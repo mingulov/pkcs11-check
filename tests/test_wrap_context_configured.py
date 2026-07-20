@@ -596,6 +596,61 @@ def test_rsa_happy_path_context_probe_and_never_destroys_kek(
 
 
 # ---------------------------------------------------------------------------
+# Finding 1 (final-review harden): a PRESENT-but-degenerate RSA public half
+# (e.g. zero-length CKA_MODULUS/CKA_PUBLIC_EXPONENT) must resolve to None via
+# the normal "cannot recover the RSA public half" note -- never let
+# RSAPublicNumbers(...).public_key() raise ValueError out to the test.
+# ---------------------------------------------------------------------------
+
+
+def test_rsa_degenerate_modulus_returns_none_not_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct-read leg returns present-but-empty CKA_MODULUS/CKA_PUBLIC_EXPONENT
+    (e.g. b"") and no public object is found by CKA_ID or CKA_LABEL -> None,
+    with the standard public-half-unrecoverable note, not a raw ValueError."""
+    priv_handle = 66
+    captured = _notes_spy(monkeypatch)
+    find_objects_calls: list[Any] = []
+
+    def fake_find_objects(raw: Any, session: int, tmpl: Any, **kwargs: Any) -> list[int]:
+        find_objects_calls.append(tmpl)
+        if len(find_objects_calls) == 1:
+            return [priv_handle]  # wrap_key_label resolution in _build_configured_wrap_context
+        return []  # CKA_LABEL-matched public-key search in _configured_rsa_pub_der -> leg 3
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        if attr_types == (CKA_CLASS,):
+            return {CKA_CLASS: CKO_PRIVATE_KEY}
+        if attr_types == (CKA_KEY_TYPE,):
+            return {CKA_KEY_TYPE: CKK_RSA}
+        if attr_types == (CKA_ID,):
+            return {}  # no CKA_ID -> skip leg 1 (no public-key-by-ID search)
+        if CKA_MODULUS in attr_types and CKA_PUBLIC_EXPONENT in attr_types:
+            # Present but degenerate: empty bytes -> int 0.
+            return {CKA_MODULUS: b"", CKA_PUBLIC_EXPONENT: b""}
+        raise AssertionError(f"unexpected attr_types {attr_types!r}")
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.find_objects", fake_find_objects)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    _reset_cache()
+
+    rs = _make_rs(sh=25)
+    cfg = _cfg(wrap_key_label="rsa-kek-label")
+
+    # Must not raise (ValueError from RSAPublicNumbers(0, 0).public_key() must
+    # never escape) -- a bare call is part of the assertion.
+    ctx = _prov.build_wrap_context(rs, cfg)
+
+    assert ctx is None
+    assert len(captured) == 1
+    description, _level = captured[0]
+    assert "cannot recover the RSA public half" in description
+
+
+# ---------------------------------------------------------------------------
 # Task 4: secret material happy path -- wrap_key_value hex is used directly,
 # CKA_VALUE is never read off the token.
 # ---------------------------------------------------------------------------

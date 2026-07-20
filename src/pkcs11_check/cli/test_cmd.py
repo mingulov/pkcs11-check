@@ -520,7 +520,7 @@ def test_command(
                 destructive=destructive,
                 pin=SecretStr(pin) if pin is not None else None,
                 key_inject=key_inject,
-                wrap_key_source=wrap_key_source,
+                wrap_key_source=cast(Literal["bootstrap", "configured"], wrap_key_source),
                 wrap_key_label=wrap_key_label,
                 wrap_key_handle=wrap_key_handle,
                 wrap_key_value=wrap_key_value,

@@ -785,11 +785,20 @@ def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> byt
     # 3) direct read off the private object (CKA_MODULUS/EXPONENT are non-sensitive per spec)
     if n_bytes is None or e_bytes is None:
         n_bytes, e_bytes = _pub_from(priv_handle)
-    if n_bytes is None or e_bytes is None:
+    if not n_bytes or not e_bytes:
+        # Absent OR present-but-degenerate (e.g. a zero-length CKA_MODULUS/
+        # CKA_PUBLIC_EXPONENT -> b""): both are falsy, so this catches both.
         return None
     n = int.from_bytes(n_bytes, "big")
     e = int.from_bytes(e_bytes, "big")
-    pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
+    try:
+        pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
+    except ValueError:
+        # cryptography rejected the numbers (e.g. an absurd/degenerate modulus
+        # that survived the not-empty check above) -- never let this escape as
+        # a raw exception; the caller emits the standard "cannot recover the
+        # RSA public half" note on None.
+        return None
     return pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
 
 

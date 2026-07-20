@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import (
@@ -52,7 +53,7 @@ class P11TestConfig(BaseSettings):
     # Key-provisioning injection (see docs/.../key-provisioning-injection-design.md).
     # off: create->skip. unwrap: create->unwrap->skip. force-unwrap: unwrap->skip (no create).
     key_inject: str = "off"
-    wrap_key_source: str = "bootstrap"  # bootstrap | configured
+    wrap_key_source: Literal["bootstrap", "configured"] = "bootstrap"
     wrap_key_label: str | None = None
     wrap_key_handle: int | None = None
     wrap_key_value: str | None = None  # hex; only for a symmetric configured KEK

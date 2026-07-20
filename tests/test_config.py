@@ -115,3 +115,19 @@ class TestWrapKeyValueValidation:
     def test_odd_length_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(Exception, match="hex"):
             P11TestConfig(module=tmp_path / "m.so", wrap_key_value="0" * 33)
+
+
+class TestWrapKeySourceValidation:
+    def test_bootstrap_accepted(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", wrap_key_source="bootstrap")
+        assert config.wrap_key_source == "bootstrap"
+
+    def test_configured_accepted(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", wrap_key_source="configured")
+        assert config.wrap_key_source == "configured"
+
+    def test_bogus_value_rejected_at_construction(self, tmp_path: Path) -> None:
+        """A typo'd --p11-wrap-key-source must fail fast at config construction,
+        not escape as a raw ValueError out of build_wrap_context later."""
+        with pytest.raises(Exception):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_source="bogus")
