@@ -96,3 +96,38 @@ def test_so_pin_env_key_fingerprinted_and_redacted() -> None:
 
     assert "P11TEST_SO_PIN" in _run_state._DEFAULT_FINGERPRINT_ENV_KEYS
     assert "P11TEST_SO_PIN" in _run_state._REDACTED_ENV_KEYS
+
+
+class TestWrapKeyValueValidation:
+    def test_valid_hex_lengths_accepted(self, tmp_path: Path) -> None:
+        for hexstr in ("00" * 16, "11" * 24, "ab" * 32):
+            config = P11TestConfig(module=tmp_path / "m.so", wrap_key_value=hexstr)
+            assert config.wrap_key_value == hexstr
+
+    def test_non_hex_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(Exception, match="hex"):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_value="zz" * 16)
+
+    def test_wrong_length_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(Exception, match="16, 24, or 32"):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_value="00" * 15)
+
+    def test_odd_length_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(Exception, match="hex"):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_value="0" * 33)
+
+
+class TestWrapKeySourceValidation:
+    def test_bootstrap_accepted(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", wrap_key_source="bootstrap")
+        assert config.wrap_key_source == "bootstrap"
+
+    def test_configured_accepted(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "m.so", wrap_key_source="configured")
+        assert config.wrap_key_source == "configured"
+
+    def test_bogus_value_rejected_at_construction(self, tmp_path: Path) -> None:
+        """A typo'd --p11-wrap-key-source must fail fast at config construction,
+        not escape as a raw ValueError out of build_wrap_context later."""
+        with pytest.raises(Exception):
+            P11TestConfig(module=tmp_path / "m.so", wrap_key_source="bogus")

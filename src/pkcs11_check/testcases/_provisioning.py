@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKG_MGF1_SHA256,
     CKK_AES,
     CKK_EC,
+    CKK_GENERIC_SECRET,
     CKK_RSA,
     CKM,
     CKM_AES_KEY_WRAP_KWP,
@@ -55,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKO_CERTIFICATE,
     CKO_DATA,
     CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -639,6 +641,249 @@ def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] 
     return None
 
 
+def _trial_round_trip(rs: Any, strategy: WrapStrategy, ctx: WrapContext) -> bool:
+    """Trial round-trip: wrap a 16-byte probe, confirm C_UnwrapKey accepts it.
+
+    The unwrapped probe handle is destroyed; a clean CKR failure means "this
+    strategy/hash combo does not work here", never a finding.
+    """
+    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+
+    unwrap_handle = strategy.unwrapping_key_handle(ctx)
+    if unwrap_handle is None:
+        return False
+    blob = strategy.wrap(ctx, b"\x00" * 16)
+    try:
+        handle = unwrap_key(
+            rs.raw,
+            rs.sh,
+            unwrap_handle,
+            blob,
+            strategy.unwrap_mech,
+            attrs=_PROBE_ATTRS,
+            mech_param=strategy.unwrap_mech_param(ctx),
+        )
+    except CkrAssertionError:
+        return False
+    destroy_quietly(rs.raw, rs.sh, handle)
+    return True
+
+
+def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
+    """Resolve an operator-configured KEK into a trial-verified WrapContext.
+
+    Every failure emits a compliance note naming the reason and returns None
+    (-> the callers' existing "no wrapping path" skip). The configured key is
+    NEVER destroyed. No bootstrap fallback: explicit config is explicit intent.
+    """
+    from pkcs11_check.compliance import ComplianceLevel, note
+    from pkcs11_check.raw.pack import template_from_dict
+    from pkcs11_check.raw.recipes import find_objects, read_attributes
+
+    def _fail(reason: str) -> None:
+        note(f"configured wrap key unusable: {reason}", ComplianceLevel.STANDARD)
+
+    cfg_handle = getattr(cfg, "wrap_key_handle", None)
+    label = getattr(cfg, "wrap_key_label", None)
+
+    if cfg_handle is not None:
+        try:
+            probe = read_attributes(rs.raw, rs.sh, cfg_handle, (CKA_CLASS,))
+        except CkrAssertionError as exc:
+            _fail(f"wrap_key_handle not usable: {exc}")
+            return None
+        if CKA_CLASS not in probe:
+            _fail("wrap_key_handle: CKA_CLASS unreadable")
+            return None
+        handle = cfg_handle
+    elif label is not None:
+        try:
+            matches = find_objects(
+                rs.raw, rs.sh, template_from_dict({CKA_LABEL: label, CKA_TOKEN: True})
+            )
+        except CkrAssertionError as exc:
+            _fail(f"C_FindObjects for wrap_key_label failed: {exc}")
+            return None
+        if len(matches) != 1:
+            hint = ""
+            if not matches and getattr(cfg, "pin", None) is None:
+                hint = "; session not logged in (no PIN), a private wrap key is not visible"
+            _fail(f"wrap_key_label matched {len(matches)} token objects; expected exactly 1{hint}")
+            return None
+        handle = matches[0]
+        try:
+            probe = read_attributes(rs.raw, rs.sh, handle, (CKA_CLASS,))
+        except CkrAssertionError as exc:
+            _fail(f"resolved wrap key not readable: {exc}")
+            return None
+    else:
+        _fail("wrap_key_source=configured but neither wrap_key_label nor wrap_key_handle given")
+        return None
+
+    try:
+        kt_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_KEY_TYPE,))
+    except CkrAssertionError as exc:
+        _fail(f"CKA_KEY_TYPE unreadable: {exc}")
+        return None
+    obj_class = probe.get(CKA_CLASS)
+    key_type = kt_attrs.get(CKA_KEY_TYPE)
+
+    if obj_class == CKO_PRIVATE_KEY:
+        if key_type != CKK_RSA:
+            _fail("configured private key is not RSA")
+            return None
+        return _configured_rsa_material(rs, cfg, handle, label, _fail)
+    if obj_class == CKO_SECRET_KEY:
+        if key_type not in (CKK_AES, CKK_GENERIC_SECRET):
+            _fail("configured secret key type unsupported (need AES/generic-secret)")
+            return None
+        return _configured_secret_material(rs, cfg, handle, _fail)
+    _fail("configured object class unsupported (need private RSA or secret key)")
+    return None
+
+
+def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> bytes | None:
+    """Recover the configured RSA KEK's public half as SubjectPublicKeyInfo DER."""
+    from pkcs11_check.raw.pack import template_from_dict
+    from pkcs11_check.raw.recipes import find_objects, read_attributes
+
+    n_bytes: bytes | None = None
+    e_bytes: bytes | None = None
+
+    def _pub_from(handle: int) -> tuple[bytes | None, bytes | None]:
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT))
+        except CkrAssertionError:
+            return None, None
+        return attrs.get(CKA_MODULUS), attrs.get(CKA_PUBLIC_EXPONENT)
+
+    # 1) CKA_ID-matched public object (spec-correct pair convention)
+    try:
+        id_attrs = read_attributes(rs.raw, rs.sh, priv_handle, (CKA_ID,))
+        key_id = id_attrs.get(CKA_ID)
+    except CkrAssertionError:
+        key_id = None
+    if key_id:
+        try:
+            pubs = find_objects(
+                rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_ID: key_id})
+            )
+        except CkrAssertionError:
+            pubs = []
+        if len(pubs) == 1:
+            n_bytes, e_bytes = _pub_from(pubs[0])
+    # 2) label-matched public object
+    if (n_bytes is None or e_bytes is None) and label is not None:
+        try:
+            pubs = find_objects(
+                rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_LABEL: label})
+            )
+        except CkrAssertionError:
+            pubs = []
+        if len(pubs) == 1:
+            n_bytes, e_bytes = _pub_from(pubs[0])
+    # 3) direct read off the private object (CKA_MODULUS/EXPONENT are non-sensitive per spec)
+    if n_bytes is None or e_bytes is None:
+        n_bytes, e_bytes = _pub_from(priv_handle)
+    if not n_bytes or not e_bytes:
+        # Absent OR present-but-degenerate (e.g. a zero-length CKA_MODULUS/
+        # CKA_PUBLIC_EXPONENT -> b""): both are falsy, so this catches both.
+        return None
+    n = int.from_bytes(n_bytes, "big")
+    e = int.from_bytes(e_bytes, "big")
+    try:
+        pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
+    except ValueError:
+        # cryptography rejected the numbers (e.g. an absurd/degenerate modulus
+        # that survived the not-empty check above) -- never let this escape as
+        # a raw exception; the caller emits the standard "cannot recover the
+        # RSA public half" note on None.
+        return None
+    return pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+
+
+def _configured_strategy_trial(
+    rs: Any,
+    cfg: Any,
+    *,
+    rsa_pub_der: bytes | None,
+    rsa_unwrap_handle: int | None,
+    aes_kek_handle: int | None,
+    sym_kek: bytes | None,
+    _fail: Any,
+) -> WrapContext | None:
+    oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
+    for strategy in DEFAULT_STRATEGIES:
+        if not strategy.usable(profile_for(rs)):
+            continue
+        if strategy.name in ("rsa_aes_key_wrap", "rsa_oaep"):
+            hash_candidates: tuple[str, ...] = (
+                ("sha256", "sha1") if oaep_hash_cfg == "auto" else (oaep_hash_cfg,)
+            )
+        else:
+            hash_candidates = ("sha1",)
+        for cand in hash_candidates:
+            trial_ctx = WrapContext(
+                rsa_pub_der=rsa_pub_der,
+                rsa_unwrap_handle=rsa_unwrap_handle,
+                aes_kek_handle=aes_kek_handle,
+                sym_kek=sym_kek,
+                aes_bits=256,
+                oaep_hash=cand,
+                strategy_name=strategy.name,
+            )
+            if not strategy.has_material(trial_ctx):
+                break  # missing material is hash-independent
+            if _trial_round_trip(rs, strategy, trial_ctx):
+                return trial_ctx
+    _fail("configured KEK failed every usable strategy's trial round-trip")
+    return None
+
+
+def _configured_rsa_material(
+    rs: Any, cfg: Any, handle: int, label: str | None, _fail: Any
+) -> WrapContext | None:
+    rsa_pub_der = _configured_rsa_pub_der(rs, handle, label)
+    if rsa_pub_der is None:
+        _fail("cannot recover the RSA public half (no unique public object; modulus unreadable)")
+        return None
+    profile_for(rs).rsa_pub_der_probe = rsa_pub_der
+    return _configured_strategy_trial(
+        rs,
+        cfg,
+        rsa_pub_der=rsa_pub_der,
+        rsa_unwrap_handle=handle,
+        aes_kek_handle=None,
+        sym_kek=None,
+        _fail=_fail,
+    )
+
+
+def _configured_secret_material(rs: Any, cfg: Any, handle: int, _fail: Any) -> WrapContext | None:
+    from pkcs11_check.raw.recipes import read_attributes
+
+    wkv = getattr(cfg, "wrap_key_value", None)
+    if wkv is not None:
+        sym_kek: bytes | None = bytes.fromhex(wkv)  # validated at config construction
+    else:
+        try:
+            val_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
+            sym_kek = val_attrs.get(CKA_VALUE)
+        except CkrAssertionError:
+            sym_kek = None
+    # Non-extractable KEK without wrap_key_value: sym_kek stays None -> AesKwp
+    # has_material() fails in the trial (documented limitation; software-side wrap).
+    return _configured_strategy_trial(
+        rs,
+        cfg,
+        rsa_pub_der=None,
+        rsa_unwrap_handle=None,
+        aes_kek_handle=handle,
+        sym_kek=sym_kek,
+        _fail=_fail,
+    )
+
+
 def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     """Build a ``WrapContext`` by probing ALL usable strategies in DEFAULT_STRATEGIES order.
 
@@ -654,15 +899,16 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     Sets ``profile_for(rs).rsa_pub_der_probe`` when RSA material is successfully
     bootstrapped so ``select_strategy`` can size-check OAEP payloads correctly.
 
-    The ``configured`` wrap-key-source path is not yet implemented; a
-    ``NotImplementedError`` is raised for that branch.
+    When ``cfg.wrap_key_source == "configured"``, resolution routes to
+    ``_build_configured_wrap_context``: an operator-named KEK (by handle or label) is
+    looked up, class/key-type dispatched, and its material + trial round-trip built —
+    never falling back to bootstrap (explicit config is explicit intent).
     """
     wrap_key_source: str = getattr(cfg, "wrap_key_source", "bootstrap")
+    if wrap_key_source == "configured":
+        return _build_configured_wrap_context(rs, cfg)
     if wrap_key_source != "bootstrap":
-        raise NotImplementedError(
-            f"wrap_key_source={wrap_key_source!r} is not yet implemented; "
-            "only 'bootstrap' is supported in Phase 1"
-        )
+        raise ValueError(f"unknown wrap_key_source {wrap_key_source!r}")
 
     start_bits: int = getattr(cfg, "wrap_rsa_bits", 2048)
     oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
@@ -677,7 +923,7 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     rsa_bootstrapped = False
     aes_bootstrapped = False
 
-    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+    from pkcs11_check.raw.recipes import destroy_quietly
 
     for strategy in DEFAULT_STRATEGIES:
         if not strategy.usable(profile_for(rs)):
@@ -771,24 +1017,8 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                 oaep_hash=cand if cand is not None else "sha1",
                 strategy_name=strategy.name,
             )
-            unwrap_handle = strategy.unwrapping_key_handle(trial_ctx)
-            if unwrap_handle is None:
-                continue  # material check passed but no handle (shouldn't happen)
-            blob = strategy.wrap(trial_ctx, b"\x00" * 16)
-            try:
-                handle = unwrap_key(
-                    rs.raw,
-                    rs.sh,
-                    unwrap_handle,
-                    blob,
-                    strategy.unwrap_mech,
-                    attrs=_PROBE_ATTRS,
-                    mech_param=strategy.unwrap_mech_param(trial_ctx),
-                )
-            except CkrAssertionError:
-                continue
-            destroy_quietly(rs.raw, rs.sh, handle)
-            return trial_ctx
+            if _trial_round_trip(rs, strategy, trial_ctx):
+                return trial_ctx
 
     return None
 

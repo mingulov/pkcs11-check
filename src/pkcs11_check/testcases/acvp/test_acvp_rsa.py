@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives import hashes
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import classify, fail_as, set_mechanism, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_pss
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -195,6 +195,9 @@ class TestRsaPkcs15:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
         require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
+        # Dual-op roundtrip (sign then local+module verify below): declare C_Sign
+        # only, one call -- C_Verify is backstopped by TestRsaSigVer.
+        set_mechanism(mech_name, operation="C_Sign", expect_success=True)
 
         pub_key = priv_key = 0
         try:
@@ -255,6 +258,9 @@ class TestRsaPss:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported by module")
         require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", key_bits, label=vec_id)
+        # Dual-op roundtrip (sign then local+module verify below): declare C_Sign
+        # only, one call -- C_Verify is backstopped by TestRsaSigVer.
+        set_mechanism(mech_name, operation="C_Sign", expect_success=True)
 
         pub_key = priv_key = 0
         try:

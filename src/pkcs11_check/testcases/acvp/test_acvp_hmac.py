@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import set_mechanism, xfail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     sign_single,
@@ -249,6 +249,8 @@ def test_acvp_hmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) ->
     skip_unless_create_object_supported(rs)
     if not rs.has_mechanism(vec["mech_display"]):
         pytest.skip(f"{vec['mech_display']} not supported by module")
+
+    set_mechanism(vec["mech_display"], operation="C_Sign", expect_success=True)
 
     mac = _sign_hmac_with_key_fallback(rs, vec)
 

@@ -326,6 +326,7 @@ class TestHMACSHA256Wycheproof:
         tag_expected = bytes.fromhex(vec["tag"])
         result = vec["result"]
         tag_size = vec["_group"].get("tagSize", 256) // 8
+        set_mechanism("CKM_SHA256_HMAC", operation="C_Sign", expect_success=(result == "valid"))
 
         # Track non-recommended key sizes
         if len(key_bytes) < 32 and result == "valid":

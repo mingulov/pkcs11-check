@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, set_mechanism, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_ccm, mech_gcm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -179,6 +179,8 @@ def run_gcm_encrypt_test(
     if not rs.has_mechanism("AES_GCM"):
         pytest.skip("AES_GCM not supported by module")
 
+    set_mechanism("AES_GCM", operation="C_Encrypt", expect_success=True)
+
     tag_bytes = vec["tag_len_bits"] // 8
     iv = vec.get("extended_nonce", vec["iv"])
     aad = vec.get("aad") or None
@@ -269,6 +271,8 @@ def run_gcm_decrypt_test(
     rs = p11_module_session
     if not rs.has_mechanism("AES_GCM"):
         pytest.skip("AES_GCM not supported by module")
+
+    set_mechanism("AES_GCM", operation="C_Decrypt", expect_success=bool(vec["test_passed"]))
 
     tag_bytes = vec["tag_len_bits"] // 8
     iv = vec.get("extended_nonce", vec["iv"])
@@ -380,6 +384,8 @@ def run_ccm_encrypt_test(
     if not rs.has_mechanism("AES_CCM"):
         pytest.skip("AES_CCM not supported by module")
 
+    set_mechanism("AES_CCM", operation="C_Encrypt", expect_success=True)
+
     nonce = vec["nonce"]
     aad = vec.get("aad") or None
 
@@ -483,6 +489,8 @@ def run_ccm_decrypt_test(
     rs = p11_module_session
     if not rs.has_mechanism("AES_CCM"):
         pytest.skip("AES_CCM not supported by module")
+
+    set_mechanism("AES_CCM", operation="C_Decrypt", expect_success=bool(vec["test_passed"]))
 
     nonce = vec["nonce"]
     aad = vec.get("aad") or None

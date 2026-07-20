@@ -7,7 +7,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, set_params
+from pkcs11_check.classification import classify, set_mechanism, set_params
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -183,6 +183,7 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
+    set_mechanism("AES_CMAC", operation="C_Verify", expect_success=(result == "valid"))
 
     try:
         key = import_secret_key_negotiated(
@@ -258,6 +259,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
     msg_expected = bytes.fromhex(vec["msg"])
     ct = bytes.fromhex(vec["ct"])
     result = vec["result"]
+    set_mechanism("AES_KEY_WRAP", operation="C_UnwrapKey", expect_success=(result == "valid"))
 
     # Import unwrapping key
     try:
@@ -389,6 +391,10 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     msg = bytes.fromhex(vec["msg"])
     ct_expected = bytes.fromhex(vec["ct"])
     result = vec["result"]
+    # NOT C_WrapKey -- the raw call below is encrypt_single (KWP is exposed via
+    # C_Encrypt in PKCS#11); the existing "C_WrapKey" classify label on the
+    # assert_correct() call further down stays untouched (cosmetic KAT label).
+    set_mechanism("AES_KEY_WRAP_KWP", operation="C_Encrypt", expect_success=(result == "valid"))
 
     # Import wrapping key
     try:
@@ -488,6 +494,7 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     ct = bytes.fromhex(vec["ct"])
     tag = bytes.fromhex(vec["tag"])
     result = vec["result"]
+    set_mechanism("AES_CCM", operation="C_Decrypt", expect_success=(result == "valid"))
 
     try:
         key = import_secret_key_negotiated(
@@ -604,6 +611,7 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
     msg = bytes.fromhex(vec["msg"])  # AAD in GMAC context
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
+    set_mechanism("AES_GMAC", operation="C_Verify", expect_success=(result == "valid"))
 
     try:
         key = import_secret_key_negotiated(
@@ -692,6 +700,7 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     msg = bytes.fromhex(vec["msg"])
     ct_expected = bytes.fromhex(vec["ct"])
     result = vec["result"]
+    set_mechanism("AES_XTS", operation="C_Encrypt", expect_success=(result == "valid"))
 
     # XTS uses AES_XTS key type with double-size key
     try:
