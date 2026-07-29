@@ -21,8 +21,15 @@ from types import SimpleNamespace
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKF_DECRYPT, CKF_ENCRYPT, CKR_MECHANISM_INVALID
+from pkcs11_check.raw.types_std import (
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
+)
+from pkcs11_check.testcases import test_encrypt, test_key_sizes
 from pkcs11_check.testcases.security import test_cve_regression, test_padding_oracle
+from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_decrypt
 
 
 class _GuardFellThroughError(Exception):
@@ -152,3 +159,142 @@ def test_rsa_timing_sanity_xfails_when_advertised_but_not_operational(
 
     with pytest.raises(pytest.xfail.Exception):
         test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity(rs)
+
+
+# --- GH #7 class sweep: same guard at the remaining RSA cipher sites --------------------
+# The class defect (RSA cipher op with no operation-flag guard) also lived in the
+# conformance roundtrips, the key-size OAEP roundtrip, and the Wycheproof PKCS#1
+# decrypt gate. The guards must skip only non-claiming modules; genuine crypto
+# findings (broken OAEP randomization, unknown CKRs on advertised ops) must
+# survive as hard failures.
+
+
+def test_encrypt_rsa_pkcs_roundtrip_skips_without_ckf_decrypt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Encrypt-only CKM_RSA_PKCS cannot round-trip -- skip, not xfail."""
+
+    def _unexpected_keygen(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("keypair generation should have been capability-guarded")
+
+    monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
+    rs = _session(flags={int(CKF_ENCRYPT)})
+
+    with pytest.raises(pytest.skip.Exception, match="CKF_DECRYPT"):
+        test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip(rs)
+
+
+def test_encrypt_rsa_pkcs_roundtrip_skips_without_ckf_encrypt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Signature-only CKM_RSA_PKCS (the craton-hsm/nethsm posture) must skip."""
+
+    def _unexpected_keygen(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("keypair generation should have been capability-guarded")
+
+    monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
+    rs = _session(flags={int(CKF_DECRYPT)})
+
+    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
+        test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip(rs)
+
+
+def test_encrypt_rsa_pkcs_roundtrip_runs_with_both_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both flags advertised -> the roundtrip really runs."""
+
+    def _reached(*_args: object, **_kwargs: object) -> object:
+        raise _GuardFellThroughError
+
+    monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _reached)
+    rs = _session(flags={int(CKF_ENCRYPT), int(CKF_DECRYPT)})
+
+    with pytest.raises(_GuardFellThroughError):
+        test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip(rs)
+
+
+def test_encrypt_rsa_oaep_roundtrip_skips_without_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A module not offering OAEP encryption must skip the OAEP roundtrip."""
+
+    def _unexpected_keygen(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("keypair generation should have been capability-guarded")
+
+    monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
+    rs = _session(flags=set())
+
+    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
+        test_encrypt.TestRSAEncryption().test_rsa_oaep_roundtrip(rs)
+
+
+def test_encrypt_rsa_oaep_roundtrip_xfails_when_advertised_but_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Advertised OAEP + clean runtime refusal -> not_operational xfail."""
+    monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_encrypt, "encrypt_single", _ckr_mechanism_invalid)
+    monkeypatch.setattr(test_encrypt, "destroy_quietly", lambda *_a, **_k: None)
+    rs = _session(flags={int(CKF_ENCRYPT), int(CKF_DECRYPT)})
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_encrypt.TestRSAEncryption().test_rsa_oaep_roundtrip(rs)
+
+
+def test_encrypt_rsa_ciphertext_random_break_stays_a_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identical OAEP ciphertexts (real case: pkcs11-mock) must NOT become xfail."""
+    monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_encrypt, "encrypt_single", lambda *_a, **_k: b"same-ct")
+    monkeypatch.setattr(test_encrypt, "destroy_quietly", lambda *_a, **_k: None)
+    rs = _session(flags={int(CKF_ENCRYPT)})
+
+    with pytest.raises(AssertionError):
+        test_encrypt.TestRSAEncryption().test_rsa_ciphertext_is_random(rs)
+
+
+def test_key_sizes_oaep_roundtrip_skips_without_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OAEP advertised without cipher flags -> skip at every key size."""
+
+    def _unexpected_keygen(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("keypair generation should have been capability-guarded")
+
+    monkeypatch.setattr(test_key_sizes, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
+    rs = _session(flags=set())
+
+    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
+        test_key_sizes.TestRSAKeySizes().test_rsa_oaep_roundtrip(rs, 2048)
+
+
+def test_key_sizes_oaep_unknown_ckr_stays_a_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKR_KEY_HANDLE_INVALID on an advertised OAEP op (real case: craton-hsm)
+    is not in the not-operational tuple and must stay a hard failure."""
+
+    def _key_handle_invalid(*_args: object, **_kwargs: object) -> object:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_KEY_HANDLE_INVALID", int(CKR_KEY_HANDLE_INVALID)
+        )
+
+    monkeypatch.setattr(test_key_sizes, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_key_sizes, "encrypt_single", _key_handle_invalid)
+    monkeypatch.setattr(test_key_sizes, "destroy_quietly", lambda *_a, **_k: None)
+    rs = _session(flags={int(CKF_ENCRYPT), int(CKF_DECRYPT)})
+
+    with pytest.raises(CkrAssertionError):
+        test_key_sizes.TestRSAKeySizes().test_rsa_oaep_roundtrip(rs, 2048)
+
+
+def test_wycheproof_rsa_decrypt_skips_without_ckf_decrypt() -> None:
+    """Sign-only CKM_RSA_PKCS must not accumulate per-vector decrypt findings.
+
+    The guard must fire before the vector dict is even touched (vec={} here)."""
+    rs = _session(flags=set())
+
+    with pytest.raises(pytest.skip.Exception, match="CKF_DECRYPT"):
+        test_wycheproof_rsa_decrypt.test_rsa_pkcs1_decrypt(rs, object(), "unit", {})
