@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.raw.pack import mech_bytes, mech_oaep
+from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -27,6 +27,7 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     read_attributes,
 )
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_DECRYPT,
@@ -41,6 +42,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
+    CKR_OK,
 )
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
@@ -71,6 +73,80 @@ def _abort_decrypt_operation(raw: Any, session: int) -> None:
         raw.C_DecryptFinal(session, out_buf, ctypes.byref(out_len))
     except (AttributeError, OSError, ctypes.ArgumentError):
         pass
+
+
+def _timed_decrypt(
+    raw: Any,
+    session: int,
+    key: int,
+    mechanism: int,
+    ciphertext: bytes,
+    *,
+    mech_param: Any | None = None,
+) -> tuple[float, int]:
+    """Time ONE module decrypt. Returns ``(seconds, rv)``; rv is the raw CK_RV.
+
+    Only ``C_Decrypt`` is inside the timer: ``C_DecryptInit`` runs before it and any
+    teardown after it. That scoping is what makes valid-vs-invalid timings comparable.
+
+    Timing the single-shot ``decrypt_single`` recipe instead measures the harness on
+    the failure path: a rejected decrypt leaves the operation ACTIVE, the recipe's
+    best-effort ``C_SessionCancel`` is a no-op on a pre-v3.0 module that does not
+    export it, and every following ``C_DecryptInit`` then returns
+    CKR_OPERATION_ACTIVE and pays a session-recovery round trip. Measured against
+    SoftHSM2 2.5.0 that recovery is ~130us versus ~8us for the decrypt itself -- a
+    12x "timing oracle" that is entirely harness teardown (the module's real
+    valid/invalid ratio there is 1.5x).
+
+    A single pre-allocated output buffer is used rather than the two-call NULL-size
+    probe so both legs issue exactly one ``C_Decrypt``.
+    """
+    mech = mech_param if mech_param is not None else mech_simple(mechanism)
+    in_buf = (ctypes.c_ubyte * len(ciphertext)).from_buffer_copy(ciphertext)
+    out_size = max(len(ciphertext), 16) + 64
+    out_buf = (ctypes.c_ubyte * out_size)()
+    out_len = CK_ULONG(out_size)
+
+    rv_init = raw.C_DecryptInit(session, mech.byref(), key)
+    if rv_init != CKR_OK:
+        return (0.0, int(rv_init))
+
+    start = time.perf_counter()
+    rv = raw.C_Decrypt(session, in_buf, len(ciphertext), out_buf, ctypes.byref(out_len))
+    elapsed = time.perf_counter() - start
+
+    if rv != CKR_OK:
+        _abort_decrypt_operation(raw, session)
+    return (elapsed, int(rv))
+
+
+# Absolute mean-gap a timing difference must clear before it is reported, on top of the
+# ratio threshold. These probes explicitly detect only GROSS oracles (see the test
+# docstrings: think 100ms vs 5ms, not Lucky13's sub-microsecond signal). Once the
+# measurement window covers the module call alone, the means land in the microseconds,
+# where a bare ratio test turns ordinary scheduler jitter into a 3x-plus "oracle": real
+# SoftHSM2 2.7.0 samples of 2us vs 10us give 5.7x. Requiring a millisecond of absolute
+# separation keeps every gross oracle in range (a 95ms gap clears it trivially) while
+# refusing to accuse a conformant module over microsecond noise that this environment --
+# no CPU pinning, no jitter calibration -- cannot resolve anyway.
+_MIN_TIMING_GAP_S = 0.001
+
+
+def _timing_ratio(valid: list[float], invalid: list[float]) -> float | None:
+    """Slower/faster mean ratio, or None when the comparison is not meaningful.
+
+    Returns None for empty or non-positive samples, and for gaps below
+    ``_MIN_TIMING_GAP_S`` -- a ratio computed on microsecond means is noise, not signal.
+    """
+    if not valid or not invalid:
+        return None
+    valid_avg = sum(valid) / len(valid)
+    invalid_avg = sum(invalid) / len(invalid)
+    if valid_avg <= 0 or invalid_avg <= 0:
+        return None
+    if abs(invalid_avg - valid_avg) < _MIN_TIMING_GAP_S:
+        return None
+    return max(valid_avg, invalid_avg) / min(valid_avg, invalid_avg)
 
 
 def _decrypt_result_or_error(
@@ -731,33 +807,21 @@ class TestTimingBasic:
                 )
                 raise
 
-            # Time valid decryptions
-            valid_times = []
-            for _ in range(50):
-                start = time.perf_counter()
-                try:
-                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, valid_ct)
-                except AssertionError:
-                    _abort_decrypt_operation(rs.raw, rs.sh)
-                valid_times.append(time.perf_counter() - start)
-
-            # Time invalid decryptions
+            # Both legs measure the module's C_Decrypt alone (see _timed_decrypt):
+            # timing the recipe wrapper would charge the failure path for harness
+            # session recovery and manufacture an oracle finding.
+            valid_times = [
+                _timed_decrypt(rs.raw, rs.sh, priv, CKM_RSA_PKCS, valid_ct)[0] for _ in range(50)
+            ]
             invalid_times = []
             for _ in range(50):
                 bad_ct = generate_random(rs.raw, rs.sh, 256)
-                start = time.perf_counter()
-                try:
-                    decrypt_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, bad_ct)
-                except AssertionError:
-                    _abort_decrypt_operation(rs.raw, rs.sh)
-                invalid_times.append(time.perf_counter() - start)
+                invalid_times.append(_timed_decrypt(rs.raw, rs.sh, priv, CKM_RSA_PKCS, bad_ct)[0])
 
-            valid_avg = sum(valid_times) / len(valid_times)
-            invalid_avg = sum(invalid_times) / len(invalid_times)
-
-            # If one is more than 3x the other, flag it
-            if valid_avg > 0 and invalid_avg > 0:
-                ratio = max(valid_avg, invalid_avg) / min(valid_avg, invalid_avg)
+            ratio = _timing_ratio(valid_times, invalid_times)
+            if ratio is not None:
+                valid_avg = sum(valid_times) / len(valid_times)
+                invalid_avg = sum(invalid_times) / len(invalid_times)
                 if ratio > 3.0:
                     classify(
                         "oracle",
@@ -817,20 +881,20 @@ class TestTimingBasic:
             # Valid decrypts: CT with intact PKCS#7 padding. The valid
             # path MUST NOT raise — if it does, that is itself a finding
             # (and timing measurement of failures is meaningless).
+            # Both legs time the module's C_Decrypt alone (see _timed_decrypt): timing the
+            # recipe wrapper would charge the rejection path for harness session recovery
+            # and manufacture a Lucky13 finding out of teardown cost.
             valid_times: list[float] = []
             for _ in range(50):
-                start = time.perf_counter()
-                try:
-                    decrypt_single(
-                        rs.raw,
-                        rs.sh,
-                        key,
-                        CKM_AES_CBC_PAD,
-                        valid_ct,
-                        mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
-                    )
-                except AssertionError as exc:
-                    _abort_decrypt_operation(rs.raw, rs.sh)
+                elapsed, rv = _timed_decrypt(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC_PAD,
+                    valid_ct,
+                    mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                )
+                if rv != CKR_OK:
                     classify(
                         "not_operational",
                         kind="crypto",
@@ -838,9 +902,9 @@ class TestTimingBasic:
                         operation="C_Decrypt",
                         mechanism="CKM_AES_CBC_PAD",
                         summary=f"Valid CBC-PAD decrypt failed unexpectedly "
-                        f"({exc}) — timing comparison invalid",
+                        f"({ckr_name(rv)}) — timing comparison invalid",
                     )
-                valid_times.append(time.perf_counter() - start)
+                valid_times.append(elapsed)
 
             # Invalid decrypts: corrupt the LAST block to invalidate
             # padding. Use a fresh corrupted ct each iteration so we
@@ -861,46 +925,35 @@ class TestTimingBasic:
                 # Vary the corruption position so we sample the response
                 # surface, not just one byte.
                 bad_ct[last_block_start + (i % 16)] ^= 0xFF
-                start = time.perf_counter()
-                try:
-                    decrypt_single(
-                        rs.raw,
-                        rs.sh,
-                        key,
-                        CKM_AES_CBC_PAD,
-                        bytes(bad_ct),
-                        mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                elapsed, rv = _timed_decrypt(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC_PAD,
+                    bytes(bad_ct),
+                    mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
+                )
+                # Some bit-flips happen to produce valid padding → CKR_OK + garbage
+                # plaintext. That is fine; timing is still on the rejection path the
+                # test compares. Other (non-padding) CKRs indicate a broken decrypt
+                # and would skew timing.
+                if rv != CKR_OK and ckr_name(rv) not in invalid_path_codes:
+                    classify(
+                        "nonspec_reject",
+                        label="AES-CBC-PAD corrupted decrypt",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_CBC_PAD",
+                        expected=invalid_path_codes,
+                        summary=f"Unexpected non-padding error on bit-"
+                        f"flipped CBC-PAD decrypt: {ckr_name(rv)} — timing "
+                        f"comparison invalid",
                     )
-                except AssertionError as exc:
-                    elapsed = time.perf_counter() - start
-                    _abort_decrypt_operation(rs.raw, rs.sh)
-                    msg = str(exc)
-                    if not any(code in msg for code in invalid_path_codes):
-                        # Some bit-flips happen to produce valid padding
-                        # → CKR_OK + garbage plaintext, no exception. That
-                        # is fine; timing is still on the rejection path
-                        # the test is comparing. Other (non-padding) CKRs
-                        # indicate broken decrypt and would skew timing.
-                        if "CKR_OK" not in msg:
-                            classify(
-                                "nonspec_reject",
-                                label="AES-CBC-PAD corrupted decrypt",
-                                operation="C_Decrypt",
-                                mechanism="CKM_AES_CBC_PAD",
-                                expected=invalid_path_codes,
-                                summary=f"Unexpected non-padding error on bit-"
-                                f"flipped CBC-PAD decrypt: {exc} — timing "
-                                f"comparison invalid",
-                            )
-                    invalid_times.append(elapsed)
-                else:
-                    invalid_times.append(time.perf_counter() - start)
+                invalid_times.append(elapsed)
 
-            valid_avg = sum(valid_times) / len(valid_times)
-            invalid_avg = sum(invalid_times) / len(invalid_times)
-
-            if valid_avg > 0 and invalid_avg > 0:
-                ratio = max(valid_avg, invalid_avg) / min(valid_avg, invalid_avg)
+            ratio = _timing_ratio(valid_times, invalid_times)
+            if ratio is not None:
+                valid_avg = sum(valid_times) / len(valid_times)
+                invalid_avg = sum(invalid_times) / len(invalid_times)
                 if ratio > 3.0:
                     from pkcs11_check.compliance import ComplianceLevel, note
 
