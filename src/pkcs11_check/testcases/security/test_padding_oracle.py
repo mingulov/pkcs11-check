@@ -34,6 +34,8 @@ from pkcs11_check.raw.types_std import (
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKA_TOKEN,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKG_MGF1_SHA1,
     CKM_AES_CBC_PAD,
     CKM_RSA_PKCS,
@@ -44,6 +46,7 @@ from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
+    skip_unless_mechanism_flag,
 )
 
 pytestmark = pytest.mark.security
@@ -697,6 +700,14 @@ class TestTimingBasic:
         If the difference is >2x, there may be a timing oracle.
         """
         rs = p11_raw_session
+        # Needs BOTH directions: this encrypts a probe, then times decryptions.
+        # CKM_RSA_PKCS signature and encryption are separately gated -- PKCS#1 v1.5
+        # signature is FIPS-approved while v1.5 encryption is not -- so a FIPS-strict
+        # module advertises the mechanism for signing only (GH #7). Gate on the
+        # operation flags rather than mere presence: a module that DOES advertise
+        # CKF_ENCRYPT/CKF_DECRYPT and then refuses is still a finding.
+        skip_unless_mechanism_flag(rs, "RSA_PKCS", CKF_ENCRYPT)
+        skip_unless_mechanism_flag(rs, "RSA_PKCS", CKF_DECRYPT)
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
             2048,

@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VERIFY,
     CKA_WRAP,
+    CKF_ENCRYPT,
     CKK_AES,
     CKK_EC,
     CKM_AES_ECB,
@@ -101,6 +102,7 @@ from pkcs11_check.testcases.conftest import (
     reject_or_classify,
     skip_unless_create_object_supported,
     skip_unless_mechanism,
+    skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
 
@@ -708,6 +710,12 @@ class TestBoundaryLengthCrypto:
     def test_rsa_encrypt_boundary(self, p11_raw_session: Any) -> None:
         """RSA-PKCS encrypt with empty and max-length data."""
         rs = p11_raw_session
+        # CKM_RSA_PKCS covers signature AND encryption, and the two are separately
+        # gated: PKCS#1 v1.5 *signature* is FIPS-approved while v1.5 *encryption* is
+        # not, so a FIPS-strict module advertises the mechanism for signing only (GH
+        # #7). Gate on the operation flag, not mere presence -- a module that does
+        # advertise CKF_ENCRYPT and then rejects the operation is still a finding.
+        skip_unless_mechanism_flag(rs, "RSA_PKCS", CKF_ENCRYPT)
         pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
         try:
             # Empty data - some modules reject
