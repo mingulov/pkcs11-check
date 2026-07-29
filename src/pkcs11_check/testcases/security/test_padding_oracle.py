@@ -43,10 +43,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
 )
 from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
     skip_unless_mechanism_flag,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
@@ -716,8 +718,18 @@ class TestTimingBasic:
         )
 
         try:
-            # Valid ciphertext
-            valid_ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"timing test")
+            # Valid ciphertext. The flag guard above means the module DID advertise
+            # CKF_ENCRYPT, so a clean refusal here is advertised-but-not-operational
+            # -- an xfail finding per the classification model, not a hard failure.
+            try:
+                valid_ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"timing test")
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "RSA-PKCS encrypt advertised (CKF_ENCRYPT) but not operational",
+                )
+                raise
 
             # Time valid decryptions
             valid_times = []

@@ -20,7 +20,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from pkcs11_check.raw.types_std import CKF_DECRYPT, CKF_ENCRYPT
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKF_DECRYPT, CKF_ENCRYPT, CKR_MECHANISM_INVALID
 from pkcs11_check.testcases.security import test_cve_regression, test_padding_oracle
 
 
@@ -110,4 +111,44 @@ def test_rsa_timing_sanity_runs_with_both_flags(
     rs = _session(flags={int(CKF_ENCRYPT), int(CKF_DECRYPT)})
 
     with pytest.raises(_GuardFellThroughError):
+        test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity(rs)
+
+
+# --- advertised-but-not-operational: xfail, never a hard fail ---------------------------
+# The flag guard only skips a module that never CLAIMED the capability. A module that DOES
+# advertise CKF_ENCRYPT/CKF_DECRYPT and then refuses is a positive op returning a clean
+# error -- "advertised but not operational" -- which the classification model records as an
+# xfail finding (reason=not_operational), not a failure. Both are recorded findings; the
+# distinction that matters is not accusing a module that made no such claim.
+
+
+def _ckr_mechanism_invalid(*_args: object, **_kwargs: object) -> object:
+    raise CkrAssertionError("Unexpected CK_RV CKR_MECHANISM_INVALID", int(CKR_MECHANISM_INVALID))
+
+
+def test_rsa_encrypt_boundary_xfails_when_advertised_but_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Advertised CKF_ENCRYPT + CKR_MECHANISM_INVALID -> not_operational xfail."""
+    monkeypatch.setattr(
+        test_cve_regression, "_gen_cve_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2)
+    )
+    monkeypatch.setattr(test_cve_regression, "encrypt_single", _ckr_mechanism_invalid)
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a, **_k: None)
+    rs = _session(flags={int(CKF_ENCRYPT)})
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_cve_regression.TestBoundaryLengthCrypto().test_rsa_encrypt_boundary(rs)
+
+
+def test_rsa_timing_sanity_xfails_when_advertised_but_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The timing probe's setup encrypt must xfail, not fail, on a clean refusal."""
+    monkeypatch.setattr(test_padding_oracle, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_padding_oracle, "encrypt_single", _ckr_mechanism_invalid)
+    monkeypatch.setattr(test_padding_oracle, "destroy_quietly", lambda *_a, **_k: None)
+    rs = _session(flags={int(CKF_ENCRYPT), int(CKF_DECRYPT)})
+
+    with pytest.raises(pytest.xfail.Exception):
         test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity(rs)

@@ -94,6 +94,7 @@ from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
     assert_correct,
     gen_aes_key_or_xfail,
@@ -724,7 +725,7 @@ class TestBoundaryLengthCrypto:
             except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
-                    (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_DATA_INVALID),
+                    (*CIPHER_OP_RUNTIME_REJECT_RVS, CKR_DATA_INVALID),
                     "RSA-PKCS encrypt of empty data rejected",
                 )
 
@@ -734,7 +735,7 @@ class TestBoundaryLengthCrypto:
             except AssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
-                    (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD),
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
                     "RSA-2048 PKCS#1 encrypt of max-length (245B) data rejected",
                 )
             else:
