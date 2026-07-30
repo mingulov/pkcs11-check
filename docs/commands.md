@@ -133,6 +133,19 @@ unrecognized unit status) - use it for release sign-off and before trusting a re
 For a worked end-to-end example - build two SoftHSM2 versions in Docker and diff them with
 `compare-results` and `compare-coverage` - see [docker-examples.md](docker-examples.md).
 
+## Differential cross-provider check (N-way KAT agreement)
+
+```bash
+uv run pkcs11-check differential softhsm2=a/report.jsonl kryoptic=b/report.jsonl nss=c/report.jsonl
+```
+
+`differential` diffs several providers' verdicts on the same deterministic known-answer
+vectors (Wycheproof/ACVP/CCTV/X.509 by default) and names the odd-one-out per node-id where
+the providers that ran a KAT disagree - a low-false-positive finder, since a KAT has one
+correct verdict, so the minority is a suspect (wrong crypto, a spurious rejection, or a
+crash). Capability skips are excluded. Exits 1 when any disagreement is found. Pass `--all`
+to compare every node-id (not just KAT suites) and `--min-providers N` to require N runs.
+
 ## Per-provider classification report
 
 Roll at-source classifications (and runner-side crash findings) up into per-provider
