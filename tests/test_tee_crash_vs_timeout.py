@@ -18,15 +18,36 @@ import time
 
 import pytest
 
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.core.file_runner import _run_subprocess_tee
 
 # Direct child spawns a grandchild that inherits stdout/stderr (close_fds keeps
-# 0/1/2) and sleeps, holding the pipe open; then the child kills itself with a
-# signal so its returncode is negative. The pipe never EOFs before the deadline.
+# 0/1/2) and sleeps, holding the pipe open; then the child kills itself abruptly so its
+# returncode denotes a crash. The pipe never EOFs before the deadline.
+#
+# The self-kill is necessarily platform-specific: Windows has no signals at all (there is
+# no signal.SIGKILL, so the POSIX form raised AttributeError there). Its ABI-equivalent is
+# terminating with an NTSTATUS exception code, which is exactly what crash_codes.py
+# recognizes as a crash, so both branches exercise the same product contract.
+_SELF_KILL = (
+    # argtypes/restype are REQUIRED, not decoration: GetCurrentProcess returns the
+    # pseudo-handle (HANDLE)-1, and under ctypes' default c_int signature it is truncated,
+    # so the call silently fails and the process exits 0 -- which reads as "no crash".
+    # Measured: typed -> 0xC0000005, untyped -> 0.
+    "import ctypes\n"
+    "k = ctypes.windll.kernel32\n"
+    "k.GetCurrentProcess.restype = ctypes.c_void_p\n"
+    "k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]\n"
+    # 0xC0000005 == EXCEPTION_ACCESS_VIOLATION, the NTSTATUS a real faulting module yields.
+    # Note ctypes.string_at(0) is NOT usable here: Windows SEH translates the fault into a
+    # catchable OSError, so the child exits 1 and never reports a crash code at all.
+    "k.TerminateProcess(k.GetCurrentProcess(), 0xC0000005)\n"
+    if sys.platform == "win32"
+    else "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n"
+)
 _CRASH_WITH_LINGERING_GRANDCHILD = (
-    "import subprocess, sys, os, signal\n"
-    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'])\n"
-    "os.kill(os.getpid(), signal.SIGKILL)\n"
+    "import subprocess, sys\n"
+    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'])\n" + _SELF_KILL
 )
 
 
@@ -39,9 +60,15 @@ def test_crash_is_not_misreported_as_timeout_when_grandchild_holds_pipe() -> Non
     )
     elapsed = time.monotonic() - start
 
-    # The child crashed (negative returncode == killed by a signal), NOT 124.
-    assert rc < 0, rc
-    assert rc == -signal.SIGKILL, rc
+    # The child crashed, NOT timed out (124). Assert via the product's own platform-aware
+    # classifier rather than a POSIX signal number, so this pins the contract the runner
+    # actually relies on: negative signal on POSIX, NTSTATUS on Windows.
+    assert is_crash_returncode(rc), f"{rc} ({crash_detail_name(rc)}) must classify as a crash"
+    assert rc != 124, rc
+    if sys.platform == "win32":
+        assert rc & 0xFFFFFFFF == 0xC0000005, crash_detail_name(rc)
+    else:
+        assert rc == -signal.SIGKILL, rc
     # And it returned at the deadline, not after the grandchild's 8s sleep.
     assert elapsed < 6, elapsed
 

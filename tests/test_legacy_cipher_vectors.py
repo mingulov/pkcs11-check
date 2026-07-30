@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CKM_ARIA_CBC_PAD,
     CKM_ARIA_MAC,
     CKM_ARIA_MAC_GENERAL,
@@ -462,8 +463,11 @@ def test_cdmf_mac_general_vector_params_replay_length() -> None:
 
     params = build_params_from_vector(int(CKM_CDMF_MAC_GENERAL), config.param_recipe, vector)
 
+    # CK_MAC_GENERAL_PARAMS is a CK_ULONG, whose width is platform-dependent: 8 bytes on
+    # LP64 (Linux/macOS), 4 on Windows's LLP64. Hardcoding 8 asserted the packing of the
+    # developer's platform rather than the ABI the code targets.
     assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == (
-        vector["params"]["mac_len"].to_bytes(8, "little")
+        vector["params"]["mac_len"].to_bytes(ctypes.sizeof(CK_ULONG), "little")
     )
 
 

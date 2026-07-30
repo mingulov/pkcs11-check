@@ -38,7 +38,10 @@ class TestResolveDataDir:
         from pkcs11_check.testcases.data import resolve_data_dir
 
         result = resolve_data_dir()
-        assert str(result).endswith(".local/share/pkcs11-check/data")
+        # Compare path COMPONENTS, not a string suffix: str(WindowsPath) renders "\", so a
+        # hardcoded "/" suffix asserted the separator rather than the location and failed
+        # on Windows even though the resolved directory was exactly right.
+        assert result.parts[-4:] == (".local", "share", "pkcs11-check", "data")
 
 
 class TestSourcesManifest:

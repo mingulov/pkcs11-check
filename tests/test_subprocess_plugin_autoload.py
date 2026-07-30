@@ -6,6 +6,7 @@ they need, trimming startup cost without changing test behavior.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from pkcs11_check.core.file_runner import (
@@ -55,7 +56,14 @@ def test_env_preserves_existing_addopts() -> None:
 def test_env_unchanged_when_file_unreadable() -> None:
     base = {"FOO": "bar"}
     env = _subprocess_plugin_env(base, str(_TESTCASES / "does_not_exist.py"))
-    assert env == {"FOO": "bar"}
+    # On Windows the helper ALWAYS seeds PYTHONUTF8=1 so a unit's pytest output cannot die
+    # on a cp1252 console. That baseline is deliberate and unrelated to plugin selection,
+    # so the property under test is "nothing beyond the platform baseline was added", not
+    # "the mapping is byte-identical".
+    expected = {"FOO": "bar"}
+    if sys.platform == "win32":
+        expected["PYTHONUTF8"] = "1"
+    assert env == expected
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" not in env
 
 
