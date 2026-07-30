@@ -14,6 +14,7 @@ import ctypes
 import re
 import secrets
 import time
+from collections.abc import Iterable
 from typing import Any
 
 import pytest
@@ -523,6 +524,57 @@ class TestRSAPaddingOracle:
             destroy_quietly(rs.raw, rs.sh, priv)
 
 
+#: Verdicts of the CBC-PAD corruption sweep that are module DEFECTS. The inherent
+#: Vaudenay channel is deliberately absent: see :func:`cbc_pad_verdict`.
+CBC_PAD_FINDING_VERDICTS = frozenset({"unchecked_malleability"})
+
+
+def cbc_pad_verdict(outcomes: Iterable[str]) -> str:
+    """Classify a CBC-PAD last-block corruption sweep. Pure; no pytest side effects.
+
+    Returns one of:
+
+    ``uniform_reject``
+        Every corruption was rejected with the same code. The module either validates
+        padding in a way no probe defeated, or no probe happened to produce valid
+        padding. Not a finding.
+    ``inherent_channel``
+        Rejections *and* CKR_OK results are both present -- the Vaudenay 2002 / POODLE
+        channel. NOT a finding: this is what every conforming CBC-PAD implementation
+        does. Accepting a ciphertext whose padding really is valid is correct behaviour,
+        and the leak is a property of the mode, mitigated at the application layer
+        (AES-GCM, RFC 7366 encrypt-then-MAC) rather than by the module. The caller still
+        records a CRITICAL compliance note so the channel is reported.
+    ``unchecked_malleability``
+        Every corruption returned CKR_OK with altered plaintext: no padding validation at
+        all, which is strictly worse than the channel and a genuine defect.
+
+    Why this is a pure function and why the channel is not a fail: the previous inline
+    rule was ``len(set(outcomes)) > 1 -> CRITICAL fail``, which made the verdict depend on
+    chance. Corrupting the LAST ciphertext block randomises that entire block's plaintext,
+    and for the 32-byte probe plaintext that block is pure padding, so a corruption yields
+    valid padding only when the final byte lands on 0x01 (or 0x0202, ...) -- about 1/256
+    per probe, not the 6/256 originally assumed. Over 320 probes P(no such probe) =
+    (1 - 1/256)**320 ~= 29%, so the same conforming module raised a CRITICAL in roughly
+    71% of runs and passed in the rest. Three pool rounds recorded exactly that: fail
+    counts 10 -> 17 -> 14, flipping in both directions on one provider across five
+    commits. A fail that lands on the majority of conforming providers, at random, is the
+    false accusation the classification model exists to prevent -- while the genuinely
+    broken case (validates nothing) is stable and still reported.
+    """
+    distinct = set(outcomes)
+    if not distinct:
+        return "uniform_reject"
+    if len(distinct) > 1:
+        return "inherent_channel"
+    single = next(iter(distinct))
+    if single == "CKR_OK_DIFFERENT":
+        return "unchecked_malleability"
+    if single.startswith("CKR_OK"):
+        return "unexpected_uniform_ok"
+    return "uniform_reject"
+
+
 class TestAESPaddingOracle:
     """Check if AES-CBC padding errors leak information."""
 
@@ -689,15 +741,16 @@ class TestAESPaddingOracle:
                             "CKR_OK_MATCH" if result == plaintext else "CKR_OK_DIFFERENT"
                         )
 
-            distinct = set(all_errors.values())
-            if len(distinct) > 1:
-                # Tally for the failure message so triage can see
-                # whether the leak is the canonical Vaudenay path
-                # (CKR_OK_DIFFERENT vs CKR_ENCRYPTED_DATA_INVALID) or
-                # a malleability finding (all CKR_OK_DIFFERENT).
-                from collections import Counter
+            from collections import Counter
 
-                tally = Counter(all_errors.values())
+            tally = Counter(all_errors.values())
+            verdict = cbc_pad_verdict(all_errors.values())
+
+            if verdict == "inherent_channel":
+                # Reported, NOT a finding -- see cbc_pad_verdict for why. Every conforming
+                # CBC-PAD module lands here whenever a probe happens to produce valid
+                # padding, which is a ~1/256-per-probe coin flip, so failing on it both
+                # accused conforming providers and made the verdict irreproducible.
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -707,33 +760,16 @@ class TestAESPaddingOracle:
                     f"leak channel — a module that returns "
                     f"CKR_OK_DIFFERENT (accidentally valid padding) "
                     f"distinguishably from CKR_ENCRYPTED_DATA_INVALID "
-                    f"leaks the padding-validity bit per chosen-CT query.",
+                    f"leaks the padding-validity bit per chosen-CT query. "
+                    f"Inherent to CBC-PAD without integrity; mitigate at the "
+                    f"application layer (AES-GCM / encrypt-then-MAC).",
                     ComplianceLevel.CRITICAL,
                     reference="Vaudenay 'Security Flaws Induced by CBC "
                     "Padding' (EUROCRYPT 2002); POODLE (CVE-2014-3566); "
                     "RFC 7366 (encrypt-then-MAC mitigation)",
                 )
-                classify(
-                    "oracle",
-                    kind="crypto",
-                    label="AES-CBC-PAD padding oracle (Vaudenay 2002)",
-                    operation="C_Decrypt",
-                    mechanism="CKM_AES_CBC_PAD",
-                    summary="SECURITY: AES-CBC-PAD padding oracle (Vaudenay 2002) — "
-                    f"distinct outcomes {dict(tally)} across {trials * 16} "
-                    f"corruption probes. An attacker with chosen-ciphertext "
-                    f"access can recover plaintext byte-by-byte via ~256 "
-                    f"oracle queries per byte. Mitigation is application-"
-                    f"level: use AES-GCM or encrypt-then-MAC instead of "
-                    f"bare CBC-PAD.",
-                    detail={"channel": "error_code", "outcomes": dict(tally)},
-                )
 
-            # Single-outcome path: surface the *kind* of single outcome.
-            # All CKR_OK_DIFFERENT = malleability finding; all
-            # CKR_ENCRYPTED_DATA_INVALID = real Vaudenay mitigation.
-            single = next(iter(distinct))
-            if single == "CKR_OK_DIFFERENT":
+            if verdict == "unchecked_malleability":
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
