@@ -84,6 +84,7 @@ def _write_coverage(raw: RawPKCS11) -> None:
     write_coverage(
         raw.call_log,
         {str(k): v for k, v in raw.mechanism_counts.items()},
+        raw.call_log_ok,
     )
 
 

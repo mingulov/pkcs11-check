@@ -232,7 +232,7 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
     encoding_name = vec["_encoding"]
     result = vec["result"]
     set_params({"curve": "x25519" if oid == X25519_OID else "x448"})
-    set_mechanism("CKM_ECDH1_DERIVE", operation="C_DeriveKey")
+    set_mechanism("CKM_ECDH1_DERIVE", operation="C_DeriveKey", expect_success=(result == "valid"))
     try:
         private_bytes = decode_xdh_private_bytes(vec["private"], encoding_name)
     except _XDH_DECODE_ERRORS as exc:
