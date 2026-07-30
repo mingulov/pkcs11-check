@@ -78,7 +78,7 @@ class TestLocateUpstreamLicensePaths:
     def test_resolves_direct_match_under_dest(self, tmp_path: Path) -> None:
         dest = tmp_path / "wycheproof"
         dest.mkdir()
-        (dest / "LICENSE").write_text("apache text")
+        (dest / "LICENSE").write_text("apache text", encoding="utf-8")
 
         found = _locate_upstream_license_paths(dest, ["LICENSE"])
 
@@ -88,7 +88,7 @@ class TestLocateUpstreamLicensePaths:
         dest = tmp_path / "wycheproof"
         archive_root = dest / "wycheproof-abcdef1"
         archive_root.mkdir(parents=True)
-        (archive_root / "LICENSE").write_text("apache text")
+        (archive_root / "LICENSE").write_text("apache text", encoding="utf-8")
 
         found = _locate_upstream_license_paths(dest, ["LICENSE"])
 
@@ -99,7 +99,7 @@ class TestLocateUpstreamLicensePaths:
         archive_root = dest / "CCTV-1234567"
         nested = archive_root / "ed25519"
         nested.mkdir(parents=True)
-        (nested / "LICENSE").write_text("bsd text")
+        (nested / "LICENSE").write_text("bsd text", encoding="utf-8")
 
         found = _locate_upstream_license_paths(dest, ["ed25519/LICENSE"])
 
@@ -111,7 +111,7 @@ class TestLocateUpstreamLicensePaths:
         # Only one of two declared paths is present on disk.
         archive_root = dest / "ACVP-Server-abc"
         archive_root.mkdir()
-        (archive_root / "README.md").write_text("nist text")
+        (archive_root / "README.md").write_text("nist text", encoding="utf-8")
 
         found = _locate_upstream_license_paths(dest, ["README.md", "LICENSE"])
 
@@ -125,8 +125,8 @@ class TestLocateUpstreamLicensePaths:
         archive_root = dest / "repo-1"
         sub = archive_root / "sub"
         sub.mkdir(parents=True)
-        (archive_root / "FIRST").write_text("a")
-        (sub / "SECOND").write_text("b")
+        (archive_root / "FIRST").write_text("a", encoding="utf-8")
+        (sub / "SECOND").write_text("b", encoding="utf-8")
 
         found = _locate_upstream_license_paths(dest, ["sub/SECOND", "FIRST"])
 
@@ -161,7 +161,8 @@ class TestDisabledAutoDiscovery:
     ) -> None:
         baseline_file = tmp_path / "disabled-tests.txt"
         baseline_file.write_text(
-            "# test baseline\nsrc/pkcs11_check/testcases/test_foo.py::TestFoo::test_bar\n"
+            "# test baseline\nsrc/pkcs11_check/testcases/test_foo.py::TestFoo::test_bar\n",
+            encoding="utf-8",
         )
         monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(tmp_path))
 

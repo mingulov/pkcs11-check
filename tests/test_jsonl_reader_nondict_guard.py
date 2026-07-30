@@ -26,7 +26,7 @@ _SCALAR_NOISE = ["5", '"stray"', "true", "[1, 2, 3]"]
 
 
 def _write(path: Path, lines: list[str]) -> None:
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_extract_coverage_skips_non_dict_lines(tmp_path: Path) -> None:

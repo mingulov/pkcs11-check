@@ -42,7 +42,8 @@ class TestCompareCoverageCommand:
                     }
                 }
             )
-            + "\n"
+            + "\n",
+            encoding="utf-8",
         )
         (candidate_dir / "coverage.json").write_text(
             json.dumps(
@@ -53,7 +54,8 @@ class TestCompareCoverageCommand:
                     }
                 }
             )
-            + "\n"
+            + "\n",
+            encoding="utf-8",
         )
 
         result = runner.invoke(
@@ -88,7 +90,7 @@ class TestTestCommand:
 
     def test_test_file_isolation_invokes_runner(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         state_file = tmp_path / "state.json"
         called: dict[str, object] = {}
 
@@ -137,7 +139,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -189,7 +191,7 @@ class TestTestCommand:
 
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         monkeypatch.setenv("P11TEST_PIN", "outer-secret")
 
         def fake_run(
@@ -240,7 +242,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -274,7 +276,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         monkeypatch.setenv("P11TEST_SO_PIN", "outer-so")
 
         def fake_run(
@@ -325,7 +327,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -357,7 +359,7 @@ class TestTestCommand:
 
     def test_test_test_isolation_invokes_runner(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -407,7 +409,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -433,7 +435,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: object
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -484,7 +486,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -521,7 +523,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -571,7 +573,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -593,7 +595,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         state_file = tmp_path / "state.json"
         called: dict[str, object] = {}
 
@@ -654,7 +656,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -691,10 +693,10 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         state_file = tmp_path / "state.json"
         marked_file = tmp_path / "test_marked.py"
-        marked_file.write_text("def test_one():\n    assert True\n")
+        marked_file.write_text("def test_one():\n    assert True\n", encoding="utf-8")
 
         monkeypatch.setattr(
             test_cmd,
@@ -716,7 +718,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -769,7 +771,7 @@ class TestTestCommand:
         expected_name: str,
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -826,7 +828,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -863,14 +865,16 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         state_file = tmp_path / "state.json"
-        state_file.write_text('{"fingerprint":"old","results":[],"units":["a.py"]}\n')
+        state_file.write_text(
+            '{"fingerprint":"old","results":[],"units":["a.py"]}\n', encoding="utf-8"
+        )
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -905,7 +909,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         results_path = tmp_path / "artifacts" / "results.json"
 
         def fake_main(args: list[str]) -> int:
@@ -963,7 +967,8 @@ class TestTestCommand:
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return 0
 
@@ -972,7 +977,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1005,7 +1010,7 @@ class TestTestCommand:
         assert results_path.parent.joinpath("coverage.json").exists()
         quality_path = results_path.parent / "quality.json"
         assert quality_path.exists()
-        report = json.loads(quality_path.read_text())
+        report = json.loads(quality_path.read_text(encoding="utf-8"))
         assert report["schema_version"] == "1"
         assert report["selection_findings"][0]["selected_but_not_invoked"] == ["CKM_AES_GCM"]
 
@@ -1013,7 +1018,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         results_path = tmp_path / "artifacts" / "results.json"
 
         def fake_main(args: list[str]) -> int:
@@ -1025,7 +1030,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1056,7 +1061,7 @@ class TestTestCommand:
         assert result.exit_code == 0
         quality_path = results_path.parent / "quality.json"
         assert quality_path.exists()
-        report = json.loads(quality_path.read_text())
+        report = json.loads(quality_path.read_text(encoding="utf-8"))
         assert report["schema_version"] == "1"
         assert "selection telemetry not provided" in report["data_quality_warnings"]
 
@@ -1064,14 +1069,14 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_main(args: list[str]) -> int:
             del args
             deselect_path = Path(os.environ["PKCS11_CHECK_DESELECT_FILE"])
             called["path"] = deselect_path
-            called["text"] = deselect_path.read_text()
+            called["text"] = deselect_path.read_text(encoding="utf-8")
             return 0
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
@@ -1089,7 +1094,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1112,7 +1117,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
 
         def fake_main(args: list[str]) -> int:
             del args
@@ -1130,7 +1135,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1154,7 +1159,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
 
         monkeypatch.setattr(
             test_cmd,
@@ -1168,7 +1173,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1190,9 +1195,9 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         file_path = tmp_path / "test_demo.py"
-        file_path.write_text("")
+        file_path.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -1252,7 +1257,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1277,11 +1282,11 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         file_a = tmp_path / "test_a.py"
         file_b = tmp_path / "test_b.py"
-        file_a.write_text("")
-        file_b.write_text("")
+        file_a.write_text("", encoding="utf-8")
+        file_b.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -1361,7 +1366,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1385,7 +1390,7 @@ class TestTestCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
 
         def fake_run(
@@ -1435,7 +1440,7 @@ class TestTestCommand:
             test_cmd,
             "run_preflight_subprocess",
             lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}"),
+                output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
                     module_path=str(module),
@@ -1465,7 +1470,7 @@ class TestTestCommand:
 
     def test_test_preflight_failure_is_reported(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
-        module.write_text("")
+        module.write_text("", encoding="utf-8")
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
@@ -1531,7 +1536,7 @@ class TestFetchDisabledCommand:
         result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
 
         assert result.exit_code == 0, result.output
-        assert (tmp_path / "disabled-tests.txt").read_text() == baseline
+        assert (tmp_path / "disabled-tests.txt").read_text(encoding="utf-8") == baseline
 
     def test_accepts_real_entries(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import io
@@ -1548,7 +1553,7 @@ class TestFetchDisabledCommand:
         result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
 
         assert result.exit_code == 0, result.output
-        assert (tmp_path / "disabled-tests.txt").read_text() == baseline
+        assert (tmp_path / "disabled-tests.txt").read_text(encoding="utf-8") == baseline
 
     def test_rejects_non_baseline(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A non-empty file that is not a baseline (e.g. an HTML 404 page) must

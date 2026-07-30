@@ -103,7 +103,14 @@ def run_probe(
 
         cmd = [sys.executable, "-m", f"pkcs11_check.testcases._probes.{probe}", params_path]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env=env,
+                timeout=timeout,
+            )
             rc, out, err = proc.returncode, proc.stdout, proc.stderr
         except subprocess.TimeoutExpired as exc:
             # TimeoutExpired.stdout/.stderr can be bytes even with text=True

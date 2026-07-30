@@ -79,6 +79,7 @@ def _run(
         cmd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=timeout,
         env=full_env,
         input=input_text,

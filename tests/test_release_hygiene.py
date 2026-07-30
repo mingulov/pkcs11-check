@@ -30,7 +30,7 @@ def test_public_docs_do_not_reference_workstation_paths_or_agent_plans() -> None
     banned = ("/home/user", "/home/", "ScheduleWakeup", "/loop", "superpowers/")
     offenders: list[str] = []
     for path in PUBLIC_DOCS:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for token in banned:
             if token in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
@@ -40,7 +40,7 @@ def test_public_docs_do_not_reference_workstation_paths_or_agent_plans() -> None
 def test_no_exact_exception_pass_swallows() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -54,7 +54,7 @@ def test_no_exact_exception_pass_swallows() -> None:
 def test_source_subprocess_calls_do_not_use_shell_true() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -74,7 +74,7 @@ def test_source_subprocess_calls_do_not_use_shell_true() -> None:
 def test_sha1_calls_declare_non_security_use() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -96,7 +96,7 @@ def test_sha1_calls_declare_non_security_use() -> None:
 def test_legacy_crypto_reference_calls_are_explicitly_annotated() -> None:
     offenders: list[str] = []
     for path in _python_files():
-        source_lines = path.read_text().splitlines()
+        source_lines = path.read_text(encoding="utf-8").splitlines()
         tree = ast.parse("\n".join(source_lines))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -150,7 +150,7 @@ def test_third_party_sources_carry_license_metadata() -> None:
 def test_third_party_licenses_md_lists_every_source() -> None:
     """THIRD_PARTY_LICENSES.md must mention every fetched source plus pkcs11-headers."""
     assert THIRD_PARTY_LICENSES_MD.is_file(), "THIRD_PARTY_LICENSES.md missing"
-    text = THIRD_PARTY_LICENSES_MD.read_text()
+    text = THIRD_PARTY_LICENSES_MD.read_text(encoding="utf-8")
     assert text.strip(), "THIRD_PARTY_LICENSES.md is empty"
     with open(SOURCES_TOML, "rb") as f:
         sources = tomllib.load(f)
@@ -177,7 +177,7 @@ def test_bundled_pkcs11_header_declares_public_domain() -> None:
     """The bundled PKCS#11 header must carry its public-domain declaration intact."""
     header = REPO_ROOT / "third_party/pkcs11-headers/3.2/pkcs11.h"
     assert header.is_file(), f"missing {header}"
-    first_line = header.open().readline().strip()
+    first_line = header.open(encoding="utf-8").readline().strip()
     assert first_line == "/* This file is in the Public Domain */", (
         f"unexpected first line of pkcs11.h: {first_line!r}"
     )
@@ -192,7 +192,7 @@ def test_pqc_xfails_explain_module_or_spec_context() -> None:
     }
     offenders: list[str] = []
     path = REPO_ROOT / "src/pkcs11_check/testcases/test_pqc_sign.py"
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue

@@ -10,7 +10,7 @@ MECH_NEGATIVE = REPO / "src" / "pkcs11_check" / "testcases" / "test_mech_negativ
 
 
 def _source() -> str:
-    return MECH_NEGATIVE.read_text()
+    return MECH_NEGATIVE.read_text(encoding="utf-8")
 
 
 def _fixture_names() -> set[str]:

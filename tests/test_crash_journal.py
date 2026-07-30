@@ -19,14 +19,16 @@ def test_summarize_reports_only_crashed_journals(tmp_path: Path) -> None:
     (tmp_path / "unitA-111.jsonl").write_text(
         '{"ev": "call", "i": 0, "fn": "C_Sign", "mech": 1}\n'
         '{"ev": "ret", "i": 0, "rv": 0, "rv_name": "CKR_OK"}\n'
-        '{"ev": "call", "i": 1, "fn": "C_DeriveKey", "mech": 2, "in_len": 16}\n'
+        '{"ev": "call", "i": 1, "fn": "C_DeriveKey", "mech": 2, "in_len": 16}\n',
+        encoding="utf-8",
     )
     # Clean: every call matched -> no crash, must be skipped.
     (tmp_path / "unitB-222.jsonl").write_text(
         '{"ev": "call", "i": 0, "fn": "C_GetInfo", "mech": null}\n'
-        '{"ev": "ret", "i": 0, "rv": 0, "rv_name": "CKR_OK"}\n'
+        '{"ev": "ret", "i": 0, "rv": 0, "rv_name": "CKR_OK"}\n',
+        encoding="utf-8",
     )
-    (tmp_path / "unitC-333.jsonl").write_text("")  # empty -> skipped
+    (tmp_path / "unitC-333.jsonl").write_text("", encoding="utf-8")  # empty -> skipped
 
     rows = summarize_crash_journals(tmp_path)
 
@@ -46,7 +48,8 @@ def test_summarize_tolerates_record_without_index(tmp_path: Path) -> None:
     # break max() over the otherwise-int pending keys).
     (tmp_path / "weird-1.jsonl").write_text(
         '{"ev": "call", "fn": "C_Sign"}\n'  # no "i" -> skipped, not crashed on
-        '{"ev": "call", "i": 0, "fn": "C_DeriveKey", "mech": 2}\n'  # the real crash
+        '{"ev": "call", "i": 0, "fn": "C_DeriveKey", "mech": 2}\n',  # the real crash
+        encoding="utf-8",
     )
     rows = summarize_crash_journals(tmp_path)
     assert len(rows) == 1

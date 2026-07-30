@@ -63,10 +63,10 @@ def test_digest_changes_when_input_file_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     probe = tmp_path / "probe.py"
-    probe.write_text("x = 1\n")
+    probe.write_text("x = 1\n", encoding="utf-8")
     monkeypatch.setattr(col, "_iter_input_files", lambda: [probe])
     before = _collection_inputs_digest(_SMALL_TARGET, _ARGS)
-    probe.write_text("x = 2  # changed size + mtime\n")
+    probe.write_text("x = 2  # changed size + mtime\n", encoding="utf-8")
     after = _collection_inputs_digest(_SMALL_TARGET, _ARGS)
     assert before is not None and before != after
 

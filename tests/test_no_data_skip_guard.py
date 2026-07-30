@@ -72,6 +72,7 @@ def test_vector_dependent_meta_tests_skip_without_fetch_data(tmp_path: Path) -> 
         capture_output=True,
         text=True,
         timeout=180,
+        encoding="utf-8",
     )
 
     # pytest exit 0 = all passed/skipped; 1 = failures; 5 = no tests collected.

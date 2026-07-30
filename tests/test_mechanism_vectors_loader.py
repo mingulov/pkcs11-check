@@ -13,7 +13,7 @@ def test_load_vectors_uses_shared_json_cache(
     from pkcs11_check.testcases import mechanism_vectors
 
     vector_file = tmp_path / "aes.json"
-    vector_file.write_text('{"vectors": []}\n')
+    vector_file.write_text('{"vectors": []}\n', encoding="utf-8")
     calls: list[Path] = []
 
     def fake_load_json_cached(path: str | Path) -> dict[str, Any]:

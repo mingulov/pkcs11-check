@@ -707,7 +707,8 @@ def test_collection_modifyitems_ignores_comments_in_deselect_file(
                 f"{tmp_path / 'testcases' / 'test_a.py'}::test_case",
                 "# keep this comment",
             ]
-        )
+        ),
+        encoding="utf-8",
     )
     item_a = _FakeItem(tmp_path / "testcases" / "test_a.py", {})
     item_b = _FakeItem(tmp_path / "testcases" / "test_b.py", {})

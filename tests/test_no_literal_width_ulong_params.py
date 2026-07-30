@@ -95,7 +95,7 @@ def _violations_in_source(source: str, label: str) -> list[str]:
 
 def _violations(path: Path) -> list[str]:
     label = str(path.relative_to(_TESTCASES.parent.parent.parent))
-    return _violations_in_source(path.read_text(), label)
+    return _violations_in_source(path.read_text(encoding="utf-8"), label)
 
 
 def test_inline_and_two_step_literal_widths_flagged_abi_general_and_cross_scope_not() -> None:

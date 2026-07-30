@@ -55,7 +55,8 @@ def test_parse_test_results_unified_format(tmp_path: Path) -> None:
                     },
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     counts = _parse_test_results(results_file)
@@ -86,7 +87,8 @@ def test_parse_test_results_unified_format_without_counts(tmp_path: Path) -> Non
                     {"target": "test_crash.py", "status": "crashed"},
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     counts = _parse_test_results(results_file)
@@ -118,7 +120,8 @@ def test_parse_test_results_preserves_non_pass_fail_outcomes(tmp_path: Path) -> 
                     },
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     counts = _parse_test_results(results_file)
@@ -198,7 +201,8 @@ def test_observed_coverage_prevents_filename_heuristic_overstatement(tmp_path: P
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     observed = _load_observed_function_coverage(results_file)
@@ -225,7 +229,8 @@ def test_observed_coverage_only_counts_do_not_imply_pass(tmp_path: Path) -> None
                 "summary": {"passed": 1, "total": 1},
                 "units": [{"target": "test_unknown.py", "status": "passed"}],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     (tmp_path / "coverage.json").write_text(
         json.dumps(
@@ -236,7 +241,8 @@ def test_observed_coverage_only_counts_do_not_imply_pass(tmp_path: Path) -> None
                     "uncalled_names": ["C_GetInfo"],
                 }
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     observed = _load_observed_function_coverage(results_file)
@@ -259,7 +265,8 @@ def test_observed_coverage_can_come_from_sibling_report_jsonl_trace(tmp_path: Pa
                 "summary": {"xfailed": 1, "total": 1},
                 "units": [{"target": "test_custom.py", "status": "xfailed"}],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     (tmp_path / "report.jsonl").write_text(
         json.dumps(
@@ -272,7 +279,8 @@ def test_observed_coverage_can_come_from_sibling_report_jsonl_trace(tmp_path: Pa
                 "user_properties": [["pkcs11_rv_trace", [{"fn": "C_Encrypt", "rv": 48}]]],
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     observed = _load_observed_function_coverage(results_file)
@@ -463,7 +471,8 @@ def test_generate_report_includes_compliance_notes_from_result_units(tmp_path: P
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     report = generate_report(
@@ -504,7 +513,8 @@ def test_crash_limited_unit_is_skip_class_not_error(tmp_path: Path) -> None:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     counts = _parse_test_results(results_file)
@@ -538,7 +548,8 @@ def test_generate_report_includes_compliance_notes_from_report_jsonl(tmp_path: P
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     (tmp_path / "report.jsonl").write_text(
         json.dumps(
@@ -566,7 +577,8 @@ def test_generate_report_includes_compliance_notes_from_report_jsonl(tmp_path: P
                 ],
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     report = generate_report(

@@ -24,7 +24,7 @@ from pkcs11_check.core.file_runner import (
 
 
 def _write(path: Path, records: list[dict[str, object]]) -> None:
-    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
 
 def _report(nodeid: str, when: str, outcome: str = "passed") -> dict[str, object]:
@@ -41,7 +41,7 @@ def test_culprit_records_core_matches_path_wrapper(tmp_path: Path) -> None:
         _report("f.py::test_a", "teardown"),
         _report("f.py::test_b", "setup"),
     ]
-    jsonl.write_text("5\n" + "".join(json.dumps(r) + "\n" for r in records))
+    jsonl.write_text("5\n" + "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
     path_result = _identify_crash_culprit(jsonl)
     core_result = _identify_crash_culprit_from_records(_load_report_log_records(jsonl))
@@ -144,7 +144,7 @@ def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
         _report("f.py::test_b", "call", "failed"),
         _report("f.py::test_c", "setup"),
     ]
-    jsonl.write_text("".join(json.dumps(r) + "\n" for r in records))
+    jsonl.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
     def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
         pytest.fail("_analyze_report_jsonl must stream records")
@@ -167,4 +167,6 @@ def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
     assert detail["tests"] == [{"nodeid": "f.py::test_b", "outcome": "failed", "duration": 0.0}]
 
     cache_path = file_runner_mod._report_record_cache_path(tmp_path / "state.json", "f.py")
-    assert [json.loads(line) for line in cache_path.read_text().splitlines()] == records
+    assert [
+        json.loads(line) for line in cache_path.read_text(encoding="utf-8").splitlines()
+    ] == records

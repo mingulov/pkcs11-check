@@ -73,7 +73,7 @@ def test_extract_groups_propagates_detail_to_capability_audit(tmp_path: Path) ->
         "user_properties": [["pkcs11_classification", [rec]]],
     }
     path = tmp_path / "report.jsonl"
-    path.write_text(json.dumps(report_line) + "\n")
+    path.write_text(json.dumps(report_line) + "\n", encoding="utf-8")
 
     groups = extract_groups(path, crashes=[])
     audit = capability_audit(groups)

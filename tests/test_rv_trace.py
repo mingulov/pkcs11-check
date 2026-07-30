@@ -615,7 +615,8 @@ def test_report_log_failed_call_record_contains_rv_trace(tmp_path: Path) -> None
                 p11_raw_session.raw.C_GetSessionInfo(7, None)
                 assert False
             """
-        )
+        ),
+        encoding="utf-8",
     )
 
     proc = subprocess.run(
@@ -635,11 +636,12 @@ def test_report_log_failed_call_record_contains_rv_trace(tmp_path: Path) -> None
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
+        encoding="utf-8",
     )
 
     assert proc.returncode == 1, proc.stdout
     call_reports = []
-    for line in report_log.read_text().splitlines():
+    for line in report_log.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         record = json.loads(line)
@@ -713,7 +715,7 @@ def test_output_len_funcs_covers_two_call_output_callers() -> None:
     import pkcs11_check.raw.recipes as recipes_mod
     from pkcs11_check.raw.api import _OUTPUT_LEN_FUNCS
 
-    src = pathlib.Path(recipes_mod.__file__).read_text()
+    src = pathlib.Path(recipes_mod.__file__).read_text(encoding="utf-8")
     direct_callers = set(re.findall(r'_two_call_output\(\s*raw,\s*"(C_\w+)"', src))
     assert direct_callers, "regex found no _two_call_output callers (pattern drift?)"
     # _multipart_output(raw, session, init_fn, update_fn, final_fn, ...): the
@@ -802,7 +804,8 @@ def test_crash_journal_tolerates_torn_final_line(tmp_path: Path) -> None:
     jpath.write_text(
         '{"ev": "call", "i": 0, "fn": "C_Sign", "mech": null}\n'
         '{"ev": "ret", "i": 0, "rv": 0, "rv_name": "CKR_OK"}\n'
-        '{"ev": "call", "i": 1, "fn": "C_Dec'  # torn mid-write by the crash
+        '{"ev": "call", "i": 1, "fn": "C_Dec',  # torn mid-write by the crash
+        encoding="utf-8",
     )
     done, incomplete = rawapi.read_crash_journal(jpath)
     assert [d["fn"] for d in done] == ["C_Sign"]

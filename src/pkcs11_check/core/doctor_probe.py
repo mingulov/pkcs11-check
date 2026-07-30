@@ -107,7 +107,13 @@ def run_login_probe_subprocess(
     ]
     try:
         completed = subprocess.run(
-            cmd, check=False, capture_output=True, text=True, timeout=timeout, env=env
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return LoginProbe("timeout", f"login probe timed out after {timeout}s")

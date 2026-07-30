@@ -74,11 +74,11 @@ def test_status_from_returncode_classifies_timeout_sentinel() -> None:
 def test_discover_pytest_units_from_directory(tmp_path: Path) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
-    (tests_dir / "test_b.py").write_text("")
-    (tests_dir / "note.txt").write_text("")
+    (tests_dir / "test_b.py").write_text("", encoding="utf-8")
+    (tests_dir / "note.txt").write_text("", encoding="utf-8")
     nested = tests_dir / "nested"
     nested.mkdir()
-    (nested / "test_a.py").write_text("")
+    (nested / "test_a.py").write_text("", encoding="utf-8")
 
     units = discover_pytest_units([str(tests_dir)], tmp_path / "unused")
 
@@ -87,7 +87,7 @@ def test_discover_pytest_units_from_directory(tmp_path: Path) -> None:
 
 def test_discover_pytest_units_keeps_nodeid_target(tmp_path: Path) -> None:
     target = f"{tmp_path / 'test_demo.py'}::TestThing::test_case"
-    (tmp_path / "test_demo.py").write_text("")
+    (tmp_path / "test_demo.py").write_text("", encoding="utf-8")
 
     units = discover_pytest_units([target], tmp_path / "unused")
 
@@ -96,7 +96,7 @@ def test_discover_pytest_units_keeps_nodeid_target(tmp_path: Path) -> None:
 
 def test_collect_pytest_nodeids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
 
     def fake_run(
         cmd: list[str],
@@ -105,8 +105,9 @@ def test_collect_pytest_nodeids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         capture_output: bool,
         text: bool,
         env: dict[str, str],
+        encoding: str | None = None,
     ) -> SimpleNamespace:
-        del check, capture_output, text, env
+        del check, capture_output, text, env, encoding
         assert cmd[-2:] == ["--collect-only", "-qq"]
         return SimpleNamespace(
             returncode=0,
@@ -127,7 +128,7 @@ def test_discover_pytest_units_test_granularity_collects_nodeids(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
 
     monkeypatch.setattr(
         "pkcs11_check.core._unit_discovery.collect_pytest_nodeids",
@@ -148,7 +149,7 @@ def test_collect_pytest_nodeids_reports_collection_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
 
     def fake_run(
         cmd: list[str],
@@ -157,8 +158,9 @@ def test_collect_pytest_nodeids_reports_collection_failure(
         capture_output: bool,
         text: bool,
         env: dict[str, str],
+        encoding: str | None = None,
     ) -> SimpleNamespace:
-        del cmd, check, capture_output, text, env
+        del cmd, check, capture_output, text, env, encoding
         return SimpleNamespace(returncode=4, stdout="", stderr="usage error")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
@@ -185,7 +187,7 @@ def test_discover_auto_isolation_units_keeps_regular_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
         "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
@@ -206,7 +208,7 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_one():\n    assert True\n")
+    target.write_text("def test_one():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
         "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
@@ -252,7 +254,7 @@ def test_discover_auto_isolation_units_pins_absolute_nodeid_for_rootdir_mismatch
     # the absolute file path so it is runnable and passes the expansion guard
     # (previously this raised "subprocess_per_test file was not expanded").
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_one():\n    assert True\n")
+    target.write_text("def test_one():\n    assert True\n", encoding="utf-8")
     rootdir_relative_nodeid = f"{str(target).lstrip('/')}::test_one"
     monkeypatch.setattr(
         "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
@@ -277,7 +279,7 @@ def test_discover_auto_isolation_units_pins_absolute_nodeid_for_rootdir_mismatch
 
 def test_validate_subprocess_per_test_expansion_rejects_file_unit(tmp_path: Path) -> None:
     target = tmp_path / "test_marked.py"
-    target.write_text("def test_one():\n    assert True\n")
+    target.write_text("def test_one():\n    assert True\n", encoding="utf-8")
     collected = [
         CollectedPytestItem(
             nodeid=f"{target}::test_one",
@@ -294,9 +296,9 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_one():\n    assert True\n")
+    target.write_text("def test_one():\n    assert True\n", encoding="utf-8")
     policy_file = tmp_path / "policy.json"
     fingerprint = build_policy_fingerprint(["--p11-module", str(module)])
     save_isolation_policy(
@@ -331,7 +333,7 @@ def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     monkeypatch.setattr(
         "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
@@ -356,9 +358,9 @@ def test_discover_auto_isolation_units_falls_back_to_nodeid_collection_when_meta
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     policy_file = tmp_path / "policy.json"
     fingerprint = build_policy_fingerprint(["--p11-module", str(module)])
     save_isolation_policy(
@@ -442,7 +444,7 @@ def test_save_run_state_does_not_embed_report_records(tmp_path: Path) -> None:
 
     save_run_state(state_file, state)
 
-    raw = json.loads(state_file.read_text())
+    raw = json.loads(state_file.read_text(encoding="utf-8"))
     assert "report_records_by_unit" not in raw
     # The persisted file stays tiny even though the in-memory records are large.
     assert state_file.stat().st_size < 200_000
@@ -564,9 +566,9 @@ def test_run_isolated_pytest_units_promotes_crashed_file_in_policy(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     state_file = tmp_path / "state.json"
     policy_file = tmp_path / "policy.json"
     console = Console(file=StringIO(), force_terminal=False)
@@ -609,9 +611,9 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     state_file = tmp_path / "state.json"
     console = Console(file=StringIO(), force_terminal=False)
     calls: list[str] = []
@@ -680,9 +682,9 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     state_file = tmp_path / "state.json"
     console = Console(file=StringIO(), force_terminal=False)
     calls: list[str] = []
@@ -755,12 +757,12 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
 
 def test_build_state_fingerprint_changes_when_unit_file_changes(tmp_path: Path) -> None:
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     env = {"P11TEST_PIN": "1234"}
 
     first = build_state_fingerprint([str(unit)], ["--p11-module", "/tmp/module.so"], env)
 
-    unit.write_text("def test_demo():\n    assert False\n")
+    unit.write_text("def test_demo():\n    assert False\n", encoding="utf-8")
     second = build_state_fingerprint([str(unit)], ["--p11-module", "/tmp/module.so"], env)
 
     assert first != second
@@ -768,14 +770,14 @@ def test_build_state_fingerprint_changes_when_unit_file_changes(tmp_path: Path) 
 
 def test_build_state_fingerprint_changes_when_module_changes(tmp_path: Path) -> None:
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     module = tmp_path / "module.so"
-    module.write_text("v1")
+    module.write_text("v1", encoding="utf-8")
     env = {"P11TEST_PIN": "1234"}
 
     first = build_state_fingerprint([str(unit)], ["--p11-module", str(module)], env)
 
-    module.write_text("v2")
+    module.write_text("v2", encoding="utf-8")
     second = build_state_fingerprint([str(unit)], ["--p11-module", str(module)], env)
 
     assert first != second
@@ -783,9 +785,9 @@ def test_build_state_fingerprint_changes_when_module_changes(tmp_path: Path) -> 
 
 def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> None:
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     module = tmp_path / "module.so"
-    module.write_text("v1")
+    module.write_text("v1", encoding="utf-8")
 
     first = build_state_fingerprint(
         [str(unit)],
@@ -804,9 +806,9 @@ def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> Non
 def test_build_state_fingerprint_ignores_unregistered_provider_env(tmp_path: Path) -> None:
     """A provider env var outside the framework namespaces is ignored by default."""
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     module = tmp_path / "module.so"
-    module.write_text("v1")
+    module.write_text("v1", encoding="utf-8")
 
     first = build_state_fingerprint(
         [str(unit)], ["--p11-module", str(module)], {"MYHSM_CONF": "/etc/a.conf"}
@@ -822,9 +824,9 @@ def test_build_state_fingerprint_honors_extension_env_prefixes(tmp_path: Path) -
     """Registering a provider prefix via PKCS11_CHECK_FINGERPRINT_ENV_PREFIXES
     makes that provider's configuration part of the fingerprint."""
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     module = tmp_path / "module.so"
-    module.write_text("v1")
+    module.write_text("v1", encoding="utf-8")
 
     first = build_state_fingerprint(
         [str(unit)],
@@ -842,7 +844,7 @@ def test_build_state_fingerprint_honors_extension_env_prefixes(tmp_path: Path) -
 
 def test_build_state_fingerprint_changes_when_disabled_baseline_changes(tmp_path: Path) -> None:
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
 
     first = build_state_fingerprint(
         [str(unit)],
@@ -860,7 +862,7 @@ def test_build_state_fingerprint_changes_when_disabled_baseline_changes(tmp_path
 
 def test_build_policy_fingerprint_ignores_runner_control_env(tmp_path: Path) -> None:
     module = tmp_path / "module.so"
-    module.write_text("v1")
+    module.write_text("v1", encoding="utf-8")
 
     first = build_policy_fingerprint(
         ["--p11-module", str(module)],
@@ -884,13 +886,13 @@ def test_build_policy_fingerprint_ignores_runner_control_env(tmp_path: Path) -> 
 
 def test_build_state_fingerprint_uses_manifest_content_not_manifest_path(tmp_path: Path) -> None:
     unit = tmp_path / "test_demo.py"
-    unit.write_text("def test_demo():\n    assert True\n")
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
     module = tmp_path / "module.so"
-    module.write_text("v1")
+    module.write_text("v1", encoding="utf-8")
     manifest_a = tmp_path / "manifest-a.json"
     manifest_b = tmp_path / "manifest-b.json"
-    manifest_a.write_text('{"status":"ok"}\n')
-    manifest_b.write_text('{"status":"ok"}\n')
+    manifest_a.write_text('{"status":"ok"}\n', encoding="utf-8")
+    manifest_b.write_text('{"status":"ok"}\n', encoding="utf-8")
 
     first = build_state_fingerprint(
         [str(unit)],
@@ -1151,7 +1153,8 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_artifacts_when_complete(
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     exit_code = run_isolated_pytest_units(
@@ -1173,11 +1176,11 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_artifacts_when_complete(
 
     assert exit_code == 0
     assert seen_cmds == []
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     assert report["units"][0]["counts"]["passed"] == 1
-    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    coverage = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
     assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
-    quality = json.loads((tmp_path / "quality.json").read_text())
+    quality = json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))
     assert quality["summary"]["selection_scenarios"] == 1
     assert quality["selection_findings"][0]["scenario"] == "encrypt_roundtrip"
 
@@ -1284,10 +1287,10 @@ def test_run_isolated_pytest_units_resume_json_streams_complete_cache(
 
     assert exit_code == 0
     assert seen_cmds == []
-    assert "test_a.py::test_case" in report_jsonl_path.read_text()
-    report = json.loads(results_path.read_text())
+    assert "test_a.py::test_case" in report_jsonl_path.read_text(encoding="utf-8")
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     assert report["units"][0]["counts"]["passed"] == 1
-    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    coverage = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
     assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
 
 
@@ -1372,7 +1375,8 @@ def test_run_isolated_pytest_units_resume_json_streams_complete_existing_report(
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     exit_code = run_isolated_pytest_units(
@@ -1394,9 +1398,9 @@ def test_run_isolated_pytest_units_resume_json_streams_complete_existing_report(
 
     assert exit_code == 0
     assert seen_cmds == []
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     assert report["units"][0]["counts"]["passed"] == 1
-    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    coverage = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
     assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC"]
 
 
@@ -1463,7 +1467,8 @@ def test_run_isolated_pytest_units_resume_json_streams_partial_existing_report(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -1553,7 +1558,8 @@ def test_run_isolated_pytest_units_resume_json_streams_partial_existing_report(
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     exit_code = run_isolated_pytest_units(
@@ -1574,14 +1580,14 @@ def test_run_isolated_pytest_units_resume_json_streams_partial_existing_report(
     )
 
     assert exit_code == 0
-    merged_report = report_jsonl_path.read_text()
+    merged_report = report_jsonl_path.read_text(encoding="utf-8")
     assert "test_a.py::test_old" in merged_report
     assert "test_b.py::test_new" in merged_report
     assert "test_b.py::test_stale" not in merged_report
-    results = json.loads(results_path.read_text())
+    results = json.loads(results_path.read_text(encoding="utf-8"))
     assert [unit["target"] for unit in results["units"]] == units
     assert [unit["counts"]["passed"] for unit in results["units"]] == [1, 1]
-    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    coverage = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
     assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
 
 
@@ -1651,7 +1657,8 @@ def test_run_isolated_pytest_units_resume_json_uses_state_records_without_covera
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -1714,11 +1721,11 @@ def test_run_isolated_pytest_units_resume_json_uses_state_records_without_covera
 
     assert exit_code == 0
     assert len(seen_cmds) == 1
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     units_by_target = {unit["target"]: unit for unit in report["units"]}
     assert units_by_target["test_a.py"]["counts"]["passed"] == 1
     assert units_by_target["test_b.py"]["counts"]["passed"] == 1
-    merged_jsonl = report_jsonl_path.read_text()
+    merged_jsonl = report_jsonl_path.read_text(encoding="utf-8")
     assert "test_a.py::test_case" in merged_jsonl
     assert "test_b.py::test_case" in merged_jsonl
 
@@ -1744,7 +1751,8 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
                 "not json",
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
     second.write_text(
         json.dumps(
@@ -1759,7 +1767,8 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
                 },
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     def load_all_forbidden(_path: Path) -> list[dict[str, object]]:
@@ -1774,7 +1783,9 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
         [first, tmp_path / "missing.jsonl", second],
     )
 
-    cache_text = file_runner_mod._report_record_cache_path(state_file, "test_a.py").read_text()
+    cache_text = file_runner_mod._report_record_cache_path(state_file, "test_a.py").read_text(
+        encoding="utf-8"
+    )
     assert [json.loads(line) for line in cache_text.splitlines()] == [
         {
             "$report_type": "TestReport",
@@ -1834,7 +1845,8 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_multi_unit_log_without_c
                 _jsonl_line(nodeid="test_b.py::test_case", when="call", outcome="passed"),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     exit_code = run_isolated_pytest_units(
@@ -1856,11 +1868,11 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_multi_unit_log_without_c
 
     assert exit_code == 0
     assert seen_cmds == []
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     units_by_target = {unit["target"]: unit for unit in report["units"]}
     assert units_by_target["test_a.py"]["counts"]["passed"] == 1
     assert units_by_target["test_b.py"]["counts"]["passed"] == 1
-    quality = json.loads((tmp_path / "quality.json").read_text())
+    quality = json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))
     assert quality["summary"]["test_records"] == 2
 
 
@@ -1930,7 +1942,8 @@ def test_run_isolated_pytest_units_resume_json_merges_existing_report_log(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -2030,7 +2043,8 @@ def test_run_isolated_pytest_units_resume_json_merges_existing_report_log(
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     exit_code = run_isolated_pytest_units(
@@ -2052,16 +2066,16 @@ def test_run_isolated_pytest_units_resume_json_merges_existing_report_log(
 
     assert exit_code == 0
     assert len(seen_cmds) == 1
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     units_by_target = {unit["target"]: unit for unit in report["units"]}
     assert units_by_target["test_a.py"]["counts"]["passed"] == 1
     assert units_by_target["test_b.py"]["counts"]["passed"] == 1
-    merged_jsonl = report_jsonl_path.read_text()
+    merged_jsonl = report_jsonl_path.read_text(encoding="utf-8")
     assert "test_a.py::test_case" in merged_jsonl
     assert "test_b.py::test_case" in merged_jsonl
-    coverage = json.loads((tmp_path / "coverage.json").read_text())
+    coverage = json.loads((tmp_path / "coverage.json").read_text(encoding="utf-8"))
     assert coverage["mechanism_coverage"]["invoked_names"] == ["CKM_AES_CBC", "CKM_AES_GCM"]
-    quality = json.loads((tmp_path / "quality.json").read_text())
+    quality = json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))
     assert quality["summary"]["test_records"] == 2
     assert quality["selection_findings"][0]["selected_mechanisms"] == [
         "CKM_AES_CBC",
@@ -2132,7 +2146,8 @@ def test_run_isolated_pytest_units_persists_report_records_into_state(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -2209,7 +2224,8 @@ def test_run_isolated_pytest_units_timeout_persists_partial_report_records(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         raise subprocess.TimeoutExpired(cmd, timeout=12)
@@ -2309,7 +2325,8 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (-11, "", "")
 
@@ -2351,7 +2368,8 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (0, "", "")
 
@@ -2379,7 +2397,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     saved = load_run_state(state_file)
     assert exit_code == 1
     assert saved is not None
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     assert report["summary"]["crashed"] == 1
     assert report["units"][0]["status"] == "crashed"
     assert calls[0][0] == "test_a.py"
@@ -2413,11 +2431,11 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_a.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     after = tmp_path / "test_after.py"
-    after.write_text("def test_after():\n    assert True\n")
+    after.write_text("def test_after():\n    assert True\n", encoding="utf-8")
     state_file = tmp_path / "state.json"
     results_path = tmp_path / "results.json"
     calls: list[str] = []
@@ -2444,11 +2462,13 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
             file_runs += 1
             if file_runs <= 2:
                 report_log_path.write_text(
-                    _jsonl_line(nodeid=f"{target}::test_crash_{file_runs}", when="setup") + "\n"
+                    _jsonl_line(nodeid=f"{target}::test_crash_{file_runs}", when="setup") + "\n",
+                    encoding="utf-8",
                 )
                 return (-11, "", "")
             report_log_path.write_text(
-                _jsonl_line(nodeid=f"{target}::test_remaining", when="call") + "\n"
+                _jsonl_line(nodeid=f"{target}::test_remaining", when="call") + "\n",
+                encoding="utf-8",
             )
             return (0, "", "")
 
@@ -2492,7 +2512,7 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
         (str(after), "passed"),
     ]
 
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     assert report["units"][0]["target"] == str(target)
     assert report["units"][0]["status"] == "crashed"
     assert report["units"][0]["counts"]["crashed"] == 2
@@ -2515,7 +2535,7 @@ def test_run_isolated_pytest_units_applies_baseline_deselects_on_initial_file_ru
         del cmd, timeout
         assert env is not None
         deselect_path = Path(env["PKCS11_CHECK_DESELECT_FILE"])
-        seen["text"] = deselect_path.read_text()
+        seen["text"] = deselect_path.read_text(encoding="utf-8")
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
@@ -2556,7 +2576,7 @@ def test_run_isolated_pytest_units_merges_baseline_deselects_into_retry_loop(
         target = cmd[3]
         deselect_text = None
         if env is not None and "PKCS11_CHECK_DESELECT_FILE" in env:
-            deselect_text = Path(env["PKCS11_CHECK_DESELECT_FILE"]).read_text()
+            deselect_text = Path(env["PKCS11_CHECK_DESELECT_FILE"]).read_text(encoding="utf-8")
         calls.append((target, deselect_text))
         report_log_path: Path | None = None
         for i, arg in enumerate(cmd):
@@ -2579,7 +2599,8 @@ def test_run_isolated_pytest_units_merges_baseline_deselects_into_retry_loop(
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (-11, "", "")
 
@@ -2620,7 +2641,7 @@ def test_run_isolated_pytest_units_filters_disabled_tests_when_escalating_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     state_file = tmp_path / "state.json"
     console = Console(file=StringIO(), force_terminal=False)
     calls: list[str] = []
@@ -2716,7 +2737,8 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 return (-11, "", "")
 
@@ -2727,7 +2749,8 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
                     outcome="failed",
                     longrepr="assert False",
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (1, "retry failure", "")
 
@@ -2752,7 +2775,7 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     )
 
     assert exit_code == 1
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     unit = report["units"][0]
     assert unit["target"] == "test_a.py"
     assert unit["status"] == "crashed"
@@ -2812,7 +2835,8 @@ def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 return (-11, "fatal python error", "")
 
@@ -2820,7 +2844,8 @@ def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
             assert "PKCS11_CHECK_DESELECT_FILE" in env
             report_log_path.write_text(
                 _jsonl_line(nodeid="test_a.py::test_remaining", when="call", outcome="passed")
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (0, "", "")
 
@@ -2845,7 +2870,7 @@ def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
     )
 
     assert exit_code == 1
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     unit = report["units"][0]
     assert unit["target"] == "test_a.py"
     assert unit["status"] == "timeout"
@@ -2902,7 +2927,8 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 return (-11, "fatal python error", "")
 
@@ -2916,7 +2942,8 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (0, "", "")
 
@@ -2941,7 +2968,7 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
     )
 
     assert exit_code == 1
-    report = json.loads(results_path.read_text())
+    report = json.loads(results_path.read_text(encoding="utf-8"))
     unit = report["units"][0]
     assert unit["target"] == "test_a.py"
     assert unit["status"] == "crashed"
@@ -3050,7 +3077,7 @@ def test_run_isolated_pytest_units_writes_json_report(
     )
 
     assert exit_code == 0
-    payload = report_path.read_text()
+    payload = report_path.read_text(encoding="utf-8")
     assert '"kind": "test-run"' in payload
     assert '"status": "passed"' in payload
 
@@ -3088,7 +3115,7 @@ def test_run_isolated_pytest_units_writes_junit_report(
     )
 
     assert exit_code == 1
-    payload = report_path.read_text()
+    payload = report_path.read_text(encoding="utf-8")
     assert '<testsuite name="pkcs11-check-isolated"' in payload
     assert 'type="failure"' in payload
     assert 'type="crashed"' in payload
@@ -3099,7 +3126,7 @@ def test_run_isolated_pytest_units_writes_junit_skipped_for_crash_limited(
 ) -> None:
     results = iter([-11, -11, 0])
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
 
     def fake_run(
         cmd: list[str],
@@ -3134,7 +3161,7 @@ def test_run_isolated_pytest_units_writes_junit_skipped_for_crash_limited(
     )
 
     assert exit_code == 1
-    payload = report_path.read_text()
+    payload = report_path.read_text(encoding="utf-8")
     assert 'message="skipped after per-file crash limit was reached"' in payload
 
 
@@ -3165,7 +3192,8 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
                             "duration": 0.1,
                         }
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -3195,7 +3223,7 @@ def test_run_isolated_pytest_units_extracts_per_unit_details(
     # Verify the temp file was cleaned up
     assert not jsonl_temp_path.exists()
     # Verify the report has per-unit counts
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["units"][0].get("counts") is not None
     assert report["units"][0]["counts"]["passed"] == 1
 
@@ -3239,7 +3267,8 @@ def test_run_isolated_pytest_units_preserves_compliance_notes(
                             ],
                         }
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -3262,7 +3291,7 @@ def test_run_isolated_pytest_units_preserves_compliance_notes(
 
     assert exit_code == 0
     assert seen_cmds
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["units"][0]["compliance_notes"] == [
         {
             "description": "validation policy accepted",
@@ -3294,7 +3323,8 @@ def test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes(
                 "    )",
                 "",
             ]
-        )
+        ),
+        encoding="utf-8",
     )
     report_path = tmp_path / "results.json"
     report_jsonl = tmp_path / "report.jsonl"
@@ -3313,7 +3343,7 @@ def test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes(
     )
 
     assert exit_code == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     expected_fields = {
         "description": "validation policy accepted",
         "level": "standard",
@@ -3326,7 +3356,9 @@ def test_run_isolated_pytest_units_preserves_real_subprocess_compliance_notes(
         assert unit_note[key] == value
     assert unit_note["nodeid"].endswith("src/pkcs11_check/testcases/test_note.py::test_emits_note")
     assert report_jsonl.exists()
-    report_records = [json.loads(line) for line in report_jsonl.read_text().splitlines()]
+    report_records = [
+        json.loads(line) for line in report_jsonl.read_text(encoding="utf-8").splitlines()
+    ]
     call_report = next(record for record in report_records if record.get("when") == "call")
     assert ["pkcs11_compliance_notes", [unit_note]] in call_report["user_properties"]
 
@@ -3360,7 +3392,8 @@ def test_run_isolated_pytest_units_does_not_retain_cached_report_records(
                         )
                         for case in range(10)
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -3400,7 +3433,7 @@ def test_run_isolated_pytest_units_does_not_retain_cached_report_records(
     assert exit_code == 0
     assert seen_record_sizes
     assert max(seen_record_sizes) == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["summary"]["passed"] == 20
     assert len(_load_cached_report_records_by_unit(state_file, ["test_a.py", "test_b.py"])) == 2
 
@@ -3455,7 +3488,8 @@ def test_run_isolated_pytest_units_writes_quality_report(
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -3484,7 +3518,7 @@ def test_run_isolated_pytest_units_writes_quality_report(
     assert (tmp_path / "coverage.json").exists()
     quality_path = tmp_path / "quality.json"
     assert quality_path.exists()
-    report = json.loads(quality_path.read_text())
+    report = json.loads(quality_path.read_text(encoding="utf-8"))
     assert report["schema_version"] == "1"
     assert report["selection_findings"] == []
     assert "selection telemetry not provided" in report["data_quality_warnings"]
@@ -3525,7 +3559,7 @@ def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
                         }
                     ),
                 ]
-                jsonl_path.write_text("\n".join(lines) + "\n")
+                jsonl_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 break
         return (0, "xfail output here\n", "")
 
@@ -3656,7 +3690,8 @@ def test_run_isolated_pytest_units_uses_report_log_for_test_level_when_merging_j
                             ),
                         ]
                     )
-                    + "\n"
+                    + "\n",
+                    encoding="utf-8",
                 )
                 break
         return (0, "", "")
@@ -3688,11 +3723,11 @@ def test_run_isolated_pytest_units_uses_report_log_for_test_level_when_merging_j
     jsonl_temp_path = Path(cmd[report_log_idx + 1])
     assert not jsonl_temp_path.exists()
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["units"][0]["target"] == "test_a.py"
     assert report["units"][0]["counts"]["passed"] == 1
 
-    quality_report = json.loads((tmp_path / "quality.json").read_text())
+    quality_report = json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))
     assert quality_report["summary"]["selection_scenarios"] == 1
     assert quality_report["selection_findings"][0]["scenario"] == "encrypt_roundtrip"
     assert quality_report["selection_findings"][0]["selected_but_not_invoked"] == ["CKM_AES_GCM"]
@@ -3751,7 +3786,7 @@ def test_write_isolated_json_report_unified_format(tmp_path: Path) -> None:
         per_unit_details=per_unit_details,
     )
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["tool"] == "pkcs11-check"
     assert report["kind"] == "test-run"
     # Summary: (3+1)=4 passed, 1 failed, 1 skipped, 1 xfailed = total 7
@@ -3834,7 +3869,7 @@ def test_write_isolated_json_report_groups_test_units_by_file(tmp_path: Path) ->
         per_unit_details=per_unit_details,
     )
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     # Should be grouped into 2 file-level units, not 3 test-level units
     assert len(report["units"]) == 2
     unit_a = next(u for u in report["units"] if u["target"] == "test_a.py")
@@ -3867,7 +3902,7 @@ def test_write_isolated_json_report_preserves_crashed_test_unit(tmp_path: Path) 
 
     write_isolated_json_report(report_path, state, per_unit_details={})
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["summary"]["crashed"] == 1
     assert report["summary"]["error"] == 0
     assert report["summary"]["total"] == 1
@@ -3922,7 +3957,7 @@ def test_write_isolated_json_report_crash_status_wins_over_failed_count(
 
     write_isolated_json_report(report_path, state, per_unit_details=per_unit_details)
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["summary"]["failed"] == 1
     assert report["summary"]["crashed"] == 1
     unit = report["units"][0]
@@ -3985,7 +4020,7 @@ def test_write_isolated_json_report_special_detail_status_wins_over_failed_file_
 
     write_isolated_json_report(report_path, state, per_unit_details=per_unit_details)
 
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     unit = report["units"][0]
     assert unit["status"] == expected_status
     assert unit["counts"]["failed"] == 1
@@ -4094,7 +4129,7 @@ def test_read_jsonl_results_maps_outcomes(tmp_path: Path) -> None:
         _jsonl_line(nodeid="t::f", outcome="skipped", wasxfail="known bug", longrepr="known bug"),
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4146,7 +4181,7 @@ def test_read_jsonl_results_flattens_longrepr(tmp_path: Path) -> None:
         _jsonl_line(nodeid="t::c", outcome="passed"),
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4177,7 +4212,7 @@ def test_read_jsonl_results_handles_setup_skip(tmp_path: Path) -> None:
         # No when=call line follows for this test
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4198,7 +4233,7 @@ def test_read_jsonl_results_handles_collect_error(tmp_path: Path) -> None:
         ),
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4223,7 +4258,7 @@ def test_read_jsonl_results_skips_truncated_lines(tmp_path: Path) -> None:
         _jsonl_line(nodeid="t::also_good", outcome="failed", longrepr="fail"),
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4249,7 +4284,7 @@ def test_identify_crash_culprit_from_jsonl(tmp_path: Path) -> None:
         _jsonl_line(nodeid="t.py::test_b", when="setup"),
         # crash — no call or teardown for test_b
     ]
-    jsonl.write_text("\n".join(lines) + "\n")
+    jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
     culprit, completed = _identify_crash_culprit(jsonl)
     assert culprit == "t.py::test_b"
     assert completed == ["t.py::test_a"]
@@ -4266,7 +4301,7 @@ def test_identify_crash_culprit_mid_call(tmp_path: Path) -> None:
         _jsonl_line(nodeid="t.py::test_b", when="call"),
         # crash during call — no teardown
     ]
-    jsonl.write_text("\n".join(lines) + "\n")
+    jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
     culprit, completed = _identify_crash_culprit(jsonl)
     assert culprit == "t.py::test_b"
     assert completed == ["t.py::test_a"]
@@ -4275,7 +4310,7 @@ def test_identify_crash_culprit_mid_call(tmp_path: Path) -> None:
 def test_identify_crash_culprit_empty_jsonl(tmp_path: Path) -> None:
     """Empty JSONL — no culprit, no completed."""
     jsonl = tmp_path / "report.jsonl"
-    jsonl.write_text("")
+    jsonl.write_text("", encoding="utf-8")
     culprit, completed = _identify_crash_culprit(jsonl)
     assert culprit is None
     assert completed == []
@@ -4289,7 +4324,7 @@ def test_identify_crash_culprit_all_completed(tmp_path: Path) -> None:
         _jsonl_line(nodeid="t.py::test_a", when="call"),
         _jsonl_line(nodeid="t.py::test_a", when="teardown"),
     ]
-    jsonl.write_text("\n".join(lines) + "\n")
+    jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
     culprit, completed = _identify_crash_culprit(jsonl)
     assert culprit is None
     assert completed == ["t.py::test_a"]
@@ -4331,7 +4366,7 @@ def test_read_jsonl_results_deduplicates_fixture_errors(tmp_path: Path) -> None:
         ),
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4362,7 +4397,7 @@ def test_identify_crash_culprit_with_completed_and_partial(tmp_path: Path) -> No
         _jsonl_line(nodeid="t.py::test_e", when="setup"),
     ]
     jsonl = tmp_path / "report.jsonl"
-    jsonl.write_text("\n".join(lines) + "\n")
+    jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     culprit, completed = _identify_crash_culprit(jsonl)
     assert culprit == "t.py::test_d"
@@ -4397,12 +4432,12 @@ def test_postprocess_jsonl_to_unified_groups_by_file(tmp_path: Path) -> None:
         _jsonl_line(nodeid="b.py::test_3", when="teardown"),
     ]
     jsonl = tmp_path / "input.jsonl"
-    jsonl.write_text("\n".join(lines) + "\n")
+    jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
     output = tmp_path / "results.json"
 
     postprocess_jsonl_to_unified(jsonl, output)
 
-    report = json.loads(output.read_text())
+    report = json.loads(output.read_text(encoding="utf-8"))
     assert report["tool"] == "pkcs11-check"
     assert report["kind"] == "test-run"
     assert len(report["units"]) == 2
@@ -4439,7 +4474,7 @@ def test_read_jsonl_results_strict_xfail_stays_failed(tmp_path: Path) -> None:
         ),
     ]
     p = tmp_path / "report.jsonl"
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = _read_jsonl_results(p)
     assert result is not None
@@ -4456,15 +4491,15 @@ def test_write_report_jsonl_streaming_concat(tmp_path: Path) -> None:
     src_a = tmp_path / "a.jsonl"
     src_b = tmp_path / "b.jsonl"
     src_c = tmp_path / "c.jsonl"
-    src_a.write_text('{"line": "a1"}\n{"line": "a2"}\n')
-    src_b.write_text('{"line": "b1"}\n')
-    src_c.write_text('{"line": "c1"}\n{"line": "c2"}\n{"line": "c3"}\n')
+    src_a.write_text('{"line": "a1"}\n{"line": "a2"}\n', encoding="utf-8")
+    src_b.write_text('{"line": "b1"}\n', encoding="utf-8")
+    src_c.write_text('{"line": "c1"}\n{"line": "c2"}\n{"line": "c3"}\n', encoding="utf-8")
 
     output = tmp_path / "out" / "combined.jsonl"
     write_report_jsonl([src_a, src_b, src_c], output)
 
     assert output.exists()
-    lines = output.read_text().strip().split("\n")
+    lines = output.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 6
     # Verify order: a lines, then b, then c
     assert json.loads(lines[0])["line"] == "a1"
@@ -4604,7 +4639,8 @@ def test_progressive_timeout_retry_succeeds(
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             raise subprocess.TimeoutExpired(cmd, timeout=12)
 
@@ -4625,7 +4661,8 @@ def test_progressive_timeout_retry_succeeds(
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             return (0, "", "")
 
@@ -4667,9 +4704,9 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
     """When progressive timeout retries are exhausted, fall back to escalation
     but only for tests NOT already completed."""
     module = tmp_path / "module.so"
-    module.write_text("")
+    module.write_text("", encoding="utf-8")
     target = tmp_path / "test_demo.py"
-    target.write_text("def test_case():\n    assert True\n")
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     units = [str(target)]
     pytest_args = ["--p11-module", str(module)]
     state_file = tmp_path / "state.json"
@@ -4721,7 +4758,8 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
                         ),
                     ]
                 )
-                + "\n"
+                + "\n",
+                encoding="utf-8",
             )
             raise subprocess.TimeoutExpired(cmd, timeout=12)
 
@@ -4812,7 +4850,7 @@ def test_timeout_does_not_promote_to_policy(
                 report_log_path = Path(cmd[i + 1])
                 break
         if report_log_path is not None:
-            report_log_path.write_text("")
+            report_log_path.write_text("", encoding="utf-8")
         raise subprocess.TimeoutExpired(cmd, timeout=12)
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
@@ -4848,7 +4886,8 @@ def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
 
     test_file = tmp_path / "test_example.py"
     test_file.write_text(
-        'import pytest\nREQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_dummy(): pass\n'
+        'import pytest\nREQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_dummy(): pass\n',
+        encoding="utf-8",
     )
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
@@ -4862,7 +4901,8 @@ def test_file_skip_for_missing_mechanism(tmp_path: Path) -> None:
                 "slot_count": 1,
                 "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
@@ -4880,7 +4920,8 @@ def test_file_skip_counts_collected_tests_as_skipped(
 ) -> None:
     test_file = tmp_path / "test_example.py"
     test_file.write_text(
-        'REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_a(): pass\ndef test_b(): pass\n'
+        'REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_a(): pass\ndef test_b(): pass\n',
+        encoding="utf-8",
     )
     report_path = tmp_path / "results.json"
 
@@ -4915,14 +4956,14 @@ def test_file_skip_counts_collected_tests_as_skipped(
     )
 
     assert exit_code == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["summary"]["skipped"] == 2
     assert report["summary"]["total"] == 2
     unit = report["units"][0]
     assert unit["file_skip"] is True
     assert unit["counts"]["skipped"] == 2
     assert unit["skip_reasons"] == {"AES_CCM not supported by module": 2}
-    quality = json.loads((tmp_path / "quality.json").read_text())
+    quality = json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))
     assert quality["file_skipped_units"] == [
         {"target": str(test_file), "reason": "AES_CCM not supported by module"}
     ]
@@ -4932,11 +4973,17 @@ def test_mechanism_coverage_buckets_required_mechanisms_for_unit_outcomes(
     tmp_path: Path,
 ) -> None:
     skipped_file = tmp_path / "test_skip.py"
-    skipped_file.write_text('REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_x(): pass\n')
+    skipped_file.write_text(
+        'REQUIRED_MECHANISMS = ["AES_CCM"]\ndef test_x(): pass\n', encoding="utf-8"
+    )
     crashed_file = tmp_path / "test_crash.py"
-    crashed_file.write_text('REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_x(): pass\n')
+    crashed_file.write_text(
+        'REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_x(): pass\n', encoding="utf-8"
+    )
     timeout_file = tmp_path / "test_timeout.py"
-    timeout_file.write_text('REQUIRED_MECHANISMS = ["CKM_ML_DSA"]\ndef test_x(): pass\n')
+    timeout_file.write_text(
+        'REQUIRED_MECHANISMS = ["CKM_ML_DSA"]\ndef test_x(): pass\n', encoding="utf-8"
+    )
     coverage = {
         "mechanism_coverage": {
             "available_names": ["CKM_AES_CCM", "CKM_HKDF_DERIVE", "CKM_ML_DSA"],
@@ -4974,7 +5021,9 @@ def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(
     tmp_path: Path,
 ) -> None:
     test_file = tmp_path / "test_example.py"
-    test_file.write_text('REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_a(): pass\n')
+    test_file.write_text(
+        'REQUIRED_MECHANISMS = ["HKDF_DERIVE"]\ndef test_a(): pass\n', encoding="utf-8"
+    )
     nodeid = f"{test_file}::test_a"
     report_path = tmp_path / "results.json"
 
@@ -5006,7 +5055,7 @@ def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(
     )
 
     assert exit_code == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["summary"]["skipped"] == 1
     assert report["summary"]["total"] == 1
     unit = report["units"][0]
@@ -5024,7 +5073,8 @@ def test_file_skip_for_any_missing_required_mechanism_counts_collected_tests(
     test_file.write_text(
         'REQUIRED_MECHANISMS = ["ML_DSA", "ML_DSA_KEY_PAIR_GEN"]\n'
         "def test_a(): pass\n"
-        "def test_b(): pass\n"
+        "def test_b(): pass\n",
+        encoding="utf-8",
     )
     report_path = tmp_path / "results.json"
     calls: list[list[str]] = []
@@ -5067,7 +5117,7 @@ def test_file_skip_for_any_missing_required_mechanism_counts_collected_tests(
 
     assert exit_code == 0
     assert calls == []
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     unit = report["units"][0]
     assert unit["file_skip"] is True
     assert unit["counts"]["skipped"] == 2
@@ -5080,10 +5130,11 @@ def test_file_skip_counts_survive_report_jsonl_merge(
 ) -> None:
     skipped_file = tmp_path / "test_skipped.py"
     skipped_file.write_text(
-        'REQUIRED_MECHANISMS = ["EDDSA"]\ndef test_a(): pass\ndef test_b(): pass\n'
+        'REQUIRED_MECHANISMS = ["EDDSA"]\ndef test_a(): pass\ndef test_b(): pass\n',
+        encoding="utf-8",
     )
     passed_file = tmp_path / "test_passed.py"
-    passed_file.write_text("def test_ok(): pass\n")
+    passed_file.write_text("def test_ok(): pass\n", encoding="utf-8")
     report_path = tmp_path / "results.json"
     report_jsonl_path = tmp_path / "report.jsonl"
 
@@ -5110,7 +5161,7 @@ def test_file_skip_counts_survive_report_jsonl_merge(
         report_log_idx = cmd.index("--report-log")
         unit_jsonl_path = Path(cmd[report_log_idx + 1])
         unit_jsonl_path.write_text(
-            _jsonl_line(nodeid=f"{passed_file}::test_ok", outcome="passed") + "\n"
+            _jsonl_line(nodeid=f"{passed_file}::test_ok", outcome="passed") + "\n", encoding="utf-8"
         )
         return (0, "", "")
 
@@ -5130,7 +5181,7 @@ def test_file_skip_counts_survive_report_jsonl_merge(
     )
 
     assert exit_code == 0
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["summary"]["passed"] == 1
     assert report["summary"]["skipped"] == 2
     assert report["summary"]["total"] == 3
@@ -5147,7 +5198,7 @@ def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
     from pkcs11_check.core.test_selection import extract_required_mechanisms
 
     test_file = tmp_path / "test_example.py"
-    test_file.write_text('REQUIRED_MECHANISMS = ["AES_CBC"]\n')
+    test_file.write_text('REQUIRED_MECHANISMS = ["AES_CBC"]\n', encoding="utf-8")
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -5160,7 +5211,8 @@ def test_file_not_skipped_when_mechanism_present(tmp_path: Path) -> None:
                 "slot_count": 1,
                 "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB"],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     mechs = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     required = extract_required_mechanisms(str(test_file))
@@ -5184,7 +5236,8 @@ def test_load_available_mechanisms_from_manifest(tmp_path: Path) -> None:
                 "slot_count": 1,
                 "mechanisms": ["CKM_AES_CBC", "CKM_AES_ECB", "CKM_RSA_PKCS"],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     result = _load_available_mechanisms(["--p11-manifest", str(manifest)])
     assert result is not None

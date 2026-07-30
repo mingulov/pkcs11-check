@@ -219,6 +219,7 @@ def collect_pytest_item_metadata(
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=dict(env or os.environ),
         )
 

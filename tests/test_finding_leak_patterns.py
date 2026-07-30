@@ -43,7 +43,7 @@ def _swallow_pass(lines: list[str], i: int) -> bool:
 
 
 def _flag(path: Path) -> list[str]:
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     hits: list[str] = []
     i = 0
     while i < len(lines):
@@ -209,7 +209,7 @@ def test_no_named_ckr_ok_membership_acceptance() -> None:
     hits: list[str] = []
     for path in sorted(_ROOT.rglob("*.py")):
         rel = path.relative_to(_ROOT.parent.parent.parent)
-        hits.extend(_named_ckr_ok_membership_hits(path.read_text(), str(rel)))
+        hits.extend(_named_ckr_ok_membership_hits(path.read_text(encoding="utf-8"), str(rel)))
     assert not hits, (
         "CKR_OK accepted on a negative op via a named tuple/set. Route through the classifier "
         "or annotate the assertion `# audit-ok: <spec reason>` if the CKR_OK is sanctioned:\n  "

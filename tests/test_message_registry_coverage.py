@@ -24,7 +24,7 @@ def test_plugin_exposes_message_flag_fixtures() -> None:
 
 
 def test_mech_message_consumes_registry_message_fixtures() -> None:
-    source = MECH_MESSAGE.read_text()
+    source = MECH_MESSAGE.read_text(encoding="utf-8")
 
     for fixture in (
         "mech_message_encrypt_entry",
@@ -36,7 +36,7 @@ def test_mech_message_consumes_registry_message_fixtures() -> None:
 
 
 def test_mech_message_has_registry_permission_negatives() -> None:
-    source = MECH_MESSAGE.read_text()
+    source = MECH_MESSAGE.read_text(encoding="utf-8")
 
     for test_name in (
         "test_registry_message_encrypt_without_flag",
@@ -51,7 +51,7 @@ def test_mech_message_has_registry_permission_negatives() -> None:
 
 
 def test_mech_message_has_registry_wrong_key_negatives() -> None:
-    source = MECH_MESSAGE.read_text()
+    source = MECH_MESSAGE.read_text(encoding="utf-8")
 
     for test_name in (
         "test_registry_message_encrypt_wrong_key_type",
@@ -66,7 +66,7 @@ def test_mech_message_has_registry_wrong_key_negatives() -> None:
 
 
 def test_mech_message_has_registry_required_param_negatives() -> None:
-    source = MECH_MESSAGE.read_text()
+    source = MECH_MESSAGE.read_text(encoding="utf-8")
 
     for test_name in (
         "test_registry_message_encrypt_missing_required_param",

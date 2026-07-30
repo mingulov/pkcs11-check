@@ -20,7 +20,7 @@ _TRACE = [{"fn": "C_Encrypt", "rv": 6}]
 
 def _write(tmp_path: Path, records: list[dict]) -> Path:
     p = tmp_path / "report.jsonl"
-    p.write_text("".join(json.dumps(r) + "\n" for r in records))
+    p.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
     return p
 
 
@@ -45,7 +45,7 @@ def test_promotes_teardown_trace_onto_failed_report(tmp_path: Path) -> None:
         ],
     )
     _promote_rv_traces_to_outcome_reports(p)
-    recs = [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    recs = [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
     failed = next(r for r in recs if r["when"] == "call")
     assert ["pkcs11_rv_trace", _TRACE] in failed["user_properties"]
 

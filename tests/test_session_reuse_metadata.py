@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def _text(path: str) -> str:
-    return Path(path).read_text()
+    return Path(path).read_text(encoding="utf-8")
 
 
 def test_hot_vector_files_use_module_session() -> None:

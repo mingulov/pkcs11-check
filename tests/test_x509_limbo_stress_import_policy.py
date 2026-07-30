@@ -69,7 +69,7 @@ def test_x509_metadata_paths_do_not_catch_generic_exception() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         parents: dict[ast.AST, ast.AST] = {}
         for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):

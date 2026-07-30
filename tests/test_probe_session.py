@@ -33,7 +33,8 @@ def _write_probe(tmp_path: Path) -> Path:
             if __name__ == "__main__":
                 probe_main(run)
             """
-        )
+        ),
+        encoding="utf-8",
     )
     return probe
 
@@ -43,7 +44,7 @@ def test_session_probe_opens_session_and_runs(tmp_path: Path, mock_module_path: 
     params = tmp_path / "params.json"
     # Do NOT hard-code slot_id: pkcs11-mock exposes slot 1, not 0. Omitting lets
     # probe_main discover the first available slot via get_slot_ids().
-    params.write_text(json.dumps({"module_path": mock_module_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}), encoding="utf-8")
 
     probe = _write_probe(tmp_path)
 
@@ -53,6 +54,7 @@ def test_session_probe_opens_session_and_runs(tmp_path: Path, mock_module_path: 
         text=True,
         env={"PATH": "", "_P11CHECK_PIN": "1234"},  # PIN only via env (I3)
         timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     assert "SESSION_OK:True" in proc.stdout
@@ -65,7 +67,7 @@ def test_session_probe_writes_coverage(tmp_path: Path, mock_module_path: str) ->
     A future rename of call_log / mechanism_counts fields would be caught here.
     """
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_module_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}), encoding="utf-8")
 
     probe = _write_probe(tmp_path)
     cov_path = tmp_path / "cov.json"
@@ -76,11 +78,12 @@ def test_session_probe_writes_coverage(tmp_path: Path, mock_module_path: str) ->
         text=True,
         env={"PATH": "", "_P11CHECK_PIN": "1234", "_P11CHECK_SUBPROCESS_COVERAGE": str(cov_path)},
         timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
 
     assert cov_path.exists(), "coverage file was not written"
-    data = json.loads(cov_path.read_text())
+    data = json.loads(cov_path.read_text(encoding="utf-8"))
 
     assert "call_log" in data, f"missing 'call_log' key; got: {list(data)}"
     assert "mechanism_counts" in data, f"missing 'mechanism_counts' key; got: {list(data)}"
@@ -96,7 +99,7 @@ def test_session_probe_writes_coverage(tmp_path: Path, mock_module_path: str) ->
 def test_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str) -> None:
     """I7 round-trip: PKCS11_CHECK_RV_TRACE=1 causes P11_RV_TRACE_JSON: to appear in stdout."""
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_module_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}), encoding="utf-8")
 
     probe = _write_probe(tmp_path)
 
@@ -106,6 +109,7 @@ def test_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str) -> 
         text=True,
         env={"PATH": "", "_P11CHECK_PIN": "1234", "PKCS11_CHECK_RV_TRACE": "1"},
         timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
 

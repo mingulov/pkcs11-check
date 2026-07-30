@@ -21,6 +21,7 @@ def _files_with_raw_sites() -> set[str]:
         ["grep", "-rlE", r"pytest\.(xfail|fail)\(", ROOT, "--include=*.py"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout.split()
     return {f for f in out if pathlib.Path(f).name not in SANCTIONED}
 
@@ -42,6 +43,7 @@ def test_no_test_site_emits_reserved_unclassified_reason() -> None:
         ["grep", "-rn", "unclassified", ROOT, "--include=*.py"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout.strip()
     assert not out, (
         f"'unclassified' is reserved for the plugin runtime gate; remove from testcases/:\n{out}"
