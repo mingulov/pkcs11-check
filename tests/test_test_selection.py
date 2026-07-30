@@ -116,7 +116,42 @@ def test_build_disabled_selection_plan_retains_mixed_file_units_with_deselects(
     )
 
     assert plan.units == [unit]
-    assert plan.deselect_by_file == {unit: {f"{unit}::test_b"}}
+    # Keys are scheduling units (native paths, handed back to the runner as-is); VALUES are
+    # node-ids, which the plan emits in canonical forward-slash form so they compare equal
+    # against a disabled-tests file written on any platform. Both sides of the eventual
+    # match are normalized in plugin.py, so the canonical form is what belongs here.
+    assert plan.deselect_by_file == {unit: {f"{file_path.as_posix()}::test_b"}}
+
+
+def test_build_disabled_selection_plan_matches_windows_written_nodeids(tmp_path: Path) -> None:
+    """A disabled-tests file written on Windows must still match, whatever the host.
+
+    Every comparison inside the plan happens in normalized (forward-slash) space, but the
+    incoming ``disabled_nodeids`` used to be trusted as already-normalized -- true only
+    because the one production caller happened to run them through
+    ``parse_disabled_nodeids`` first. That made it an invisible precondition: any new source
+    of disabled node-ids (a resume state file, a manifest, a new flag) would match NOTHING
+    on Windows and silently run tests the operator had disabled.
+
+    Backslash node-ids are fed in deliberately here so the assertion holds on POSIX too,
+    rather than only failing on a Windows runner.
+    """
+    file_path = tmp_path / "test_demo.py"
+    unit = str(file_path)
+    items = [
+        CollectedPytestItem(nodeid=f"{unit}::test_a", file_path=unit, markers=[]),
+        CollectedPytestItem(nodeid=f"{unit}::test_b", file_path=unit, markers=[]),
+    ]
+    windows_style = f"{file_path.as_posix().replace('/', chr(92))}::test_b"
+
+    plan = build_disabled_selection_plan(
+        units=[unit],
+        disabled_nodeids={windows_style},
+        baseline_fingerprint="fp-win",
+        collected_items=items,
+    )
+
+    assert plan.deselect_by_file == {unit: {f"{file_path.as_posix()}::test_b"}}
 
 
 def test_build_disabled_selection_plan_rebuilds_from_saved_units(tmp_path: Path) -> None:
@@ -144,7 +179,9 @@ def test_build_disabled_selection_plan_rebuilds_from_saved_units(tmp_path: Path)
 
     assert first == second
     assert first.units == saved_units
-    assert first.deselect_by_file == {file_unit: {f"{file_unit}::test_b"}}
+    # Node-id values are canonical (forward-slash); the unit key stays native. See the
+    # comment in test_build_disabled_selection_plan_retains_mixed_file_units_with_deselects.
+    assert first.deselect_by_file == {file_unit: {f"{file_path.as_posix()}::test_b"}}
 
 
 def test_collect_disabled_candidates_from_report_jsonl_supports_multiple_outcomes(

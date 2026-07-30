@@ -139,7 +139,16 @@ def build_disabled_selection_plan(
     baseline_fingerprint: str,
     collected_items: list[CollectedPytestItem] | None,
 ) -> DisabledSelectionPlan:
-    """Build the scheduled unit list and per-file deselect mapping."""
+    """Build the scheduled unit list and per-file deselect mapping.
+
+    ``disabled_nodeids`` may arrive in either separator form. Every comparison below is
+    made in normalized (forward-slash) space, so normalize the incoming set here rather
+    than trusting the caller to have done it: the production path happens to normalize in
+    ``parse_disabled_nodeids``, which made this an invisible unenforced precondition, and
+    any future source of disabled node-ids (a resume state file, a manifest, a new flag)
+    would silently match nothing on Windows.
+    """
+    disabled_nodeids = {normalize_nodeid(nodeid) for nodeid in disabled_nodeids}
     planned_units: list[str] = []
     deselect_by_file: dict[str, set[str]] = {}
 

@@ -1384,7 +1384,9 @@ class TestTestCommand:
         assert result.exit_code == 0
         assert called["units"] == [str(file_a)]
         assert called["granularity"] == "file"
-        assert called["deselect_by_file"] == {str(file_a): {f"{file_a}::test_drop"}}
+        # Keys are scheduling units (native paths); node-id VALUES are canonical
+        # forward-slash form so they match a disabled-tests file written on any platform.
+        assert called["deselect_by_file"] == {str(file_a): {f"{file_a.as_posix()}::test_drop"}}
 
     def test_max_crashes_per_file_defaults_to_ten(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
