@@ -1559,6 +1559,7 @@ def external_provision(
     returns the handle. Any failure (timeout / non-zero exit / not found / exception)
     returns None — the caller decides whether to skip. NEVER raises.
     """
+    import contextlib
     import os
     import subprocess
     import tempfile
@@ -1582,13 +1583,25 @@ def external_provision(
     try:
         try:
             if hasattr(os, "fchmod"):
-                # POSIX owner-only tightening. Absent on Windows, where the key file
-                # lives in the per-user temp dir; do not let its absence disable the tier.
+                # POSIX owner-only tightening. On Windows this is NOT the protection: the
+                # call is absent before Python 3.13 and, from 3.13 on, present but
+                # ineffective -- it returns success while the mode stays 0o666, because
+                # NTFS cannot express POSIX owner-only bits. There the key file's
+                # confidentiality rests entirely on tempfile placing it in the per-user
+                # %TEMP% under the profile directory, whose ACL excludes other users.
+                # Either way its uselessness must not disable the tier, hence best-effort.
                 os.fchmod(fd, 0o600)
             os.write(fd, material)
-            os.close(fd)
         except Exception:  # noqa: BLE001
             return None
+        finally:
+            # Close on EVERY path, including the failure one. Windows refuses to unlink a
+            # file that still has an open handle (WinError 32), so leaving fd open on the
+            # write-failure path made the finally-block unlink below fail silently and
+            # STRANDED THE KEY MATERIAL in the per-user temp dir. POSIX unlinks an open
+            # file happily, which is why this only ever showed up on Windows.
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
         # Build and run the command.
         try:
@@ -1654,8 +1667,21 @@ def external_provision(
             pass  # best-effort zeroing; unlink still attempted below
         try:
             os.unlink(path)
-        except OSError:
-            pass  # best-effort unlink; file may already be gone
+        except FileNotFoundError:
+            pass  # already gone -- the desired end state
+        except OSError as exc:
+            # A surviving key file is a real exposure, so it must never be silent. This is
+            # how the leaked-fd bug above hid: unlink failed with WinError 32 and the
+            # `except OSError: pass` swallowed it, so the run looked clean while the key
+            # material stayed in the per-user temp dir.
+            with contextlib.suppress(Exception):
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"{label}: could not remove external-provision key file {path}"
+                    f" ({type(exc).__name__}: {exc}) -- key material may remain on disk",
+                    ComplianceLevel.CRITICAL,
+                )
 
 
 # ---------------------------------------------------------------------------

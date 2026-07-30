@@ -20,6 +20,9 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -327,14 +330,29 @@ def test_record_provisioning_event_raises_still_returns_handle(
 
 
 def test_temp_file_mode_0600_while_exists(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The temp file must have mode 0600 at the time the command runs."""
+    """The key file must be owner-only while the operator command can see it.
+
+    The guarantee is one thing; its mechanism is platform-specific, so assert whichever
+    one actually applies:
+
+    * POSIX -- ``os.fchmod(fd, 0o600)``, checked as mode bits.
+    * Windows -- ``os.fchmod`` does not exist, so the file keeps the default 0o666 and the
+      protection is instead that ``tempfile`` places it in the per-user ``%TEMP%`` under
+      the profile directory, whose NTFS ACL excludes other users. Asserting 0o600 there
+      asserted a POSIX API that is simply absent.
+
+    Mode bits are NOT merely skipped on Windows: the containment that replaces them is
+    asserted, so the platform's real boundary stays covered.
+    """
     observed_mode: list[int] = []
+    observed_path: list[str] = []
 
     def fake_run(args: list[str], **kwargs: Any) -> Any:
         # args[1] is the keyfile path (template: "load-key {keyfile} {label} ...")
         keyfile = args[1]
         st = os.stat(keyfile)
         observed_mode.append(stat.S_IMODE(st.st_mode))
+        observed_path.append(keyfile)
         proc = MagicMock()
         proc.returncode = 0
         return proc
@@ -353,7 +371,20 @@ def test_temp_file_mode_0600_while_exists(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert result == 99
     assert observed_mode, "fake_run must have been called and observed the file mode"
-    assert observed_mode[0] == 0o600, f"expected mode 0600, got {oct(observed_mode[0])}"
+
+    # Gate on the PLATFORM, not on hasattr(os, "fchmod"): Python 3.13 added os.fchmod on
+    # Windows, where it SUCCEEDS and yet leaves the mode 0o666, because NTFS cannot express
+    # POSIX owner-only bits. A capability check therefore takes the POSIX branch on Windows
+    # and asserts a guarantee the OS never made.
+    if sys.platform != "win32":
+        assert observed_mode[0] == 0o600, f"expected mode 0600, got {oct(observed_mode[0])}"
+    else:
+        # Windows: assert the containment that replaces the mode bits.
+        keyfile = Path(observed_path[0]).resolve()
+        assert Path(tempfile.gettempdir()).resolve() in keyfile.parents, (
+            f"key file {keyfile} must live in the per-user temp dir, which is what "
+            "protects it when fchmod is unavailable"
+        )
 
 
 def test_write_failure_still_removes_temp_file(monkeypatch: pytest.MonkeyPatch) -> None:
