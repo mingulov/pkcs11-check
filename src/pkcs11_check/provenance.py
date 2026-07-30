@@ -24,7 +24,13 @@ def _run_git(args: list[str], cwd: Path) -> str | None:
     """Run a git subcommand in ``cwd``; return stripped stdout or None on any failure."""
     try:
         result = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=5, check=False
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=5,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None

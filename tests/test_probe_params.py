@@ -22,7 +22,8 @@ def test_load_roundtrip(tmp_path: Path) -> None:
                 "interface": None,
                 "extra": {"length": 0x7FFFFFFFFFFFFFFF, "mech": "CKM_AES_GCM"},
             }
-        )
+        ),
+        encoding="utf-8",
     )
     params = ProbeParams.load(str(p))
     assert params.module_path == "/lib/softhsm2.so"
@@ -39,7 +40,7 @@ def test_dump_rejects_pin() -> None:
 
 def test_load_rejects_pin(tmp_path: Path) -> None:
     p = tmp_path / "params.json"
-    p.write_text(json.dumps({"module_path": "/lib/x.so", "user_pin": "1234"}))
+    p.write_text(json.dumps({"module_path": "/lib/x.so", "user_pin": "1234"}), encoding="utf-8")
     with pytest.raises(PinInParamsError):
         ProbeParams.load(str(p))
 
@@ -58,20 +59,20 @@ def test_dump_rejects_pin_nested_in_a_list() -> None:
 
 def test_load_rejects_non_object(tmp_path: Path) -> None:
     p = tmp_path / "params.json"
-    p.write_text(json.dumps([1, 2, 3]))
+    p.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
     with pytest.raises(ValueError):
         ProbeParams.load(str(p))
 
 
 def test_load_rejects_missing_module_path(tmp_path: Path) -> None:
     p = tmp_path / "params.json"
-    p.write_text(json.dumps({"slot_id": 0}))
+    p.write_text(json.dumps({"slot_id": 0}), encoding="utf-8")
     with pytest.raises(ValueError, match="module_path"):
         ProbeParams.load(str(p))
 
 
 def test_load_rejects_non_dict_extra(tmp_path: Path) -> None:
     p = tmp_path / "params.json"
-    p.write_text(json.dumps({"module_path": "/lib/x.so", "extra": "oops"}))
+    p.write_text(json.dumps({"module_path": "/lib/x.so", "extra": "oops"}), encoding="utf-8")
     with pytest.raises(ValueError, match="extra.*object"):
         ProbeParams.load(str(p))

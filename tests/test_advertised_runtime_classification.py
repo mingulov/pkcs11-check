@@ -104,7 +104,7 @@ def test_advertised_legacy_cipher_runtime_rejections_are_not_skips() -> None:
     """Advertised-but-rejected mechanisms should remain visible as xfails."""
     offenders: list[str] = []
     for path in _LEGACY_CIPHER_FILES:
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or _call_name(node) != "pytest.skip":
@@ -119,7 +119,7 @@ def test_advertised_runtime_rejections_are_not_skipped() -> None:
     """Runtime rejection after capability checks should be xfail/fail evidence."""
     offenders: list[str] = []
     for path, skip_patterns in _RUNTIME_SKIP_PATTERNS.items():
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or _call_name(node) != "pytest.skip":
@@ -134,7 +134,7 @@ def test_advertised_runtime_rejections_are_not_skipped() -> None:
 def test_acvp_rsa_keygen_uses_structured_ckr_checks() -> None:
     """ACVP RSA keygen should match CKR constants, not exception text."""
     path = Path("src/pkcs11_check/testcases/acvp/test_acvp_rsa_keygen.py")
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
 
     offenders = [
         f"{path}:{node.lineno}: {node.value}"
@@ -157,7 +157,7 @@ def test_acvp_asymmetric_vectors_use_structured_ckr_checks() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         offenders.extend(
             f"{path}:{node.lineno}: {node.value}"
             for node in ast.walk(tree)
@@ -207,7 +207,7 @@ def test_acvp_capability_skips_do_not_accept_runtime_failure_ckrs() -> None:
     disallowed = {"CKR_DEVICE_ERROR", "CKR_FUNCTION_FAILED", "CKR_GENERAL_ERROR"}
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):
                 continue
@@ -233,7 +233,7 @@ def test_acvp_capability_skips_do_not_accept_runtime_failure_ckrs() -> None:
 def test_acvp_ecdh_uses_structured_ckr_checks() -> None:
     """ACVP ECDH capability and runtime guards should match CKR constants."""
     path = Path("src/pkcs11_check/testcases/acvp/test_acvp_ecdh.py")
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
 
     offenders = [
         f"{path}:{node.lineno}: {node.value}"
@@ -277,7 +277,7 @@ def test_acvp_ecdsa_host_memory_runtime_reject_is_xfail() -> None:
 def test_acvp_mlkem_uses_structured_ckr_checks() -> None:
     """ACVP ML-KEM capability/runtime guards should match CKR constants."""
     path = Path("src/pkcs11_check/testcases/acvp/test_acvp_mlkem.py")
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
 
     offenders = [
         f"{path}:{node.lineno}: {node.value}"
@@ -293,7 +293,7 @@ def test_acvp_mlkem_uses_structured_ckr_checks() -> None:
 def test_acvp_mlkem_capability_skips_stay_narrow() -> None:
     """ML-KEM unsupported-parameter skips should not hide runtime failures."""
     path = Path("src/pkcs11_check/testcases/acvp/test_acvp_mlkem.py")
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     disallowed = {
         "CKR_DEVICE_ERROR",
         "CKR_FUNCTION_FAILED",
@@ -393,7 +393,7 @@ def test_kdf_runtime_classifiers_do_not_catch_generic_exception() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -450,7 +450,7 @@ def test_object_metadata_classifiers_do_not_catch_generic_exception() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
@@ -485,7 +485,7 @@ def test_wycheproof_ec_import_guards_use_structured_ckr_checks() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         offenders.extend(
             f"{path}:{node.lineno}: {node.value}"
             for node in ast.walk(tree)
@@ -510,7 +510,7 @@ def test_wycheproof_signature_vectors_use_verify_result() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         offenders.extend(
             f"{path}:{node.lineno}: verify_single() result ignored"
             for node in ast.walk(tree)
@@ -535,7 +535,7 @@ def test_wycheproof_invalid_signature_acceptance_is_reported() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.If):
                 continue
@@ -562,7 +562,7 @@ def test_wycheproof_rsa_hmac_pqc_guards_use_structured_ckr_checks() -> None:
     )
     offenders: list[str] = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         offenders.extend(
             f"{path}:{node.lineno}: {node.value}"
             for node in ast.walk(tree)
@@ -715,13 +715,15 @@ def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
     test_wycheproof_hmac.py was re-framed (Phase 2 Task 2i) to verify-and-reject
     the supplied tag, so an accepted invalid tag is a finding.
     """
-    produce_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py").read_text()
+    produce_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py").read_text(
+        encoding="utf-8"
+    )
     assert "Invalid HMAC tag" in produce_source
     assert "truncated == tag_expected" in produce_source
 
-    verify_source = Path(
-        "src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py"
-    ).read_text()
+    verify_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py").read_text(
+        encoding="utf-8"
+    )
     assert "accepted invalid tag" in verify_source
     assert 'result == "invalid"' in verify_source
 
@@ -735,12 +737,16 @@ def test_wycheproof_rsa_decrypt_invalid_ciphertexts_are_reported() -> None:
     RSA-OAEP (Manger) still rejects invalid ciphertext, so its accept->report
     guard stays. Both paths must still branch on the invalid result.
     """
-    pkcs1 = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py").read_text()
+    pkcs1 = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_decrypt.py").read_text(
+        encoding="utf-8"
+    )
     assert "recovered the target message" in pkcs1  # real Bleichenbacher break
     assert "plaintext == msg_expected" in pkcs1
     assert 'result == "invalid"' in pkcs1
 
-    oaep = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py").read_text()
+    oaep = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_rsa_oaep.py").read_text(
+        encoding="utf-8"
+    )
     assert "accepted invalid ciphertext" in oaep
     assert 'result == "invalid"' in oaep
 
@@ -767,7 +773,7 @@ def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
     }
 
     for path, snippets in expected.items():
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         for snippet in snippets:
             assert snippet in source
         assert 'result == "invalid"' in source
@@ -775,7 +781,9 @@ def test_wycheproof_symmetric_invalid_outputs_are_reported() -> None:
 
 def test_wycheproof_hkdf_invalid_size_success_is_reported() -> None:
     """HKDF SizeTooLarge vectors must fail if key derivation succeeds."""
-    source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hkdf.py").read_text()
+    source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hkdf.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "Invalid HKDF vector" in source
     assert "derived successfully" in source
@@ -784,7 +792,9 @@ def test_wycheproof_hkdf_invalid_size_success_is_reported() -> None:
 
 def test_wycheproof_mlkem_malformed_decaps_success_is_reported() -> None:
     """Malformed ML-KEM decapsulation vectors must fail if decapsulation succeeds."""
-    source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mlkem.py").read_text()
+    source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_mlkem.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "Invalid ML-KEM decapsulation vector" in source
     assert "produced a shared key" in source
@@ -794,7 +804,7 @@ def test_wycheproof_mlkem_malformed_decaps_success_is_reported() -> None:
 def test_stateful_signature_guards_use_structured_ckr_checks() -> None:
     """Stateful signature guards should not parse CKR names from text."""
     path = Path("src/pkcs11_check/testcases/test_stateful_sigs.py")
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
 
     offenders: list[str] = []
     for node in ast.walk(tree):

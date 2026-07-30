@@ -62,6 +62,6 @@ def test_empty_units_writes_zero_total_report(tmp_path: Path) -> None:
     assert exit_code == _NO_TESTS_COLLECTED_EXIT
     # An empty but well-formed report is emitted so tooling sees total == 0
     # (rather than a stale/absent file masquerading as a pass).
-    payload = json.loads(results_path.read_text())
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
     assert payload["summary"]["total"] == 0
     assert payload["units"] == []

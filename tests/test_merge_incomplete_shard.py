@@ -17,7 +17,7 @@ from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
 
 
 def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
-    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
 
 def _call(nodeid: str, outcome: str) -> dict[str, object]:
@@ -54,7 +54,7 @@ def _make_shard(root: Path, name: str, *, results: bool, jsonl: list[dict[str, o
     d.mkdir()
     _write_jsonl(d / "report.jsonl", jsonl)
     if results:
-        (d / "results.json").write_text(json.dumps(_ok_results("test_ok.py")))
+        (d / "results.json").write_text(json.dumps(_ok_results("test_ok.py")), encoding="utf-8")
     return d
 
 
@@ -86,7 +86,9 @@ def test_corrupt_results_json_does_not_abort_merge(tmp_path: Path) -> None:
     s1 = tmp_path / "shard-1"
     s1.mkdir()
     _write_jsonl(s1 / "report.jsonl", [_call("test_bad.py::test_fail", "failed")])
-    (s1 / "results.json").write_text('{"summary": {"failed": 1, ')  # truncated JSON
+    (s1 / "results.json").write_text(
+        '{"summary": {"failed": 1, ', encoding="utf-8"
+    )  # truncated JSON
 
     merged = merge_shard_dirs([s0, s1], tmp_path / "out")
 
@@ -109,7 +111,7 @@ def test_partial_shard_results_are_warned_not_silent(tmp_path: Path) -> None:
         "completed_units": 223,
         "planned_units": 246,
     }
-    (s1 / "results.json").write_text(json.dumps(payload))
+    (s1 / "results.json").write_text(json.dumps(payload), encoding="utf-8")
 
     merged = merge_shard_dirs([s0, s1], tmp_path / "out")
 
@@ -124,7 +126,7 @@ def test_total_loss_shard_is_warned_not_silent(tmp_path: Path) -> None:
     # shard1: corrupt results.json AND no report.jsonl to salvage from.
     s1 = tmp_path / "shard-1"
     s1.mkdir()
-    (s1 / "results.json").write_text("not json at all")
+    (s1 / "results.json").write_text("not json at all", encoding="utf-8")
 
     merged = merge_shard_dirs([s0, s1], tmp_path / "out")
 
@@ -141,8 +143,8 @@ def test_corrupt_results_with_empty_jsonl_is_warned_lost(tmp_path: Path) -> None
     # zero-count salvage is a genuine loss and must be warned, not silently accepted.
     s1 = tmp_path / "shard-1"
     s1.mkdir()
-    (s1 / "report.jsonl").write_text("")
-    (s1 / "results.json").write_text("{ truncated")
+    (s1 / "report.jsonl").write_text("", encoding="utf-8")
+    (s1 / "results.json").write_text("{ truncated", encoding="utf-8")
 
     merged = merge_shard_dirs([s0, s1], tmp_path / "out")
 

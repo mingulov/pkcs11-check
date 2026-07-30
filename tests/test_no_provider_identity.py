@@ -42,7 +42,7 @@ def test_no_deleted_quirk_symbols() -> None:
     banned = re.compile(
         r"\b(_module_quirks|quirk_extras|detect_module|ModuleId|MODULE_QUIRKS|known_quirk_keys)\b"
     )
-    bad = [_rel(p) for p in _files() if banned.search(p.read_text())]
+    bad = [_rel(p) for p in _files() if banned.search(p.read_text(encoding="utf-8"))]
     assert not bad, f"reintroduced quirk-registry references: {bad}"
 
 
@@ -61,7 +61,11 @@ def test_no_literal_discrimination_legs() -> None:
     pat = re.compile(
         r"classify_discrimination\([^)]*\b(valid_accepted|invalid_outcome)\s*=\s*(True|False)\b"
     )
-    bad = [_rel(p) for p in _files() if p.name not in allow and pat.search(p.read_text())]
+    bad = [
+        _rel(p)
+        for p in _files()
+        if p.name not in allow and pat.search(p.read_text(encoding="utf-8"))
+    ]
     assert not bad, f"classify_discrimination called with a literal leg (masking smell): {bad}"
 
 
@@ -71,7 +75,7 @@ def test_no_silent_material_skip() -> None:
     a self-contradiction (lifecycle) instead of failing. It must not appear.
     """
     pat = re.compile(r"if\s+recovered\s+is\s+not\s+None\s*:")
-    bad = [_rel(p) for p in _files() if pat.search(p.read_text())]
+    bad = [_rel(p) for p in _files() if pat.search(p.read_text(encoding="utf-8"))]
     assert not bad, f"silent material-skip idiom: {bad}"
 
 
@@ -88,5 +92,9 @@ def test_no_provider_name_branch_on_module() -> None:
         r"(if|elif)\b.*\b(softhsm|kryoptic|nss|opencryptoki|tpm2|bouncyhsm|qrypto)\b.*"
         r"(p11_config\.module|module\.lower\(\)|in module)"
     )
-    bad = [_rel(p) for p in _files() if p.name not in allow and pat.search(p.read_text())]
+    bad = [
+        _rel(p)
+        for p in _files()
+        if p.name not in allow and pat.search(p.read_text(encoding="utf-8"))
+    ]
     assert not bad, f"provider-name branch on module path: {bad}"

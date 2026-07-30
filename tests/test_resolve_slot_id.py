@@ -50,7 +50,7 @@ def _calls_resolve_slot_id(module_path) -> bool:
     import ast
     import pathlib
 
-    tree = ast.parse(pathlib.Path(module_path).read_text())
+    tree = ast.parse(pathlib.Path(module_path).read_text(encoding="utf-8"))
     return any(
         isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "resolve_slot_id"
         for n in ast.walk(tree)

@@ -26,7 +26,9 @@ TESTCASES_DIR = SRC_DIR / "pkcs11_check" / "testcases"
 def _git_ls_files(*patterns: str) -> list[Path]:
     """Return tracked files matching the given git-ls-files patterns."""
     cmd = ["git", "ls-files", *patterns]
-    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=True, encoding="utf-8"
+    )
     return [REPO_ROOT / p for p in result.stdout.splitlines() if p]
 
 
@@ -49,6 +51,7 @@ def _tracked_files_under(*prefixes: str) -> list[Path]:
         capture_output=True,
         text=True,
         check=True,
+        encoding="utf-8",
     )
     return [REPO_ROOT / p for p in result.stdout.splitlines() if p]
 

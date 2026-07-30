@@ -15,6 +15,7 @@ def test_python_dash_m_runs_cli_help() -> None:
         [sys.executable, "-m", "pkcs11_check", "--help"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     assert "Usage" in result.stdout or "usage" in result.stdout

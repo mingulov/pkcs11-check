@@ -38,7 +38,7 @@ def test_runtime_findings_use_provider_neutral_wording() -> None:
     """Runtime findings should not misattribute behavior to a specific provider."""
     offenders: list[str] = []
     for path in sorted(_TESTCASE_ROOT.rglob("*.py")):
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and _call_name(node) in {

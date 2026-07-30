@@ -62,7 +62,7 @@ def test_advertised_acvp_aes_runtime_rejections_are_not_skips() -> None:
     """After has_mechanism passes, runtime mechanism rejection is a finding."""
     offenders: list[str] = []
     for path in sorted(_ACVP_AES_ROOT.rglob("*.py")):
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or _call_name(node) != "pytest.skip":

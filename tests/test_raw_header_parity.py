@@ -41,17 +41,21 @@ class TestTypesParity:
     """Every constant and struct from the reference must exist in current output."""
 
     def test_all_reference_constants_present(self) -> None:
-        ref = _extract_constants(REF_TYPES.read_text())
+        ref = _extract_constants(REF_TYPES.read_text(encoding="utf-8"))
         cur = _extract_constants(
-            (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text()
+            (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text(
+                encoding="utf-8"
+            )
         )
         missing = ref - cur
         assert not missing, f"Missing constants: {sorted(missing)[:20]}"
 
     def test_all_reference_structs_present(self) -> None:
-        ref = _extract_classes(REF_TYPES.read_text())
+        ref = _extract_classes(REF_TYPES.read_text(encoding="utf-8"))
         cur = _extract_classes(
-            (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text()
+            (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text(
+                encoding="utf-8"
+            )
         )
         missing = ref - cur
         assert not missing, f"Missing structs: {sorted(missing)}"
@@ -71,17 +75,21 @@ class TestMetadataParity:
     """Every function from the reference must exist in current output."""
 
     def test_all_reference_functions_present(self) -> None:
-        ref = _extract_function_sigs(REF_METADATA.read_text())
+        ref = _extract_function_sigs(REF_METADATA.read_text(encoding="utf-8"))
         cur = _extract_function_sigs(
-            (Path(__file__).parents[1] / "src/pkcs11_check/raw/metadata_std.py").read_text()
+            (Path(__file__).parents[1] / "src/pkcs11_check/raw/metadata_std.py").read_text(
+                encoding="utf-8"
+            )
         )
         missing = ref - cur
         assert not missing, f"Missing functions: {sorted(missing)}"
 
     def test_function_count_not_regressed(self) -> None:
-        ref = _extract_function_sigs(REF_METADATA.read_text())
+        ref = _extract_function_sigs(REF_METADATA.read_text(encoding="utf-8"))
         cur = _extract_function_sigs(
-            (Path(__file__).parents[1] / "src/pkcs11_check/raw/metadata_std.py").read_text()
+            (Path(__file__).parents[1] / "src/pkcs11_check/raw/metadata_std.py").read_text(
+                encoding="utf-8"
+            )
         )
         assert len(cur) >= len(ref), f"Function count regressed: {len(cur)} < {len(ref)}"
 
@@ -90,7 +98,9 @@ class TestTypedConstants:
     """Verify all generated constants use typed families, not plain int."""
 
     def test_no_plain_int_constants(self) -> None:
-        text = (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text()
+        text = (Path(__file__).parents[1] / "src/pkcs11_check/raw/types_std.py").read_text(
+            encoding="utf-8"
+        )
         # Match lines like "CKA_TOKEN = 0x00000001" (plain int, no class wrapper)
         plain_pattern = re.compile(r"^(CK[A-Z_]+)\s*=\s*0x[0-9a-fA-F]+$", re.MULTILINE)
         plain_ints = plain_pattern.findall(text)

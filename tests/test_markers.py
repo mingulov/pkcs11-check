@@ -45,7 +45,9 @@ def test_no_testcase_uses_interface_version_markers() -> None:
     # `test_authenticated_wrap_requires_v32` is intentionally retained and must not trip this.
     pattern = re.compile(r"mark\.requires_v3[012]")
     offenders = [
-        str(p.relative_to(root)) for p in root.rglob("test_*.py") if pattern.search(p.read_text())
+        str(p.relative_to(root))
+        for p in root.rglob("test_*.py")
+        if pattern.search(p.read_text(encoding="utf-8"))
     ]
     assert offenders == [], f"interface-version markers must not be used: {offenders}"
 

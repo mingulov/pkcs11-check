@@ -18,7 +18,8 @@ def test_ingest_and_drain_propagate_call_log_ok(tmp_path) -> None:
                 "mechanism_counts": {},
                 "call_log_ok": {"C_Sign": 4},  # 4 of 5 signs returned CKR_OK
             }
-        )
+        ),
+        encoding="utf-8",
     )
     # Drain any residue first so this test is order-independent.
     pre.get_preamble_subprocess_coverage()
@@ -38,7 +39,9 @@ def test_ingest_and_drain_propagate_call_log_ok(tmp_path) -> None:
 def test_missing_call_log_ok_key_is_tolerated(tmp_path) -> None:
     cov = tmp_path / "cov.json"
     # No "call_log_ok" key at all -> tolerated as empty.
-    cov.write_text(json.dumps({"call_log": {"C_Sign": 1}, "mechanism_counts": {}}))
+    cov.write_text(
+        json.dumps({"call_log": {"C_Sign": 1}, "mechanism_counts": {}}), encoding="utf-8"
+    )
     pre.get_preamble_subprocess_coverage()
     pre.ingest_subprocess_coverage(str(cov))
     func, _mech, func_ok = pre.get_preamble_subprocess_coverage()

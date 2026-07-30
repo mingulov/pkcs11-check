@@ -24,7 +24,7 @@ def _write_report(path, nodeid_outcomes: dict[str, str]) -> None:
                 {"$report_type": "TestReport", "when": "call", "outcome": outcome, "nodeid": nodeid}
             )
         )
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def test_differential_cli_flags_kat_odd_one_out(tmp_path) -> None:

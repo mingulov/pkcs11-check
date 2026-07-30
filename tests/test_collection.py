@@ -33,7 +33,8 @@ def test_collect_pytest_item_metadata_reports_markers(tmp_path: Path) -> None:
         "import pytest\n"
         "pytestmark = [pytest.mark.subprocess_per_test, pytest.mark.smoke]\n\n"
         "def test_case():\n"
-        "    assert True\n"
+        "    assert True\n",
+        encoding="utf-8",
     )
 
     items = collect_pytest_item_metadata([str(target)], [])

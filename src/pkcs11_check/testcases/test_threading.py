@@ -66,7 +66,9 @@ def _mint_throwaway_token(tmp_path: Path) -> str | None:
     tokens = tmp_path / "tokens"
     tokens.mkdir(parents=True, exist_ok=True)
     mint_cmd = mint_cmd_tmpl.format(token_dir=str(tmp_path), conf_path=str(conf))
-    proc = subprocess.run(shell_invocation(mint_cmd), capture_output=True, text=True)
+    proc = subprocess.run(
+        shell_invocation(mint_cmd), capture_output=True, text=True, encoding="utf-8"
+    )
     return str(conf) if proc.returncode == 0 else None
 
 
@@ -188,6 +190,7 @@ def _run_threaded_workload(
             [sys.executable, "-c", _WORKLOAD_SCRIPT],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout,
             env=env,
         )

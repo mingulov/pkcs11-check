@@ -69,13 +69,13 @@ def test_framework_version_falls_back_to_package_version() -> None:
 def test_read_build_provenance_absent_or_malformed(tmp_path: Path) -> None:
     assert P.read_build_provenance(tmp_path / "nope.json") == {}
     bad = tmp_path / "bad.json"
-    bad.write_text("{not json")
+    bad.write_text("{not json", encoding="utf-8")
     assert P.read_build_provenance(bad) == {}
 
 
 def test_read_build_provenance_loads_dict(tmp_path: Path) -> None:
     good = tmp_path / "build-provenance.json"
-    good.write_text('{"provider": {"name": "softhsm2"}}')
+    good.write_text('{"provider": {"name": "softhsm2"}}', encoding="utf-8")
     assert P.read_build_provenance(good) == {"provider": {"name": "softhsm2"}}
 
 
@@ -110,7 +110,8 @@ def test_assemble_merges_all_sources(tmp_path: Path) -> None:
     build.write_text(
         '{"provider": {"name": "softhsm2", "commit": "8d4f1a2"},'
         ' "crypto_backend": {"name": "openssl", "version": "3.6.3"},'
-        ' "extra": {"note": "custom"}}'
+        ' "extra": {"note": "custom"}}',
+        encoding="utf-8",
     )
     (tmp_path / "wycheproof").mkdir()
     manifest = {

@@ -40,7 +40,8 @@ def _write_raw_probe(tmp_path: Path) -> Path:
             if __name__ == "__main__":
                 probe_main_raw(run)
             """
-        )
+        ),
+        encoding="utf-8",
     )
     return probe
 
@@ -48,7 +49,7 @@ def _write_raw_probe(tmp_path: Path) -> Path:
 def test_raw_session_probe_loads_and_runs(tmp_path: Path, mock_module_path: str) -> None:
     """probe_main_raw loads the CDLL, bootstraps the function list, and runs run_fn."""
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_module_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}), encoding="utf-8")
     probe = _write_raw_probe(tmp_path)
 
     proc = subprocess.run(
@@ -57,6 +58,7 @@ def test_raw_session_probe_loads_and_runs(tmp_path: Path, mock_module_path: str)
         text=True,
         env={"PATH": ""},
         timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     assert "RAW_OK:True" in proc.stdout
@@ -70,7 +72,7 @@ def test_raw_session_probe_writes_coverage(tmp_path: Path, mock_module_path: str
     the content — an empty call_log is the legitimate, expected value for this path.
     """
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_module_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}), encoding="utf-8")
     probe = _write_raw_probe(tmp_path)
     cov_path = tmp_path / "cov.json"
 
@@ -80,11 +82,12 @@ def test_raw_session_probe_writes_coverage(tmp_path: Path, mock_module_path: str
         text=True,
         env={"PATH": "", "_P11CHECK_SUBPROCESS_COVERAGE": str(cov_path)},
         timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
 
     assert cov_path.exists(), "coverage file was not written by probe_main_raw"
-    data = json.loads(cov_path.read_text())
+    data = json.loads(cov_path.read_text(encoding="utf-8"))
 
     # Shape check (I6): both keys must be present.
     assert "call_log" in data, f"missing 'call_log' key; got: {list(data)}"
@@ -108,7 +111,7 @@ def test_raw_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str)
     The test verifies the marker is present and the JSON payload is a list.
     """
     params = tmp_path / "params.json"
-    params.write_text(json.dumps({"module_path": mock_module_path}))
+    params.write_text(json.dumps({"module_path": mock_module_path}), encoding="utf-8")
     probe = _write_raw_probe(tmp_path)
 
     proc = subprocess.run(
@@ -117,6 +120,7 @@ def test_raw_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str)
         text=True,
         env={"PATH": "", "PKCS11_CHECK_RV_TRACE": "1"},
         timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
 

@@ -67,7 +67,9 @@ def test_hollow_oracle_end_to_end(pytester: pytest.Pytester) -> None:
     result.assert_outcomes(passed=26)
 
     log = pytester.path / "report.jsonl"
-    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    records = [
+        json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     passed_calls = [
         r
         for r in records

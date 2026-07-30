@@ -50,7 +50,7 @@ def test_two_records_same_key_merge_into_one_group(tmp_path: Path) -> None:
         _test_report("tests/test_rsa.py::test_a", [r1]),
         _test_report("tests/test_rsa.py::test_b", [r2]),
     ]
-    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
     groups = extract_groups(path, crashes=[])
 
@@ -80,7 +80,7 @@ def test_distinct_keys_make_distinct_groups(tmp_path: Path) -> None:
         _test_report("tests/test_x.py::t1", [a]),
         _test_report("tests/test_x.py::t2", [b]),
     ]
-    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
     groups = extract_groups(path, crashes=[])
     assert len(groups) == 2
@@ -88,7 +88,10 @@ def test_distinct_keys_make_distinct_groups(tmp_path: Path) -> None:
 
 def test_crashes_are_merged_as_findings(tmp_path: Path) -> None:
     path = tmp_path / "report.jsonl"
-    path.write_text(json.dumps(_test_report("tests/test_x.py::t1", [_classification()])) + "\n")
+    path.write_text(
+        json.dumps(_test_report("tests/test_x.py::t1", [_classification()])) + "\n",
+        encoding="utf-8",
+    )
     crash = {
         "schema": 1,
         "reason": "crash",
@@ -124,7 +127,7 @@ def test_non_call_phase_reports_ignored(tmp_path: Path) -> None:
         "user_properties": [["pkcs11_classification", [_classification()]]],
     }
     call = _test_report("tests/test_x.py::t1", [_classification()])
-    path.write_text(json.dumps(setup) + "\n" + json.dumps(call) + "\n")
+    path.write_text(json.dumps(setup) + "\n" + json.dumps(call) + "\n", encoding="utf-8")
 
     groups = extract_groups(path, crashes=[])
     assert len(groups) == 1
@@ -139,7 +142,7 @@ def test_params_aggregate_into_param_breakdown(tmp_path: Path) -> None:
         _test_report("tests/test_ec.py::b", [_classification(params={"curve": "brainpoolP224r1"})]),
         _test_report("tests/test_ec.py::c", [_classification(params={"curve": "secp256r1"})]),
     ]
-    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
     groups = extract_groups(path, crashes=[])
     assert len(groups) == 1
@@ -148,6 +151,8 @@ def test_params_aggregate_into_param_breakdown(tmp_path: Path) -> None:
 
 def test_no_params_yields_empty_param_breakdown(tmp_path: Path) -> None:
     path = tmp_path / "report.jsonl"
-    path.write_text(json.dumps(_test_report("t.py::a", [_classification()])) + "\n")
+    path.write_text(
+        json.dumps(_test_report("t.py::a", [_classification()])) + "\n", encoding="utf-8"
+    )
     groups = extract_groups(path, crashes=[])
     assert groups[0]["param_breakdown"] == {}

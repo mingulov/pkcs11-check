@@ -137,5 +137,5 @@ def test_manifest_serialization_roundtrip_with_and_without_functions(tmp_path: P
         "mechanisms": [],
     }
     legacy_path = tmp_path / "legacy.json"
-    legacy_path.write_text(json.dumps(legacy))
+    legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
     assert load_manifest(legacy_path).functions == []

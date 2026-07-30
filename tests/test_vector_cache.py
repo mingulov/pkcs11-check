@@ -26,14 +26,14 @@ _DIRECT_JSON_LOAD_EXCEPTIONS = {
 
 def _write(tmp_path: Path, obj: object) -> Path:
     p = tmp_path / "vec.json"
-    p.write_text(json.dumps(obj))
+    p.write_text(json.dumps(obj), encoding="utf-8")
     return p
 
 
 def test_identical_to_json_load(tmp_path: Path) -> None:
     obj = {"testGroups": [{"tests": [{"tcId": 1, "msg": "ab"}], "type": "x"}], "n": 3.5}
     src = _write(tmp_path, obj)
-    assert load_json_cached(src) == obj == json.loads(src.read_text())
+    assert load_json_cached(src) == obj == json.loads(src.read_text(encoding="utf-8"))
 
 
 def test_cache_file_created_and_reused(tmp_path: Path) -> None:
@@ -52,7 +52,7 @@ def test_stale_cache_invalidated_on_content_change(tmp_path: Path) -> None:
     assert load_json_cached(src) == {"v": 1}
     # Rewrite with different content + bump mtime; cache must NOT hide the change.
     time.sleep(0.01)
-    src.write_text(json.dumps({"v": 2}))
+    src.write_text(json.dumps({"v": 2}), encoding="utf-8")
     os.utime(src, None)
     assert load_json_cached(src) == {"v": 2}
 

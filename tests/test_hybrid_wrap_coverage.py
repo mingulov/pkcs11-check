@@ -11,7 +11,7 @@ AUTH_WRAP = REPO / "src" / "pkcs11_check" / "testcases" / "test_authenticated_wr
 
 
 def _class_source(path: Path, class_name: str) -> str:
-    source = path.read_text()
+    source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == class_name:
@@ -32,7 +32,7 @@ def test_rsa_aes_key_wrap_has_observed_tamper_classifier() -> None:
 
 def test_ecdh_aes_key_wrap_covers_oasis_family() -> None:
     """CK_ECDH_AES_KEY_WRAP_PARAMS applies to deprecated, cofactor, and X mechanisms."""
-    source = AUTH_WRAP.read_text()
+    source = AUTH_WRAP.read_text(encoding="utf-8")
     cls = _class_source(AUTH_WRAP, "TestEcdhAesKeyWrap")
 
     assert "_ECDH_AES_KW_CASES" in cls

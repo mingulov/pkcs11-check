@@ -22,7 +22,8 @@ def test_state_command_renders_state_file(tmp_path: Path) -> None:
     {"target": "b.py", "status": "crashed", "returncode": -11, "duration_s": 1.4}
   ]
 }
-"""
+""",
+        encoding="utf-8",
     )
 
     result = runner.invoke(app, ["state", str(state_file)])
@@ -44,7 +45,8 @@ def test_state_command_renders_policy_file(tmp_path: Path) -> None:
     }
   }
 }
-"""
+""",
+        encoding="utf-8",
     )
 
     result = runner.invoke(app, ["state", str(policy_file)])
@@ -56,7 +58,7 @@ def test_state_command_renders_policy_file(tmp_path: Path) -> None:
 
 def test_state_command_json_output_echoes_file(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
-    state_file.write_text('{"fingerprint":"abc123","units":[],"results":[]}\n')
+    state_file.write_text('{"fingerprint":"abc123","units":[],"results":[]}\n', encoding="utf-8")
 
     result = runner.invoke(app, ["state", "--output", "json", str(state_file)])
 

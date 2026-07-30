@@ -11,7 +11,7 @@ from pkcs11_check.testcases.data import WYCHEPROOF_DIR
 
 
 def _first_valid_public_key(filename: str) -> bytes:
-    data = json.loads((Path(WYCHEPROOF_DIR) / filename).read_text())
+    data = json.loads((Path(WYCHEPROOF_DIR) / filename).read_text(encoding="utf-8"))
     for group in data["testGroups"]:
         for test in group["tests"]:
             if test.get("result") == "valid":

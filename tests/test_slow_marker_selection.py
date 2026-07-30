@@ -41,6 +41,7 @@ def _collect(markexpr: str, *targets: str) -> list[str]:
         capture_output=True,
         text=True,
         cwd=REPO,
+        encoding="utf-8",
     )
     return [line for line in proc.stdout.splitlines() if "::" in line]
 

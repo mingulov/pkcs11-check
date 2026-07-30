@@ -9,7 +9,7 @@ from pkcs11_check.raw.types_std import CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_
 
 def test_verify_state_uses_named_signature_ckrs() -> None:
     """Verify state tests must use generated CKR constants, not stale magic values."""
-    source = Path("src/pkcs11_check/testcases/test_mech_state.py").read_text()
+    source = Path("src/pkcs11_check/testcases/test_mech_state.py").read_text(encoding="utf-8")
 
     assert "CKR_SIGNATURE_INVALID" in source
     assert "CKR_SIGNATURE_LEN_RANGE" in source

@@ -16,19 +16,19 @@ from pkcs11_check.core.merge import merge_results_payloads
 
 def test_postprocess_includes_provenance(tmp_path: Path) -> None:
     jsonl = tmp_path / "report.jsonl"
-    jsonl.write_text("")  # empty run is fine for this structural test
+    jsonl.write_text("", encoding="utf-8")  # empty run is fine for this structural test
     out = tmp_path / "results.json"
     postprocess_jsonl_to_unified(jsonl, out, provenance={"framework": {"version": "v1"}})
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["provenance"] == {"framework": {"version": "v1"}}
 
 
 def test_postprocess_omits_provenance_when_none(tmp_path: Path) -> None:
     jsonl = tmp_path / "report.jsonl"
-    jsonl.write_text("")
+    jsonl.write_text("", encoding="utf-8")
     out = tmp_path / "results.json"
     postprocess_jsonl_to_unified(jsonl, out)
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     assert "provenance" not in payload
 
 
@@ -77,7 +77,7 @@ def test_write_isolated_json_report_includes_provenance(tmp_path: Path) -> None:
     state = _empty_state()
     out = tmp_path / "results.json"
     write_isolated_json_report(out, state, provenance=_SAMPLE_PROVENANCE)
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["provenance"] == _SAMPLE_PROVENANCE
 
 
@@ -86,5 +86,5 @@ def test_write_isolated_json_report_omits_provenance_when_none(tmp_path: Path) -
     state = _empty_state()
     out = tmp_path / "results.json"
     write_isolated_json_report(out, state)
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     assert "provenance" not in payload

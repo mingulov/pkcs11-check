@@ -59,7 +59,11 @@ def test_no_cross_item_classification_leak(pytester: pytest.Pytester) -> None:
     import json
 
     report_log = pytester.path / "report.jsonl"
-    lines = [json.loads(line) for line in report_log.read_text().splitlines() if line.strip()]
+    lines = [
+        json.loads(line)
+        for line in report_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     call_lines = [ln for ln in lines if ln.get("when") == "call"]
     assert len(call_lines) == 2, f"expected 2 call records, got {len(call_lines)}"
 

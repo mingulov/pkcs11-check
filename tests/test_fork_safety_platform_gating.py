@@ -42,7 +42,7 @@ def _calls_os_fork(func: ast.FunctionDef) -> bool:
 
 def _fork_probe_keys() -> set[str]:
     """Dispatch keys in the probe whose handler calls ``os.fork``."""
-    tree = ast.parse(_PROBE.read_text())
+    tree = ast.parse(_PROBE.read_text(encoding="utf-8"))
     fork_funcs = {
         node.name
         for node in ast.walk(tree)
@@ -87,7 +87,7 @@ def test_fork_based_tests_skip_without_os_fork() -> None:
     # Guard against a vacuous pass: the probe must actually host fork handlers.
     assert fork_keys, "expected the subprocess_safety probe to expose fork-using handlers"
 
-    tree = ast.parse(_PARENT.read_text())
+    tree = ast.parse(_PARENT.read_text(encoding="utf-8"))
     offenders: list[str] = []
 
     for cls in ast.walk(tree):

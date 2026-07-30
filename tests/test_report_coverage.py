@@ -269,7 +269,7 @@ def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
         ),
     ]
     report = tmp_path / "report.jsonl"
-    report.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    report.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     results = tmp_path / "results.json"
     results.write_text(
         json.dumps(
@@ -300,7 +300,8 @@ def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     quality = tmp_path / "quality.json"
     quality.write_text(
@@ -315,7 +316,8 @@ def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     rc = main(
@@ -331,7 +333,7 @@ def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
         ]
     )
     assert rc == 0
-    md = (tmp_path / "out" / "demo.md").read_text()
+    md = (tmp_path / "out" / "demo.md").read_text(encoding="utf-8")
 
     # health + coverage
     assert "passed 900/1000 (90%)" in md

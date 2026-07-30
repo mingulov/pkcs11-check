@@ -54,7 +54,7 @@ def test_kwp_wrap_setup_passes_output_size_hint() -> None:
     import ast
     from pathlib import Path
 
-    src = Path("src/pkcs11_check/testcases/_probes/error_path_kwp.py").read_text()
+    src = Path("src/pkcs11_check/testcases/_probes/error_path_kwp.py").read_text(encoding="utf-8")
     # The probe child must call wrap_key_recipe with the hint.
     assert "output_size_hint=64" in src
     tree = ast.parse(src)

@@ -104,7 +104,7 @@ def _call_target_name(node: ast.Call) -> str | None:
 
 def _scan_file(path: pathlib.Path) -> list[str]:
     """Return human-readable offender descriptions for one file."""
-    tree = ast.parse(path.read_text(), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     offenders: list[str] = []
     rel = path.relative_to(_TESTCASES)
     exec_names = _exec_alias_names(tree)
@@ -170,7 +170,7 @@ def test_sanctioned_files_still_contain_an_inline_child() -> None:
         if not path.exists():
             stale.append(f"{name}: sanctioned file no longer exists")
             continue
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         if not any(_list_is_inline_python_c(n) for n in ast.walk(tree)):
             stale.append(f"{name}: no inline `sys.executable -c` child -- remove from _SANCTIONED")
     assert not stale, "stale entries in _SANCTIONED:\n" + "\n".join(stale)

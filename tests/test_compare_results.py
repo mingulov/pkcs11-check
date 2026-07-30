@@ -87,7 +87,8 @@ def test_status_class_covers_every_framework_unit_status() -> None:
 
 def _write(p: Path, units: list[tuple[str, str]], summary: dict[str, int]) -> None:
     p.write_text(
-        json.dumps({"units": [{"target": t, "status": s} for t, s in units], "summary": summary})
+        json.dumps({"units": [{"target": t, "status": s} for t, s in units], "summary": summary}),
+        encoding="utf-8",
     )
 
 

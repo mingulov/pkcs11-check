@@ -104,7 +104,7 @@ _FIXTURE_RECORDS: list[dict] = [
 
 def _write_fixture(tmp_path: Path) -> Path:
     p = tmp_path / "report.jsonl"
-    p.write_text("".join(json.dumps(r) + "\n" for r in _FIXTURE_RECORDS))
+    p.write_text("".join(json.dumps(r) + "\n" for r in _FIXTURE_RECORDS), encoding="utf-8")
     return p
 
 
@@ -142,7 +142,7 @@ def test_extract_unit_report_records_streams_without_load_all(
         },
         {"$report_type": "SessionFinish"},
     ]
-    p.write_text("".join(json.dumps(record) + "\n" for record in records))
+    p.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
 
     def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
         pytest.fail("_extract_unit_report_records_from_jsonl must stream records")
@@ -227,7 +227,7 @@ def test_coverage_merges_two_reports_exactly(tmp_path: Path) -> None:
 
 def test_coverage_none_when_no_coverage_report(tmp_path: Path) -> None:
     p = tmp_path / "r.jsonl"
-    p.write_text(json.dumps({"$report_type": "TestReport", "nodeid": "x"}) + "\n")
+    p.write_text(json.dumps({"$report_type": "TestReport", "nodeid": "x"}) + "\n", encoding="utf-8")
     assert extract_coverage_from_jsonl(p) is None
 
 

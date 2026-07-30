@@ -50,12 +50,12 @@ def test_load_disabled_baseline_raises_for_missing_file(tmp_path: Path) -> None:
 
 def test_load_disabled_baseline_fingerprint_changes_with_content(tmp_path: Path) -> None:
     path = tmp_path / "disabled.txt"
-    path.write_text("a.py::test_one\n")
+    path.write_text("a.py::test_one\n", encoding="utf-8")
 
     first = load_disabled_baseline(path)
     assert isinstance(first, DisabledBaseline)
 
-    path.write_text("a.py::test_one\nb.py::test_two\n")
+    path.write_text("a.py::test_one\nb.py::test_two\n", encoding="utf-8")
     second = load_disabled_baseline(path)
     assert isinstance(second, DisabledBaseline)
 
@@ -191,7 +191,8 @@ def test_collect_disabled_candidates_from_report_jsonl_supports_multiple_outcome
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     candidates, manual = collect_disabled_candidates(
@@ -222,7 +223,8 @@ def test_collect_disabled_candidates_streams_report_jsonl(
                 "outcome": "failed",
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     def _load_all_forbidden(_path: Path) -> list[dict[str, object]]:
@@ -260,7 +262,8 @@ def test_collect_disabled_candidates_preserves_parametrized_nodeids_sorted(tmp_p
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"failed"})
@@ -314,7 +317,8 @@ def test_collect_disabled_candidates_recovers_crash_culprit_from_results_json(
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
     (artifact_dir / "results.json").write_text(
         json.dumps(
@@ -326,7 +330,8 @@ def test_collect_disabled_candidates_recovers_crash_culprit_from_results_json(
                     }
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"crashed"})
@@ -340,7 +345,7 @@ def test_collect_disabled_candidates_reports_manual_review_when_culprit_missing(
 ) -> None:
     artifact_dir = tmp_path / "artifact"
     artifact_dir.mkdir()
-    (artifact_dir / "report.jsonl").write_text("")
+    (artifact_dir / "report.jsonl").write_text("", encoding="utf-8")
     (artifact_dir / "results.json").write_text(
         json.dumps(
             {
@@ -351,7 +356,8 @@ def test_collect_disabled_candidates_reports_manual_review_when_culprit_missing(
                     }
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     candidates, manual = collect_disabled_candidates([artifact_dir], outcomes={"timeout"})
@@ -386,7 +392,8 @@ def test_collect_disabled_candidates_reads_explicit_crash_and_timeout_tests_from
                     }
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     candidates, manual = collect_disabled_candidates(
@@ -427,7 +434,8 @@ def test_collect_disabled_candidate_review_records_include_sources_and_inference
                 ),
             ]
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
     (artifact_dir / "results.json").write_text(
         json.dumps(
@@ -445,7 +453,8 @@ def test_collect_disabled_candidate_review_records_include_sources_and_inference
                     }
                 ]
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     records, manual = collect_disabled_candidate_review_records(
@@ -490,25 +499,25 @@ def test_collect_disabled_candidate_review_records_include_sources_and_inference
 
 def test_extract_required_mechanisms_single(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
-    f.write_text('REQUIRED_MECHANISMS = ["AES_CCM"]\n')
+    f.write_text('REQUIRED_MECHANISMS = ["AES_CCM"]\n', encoding="utf-8")
     assert extract_required_mechanisms(str(f)) == ["AES_CCM"]
 
 
 def test_extract_required_mechanisms_multiple(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
-    f.write_text('REQUIRED_MECHANISMS = ["AES_KEY_WRAP", "AES_KEY_WRAP_KWP"]\n')
+    f.write_text('REQUIRED_MECHANISMS = ["AES_KEY_WRAP", "AES_KEY_WRAP_KWP"]\n', encoding="utf-8")
     assert extract_required_mechanisms(str(f)) == ["AES_KEY_WRAP", "AES_KEY_WRAP_KWP"]
 
 
 def test_extract_required_mechanisms_absent(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
-    f.write_text("pytestmark = [pytest.mark.kat]\n")
+    f.write_text("pytestmark = [pytest.mark.kat]\n", encoding="utf-8")
     assert extract_required_mechanisms(str(f)) is None
 
 
 def test_extract_required_mechanisms_empty_list(tmp_path: Path) -> None:
     f = tmp_path / "test_example.py"
-    f.write_text("REQUIRED_MECHANISMS = []\n")
+    f.write_text("REQUIRED_MECHANISMS = []\n", encoding="utf-8")
     assert extract_required_mechanisms(str(f)) is None
 
 

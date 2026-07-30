@@ -133,7 +133,7 @@ def test_duration_by_unit_folds_per_test_nodeids(tmp_path: Path) -> None:
         ]
     }
     path = tmp_path / "results.json"
-    path.write_text(json.dumps(results))
+    path.write_text(json.dumps(results), encoding="utf-8")
     durs = duration_by_unit_from_results(path)
     assert durs == {"a.py": 7.0, "b.py": 1.0}
 
@@ -245,9 +245,14 @@ def _write_shard(
 ) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / "results.json").write_text(
-        json.dumps({"tool": "pkcs11-check", "kind": "test-run", "summary": summary, "units": units})
+        json.dumps(
+            {"tool": "pkcs11-check", "kind": "test-run", "summary": summary, "units": units}
+        ),
+        encoding="utf-8",
     )
-    (d / "report.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    (d / "report.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+    )
 
 
 def test_merge_shard_dirs_unions_coverage_and_sums_results(tmp_path: Path) -> None:
@@ -290,7 +295,7 @@ def test_merge_shard_dirs_unions_coverage_and_sums_results(tmp_path: Path) -> No
     assert (out / "quality.json").exists()
 
     # coverage: union across shards
-    cov = json.loads((out / "coverage.json").read_text())
+    cov = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
     assert set(cov["function_coverage"]["called_names"]) == {"C_Encrypt", "C_Decrypt"}
     assert set(cov["mechanism_coverage"]["invoked_names"]) == {"CKM_AES_CBC", "CKM_AES_GCM"}
     # both available mechanisms were invoked across shards -> none not-invoked
@@ -326,7 +331,7 @@ def test_merge_shard_dirs_preserves_file_skip_quality_accounting(tmp_path: Path)
     out = tmp_path / "merged"
     merge_shard_dirs([s0], out)
 
-    quality = json.loads((out / "quality.json").read_text())
+    quality = json.loads((out / "quality.json").read_text(encoding="utf-8"))
     assert quality["file_skipped_units"] == [
         {"target": "test_cctv_ed25519.py", "reason": "EDDSA not supported by module"}
     ]
@@ -361,13 +366,14 @@ def test_merge_shard_dirs_salvages_compliance_notes_from_report_jsonl(
                 ],
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     out = tmp_path / "merged"
     merge_shard_dirs([s0], out)
 
-    merged = json.loads((out / "results.json").read_text())
+    merged = json.loads((out / "results.json").read_text(encoding="utf-8"))
     assert merged["units"][0]["compliance_notes"] == [
         {
             "description": "validation policy accepted",
@@ -417,7 +423,10 @@ def test_merge_shard_dirs_promotes_teardown_trace_to_failed_call_report(tmp_path
 
     call_report = next(
         record
-        for record in (json.loads(line) for line in (out / "report.jsonl").read_text().splitlines())
+        for record in (
+            json.loads(line)
+            for line in (out / "report.jsonl").read_text(encoding="utf-8").splitlines()
+        )
         if record.get("$report_type") == "TestReport" and record.get("when") == "call"
     )
     assert dict(call_report["user_properties"])["pkcs11_rv_trace"] == trace
@@ -464,7 +473,7 @@ def test_merge_shard_dirs_promotes_subprocess_marker_to_failed_call_report(
     out = tmp_path / "merged"
     merge_shard_dirs([s0], out)
 
-    call_report = json.loads((out / "report.jsonl").read_text().splitlines()[0])
+    call_report = json.loads((out / "report.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert dict(call_report["user_properties"])["pkcs11_rv_trace"] == trace
 
 
@@ -509,7 +518,7 @@ def test_merge_shard_dirs_replaces_empty_trace_with_subprocess_marker(
     out = tmp_path / "merged"
     merge_shard_dirs([s0], out)
 
-    call_report = json.loads((out / "report.jsonl").read_text().splitlines()[0])
+    call_report = json.loads((out / "report.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert dict(call_report["user_properties"])["pkcs11_rv_trace"] == trace
 
 
@@ -543,5 +552,5 @@ def test_merge_shard_dirs_round_trip_identity(tmp_path: Path) -> None:
     assert merged["summary"]["passed"] == full_summary["passed"]
     assert merged["summary"]["failed"] == full_summary["failed"]
     assert {u["target"] for u in merged["units"]} == {"a.py", "b.py", "c.py"}
-    cov = json.loads((out / "coverage.json").read_text())
+    cov = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
     assert set(cov["function_coverage"]["called_names"]) == {"C_Encrypt", "C_Sign"}

@@ -197,7 +197,7 @@ class TestInitPINErrors:
         # This test writes a file-based uninitialized-token config and therefore
         # assumes the configured throwaway module uses file-based token storage.
         conf_path = os.path.join(token_dir, "module.conf")
-        with open(conf_path, "w") as f:
+        with open(conf_path, "w", encoding="utf-8") as f:
             f.write(f"directories.tokendir = {token_dir}/tokens\n")
             f.write("objectstore.backend = file\n")
         os.makedirs(os.path.join(token_dir, "tokens"), exist_ok=True)

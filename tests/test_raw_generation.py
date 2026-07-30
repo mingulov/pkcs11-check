@@ -19,14 +19,16 @@ def test_vendored_header_exists() -> None:
 
 def test_vendored_header_local_dependencies_exist() -> None:
     header = Path("third_party/pkcs11-headers/3.2/pkcs11.h")
-    includes = re.findall(r'^#include "([^"]+)"$', header.read_text(), flags=re.MULTILINE)
+    includes = re.findall(
+        r'^#include "([^"]+)"$', header.read_text(encoding="utf-8"), flags=re.MULTILINE
+    )
     for include in includes:
         assert (header.parent / include).is_file()
 
 
 def test_vendored_header_x942_mqv_pointer_field_names_match_oasis() -> None:
     header = Path("third_party/pkcs11-headers/3.2/pkcs11.h")
-    text = header.read_text()
+    text = header.read_text(encoding="utf-8")
     match = re.search(
         r"struct CK_X9_42_MQV_DERIVE_PARAMS \{(?P<body>.*?)\};",
         text,
@@ -52,9 +54,9 @@ def test_generator_writes_explicit_outputs(tmp_path: Path) -> None:
     from scripts.generate_raw_standard import generate_raw_standard
 
     header = tmp_path / "pkcs11.h"
-    header.write_text('#include "pkcs11t.h"\n#include "pkcs11f.h"\n')
-    (tmp_path / "pkcs11t.h").write_text("typedef int dummy_t;\n")
-    (tmp_path / "pkcs11f.h").write_text("typedef int dummy_f;\n")
+    header.write_text('#include "pkcs11t.h"\n#include "pkcs11f.h"\n', encoding="utf-8")
+    (tmp_path / "pkcs11t.h").write_text("typedef int dummy_t;\n", encoding="utf-8")
+    (tmp_path / "pkcs11f.h").write_text("typedef int dummy_f;\n", encoding="utf-8")
 
     out_types = tmp_path / "types_std.py"
     out_metadata = tmp_path / "metadata_std.py"
@@ -62,11 +64,11 @@ def test_generator_writes_explicit_outputs(tmp_path: Path) -> None:
     generate_raw_standard(header=header, out_types=out_types, out_metadata=out_metadata)
 
     # Generator runs ruff format, so check content not exact formatting
-    types_content = out_types.read_text()
+    types_content = out_types.read_text(encoding="utf-8")
     assert "STANDARD_GENERATED = True" in types_content
     assert "from __future__ import annotations" in types_content
 
-    metadata_content = out_metadata.read_text()
+    metadata_content = out_metadata.read_text(encoding="utf-8")
     assert '"functions": 0' in metadata_content
     assert "from __future__ import annotations" in metadata_content
 
@@ -78,10 +80,7 @@ def test_generator_script_works_outside_repo_root(tmp_path: Path) -> None:
     workdir.mkdir()
 
     result = subprocess.run(
-        [sys.executable, str(script)],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
+        [sys.executable, str(script)], cwd=workdir, capture_output=True, text=True, encoding="utf-8"
     )
 
     assert result.returncode == 0, result.stderr

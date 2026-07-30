@@ -1267,6 +1267,7 @@ def test_sdist_and_wheel_ship_generated_raw_modules_without_the_vendored_header(
         cwd=repo_root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
     assert result.returncode == 0, result.stderr

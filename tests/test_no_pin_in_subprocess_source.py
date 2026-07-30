@@ -90,7 +90,7 @@ def _classify(expr: ast.expr) -> str | None:
 
 
 def _scan_file(path: pathlib.Path) -> list[str]:
-    tree = ast.parse(path.read_text(), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     offenders: list[str] = []
     rel = path.relative_to(_TESTCASES)
 
