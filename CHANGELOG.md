@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.1.8] - 2026-07-30
+
+A portability and oracles release. pkcs11-check now runs on Windows, macOS and FreeBSD as
+well as Linux, and gains three new ways to catch a provider problem that a per-test verdict
+misses: cross-provider disagreement, tests that pass without exercising what they claim, and
+a daemon that dies mid-run. The rest is internals and a set of measurement fixes that stop
+the suite accusing conformant providers.
+
+### Added
+
+- **Cross-platform support: Linux, Windows, macOS, FreeBSD (roadmap #1).** Shared
+  Windows-aware crash classification and node-id normalization seams, NTSTATUS crash
+  recognition in preflight and doctor, utf-8 pinned on all JSON/IPC file I/O so a cp1252
+  default cannot corrupt a report, a per-user cache under `%LOCALAPPDATA%` with its ACL
+  boundary documented, portable external provisioning and token-mint hooks, and a bounded
+  post-exit drain for the Windows grandchild-pipe hang. CI gains a macOS lane against a real
+  Homebrew SoftHSM2 dylib plus a Windows meta-test suite.
+- **`list-tests` command (roadmap #3, GH #6).** Collect-only node-id enumeration matching
+  `--match`/`--mark`, for building disabled-tests files without a live run.
+- **`differential` N-way cross-provider oracle (roadmap #6).** Diffs deterministic-KAT
+  verdicts across N providers and names the odd-one-out. Agreement between independent
+  implementations is the oracle, so no recorded crypto output is needed.
+- **Hollow-pass execution-coverage oracle (roadmap #5).** Flags passing tests that claim an
+  operation their run barely invoked productively - the lesson of a green run in which
+  `C_Sign` executed once across 110k tests. Surfaced as a never-silent run-quality warning.
+- **Crashing-daemon recovery (roadmap #2, GH #5).** Detects a dead daemon between units with
+  a fresh-subprocess reachability probe (never a CK_RV allowlist, so a provider's generic
+  error fallbacks cannot trigger it), then pauses for an external supervisor or runs an
+  opt-in no-shell command, resuming or aborting without hiding the crash finding. Opt-in via
+  `--recover-mode`; the default is byte-identical to before. The trigger is reachability-only
+  by design: a daemon that is reachable and responsive but degraded is not detected.
+- **SO-login support (roadmap #11).** A configured SO PIN (`P11TEST_SO_PIN`, `--so-pin`,
+  `--p11-so-pin`) with a two-tier lockout gate, so a wrong-PIN probe can no longer walk a
+  token toward `CKR_PIN_LOCKED`, plus a genuine `CKU_SO` session and the `CKA_TRUSTED`
+  certificate-import test that requires one.
+- **Configured wrap-key source (roadmap #9).** KEK resolution by handle or label with
+  class+key-type dispatch, hex validated at construction so a bad value fails fast instead of
+  silently skipping, and `wrap_key_source` narrowed so an unknown source cannot escape.
+
+### Improved
+
+- **God-module splits (roadmap #12).** `_ckr_spec.py` 8394 -> 259 logic + 106 base + 8111
+  tables, `ffi_length.py` 3151 -> 238, `file_runner.py` 4018 -> 1743, `plugin.py` 1395 -> 863,
+  plus conftest import-negotiation extraction. Behaviour-preserving throughout, verified by
+  AST source comparison of every moved definition; all nine plugin hooks byte-identical.
+- **Third-party test vectors** re-pinned to current upstream tips, each with its
+  `archive_sha256` so a fetch is reproducible and verifiable.
+
+### Fixed
+
+- **`CKM_RSA_PKCS` cipher operations were gated on mechanism presence, not the operation flag
+  (GH #7).** PKCS#1 v1.5 signature is FIPS-approved while v1.5 encryption is not, so a
+  FIPS-strict module advertises the mechanism for signing only; driving encrypt/decrypt
+  against it recorded a false finding. Gating is now on `CKF_ENCRYPT`/`CKF_DECRYPT`, and a
+  module that does advertise the flag and then refuses is recorded as a `not_operational`
+  xfail. The whole defect class was swept.
+- **Two false-CRITICAL sources in the padding-oracle suite.** The timing probes measured
+  harness session recovery rather than the module (~130us of teardown against ~8us of
+  decrypt on one provider, a fabricated 12x "oracle" against a module whose real ratio is
+  1.5x); only `C_Decrypt` is timed now, with an absolute floor so microsecond jitter cannot
+  manufacture a ratio. The CBC-PAD corruption sweep failed on "more than one distinct
+  outcome", which is a ~1/256-per-probe coin flip and, worse, is what every conforming
+  CBC-PAD implementation produces - the inherent Vaudenay channel now records its compliance
+  note without being a finding, while a module that validates no padding at all still fails.
+- **Stress tests asserted absolute wall-clock budgets**, which fail a slow or loaded host
+  rather than a misbehaving module. `--timeout` already covers the real failure mode.
+- **Invented SHAKE digest placeholder IDs retired (roadmap #7).** SHAKE-128/256 digest
+  mechanisms are unnumbered in every OASIS header, so the IDs in use had been made up.
+  XOF digests are now detected by name.
+
 ## [0.1.7] - 2026-07-07
 
 A large hardening and internals release. The headline user-visible items are Windows/Win64
