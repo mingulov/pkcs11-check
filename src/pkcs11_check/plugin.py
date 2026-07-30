@@ -71,6 +71,8 @@ _CUMULATIVE_MECHANISM_DETAILS: pytest.StashKey[set[tuple[int, frozenset[tuple[st
     pytest.StashKey()
 )
 _CUMULATIVE_FUNCTION_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
+# Per-function CKR_OK ("productive") invocation counts, for the hollow-pass oracle.
+_CUMULATIVE_FUNCTION_OK_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _PROVISIONING_COUNTS: pytest.StashKey[Counter[tuple[str, str]]] = pytest.StashKey()
@@ -267,6 +269,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_USED_MECHANISMS] = set()
     config.stash[_CUMULATIVE_MECHANISM_DETAILS] = set()
     config.stash[_CUMULATIVE_FUNCTION_COUNTS] = Counter()
+    config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS] = Counter()
     config.stash[_CUMULATIVE_MECHANISM_COUNTS] = Counter()
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
@@ -769,6 +772,33 @@ def _rv_trace_properties_from_previous_failure(
     return [("pkcs11_rv_trace", trace)]
 
 
+def _attach_claimed_op_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach the test's claimed productive operation (pkcs11_claimed_op) to its PASSED call report.
+
+    The hollow-pass oracle (quality_audit) groups PASSED records with ``when == "call"`` by this
+    property. Attaching in teardown would land it on the *teardown* TestReport record instead
+    (report-log writes a separate record per phase), which the collector never reads -- so the
+    denominator would always be empty. So attach here, on the passed call report, mirroring
+    _attach_rv_trace_to_report. The value comes from classification.current_claimed_op(), which is
+    gated on set_mechanism(expect_success=True): a negative/rejection vector passes without a
+    productive CKR_OK and must not be counted. No-op unless a productive claim was declared.
+    """
+    if getattr(report, "when", None) != "call" or getattr(report, "outcome", None) != "passed":
+        return
+    if not _is_testcase_item(item):
+        return
+    from pkcs11_check.classification import current_claimed_op
+
+    op = current_claimed_op()
+    if not op:
+        return
+    user_properties = getattr(report, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+    if not any(name == "pkcs11_claimed_op" for name, _ in user_properties):
+        user_properties.append(("pkcs11_claimed_op", op))
+
+
 def _drain_rv_trace(item: pytest.Item) -> None:
     """Attach the per-test CK_RV trace to ``item.user_properties`` when enabled.
 
@@ -947,6 +977,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     _attach_rv_trace_to_report(item, report)
     _attach_compliance_notes_to_report(item, report)
     _attach_classification_to_report(item, report)
+    _attach_claimed_op_to_report(item, report)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
@@ -1013,10 +1044,11 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                 cumulative.update(rs.raw.call_log.keys())
                 if raw_ref is None:
                     session.config.stash[_RAW_INSTANCE] = rs.raw
-                # Accumulate function call counts
+                # Accumulate function call counts (+ CKR_OK "productive" counts)
                 try:
                     fc = session.config.stash[_CUMULATIVE_FUNCTION_COUNTS]
                     fc.update(rs.raw.call_log)
+                    session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(rs.raw.call_log_ok)
                 except KeyError:
                     pass
                 # Collect bootstrap counts once
@@ -1063,11 +1095,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     try:
         from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
 
-        sub_func, _sub_mech = get_raw_subprocess_coverage()
+        sub_func, _sub_mech, sub_func_ok = get_raw_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
                 session.config.stash[_CUMULATIVE_FUNCTION_COUNTS].update(sub_func)
+                session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(sub_func_ok)
             except KeyError:
                 pass
     except ImportError:
@@ -1075,11 +1108,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     try:
         from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
 
-        sub_func, _sub_mech = get_preamble_subprocess_coverage()
+        sub_func, _sub_mech, sub_func_ok = get_preamble_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
                 session.config.stash[_CUMULATIVE_FUNCTION_COUNTS].update(sub_func)
+                session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(sub_func_ok)
             except KeyError:
                 pass
     except ImportError:
@@ -1277,6 +1311,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     # Call counts
     func_counts = config.stash.get(_CUMULATIVE_FUNCTION_COUNTS, Counter())
+    func_ok_counts = config.stash.get(_CUMULATIVE_FUNCTION_OK_COUNTS, Counter())
     mech_counts_raw = config.stash.get(_CUMULATIVE_MECHANISM_COUNTS, Counter())
     detail_counts = config.stash.get(_CUMULATIVE_DETAIL_COUNTS, Counter())
     bootstrap = config.stash.get(_BOOTSTRAP_FUNCTION_COUNTS, {})
@@ -1302,6 +1337,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "called": len(called),
             "called_names": called,
             "called_counts": dict(sorted(func_counts.items())),
+            "ok_counts": dict(sorted(func_ok_counts.items())),
             "bootstrap_counts": bootstrap,
             "module_session_health": {
                 "checks": int(module_session_health.get("checks", 0)),

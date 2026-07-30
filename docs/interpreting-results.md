@@ -19,3 +19,7 @@ The dominant `not_operational` pattern is an advertised **mechanism** (e.g. `CKM
 When a module crashes repeatedly in one file, the runner abandons that file's remaining tests after `--max-crashes-per-file` (default 10) and records them as `crash_limited` (a skipped-class outcome counted in `total`). `summary.incomplete` is then true and the report shows an INCOMPLETE COVERAGE banner. These tests' true outcome is unknown - re-run to probe them.
 
 **Resume caveat:** a resumed run does not re-attempt `crash_limited` units (they are in `_RESUME_COMPLETE_STATUSES`); a fresh run is required to re-probe them.
+
+## `hollow_coverage` - green that did not actually run the operation
+
+`quality.json` carries a `hollow_coverage` list flagging operations whose passing tests did not productively invoke them. For each operation a test declared (via `set_mechanism`), the oracle compares the number of passing tests claiming it against the number of productive (`CKR_OK`) invocations of that operation's function family; a large claimed-pass population with a near-zero ratio means most of those green passes never actually ran the operation. This catches the class of bug where, e.g., `C_Sign` executed only once across thousands of green "sign" tests - the green was hollow. It is a run-quality signal for triage (a `HOLLOW COVERAGE` line in `data_quality_warnings`), not a per-test verdict or a provider-bug accusation; the counts name the operation so a human can adjudicate.

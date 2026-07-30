@@ -370,6 +370,9 @@ class RawPKCS11:
         # Windows DLL-search handles kept alive for the process (see _windows_dll_directory).
         self._dll_dir_handles: list[Any] = []
         self._call_log: dict[str, int] = defaultdict(int)
+        # CKR_OK invocations per function: "productively succeeded", not just "called".
+        # Feeds the hollow-pass coverage oracle (docs/.../hollow-pass-coverage-oracle-design.md).
+        self._call_log_ok: dict[str, int] = defaultdict(int)
         self._used_mechanisms: set[int] = set()
         self._mechanism_counts: Counter[int] = Counter()
         self._mechanism_rv_counts: defaultdict[int, Counter[int]] = defaultdict(Counter)
@@ -522,11 +525,17 @@ class RawPKCS11:
         return dict(self._call_log)
 
     @property
+    def call_log_ok(self) -> dict[str, int]:
+        """Per-function count of CKR_OK invocations (productive successes)."""
+        return dict(self._call_log_ok)
+
+    @property
     def call_count(self) -> int:
         return sum(self._call_log.values())
 
     def reset_call_log(self) -> None:
         self._call_log.clear()
+        self._call_log_ok.clear()
 
     @property
     def used_mechanisms(self) -> set[int]:
@@ -626,6 +635,8 @@ class RawPKCS11:
             else None
         )
         result = int(func(*args))
+        if result == int(CKR_OK):
+            self._call_log_ok[name] += 1
         if mech_id is not None:
             self._mechanism_rv_counter()[mech_id][result] += 1
         ckr = _to_ckr(result)

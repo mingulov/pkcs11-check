@@ -41,6 +41,7 @@ def _stub_raw(funcs: dict[str, Any]) -> RawPKCS11:
     raw._funcs = dict(funcs)
     raw._lib = None
     raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
     raw._used_mechanisms = set()
     raw._mechanism_counts = Counter()
     raw._rv_trace = None
@@ -596,6 +597,7 @@ def test_report_log_failed_call_record_contains_rv_trace(tmp_path: Path) -> None
                 raw._funcs = {"C_GetSessionInfo": lambda *a: int(CKR_FUNCTION_FAILED)}
                 raw._lib = None
                 raw._call_log = defaultdict(int)
+                raw._call_log_ok = defaultdict(int)
                 raw._used_mechanisms = set()
                 raw._mechanism_counts = Counter()
                 raw._rv_trace = None
@@ -893,6 +895,7 @@ def test_crash_journal_survives_real_process_death(tmp_path: Path) -> None:
         "raw._funcs = {'C_GetInfo': lambda *a: 0, 'C_Sign': lambda *a: os.abort()}\n"
         "raw._lib = None\n"
         "raw._call_log = defaultdict(int)\n"
+        "raw._call_log_ok = defaultdict(int)\n"
         "raw._used_mechanisms = set()\n"
         "raw._mechanism_counts = Counter()\n"
         "raw._rv_trace = None\n"

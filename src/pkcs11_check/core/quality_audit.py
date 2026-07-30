@@ -6,7 +6,61 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any, Literal, cast
 
+from pkcs11_check.core.hollow_coverage import assess_hollow_coverage
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
+
+# A claimed operation (e.g. "C_Decrypt") is productively satisfied by any function in its
+# family, so a multipart test that runs C_DecryptUpdate still counts. Ops not listed map to
+# themselves.
+_OP_FAMILY_MAP: dict[str, frozenset[str]] = {
+    "C_Encrypt": frozenset({"C_Encrypt", "C_EncryptUpdate", "C_EncryptFinal"}),
+    "C_Decrypt": frozenset({"C_Decrypt", "C_DecryptUpdate", "C_DecryptFinal"}),
+    "C_Sign": frozenset({"C_Sign", "C_SignUpdate", "C_SignFinal"}),
+    "C_Verify": frozenset({"C_Verify", "C_VerifyUpdate", "C_VerifyFinal"}),
+    "C_Digest": frozenset({"C_Digest", "C_DigestUpdate", "C_DigestFinal"}),
+}
+
+
+def _collect_hollow_coverage(
+    records: list[Mapping[str, Any]], coverage_map: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Flag operations whose passing tests did not productively invoke them.
+
+    claimed_passes = count of PASSED test records grouped by their declared operation
+    (pkcs11_claimed_op user_property); productive_ok = per-function CKR_OK counts from
+    coverage. A large claimed population with a near-zero productive ratio is a hollow
+    green (the kmsp11 pattern). Empty when either input is absent.
+    """
+    claimed_passes: Counter[str] = Counter()
+    for rec in records:
+        if str(rec.get("$report_type", "TestReport")) != "TestReport":
+            continue
+        if str(rec.get("when", "")) != "call" or str(rec.get("outcome", "")) != "passed":
+            continue
+        for prop in rec.get("user_properties", []) or []:
+            if (
+                isinstance(prop, (list, tuple))
+                and len(prop) == 2
+                and prop[0] == "pkcs11_claimed_op"
+                and prop[1]
+            ):
+                claimed_passes[str(prop[1])] += 1
+    func_cov = coverage_map.get("function_coverage", {})
+    ok_raw = func_cov.get("ok_counts", {}) if isinstance(func_cov, Mapping) else {}
+    productive_ok = {str(k): int(v) for k, v in ok_raw.items()}
+    findings = assess_hollow_coverage(
+        dict(claimed_passes), productive_ok, family_map=_OP_FAMILY_MAP
+    )
+    return [
+        {
+            "operation": f.operation,
+            "claimed_passes": f.claimed_passes,
+            "productive_ok": f.productive_ok,
+            "ratio": round(f.ratio, 6),
+        }
+        for f in findings
+    ]
+
 
 type SchemaVersion = str
 type SkipReasonCategory = Literal[
@@ -249,6 +303,14 @@ def build_quality_audit(
 
     file_skipped = _collect_file_skipped_units(results_map)
 
+    hollow_coverage = _collect_hollow_coverage(report_records, coverage_map)
+    if hollow_coverage:
+        ops = ", ".join(
+            f"{h['operation']} ({h['productive_ok']}/{h['claimed_passes']} productive)"
+            for h in hollow_coverage
+        )
+        warnings.append(f"HOLLOW COVERAGE: passing tests did not productively exercise {ops}")
+
     return {
         "schema_version": SCHEMA_VERSION,
         "summary": summary,
@@ -257,6 +319,7 @@ def build_quality_audit(
         "framework_skip_candidates": _serialize_skip_buckets(explicit_skip_buckets),
         "selection_findings": selection_findings,
         "mechanism_findings": mechanism_findings,
+        "hollow_coverage": hollow_coverage,
         "data_quality_warnings": _dedupe_preserve_order(warnings),
     }
 

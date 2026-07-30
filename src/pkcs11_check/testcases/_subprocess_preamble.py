@@ -32,6 +32,7 @@ SUBPROCESS_TIMEOUT_RC = 124  # conventional timeout exit code (GNU timeout)
 
 _subprocess_call_counts: Counter[str] = Counter()
 _subprocess_mechanism_counts: Counter[str] = Counter()
+_subprocess_call_ok_counts: Counter[str] = Counter()
 
 
 def pin_from_config(p11_config: Any) -> str | None:
@@ -67,12 +68,15 @@ def ingest_subprocess_coverage(path: str) -> None:
         return
     _subprocess_call_counts.update(data.get("call_log", {}))
     _subprocess_mechanism_counts.update(data.get("mechanism_counts", {}))
+    _subprocess_call_ok_counts.update(data.get("call_log_ok", {}))
 
 
-def get_preamble_subprocess_coverage() -> tuple[Counter[str], Counter[str]]:
-    """Return accumulated subprocess coverage and clear it."""
+def get_preamble_subprocess_coverage() -> tuple[Counter[str], Counter[str], Counter[str]]:
+    """Return accumulated subprocess coverage (func, mech, func_ok) and clear it."""
     func = Counter(_subprocess_call_counts)
     mech = Counter(_subprocess_mechanism_counts)
+    func_ok = Counter(_subprocess_call_ok_counts)
     _subprocess_call_counts.clear()
     _subprocess_mechanism_counts.clear()
-    return func, mech
+    _subprocess_call_ok_counts.clear()
+    return func, mech, func_ok
