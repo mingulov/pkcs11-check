@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import pytest
 
-from pkcs11_check.core import file_runner
+from pkcs11_check.core import _crash_classify, file_runner
 
 
 def test_is_windows_crash_code_recognises_ntstatus_errors() -> None:
-    assert file_runner._is_windows_crash_code(0xC0000005)  # access violation
-    assert file_runner._is_windows_crash_code(0xC00000FD)  # stack overflow
-    assert file_runner._is_windows_crash_code(0xC0000409)  # stack buffer overrun
-    assert not file_runner._is_windows_crash_code(0)
-    assert not file_runner._is_windows_crash_code(1)  # ordinary pytest failure
-    assert not file_runner._is_windows_crash_code(5)
+    assert _crash_classify._is_windows_crash_code(0xC0000005)  # access violation
+    assert _crash_classify._is_windows_crash_code(0xC00000FD)  # stack overflow
+    assert _crash_classify._is_windows_crash_code(0xC0000409)  # stack buffer overrun
+    assert not _crash_classify._is_windows_crash_code(0)
+    assert not _crash_classify._is_windows_crash_code(1)  # ordinary pytest failure
+    assert not _crash_classify._is_windows_crash_code(5)
 
 
 def test_status_from_returncode_windows_crash(monkeypatch: pytest.MonkeyPatch) -> None:

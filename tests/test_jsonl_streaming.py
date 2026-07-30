@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from pkcs11_check.core import _report_records as report_records_mod
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.file_runner import (
     _extract_unit_report_records_from_jsonl,
@@ -147,6 +148,7 @@ def test_extract_unit_report_records_streams_without_load_all(
         pytest.fail("_extract_unit_report_records_from_jsonl must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", _load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", _load_all_forbidden)
 
     assert _extract_unit_report_records_from_jsonl(
         p,

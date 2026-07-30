@@ -12,6 +12,10 @@ from typing import Any
 import pytest
 from rich.console import Console
 
+from pkcs11_check.core import _escalation as escalation_mod
+from pkcs11_check.core import _report_records as report_records_mod
+from pkcs11_check.core import _unit_details as unit_details_mod
+from pkcs11_check.core import _unit_discovery as unit_discovery_mod
 from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
@@ -126,7 +130,7 @@ def test_discover_pytest_units_test_granularity_collects_nodeids(
     target.write_text("def test_case():\n    assert True\n")
 
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_nodeids",
+        "pkcs11_check.core._unit_discovery.collect_pytest_nodeids",
         lambda targets, pytest_args, *, env=None: [f"{target}::test_case"],  # type: ignore[arg-type]
     )
 
@@ -183,7 +187,7 @@ def test_discover_auto_isolation_units_keeps_regular_files(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(nodeid=f"{target}::test_case", file_path=str(target), markers=[])
         ],
@@ -204,7 +208,7 @@ def test_discover_auto_isolation_units_expands_per_test_marked_files(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_one():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(
                 nodeid=f"{target}::test_one",
@@ -251,7 +255,7 @@ def test_discover_auto_isolation_units_pins_absolute_nodeid_for_rootdir_mismatch
     target.write_text("def test_one():\n    assert True\n")
     rootdir_relative_nodeid = f"{str(target).lstrip('/')}::test_one"
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(
                 nodeid=rootdir_relative_nodeid,
@@ -307,7 +311,7 @@ def test_discover_auto_isolation_units_expands_policy_promoted_files(
     )
 
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(nodeid=f"{target}::test_one", file_path=str(target), markers=[])
         ],
@@ -329,7 +333,7 @@ def test_discover_auto_isolation_units_collapses_nodeid_for_subprocess_file(
     target = tmp_path / "test_demo.py"
     target.write_text("def test_case():\n    assert True\n")
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
             CollectedPytestItem(
                 nodeid=f"{target}::test_case",
@@ -368,11 +372,11 @@ def test_discover_auto_isolation_units_falls_back_to_nodeid_collection_when_meta
         },
     )
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.collect_pytest_item_metadata",
+        "pkcs11_check.core._unit_discovery.collect_pytest_item_metadata",
         lambda targets, pytest_args, *, env=None: [],  # type: ignore[arg-type]
     )
     monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
+        "pkcs11_check.core._unit_discovery.discover_pytest_units",
         lambda targets, default_root, *, granularity, pytest_args=None, env=None: (  # type: ignore[arg-type]
             [f"{target}::test_case"] if granularity == "test" else list(targets)
         ),
@@ -624,17 +628,20 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
         return (-11 if unit == str(target) else 0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
                 f"{target}::test_two",
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -696,9 +703,9 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
                 f"{target}::test_two",
@@ -706,8 +713,11 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -1756,6 +1766,7 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
         pytest.fail("cache writes from JSONL paths must stream records")
 
     monkeypatch.setattr(file_runner_mod, "_load_report_log_records", load_all_forbidden)
+    monkeypatch.setattr(report_records_mod, "_load_report_log_records", load_all_forbidden)
 
     file_runner_mod._write_unit_report_record_cache_from_jsonl_paths(
         state_file,
@@ -2626,17 +2637,20 @@ def test_run_isolated_pytest_units_filters_disabled_tests_when_escalating_file(
         return (-11 if unit == str(target) else 0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_one",
                 f"{target}::test_two",
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -4719,9 +4733,9 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        "pkcs11_check.core.file_runner.discover_pytest_units",
-        lambda targets, default_root, *, granularity, pytest_args, env=None: (
+
+    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        return (
             [  # type: ignore[arg-type]
                 f"{target}::test_done1",
                 f"{target}::test_done2",
@@ -4733,8 +4747,11 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
             ]
             if granularity == "test"
             else list(targets)
-        ),
-    )
+        )
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
 
     exit_code = run_isolated_pytest_units(
         units,
@@ -4868,14 +4885,16 @@ def test_file_skip_counts_collected_tests_as_skipped(
     report_path = tmp_path / "results.json"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [
             f"{test_file}::test_a",
             f"{test_file}::test_b",
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
         pytest.fail("file-skipped unit must not invoke pytest")
@@ -4960,11 +4979,13 @@ def test_nodeid_unit_with_missing_required_mechanism_is_skipped_before_pytest(
     report_path = tmp_path / "results.json"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [nodeid],
-    )
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [nodeid]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     def _unexpected_run(*_args: Any, **_kwargs: Any) -> tuple[int, str, str]:
         pytest.fail("missing REQUIRED_MECHANISMS nodeid unit must not invoke pytest")
@@ -5020,14 +5041,16 @@ def test_file_skip_for_any_missing_required_mechanism_counts_collected_tests(
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"ML_DSA"})
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [
             f"{test_file}::test_a",
             f"{test_file}::test_b",
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     exit_code = run_isolated_pytest_units(
         [str(test_file)],
@@ -5065,14 +5088,16 @@ def test_file_skip_counts_survive_report_jsonl_merge(
     report_jsonl_path = tmp_path / "report.jsonl"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
-    monkeypatch.setattr(
-        file_runner_mod,
-        "collect_pytest_nodeids",
-        lambda targets, pytest_args, *, env=None: [
+
+    def _fake_collect(targets, pytest_args, *, env=None):
+        return [
             f"{skipped_file}::test_a",
             f"{skipped_file}::test_b",
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_details_mod, "collect_pytest_nodeids", _fake_collect)
+    monkeypatch.setattr(unit_discovery_mod, "collect_pytest_nodeids", _fake_collect)
 
     def fake_run(
         cmd: list[str],
