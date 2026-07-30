@@ -39,6 +39,13 @@ def test_collect_pytest_item_metadata_reports_markers(tmp_path: Path) -> None:
 
     items = collect_pytest_item_metadata([str(target)], [])
 
-    assert [item.nodeid for item in items] == [f"{target.name}::test_case"]
+    # Assert the node-id IDENTIFIES this file and test, not its exact relative spelling.
+    # The spelling depends on pytest's rootdir, which is the common ancestor of the CWD and
+    # the args -- so it is "test_demo.py::test_case" here but an absolute path when the file
+    # is on a different drive from the CWD (Windows CI: workspace D:, %TEMP% C:), where
+    # pytest emits no path at all and item_nodeid substitutes the absolute one. File
+    # identity is the contract; the relative form was an accident of where pytest was run.
+    assert len(items) == 1
+    assert items[0].nodeid.endswith(f"{target.name}::test_case")
     assert items[0].file_path == str(target.resolve())
     assert set(items[0].markers) >= {"subprocess_per_test", "smoke"}
