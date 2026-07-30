@@ -25,6 +25,8 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_KEY_TYPE,
     CKA_TOKEN,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKG_MGF1_SHA1,
     CKK_AES,
     CKM_AES_CBC_PAD,
@@ -38,6 +40,7 @@ from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
+    skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
 
@@ -248,6 +251,10 @@ class TestRSAEncryption:
     def test_rsa_pkcs_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA PKCS#1 v1.5 encrypt/decrypt roundtrip."""
         rs = p11_raw_session
+        # Operation-flag guard, not mere mechanism presence: FIPS-strict modules
+        # advertise CKM_RSA_PKCS for signing only (GH #7).
+        skip_unless_mechanism_flag(rs, "RSA_PKCS", CKF_ENCRYPT)
+        skip_unless_mechanism_flag(rs, "RSA_PKCS", CKF_DECRYPT)
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
             2048,
@@ -272,6 +279,8 @@ class TestRSAEncryption:
     def test_rsa_oaep_roundtrip(self, p11_raw_session: Any) -> None:
         """RSA-OAEP encrypt/decrypt roundtrip."""
         rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, "RSA_PKCS_OAEP", CKF_ENCRYPT)
+        skip_unless_mechanism_flag(rs, "RSA_PKCS_OAEP", CKF_DECRYPT)
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
             2048,
@@ -285,22 +294,25 @@ class TestRSAEncryption:
                 hash_mech=CKM_SHA_1,
                 mgf=CKG_MGF1_SHA1,
             )
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                priv,
-                CKM_RSA_PKCS_OAEP,
-                ct,
-                mech_param=oaep,
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    ct,
+                    mech_param=oaep,
+                )
+            except AssertionError as exc:
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS_OAEP")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -309,6 +321,7 @@ class TestRSAEncryption:
     def test_rsa_ciphertext_is_random(self, p11_raw_session: Any) -> None:
         """RSA-OAEP should produce different ciphertexts for same plaintext."""
         rs = p11_raw_session
+        skip_unless_mechanism_flag(rs, "RSA_PKCS_OAEP", CKF_ENCRYPT)
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
             2048,
@@ -322,22 +335,27 @@ class TestRSAEncryption:
                 hash_mech=CKM_SHA_1,
                 mgf=CKG_MGF1_SHA1,
             )
-            ct1 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
-            ct2 = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=oaep,
-            )
+            try:
+                ct1 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+                ct2 = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=oaep,
+                )
+            except AssertionError as exc:
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS_OAEP")
+            # Equal ciphertexts = broken OAEP randomization: a crypto finding
+            # that must stay a hard failure (real case: pkcs11-mock).
             assert ct1 != ct2
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

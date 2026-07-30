@@ -110,6 +110,7 @@ def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
         raw=object(),
         sh=1,
         has_mechanism=lambda name: name in names,
+        has_mechanism_flag=lambda mech, _flag: mech in names,
     )
 
 

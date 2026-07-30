@@ -18,6 +18,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
+    CKF_DECRYPT,
     CKM_RSA_PKCS,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
@@ -38,6 +39,7 @@ from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     is_known_error,
+    skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
@@ -149,6 +151,9 @@ def test_rsa_pkcs1_decrypt(
     rs = p11_module_session
     if not rs.has_mechanism("RSA_PKCS"):
         pytest.skip("RSA_PKCS not supported")
+    # Decrypt-flag guard, not mere presence: sign-only CKM_RSA_PKCS modules must
+    # not accumulate per-vector findings for a capability they never claimed (GH #7).
+    skip_unless_mechanism_flag(rs, "RSA_PKCS", CKF_DECRYPT)
 
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])

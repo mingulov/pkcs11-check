@@ -63,6 +63,9 @@ class _RsaPkcsSession:
     def has_mechanism(self, name: str) -> bool:
         return name == "RSA_PKCS"
 
+    def has_mechanism_flag(self, mech: str | int, _flag: int) -> bool:
+        return mech == "RSA_PKCS"
+
 
 class _RsaOaepSession:
     """Session stub that advertises RSA_PKCS_OAEP (for OAEP tests)."""
@@ -73,6 +76,9 @@ class _RsaOaepSession:
     def has_mechanism(self, name: str) -> bool:
         return name == "RSA_PKCS_OAEP"
 
+    def has_mechanism_flag(self, mech: str | int, _flag: int) -> bool:
+        return mech == "RSA_PKCS_OAEP"
+
 
 class _RsaNoneSession:
     """Session stub that advertises NEITHER RSA_PKCS nor RSA_PKCS_OAEP."""
@@ -81,6 +87,9 @@ class _RsaNoneSession:
     sh = 1
 
     def has_mechanism(self, _name: str) -> bool:
+        return False
+
+    def has_mechanism_flag(self, _mech: str | int, _flag: int) -> bool:
         return False
 
 
