@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import pkcs11_check.plugin as plugin_mod
+from pkcs11_check import _plugin_selection as selection_mod
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.fixtures import p11_config
 from pkcs11_check.raw.types_std import (
@@ -109,7 +110,7 @@ def test_ensure_manifest_defaults_unset_interface_and_slot(
             mechanisms=[],
         )
 
-    monkeypatch.setattr(plugin_mod, "run_preflight_subprocess", fake_preflight)
+    monkeypatch.setattr(selection_mod, "run_preflight_subprocess", fake_preflight)
     stash = pytest.Stash()
     stash[plugin_mod._MANIFEST_KEY] = None
     config = SimpleNamespace(stash=stash, getoption=getoption)
@@ -228,7 +229,7 @@ def test_pytest_generate_tests_maps_fixture_to_selection_scenario(
             ),
         )
 
-    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(selection_mod, "select_for_scenario", fake_select)
     monkeypatch.setattr(
         plugin_mod,
         "_ensure_mechanism_catalog",
@@ -273,7 +274,7 @@ def test_pytest_generate_tests_records_multipart_encrypt_selection_telemetry(
             ),
         )
 
-    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(selection_mod, "select_for_scenario", fake_select)
     monkeypatch.setattr(
         plugin_mod,
         "_ensure_mechanism_catalog",
@@ -319,7 +320,7 @@ def test_pytest_generate_tests_records_multipart_sign_selection_telemetry(
             ),
         )
 
-    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(selection_mod, "select_for_scenario", fake_select)
     monkeypatch.setattr(
         plugin_mod,
         "_ensure_mechanism_catalog",
@@ -370,7 +371,7 @@ def test_pytest_generate_tests_caches_selection_aggregation(
             ),
         )
 
-    monkeypatch.setattr(plugin_mod, "select_for_scenario", fake_select)
+    monkeypatch.setattr(selection_mod, "select_for_scenario", fake_select)
     monkeypatch.setattr(
         plugin_mod,
         "_ensure_mechanism_catalog",

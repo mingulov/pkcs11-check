@@ -2,27 +2,206 @@
 
 from __future__ import annotations
 
-import json
 import os
-import signal
-import tempfile
-import threading
 from collections import Counter
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
+from pkcs11_check._plugin_finalize import (
+    _TEARDOWN_FINALIZE_TIMEOUT_S as _TEARDOWN_FINALIZE_TIMEOUT_S,
+)
+from pkcs11_check._plugin_finalize import (
+    _build_provisioning_report as _build_provisioning_report,
+)
+from pkcs11_check._plugin_finalize import (
+    _finalize_on_teardown as _finalize_on_teardown,
+)
+from pkcs11_check._plugin_finalize import (
+    _TeardownFinalizeTimeoutError as _TeardownFinalizeTimeoutError,
+)
+from pkcs11_check._plugin_report_attach import (
+    _RV_TRACE_RAW_SOURCES as _RV_TRACE_RAW_SOURCES,
+)
+from pkcs11_check._plugin_report_attach import (
+    _accumulate_module_session_health_metrics as _accumulate_module_session_health_metrics,
+)
+from pkcs11_check._plugin_report_attach import (
+    _append_missing_compliance_notes as _append_missing_compliance_notes,
+)
+from pkcs11_check._plugin_report_attach import (
+    _append_missing_rv_trace as _append_missing_rv_trace,
+)
+from pkcs11_check._plugin_report_attach import (
+    _attach_claimed_op_to_report as _attach_claimed_op_to_report,
+)
+from pkcs11_check._plugin_report_attach import (
+    _attach_classification_to_report as _attach_classification_to_report,
+)
+from pkcs11_check._plugin_report_attach import (
+    _attach_compliance_notes_to_report as _attach_compliance_notes_to_report,
+)
+from pkcs11_check._plugin_report_attach import (
+    _attach_rv_trace_to_report as _attach_rv_trace_to_report,
+)
+from pkcs11_check._plugin_report_attach import (
+    _convert_missing_function_to_skip as _convert_missing_function_to_skip,
+)
+from pkcs11_check._plugin_report_attach import (
+    _drain_rv_trace as _drain_rv_trace,
+)
+from pkcs11_check._plugin_report_attach import (
+    _is_previous_item_setup_failure as _is_previous_item_setup_failure,
+)
+from pkcs11_check._plugin_report_attach import (
+    _last_rv_trace as _last_rv_trace,
+)
+from pkcs11_check._plugin_report_attach import (
+    _nonempty_rv_trace_from_props as _nonempty_rv_trace_from_props,
+)
+from pkcs11_check._plugin_report_attach import (
+    _remember_module_session_call_outcome as _remember_module_session_call_outcome,
+)
+from pkcs11_check._plugin_report_attach import (
+    _remember_rv_trace as _remember_rv_trace,
+)
+from pkcs11_check._plugin_report_attach import (
+    _report_is_fail_or_xfail as _report_is_fail_or_xfail,
+)
+from pkcs11_check._plugin_report_attach import (
+    _report_needs_rv_trace as _report_needs_rv_trace,
+)
+from pkcs11_check._plugin_report_attach import (
+    _report_text as _report_text,
+)
+from pkcs11_check._plugin_report_attach import (
+    _rv_trace_properties as _rv_trace_properties,
+)
+from pkcs11_check._plugin_report_attach import (
+    _rv_trace_properties_from_previous_failure as _rv_trace_properties_from_previous_failure,
+)
+from pkcs11_check._plugin_report_attach import (
+    _rv_trace_properties_from_report as _rv_trace_properties_from_report,
+)
+from pkcs11_check._plugin_report_attach import (
+    _synthetic_unclassified_record as _synthetic_unclassified_record,
+)
+from pkcs11_check._plugin_selection import (
+    _build_one_stacked_string as _build_one_stacked_string,
+)
+from pkcs11_check._plugin_selection import (
+    _build_stacked_strings as _build_stacked_strings,
+)
+from pkcs11_check._plugin_selection import (
+    _ensure_manifest as _ensure_manifest,
+)
+from pkcs11_check._plugin_selection import (
+    _ensure_mechanism_catalog as _ensure_mechanism_catalog,
+)
+from pkcs11_check._plugin_selection import (
+    _manifest_failure_message as _manifest_failure_message,
+)
+from pkcs11_check._plugin_selection import (
+    _mechanism_rv_state_names as _mechanism_rv_state_names,
+)
+from pkcs11_check._plugin_selection import (
+    _name_set as _name_set,
+)
+from pkcs11_check._plugin_selection import (
+    _record_selection_decision as _record_selection_decision,
+)
+from pkcs11_check._plugin_selection import (
+    _reported_names_for_mechanism as _reported_names_for_mechanism,
+)
+from pkcs11_check._plugin_selection import (
+    _runtime_skip_reason as _runtime_skip_reason,
+)
+from pkcs11_check._plugin_selection import (
+    _selected_entries_for_scenario as _selected_entries_for_scenario,
+)
+from pkcs11_check._plugin_selection import (
+    _selection_param_cache as _selection_param_cache,
+)
+from pkcs11_check._plugin_selection import (
+    _selection_state_names as _selection_state_names,
+)
+from pkcs11_check._plugin_selection import (
+    _selection_telemetry_store as _selection_telemetry_store,
+)
+from pkcs11_check._plugin_selection import (
+    _serialize_selection_telemetry as _serialize_selection_telemetry,
+)
+from pkcs11_check._plugin_state import (
+    _BOOTSTRAP_COLLECTED as _BOOTSTRAP_COLLECTED,
+)
+from pkcs11_check._plugin_state import (
+    _BOOTSTRAP_FUNCTION_COUNTS as _BOOTSTRAP_FUNCTION_COUNTS,
+)
+from pkcs11_check._plugin_state import (
+    _COVERAGE_DATA as _COVERAGE_DATA,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_DETAIL_COUNTS as _CUMULATIVE_DETAIL_COUNTS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_FUNCTION_COUNTS as _CUMULATIVE_FUNCTION_COUNTS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_FUNCTION_OK_COUNTS as _CUMULATIVE_FUNCTION_OK_COUNTS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_FUNCTIONS as _CUMULATIVE_FUNCTIONS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_MECHANISM_COUNTS as _CUMULATIVE_MECHANISM_COUNTS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_MECHANISM_DETAILS as _CUMULATIVE_MECHANISM_DETAILS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_MECHANISMS as _CUMULATIVE_MECHANISMS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_USED_MECHANISMS as _CUMULATIVE_USED_MECHANISMS,
+)
+from pkcs11_check._plugin_state import (
+    _LAST_RV_TRACE as _LAST_RV_TRACE,
+)
+from pkcs11_check._plugin_state import (
+    _MANIFEST_KEY as _MANIFEST_KEY,
+)
+from pkcs11_check._plugin_state import (
+    _MECHANISM_CATALOG_KEY as _MECHANISM_CATALOG_KEY,
+)
+from pkcs11_check._plugin_state import (
+    _MODULE_SESSION_HEALTH_METRICS as _MODULE_SESSION_HEALTH_METRICS,
+)
+from pkcs11_check._plugin_state import (
+    _P11_MODULE as _P11_MODULE,
+)
+from pkcs11_check._plugin_state import (
+    _PROVISIONING_COUNTS as _PROVISIONING_COUNTS,
+)
+from pkcs11_check._plugin_state import (
+    _RAW_INSTANCE as _RAW_INSTANCE,
+)
+from pkcs11_check._plugin_state import (
+    _SELECTION_PARAM_CACHE_KEY as _SELECTION_PARAM_CACHE_KEY,
+)
+from pkcs11_check._plugin_state import (
+    _SELECTION_TELEMETRY_KEY as _SELECTION_TELEMETRY_KEY,
+)
+from pkcs11_check._plugin_state import (
+    _TEARDOWN_FINALIZED as _TEARDOWN_FINALIZED,
+)
+from pkcs11_check._plugin_state import (
+    _has_dynamic_markers as _has_dynamic_markers,
+)
+from pkcs11_check._plugin_state import (
+    _is_testcase_item as _is_testcase_item,
+)
 from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.preflight import (
-    CapabilityManifest,
-    load_manifest,
-    run_preflight_subprocess,
-)
-from pkcs11_check.core.subprocess_trace import (
-    drain_subprocess_rv_trace,
-    extract_subprocess_rv_trace,
-)
 from pkcs11_check.core.test_selection import parse_disabled_nodeids
 
 # Re-export fixtures so pytest discovers them
@@ -47,7 +226,6 @@ from pkcs11_check.raw.types_std import (
     CKF_MESSAGE_ENCRYPT,
     CKF_MESSAGE_SIGN,
     CKF_MESSAGE_VERIFY,
-    CKR_OK,
 )
 from pkcs11_check.testcases.mechanism_selection import (
     ENCRYPT_ROUNDTRIP,
@@ -55,45 +233,7 @@ from pkcs11_check.testcases.mechanism_selection import (
     MULTIPART_SIGN_VERIFY_ROUNDTRIP,
     SIGN_VERIFY_ROUNDTRIP,
     WRAP_ROUNDTRIP,
-    select_for_scenario,
 )
-
-_MANIFEST_KEY: pytest.StashKey[CapabilityManifest | None] = pytest.StashKey()
-_MECHANISM_CATALOG_KEY: pytest.StashKey[Any] = pytest.StashKey()
-_SELECTION_TELEMETRY_KEY: pytest.StashKey[dict[str, dict[str, Any]]] = pytest.StashKey()
-_SELECTION_PARAM_CACHE_KEY: pytest.StashKey[dict[str, list[Any]]] = pytest.StashKey()
-_CUMULATIVE_FUNCTIONS: pytest.StashKey[set[str]] = pytest.StashKey()
-_CUMULATIVE_MECHANISMS: pytest.StashKey[set[str]] = pytest.StashKey()
-_RAW_INSTANCE: pytest.StashKey[Any] = pytest.StashKey()
-_COVERAGE_DATA: pytest.StashKey[dict[str, Any]] = pytest.StashKey()
-_CUMULATIVE_USED_MECHANISMS: pytest.StashKey[set[int]] = pytest.StashKey()
-_CUMULATIVE_MECHANISM_DETAILS: pytest.StashKey[set[tuple[int, frozenset[tuple[str, int]]]]] = (
-    pytest.StashKey()
-)
-_CUMULATIVE_FUNCTION_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
-# Per-function CKR_OK ("productive") invocation counts, for the hollow-pass oracle.
-_CUMULATIVE_FUNCTION_OK_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
-_CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
-_CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
-_PROVISIONING_COUNTS: pytest.StashKey[Counter[tuple[str, str]]] = pytest.StashKey()
-_BOOTSTRAP_FUNCTION_COUNTS: pytest.StashKey[dict[str, int]] = pytest.StashKey()
-_BOOTSTRAP_COLLECTED: pytest.StashKey[bool] = pytest.StashKey()
-_MODULE_SESSION_HEALTH_METRICS: pytest.StashKey[dict[str, int | float]] = pytest.StashKey()
-_LAST_RV_TRACE: pytest.StashKey[list[dict[str, Any]]] = pytest.StashKey()
-# Live P11Module (carries reinit_count) -- populated opportunistically in
-# pytest_runtest_teardown so the teardown-finalize record is self-describing.
-_P11_MODULE: pytest.StashKey[Any] = pytest.StashKey()
-# Guard flag: pytest_sessionfinish may be entered more than once; the
-# normal-teardown C_Finalize must run at most once per process.
-_TEARDOWN_FINALIZED: pytest.StashKey[bool] = pytest.StashKey()
-
-# Bounded budget (seconds) for the normal-teardown C_Finalize.
-# The SIGALRM watchdog bounds a *Python-level* hang (e.g. a spin-wait in a
-# ctypes callback or a Python-side stall that yields to the eval loop).  It
-# does NOT interrupt a module stuck inside native C code: SIGALRM only
-# delivers to the CPython eval loop, so pure-C hangs inside the C_Finalize
-# dlsym are backstopped by the outer per-file subprocess deadline instead.
-_TEARDOWN_FINALIZE_TIMEOUT_S = 5
 
 _SCENARIO_BY_FIXTURE: dict[str, str] = {
     "mech_wrap_entry": WRAP_ROUNDTRIP,
@@ -292,226 +432,6 @@ def pytest_configure(config: pytest.Config) -> None:
         config.option.report_log = report_log_path
 
 
-def _is_testcase_item(item: pytest.Item) -> bool:
-    item_path = getattr(item, "path", None)
-    if item_path is not None:
-        return "testcases" in str(item_path)
-    return "testcases" in str(item.fspath)
-
-
-def _has_dynamic_markers(item: pytest.Item) -> bool:
-    return any(
-        item.get_closest_marker(marker_name)
-        for marker_name in (
-            "needs_mechanism",
-            "needs_function",
-        )
-    )
-
-
-def _manifest_failure_message(manifest: CapabilityManifest) -> str:
-    detail = manifest.error or "unknown error"
-    return f"PKCS#11 preflight {manifest.status}: {detail}"
-
-
-def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
-    cached = config.stash[_MANIFEST_KEY]
-    if cached is not None:
-        return cached
-
-    module_path = config.getoption("p11_module", default=None)
-    if module_path is None:
-        return None
-
-    manifest_option = config.getoption("p11_manifest", default=None)
-    if manifest_option:
-        try:
-            manifest = load_manifest(Path(manifest_option))
-        except Exception as exc:
-            pytest.exit(f"Unable to load p11 manifest: {exc}", returncode=2)
-        config.stash[_MANIFEST_KEY] = manifest
-        return manifest
-
-    manifest_fd, manifest_raw_path = tempfile.mkstemp(
-        prefix="pkcs11-check-manifest-", suffix=".json"
-    )
-    os.close(manifest_fd)
-    manifest_path = Path(manifest_raw_path)
-    interface_option = config.getoption("p11_interface", default=None)
-    interface = "auto" if interface_option is None else str(interface_option)
-    slot_option = config.getoption("p11_slot", default=None)
-    slot = 0 if slot_option is None else int(slot_option)
-    try:
-        manifest = run_preflight_subprocess(
-            Path(module_path),
-            interface=interface,
-            slot=slot,
-            timeout=30,
-            output_path=manifest_path,
-        )
-    finally:
-        manifest_path.unlink(missing_ok=True)
-
-    if manifest.status != "ok":
-        pytest.exit(_manifest_failure_message(manifest), returncode=2)
-
-    config.stash[_MANIFEST_KEY] = manifest
-    return manifest
-
-
-def _ensure_mechanism_catalog(config: pytest.Config) -> Any:
-    """Lazily build mechanism catalog from preflight manifest."""
-    cached = config.stash.get(_MECHANISM_CATALOG_KEY, None)
-    if cached is not None:
-        return cached
-    manifest = _ensure_manifest(config)
-    if manifest is None:
-        return None
-    mech_info = getattr(manifest, "mechanism_info", None)
-    if mech_info is None:
-        return None
-    from pkcs11_check.testcases.mechanism_catalog import MechanismCatalog
-
-    catalog = MechanismCatalog.from_manifest(manifest)
-    config.stash[_MECHANISM_CATALOG_KEY] = catalog
-    return catalog
-
-
-def _selection_telemetry_store(config: pytest.Config) -> dict[str, dict[str, Any]]:
-    """Return the per-scenario selection telemetry store, creating it if needed."""
-    telemetry = config.stash.get(_SELECTION_TELEMETRY_KEY, None)
-    if telemetry is None:
-        telemetry = {}
-        config.stash[_SELECTION_TELEMETRY_KEY] = telemetry
-    return telemetry
-
-
-def _selection_param_cache(config: pytest.Config) -> dict[str, list[Any]]:
-    """Return the scenario parametrization cache, creating it if needed."""
-    cache = config.stash.get(_SELECTION_PARAM_CACHE_KEY, None)
-    if cache is None:
-        cache = {}
-        config.stash[_SELECTION_PARAM_CACHE_KEY] = cache
-    return cache
-
-
-def _record_selection_decision(
-    config: pytest.Config,
-    scenario: str,
-    entry: Any,
-    decision: Any,
-) -> None:
-    """Accumulate scenario-level selection telemetry for later reporting."""
-    telemetry = _selection_telemetry_store(config)
-    scenario_data = telemetry.setdefault(
-        scenario,
-        {
-            "selected_mechanisms": set(),
-            "rejected_mechanisms": set(),
-            "rejected_reason_counts": Counter(),
-        },
-    )
-    if decision.selected:
-        scenario_data["selected_mechanisms"].add(entry.mech_name)
-        return
-
-    scenario_data["rejected_mechanisms"].add(entry.mech_name)
-    scenario_data["rejected_reason_counts"].update(reason.code for reason in decision.reasons)
-
-
-def _serialize_selection_telemetry(
-    telemetry: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Convert selection telemetry to report-log friendly data."""
-    selection_coverage: dict[str, dict[str, Any]] = {}
-    for scenario, data in sorted(telemetry.items()):
-        selection_coverage[scenario] = {
-            "selected_mechanisms": sorted(data["selected_mechanisms"]),
-            "rejected_mechanisms": sorted(data["rejected_mechanisms"]),
-            "rejected_reason_counts": dict(sorted(data["rejected_reason_counts"].items())),
-        }
-    return selection_coverage
-
-
-def _name_set(value: Any) -> set[str]:
-    if not isinstance(value, (set, list, tuple)):
-        return set()
-    return {str(item) for item in value if item is not None}
-
-
-def _selection_state_names(telemetry: dict[str, dict[str, Any]]) -> tuple[set[str], set[str]]:
-    selected: set[str] = set()
-    rejected: set[str] = set()
-    for data in telemetry.values():
-        selected.update(_name_set(data.get("selected_mechanisms")))
-        rejected.update(_name_set(data.get("rejected_mechanisms")))
-    return selected, rejected
-
-
-def _reported_names_for_mechanism(
-    mechanism_id: int,
-    ckm_alias_map: dict[int, list[str]],
-    ckm_name_fn: Any,
-    advertised_names: set[str],
-) -> set[str]:
-    names = {ckm_name_fn(mechanism_id), *ckm_alias_map.get(mechanism_id, [])}
-    advertised_matches = names & advertised_names
-    if advertised_matches:
-        return advertised_matches
-    return {ckm_name_fn(mechanism_id)}
-
-
-def _mechanism_rv_state_names(
-    mechanism_rv_counts: Any,
-    ckm_alias_map: dict[int, list[str]],
-    ckm_name_fn: Any,
-    advertised_names: set[str],
-) -> tuple[set[str], set[str]]:
-    accepted: set[str] = set()
-    rejected_cleanly: set[str] = set()
-    if not isinstance(mechanism_rv_counts, dict):
-        return accepted, rejected_cleanly
-    for raw_mid, raw_counts in mechanism_rv_counts.items():
-        if not isinstance(raw_mid, int) or not isinstance(raw_counts, dict):
-            continue
-        names = _reported_names_for_mechanism(
-            raw_mid,
-            ckm_alias_map,
-            ckm_name_fn,
-            advertised_names,
-        )
-        for raw_rv, raw_count in raw_counts.items():
-            if not isinstance(raw_rv, int) or not isinstance(raw_count, int) or raw_count <= 0:
-                continue
-            if raw_rv == int(CKR_OK):
-                accepted.update(names)
-            else:
-                rejected_cleanly.update(names)
-    return accepted, rejected_cleanly
-
-
-def _selected_entries_for_scenario(
-    catalog: Any,
-    config: pytest.Config,
-    scenario: str,
-) -> list[Any]:
-    """Select and cache mechanism entries for a semantic scenario."""
-    cache = _selection_param_cache(config)
-    cached = cache.get(scenario)
-    if cached is not None:
-        return cached
-
-    entries: list[Any] = []
-    for entry in catalog.all_entries():
-        decision = select_for_scenario(entry, scenario)
-        _record_selection_decision(config, scenario, entry, decision)
-        if decision.selected:
-            entries.append(entry)
-
-    cache[scenario] = entries
-    return entries
-
-
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Parametrize mechanism-driven tests from the module's mechanism list."""
     requested = None
@@ -547,30 +467,6 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         ids = [e.mech_name for e in entries]
 
     metafunc.parametrize(requested, entries, ids=ids, indirect=False)
-
-
-def _runtime_skip_reason(
-    item: pytest.Item,
-    config: pytest.Config,
-    manifest: CapabilityManifest | None,
-) -> str | None:
-    if manifest is None:
-        return None
-
-    function_marker = item.get_closest_marker("needs_function")
-    if function_marker and function_marker.args:
-        needed_fn = str(function_marker.args[0])
-        if needed_fn not in manifest.functions:
-            return f"Function {needed_fn} not present in module"
-
-    if config.getoption("p11_skip_unsupported", default=True):
-        marker = item.get_closest_marker("needs_mechanism")
-        if marker and marker.args:
-            needed = str(marker.args[0])
-            if needed not in manifest.mechanisms:
-                return f"Mechanism {needed} not supported by module"
-
-    return None
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -646,326 +542,6 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     reason = _runtime_skip_reason(item, item.config, manifest)
     if reason is not None:
         pytest.skip(reason)
-
-
-def _build_one_stacked_string(mech_id: int, subs: dict[str, int]) -> str:
-    """Build one stacked string like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
-    from pkcs11_check.raw.api import ckm_name, sub_param_name
-
-    base = ckm_name(mech_id)
-    if subs:
-        parts = ",".join(f"{k}={sub_param_name(k, v)}" for k, v in sorted(subs.items()))
-        return f"{base}[{parts}]"
-    return base
-
-
-def _build_stacked_strings(
-    detail_set: set[tuple[int, frozenset[tuple[str, int]]]],
-) -> list[str]:
-    """Build sorted stacked strings like CKM_RSA_PKCS_OAEP[hashAlg=CKM_SHA256]."""
-    return sorted(
-        _build_one_stacked_string(mech_id, dict(subs_frozen)) for mech_id, subs_frozen in detail_set
-    )
-
-
-_RV_TRACE_RAW_SOURCES = ("p11_raw_session", "p11_session", "p11_module_session", "p11_module")
-
-
-def _rv_trace_properties(item: pytest.Item) -> list[tuple[str, Any]]:
-    """Return CK_RV trace user properties for ``item`` when tracing is enabled."""
-    subprocess_trace = drain_subprocess_rv_trace()
-    if subprocess_trace:
-        return [("pkcs11_rv_trace", subprocess_trace)]
-
-    funcargs = getattr(item, "funcargs", None)
-    if not isinstance(funcargs, dict):
-        return []
-    for name in _RV_TRACE_RAW_SOURCES:
-        raw = getattr(funcargs.get(name), "raw", None)
-        if raw is None:
-            continue
-        if not getattr(raw, "rv_trace_enabled", False):
-            return []
-        props: list[tuple[str, Any]] = [("pkcs11_rv_trace", raw.rv_trace)]
-        if raw.rv_trace_dropped:
-            props.append(("pkcs11_rv_trace_dropped", raw.rv_trace_dropped))
-        return props
-    return []
-
-
-def _append_missing_rv_trace(
-    user_properties: list[tuple[str, Any]], trace_props: list[tuple[str, Any]]
-) -> None:
-    for name, value in trace_props:
-        replaced = False
-        for index, (existing_name, existing_value) in enumerate(user_properties):
-            if existing_name != name:
-                continue
-            if existing_value in (None, "", [], {}) and value not in (None, "", [], {}):
-                user_properties[index] = (name, value)
-            replaced = True
-            break
-        if not replaced:
-            user_properties.append((name, value))
-
-
-def _nonempty_rv_trace_from_props(user_properties: Any) -> list[dict[str, Any]]:
-    if not isinstance(user_properties, list):
-        return []
-    for name, value in user_properties:
-        if name in ("pkcs11_rv_trace", "pkcs11_rv_trace_compact") and isinstance(value, list):
-            trace = [entry for entry in value if isinstance(entry, dict)]
-            if trace:
-                return trace
-    return []
-
-
-def _last_rv_trace(item: pytest.Item) -> list[dict[str, Any]]:
-    config = getattr(item, "config", None)
-    stash = getattr(config, "stash", None)
-    if stash is None:
-        return []
-    return cast("list[dict[str, Any]]", stash.get(_LAST_RV_TRACE, []))
-
-
-def _remember_rv_trace(item: pytest.Item, report: Any) -> None:
-    trace = _nonempty_rv_trace_from_props(getattr(report, "user_properties", None))
-    if not trace:
-        return
-    config = getattr(item, "config", None)
-    stash = getattr(config, "stash", None)
-    if stash is not None:
-        stash[_LAST_RV_TRACE] = trace
-
-
-def _report_text(report: Any) -> str:
-    longrepr = getattr(report, "longrepr", None)
-    if isinstance(longrepr, dict):
-        crash = longrepr.get("reprcrash")
-        if isinstance(crash, dict):
-            return str(crash.get("message", ""))
-        return json.dumps(longrepr)
-    return str(longrepr or "")
-
-
-def _is_previous_item_setup_failure(report: Any) -> bool:
-    return getattr(
-        report, "when", None
-    ) == "setup" and "previous item was not torn down properly" in _report_text(report)
-
-
-def _rv_trace_properties_from_report(report: Any) -> list[tuple[str, Any]]:
-    trace = extract_subprocess_rv_trace(_report_text(report))
-    if not trace:
-        return []
-    return [("pkcs11_rv_trace", trace)]
-
-
-def _rv_trace_properties_from_previous_failure(
-    item: pytest.Item, report: Any
-) -> list[tuple[str, Any]]:
-    if not _is_previous_item_setup_failure(report):
-        return []
-    trace = _last_rv_trace(item)
-    if not trace:
-        return []
-    return [("pkcs11_rv_trace", trace)]
-
-
-def _attach_claimed_op_to_report(item: pytest.Item, report: Any) -> None:
-    """Attach the test's claimed productive operation (pkcs11_claimed_op) to its PASSED call report.
-
-    The hollow-pass oracle (quality_audit) groups PASSED records with ``when == "call"`` by this
-    property. Attaching in teardown would land it on the *teardown* TestReport record instead
-    (report-log writes a separate record per phase), which the collector never reads -- so the
-    denominator would always be empty. So attach here, on the passed call report, mirroring
-    _attach_rv_trace_to_report. The value comes from classification.current_claimed_op(), which is
-    gated on set_mechanism(expect_success=True): a negative/rejection vector passes without a
-    productive CKR_OK and must not be counted. No-op unless a productive claim was declared.
-    """
-    if getattr(report, "when", None) != "call" or getattr(report, "outcome", None) != "passed":
-        return
-    if not _is_testcase_item(item):
-        return
-    from pkcs11_check.classification import current_claimed_op
-
-    op = current_claimed_op()
-    if not op:
-        return
-    user_properties = getattr(report, "user_properties", None)
-    if not isinstance(user_properties, list):
-        return
-    if not any(name == "pkcs11_claimed_op" for name, _ in user_properties):
-        user_properties.append(("pkcs11_claimed_op", op))
-
-
-def _drain_rv_trace(item: pytest.Item) -> None:
-    """Attach the per-test CK_RV trace to ``item.user_properties`` when enabled.
-
-    Independent of coverage draining (not gated on the coverage stash). The
-    trace lands on the teardown TestReport record for successful tests; failed
-    and xfail/xpass call reports get the same trace in ``pytest_runtest_makereport``.
-    ``report.jsonl`` is byte-identical when tracing is off. See docs/rv-trace-design.md.
-    """
-    user_properties = getattr(item, "user_properties", None)
-    if not isinstance(user_properties, list):
-        return
-    _append_missing_rv_trace(user_properties, _rv_trace_properties(item))
-
-
-def _report_needs_rv_trace(report: Any) -> bool:
-    return (
-        getattr(report, "outcome", None) == "failed"
-        or getattr(report, "wasxfail", None) is not None
-    )
-
-
-def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
-    """Attach CK_RV trace directly to failed/xfail reports before report-log writes them."""
-    if not _is_testcase_item(item) or not _report_needs_rv_trace(report):
-        return
-    user_properties = getattr(report, "user_properties", None)
-    if not isinstance(user_properties, list):
-        return
-    trace_props = (
-        _rv_trace_properties(item)
-        or _rv_trace_properties_from_report(report)
-        or _rv_trace_properties_from_previous_failure(item, report)
-    )
-    _append_missing_rv_trace(user_properties, trace_props)
-    _remember_rv_trace(item, report)
-
-
-def _append_missing_compliance_notes(
-    user_properties: list[tuple[str, Any]], notes: list[dict[str, str]]
-) -> None:
-    if not notes:
-        return
-    for index, (existing_name, existing_value) in enumerate(user_properties):
-        if existing_name != "pkcs11_compliance_notes":
-            continue
-        if isinstance(existing_value, list):
-            existing_value.extend(notes)
-        else:
-            user_properties[index] = ("pkcs11_compliance_notes", notes)
-        return
-    user_properties.append(("pkcs11_compliance_notes", notes))
-
-
-def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
-    """Attach compliance notes to call reports before report-log serializes them."""
-    if not _is_testcase_item(item) or getattr(report, "when", None) != "call":
-        return
-    user_properties = getattr(report, "user_properties", None)
-    if not isinstance(user_properties, list):
-        return
-
-    from pkcs11_check.compliance import get_notes, serialize_notes
-
-    notes = serialize_notes(get_notes(), nodeid=str(getattr(item, "nodeid", "")))
-    _append_missing_compliance_notes(user_properties, notes)
-
-
-def _report_is_fail_or_xfail(report: Any) -> bool:
-    """True when a call report represents a hard fail or an imperative xfail.
-
-    ``pytest.fail()`` yields ``outcome == "failed"``; ``pytest.xfail()`` yields a
-    ``skipped`` report carrying a ``wasxfail`` attribute. Both are the un-migrated
-    raw-site shapes the unclassified gate must cover.
-    """
-    return (
-        getattr(report, "outcome", None) == "failed"
-        or getattr(report, "wasxfail", None) is not None
-    )
-
-
-def _synthetic_unclassified_record(item: pytest.Item, report: Any) -> Any:
-    """Build the synthetic ``unclassified`` record for a raw fail/xfail testcase.
-
-    A testcase that ends as fail/xfail without emitting a :func:`classify` record
-    is part of the un-migrated backlog; injecting one synthetic record keeps the
-    report 100% covered so the live ``unclassified`` count IS the migration backlog.
-    """
-    from pkcs11_check.classification import Classification
-
-    return Classification(
-        reason="unclassified",
-        outcome="fail",
-        severity="HIGH",
-        label=str(getattr(item, "nodeid", "")),
-        summary=_report_text(report) or "raw pytest.fail/xfail with no classification",
-        detail={"raw": True},
-    )
-
-
-def _attach_classification_to_report(item: pytest.Item, report: Any) -> None:
-    """Attach structured classifications before report-log serializes them.
-
-    Real emitted records always take precedence. When a testcase item ends as a
-    raw fail/xfail with no emitted record, a single synthetic ``unclassified``
-    record is injected so every testcase outcome stays covered (Phase 5.1 gate).
-    """
-    if getattr(report, "when", None) != "call":
-        return
-    from pkcs11_check.classification import get_records, serialize
-
-    collected = get_records()
-    if not collected and _is_testcase_item(item) and _report_is_fail_or_xfail(report):
-        collected = [_synthetic_unclassified_record(item, report)]
-    records = serialize(collected)
-    if not records:
-        return
-    props = list(getattr(report, "user_properties", []) or [])
-    props = [(k, v) for (k, v) in props if k != "pkcs11_classification"]
-    props.append(("pkcs11_classification", records))
-    report.user_properties = props
-
-
-def _convert_missing_function_to_skip(report: Any, call: pytest.CallInfo[Any]) -> None:
-    """A PKCS#11 function absent from the module's function list is a capability
-    gap, not a test error.
-
-    The function dispatcher (``raw/api.py``) raises
-    ``AttributeError("<C_Fn> not available in this module")`` when a test calls a
-    function the loaded module does not implement (common on minimal modules).
-    Per the classification model a genuinely-absent capability is
-    a ``skip``, so convert that specific uncaught error into a skip rather than
-    letting it surface as a hard error. Full modules expose all standard
-    functions, so this never fires for them.
-    """
-    if getattr(report, "when", None) not in ("setup", "call"):
-        return
-    if getattr(report, "outcome", None) != "failed":
-        return
-    excinfo = getattr(call, "excinfo", None)
-    if excinfo is None or not issubclass(excinfo.type, AttributeError):
-        return
-    message = str(excinfo.value)
-    if not message.endswith("not available in this module"):
-        return
-    report.outcome = "skipped"
-    lineno = item_location[1] if (item_location := getattr(report, "location", None)) else 0
-    report.longrepr = (str(getattr(report, "fspath", "")), (lineno or 0) + 1, f"Skipped: {message}")
-
-
-def _remember_module_session_call_outcome(item: pytest.Item, report: Any) -> None:
-    """Mark failed call phases so fast shared-session reuse checks before reuse."""
-    if getattr(report, "when", None) != "call":
-        return
-    if getattr(report, "outcome", None) == "failed":
-        setattr(item, MODULE_SESSION_CALL_FAILED_ATTR, True)
-
-
-def _accumulate_module_session_health_metrics(
-    total: dict[str, int | float],
-    delta: Any,
-) -> None:
-    if not isinstance(delta, dict):
-        return
-    total["checks"] = int(total.get("checks", 0)) + int(delta.get("checks", 0) or 0)
-    total["duration_s"] = float(total.get("duration_s", 0.0)) + float(
-        delta.get("duration_s", 0.0) or 0.0
-    )
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -1134,114 +710,6 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                     detail_counts[detail_str] += 1
     except (KeyError, ImportError):
         pass
-
-
-class _TeardownFinalizeTimeoutError(Exception):
-    """Raised by the SIGALRM watchdog when a teardown C_Finalize overruns."""
-
-
-def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
-    """Call ``C_Finalize`` once on normal per-process teardown.
-
-    Runs at ``pytest_sessionfinish`` -- AFTER every test outcome and the
-    coverage report are already recorded -- so it CANNOT change any test's
-    verdict (segfault-survival model). A non-OK rv, an exception, or a hang is
-    *recorded* via an additive ``TeardownFinalize`` report-log record, never via
-    ``classify()`` / ``pytest.fail`` / ``pytest.xfail`` (no false-accusation of
-    a compliant provider) and never silently swallowed (no hidden finding).
-
-    Mirrors the best-effort shape of ``P11Module.reinitialize()``
-    (``core/loader.py``). A Python-level hang (spin-wait in a ctypes callback
-    or any stall that yields to the CPython eval loop) is bounded by a SIGALRM
-    watchdog (``_TEARDOWN_FINALIZE_TIMEOUT_S``).  A module stuck *inside* native
-    C code is NOT interrupted by SIGALRM -- that is backstopped by the outer
-    per-file subprocess deadline.  On platforms without ``SIGALRM`` the call
-    runs unguarded-for-hang (still guarded for rv / raise).
-    """
-    from pkcs11_check.raw.rv import ckr_name
-
-    # Idempotency: at most one normal-teardown finalize per process.
-    if config.stash.get(_TEARDOWN_FINALIZED, False):
-        return
-    config.stash[_TEARDOWN_FINALIZED] = True
-
-    module = config.stash.get(_P11_MODULE, None)
-    reinit_count = getattr(module, "reinit_count", None)
-
-    outcome = "ok"
-    rv: int | None = None
-    rv_name: str | None = None
-    error: str | None = None
-
-    # SIGALRM watchdog: POSIX-only, and signal.signal/setitimer only work on the
-    # main thread. Off the main thread or on a SIGALRM-less platform, the call
-    # runs unguarded-for-hang (still guarded for non-OK rv and for any raise).
-    use_watchdog = hasattr(signal, "SIGALRM") and (
-        threading.current_thread() is threading.main_thread()
-    )
-    previous_handler: Any = None
-    # Saved return value of setitimer when we arm the watchdog; used in
-    # finally to *restore* any pre-existing ITIMER_REAL rather than zero it.
-    old_timer: tuple[float, float] | None = None
-
-    def _on_alarm(_signum: int, _frame: Any) -> None:
-        raise _TeardownFinalizeTimeoutError
-
-    try:
-        if use_watchdog:
-            previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
-            # setitimer returns (old_value, old_interval); capture to restore.
-            old_timer = signal.setitimer(signal.ITIMER_REAL, float(_TEARDOWN_FINALIZE_TIMEOUT_S))
-        rv_int = int(raw.C_Finalize(None))
-        rv = rv_int
-        rv_name = ckr_name(rv_int)
-        if rv_int != int(CKR_OK):
-            outcome = "error"
-    except _TeardownFinalizeTimeoutError:
-        outcome = "timeout"
-        error = f"C_Finalize exceeded {_TEARDOWN_FINALIZE_TIMEOUT_S}s teardown budget"
-    except Exception as exc:  # noqa: BLE001
-        # Best-effort teardown (mirrors P11Module.reinitialize): a non-OK rv is
-        # handled above; any raise -- AttributeError / OSError /
-        # ctypes.ArgumentError / a module-specific ctypes fault -- is recorded
-        # here with its exact text, never propagated (it would abort report
-        # writing) and never turned into a test verdict.
-        outcome = "error"
-        error = f"{type(exc).__name__}: {exc}"
-    finally:
-        if use_watchdog and old_timer is not None:
-            # Restore the previous timer (value, interval), not unconditionally
-            # zero -- cancelling an outer ITIMER_REAL would be a silent hazard.
-            signal.setitimer(signal.ITIMER_REAL, *old_timer)
-            if previous_handler is not None:
-                signal.signal(signal.SIGALRM, previous_handler)
-
-    record: dict[str, Any] = {
-        "$report_type": "TeardownFinalize",
-        "outcome": outcome,
-        "rv": rv,
-        "rv_name": rv_name,
-        "reinit_count": reinit_count,
-    }
-    if error is not None:
-        record["error"] = error
-
-    report_log_plugin = getattr(config, "_report_log_plugin", None)
-    if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
-        report_log_plugin._write_json_data(record)
-
-
-def _build_provisioning_report(counts: Counter[tuple[str, str]]) -> dict[str, Any]:
-    """Build the ProvisioningReport payload from a per-(obj_class, method) counter.
-
-    Pure function — no I/O, fully unit-testable.
-    """
-    by_class: dict[str, dict[str, int]] = {}
-    for (obj_class, method), n in counts.items():
-        by_class.setdefault(obj_class, {})[method] = n
-    methods = ("ran_via_create", "ran_via_unwrap", "ran_via_external", "skipped_no_path")
-    totals = {m: sum(c.get(m, 0) for c in by_class.values()) for m in methods}
-    return {"by_class": by_class, "totals": totals}
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
