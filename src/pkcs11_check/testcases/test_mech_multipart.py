@@ -45,6 +45,10 @@ from pkcs11_check.testcases.mechanism_helpers import (
     make_mech_param_or_skip,
 )
 
+# Standalone SHAKE-128/256 are XOF digests (C_DigestXof*, not standard multipart digest) and
+# are unnumbered in the current spec, so they are detected by NAME rather than a made-up ID.
+_XOF_DIGEST_NAMES = frozenset({"CKM_SHAKE_128", "CKM_SHAKE_256"})
+
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.multipart]
 
 
@@ -172,10 +176,9 @@ class TestMultipartDigest:
         if config is None:
             pytest.skip(f"{entry.mech_name}: no registry config")
 
-        # XOF mechanisms (SHAKE) use a different API
-        shake_128_id = 0x00000418  # TODO: not in vendored v3.2 header; future spec
-        shake_256_id = 0x00000419  # TODO: not in vendored v3.2 header; future spec
-        if entry.mech_id in (shake_128_id, shake_256_id):
+        # XOF digests (SHAKE-128/256) use a different API (C_DigestXof*) and are unnumbered
+        # in the current spec, so detect them by NAME rather than a made-up ID.
+        if entry.mech_name in _XOF_DIGEST_NAMES:
             pytest.skip(f"{entry.mech_name}: XOF mechanism requires C_DigestXof*")
 
         # Parameterised digests (SHA-512/t) without a buildable recipe
@@ -220,9 +223,7 @@ class TestMultipartDigest:
         if config is None:
             pytest.skip(f"{entry.mech_name}: no registry config")
 
-        shake_128_id = 0x00000418  # TODO: not in vendored v3.2 header; future spec
-        shake_256_id = 0x00000419  # TODO: not in vendored v3.2 header; future spec
-        if entry.mech_id in (shake_128_id, shake_256_id):
+        if entry.mech_name in _XOF_DIGEST_NAMES:
             pytest.skip(f"{entry.mech_name}: XOF mechanism requires C_DigestXof*")
 
         if config.param_required and config.param_recipe.style == "none":
