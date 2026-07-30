@@ -8,22 +8,42 @@ The allowlist (``tests/_raw_site_allowlist.py``) lists files not yet migrated to
 from __future__ import annotations
 
 import pathlib
-import subprocess
+import re
 
 from tests._raw_site_allowlist import ALLOWLIST
 
+# Anchored at this file, NOT the process CWD. These scans used to shell out to `grep` with
+# a CWD-relative root, which made them (a) silently vacuous whenever pytest ran from
+# anywhere but the repo root -- a scan of a nonexistent path finds no offenders and the
+# gate PASSES -- and (b) impossible on Windows, where there is no `grep`: the tests died
+# with FileNotFoundError [WinError 2]. Scanning in-process is portable and CWD-independent.
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROOT = "src/pkcs11_check/testcases"
+ROOT_DIR = REPO_ROOT / ROOT
 SANCTIONED = {"conftest.py", "_ckr_spec.py"}
+
+_RAW_SITE_RE = re.compile(r"pytest\.(xfail|fail)\(")
+
+
+def _py_files() -> list[pathlib.Path]:
+    files = sorted(ROOT_DIR.rglob("*.py"))
+    # A scan that matches nothing because it looked nowhere is the failure mode this guard
+    # is most vulnerable to, so make an empty tree impossible to mistake for "all clean".
+    assert files, f"no .py files under {ROOT_DIR}; the scan would be vacuous"
+    return files
+
+
+def _rel(path: pathlib.Path) -> str:
+    """Repo-relative POSIX path -- the form ALLOWLIST entries are written in."""
+    return path.relative_to(REPO_ROOT).as_posix()
 
 
 def _files_with_raw_sites() -> set[str]:
-    out = subprocess.run(
-        ["grep", "-rlE", r"pytest\.(xfail|fail)\(", ROOT, "--include=*.py"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout.split()
-    return {f for f in out if pathlib.Path(f).name not in SANCTIONED}
+    return {
+        _rel(path)
+        for path in _py_files()
+        if path.name not in SANCTIONED and _RAW_SITE_RE.search(path.read_text(encoding="utf-8"))
+    }
 
 
 def test_no_raw_sites_outside_allowlist() -> None:
@@ -39,14 +59,15 @@ def test_allowlist_has_no_stale_entries() -> None:
 def test_no_test_site_emits_reserved_unclassified_reason() -> None:
     """``unclassified`` is the plugin's synthetic migration-backlog marker; no test or
     helper under ``testcases/`` may emit it, or it would corrupt the backlog metric."""
-    out = subprocess.run(
-        ["grep", "-rn", "unclassified", ROOT, "--include=*.py"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout.strip()
-    assert not out, (
-        f"'unclassified' is reserved for the plugin runtime gate; remove from testcases/:\n{out}"
+    hits = [
+        f"{_rel(path)}:{lineno}:{line}"
+        for path in _py_files()
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if "unclassified" in line
+    ]
+    assert not hits, (
+        "'unclassified' is reserved for the plugin runtime gate; remove from testcases/:\n"
+        + "\n".join(hits)
     )
 
 

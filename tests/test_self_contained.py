@@ -14,6 +14,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from tests._git_guard import requires_git_tracked_files
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Directories and files scanned by the various rules.
@@ -61,6 +63,7 @@ def _tracked_files_under(*prefixes: str) -> list[Path]:
 _THIS_FILE_REL = Path("tests") / "test_self_contained.py"
 
 
+@requires_git_tracked_files
 def test_no_relocated_doc_refs() -> None:
     """No reference to relocated doc files in src/, tests/, or docs/.
 
@@ -150,6 +153,7 @@ def test_no_workspace_or_infra_refs() -> None:
     assert offenders == [], "Workspace/infra references found:\n" + "\n".join(offenders)
 
 
+@requires_git_tracked_files
 def test_no_em_dash_in_markdown() -> None:
     """No em-dash (U+2014) or en-dash (U+2013) in any tracked *.md outside tests/fixtures/."""
     offenders: list[str] = []
