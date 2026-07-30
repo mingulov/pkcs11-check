@@ -352,6 +352,24 @@ def build_policy_fingerprint(pytest_args: list[str], env: Mapping[str, str] | No
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+#: Read size for content digests. Provider modules are a few MB at most.
+_DIGEST_CHUNK = 1 << 20
+
+
+def _content_digest(path: Path) -> str:
+    """SHA-256 of the file's bytes, or a sentinel if it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(_DIGEST_CHUNK), b""):
+                digest.update(chunk)
+    except OSError:
+        # Unreadable is itself a state change worth invalidating a resume on, and it must
+        # not collide with any real digest.
+        return "unreadable"
+    return digest.hexdigest()
+
+
 def _path_snapshot(path_str: str) -> dict[str, int | str] | None:
     path = Path(path_str)
     if not path.exists():
@@ -362,6 +380,14 @@ def _path_snapshot(path_str: str) -> dict[str, int | str] | None:
         "path": str(path.resolve()),
         "size": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
+        # size+mtime_ns alone is NOT an identity. Filesystem timestamp granularity is
+        # coarse enough that consecutive writes share one mtime_ns -- measured on Windows,
+        # where five back-to-back writes to the same path produced a single identical
+        # st_mtime_ns -- so swapping in a different provider module of the same size was
+        # invisible here. Resume would then merge results from two different modules into
+        # one report and call it a continuation, which for a conformance tool means
+        # attributing one module's findings to another. Hash the bytes instead.
+        "sha256": _content_digest(path),
     }
 
 
