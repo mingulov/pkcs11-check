@@ -26,6 +26,11 @@ jobs:
 
   meta-tests:
     runs-on: ubuntu-latest
+    # Some guards enumerate git-TRACKED files and skip where that is impossible (sdist
+    # install, tarball lane). CI always has git and a real checkout, so demand they run:
+    # without this a lost `git` would turn them into silent skips and drop real coverage.
+    env:
+      PKCS11_CHECK_REQUIRE_GIT_GUARDS: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
@@ -51,6 +56,7 @@ jobs:
       LANG: C
       PYTHONCOERCECLOCALE: "0"
       PYTHONUTF8: "0"
+      PKCS11_CHECK_REQUIRE_GIT_GUARDS: "1"
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
@@ -106,6 +112,8 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - name: Meta-test suite (Windows)
+        env:
+          PKCS11_CHECK_REQUIRE_GIT_GUARDS: "1"
         # Runs the framework's own meta-tests natively on Windows so portability
         # regressions surface here rather than only in a user's real run (issue #3).
         shell: pwsh
@@ -151,6 +159,8 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - name: Meta-test suite (macOS)
+        env:
+          PKCS11_CHECK_REQUIRE_GIT_GUARDS: "1"
         run: uv run pytest tests/ -v --timeout=60
       - name: Install SoftHSM2 + provision a token
         run: |
