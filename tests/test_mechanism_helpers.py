@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from pkcs11_check.raw.types_std import (
+    CK_ULONG,
     CKA_VALUE_LEN,
     CKK_AES,
     CKK_CDMF,
@@ -360,8 +361,10 @@ def test_build_params_from_vector_replays_generic_mac_general_length() -> None:
     )
 
     assert params != "SKIP"
+    # CK_ULONG width is platform-dependent (4 bytes on Windows's LLP64, 8 on LP64), so
+    # derive it rather than hardcoding the developer platform's packing.
     assert ctypes.string_at(params.ck.pParameter, params.ck.ulParameterLen) == (
-        (16).to_bytes(8, "little")
+        (16).to_bytes(ctypes.sizeof(CK_ULONG), "little")
     )
 
 

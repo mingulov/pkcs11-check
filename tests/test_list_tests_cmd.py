@@ -48,8 +48,22 @@ def test_skip_slow_composes_via_combine_marker() -> None:
 
 
 def test_module_adds_p11_trio() -> None:
-    got = _args(module=Path("/m.so"), match="x")
-    assert got == ["--p11-module", "/m.so", "--p11-interface", "auto", "--p11-slot", "0", "-k", "x"]
+    module = Path("/m.so")
+    got = _args(module=module, match="x")
+    # The module path is handed to pytest as a real filesystem path, so it is rendered in
+    # OS-native form -- str(Path("/m.so")) is "\\m.so" on Windows. Unlike a node-id (which
+    # is normalized to forward slashes for cross-platform comparison), this must stay
+    # native, so derive the expectation instead of hardcoding the POSIX spelling.
+    assert got == [
+        "--p11-module",
+        str(module),
+        "--p11-interface",
+        "auto",
+        "--p11-slot",
+        "0",
+        "-k",
+        "x",
+    ]
 
 
 def test_no_module_has_no_p11_module() -> None:
