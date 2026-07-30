@@ -126,6 +126,7 @@ from pkcs11_check._plugin_state import (
 from pkcs11_check._plugin_state import (
     _is_testcase_item as _is_testcase_item,
 )
+from pkcs11_check.core.nodeids import item_nodeid
 from pkcs11_check.core.subprocess_trace import (
     drain_subprocess_rv_trace,
     extract_subprocess_rv_trace,
@@ -338,7 +339,7 @@ def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
 
     from pkcs11_check.compliance import get_notes, serialize_notes
 
-    notes = serialize_notes(get_notes(), nodeid=str(getattr(item, "nodeid", "")))
+    notes = serialize_notes(get_notes(), nodeid=item_nodeid(item))
     _append_missing_compliance_notes(user_properties, notes)
 
 
@@ -368,7 +369,7 @@ def _synthetic_unclassified_record(item: pytest.Item, report: Any) -> Any:
         reason="unclassified",
         outcome="fail",
         severity="HIGH",
-        label=str(getattr(item, "nodeid", "")),
+        label=item_nodeid(item),
         summary=_report_text(report) or "raw pytest.fail/xfail with no classification",
         detail={"raw": True},
     )
