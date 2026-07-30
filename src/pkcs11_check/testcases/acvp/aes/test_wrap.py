@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, set_mechanism, xfail_as
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -193,6 +193,8 @@ def test_acvp_aes_kw_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, A
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported by module")
 
+    set_mechanism("AES_KEY_WRAP", operation="C_Encrypt", expect_success=True)
+
     key = 0
     try:
         key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
@@ -229,6 +231,10 @@ def test_acvp_aes_kw_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str,
     rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP"):
         pytest.skip("AES_KEY_WRAP not supported by module")
+
+    set_mechanism(
+        "AES_KEY_WRAP", operation="C_Decrypt", expect_success=bool(vec.get("test_passed", True))
+    )
 
     test_passed = vec.get("test_passed", True)
     key = 0
@@ -346,6 +352,8 @@ def test_acvp_aes_kwp_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, 
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported by module")
 
+    set_mechanism("AES_KEY_WRAP_KWP", operation="C_Encrypt", expect_success=True)
+
     key = 0
     try:
         key = _import_aes_key(rs, vec["key"], encrypt=True, decrypt=False)
@@ -385,6 +393,12 @@ def test_acvp_aes_kwp_unwrap(p11_module_session: Any, vec_id: str, vec: dict[str
     rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported by module")
+
+    set_mechanism(
+        "AES_KEY_WRAP_KWP",
+        operation="C_Decrypt",
+        expect_success=bool(vec.get("test_passed", True)),
+    )
 
     test_passed = vec.get("test_passed", True)
     key = 0

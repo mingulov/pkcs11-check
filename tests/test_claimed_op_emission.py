@@ -90,3 +90,64 @@ def test_attach_skips_negative_vector_pass():
     report = _report("call", "passed")
     _attach_claimed_op_to_report(_item(), report)
     assert report.user_properties == []
+
+
+# ---- runner-family (ACVP AES): op-declarations wired the same way the shared runners do ----
+
+
+def test_aft_encrypt_path_declares_c_encrypt_claim():
+    # Mirrors the AFT (positive-only) encrypt runners in base_runner_aead.py/
+    # base_runner_simple.py/test_wrap.py: declared immediately after the
+    # capability-skip guard, unconditionally expect_success=True.
+    set_mechanism("AES_GCM", operation="C_Encrypt", expect_success=True)
+    assert current_claimed_op() == "C_Encrypt"
+
+
+def test_vot_decrypt_test_passed_false_declares_no_claim():
+    # Mirrors the GCM/CCM decrypt runners and test_wrap.py's unwrap tests: a VOT
+    # vector whose test_passed is False is an expected-fail vector -- its pass does
+    # NOT witness a productive (CKR_OK) decrypt, so no claim should be recorded.
+    vec = {"ct": b"\x00" * 16, "test_passed": False}
+    set_mechanism("AES_GCM", operation="C_Decrypt", expect_success=bool(vec["test_passed"]))
+    assert current_claimed_op() is None
+
+
+# ---- Task 6: wycheproof + ACVP sign-suite op-declarations ----
+
+
+def test_wycheproof_valid_vector_declares_claim():
+    # Mirrors the wycheproof sites (e.g. test_aes_ccm/test_aes_cmac/test_hmac_wycheproof):
+    # gate on the vector's own "result" field, declared right after the capability guard.
+    vec = {"result": "valid"}
+    result = vec["result"]
+    set_mechanism("AES_CCM", operation="C_Decrypt", expect_success=(result == "valid"))
+    assert current_claimed_op() == "C_Decrypt"
+
+
+def test_wycheproof_invalid_vector_declares_no_claim():
+    # The mirror negative case: an "invalid" wycheproof vector passes on a clean
+    # reject, which never witnessed a productive CKR_OK decrypt -- no claim.
+    vec = {"result": "invalid"}
+    result = vec["result"]
+    set_mechanism("AES_CCM", operation="C_Decrypt", expect_success=(result == "valid"))
+    assert current_claimed_op() is None
+
+
+def test_dual_op_roundtrip_declares_only_c_sign():
+    # Mirrors the ACVP KeyGen/SigGen dual-op roundtrip sites (RSA, ECDSA, EdDSA,
+    # ML-DSA, SLH-DSA): ONE set_mechanism call for C_Sign, made before the sign
+    # call; the subsequent verify call (module and/or local oracle) is NOT preceded
+    # by a second, overwriting set_mechanism("C_Verify", ...) call. The productive
+    # claim must stay pinned to C_Sign through and after the verify step.
+    set_mechanism("ECDSA_SHA256", operation="C_Sign", expect_success=True)
+
+    def _fake_sign() -> bytes:
+        return b"\x00" * 64
+
+    def _fake_verify(sig: bytes) -> bool:
+        return sig == b"\x00" * 64
+
+    sig = _fake_sign()
+    verified = _fake_verify(sig)
+    assert verified
+    assert current_claimed_op() == "C_Sign"

@@ -15,7 +15,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.classification import fail_as, set_params, xfail_as
+from pkcs11_check.classification import fail_as, set_mechanism, set_params, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -310,6 +310,7 @@ def test_acvp_ecdsa_sigver(
         pytest.skip(f"{mech_name} not supported by module")
     skip_unless_mechanism_flag(rs, mech_int, int(CKF_VERIFY))
     set_params({"curve": vec.get("ec_curve_name", "")})
+    set_mechanism(mech_name, operation="C_Verify", expect_success=vec["expected_pass"])
     pub_key = 0
     try:
         try:
@@ -389,6 +390,10 @@ class TestEcdsaKeyGen:
         )
         skip_duplicate_pkcs11_input(vec, "ECDSA KeyGen")
         set_params({"curve": vec.get("ec_curve_name", "")})
+        # Roundtrip below signs with CKM_ECDSA_SHA256 then verifies locally + on
+        # module: declare C_Sign only, one call -- C_Verify is backstopped by
+        # test_acvp_ecdsa_sigver.
+        set_mechanism("ECDSA_SHA256", operation="C_Sign", expect_success=True)
         pub_key = priv_key = 0
         msg = b"ACVP keygen test"
         try:
@@ -446,6 +451,9 @@ class TestEcdsaSigGen:
             rs, "EC_KEY_PAIR_GEN", _CURVE_FIELD_BITS[vec["curve"]], label=vec_id
         )
         set_params({"curve": vec.get("ec_curve_name", "")})
+        # Dual-op roundtrip (sign then local+module verify below): declare C_Sign
+        # only, one call -- C_Verify is backstopped by test_acvp_ecdsa_sigver.
+        set_mechanism(mech_name, operation="C_Sign", expect_success=True)
         pub_key = priv_key = 0
         try:
             try:

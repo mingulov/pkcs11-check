@@ -18,7 +18,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import fail_as, set_params, xfail_as
+from pkcs11_check.classification import fail_as, set_mechanism, set_params, xfail_as
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
@@ -158,6 +158,9 @@ class TestMlDsaKeyGen:
         param_set_name = vec["param_set"]
         set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
         skip_duplicate_pkcs11_input(vec, "ML-DSA KeyGen")
+        # Roundtrip below signs with pure ML-DSA then verifies: declare C_Sign
+        # only, one call -- C_Verify is backstopped by TestMlDsaSigVer.
+        set_mechanism("ML_DSA", operation="C_Sign", expect_success=True)
 
         pub_key = priv_key = 0
         try:
@@ -208,6 +211,7 @@ class TestMlDsaSigGen:
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
         set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
+        set_mechanism(mech_name, operation="C_Sign", expect_success=True)
 
         priv_key = 0
         try:

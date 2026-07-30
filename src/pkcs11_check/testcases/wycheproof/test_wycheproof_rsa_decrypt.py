@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, set_params
+from pkcs11_check.classification import classify, set_mechanism, set_params
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -153,6 +153,7 @@ def test_rsa_pkcs1_decrypt(
     ct = bytes.fromhex(vec["ct"])
     msg_expected = bytes.fromhex(vec["msg"])
     result = vec["result"]
+    set_mechanism("RSA_PKCS", operation="C_Decrypt", expect_success=(result == "valid"))
     group = vec["_group"]
 
     pk = group.get("privateKey", {})
