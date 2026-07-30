@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pytest
 
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import (
     CapabilityManifest,
     load_manifest,
@@ -577,14 +578,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
     if deselect_file:
         try:
-            deselect_nodeids = set(parse_disabled_nodeids(Path(deselect_file).read_text()))
+            deselect_nodeids = set(
+                parse_disabled_nodeids(Path(deselect_file).read_text(encoding="utf-8"))
+            )
         except (FileNotFoundError, OSError):
             deselect_nodeids = set()
         if deselect_nodeids:
             remaining: list[pytest.Item] = []
             deselected: list[pytest.Item] = []
             for item in items:
-                if item.nodeid in deselect_nodeids:
+                if normalize_nodeid(item.nodeid) in deselect_nodeids:
                     deselected.append(item)
                 else:
                     remaining.append(item)

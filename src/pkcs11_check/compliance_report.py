@@ -492,7 +492,7 @@ def _parse_test_results(
 
     Returns a mapping of test file base name to outcome counts.
     """
-    data = json.loads(results_path.read_text())
+    data = json.loads(results_path.read_text(encoding="utf-8"))
 
     counts: dict[str, dict[str, int]] = {}
 
@@ -560,7 +560,7 @@ def _parse_test_results(
 
 def _json_mapping(path: Path) -> Mapping[str, Any] | None:
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
     return data if isinstance(data, Mapping) else None

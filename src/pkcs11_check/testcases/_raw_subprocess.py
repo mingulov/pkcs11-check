@@ -33,7 +33,9 @@ def ingest_raw_subprocess_coverage(path: str) -> None:
     if not path or not os.path.exists(path):
         return
     try:
-        with open(path) as fh:
+        # UTF-8 to match the child's write side (_probes/_emit.write_coverage); an
+        # unpinned read would decode as the platform codepage (cp1252 on Windows).
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return

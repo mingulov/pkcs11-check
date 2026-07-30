@@ -90,7 +90,7 @@ def _load_coverage_payload(path: Path) -> tuple[Path, Mapping[str, Any]]:
         console.print(f"[red]Error:[/red] coverage artifact not found: {coverage_path}")
         raise typer.Exit(code=2)
     try:
-        payload = json.loads(coverage_path.read_text())
+        payload = json.loads(coverage_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         console.print(f"[red]Error:[/red] invalid JSON in {coverage_path}: {exc}")
         raise typer.Exit(code=2) from exc

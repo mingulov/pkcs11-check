@@ -5,6 +5,8 @@ create -> (opt-in) unwrap -> skip. See docs/.../key-provisioning-injection-desig
 
 from __future__ import annotations
 
+import shlex
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -63,6 +65,12 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_UNEXTRACTABLE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+
+def _split_provision_cmd(cmd_str: str) -> list[str]:
+    """Split an external-provision command line. POSIX shells use POSIX quoting;
+    on Windows, backslash path separators must not be treated as escapes."""
+    return shlex.split(cmd_str, posix=(sys.platform != "win32"))
 
 
 @dataclass(frozen=True)
@@ -1322,7 +1330,6 @@ def external_provision(
     returns None — the caller decides whether to skip. NEVER raises.
     """
     import os
-    import shlex
     import subprocess
     import tempfile
 
@@ -1344,7 +1351,10 @@ def external_provision(
     # while writing the material (e.g. ENOSPC) cannot leave key material behind.
     try:
         try:
-            os.fchmod(fd, 0o600)
+            if hasattr(os, "fchmod"):
+                # POSIX owner-only tightening. Absent on Windows, where the key file
+                # lives in the per-user temp dir; do not let its absence disable the tier.
+                os.fchmod(fd, 0o600)
             os.write(fd, material)
             os.close(fd)
         except Exception:  # noqa: BLE001
@@ -1358,7 +1368,7 @@ def external_provision(
                 key_type=str(key_type),
                 key_class=obj_class,
             )
-            args = shlex.split(cmd_str)
+            args = _split_provision_cmd(cmd_str)
         except Exception:  # noqa: BLE001
             return None
 

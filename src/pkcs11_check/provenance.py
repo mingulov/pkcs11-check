@@ -59,7 +59,7 @@ def framework_version(
 def read_build_provenance(path: Path) -> dict[str, Any]:
     """Load the build-baked provenance JSON (provider + crypto), or {} if absent/bad."""
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}

@@ -60,6 +60,38 @@ uv run pkcs11-check fetch-data wycheproof    # fetch individual source
 uv run pkcs11-check fetch-disabled           # fetch disabled-tests baseline
 ```
 
+## Disabled-tests file
+
+A disabled-tests file deselects specific test node-ids from a run - use it to skip
+node-ids that crash or hang a particular provider so the rest of the suite still runs.
+It is a plain text file, one pytest node-id per line; blank lines and lines starting
+with `#` are ignored. Node-ids always use forward slashes, on every platform (Linux,
+Windows, macOS, FreeBSD):
+
+```text
+# provider X crashes on these; re-check after the vendor fix
+src/pkcs11_check/testcases/security/test_ffi_length_boundary.py::test_encrypt_len_boundary[aes-cbc]
+src/pkcs11_check/testcases/test_dual_function.py::TestDualFunction::test_digest_encrypt
+```
+
+Point a run at the file by env var or config:
+
+```bash
+# Environment variable (highest-precedence besides CLI):
+P11TEST_DISABLED_TESTS_FILE=/path/to/disabled-tests.txt \
+  uv run pkcs11-check test --module /path/to/module.so --pin 1234
+
+# ... or in pkcs11_check.toml:
+#   disabled_tests_file = "disabled-tests.txt"
+```
+
+A baseline named `disabled-tests.txt` in the resolved data directory is auto-discovered
+if no path is given; pass `--ignore-disabled-tests` to run everything regardless. To find
+the exact node-ids to list (including parametrized variants) without repeatedly running a
+crashing suite, enumerate them with a collect-only pass filtered by `--match`/`--mark`
+(the forthcoming `list-tests` command, issue #6); until then, `--collect-only -q` under
+pytest prints the same forward-slash node-ids.
+
 ## Artifact comparison
 
 ```bash

@@ -15,7 +15,8 @@ session. It runs in a dedicated **child process** that performs its own
 ``C_Initialize(CKF_OS_LOCKING_OK)``, against a disposable token where one can be
 minted so that even a genuine thread-safety crash cannot corrupt the
 shared token. A crash
-(``returncode < 0``) or hang under this spec-valid multi-threaded contract is a
+(a POSIX signal or Windows NTSTATUS exit) or hang under this spec-valid
+multi-threaded contract is a
 genuine module thread-safety **finding** (FAIL); a module that cannot lock
 (``CKR_CANT_LOCK``) is skipped (capability genuinely absent).
 
@@ -34,6 +35,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+from pkcs11_check.testcases._shellcmd import shell_invocation
 
 pytestmark = [
     pytest.mark.stress,
@@ -63,7 +66,7 @@ def _mint_throwaway_token(tmp_path: Path) -> str | None:
     tokens = tmp_path / "tokens"
     tokens.mkdir(parents=True, exist_ok=True)
     mint_cmd = mint_cmd_tmpl.format(token_dir=str(tmp_path), conf_path=str(conf))
-    proc = subprocess.run(["/bin/sh", "-c", mint_cmd], capture_output=True, text=True)
+    proc = subprocess.run(shell_invocation(mint_cmd), capture_output=True, text=True)
     return str(conf) if proc.returncode == 0 else None
 
 
@@ -228,13 +231,13 @@ class TestConcurrentUnderOSLocking:
                     f"(timeout) -- a spec-valid multi-threaded contract must make progress"
                 ),
             )
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 kind="lifecycle",
                 label=f"threading:{workload}",
                 summary=(
-                    f"{workload}: module SIGSEGV (signal {-rc}) under CKF_OS_LOCKING_OK "
+                    f"{workload}: module crashed ({crash_detail_name(rc)}) under CKF_OS_LOCKING_OK "
                     f"concurrency -- a spec-valid multi-threaded contract MUST be "
                     f"crash-safe. stderr: {stderr}"
                 ),
