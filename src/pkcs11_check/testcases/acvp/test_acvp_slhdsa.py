@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.classification import classify, fail_as, set_mechanism
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
@@ -285,6 +285,9 @@ def test_slhdsa_keygen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
+    # Roundtrip below signs then verifies with CKM_SLH_DSA: declare C_Sign
+    # only, one call -- C_Verify is backstopped by test_slhdsa_sigver.
+    set_mechanism("SLH_DSA", operation="C_Sign", expect_success=True)
 
     param_set: int = vec["param_set"]
     priv_key = 0
@@ -402,6 +405,7 @@ def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
     rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
         pytest.skip("SLH_DSA not supported")
+    set_mechanism("SLH_DSA", operation="C_Sign", expect_success=True)
 
     param_set: int = vec["param_set"]
 

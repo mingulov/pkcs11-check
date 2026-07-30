@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, set_params
+from pkcs11_check.classification import classify, set_mechanism, set_params
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
@@ -130,6 +130,7 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
     result = vec["result"]
     private_key_bytes = bytes.fromhex(private_key_hex)
     set_params({"mldsa": _MLDSA_PARAM_LABELS.get(vec.get("_parameter_set", -1), "")})
+    set_mechanism("ML_DSA", operation="C_Sign", expect_success=(result == "valid"))
 
     if vec.get("ctx", ""):
         # This suite signs without transmitting the vector's context, so the
