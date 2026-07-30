@@ -32,6 +32,32 @@ jobs:
       - run: uv sync --frozen --extra dev
       - run: uv run pytest tests/ -v --timeout=60
 
+  meta-tests-ascii-locale:
+    # Catch locale-dependent text I/O on LINUX, where it is cheap and deterministic.
+    #
+    # Python's text mode defaults to the LOCALE encoding. Under a UTF-8 locale an omitted
+    # `encoding=` is invisible; under a non-UTF-8 one it raises. That is why 17 meta-tests
+    # failed on windows-latest (cp1252, byte 0x81 undefined) while every Linux run was green
+    # -- and why they had been green for months on code that already had the defect: the
+    # failure only appeared when the GitHub runner image changed. CI passing was luck.
+    #
+    # LC_ALL=C makes the locale encoding ASCII. PYTHONCOERCECLOCALE=0 stops PEP 538 from
+    # quietly coercing C -> UTF-8 and hiding the very thing being tested; PYTHONUTF8=0 stops
+    # PEP 540 UTF-8 mode doing the same. Verified to reproduce the original failure and to
+    # pass once the encodings are explicit.
+    runs-on: ubuntu-latest
+    env:
+      LC_ALL: C
+      LANG: C
+      PYTHONCOERCECLOCALE: "0"
+      PYTHONUTF8: "0"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --frozen --extra dev
+      - name: Meta-test suite under a non-UTF-8 locale
+        run: uv run pytest tests/ -q --timeout=60
+
   strict-markers:
     runs-on: ubuntu-latest
     steps:
