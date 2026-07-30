@@ -3,11 +3,28 @@
 Tests multi-session behavior, rapid operation cycling, and
 resource limits. These help find threading bugs and leaks
 that only manifest under sustained load.
+
+Hang detection is the runner's job, not an inline wall-clock budget. These loops
+deliberately assert only on CORRECTNESS (round-trip equality, digest stability,
+no duplicate random output) and never on elapsed time.
+
+A hard-coded budget ("1000 cycles must finish in 30s") is a benchmark against
+unspecified hardware, and it fails the provider rather than the host: on a 2-vCPU
+Windows container driving BouncyHsm over loopback RPC the same 1000 encrypt/decrypt
+cycles take 87s, and 1000 C_GenerateRandom calls take 11s -- legitimate throughput
+for that deployment, reported as a provider defect. Recording a finding against a
+conformant module is the one outcome the classification rules single out as harmful,
+and slow-but-correct hardware (embedded HSMs, smartcards, emulators, remote daemons)
+would trip these thresholds the same way.
+
+The per-unit ``--timeout`` (default 180s) already terminates a genuinely hung unit and
+records it as a crash/timeout finding, which is both stronger than an aggregate budget
+(it catches any hang, not only one that pushes the total past a constant) and free of
+the hardware assumption.
 """
 
 from __future__ import annotations
 
-import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -207,15 +224,11 @@ class TestRapidOperations:
         plaintext = b"rapid cycling!!!"  # 16 bytes
 
         try:
-            start = time.monotonic()
             for _ in range(1000):
                 ct = _encrypt_or_xfail(rs, key, plaintext)
                 pt = _decrypt_or_xfail(rs, key, ct)
                 assert pt == plaintext
-            elapsed = time.monotonic() - start
-
-            # Should complete in reasonable time (<30s for 1000 cycles)
-            assert elapsed < 30, f"1000 encrypt/decrypt cycles took {elapsed:.1f}s"
+            # No wall-clock budget here: see the module note on hang detection.
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -225,26 +238,20 @@ class TestRapidOperations:
         data = b"rapid digest test data"
         expected = _digest_or_xfail(rs, data)
 
-        start = time.monotonic()
         for _ in range(1000):
             result = _digest_or_xfail(rs, data)
             assert result == expected
-        elapsed = time.monotonic() - start
-
-        assert elapsed < 10, f"1000 digests took {elapsed:.1f}s"
+        # No wall-clock budget here: see the module note on hang detection.
 
     def test_rapid_random_1000(self, p11_raw_session: Any) -> None:
         """1000 random generation calls."""
         rs = p11_raw_session
-        start = time.monotonic()
         seen: set[bytes] = set()
         for _ in range(1000):
             data = generate_random(rs.raw, rs.sh, 32)
             seen.add(data)
-        elapsed = time.monotonic() - start
-
         assert len(seen) == 1000, "Random generation produced duplicates"
-        assert elapsed < 10, f"1000 random generations took {elapsed:.1f}s"
+        # No wall-clock budget here: see the module note on hang detection.
 
     def test_rapid_sign_verify_100(self, p11_raw_session: Any) -> None:
         """100 RSA sign/verify cycles."""
@@ -254,13 +261,10 @@ class TestRapidOperations:
         data = b"rapid sign test"
 
         try:
-            start = time.monotonic()
             for _ in range(100):
                 sig = _sign_or_xfail(rs, priv, data)
                 assert _verify_or_xfail(rs, pub, data, sig) is True
-            elapsed = time.monotonic() - start
-
-            assert elapsed < 60, f"100 RSA sign/verify took {elapsed:.1f}s"
+            # No wall-clock budget here: see the module note on hang detection.
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
