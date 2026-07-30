@@ -33,6 +33,8 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VERIFY,
+    CKF_DECRYPT,
+    CKF_ENCRYPT,
     CKG_MGF1_SHA1,
     CKK_AES,
     CKM_AES_ECB,
@@ -50,9 +52,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
+    skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
 
@@ -190,6 +194,8 @@ class TestRSAKeySizes:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_OAEP"):
             pytest.skip("CKM_RSA_PKCS_OAEP not supported")
+        skip_unless_mechanism_flag(rs, "RSA_PKCS_OAEP", CKF_ENCRYPT)
+        skip_unless_mechanism_flag(rs, "RSA_PKCS_OAEP", CKF_DECRYPT)
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
             key_bits,
@@ -203,22 +209,25 @@ class TestRSAKeySizes:
                 hash_mech=CKM_SHA_1,
                 mgf=CKG_MGF1_SHA1,
             )
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_RSA_PKCS_OAEP,
-                plaintext,
-                mech_param=mp,
-            )
-            pt = decrypt_single(
-                rs.raw,
-                rs.sh,
-                priv,
-                CKM_RSA_PKCS_OAEP,
-                ct,
-                mech_param=mp,
-            )
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_RSA_PKCS_OAEP,
+                    plaintext,
+                    mech_param=mp,
+                )
+                pt = decrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_RSA_PKCS_OAEP,
+                    ct,
+                    mech_param=mp,
+                )
+            except AssertionError as exc:
+                xfail_if_op_not_operational(exc, "CKM_RSA_PKCS_OAEP")
             assert pt == plaintext
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

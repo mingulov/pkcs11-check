@@ -22,7 +22,12 @@ from pkcs11_check.testcases import test_encrypt as enc
 
 
 def _rs() -> SimpleNamespace:
-    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: True)
+    return SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: True,
+        has_mechanism_flag=lambda _mech, _flag: True,
+    )
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, *, encrypt: Any, decrypt: Any) -> None:
