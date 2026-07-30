@@ -45,6 +45,10 @@ class TestPluginRegistration:
         val = pytestconfig.getoption("p11_destructive", default="MISSING")
         assert val != "MISSING"
 
+    def test_p11_so_pin_option_exists(self, pytestconfig: pytest.Config) -> None:
+        val = pytestconfig.getoption("p11_so_pin", default="MISSING")
+        assert val != "MISSING"
+
     def test_p11_manifest_option_exists(self, pytestconfig: pytest.Config) -> None:
         val = pytestconfig.getoption("p11_manifest", default="MISSING")
         assert val != "MISSING"
@@ -72,6 +76,56 @@ def test_p11_config_uses_env_pin_when_cli_pin_missing(
 
     assert config.pin is not None
     assert config.pin.get_secret_value() == "secret123"
+
+
+def test_p11_config_uses_env_so_pin_when_cli_so_pin_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("P11TEST_SO_PIN", "so-secret-2")
+
+    options = {
+        "p11_module": str(tmp_path / "module.so"),
+        "p11_interface": "auto",
+        "p11_slot": 0,
+        "p11_pin": None,
+        "p11_so_pin": None,
+        "p11_destructive": False,
+    }
+
+    def getoption(name: str, default: object | None = None) -> object | None:
+        return options.get(name, default)
+
+    request = SimpleNamespace(config=SimpleNamespace(getoption=getoption))
+
+    config = p11_config.__wrapped__(request)
+
+    assert config.so_pin is not None
+    assert config.so_pin.get_secret_value() == "so-secret-2"
+
+
+def test_p11_config_cli_so_pin_overrides_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("P11TEST_SO_PIN", "env-so")
+
+    options = {
+        "p11_module": str(tmp_path / "module.so"),
+        "p11_interface": "auto",
+        "p11_slot": 0,
+        "p11_pin": None,
+        "p11_so_pin": "cli-so",
+        "p11_destructive": False,
+    }
+
+    def getoption(name: str, default: object | None = None) -> object | None:
+        return options.get(name, default)
+
+    request = SimpleNamespace(config=SimpleNamespace(getoption=getoption))
+
+    config = p11_config.__wrapped__(request)
+
+    assert config.so_pin is not None
+    assert config.so_pin.get_secret_value() == "cli-so"
 
 
 def test_ensure_manifest_defaults_unset_interface_and_slot(

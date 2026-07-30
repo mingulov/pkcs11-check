@@ -32,6 +32,7 @@ def _default_args(**overrides: object) -> dict[str, object]:
         "marker": None,
         "include_pin_arg": False,
         "pin": None,
+        "so_pin": None,
         "slot": 0,
         "destructive": False,
         "rv_trace": False,

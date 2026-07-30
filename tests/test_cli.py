@@ -158,6 +158,8 @@ class TestTestCommand:
                 str(module),
                 "--pin",
                 "1234",
+                "--so-pin",
+                "9876",
                 "--isolation",
                 "file",
                 "--timeout",
@@ -182,6 +184,7 @@ class TestTestCommand:
         assert called["granularity"] == "file"
         assert called["max_crashes_per_file"] == 5
         assert "--p11-pin" not in called["pytest_args"]
+        assert "--p11-so-pin" not in called["pytest_args"]
         assert "--p11-manifest" in called["pytest_args"]
 
     def test_test_restores_pin_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -266,6 +269,91 @@ class TestTestCommand:
 
         assert result.exit_code == 0
         assert os.environ["P11TEST_PIN"] == "outer-secret"
+
+    def test_test_restores_so_pin_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("")
+        monkeypatch.setenv("P11TEST_SO_PIN", "outer-so")
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            report_config: object | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+            max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
+            provenance: object = None,
+            recovery_config: object = None,
+        ) -> int:
+            del (
+                units,
+                pytest_args,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                resume,
+                stop_on_failure,
+                console,
+                granularity,
+                max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
+            )
+            assert os.environ["P11TEST_SO_PIN"] == "9999"
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: (
+                output_path.write_text("{}"),
+                CapabilityManifest(
+                    status="ok",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version="3.2",
+                    slot_index=slot,
+                    slot_count=1,
+                    mechanisms=[],
+                ),
+            )[1],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--so-pin",
+                "9999",
+                "--isolation",
+                "file",
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert os.environ["P11TEST_SO_PIN"] == "outer-so"
 
     def test_test_test_isolation_invokes_runner(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"

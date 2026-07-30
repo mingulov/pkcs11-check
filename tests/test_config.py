@@ -52,6 +52,24 @@ class TestP11TestConfigEnv:
         assert "secret123" not in repr(config)
         assert "secret123" not in str(config)
 
+    def test_so_pin_default_none(self, tmp_path: Path) -> None:
+        config = P11TestConfig(module=tmp_path / "fake.so")
+        assert config.so_pin is None
+
+    def test_so_pin_from_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("P11TEST_MODULE", str(tmp_path / "m.so"))
+        monkeypatch.setenv("P11TEST_SO_PIN", "so-secret-1")
+        config = P11TestConfig()  # type: ignore[call-arg]
+        assert config.so_pin is not None
+        assert config.so_pin.get_secret_value() == "so-secret-1"
+
+    def test_so_pin_not_in_repr(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("P11TEST_MODULE", str(tmp_path / "m.so"))
+        monkeypatch.setenv("P11TEST_SO_PIN", "so-secret-1")
+        config = P11TestConfig()  # type: ignore[call-arg]
+        assert "so-secret-1" not in repr(config)
+        assert "so-secret-1" not in str(config)
+
     def test_disabled_tests_file_from_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -71,3 +89,10 @@ def test_disabled_tests_file_is_none_without_toml(
     config = P11TestConfig(module=tmp_path / "fake.so")
 
     assert config.disabled_tests_file is None
+
+
+def test_so_pin_env_key_fingerprinted_and_redacted() -> None:
+    from pkcs11_check.core import _run_state
+
+    assert "P11TEST_SO_PIN" in _run_state._DEFAULT_FINGERPRINT_ENV_KEYS
+    assert "P11TEST_SO_PIN" in _run_state._REDACTED_ENV_KEYS
