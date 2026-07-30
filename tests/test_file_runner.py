@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -121,7 +122,11 @@ def test_collect_pytest_nodeids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
     units = collect_pytest_nodeids([str(target)], ["--p11-module", "/tmp/module.so"])
 
-    assert units == [f"{target}::test_case", f"{target}::test_other[param]"]
+    # collect_pytest_nodeids normalizes the path portion to forward slashes on purpose, so
+    # node-ids compare equal against a disabled-tests file regardless of which platform
+    # wrote it. Expect that canonical form rather than the local separator.
+    expected_path = target.as_posix()
+    assert units == [f"{expected_path}::test_case", f"{expected_path}::test_other[param]"]
 
 
 def test_discover_pytest_units_test_granularity_collects_nodeids(
@@ -781,6 +786,40 @@ def test_build_state_fingerprint_changes_when_module_changes(tmp_path: Path) -> 
     second = build_state_fingerprint([str(unit)], ["--p11-module", str(module)], env)
 
     assert first != second
+
+
+def test_build_state_fingerprint_detects_module_swap_with_identical_stat(tmp_path: Path) -> None:
+    """Resume validation must not depend on filesystem timestamp granularity.
+
+    The fingerprint's module identity was size + mtime_ns, which is not an identity at all:
+    measured on Windows, five consecutive writes to the same path all reported an IDENTICAL
+    st_mtime_ns. A different provider module of the same size was therefore invisible, and
+    resume would happily continue a run against it -- merging two modules' results into one
+    report and attributing one module's findings to another.
+
+    Forcing both stat fields equal makes this independent of how fine the host's timestamps
+    happen to be, so it pins the content-addressed behaviour on every platform rather than
+    passing by luck where mtime_ns is precise.
+    """
+    unit = tmp_path / "test_demo.py"
+    unit.write_text("def test_demo():\n    assert True\n", encoding="utf-8")
+    module = tmp_path / "module.so"
+    env = {"P11TEST_PIN": "1234"}
+    args = ["--p11-module", str(module)]
+
+    module.write_bytes(b"AAAA")
+    before = module.stat()
+    first = build_state_fingerprint([str(unit)], args, env)
+
+    module.write_bytes(b"BBBB")  # same length, different bytes
+    os.utime(module, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = module.stat()
+
+    # Guard the guard: if the stat fields are not actually identical, this test would pass
+    # for the wrong reason and stop protecting anything.
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+
+    assert build_state_fingerprint([str(unit)], args, env) != first
 
 
 def test_build_state_fingerprint_changes_when_env_changes(tmp_path: Path) -> None:
