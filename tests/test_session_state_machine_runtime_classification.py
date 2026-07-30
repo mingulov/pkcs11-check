@@ -29,17 +29,20 @@ def _session(login_rv: int) -> SimpleNamespace:
     def _login(*_a: object, **_k: object) -> int:
         return int(login_rv)
 
-    raw = SimpleNamespace(C_Login=_login)
+    def _token_info(_slot_id: object, info_ref: object) -> int:
+        info_ref._obj.flags = 0  # type: ignore[attr-defined]
+        return int(CKR_OK)
+
+    raw = SimpleNamespace(C_Login=_login, C_GetTokenInfo=_token_info)
     return SimpleNamespace(raw=raw, sh=1, slot_id=0, has_mechanism=lambda n: True)
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, login_rv: int) -> None:
-    monkeypatch.setattr(tsm, "get_pin_bytes", lambda *_a, **_k: b"1234")
     monkeypatch.setattr(tsm, "raw_open_session", lambda *_a, **_k: 9)
     monkeypatch.setattr(tsm, "_logout_safe", lambda *_a, **_k: None)
     monkeypatch.setattr(tsm, "close_session_quietly", lambda *_a, **_k: None)
     tsm.TestROvsRWSessionState().test_so_login_requires_rw_session(
-        _session(login_rv), SimpleNamespace()
+        _session(login_rv), SimpleNamespace(pin="1234", so_pin=None)
     )
 
 

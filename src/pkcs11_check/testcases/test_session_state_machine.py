@@ -51,7 +51,6 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_OK,
-    CKR_PIN_INCORRECT,
     CKR_SESSION_CLOSED,
     CKR_SESSION_COUNT,
     CKR_SESSION_HANDLE_INVALID,
@@ -65,6 +64,11 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKU_SO,
     CKU_USER,
+)
+from pkcs11_check.testcases._so_login import (
+    guard_so_lockout,
+    resolve_so_pin,
+    skip_if_so_pin_rejected,
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -145,11 +149,6 @@ def _logout_safe(raw: Any, sh: int) -> None:
     rv = raw.C_Logout(sh)
     # Silently accept any error -- just cleaning up
     _ = rv
-
-
-def _skip_if_so_pin_differs(rv: int) -> None:
-    if rv == CKR_PIN_INCORRECT:
-        pytest.skip("SO PIN differs from user PIN on this module")
 
 
 # ---------------------------------------------------------------------------
@@ -296,14 +295,15 @@ class TestSOLoginState:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        so_pin = pin_bytes
+        so_pin, explicit = resolve_so_pin(p11_config)
+        assert so_pin is not None  # pin_bytes above guarantees the fallback
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(so_pin))
-            if rv == CKR_PIN_INCORRECT:
-                pytest.skip("SO PIN differs from user PIN on this module")
+            skip_if_so_pin_rejected(rv, explicit=explicit)
             if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
                 pytest.skip("Another user is already logged in on this token")
             expect_rv(rv, CKR_OK)
@@ -327,14 +327,15 @@ class TestSOLoginState:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
-        so_pin = pin_bytes
+        so_pin, explicit = resolve_so_pin(p11_config)
+        assert so_pin is not None  # pin_bytes above guarantees the fallback
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
             rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(so_pin))
-            if rv == CKR_PIN_INCORRECT:
-                pytest.skip("SO PIN differs from user PIN on this module")
+            skip_if_so_pin_rejected(rv, explicit=explicit)
             if rv in (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_ANOTHER_ALREADY_LOGGED_IN):
                 pytest.skip("Another user is already logged in on this token")
             expect_rv(rv, CKR_OK)
@@ -388,14 +389,17 @@ class TestLoginConflicts:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
+        so_pin, explicit = resolve_so_pin(p11_config)
+        assert so_pin is not None
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             _login_user_raw(rs.raw, test_sh, pin_bytes)
 
-            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(pin_bytes))
-            _skip_if_so_pin_differs(rv)
+            pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+            rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(so_pin))
+            skip_if_so_pin_rejected(rv, explicit=explicit)
             classify_negative_rv(
                 rv,
                 (CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
@@ -911,12 +915,15 @@ class TestROvsRWSessionState:
         if pin_bytes is None:
             pytest.skip("No PIN configured")
         rs = p11_raw_session
+        so_pin, explicit = resolve_so_pin(p11_config)
+        assert so_pin is not None
+        guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
         flags = CKF_SERIAL_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
-            pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(pin_bytes))
-            _skip_if_so_pin_differs(rv)
+            pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
+            rv = rs.raw.C_Login(test_sh, CKU_SO, pin_buf, len(so_pin))
+            skip_if_so_pin_rejected(rv, explicit=explicit)
             classify_negative_rv(
                 rv,
                 (CKR_SESSION_READ_ONLY_EXISTS,),
