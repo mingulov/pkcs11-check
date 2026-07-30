@@ -259,7 +259,7 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
 
     if results_path.exists():
         try:
-            data = json.loads(results_path.read_text())
+            data = json.loads(results_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             warnings.append(
                 f"{shard_dir.name}: results.json unreadable ({exc.__class__.__name__}); "
@@ -328,7 +328,9 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
 
     coverage = extract_coverage_from_jsonl(merged_report) if merged_report.exists() else None
     if coverage:
-        (output_dir / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
+        (output_dir / "coverage.json").write_text(
+            json.dumps(coverage, indent=2) + "\n", encoding="utf-8"
+        )
 
     payloads: list[dict[str, Any]] = []
     files_per_shard: list[int] = []

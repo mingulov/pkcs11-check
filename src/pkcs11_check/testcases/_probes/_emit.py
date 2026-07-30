@@ -55,7 +55,7 @@ def write_coverage(call_log: dict[str, int], mechanism_counts: dict[str, int]) -
             "call_log": call_log,
             "mechanism_counts": mechanism_counts,
         }
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     except (OSError, TypeError, ValueError):
         pass

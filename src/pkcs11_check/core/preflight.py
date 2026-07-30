@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.core.loader import load_module
 
 
@@ -91,14 +92,14 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
 
 def load_manifest(path: Path) -> CapabilityManifest:
     """Load a capability manifest from disk."""
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     return CapabilityManifest(**raw)
 
 
 def save_manifest(path: Path, manifest: CapabilityManifest) -> None:
     """Persist a capability manifest as JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(manifest), indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(asdict(manifest), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def run_preflight_subprocess(
@@ -140,8 +141,7 @@ def run_preflight_subprocess(
     if completed.returncode == 0 and output_path.exists():
         return load_manifest(output_path)
 
-    if completed.returncode < 0:
-        signal = -completed.returncode
+    if is_crash_returncode(completed.returncode):
         return CapabilityManifest(
             status="crashed",
             module_path=str(module),
@@ -150,7 +150,7 @@ def run_preflight_subprocess(
             slot_index=slot,
             slot_count=None,
             mechanisms=[],
-            error=f"preflight crashed (signal {signal})",
+            error=f"preflight crashed ({crash_detail_name(completed.returncode)})",
         )
 
     return CapabilityManifest(

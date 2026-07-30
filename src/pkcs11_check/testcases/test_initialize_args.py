@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_CANT_LOCK, CKR_OK
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases.conftest import classify_negative_rv
@@ -74,12 +75,12 @@ class TestInitArgsMatrix:
     def test_init_null_args(self, p11_config: Any) -> None:
         """Mode A: `C_Initialize(NULL)` is the universally-accepted default."""
         rc, stdout, stderr = _run_init_args_probe(p11_config, "null_args")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(NULL)",
                 operation="C_Initialize",
-                summary=f"C_Initialize(NULL) segfaulted (signal {-rc}). Stderr: {stderr}",
+                summary=f"C_Initialize(NULL) crashed ({crash_detail_name(rc)}). Stderr: {stderr}",
             )
         rv = _parse_rv(stdout)
         assert rv == CKR_OK, (
@@ -93,12 +94,15 @@ class TestInitArgsMatrix:
         Per spec §5.4 this is a "no-locks" mode — module must not crash.
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "empty_struct")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(empty struct)",
                 operation="C_Initialize",
-                summary=f"C_Initialize(empty struct) segfaulted (signal {-rc}). Stderr: {stderr}",
+                summary=(
+                    f"C_Initialize(empty struct) crashed ({crash_detail_name(rc)}). "
+                    f"Stderr: {stderr}"
+                ),
             )
         rv = _parse_rv(stdout)
         # Acceptable: CKR_OK (no-lock mode honored) or CKR_CANT_LOCK
@@ -119,12 +123,15 @@ class TestInitArgsMatrix:
         is expected to succeed unless it's strictly single-threaded.
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "os_locking_only")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(OS_LOCKING_OK)",
                 operation="C_Initialize",
-                summary=f"C_Initialize(OS_LOCKING_OK) segfaulted (signal {-rc}). Stderr: {stderr}",
+                summary=(
+                    f"C_Initialize(OS_LOCKING_OK) crashed ({crash_detail_name(rc)}). "
+                    f"Stderr: {stderr}"
+                ),
             )
         rv = _parse_rv(stdout)
         assert rv == CKR_OK, (
@@ -141,13 +148,13 @@ class TestInitArgsMatrix:
         CKR_CANT_LOCK if it can't use app-supplied locks.
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "app_mutex_callbacks")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(app callbacks)",
                 operation="C_Initialize",
                 summary=(
-                    f"C_Initialize(app callbacks) segfaulted (signal {-rc}). "
+                    f"C_Initialize(app callbacks) crashed ({crash_detail_name(rc)}). "
                     f"This is a real provider bug — supplied mutex callbacks "
                     f"must not crash the module.  Stderr: {stderr}"
                 ),
@@ -172,14 +179,14 @@ class TestInitArgsMatrix:
         verifies no crash.
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "both_callbacks_and_os_locking")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(callbacks + OS_LOCKING_OK)",
                 operation="C_Initialize",
                 summary=(
                     f"C_Initialize(callbacks + OS_LOCKING_OK) segfaulted "
-                    f"(signal {-rc}). Stderr: {stderr}"
+                    f"({crash_detail_name(rc)}). Stderr: {stderr}"
                 ),
             )
         rv = _parse_rv(stdout)
@@ -203,14 +210,14 @@ class TestInitArgsMatrix:
         non-compliant.
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "reserved_non_null")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(non-NULL pReserved)",
                 operation="C_Initialize",
                 summary=(
                     f"C_Initialize with non-NULL pReserved segfaulted "
-                    f"(signal {-rc}) — module dereferenced reserved field. "
+                    f"({crash_detail_name(rc)}) — module dereferenced reserved field. "
                     f"Stderr: {stderr}"
                 ),
             )
@@ -244,13 +251,13 @@ class TestInitArgsMatrix:
         supplied, or NONE.  Partial callbacks indicate caller bug.
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "partial_callbacks")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Initialize(partial callbacks)",
                 operation="C_Initialize",
                 summary=(
-                    f"C_Initialize with partial callbacks segfaulted (signal {-rc}).  "
+                    f"C_Initialize with partial callbacks crashed ({crash_detail_name(rc)}).  "
                     f"Stderr: {stderr}"
                 ),
             )
@@ -297,14 +304,14 @@ class TestFinalizeArgs:
         - Any other clean code -> xfail/nonspec_reject (noted deviation).
         """
         rc, stdout, stderr = _run_init_args_probe(p11_config, "finalize_reserved_non_null")
-        if rc < 0:
+        if is_crash_returncode(rc):
             classify(
                 "crash",
                 label="C_Finalize(non-NULL pReserved)",
                 operation="C_Finalize",
                 summary=(
                     f"C_Finalize with non-NULL pReserved segfaulted "
-                    f"(signal {-rc}) — module dereferenced reserved field. "
+                    f"({crash_detail_name(rc)}) — module dereferenced reserved field. "
                     f"Stderr: {stderr}"
                 ),
             )

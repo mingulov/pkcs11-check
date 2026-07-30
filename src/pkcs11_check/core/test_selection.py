@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
@@ -87,6 +88,7 @@ def parse_disabled_nodeids(text: str) -> list[str]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
+        line = normalize_nodeid(line)
         if line in seen:
             continue
         nodeids.append(line)
@@ -104,7 +106,7 @@ def load_disabled_baseline(path: Path | None) -> DisabledBaseline | None:
     if path is None:
         return None
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         msg = f"disabled baseline file not found: {path}"
         raise FileNotFoundError(msg) from exc
@@ -144,11 +146,13 @@ def build_disabled_selection_plan(
     items_by_file: dict[str, list[str]] = {}
     if collected_items is not None:
         for item in collected_items:
-            items_by_file.setdefault(str(Path(item.file_path).resolve()), []).append(item.nodeid)
+            items_by_file.setdefault(str(Path(item.file_path).resolve()), []).append(
+                normalize_nodeid(item.nodeid)
+            )
 
     for unit in units:
         if "::" in unit:
-            if unit in disabled_nodeids:
+            if normalize_nodeid(unit) in disabled_nodeids:
                 continue
             planned_units.append(unit)
             continue
@@ -235,7 +239,7 @@ def _identify_culprit_for_file(
 
 def _load_results_units(path: Path) -> list[dict[str, object]]:
     try:
-        payload = json.loads(path.read_text())
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return []
     units = payload.get("units", []) if isinstance(payload, dict) else []
@@ -438,5 +442,5 @@ def write_deselect_file(nodeids: Iterable[str]) -> Path:
     fd, raw_path = tempfile.mkstemp(prefix="pkcs11-check-deselect-", suffix=".txt")
     path = Path(raw_path)
     os.close(fd)
-    path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted))
+    path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted), encoding="utf-8")
     return path

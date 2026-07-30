@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 
@@ -294,19 +295,21 @@ class TestLibraryReload:
     def test_reload_cycle_5x(self, p11_config: Any) -> None:
         """Load -> init -> ops -> finalize, 5 times. No crash or leak.
 
-        A negative exit code (signal/segfault) is a module bug and kept as failure.
-        A positive exit code (rc > 0) means the module raised a Python exception
+        A crash exit code (a negative POSIX signal, or a positive Windows NTSTATUS
+        such as 0xC0000005) is a module bug and kept as a crash failure.
+        A clean positive exit code means the module raised a Python exception
         during reinit -- common causes: token label not found after reinit,
         or daemon not provisioned. These are module
         environment limitations, not crashes, so xfail.
         """
         rc, output = _run_probe(p11_config, "reload_cycle_5x", timeout=30, with_pin=True)
-        if rc < 0:
-            # Negative exit code = killed by signal (crash/segfault) -- real module bug
+        if is_crash_returncode(rc):
+            # Killed by a POSIX signal (rc < 0) or a Windows NTSTATUS crash code
+            # (positive, e.g. 0xC0000005) -- a real module bug either way.
             classify(
                 "crash",
                 label="library reload cycle (5x)",
-                summary=f"Reload cycle crashed with signal (rc={rc}): {output}",
+                summary=f"Reload cycle crashed ({crash_detail_name(rc)}): {output}",
             )
         if rc != 0:
             # Non-zero but no signal: module raised an exception during reinit

@@ -20,6 +20,7 @@ import pytest
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.raw import types_std
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import ckr_name
@@ -137,7 +138,7 @@ def _classify_unhonorable_length_outcome(
     - SETUP_XFAIL line present -> xfail (not_operational, setup didn't reach probe).
     - Timeout (rc==SUBPROCESS_TIMEOUT_RC or SUBPROCESS_TIMEOUT_MARKER in stderr) ->
       note (honoring an un-backable length is caller-UB territory, not silent truncation).
-    - Crash (rc < 0) -> note (over-read on caller-induced UB, not a module defect).
+    - Crash (is_crash_returncode) -> note (over-read on caller-induced UB, not a module defect).
     - CKR_OK -> fail (accepted_invalid: silent truncation of an un-honorable length).
     - rv in reject_rvs -> pass.
     - other clean code -> xfail (nonspec_reject).
@@ -166,11 +167,12 @@ def _classify_unhonorable_length_outcome(
         )
         return
 
-    # Crash: module over-read on caller-induced UB.
-    if rc < 0:
+    # Crash (POSIX signal OR Windows NTSTATUS): module over-read on caller-induced UB.
+    # The same provider behavior must yield the same verdict on every platform.
+    if is_crash_returncode(rc):
         note(
-            f"{label_op}: module crashed (signal {-rc}) on an un-honorable 2^63 "
-            "length — caller cannot supply 2^63 bytes; this is caller-induced UB, "
+            f"{label_op}: module crashed ({crash_detail_name(rc)}) on an un-honorable "
+            "2^63 length — caller cannot supply 2^63 bytes; this is caller-induced UB, "
             "not a module defect",
             ComplianceLevel.EXTENDED,
             reference="PKCS#11 length semantics",
@@ -178,7 +180,7 @@ def _classify_unhonorable_length_outcome(
         )
         return
 
-    # Non-zero exit without SETUP_XFAIL or signal: classify via assert_subprocess_completed
+    # Non-crash non-zero exit (e.g. a clean error code): classify via assert_subprocess_completed
     if rc > 0:
         assert_subprocess_completed(rc, stdout, stderr, context=label_op)
         return

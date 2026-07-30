@@ -23,6 +23,13 @@ from xml.etree import ElementTree as ET  # nosec B405
 from rich.console import Console
 
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.crash_codes import (
+    crash_detail_name as _crash_detail_name,
+)
+from pkcs11_check.core.crash_codes import (
+    is_windows_crash_code as _is_windows_crash_code,
+)
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import load_manifest
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
@@ -66,6 +73,13 @@ _MAX_TIMEOUT_RETRIES = 3
 _NO_TESTS_COLLECTED_EXIT = 2
 # Match the conventional GNU timeout exit code; pytest itself uses only 0-5.
 _TIMEOUT_RETURN_CODE = 124
+# After a child exits on its own, any un-read pipe data is at most the OS pipe
+# buffer and drains in milliseconds. Cap the post-exit reader-thread join so a
+# grandchild that inherited the pipe write-end cannot stall the runner for the
+# full per-test timeout (issue #3: Windows "hangs, single CTRL-C unblocks", where
+# a provider DLL more readily leaves a handle-inheriting helper process). Daemon
+# readers are abandoned after the grace and die at process exit.
+_POST_EXIT_DRAIN_GRACE_S = 3.0
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 # The fingerprint detects when the run's effective configuration changed, so
@@ -196,7 +210,11 @@ def collect_pytest_nodeids(
         line = raw_line.strip()
         if not line or "::" not in line:
             continue
-        nodeids.append(line)
+        # Canonicalize to forward slashes: on Windows pytest emits OS-native (\)
+        # path separators in node-ids, but disabled/deselect sets are normalized
+        # (core/nodeids.py), so a raw comparison in the escalation path would never
+        # match and a disabled crashing test would be re-included. No-op on POSIX.
+        nodeids.append(normalize_nodeid(line))
 
     return nodeids
 
@@ -403,7 +421,7 @@ def load_isolation_policy(path: Path) -> dict[str, BackendIsolationPolicy]:
     if not path.exists():
         return {}
 
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         msg = f"invalid isolation policy file: {path}"
         raise ValueError(msg)
@@ -443,7 +461,7 @@ def save_isolation_policy(path: Path, policies: Mapping[str, BackendIsolationPol
             for fingerprint, policy in sorted(policies.items())
         }
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _state_summary(state: FileRunState) -> dict[str, int]:
@@ -1008,7 +1026,9 @@ def _write_unit_report_record_cache(
 ) -> None:
     cache_path = _report_record_cache_path(state_file, unit)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    cache_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
 
 
 def _write_unit_report_record_cache_from_jsonl_paths(
@@ -1879,7 +1899,7 @@ def load_run_state(path: Path) -> FileRunState | None:
     if not path.exists():
         return None
 
-    raw = json.loads(path.read_text())
+    raw = json.loads(path.read_text(encoding="utf-8"))
     results = [FileRunResult(**item) for item in raw.get("results", [])]
     report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     raw_records = raw.get("report_records_by_unit", {})
@@ -1927,7 +1947,7 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         # escape hatch for offline state inspection and for A/B perf measurement;
         # it is OFF by default and never needed for resume.
         payload["report_records_by_unit"] = state.report_records_by_unit
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _extract_option_value(args: list[str], option: str) -> str | None:
@@ -2187,13 +2207,6 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
     return [unit for unit in units if unit not in completed_ok]
 
 
-def _is_windows_crash_code(returncode: int) -> bool:
-    """True for an NTSTATUS exit code with error severity (top two bits set), e.g.
-    0xC0000005 (access violation). On Windows an unhandled exception terminates the
-    process with such a code instead of a negative POSIX signal."""
-    return (returncode & 0xFFFFFFFF) & 0xC0000000 == 0xC0000000
-
-
 def _status_from_returncode(returncode: int) -> str:
     if returncode == 0:
         return "passed"
@@ -2206,40 +2219,6 @@ def _status_from_returncode(returncode: int) -> str:
     if sys.platform == "win32" and _is_windows_crash_code(returncode):
         return "crashed"
     return "failed"
-
-
-_CRASH_SIGNALS: dict[int, str] = {
-    -11: "SIGSEGV",
-    -6: "SIGABRT",
-    -5: "SIGTRAP",
-    -4: "SIGILL",
-    -8: "SIGFPE",
-    -7: "SIGBUS",
-}
-
-# Windows NTSTATUS exception codes (the process exit code when a child dies on an
-# unhandled exception); the Windows-ABI counterpart of _CRASH_SIGNALS.
-_WINDOWS_EXCEPTION_NAMES: dict[int, str] = {
-    0xC0000005: "EXCEPTION_ACCESS_VIOLATION",
-    0xC00000FD: "EXCEPTION_STACK_OVERFLOW",
-    0xC000001D: "EXCEPTION_ILLEGAL_INSTRUCTION",
-    0xC0000094: "EXCEPTION_INT_DIVIDE_BY_ZERO",
-    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN",
-    0xC0000374: "STATUS_HEAP_CORRUPTION",
-    0xC0000025: "EXCEPTION_NONCONTINUABLE_EXCEPTION",
-}
-
-
-def _crash_detail_name(returncode: int | None) -> str:
-    """Name a crash exit code: POSIX signal (negative) or Windows NTSTATUS (positive)."""
-    if returncode is None:
-        return "unknown"
-    if returncode < 0:
-        return _CRASH_SIGNALS.get(returncode, f"signal{abs(returncode)}")
-    if _is_windows_crash_code(returncode):
-        u = returncode & 0xFFFFFFFF
-        return _WINDOWS_EXCEPTION_NAMES.get(u, f"0x{u:08X}")
-    return f"exit{returncode}"
 
 
 def crash_classification(
@@ -2726,6 +2705,15 @@ def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, 
     return env
 
 
+def _join_readers_bounded(threads: list[threading.Thread], *, grace: float) -> None:
+    """Join each reader thread, but never wait longer than ``grace`` seconds total
+    after the child has already exited. A still-running daemon reader is abandoned
+    (it dies at process exit); its un-drained tail is acceptable to lose."""
+    deadline = time.monotonic() + grace
+    for thread in threads:
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
 def _run_subprocess_tee(
     cmd: list[str],
     *,
@@ -2797,11 +2785,12 @@ def _run_subprocess_tee(
         raise subprocess.TimeoutExpired(cmd, timeout)
 
     # The child exited on its own -- cleanly OR via a crash signal (negative
-    # returncode). Drain the readers, but never block past the deadline: a
-    # surviving grandchild may hold the pipes open (R2), and a crash must report
-    # its real returncode rather than being masked as a timeout.
-    for thread in threads:
-        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+    # returncode). Drain the readers, but only for a short grace: the child is
+    # gone, so any un-read data is at most the OS pipe buffer. A surviving
+    # grandchild that inherited the pipe (R2) must NOT hold the runner for the
+    # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
+    # the grace and report the child's real returncode.
+    _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
 
     proc.wait()
     return (
@@ -2944,11 +2933,15 @@ def run_isolated_pytest_units(
                     )
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                        coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+                        coverage_path.write_text(
+                            json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
+                        )
                     provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
                     if provisioning_data is not None:
                         provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
-                        provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                        provisioning_path.write_text(
+                            json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
+                        )
                         if provisioning_data["totals"].get("ran_via_external", 0) > 0:
                             _emit_external_provision_banner(
                                 provisioning_data["totals"]["ran_via_external"]
@@ -3849,11 +3842,15 @@ def run_isolated_pytest_units(
                     )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                    coverage_path.write_text(json.dumps(coverage_data, indent=2) + "\n")
+                    coverage_path.write_text(
+                        json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
+                    )
                 provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
                 if provisioning_data is not None:
                     provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
-                    provisioning_path.write_text(json.dumps(provisioning_data, indent=2) + "\n")
+                    provisioning_path.write_text(
+                        json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
+                    )
                     if provisioning_data["totals"].get("ran_via_external", 0) > 0:
                         _emit_external_provision_banner(
                             provisioning_data["totals"]["ran_via_external"]
