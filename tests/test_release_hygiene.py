@@ -206,3 +206,17 @@ def test_pqc_xfails_explain_module_or_spec_context() -> None:
         if isinstance(reason, str) and reason in generic:
             offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {reason}")
     assert offenders == []
+
+
+def test_version_is_consistent_across_release_files() -> None:
+    """The version in __init__.py, pyproject.toml and CHANGELOG.md must agree on every push.
+
+    This is the same check the release workflow runs, so drift fails in normal CI rather than
+    being discovered at release time.
+    """
+    from scripts.release_check import verify
+
+    problems = verify(REPO_ROOT, None)
+    assert not problems, "release version state is inconsistent:\n" + "\n".join(
+        str(problem) for problem in problems
+    )
