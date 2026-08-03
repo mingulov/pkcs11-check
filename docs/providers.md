@@ -23,7 +23,7 @@ under instrumentation. Those are marked *ASAN* below.
 | OpenCryptoki *(ASAN)* | C | [opencryptoki/opencryptoki](https://github.com/opencryptoki/opencryptoki) |
 | wolfPKCS11 *(ASAN)* | C | [wolfSSL/wolfPKCS11](https://github.com/wolfSSL/wolfPKCS11) |
 | corePKCS11 | C | [FreeRTOS/corePKCS11](https://github.com/FreeRTOS/corePKCS11) |
-| FreeHSM (C) *(ASAN)* | C | [afchine1337/freehsm-c](https://github.com/afchine1337/freehsm-c) |
+| FreeHSM (C) *(ASAN)* | C | [afchine1337/freehsm](https://github.com/afchine1337/freehsm) |
 | BouncyHSM | C# | [harrison314/BouncyHsm](https://github.com/harrison314/BouncyHsm) |
 | Craton HSM (core) | - | [craton-co/craton-hsm-core](https://github.com/craton-co/craton-hsm-core) |
 | Cryptech Open HSM | C | [cryptech.is sw/pkcs11](https://git.cryptech.is/sw/pkcs11) |
