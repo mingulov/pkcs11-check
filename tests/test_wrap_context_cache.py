@@ -1,7 +1,7 @@
 """Regression: wrap_context_for must build the WrapContext ONCE per session and cache it.
 
 Rebuilding build_wrap_context on every provision bootstraps fresh key material + trial
-round-trips per KAT vector, leaking objects (observed as CKR_HOST_MEMORY on freehsm-c) and
+round-trips per KAT vector, leaking objects (observed as CKR_HOST_MEMORY on one provider) and
 running a keygen per vector. wrap_context_for caches by rs.sh (incl. a None no-path result).
 """
 
