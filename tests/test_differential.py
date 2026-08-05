@@ -13,6 +13,7 @@ from pkcs11_check.core.differential import (
     find_disagreements,
     is_kat_nodeid,
     load_provider_outcomes,
+    provenance_fingerprint,
 )
 
 runner = CliRunner()
@@ -39,26 +40,273 @@ def _write_report(path: Path, nodeid_outcomes: dict[str, str]) -> None:
 
 _KAT_A = "src/pkcs11_check/testcases/wycheproof/test_rsa.py::test_kat[a]"
 _KAT_B = "src/pkcs11_check/testcases/acvp/aes/test_cbc.py::test_kat[b]"
+_TEST_DATA = [
+    {
+        "name": "wycheproof",
+        "repo": "C2SP/wycheproof",
+        "commit": "abc123",
+        "archive_sha256": "deadbeef",
+        "present": True,
+    }
+]
 
 
-def _write_report_path(root: Path, name: str, nodeid_outcomes: dict[str, str]) -> Path:
+def _write_artifact(
+    root: Path,
+    name: str,
+    nodeid_outcomes: dict[str, str],
+    *,
+    framework_version: str = "v0.1.8",
+    test_data: list[dict[str, object]] | None = None,
+) -> Path:
     artifact = root / name
     artifact.mkdir()
     report = artifact / "report.jsonl"
     _write_report(report, nodeid_outcomes)
+    (artifact / "results.json").write_text(
+        json.dumps(
+            {
+                "provenance": {
+                    "framework": {"version": framework_version, "dirty": False},
+                    "test_data": _TEST_DATA if test_data is None else test_data,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     return report
 
 
+def test_differential_requires_sibling_results_json(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {"t.py::x": "passed"})
+    b = _write_artifact(tmp_path, "b", {"t.py::x": "passed"})
+    a.with_name("results.json").unlink()
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", "--all"])
+    assert result.exit_code == 2
+    assert "sibling results.json not found" in result.output
+
+
+def test_differential_rejects_framework_mismatch(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {"t.py::x": "passed"})
+    b = _write_artifact(tmp_path, "b", {"t.py::x": "passed"}, framework_version="v0.1.7")
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", "--all"])
+    assert result.exit_code == 2
+    assert "incompatible framework/test-data provenance" in result.output
+
+
+def test_differential_rejects_test_data_mismatch(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {"t.py::x": "passed"})
+    changed = [{**_TEST_DATA[0], "commit": "different"}]
+    b = _write_artifact(tmp_path, "b", {"t.py::x": "passed"}, test_data=changed)
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", "--all"])
+    assert result.exit_code == 2
+    assert "incompatible framework/test-data provenance" in result.output
+
+
+def test_differential_override_is_visible_once(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {"t.py::x": "passed"})
+    b = _write_artifact(tmp_path, "b", {"t.py::x": "passed"})
+    b.with_name("results.json").unlink()
+    result = runner.invoke(
+        app,
+        [
+            "differential",
+            f"a={a}",
+            f"b={b}",
+            "--all",
+            "--allow-unverified-provenance",
+        ],
+    )
+    assert result.exit_code == 0
+    assert result.output.count("WARNING: provenance verification disabled") == 1
+
+
+def test_differential_rejects_malformed_results_json(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    b.with_name("results.json").write_text("{not json}\n", encoding="utf-8")
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
+    assert result.exit_code == 2
+    assert "cannot read provenance" in result.output
+
+
+def test_differential_rejects_non_utf8_results_json(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    b.with_name("results.json").write_bytes(b"\xff\xfe")
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
+    assert result.exit_code == 2
+    assert "cannot read provenance" in result.output
+
+
+@pytest.mark.parametrize("error", [OSError("denied"), RuntimeError("path loop")])
+def test_differential_translates_results_is_file_error(tmp_path, monkeypatch, error) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    blocked = b.with_name("results.json")
+    original_is_file = Path.is_file
+
+    def deny_is_file(path: Path, *args, **kwargs):
+        if path == blocked:
+            raise error
+        return original_is_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_file", deny_is_file)
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
+    assert result.exit_code == 2
+    assert "cannot read provenance" in result.output
+
+
+def test_differential_override_keeps_report_validation_mandatory(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = tmp_path / "malformed.jsonl"
+    b.write_text("{not json}\n", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        ["differential", f"a={a}", f"b={b}", "--allow-unverified-provenance"],
+    )
+    assert result.exit_code == 2
+    assert "malformed report log" in result.output
+
+
+def test_differential_override_keeps_comparability_mandatory(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_B: "passed"})
+    result = runner.invoke(
+        app,
+        ["differential", f"a={a}", f"b={b}", "--allow-unverified-provenance"],
+    )
+    assert result.exit_code == 2
+    assert "no comparable deterministic KAT node-ids" in result.output
+
+
+def test_provenance_fingerprint_normalizes_test_data_order() -> None:
+    first = {
+        "provenance": {
+            "framework": {"version": "v0.1.8", "dirty": False},
+            "test_data": [_TEST_DATA[0], {**_TEST_DATA[0], "name": "acvp"}],
+        }
+    }
+    second = {
+        "provenance": {
+            "framework": {"version": "v0.1.8", "dirty": False},
+            "test_data": list(reversed(first["provenance"]["test_data"])),
+        }
+    }
+    assert provenance_fingerprint(first) == provenance_fingerprint(second)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"provenance": {}},
+        {
+            "provenance": {
+                "framework": {"version": "v0.1.8", "dirty": True},
+                "test_data": _TEST_DATA,
+            }
+        },
+        {
+            "provenance": {
+                "framework": {"version": "v0.1.8", "dirty": False},
+                "test_data": [_TEST_DATA[0], _TEST_DATA[0]],
+            }
+        },
+        {
+            "provenance": {
+                "framework": {"version": "v0.1.8", "dirty": False},
+                "test_data": [{**_TEST_DATA[0], "commit": None}],
+            }
+        },
+        {
+            "provenance": {
+                "framework": {"version": "v0.1.8", "dirty": False},
+                "test_data": [{**_TEST_DATA[0], "archive_sha256": ""}],
+            }
+        },
+    ],
+)
+def test_provenance_fingerprint_rejects_untrusted_identity(payload) -> None:
+    assert provenance_fingerprint(payload) is None
+
+
+@pytest.mark.parametrize("field", ["name", "repo", "commit", "archive_sha256"])
+def test_provenance_fingerprint_rejects_whitespace_only_test_data_identity(field) -> None:
+    payload = {
+        "provenance": {
+            "framework": {"version": "v0.1.8", "dirty": False},
+            "test_data": [{**_TEST_DATA[0], field: " \t\n"}],
+        }
+    }
+    assert provenance_fingerprint(payload) is None
+
+
+def test_provenance_fingerprint_rejects_whitespace_only_framework_version() -> None:
+    payload = {
+        "provenance": {
+            "framework": {"version": " \t\n", "dirty": False},
+            "test_data": _TEST_DATA,
+        }
+    }
+    assert provenance_fingerprint(payload) is None
+
+
+def test_provenance_fingerprint_retains_valid_identity_values() -> None:
+    payload = {
+        "provenance": {
+            "framework": {"version": " v0.1.8 ", "dirty": False},
+            "test_data": [
+                {
+                    "name": " wycheproof ",
+                    "repo": " C2SP/wycheproof ",
+                    "commit": " abc123 ",
+                    "archive_sha256": " deadbeef ",
+                    "present": True,
+                }
+            ],
+        }
+    }
+    assert provenance_fingerprint(payload) == (
+        " v0.1.8 ",
+        False,
+        ((" wycheproof ", " C2SP/wycheproof ", " abc123 ", " deadbeef ", True),),
+    )
+
+
+def test_provenance_fingerprint_ignores_nonidentity_context() -> None:
+    base = {
+        "provenance": {
+            "framework": {"version": "v0.1.8", "dirty": False},
+            "test_data": _TEST_DATA,
+        }
+    }
+    enriched = {
+        "provenance": {
+            **base["provenance"],
+            "framework": {
+                "version": "v0.1.8",
+                "dirty": False,
+                "source": "git-describe",
+            },
+            "provider": {"name": "softhsm2"},
+            "crypto_backend": {"name": "openssl"},
+            "environment": {"slots": 1},
+        }
+    }
+    assert provenance_fingerprint(base) == provenance_fingerprint(enriched)
+
+
 def test_differential_rejects_duplicate_provider_names(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
     result = runner.invoke(app, ["differential", f"same={a}", f"same={b}"])
     assert result.exit_code == 2
     assert "duplicate provider name" in result.output
 
 
 def test_differential_rejects_duplicate_report_paths(tmp_path) -> None:
-    report = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    report = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     alias_dir = report.parent / "alias"
     alias_dir.mkdir()
     alias = alias_dir / ".." / report.name
@@ -69,8 +317,8 @@ def test_differential_rejects_duplicate_report_paths(tmp_path) -> None:
 
 @pytest.mark.parametrize("minimum", [0, 1, 3])
 def test_differential_rejects_invalid_minimum(tmp_path, minimum: int) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
     result = runner.invoke(
         app,
         ["differential", f"a={a}", f"b={b}", "--min-providers", str(minimum)],
@@ -83,22 +331,22 @@ def test_differential_rejects_invalid_minimum(tmp_path, minimum: int) -> None:
 
 
 def test_differential_rejects_blank_explicit_provider_name(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
     result = runner.invoke(app, ["differential", f" ={a}", f"b={b}"])
     assert result.exit_code == 2
     assert "provider name must not be empty" in result.output
 
 
 def test_differential_rejects_empty_report_path(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", "b="])
     assert result.exit_code == 2
     assert "report path must not be empty" in result.output
 
 
 def test_differential_rejects_directory_report_path(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     directory = tmp_path / "directory"
     directory.mkdir()
     result = runner.invoke(app, ["differential", f"a={a}", f"b={directory}"])
@@ -107,8 +355,8 @@ def test_differential_rejects_directory_report_path(tmp_path) -> None:
 
 
 def test_differential_translates_is_file_oserror(tmp_path, monkeypatch) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    blocked = _write_report_path(tmp_path, "blocked", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    blocked = _write_artifact(tmp_path, "blocked", {_KAT_A: "passed"})
     original_is_file = Path.is_file
 
     def deny_is_file(path: Path, *args, **kwargs):
@@ -126,8 +374,8 @@ def test_differential_translates_is_file_oserror(tmp_path, monkeypatch) -> None:
 def test_differential_translates_path_runtime_error(
     tmp_path, monkeypatch, method_name: str
 ) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    blocked = _write_report_path(tmp_path, "blocked", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    blocked = _write_artifact(tmp_path, "blocked", {_KAT_A: "passed"})
     original_method = getattr(Path, method_name)
 
     def fail_blocked(path: Path, *args, **kwargs):
@@ -142,7 +390,7 @@ def test_differential_translates_path_runtime_error(
 
 
 def test_differential_rejects_empty_report_log(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "empty.jsonl"
     b.write_text(" \n", encoding="utf-8")
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
@@ -151,7 +399,7 @@ def test_differential_rejects_empty_report_log(tmp_path) -> None:
 
 
 def test_differential_rejects_malformed_report_log(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "malformed.jsonl"
     b.write_text("{not json}\n", encoding="utf-8")
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
@@ -210,7 +458,7 @@ def test_differential_rejects_malformed_report_log(tmp_path) -> None:
 def test_differential_rejects_structurally_malformed_report_log(
     tmp_path, records: list[object], message: str
 ) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "structurally-invalid.jsonl"
     _write_records(b, records)
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
@@ -219,7 +467,7 @@ def test_differential_rejects_structurally_malformed_report_log(
 
 
 def test_differential_rejects_invalid_utf8_report_log(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "invalid-utf8.jsonl"
     b.write_bytes(b"\xff\n")
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
@@ -228,7 +476,7 @@ def test_differential_rejects_invalid_utf8_report_log(tmp_path) -> None:
 
 
 def test_differential_rejects_report_without_test_outcomes(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "session-only.jsonl"
     _write_records(
         b,
@@ -278,7 +526,7 @@ def test_differential_rejects_report_without_test_outcomes(tmp_path) -> None:
 def test_differential_rejects_semantically_malformed_report_record(
     tmp_path, record: dict[str, object]
 ) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "invalid-record.jsonl"
     _write_records(
         b,
@@ -294,7 +542,7 @@ def test_differential_rejects_semantically_malformed_report_record(
 
 
 def test_differential_rejects_incomplete_report_log(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "incomplete.jsonl"
     _write_records(
         b,
@@ -314,8 +562,8 @@ def test_differential_rejects_incomplete_report_log(tmp_path) -> None:
 
 
 def test_differential_rejects_unreadable_report_log(tmp_path, monkeypatch) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    blocked = _write_report_path(tmp_path, "blocked", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    blocked = _write_artifact(tmp_path, "blocked", {_KAT_A: "passed"})
     original_open = Path.open
 
     def deny_blocked(path: Path, *args, **kwargs):
@@ -330,17 +578,17 @@ def test_differential_rejects_unreadable_report_log(tmp_path, monkeypatch) -> No
 
 
 def test_differential_rejects_disjoint_evidence(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_B: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_B: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
     assert result.exit_code == 2
     assert "no comparable deterministic KAT node-ids" in result.output
 
 
 def test_differential_rejects_provider_outside_comparison_graph(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
-    c = _write_report_path(tmp_path, "c", {_KAT_B: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    c = _write_artifact(tmp_path, "c", {_KAT_B: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", f"c={c}"])
     assert result.exit_code == 2
     assert "provider evidence is disconnected" in result.output
@@ -348,27 +596,27 @@ def test_differential_rejects_provider_outside_comparison_graph(tmp_path) -> Non
 
 
 def test_differential_rejects_disconnected_comparison_islands(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
-    c = _write_report_path(tmp_path, "c", {_KAT_B: "passed"})
-    d = _write_report_path(tmp_path, "d", {_KAT_B: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    c = _write_artifact(tmp_path, "c", {_KAT_B: "passed"})
+    d = _write_artifact(tmp_path, "d", {_KAT_B: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", f"c={c}", f"d={d}"])
     assert result.exit_code == 2
     assert "provider evidence is disconnected" in result.output
 
 
 def test_differential_accepts_connected_comparison_chain(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed", _KAT_B: "passed"})
-    c = _write_report_path(tmp_path, "c", {_KAT_B: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed", _KAT_B: "passed"})
+    c = _write_artifact(tmp_path, "c", {_KAT_B: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", f"c={c}"])
     assert result.exit_code == 0
     assert "2 comparable deterministic KAT node-ids" in result.output
 
 
 def test_differential_reports_comparable_node_count(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
     assert result.exit_code == 0
     assert "1 comparable deterministic KAT node-ids" in result.output
@@ -377,8 +625,8 @@ def test_differential_reports_comparable_node_count(tmp_path) -> None:
 def test_differential_accepts_nonzero_integer_exitstatus_and_summary_after_finish(
     tmp_path,
 ) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
     records = [
         {"$report_type": "SessionStart", "pytest_version": "test"},
         {
@@ -397,8 +645,8 @@ def test_differential_accepts_nonzero_integer_exitstatus_and_summary_after_finis
 
 
 def test_differential_rejects_test_report_after_session_finish(tmp_path) -> None:
-    a = _write_report_path(tmp_path, "a", {_KAT_A: "passed"})
-    b = _write_report_path(tmp_path, "b", {_KAT_A: "passed"})
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
     records = [
         {"$report_type": "SessionStart", "pytest_version": "test"},
         {"$report_type": "SessionFinish", "exitstatus": 0},
@@ -417,9 +665,9 @@ def test_differential_rejects_test_report_after_session_finish(tmp_path) -> None
 
 def test_differential_cli_flags_kat_odd_one_out(tmp_path) -> None:
     kat = _KAT_A
-    a = _write_report_path(tmp_path, "a", {kat: "passed"})
-    b = _write_report_path(tmp_path, "b", {kat: "passed"})
-    c = _write_report_path(tmp_path, "c", {kat: "failed"})
+    a = _write_artifact(tmp_path, "a", {kat: "passed"})
+    b = _write_artifact(tmp_path, "b", {kat: "passed"})
+    c = _write_artifact(tmp_path, "c", {kat: "failed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}", f"c={c}"])
     assert result.exit_code == 1  # a disagreement is a finding
     assert "DISAGREE" in result.output
@@ -428,8 +676,8 @@ def test_differential_cli_flags_kat_odd_one_out(tmp_path) -> None:
 
 def test_differential_cli_clean_when_unanimous(tmp_path) -> None:
     kat = _KAT_A
-    a = _write_report_path(tmp_path, "a", {kat: "passed"})
-    b = _write_report_path(tmp_path, "b", {kat: "passed"})
+    a = _write_artifact(tmp_path, "a", {kat: "passed"})
+    b = _write_artifact(tmp_path, "b", {kat: "passed"})
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
     assert result.exit_code == 0
 

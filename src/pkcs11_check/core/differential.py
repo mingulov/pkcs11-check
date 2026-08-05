@@ -39,6 +39,51 @@ _OUTCOME_CLASS: dict[str, str] = {
 # Classes that count as "the provider actually ran this vector" (a comparable verdict).
 _ATTEMPTED_CLASSES = frozenset({"pass", "failure", "xfail"})
 
+type TestDataIdentity = tuple[str, str, str, str, bool]
+type ProvenanceFingerprint = tuple[str, bool, tuple[TestDataIdentity, ...]]
+
+
+def provenance_fingerprint(payload: Mapping[str, Any]) -> ProvenanceFingerprint | None:
+    """Return the comparable framework/test-data identity, or None if incomplete."""
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return None
+    framework = provenance.get("framework")
+    test_data = provenance.get("test_data")
+    if not isinstance(framework, Mapping) or not isinstance(test_data, list) or not test_data:
+        return None
+    version = framework.get("version")
+    dirty = framework.get("dirty")
+    if not isinstance(version, str) or not version.strip() or dirty is not False:
+        return None
+
+    identities: list[TestDataIdentity] = []
+    names: set[str] = set()
+    for item in test_data:
+        if not isinstance(item, Mapping):
+            return None
+        name = item.get("name")
+        repo = item.get("repo")
+        commit = item.get("commit")
+        archive_sha256 = item.get("archive_sha256")
+        present = item.get("present")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(repo, str)
+            or not repo.strip()
+            or not isinstance(commit, str)
+            or not commit.strip()
+            or not isinstance(archive_sha256, str)
+            or not archive_sha256.strip()
+            or not isinstance(present, bool)
+            or name in names
+        ):
+            return None
+        names.add(name)
+        identities.append((name, repo, commit, archive_sha256, present))
+    return version, dirty, tuple(sorted(identities))
+
 
 @dataclass(frozen=True)
 class ProviderDisagreement:

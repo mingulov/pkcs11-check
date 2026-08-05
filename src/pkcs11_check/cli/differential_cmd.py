@@ -17,11 +17,13 @@ import typer
 from rich.console import Console
 
 from pkcs11_check.core.differential import (
+    ProvenanceFingerprint,
     comparable_nodeids,
     comparison_components,
     find_disagreements,
     is_kat_nodeid,
     load_provider_outcomes,
+    provenance_fingerprint,
 )
 
 console = Console()
@@ -129,6 +131,23 @@ def _iter_report_records_strict(path: Path) -> Iterator[dict[str, Any]]:
         raise ValueError(f"incomplete report log (missing start/finish): {path}")
 
 
+def _load_provenance(report_path: Path) -> ProvenanceFingerprint:
+    try:
+        results_path = report_path.with_name("results.json")
+        is_file = results_path.is_file()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"cannot read provenance beside {report_path}: {exc}") from exc
+    if not is_file:
+        raise ValueError(f"sibling results.json not found: {results_path}")
+    try:
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read provenance from {results_path}: {exc}") from exc
+    if not isinstance(payload, dict) or (fingerprint := provenance_fingerprint(payload)) is None:
+        raise ValueError(f"incomplete framework/test-data provenance: {results_path}")
+    return fingerprint
+
+
 def differential_command(
     providers: list[str] = typer.Argument(  # noqa: B008
         ..., help="Provider report logs as NAME=report.jsonl (>= 2)"
@@ -138,6 +157,11 @@ def differential_command(
     ),
     min_providers: int = typer.Option(
         2, "--min-providers", help="Min providers that must have run a node-id to compare it"
+    ),
+    allow_unverified_provenance: bool = typer.Option(
+        False,
+        "--allow-unverified-provenance",
+        help="Compare despite missing/mismatched sibling results.json provenance (warns)",
     ),
 ) -> None:
     """Diff N providers' KAT verdicts and report the odd-one-out per disagreeing node-id."""
@@ -184,6 +208,20 @@ def differential_command(
             _err.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(code=2) from exc
         per_provider[name] = outcomes
+
+    if allow_unverified_provenance:
+        _err.print("[yellow]WARNING: provenance verification disabled[/yellow]")
+    else:
+        try:
+            fingerprints = {_load_provenance(path) for _, path in parsed_inputs}
+        except ValueError as exc:
+            _err.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
+        if len(fingerprints) != 1:
+            _err.print(
+                "[red]Error:[/red] incompatible framework/test-data provenance across providers"
+            )
+            raise typer.Exit(code=2)
 
     nodeid_filter = None
     if not include_all:
