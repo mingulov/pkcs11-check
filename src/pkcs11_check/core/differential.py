@@ -54,6 +54,17 @@ def _outcome_class(status: str) -> str:
     return _OUTCOME_CLASS.get(status, "unknown")
 
 
+def _attempted_outcomes(
+    per_provider_outcomes: Mapping[str, Mapping[str, str]], nodeid: str
+) -> dict[str, str]:
+    return {
+        provider: outcome_class
+        for provider, outcomes in per_provider_outcomes.items()
+        if nodeid in outcomes
+        and (outcome_class := _outcome_class(outcomes[nodeid])) in _ATTEMPTED_CLASSES
+    }
+
+
 def load_provider_outcomes(records: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     """Extract a node-id -> unified-outcome map from one provider's report.jsonl records.
 
@@ -62,18 +73,20 @@ def load_provider_outcomes(records: Iterable[Mapping[str, Any]]) -> dict[str, st
     """
     outcomes: dict[str, str] = {}
     for rec in records:
-        if str(rec.get("$report_type", "TestReport")) != "TestReport":
+        if rec.get("$report_type") != "TestReport":
             continue
-        nodeid = normalize_nodeid(str(rec.get("nodeid", ""))).strip()
+        raw_nodeid = rec.get("nodeid")
+        raw_outcome = rec.get("outcome")
+        if not isinstance(raw_nodeid, str) or not isinstance(raw_outcome, str):
+            continue
+        nodeid = normalize_nodeid(raw_nodeid).strip()
         if not nodeid:
             continue
-        when = str(rec.get("when", ""))
+        when = rec.get("when")
         if when == "call":
-            outcomes[nodeid] = map_report_outcome(
-                str(rec.get("outcome", "passed")), rec.get("wasxfail")
-            )
-        elif when == "setup" and str(rec.get("outcome", "")) == "skipped":
-            outcomes.setdefault(nodeid, "skipped")
+            outcomes[nodeid] = map_report_outcome(raw_outcome, rec.get("wasxfail"))
+        elif when == "setup" and raw_outcome in {"failed", "skipped"}:
+            outcomes.setdefault(nodeid, map_report_outcome(raw_outcome, rec.get("wasxfail")))
     return outcomes
 
 
@@ -90,6 +103,51 @@ def is_kat_nodeid(nodeid: str) -> bool:
         and filename.startswith("test_cctv_")
         and filename.endswith(".py")
     )
+
+
+def comparable_nodeids(
+    per_provider_outcomes: Mapping[str, Mapping[str, str]],
+    *,
+    min_providers: int = 2,
+    nodeid_filter: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """Return node IDs attempted by at least ``min_providers`` providers."""
+    all_nodeids = {nodeid for outcomes in per_provider_outcomes.values() for nodeid in outcomes}
+    if nodeid_filter is not None:
+        all_nodeids &= nodeid_filter
+    return frozenset(
+        nodeid
+        for nodeid in all_nodeids
+        if len(_attempted_outcomes(per_provider_outcomes, nodeid)) >= min_providers
+    )
+
+
+def comparison_components(
+    per_provider_outcomes: Mapping[str, Mapping[str, str]],
+    *,
+    nodeids: Iterable[str],
+) -> tuple[frozenset[str], ...]:
+    """Return provider components joined by shared attempted node IDs."""
+    adjacency: dict[str, set[str]] = {provider: set() for provider in per_provider_outcomes}
+    for nodeid in nodeids:
+        participants = set(_attempted_outcomes(per_provider_outcomes, nodeid))
+        for provider in participants:
+            adjacency[provider].update(participants - {provider})
+
+    remaining = set(adjacency)
+    components: list[frozenset[str]] = []
+    while remaining:
+        pending = [min(remaining)]
+        component: set[str] = set()
+        while pending:
+            provider = pending.pop()
+            if provider in component:
+                continue
+            component.add(provider)
+            pending.extend(adjacency[provider] - component)
+        remaining -= component
+        components.append(frozenset(component))
+    return tuple(sorted(components, key=lambda component: tuple(sorted(component))))
 
 
 def find_disagreements(
@@ -109,23 +167,15 @@ def find_disagreements(
 
     Returns disagreements sorted by node-id.
     """
-    all_nodeids: set[str] = set()
-    for outcomes in per_provider_outcomes.values():
-        all_nodeids.update(outcomes)
-    if nodeid_filter is not None:
-        all_nodeids &= nodeid_filter
-
     disagreements: list[ProviderDisagreement] = []
-    for nodeid in sorted(all_nodeids):
-        attempted: dict[str, str] = {}
-        for provider, outcomes in per_provider_outcomes.items():
-            if nodeid not in outcomes:
-                continue
-            cls = _outcome_class(outcomes[nodeid])
-            if cls in _ATTEMPTED_CLASSES:
-                attempted[provider] = cls
-        if len(attempted) < min_providers:
-            continue
+    for nodeid in sorted(
+        comparable_nodeids(
+            per_provider_outcomes,
+            min_providers=min_providers,
+            nodeid_filter=nodeid_filter,
+        )
+    ):
+        attempted = _attempted_outcomes(per_provider_outcomes, nodeid)
         if len(set(attempted.values())) <= 1:
             continue  # unanimous verdict
 
