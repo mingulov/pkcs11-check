@@ -16,16 +16,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.report_log import map_report_outcome
 
-# Node-id path fragments of the deterministic known-answer-test suites. Restricting the
-# differential check to these is the sound default: a KAT has one correct verdict, so a
-# cross-provider disagreement is a real odd-one-out (not legitimate provider variation).
-KAT_SUITE_FRAGMENTS: tuple[str, ...] = ("wycheproof", "acvp", "cctv", "x509")
-
-# Test-level (node-id) outcome -> broad class. Distinct from compare_results.status_class,
-# which maps unit-level statuses. "xfail" is kept its own class: on a deterministic KAT a
-# clean deviation still disagrees with providers that passed.
+# Test-level (node-id) verdict -> broad comparison class. Distinct from
+# compare_results.status_class, which maps unit-level statuses. "xfail" is kept its own
+# class: on a deterministic KAT a clean deviation still disagrees with providers that passed.
 _OUTCOME_CLASS: dict[str, str] = {
     "passed": "pass",
     "xpassed": "pass",
@@ -68,7 +64,7 @@ def load_provider_outcomes(records: Iterable[Mapping[str, Any]]) -> dict[str, st
     for rec in records:
         if str(rec.get("$report_type", "TestReport")) != "TestReport":
             continue
-        nodeid = str(rec.get("nodeid", "")).strip()
+        nodeid = normalize_nodeid(str(rec.get("nodeid", ""))).strip()
         if not nodeid:
             continue
         when = str(rec.get("when", ""))
@@ -82,9 +78,18 @@ def load_provider_outcomes(records: Iterable[Mapping[str, Any]]) -> dict[str, st
 
 
 def is_kat_nodeid(nodeid: str) -> bool:
-    """True if the node-id is in a deterministic KAT suite (the sound differential target)."""
-    head = nodeid.split("::", 1)[0]
-    return any(frag in head for frag in KAT_SUITE_FRAGMENTS)
+    """Return whether nodeid belongs to an explicitly supported deterministic suite."""
+    head = normalize_nodeid(nodeid).split("::", 1)[0]
+    rooted = "/" + head.lstrip("/")
+    if "/testcases/wycheproof/" in rooted or "/testcases/acvp/" in rooted:
+        return True
+    parent, separator, filename = rooted.rpartition("/")
+    return (
+        bool(separator)
+        and parent.endswith("/testcases")
+        and filename.startswith("test_cctv_")
+        and filename.endswith(".py")
+    )
 
 
 def find_disagreements(

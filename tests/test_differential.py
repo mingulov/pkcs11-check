@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from pkcs11_check.cli.app import app
@@ -67,10 +68,61 @@ def test_load_provider_outcomes_uses_call_phase_and_setup_skips() -> None:
     assert got == {"t::a": "failed", "t::b": "skipped", "t::c": "xfailed"}
 
 
-def test_is_kat_nodeid() -> None:
-    assert is_kat_nodeid("src/pkcs11_check/testcases/wycheproof/test_x.py::t[v]")
-    assert is_kat_nodeid("src/.../acvp/test_y.py::t")
-    assert not is_kat_nodeid("src/pkcs11_check/testcases/test_encrypt.py::t")
+@pytest.mark.parametrize(
+    "nodeid",
+    [
+        "src/pkcs11_check/testcases/wycheproof/test_rsa.py::test_kat[v1]",
+        "src/pkcs11_check/testcases/acvp/aes/test_cbc.py::test_kat[v1]",
+        "src/pkcs11_check/testcases/test_cctv_ecdsa.py::test_kat[v1]",
+        r"src\pkcs11_check\testcases\wycheproof\test_rsa.py::test_kat[v1]",
+    ],
+)
+def test_is_kat_nodeid_accepts_only_explicit_kat_paths(nodeid: str) -> None:
+    assert is_kat_nodeid(nodeid)
+
+
+@pytest.mark.parametrize(
+    "nodeid",
+    [
+        "src/pkcs11_check/testcases/x509/test_store.py::test_round_trip",
+        "src/pkcs11_check/testcases/test_x509.py::test_identity",
+        "src/pkcs11_check/testcases/not_wycheproof/test_fake.py::test_case",
+        "src/pkcs11_check/testcases/security/test_cctv_fake.py::test_case",
+        "vendor/wycheproof/test_fake.py::test_case",
+    ],
+)
+def test_is_kat_nodeid_rejects_non_kat_paths(nodeid: str) -> None:
+    assert not is_kat_nodeid(nodeid)
+
+
+def test_cross_platform_nodeids_compare_as_one_test() -> None:
+    windows = load_provider_outcomes(
+        [
+            {
+                "$report_type": "TestReport",
+                "when": "call",
+                "outcome": "passed",
+                "nodeid": r"src\pkcs11_check\testcases\wycheproof\test_rsa.py::test_kat[v1]",
+            }
+        ]
+    )
+    posix = load_provider_outcomes(
+        [
+            {
+                "$report_type": "TestReport",
+                "when": "call",
+                "outcome": "failed",
+                "nodeid": "src/pkcs11_check/testcases/wycheproof/test_rsa.py::test_kat[v1]",
+            }
+        ]
+    )
+
+    disagreements = find_disagreements({"windows": windows, "posix": posix})
+
+    assert len(disagreements) == 1
+    assert disagreements[0].nodeid == (
+        "src/pkcs11_check/testcases/wycheproof/test_rsa.py::test_kat[v1]"
+    )
 
 
 def test_odd_one_out_on_deterministic_vector() -> None:
