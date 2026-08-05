@@ -41,8 +41,8 @@ behavior is documented in the README and the rest of `docs/`.
   layout/width ABI. Remaining: a real-Windows pass (a VM, or CI `windows-latest`)
   for final conformance sign-off. Wine is an ABI reproducer, not a conformance gate.
 
-- *SO (security officer) login flows.* CKU_SO workflows, including
-  trusted-certificate import with `CKA_TRUSTED=True`, are not yet covered.
+SO login and destructive `CKA_TRUSTED` import coverage ship in v0.1.8. Supply the distinct
+SO PIN through `P11TEST_SO_PIN`; these token-mutating tests still require `--destructive`.
 
 - *Wider interop simulators.* Provider-generated in-band IV profiles,
   proxy/loader mutable-parameter preservation checks, and broader

@@ -38,8 +38,10 @@ P11TEST_SO_PIN=... uv run pkcs11-check test --module /path/to/module.so --pin 12
 uv run pkcs11-check test --module <so> --marker smoke                            # ~27 tests, ~5s
 uv run pkcs11-check test --module <so> --marker "not (wycheproof or acvp or cctv or stress or fuzz or slow)"  # ~2300 tests, ~30s
 uv run pkcs11-check test --module <so> --marker "wycheproof or acvp or cctv"     # ~72K vectors only
-uv run pkcs11-check test --module <so>                                           # full: ~75K tests
+uv run pkcs11-check test --module <so>                                           # full collection
 ```
+
+Collection size depends on fetched data and the selected release corpus.
 
 ### Fast vs full: long-running test cases (`slow`)
 
@@ -158,18 +160,30 @@ unrecognized unit status) - use it for release sign-off and before trusting a re
 For a worked end-to-end example - build two SoftHSM2 versions in Docker and diff them with
 `compare-results` and `compare-coverage` - see [docker-examples.md](docker-examples.md).
 
-## Differential cross-provider check (N-way KAT agreement)
+## Deterministic-test verdict comparison
 
 ```bash
-uv run pkcs11-check differential softhsm2=a/report.jsonl kryoptic=b/report.jsonl nss=c/report.jsonl
+baseline/
+├── report.jsonl
+└── results.json
+candidate/
+├── report.jsonl
+└── results.json
+
+uv run pkcs11-check differential softhsm2=baseline/report.jsonl kryoptic=candidate/report.jsonl
 ```
 
-`differential` diffs several providers' verdicts on the same deterministic known-answer
-vectors (Wycheproof/ACVP/CCTV/X.509 by default) and names the odd-one-out per node-id where
-the providers that ran a KAT disagree - a low-false-positive finder, since a KAT has one
-correct verdict, so the minority is a suspect (wrong crypto, a spurious rejection, or a
-crash). Capability skips are excluded. Exits 1 when any disagreement is found. Pass `--all`
-to compare every node-id (not just KAT suites) and `--min-providers N` to require N runs.
+Each provider input is a separate artifact directory containing `report.jsonl` and its sibling
+`results.json`. `differential` compares provider verdicts on the same deterministic known-answer
+vectors and names the odd-one-out per node-id. By default its scope is Wycheproof, ACVP, and
+direct CCTV KAT modules; X.509 is excluded. Pass `--all` to compare every node-id and
+`--min-providers N` to require N runs.
+
+Validation is strict: duplicate provider names or report paths, incomplete or malformed logs,
+invalid minima, zero comparable nodes, and a disconnected provider graph are errors. The
+artifact provenance in `results.json` must match across providers. `--allow-unverified-provenance`
+is a visible, unsafe escape hatch that warns while skipping only provenance verification.
+Exit 1 means a disagreement; exit 2 means invalid evidence.
 
 ## Per-provider classification report
 

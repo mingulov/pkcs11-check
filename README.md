@@ -144,8 +144,9 @@ move over time and are intentionally not pinned here.
 
 ## Known limitations
 
-- SO login is not implemented yet, so trusted-certificate import with
-  `CKA_TRUSTED=True` is not fully covered through `CKU_SO` workflows.
+SO login and destructive `CKA_TRUSTED` import coverage ship in v0.1.8. Supply the distinct
+SO PIN through `P11TEST_SO_PIN`; these token-mutating tests still require `--destructive`.
+
 - Provider-generated in-band IV profiles, proxy/loader mutable-parameter
   preservation checks, and broader mutable-output simulator targets are tracked
   as future interop work.
