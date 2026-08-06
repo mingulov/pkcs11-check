@@ -905,6 +905,94 @@ class TestMessageEncrypt:
     """v3.0 C_MessageEncrypt* API tests."""
 
     @pytest.mark.needs_function("C_MessageEncryptInit")
+    def test_message_encrypt_multipart_aes_gcm(self, p11_module_session: RawSession) -> None:
+        """Structured AES-GCM parameters survive Init, Begin, and Next."""
+        rs = p11_module_session
+        if not rs.has_mechanism("AES_GCM"):
+            pytest.skip("CKM_AES_GCM not supported")
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from pkcs11_check.raw.pack_mechanisms import mech_gcm_message
+        from pkcs11_check.raw.recipes import get_mechanism_info
+        from pkcs11_check.raw.types_std import (
+            CK_ULONG,
+            CKA_DECRYPT,
+            CKA_ENCRYPT,
+            CKA_TOKEN,
+            CKF_END_OF_MESSAGE,
+            CKF_MESSAGE_ENCRYPT,
+            CKK_AES,
+            CKM_AES_GCM,
+            CKR_OK,
+        )
+
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_GCM)
+        if not (info["flags"] & int(CKF_MESSAGE_ENCRYPT)):
+            pytest.skip("CKM_AES_GCM does not advertise CKF_MESSAGE_ENCRYPT")
+
+        _require_message_functions(
+            rs,
+            "C_MessageEncryptInit",
+            "C_EncryptMessageBegin",
+            "C_EncryptMessageNext",
+            "C_MessageEncryptFinal",
+        )
+
+        key_bytes = bytes(range(32))
+        key = import_secret_key_negotiated(
+            rs,
+            CKK_AES,
+            key_bytes,
+            attrs={CKA_TOKEN: False, CKA_ENCRYPT: True, CKA_DECRYPT: True},
+        )
+        try:
+            iv = bytes(range(12))
+            aad = b"message multipart aad"
+            plaintext = b"structured multipart AES-GCM"
+            packed = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
+            params = packed.params
+
+            rv = rs.raw.C_MessageEncryptInit(rs.sh, packed.byref(), key)
+            _xfail_if_message_init_rejected(rv, label="C_MessageEncryptInit (CKM_AES_GCM)")
+            assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"
+
+            aad_buf = to_ubyte_buf(aad)
+            rv = rs.raw.C_EncryptMessageBegin(
+                rs.sh,
+                byref(params),
+                ctypes.sizeof(params),
+                aad_buf,
+                len(aad),
+            )
+            assert rv == CKR_OK, f"C_EncryptMessageBegin failed: 0x{rv:08x}"
+
+            plaintext_buf = to_ubyte_buf(plaintext)
+            ciphertext_len = CK_ULONG(len(plaintext))
+            ciphertext_buf = (ctypes.c_ubyte * ciphertext_len.value)()
+            rv = rs.raw.C_EncryptMessageNext(
+                rs.sh,
+                byref(params),
+                ctypes.sizeof(params),
+                plaintext_buf,
+                len(plaintext),
+                ciphertext_buf,
+                byref(ciphertext_len),
+                CKF_END_OF_MESSAGE,
+            )
+            assert rv == CKR_OK, f"C_EncryptMessageNext failed: 0x{rv:08x}"
+
+            rv = rs.raw.C_MessageEncryptFinal(rs.sh)
+            assert rv == CKR_OK, f"C_MessageEncryptFinal failed: 0x{rv:08x}"
+
+            ciphertext = bytes(ciphertext_buf[: ciphertext_len.value])
+            tag = packed.buffer_bytes("tag")
+            assert ciphertext != plaintext
+            assert AESGCM(key_bytes).decrypt(iv, ciphertext + tag, aad) == plaintext
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    @pytest.mark.needs_function("C_MessageEncryptInit")
     def test_message_encrypt_decrypt_aes_gcm(self, p11_module_session: RawSession) -> None:
         """Single-message AES-GCM encrypt/decrypt roundtrip via message-based API.
 
@@ -1400,7 +1488,7 @@ class TestMessageEncrypt:
         """Message-based sign init/final roundtrip for CKM_AES_GMAC.
 
         Verifies that C_MessageSignInit accepts a CKM_AES_GMAC mechanism built
-        with CK_GCM_MESSAGE_PARAMS and that C_MessageSignFinal cleanly ends the
+        with classic CK_GCM_PARAMS and that C_MessageSignFinal cleanly ends the
         session, exercising the full message-based sign init/cleanup path.
 
         Reference: PKCS#11 v3.2 (Message-based signing functions).
@@ -1409,7 +1497,7 @@ class TestMessageEncrypt:
         if not rs.has_mechanism("AES_GMAC"):
             pytest.skip("CKM_AES_GMAC not supported")
 
-        from pkcs11_check.raw.pack_mechanisms import mech_gcm_message
+        from pkcs11_check.raw.pack_mechanisms import mech_gcm
         from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, get_mechanism_info
         from pkcs11_check.raw.types_std import (
             CKA_SIGN,
@@ -1434,7 +1522,7 @@ class TestMessageEncrypt:
         )
         try:
             iv = os.urandom(12)
-            mech = mech_gcm_message(CKM_AES_GMAC, iv, tag_bits=128)
+            mech = mech_gcm(CKM_AES_GMAC, iv, tag_bits=128)
             rv = rs.raw.C_MessageSignInit(rs.sh, mech.byref(), key)
             _xfail_if_message_init_rejected(rv, label="C_MessageSignInit (CKM_AES_GMAC)")
             assert rv == CKR_OK, f"C_MessageSignInit failed: 0x{rv:08x}"
