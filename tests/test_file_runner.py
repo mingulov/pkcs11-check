@@ -52,6 +52,7 @@ from pkcs11_check.core.file_runner import (
     write_isolated_json_report,
     write_report_jsonl,
 )
+from pkcs11_check.core.merge import merge_results_payloads
 
 
 def test_unit_status_priority_is_the_overall_status_set() -> None:
@@ -2466,8 +2467,16 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     ]
 
 
+@pytest.mark.parametrize(
+    ("include_untouched", "relative_nodeids"),
+    [(True, False), (False, False), (True, True)],
+    ids=["untouched", "all-filtered", "relative-nodeids"],
+)
 def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    include_untouched: bool,
+    relative_nodeids: bool,
 ) -> None:
     module = tmp_path / "module.so"
     module.write_text("", encoding="utf-8")
@@ -2479,6 +2488,15 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
     results_path = tmp_path / "results.json"
     calls: list[str] = []
     file_runs = 0
+    untouched_1 = f"{target}::test_untouched_1"
+    untouched_2 = f"{target}::test_untouched_2"
+    disabled = f"{target}::test_disabled"
+    reported_file = str(target.relative_to(target.anchor)) if relative_nodeids else str(target)
+    reported_crash_1 = f"{reported_file}::test_crash_1"
+    reported_crash_2 = f"{reported_file}::test_crash_2"
+    reported_untouched_1 = f"{reported_file}::test_untouched_1"
+    reported_untouched_2 = f"{reported_file}::test_untouched_2"
+    reported_disabled = f"{reported_file}::test_disabled"
 
     def fake_run(
         cmd: list[str],
@@ -2501,7 +2519,11 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
             file_runs += 1
             if file_runs <= 2:
                 report_log_path.write_text(
-                    _jsonl_line(nodeid=f"{target}::test_crash_{file_runs}", when="setup") + "\n",
+                    _jsonl_line(
+                        nodeid=[reported_crash_1, reported_crash_2][file_runs - 1],
+                        when="setup",
+                    )
+                    + "\n",
                     encoding="utf-8",
                 )
                 return (-11, "", "")
@@ -2511,7 +2533,7 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
             )
             return (0, "", "")
 
-        if unit in {f"{target}::test_crash_1", f"{target}::test_crash_2"}:
+        if unit in {reported_crash_1, reported_crash_2}:
             return (-11, "", "segmentation fault")
 
         if unit == str(after):
@@ -2521,9 +2543,25 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
 
+    def fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        assert targets == [str(target)]
+        assert default_root == target.parent
+        assert granularity == "test"
+        assert pytest_args == ["--p11-module", str(module)]
+        assert env is not None
+        return [
+            reported_crash_1,
+            reported_crash_2,
+            *([reported_untouched_1, reported_untouched_2] if include_untouched else []),
+            *([reported_disabled] if relative_nodeids else []),
+        ]
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", fake_discover)
+
     exit_code = run_isolated_pytest_units(
         [str(target), str(after)],
         ["--p11-module", str(module)],
+        deselect_by_file={str(target): {disabled}} if relative_nodeids else None,
         timeout=12,
         state_file=state_file,
         policy_file=None,
@@ -2538,24 +2576,328 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
     assert exit_code == 1
     assert calls == [
         str(target),
-        f"{target}::test_crash_1",
+        reported_crash_1,
         str(target),
-        f"{target}::test_crash_2",
+        reported_crash_2,
         str(after),
     ]
 
     saved = load_run_state(state_file)
     assert saved is not None
-    assert [(result.target, result.status) for result in saved.results] == [
+    expected_results = [
         (str(target), "crashed"),
-        (str(after), "passed"),
     ]
+    if include_untouched:
+        expected_results.extend([(untouched_1, "crash_limited"), (untouched_2, "crash_limited")])
+    expected_results.append((str(after), "passed"))
+    assert [(result.target, result.status) for result in saved.results] == expected_results
 
     report = json.loads(results_path.read_text(encoding="utf-8"))
+    if relative_nodeids:
+        assert [unit["target"] for unit in report["units"]] == [str(target), str(after)]
     assert report["units"][0]["target"] == str(target)
     assert report["units"][0]["status"] == "crashed"
     assert report["units"][0]["counts"]["crashed"] == 2
-    assert report["summary"]["crashed"] == 2
+    summary = report["summary"]
+    assert summary["crashed"] == 2
+    assert summary["crash_limited"] == (2 if include_untouched else 0)
+    assert summary["incomplete"] is include_untouched
+
+
+@pytest.mark.parametrize(
+    ("error_type", "error_message"),
+    [
+        (None, "direct pytest collection returned no node IDs after crash limit"),
+        (ValueError, "pytest collection failed: collection exploded"),
+        (OSError, "pytest collection launch failed"),
+    ],
+    ids=["empty-collection", "pytest-error", "launch-error"],
+)
+def test_run_isolated_pytest_units_marks_crash_cap_collection_failure_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error_type: type[Exception] | None,
+    error_message: str,
+) -> None:
+    module = tmp_path / "module.so"
+    module.write_text("", encoding="utf-8")
+    target = tmp_path / "test_a.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    culprit = f"{target}::test_crash"
+    marker = f"{target}::[pkcs11-check-crash-limited-uncollected]"
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        unit = cmd[3]
+        if unit == str(target):
+            report_log_path = Path(cmd[cmd.index("--report-log") + 1])
+            report_log_path.write_text(
+                _jsonl_line(nodeid=culprit, when="setup") + "\n",
+                encoding="utf-8",
+            )
+            return (-11, "", "")
+        if unit == culprit:
+            return (-11, "", "segmentation fault")
+        raise AssertionError(f"unexpected subprocess invocation: {cmd!r}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    def fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        del targets, default_root, granularity, pytest_args, env
+        if error_type is None:
+            return []
+        raise error_type(error_message)
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", fake_discover)
+
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", str(module)],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=tmp_path / "run.jsonl"),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+        max_crashes_per_file=1,
+    )
+
+    saved = load_run_state(state_file)
+    assert exit_code == 1
+    assert saved is not None
+    marker_result = next(result for result in saved.results if result.target == marker)
+    assert marker_result.status == "crash_limited"
+    assert error_message in marker_result.stderr
+
+    report = json.loads(results_path.read_text(encoding="utf-8"))
+    assert report["summary"]["incomplete"] is True
+    marker_entry = next(
+        test
+        for unit in report["units"]
+        for test in unit.get("tests", [])
+        if test["nodeid"] == marker
+    )
+    assert marker_entry["outcome"] == "crash_limited"
+    assert error_message in marker_entry["longrepr"]
+
+    merged = merge_results_payloads([report], coverage=None)
+    assert merged["summary"]["incomplete"] is True
+
+
+@pytest.mark.parametrize(
+    ("omission_kind", "keep_unrelated"),
+    [("nodeid", False), ("marker", False), ("nodeid", True)],
+    ids=["nodeid", "marker", "unrelated-omission"],
+)
+def test_run_isolated_pytest_units_resume_replaces_stale_crash_limited_children(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    omission_kind: str,
+    keep_unrelated: bool,
+) -> None:
+    module = tmp_path / "module.so"
+    module.write_text("", encoding="utf-8")
+    target = tmp_path / "test_a.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "run.jsonl"
+    culprit = f"{target}::test_crash"
+    omitted = (
+        f"{target}::test_untouched"
+        if omission_kind == "nodeid"
+        else f"{target}::[pkcs11-check-crash-limited-uncollected]"
+    )
+    unrelated = f"{tmp_path / 'test_other.py'}::test_unrun"
+    parent_runs = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        nonlocal parent_runs
+        unit = cmd[3]
+        if unit == str(target):
+            parent_runs += 1
+            report_log_path = Path(cmd[cmd.index("--report-log") + 1])
+            if parent_runs == 1:
+                report_log_path.write_text(
+                    _jsonl_line(nodeid=culprit, when="setup") + "\n",
+                    encoding="utf-8",
+                )
+                return (-11, "", "")
+            report_log_path.write_text(
+                _jsonl_line(nodeid=f"{target}::test_case", when="call") + "\n",
+                encoding="utf-8",
+            )
+            return (0, "", "")
+        if unit == culprit:
+            return (-11, "", "segmentation fault")
+        raise AssertionError(f"unexpected subprocess invocation: {cmd!r}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+
+    def fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
+        del targets, default_root, granularity, pytest_args, env
+        return [culprit, omitted] if omission_kind == "nodeid" else []
+
+    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", fake_discover)
+
+    report_config = IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path)
+    first_exit = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", str(module)],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=report_config,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+        max_crashes_per_file=1,
+    )
+
+    capped = load_run_state(state_file)
+    assert first_exit == 1
+    assert capped is not None
+    assert any(result.target == omitted for result in capped.results)
+    if keep_unrelated:
+        capped.results.append(FileRunResult(unrelated, "crash_limited", 0, 0.0))
+        save_run_state(state_file, capped)
+
+    resumed_exit = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", str(module)],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=report_config,
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+        max_crashes_per_file=1,
+    )
+
+    resumed = load_run_state(state_file)
+    assert resumed_exit == 0
+    assert parent_runs == 2
+    assert resumed is not None
+    assert [result.target for result in resumed.results if result.status == "crash_limited"] == (
+        [unrelated] if keep_unrelated else []
+    )
+    assert next(result for result in resumed.results if result.target == str(target)).status == (
+        "passed"
+    )
+
+    report = json.loads(results_path.read_text(encoding="utf-8"))
+    assert report["summary"]["crash_limited"] == int(keep_unrelated)
+    assert report["summary"]["incomplete"] is keep_unrelated
+    assert report["summary"]["total"] == 1 + int(keep_unrelated)
+
+
+def test_run_isolated_pytest_units_resume_recovery_assesses_replaced_parents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = tmp_path / "module.so"
+    module.write_text("", encoding="utf-8")
+    first = tmp_path / "test_first.py"
+    second = tmp_path / "test_second.py"
+    after = tmp_path / "test_after.py"
+    for path in (first, second, after):
+        path.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    units = [str(first), str(second), str(after)]
+    pytest_args = ["--p11-module", str(module)]
+    state_file = tmp_path / "state.json"
+    second_culprit = f"{second}::test_crash"
+    second_omitted = f"{second}::test_untouched"
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[
+                FileRunResult(str(first), "failed", 1, 0.1),
+                FileRunResult(f"{first}::test_old", "crash_limited", 0, 0.0),
+                FileRunResult(str(second), "crashed", -11, 0.1),
+                FileRunResult(f"{second}::test_old", "crash_limited", 0, 0.0),
+            ],
+        ),
+    )
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del env, timeout
+        unit = cmd[3]
+        if unit == str(first):
+            return (1, "", "new first failure")
+        if unit == str(second):
+            report_log_path = Path(cmd[cmd.index("--report-log") + 1])
+            report_log_path.write_text(
+                _jsonl_line(nodeid=second_culprit, when="setup") + "\n",
+                encoding="utf-8",
+            )
+            return (-11, "", "")
+        if unit == second_culprit:
+            return (-11, "", "segmentation fault")
+        if unit == str(after):
+            return (0, "", "")
+        raise AssertionError(f"unexpected subprocess invocation: {cmd!r}")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "discover_pytest_units",
+        lambda *args, **kwargs: [second_culprit, second_omitted],
+    )
+    controller = object()
+    monkeypatch.setattr(file_runner_mod, "_build_recovery_controller", lambda *args: controller)
+    assessed_batches: list[list[tuple[str, str]]] = []
+
+    def fake_apply_recovery(controller_arg, new_results, *, console):
+        del console
+        assert controller_arg is controller
+        assessed_batches.append([(result.target, result.status) for result in new_results])
+        return False
+
+    monkeypatch.setattr(file_runner_mod, "_apply_recovery_between_units", fake_apply_recovery)
+
+    exit_code = run_isolated_pytest_units(
+        units,
+        pytest_args,
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+        max_crashes_per_file=1,
+    )
+
+    assert exit_code == 1
+    assert assessed_batches == [
+        [(str(first), "failed")],
+        [(str(second), "crashed"), (second_omitted, "crash_limited")],
+    ]
 
 
 def test_run_isolated_pytest_units_applies_baseline_deselects_on_initial_file_run(

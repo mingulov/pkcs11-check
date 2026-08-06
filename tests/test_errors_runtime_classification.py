@@ -11,6 +11,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
@@ -138,6 +139,35 @@ def _encrypt_init_returning(rv: int) -> SimpleNamespace:
 def _stub_rsa_setup(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(test_errors, "gen_rsa_keypair", lambda *_a, **_k: (1, 2))
     monkeypatch.setattr(test_errors, "destroy_quietly", lambda *_a, **_k: None)
+
+
+def test_decrypt_garbage_uses_repeatable_ciphertext(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_rsa_setup(monkeypatch)
+    decrypted_inputs: list[bytes] = []
+
+    def _unexpected_random(*_args: Any) -> int:
+        raise AssertionError("C_GenerateRandom must not supply the garbage-decrypt input")
+
+    def _decrypt(
+        _session: int,
+        encrypted_data: Any,
+        encrypted_data_len: int,
+        _out: Any,
+        _out_len: Any,
+    ) -> int:
+        decrypted_inputs.append(bytes(encrypted_data[:encrypted_data_len]))
+        return int(CKR_ENCRYPTED_DATA_INVALID)
+
+    raw = SimpleNamespace(
+        C_GenerateRandom=_unexpected_random,
+        C_DecryptInit=lambda *_args: 0,
+        C_Decrypt=_decrypt,
+    )
+    rs = _session_with_mechanisms("RSA_PKCS", "RSA_PKCS_KEY_PAIR_GEN", raw=raw)
+
+    test_errors.TestInvalidOperations().test_decrypt_garbage(rs)
+
+    assert decrypted_inputs == [bytes(256)]
 
 
 def test_encrypt_with_sign_key_accepted_is_tolerated(monkeypatch: pytest.MonkeyPatch) -> None:

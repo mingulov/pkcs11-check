@@ -334,7 +334,7 @@ class TestInvalidOperations:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_decrypt_garbage(self, p11_raw_session: Any) -> None:
-        """Decrypting random garbage should fail cleanly."""
+        """Decrypting fixed invalid ciphertext should fail cleanly."""
         rs = p11_raw_session
         skip_unless_mechanism(rs, "RSA_PKCS")
         pub, priv = _gen_rsa_keypair_or_xfail(
@@ -344,7 +344,7 @@ class TestInvalidOperations:
             purpose="decrypt-garbage check",
         )
         try:
-            garbage = generate_random(rs.raw, rs.sh, 256)  # 256 bytes
+            garbage = bytes(256)
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:

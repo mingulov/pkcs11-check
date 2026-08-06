@@ -830,6 +830,23 @@ def run_isolated_pytest_units(
                     exit_code = 1
                     break
 
+            unit_granularity = _effective_granularity(unit, granularity)
+            if resume and unit_granularity == "file" and "::" not in unit:
+                file_key = _unit_file_key(unit)
+                previous_result_count = len(state.results)
+                state.results[:] = [
+                    result
+                    for result in state.results
+                    if not (
+                        result.target == unit
+                        or (
+                            result.status == "crash_limited"
+                            and _unit_file_key(result.target) == file_key
+                        )
+                    )
+                ]
+                recovery_assessed -= previous_result_count - len(state.results)
+
             executed_units.add(unit)
             if report_config is not None and report_config.jsonl_path is not None:
                 _delete_unit_report_record_cache(state_file, unit)
@@ -862,7 +879,6 @@ def run_isolated_pytest_units(
                         continue
 
             start = time.monotonic()
-            unit_granularity = _effective_granularity(unit, granularity)
             unit_disabled_nodeids = (
                 set(deselect_by_file.get(unit, set())) if unit_granularity == "file" else set()
             )
@@ -1426,6 +1442,59 @@ def run_isolated_pytest_units(
                                                 ),
                                             ),
                                         )
+                                        collection_error: str | None
+                                        try:
+                                            collected_nodeids = discover_pytest_units(
+                                                [unit],
+                                                Path(unit).parent,
+                                                granularity="test",
+                                                pytest_args=pytest_args,
+                                                env=env,
+                                            )
+                                        except (OSError, ValueError) as exc:
+                                            collected_nodeids = []
+                                            collection_error = str(exc) or type(exc).__name__
+                                        else:
+                                            collected_nodeids = [
+                                                _absolute_nodeid(unit, nodeid)
+                                                for nodeid in collected_nodeids
+                                            ]
+                                            deselect_set = {
+                                                _absolute_nodeid(unit, nodeid)
+                                                for nodeid in deselect_set
+                                            }
+                                            collection_error = (
+                                                "direct pytest collection returned no node IDs "
+                                                "after crash limit"
+                                                if not collected_nodeids
+                                                else None
+                                            )
+                                        if collection_error is not None:
+                                            _record_result(
+                                                state,
+                                                FileRunResult(
+                                                    target=(
+                                                        f"{unit}::[pkcs11-check-crash-limited-"
+                                                        "uncollected]"
+                                                    ),
+                                                    status="crash_limited",
+                                                    returncode=0,
+                                                    duration_s=0.0,
+                                                    stderr=collection_error,
+                                                ),
+                                            )
+                                        else:
+                                            for nodeid in collected_nodeids:
+                                                if nodeid not in deselect_set:
+                                                    _record_result(
+                                                        state,
+                                                        FileRunResult(
+                                                            target=nodeid,
+                                                            status="crash_limited",
+                                                            returncode=0,
+                                                            duration_s=0.0,
+                                                        ),
+                                                    )
                                         save_run_state(state_file, state)
                                         console.print(
                                             "[yellow]Adaptive isolation:[/yellow] "
