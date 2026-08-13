@@ -49,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CHACHA20_KEY_GEN,
     CKR_OK,
 )
+from pkcs11_check.testcases._probes._emit import cleanup_guard
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
 from pkcs11_check.testcases.security._boundary_values import OVERSIZE_WRITE_LEN, PROBE_OFFSET
@@ -196,11 +197,15 @@ def _run_oracle(
         out_view = (ctypes.c_ubyte * OVERSIZE_WRITE_LEN).from_buffer(out_mm)
         out_len = CK_ULONG(OVERSIZE_WRITE_LEN)
 
+        # byref, NOT ctypes.cast: cast on a from_buffer array leaves the mmap's buffer
+        # export outstanding, so close() below raises BufferError and the probe exits 1
+        # after a correct measurement -- the module then gets a crash finding it did not
+        # earn (GH #11). byref passes the identical address and releases the export.
         rv = getattr(raw, op_fn)(
             sh,
-            ctypes.cast(in_view, ctypes.POINTER(ctypes.c_ubyte)),
+            ctypes.byref(in_view),
             OVERSIZE_WRITE_LEN,
-            ctypes.cast(out_view, ctypes.POINTER(ctypes.c_ubyte)),
+            ctypes.byref(out_view),
             ctypes.byref(out_len),
         )
         print(f"TARGET_RV:0x{rv:08x}")
@@ -211,15 +216,18 @@ def _run_oracle(
             print(f"UNDERFILL:{underfill}")
             print(f"OUT_LEN:0x{out_len.value:016x}")
     finally:
-        # Release ctypes views before their mmaps.
-        if in_view is not None:
-            del in_view
-        if out_view is not None:
-            del out_view
-        if in_mm is not None:
-            in_mm.close()
-        if out_mm is not None:
-            out_mm.close()
+        # Release ctypes views before their mmaps. Guarded: releasing OUR buffers is
+        # harness work, so if it ever breaks again the parent blames us, not the module,
+        # and the measurement printed above still reaches the verdict (GH #11).
+        with cleanup_guard("output_length buffer release"):
+            if in_view is not None:
+                del in_view
+            if out_view is not None:
+                del out_view
+            if in_mm is not None:
+                in_mm.close()
+            if out_mm is not None:
+                out_mm.close()
 
 
 # ---------------------------------------------------------------------------
