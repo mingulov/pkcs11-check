@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from pkcs11_check.core.cache_paths import secure_cache_dir
+from pkcs11_check.core.collection_errors import collection_failure_message
 from pkcs11_check.core.nodeids import item_nodeid
 
 # Collection-metadata cache (Lever 2 of the speedup gap analysis). The full
@@ -224,11 +225,15 @@ def collect_pytest_item_metadata(
         )
 
         if completed.returncode not in {0, 5}:
-            details = (
-                completed.stderr.strip() or completed.stdout.strip() or "unknown collection error"
+            raise ValueError(
+                collection_failure_message(
+                    returncode=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    targets=targets,
+                    pytest_args=pytest_args,
+                )
             )
-            msg = f"pytest metadata collection failed: {details}"
-            raise ValueError(msg)
 
         if not output_path.exists():
             return []

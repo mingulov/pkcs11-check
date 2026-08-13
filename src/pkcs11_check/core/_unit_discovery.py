@@ -220,6 +220,7 @@ from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.collection_errors import collection_failure_message
 from pkcs11_check.core.nodeids import normalize_nodeid
 
 
@@ -282,9 +283,15 @@ def collect_pytest_nodeids(
     )
 
     if completed.returncode not in {0, 5}:
-        details = completed.stderr.strip() or completed.stdout.strip() or "unknown collection error"
-        msg = f"pytest collection failed: {details}"
-        raise ValueError(msg)
+        raise ValueError(
+            collection_failure_message(
+                returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                targets=targets,
+                pytest_args=_collection_args(pytest_args),
+            )
+        )
 
     nodeids: list[str] = []
     for raw_line in completed.stdout.splitlines():
