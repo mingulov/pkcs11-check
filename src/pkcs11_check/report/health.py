@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from pkcs11_check.classification import HARNESS_REASONS
+
 _FAIL_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 _SEP = " · "  # middle dot, matching the existing report separator
 
@@ -22,7 +24,7 @@ def fail_severity_counts(groups: list[dict[str, Any]]) -> dict[str, int]:
     for g in groups:
         if g.get("outcome") != "fail":
             continue
-        if g.get("reason") in ("crash", "unclassified"):
+        if g.get("reason") in ("crash", "unclassified") or g.get("reason") in HARNESS_REASONS:
             continue
         sev = str(g.get("severity") or "")
         if sev in out:
@@ -36,11 +38,14 @@ def outcome_counts(groups: list[dict[str, Any]]) -> dict[str, int]:
     ``fail`` excludes crashes and the unclassified backlog so the header numbers do
     not double-count; crashes and unclassified are reported on their own.
     """
-    out = {"fail": 0, "crash": 0, "xfail": 0, "unclassified": 0}
+    out = {"fail": 0, "crash": 0, "xfail": 0, "unclassified": 0, "harness_error": 0}
     for g in groups:
         n = int(g.get("count", 0))
         reason = g.get("reason")
-        if reason == "crash":
+        if reason in HARNESS_REASONS:
+            # pkcs11-check's own defect: never counted against the module under test.
+            out["harness_error"] += n
+        elif reason == "crash":
             out["crash"] += n
         elif reason == "unclassified":
             out["unclassified"] += n

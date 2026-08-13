@@ -22,6 +22,7 @@ import re
 from collections import Counter
 from typing import Any
 
+from pkcs11_check.classification import HARNESS_REASONS
 from pkcs11_check.report import health
 from pkcs11_check.report.capability import render_capability_gaps
 from pkcs11_check.report.sanitize import sanitize_line, summarize_crash, truncate_ckr_list
@@ -199,8 +200,39 @@ def _render_fail_buckets(members: list[dict[str, Any]]) -> list[str]:
 
 
 def _is_scored_fail(g: dict[str, Any]) -> bool:
-    """A fail that counts toward the header total (excludes crash + unclassified)."""
-    return g.get("outcome") == "fail" and g.get("reason") not in ("unclassified", "crash")
+    """A fail that counts toward the header total (excludes crash + unclassified).
+
+    Harness errors are excluded too: they are pkcs11-check's own defects and must never
+    be scored against the module under test. They get their own section below.
+    """
+    return (
+        g.get("outcome") == "fail"
+        and g.get("reason") not in ("unclassified", "crash")
+        and g.get("reason") not in HARNESS_REASONS
+    )
+
+
+def _harness_error_section(groups: list[dict[str, Any]]) -> list[str]:
+    """Render pkcs11-check's own failures, explicitly NOT attributed to the provider.
+
+    Kept separate and clearly labelled so a harness bug can never be read as a module
+    finding (GH #9/#11), and never silently dropped either.
+    """
+    harness = [g for g in groups if g.get("reason") in HARNESS_REASONS]
+    if not harness:
+        return []
+    total = sum(int(g.get("count", 0)) for g in harness)
+    out = [
+        f"## harness errors ({total}) - NOT provider findings",
+        "",
+        "pkcs11-check itself failed here. These are defects in this tool, not in the",
+        "module under test, and are excluded from every provider count above.",
+        "",
+    ]
+    for g in sorted(harness, key=lambda x: -int(x.get("count", 0))):
+        out.extend(_finding_lines(g))
+    out.append("")
+    return out
 
 
 def _fail_section(severity: str, groups: list[dict[str, Any]]) -> list[str]:
@@ -395,6 +427,7 @@ def render_provider(
     for severity in _FAIL_SECTIONS:
         out.extend(_fail_section(severity, groups))
     out.extend(_uncategorized_fail_section(groups))
+    out.extend(_harness_error_section(groups))
 
     mech_cov = (coverage or {}).get("mechanism_coverage")
     fsc = (quality or {}).get("framework_skip_candidates")

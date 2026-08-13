@@ -43,6 +43,25 @@ def test_subprocess_result_policy_preserves_rv_trace_marker_after_long_output() 
     assert marker in str(excinfo.value)
 
 
+def test_subprocess_result_policy_keeps_the_exception_line_of_a_long_traceback() -> None:
+    """A traceback carries its exception on the LAST line; a head-only excerpt drops it.
+
+    This is why GH #9 could not be diagnosed from the harness output: the reporter saw
+    the traceback header and had to reproduce the BufferError independently.
+    """
+    frames = "".join(
+        f'  File "/x/pkcs11_check/testcases/_probes/output_length.py", line {n}, in _run_oracle\n'
+        f"    in_mm.close()\n"
+        for n in range(200)
+    )
+    stderr = f"Traceback (most recent call last):\n{frames}BufferError: cannot close exported"
+
+    with pytest.raises(pytest.fail.Exception) as excinfo:
+        assert_subprocess_completed(1, "", stderr, context="generated child script")
+
+    assert "BufferError: cannot close exported" in str(excinfo.value)
+
+
 def test_subprocess_result_policy_records_rv_trace_for_later_report_attachment() -> None:
     marker = 'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_Test","rv":0,"rv_name":"CKR_OK"}]'
 

@@ -31,7 +31,26 @@ def test_fail_severity_counts_excludes_crash_and_unclassified() -> None:
 
 
 def test_outcome_counts_partitions_findings() -> None:
-    assert outcome_counts(GROUPS) == {"fail": 5, "crash": 7, "xfail": 50, "unclassified": 11}
+    assert outcome_counts(GROUPS) == {
+        "fail": 5,
+        "crash": 7,
+        "xfail": 50,
+        "unclassified": 11,
+        "harness_error": 0,
+    }
+
+
+def test_harness_error_is_never_counted_against_the_provider() -> None:
+    """A pkcs11-check defect must not inflate any provider count (GH #9/#11)."""
+    groups = [*GROUPS, _g("harness_error", "fail", "HIGH", 4)]
+
+    counts = outcome_counts(groups)
+    assert counts["harness_error"] == 4
+    assert counts["fail"] == 5, "harness error leaked into the provider fail count"
+    assert counts["crash"] == 7
+
+    severities = fail_severity_counts(groups)
+    assert severities["HIGH"] == 3, "harness error leaked into the scored severities"
 
 
 def test_health_first_line_content() -> None:
