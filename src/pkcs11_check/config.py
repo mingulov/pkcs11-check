@@ -14,6 +14,39 @@ from pydantic_settings import (
 )
 
 
+class SelectionConfig(BaseSettings):
+    """Test-selection settings for commands that do not need a module (e.g. list-tests).
+
+    P11TestConfig requires ``module``, so a collection-only command cannot build it just to
+    read which tests are disabled. Same env prefix and TOML file, so a single
+    ``P11TEST_DISABLED_TESTS_FILE`` or ``disabled_tests_file`` key drives both (GH #6).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="P11TEST_",
+        toml_file="pkcs11_check.toml",
+        extra="ignore",
+    )
+
+    disabled_tests_file: Path | None = None
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Same source order as P11TestConfig, so the TOML key is honoured here too.
+        return (
+            init_settings,
+            env_settings,
+            TomlConfigSettingsSource(settings_cls),
+        )
+
+
 class P11TestConfig(BaseSettings):
     """Configuration for pkcs11-check.
 
