@@ -351,3 +351,17 @@ def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
     # skip_reasons normalizes the phrasing to a per-mechanism "<mech> not supported"
     assert "AES_CCM not supported (x4200)" in md
     assert "data quality caveat: coverage.json not provided" in md
+
+
+def test_harness_error_rendered_but_not_as_a_provider_finding() -> None:
+    """A harness defect must be visible (never dropped) and clearly disowned.
+
+    GH #9/#11: a BufferError in our own probe teardown was rendered as a crash finding
+    against a conforming module. It has to appear, and it has to say it is ours.
+    """
+    g = _group(reason="harness_error", severity="HIGH", summary="probe teardown blew up")
+    out = render_provider("p", [g])
+
+    assert "probe teardown blew up" in out, "harness error was silently dropped"
+    assert "harness error" in out.lower()
+    assert "NOT provider findings" in out

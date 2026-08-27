@@ -44,7 +44,14 @@ _REASON_OUTCOME: dict[str, Outcome] = {
     "undeclared_capability": "xfail",  # over-advertised: performed more than advertised, benign
     "sanctioned_refusal": "pass",
     "unclassified": "fail",
+    # Not a provider verdict: OUR code broke (GH #9/#11). Still a fail so it is loud and
+    # can never pass silently, but reports must not count it against the module.
+    "harness_error": "fail",
 }
+
+# Reasons that describe the harness rather than the module under test. Report surfaces
+# use this to keep them out of provider finding counts.
+HARNESS_REASONS = frozenset({"harness_error"})
 
 
 def _severity(reason: str, kind: str | None) -> Severity:
@@ -52,7 +59,7 @@ def _severity(reason: str, kind: str | None) -> Severity:
         return "CRITICAL" if kind == "crypto" else "MEDIUM"
     if reason in ("accepted_invalid", "self_contradiction"):
         return "CRITICAL" if kind in ("crypto", "policy") else "HIGH"
-    if reason in ("oracle", "crash", "unclassified"):
+    if reason in ("oracle", "crash", "unclassified", "harness_error"):
         return "HIGH"
     if reason in ("not_operational", "nonspec_reject", "honest_deviation", "undeclared_capability"):
         return "LOW"
