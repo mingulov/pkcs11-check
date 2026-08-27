@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to test, e.g. 0.1.9 (a leading 'v' is accepted)"
+        description: "Canonical candidate version X.Y.ZrcN, e.g. 0.1.9rc1"
         required: true
         type: string
       dry_run:
@@ -31,11 +31,13 @@ jobs:
   verify:
     name: Verify the TestPyPI state
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
       actions: read
     outputs:
-      version: ${{ steps.normalize.outputs.version }}
+      version: ${{ steps.candidate.outputs.version }}
+      base_version: ${{ steps.candidate.outputs.base_version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -50,17 +52,21 @@ jobs:
             exit 1
           fi
 
-      - name: Normalize the requested version
-        id: normalize
+      - name: Validate the requested candidate
+        id: candidate
         env:
-          REQUESTED: ${{ inputs.version }}
+          CANDIDATE: ${{ inputs.version }}
         run: |
-          version="${REQUESTED#v}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ ! "$CANDIDATE" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)rc[1-9][0-9]*$ ]]; then
+            echo "::error::candidate must be canonical X.Y.ZrcN, for example 0.1.9rc1"
+            exit 1
+          fi
+          echo "version=$CANDIDATE" >> "$GITHUB_OUTPUT"
+          echo "base_version=${CANDIDATE%%rc*}" >> "$GITHUB_OUTPUT"
 
-      - name: Check version consistency
+      - name: Check stable version consistency
         env:
-          VERSION: ${{ steps.normalize.outputs.version }}
+          VERSION: ${{ steps.candidate.outputs.base_version }}
         run: python3 scripts/release_check.py --version "$VERSION"
 
       - name: Check the lockfile is current
@@ -70,27 +76,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > runs.json
-          python3 - <<'PY'
-          import json
-          import sys
-
-          with open("runs.json", encoding="utf-8") as handle:
-              data = json.load(handle)
-
-          ci_runs = [run for run in data["workflow_runs"] if run["name"] == "CI"]
-          if not ci_runs:
-              sys.exit("::error::no CI run found for this commit; push it and let CI finish")
-
-          bad = [run for run in ci_runs if run["conclusion"] != "success"]
-          for run in bad:
-              print(f"::error::CI run {run['html_url']} is {run['status']}/{run['conclusion']}")
-          sys.exit(1 if bad else 0)
-          PY
+          for _ in {1..12}; do
+            run_id=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" \
+              --branch "$GITHUB_REF_NAME" --event push --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+            [ -n "$run_id" ] && break
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::no CI push run found for $GITHUB_SHA on $GITHUB_REF_NAME"
+            exit 1
+          fi
+          gh run watch "$run_id" --exit-status --interval 10
 
       - name: Summarize what this run would do
         env:
-          VERSION: ${{ steps.normalize.outputs.version }}
+          VERSION: ${{ steps.candidate.outputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           {
@@ -112,6 +113,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Stage the TestPyPI candidate
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          BASE_VERSION: ${{ needs.verify.outputs.base_version }}
+        run: |
+          path=src/pkcs11_check/__init__.py
+          stable="__version__ = \"$BASE_VERSION\""
+          if ! grep -Fqx "$stable" "$path"; then
+            echo "::error::$path does not contain the expected stable version"
+            exit 1
+          fi
+          sed -i "s/^__version__ = \"$BASE_VERSION\"$/__version__ = \"$VERSION\"/" "$path"
+          grep -Fqx "__version__ = \"$VERSION\"" "$path"
 
       - run: uv build
 
