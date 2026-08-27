@@ -4,8 +4,8 @@ Called two ways:
 
 * ``tests/test_release_hygiene.py`` runs :func:`verify` with ``requested=None`` on every push,
   so version drift fails in normal CI rather than once per release.
-* ``.github/workflows/publish.yml`` runs this module as a script with ``--version X.Y.Z``
-  before it tags, uploads to PyPI, or creates a GitHub Release.
+* The manual publishing workflows run this module as a script with ``--version X.Y.Z``
+  before they upload artifacts, tag a release, or create a GitHub Release.
 
 Standard library only, deliberately: the workflow runs this with the runner's ``python3``
 before any ``uv sync``, so a third-party import would break the release.

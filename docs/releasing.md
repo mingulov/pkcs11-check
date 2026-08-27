@@ -2,6 +2,17 @@
 
 Releases are cut by dispatching the **Release** workflow (`.github/workflows/publish.yml`) from the Actions tab. The workflow does everything: it verifies the repository state, builds, tags, uploads to PyPI, and publishes the GitHub Release.
 
+## Rehearsing on TestPyPI
+
+Dispatch the manual **TestPyPI** workflow (`.github/workflows/publish-testpypi.yml`) from `main` with the package version. Leave `dry_run` ticked first to verify and build without uploading, then dispatch it again with `dry_run` unticked to publish the wheel and sdist to TestPyPI. This workflow never creates a tag or GitHub Release and never publishes to production PyPI.
+
+TestPyPI is a separate service and needs one-time setup before the first upload:
+
+1. Create the GitHub environment `testpypi`, restrict it to `main`, and optionally require approval.
+2. In the TestPyPI account's **Publishing** settings, add a pending GitHub publisher for project `pkcs11-check`, owner `mingulov`, repository `pkcs11-check`, workflow `publish-testpypi.yml`, and environment `testpypi`.
+
+The first successful upload creates the TestPyPI project and converts the pending publisher into the project's normal publisher. Files cannot be overwritten while they exist, so every repeat or changed rehearsal needs a new version; the workflow fails loudly if the version is already present. Unlike production PyPI, TestPyPI is not permanent and may periodically prune projects or accounts.
+
 ## Cutting a release
 
 1. On `main`, bump `__version__` in `src/pkcs11_check/__init__.py` and add the matching `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md`. These are one atomic edit: the top changelog heading must always match the package version, so this repository has no `## [Unreleased]` section.
