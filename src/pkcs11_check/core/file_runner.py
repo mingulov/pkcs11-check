@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 from typing import IO, Any
@@ -588,24 +589,47 @@ def _build_recovery_controller(
     return RecoveryController(recovery_config, probe=_probe, recover=_recover)
 
 
+@dataclass
+class _RecoveryAction:
+    """What the run loop must do after feeding a batch of results to the controller."""
+
+    abort: bool = False
+    requeue: list[str] = field(default_factory=list)
+    records: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _scan_hint_rvs(result: FileRunResult, hint_rvs: frozenset[str]) -> frozenset[str]:
+    """Return the configured hint CK_RV names that appear in this unit's captured output.
+
+    The hint is only a cheap suspicion trigger deciding WHEN to run the liveness probe; it
+    never decides that the daemon is dead on its own (a CK_RV allowlist would fire
+    constantly on healthy modules that use generic error fallbacks).
+    """
+    if not hint_rvs:
+        return frozenset()
+    blob = f"{result.stderr}\n{result.stdout}"
+    return frozenset(name for name in hint_rvs if name in blob)
+
+
 def _apply_recovery_between_units(
     controller: RecoveryController,
     new_results: Sequence[FileRunResult],
     *,
     console: Console,
-) -> bool:
+) -> _RecoveryAction:
     """Feed newly-completed unit results to the recovery controller, in order.
 
-    Prints a never-silent banner on each confirmed daemon-death event (the crash finding is never
-    hidden) and on abort. Returns True iff the run must abort (provider unrecoverable or the global
-    recovery budget exhausted). NOTE (Level A): hint-RVs are not yet scanned from report records, so
-    detection uses the consecutive-failure and crash triggers (the spec's primary path); the hint
-    fast-path, streak re-queue, and structured report.jsonl finding are scoped refinements.
+    Prints a never-silent banner on each confirmed daemon-death event (the crash finding is
+    never hidden) and on abort. Returns the action for the run loop: abort, plus any units to
+    re-queue and the synthetic crash records to persist.
     """
+    action = _RecoveryAction()
     for result in new_results:
-        assessment = controller.assess(result.target, result.status, frozenset())
+        hint_rvs = _scan_hint_rvs(result, controller.config.hint_rvs)
+        assessment = controller.assess(result.target, result.status, hint_rvs)
         if not assessment.records:
             continue
+        action.records.extend(assessment.records)
         for record in assessment.records:
             trigger = record.get("trigger_unit", result.target)
             console.print(f"[red]DAEMON UNREACHABLE[/red] after {trigger} (liveness probe failed)")
@@ -614,14 +638,77 @@ def _apply_recovery_between_units(
                 "[red]Provider unrecoverable[/red] - stopping this run (recovery attempts or "
                 "global budget exhausted). Remaining units not run."
             )
-            return True
+            action.abort = True
+            return action
         if assessment.outcome is RecoveryOutcome.RECOVERED_RETRY:
-            console.print("[green]Daemon recovered[/green] - resuming the run.")
+            console.print("[green]Daemon recovered[/green] - re-running the units it took down.")
+            action.requeue.extend(assessment.requeue_units)
         elif assessment.outcome is RecoveryOutcome.QUARANTINE:
             console.print(
                 f"[yellow]Quarantining[/yellow] {result.target} - repeatedly crashed the daemon."
             )
-    return False
+    return action
+
+
+def _record_recovery_findings(state: Any, records: Sequence[dict[str, Any]]) -> None:
+    """Persist each confirmed daemon-death event as a real finding in report.jsonl.
+
+    The controller emits these as standalone records with their own synthetic identity, so
+    they survive the re-queue that deletes the dying daemon's false failures -- the crash
+    itself is a finding and must never be dropped along with the noise it caused.
+    """
+    for record in records:
+        trigger = str(record.get("trigger_unit") or "")
+        entry = {
+            "schema": 1,
+            "reason": record.get("reason", "crash"),
+            "outcome": "fail",
+            "severity": "HIGH",
+            "kind": record.get("kind"),
+            "label": record.get("label", ""),
+            "summary": f"{trigger}: {record.get('label', 'provider became unreachable')}",
+            "operation": None,
+            "mechanism": None,
+            "expected_ckr": None,
+            "actual_ckr": None,
+            "spec_ref": "",
+            "source": None,
+            "vector_id": None,
+            "detail": {"mode": "daemon_death", "streak": record.get("streak", [])},
+        }
+        state.report_records_by_unit.setdefault(f"{trigger}::daemon-recovery", []).append(entry)
+
+
+def _requeue_units_after_recovery(
+    requeue: Sequence[str],
+    *,
+    units: list[str],
+    index: int,
+    pending_units: list[str],
+    state: Any,
+) -> int | None:
+    """Drop the failures a dying daemon produced and rewind so those units run again.
+
+    A result recorded while the daemon was going down is not the module's verdict, it is an
+    artifact of talking to a corpse: keeping it would report a cascade of false failures
+    against the provider. Delete those results (and their report records) and rewind to the
+    earliest one so they are re-run against the recovered daemon.
+
+    Returns the index to rewind to, or None if none of the units have run yet. Bounded by the
+    controller's per-unit quarantine counter: a unit that reproducibly kills the daemon is
+    quarantined instead of re-queued, so this cannot loop forever.
+    """
+    wanted = set(requeue)
+    positions = [i for i, unit in enumerate(units) if unit in wanted and i <= index]
+    if not positions:
+        return None
+    targets = {units[i] for i in positions}
+    state.results[:] = [result for result in state.results if result.target not in targets]
+    for unit in targets:
+        state.report_records_by_unit.pop(unit, None)
+        if unit not in pending_units:
+            pending_units.append(unit)
+    return min(positions)
 
 
 def run_isolated_pytest_units(
@@ -820,15 +907,31 @@ def run_isolated_pytest_units(
             # so the upcoming unit runs against a recovered daemon (or the run aborts honestly).
             # Inert unless recovery is enabled, so default runs are byte-identical.
             if recovery_controller is not None and recovery_assessed < len(state.results):
-                abort = _apply_recovery_between_units(
+                recovery_action = _apply_recovery_between_units(
                     recovery_controller,
                     state.results[recovery_assessed:],
                     console=console,
                 )
                 recovery_assessed = len(state.results)
-                if abort:
+                _record_recovery_findings(state, recovery_action.records)
+                if recovery_action.abort:
                     exit_code = 1
                     break
+                if recovery_action.requeue:
+                    rewind_to = _requeue_units_after_recovery(
+                        recovery_action.requeue,
+                        units=units,
+                        index=index,
+                        pending_units=pending_units,
+                        state=state,
+                    )
+                    if rewind_to is not None:
+                        # The dropped results were never the module's verdict; re-run them
+                        # against the recovered daemon so the report says what it really does.
+                        recovery_assessed = len(state.results)
+                        save_run_state(state_file, state)
+                        index = rewind_to
+                        continue
 
             unit_granularity = _effective_granularity(unit, granularity)
             if resume and unit_granularity == "file" and "::" not in unit:

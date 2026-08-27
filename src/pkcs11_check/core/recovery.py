@@ -176,7 +176,7 @@ class RecoveryController:
         probe: Callable[[], bool],
         recover: Callable[[], bool],
     ) -> None:
-        self._config = config
+        self.config = config
         self._probe = probe
         self._recover = recover
         self._streak: list[str] = []
@@ -206,7 +206,7 @@ class RecoveryController:
         probe; only a failing probe (provider actually unreachable) ever recovers. A passing probe
         records the unit's result normally and resets the consecutive-failure counter.
         """
-        cfg = self._config
+        cfg = self.config
         if cfg.mode == "off":
             return RecoveryAssessment(RecoveryOutcome.CONTINUE)
 

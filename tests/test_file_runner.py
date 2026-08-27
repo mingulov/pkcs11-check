@@ -2875,7 +2875,7 @@ def test_run_isolated_pytest_units_resume_recovery_assesses_replaced_parents(
         del console
         assert controller_arg is controller
         assessed_batches.append([(result.target, result.status) for result in new_results])
-        return False
+        return file_runner_mod._RecoveryAction()
 
     monkeypatch.setattr(file_runner_mod, "_apply_recovery_between_units", fake_apply_recovery)
 
