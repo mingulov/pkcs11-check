@@ -11,9 +11,9 @@
 
 [wycheproof]
 repo = "C2SP/wycheproof"
-commit = "b61843a9a5115bb758134b6a1f5d5e502d445342"
-commit_date = "2026-07-21T13:54:17Z"
-archive_sha256 = "4bf6c99be6be112c9a63664db85568ba54e6237f4f4ea8b2ddc4ab768d46c3a8"
+commit = "dac1dd4729fd1f8dd9e1e9f3dce51d783da6c166"
+commit_date = "2026-08-18T16:45:48Z"
+archive_sha256 = "51a436dd758b60dd0b5b4ba1b1a117a3b3f4d10cc73140351845fa125a4737f6"
 description = "Wycheproof edge-case cryptographic test vectors"
 include = ["testvectors_v1/", "LICENSE"]
 license = "Apache-2.0"
@@ -31,9 +31,9 @@ license_files = ["ed25519/LICENSE"]
 
 [acvp]
 repo = "usnistgov/ACVP-Server"
-commit = "c924096a71e5d050742e31efa6846d1e2d6fb3bd"
-commit_date = "2026-07-24T20:09:56Z"
-archive_sha256 = "4c3a87518be02f8774f53fb7bb728dedacad62418b184da4b1513dd999a195d9"
+commit = "975de31eb83d87039ec88934fdc47d8c312b892d"
+commit_date = "2026-08-12T19:29:36Z"
+archive_sha256 = "028f0d06f49d0f6cd7f69ae693623f93fc7d2edf29d2fa11465bc865dad6f278"
 description = "NIST ACVP Automated Cryptographic Validation"
 include = ["gen-val/json-files/", "README.md"]
 license = "LicenseRef-NIST-PD"
@@ -41,9 +41,9 @@ license_files = ["README.md"]
 
 [x509-limbo]
 repo = "C2SP/x509-limbo"
-commit = "1252c300df48507fb27e709fb287c01a9caa1e0b"
-commit_date = "2026-07-26T18:42:59Z"
-archive_sha256 = "22380b8c7c4ebb52110ab2be9b6c75ddcd31f0d9603ea3779ae28abfe79b1689"
+commit = "c6040f178a947b3fa4d4a5c118d5594f0e0ca6e2"
+commit_date = "2026-08-18T00:57:54Z"
+archive_sha256 = "7a98927a4d87dea28e5ac61e700d9753c6aa125f80d91d36516a30a744febd79"
 description = "C2SP x509-limbo pathological X.509 certificates"
 # No include = extract everything
 license = "Apache-2.0"

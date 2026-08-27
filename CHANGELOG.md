@@ -1,5 +1,99 @@
 # Changelog
 
+## [0.1.9] - 2026-08-23
+
+A diagnosis release. Every fix here is about the suite telling the truth about itself: a
+harness bug is no longer published as a provider crash, a native-code hang is no longer a
+silent hour-long stall, a mute collection failure now says what it tried, and `list-tests`
+now obeys the config layer it had been ignoring. Two defects in this set had already caused
+false findings against conformant modules; one was reported from outside.
+
+### Added
+
+- **Configuration reference (GH #3).** Every setting with its `P11TEST_*` variable and TOML
+  key, the four-layer merge order, and the two traps a user cannot guess: `pkcs11_check.toml`
+  is read from the current working directory only (no `--config` flag, no parent search), and
+  an exported `P11TEST_*` silently outranks the file being edited. Ends with a "when a setting
+  seems to be ignored" checklist. Verified against `config.py` rather than assumed.
+- **`--include-disabled` for `list-tests`.** Restores disabled node-ids for auditing an
+  existing baseline.
+
+### Improved
+
+- **Third-party test vectors re-pinned to current upstream tips.** wycheproof, ACVP-Server and
+  x509-limbo advanced; CCTV was already current. Each carries its refreshed `archive_sha256`,
+  so a fetch stays reproducible and verifiable. Collection after the bump is 110,572 node-ids,
+  confirming the vector trees grew rather than shrank.
+
+### Fixed
+
+- **A harness failure could be published as a crash finding against the module (GH #9, #11).**
+  A probe child exiting non-zero was always classified `crash`, with no way to distinguish
+  "the module faulted" from "our own Python raised". An explicit `HARNESS_ERROR` child-to-parent
+  marker and a `harness_error` reason (fail/HIGH, so it stays loud) now keep these out of
+  provider-finding counts, route them to `HARNESS_FIX` in machine-readable reports, and render
+  them under their own disowning heading. Only harness-side failures emit the marker, so a
+  genuine module fault - notably a Windows SEH fault, which arrives as a catchable `OSError`
+  with a positive exit code rather than a signal - can never be hidden by it. A signal is always
+  the module's.
+- **Crash findings dropped the actual exception.** `_format_subprocess_stream` kept the first
+  500 characters, and a traceback carries its exception on the LAST line, so every crash
+  finding reported the traceback header and discarded the error itself. This is why GH #9 could
+  not be diagnosed from harness output and the reporter had to reproduce it independently.
+  Now head- and tail-biased.
+- **The output_length oracle never produced a usable measurement (GH #11, #9).** Its original
+  `ctypes.cast` calls reached the module but retained an exported mmap pointer, so teardown
+  raised `BufferError` after the verdict. The first attempted fix replaced them with
+  `ctypes.byref(array)`, but the real typed `CK_BYTE_PTR` boundary rejects pointer-to-array with
+  `ctypes.ArgumentError` before dispatching the module at all. Passing each ctypes array
+  directly performs the correct pointer conversion and releases cleanly. The regression now
+  crosses a generated typed `CK_C_Encrypt` callback and asserts that the call is actually
+  reached; a future typed-dispatch error is explicitly marked as a harness failure.
+- **The per-test timeout could not interrupt a hang in native code.** pytest-timeout's default
+  `signal` method cannot reach a thread blocked in an FFI call: SIGALRM is delivered, the C
+  trampoline consumes it, and the Python-level handler never runs. A 5s per-test timeout did not
+  stop a purpose-built native spin at all. That is what let a `C_GenerateKeyPair` deadlock burn
+  ~90 minutes of a shard before the file-level watchdog killed it. The framework now owns the
+  timer via a `pytest_timeout_set_timer` firstresult hookspec, exiting 124 - which the status
+  classifier already maps to `timeout`, preserving the unit's partial records. It arms only in
+  isolated child units, so in-process runs fall through to pytest-timeout unchanged.
+  `--timeout-method thread` was tried and rejected: it exits via `os._exit(1)`, pytest's
+  ordinary "tests failed" code, which would record a provider deadlock as ordinary assertion
+  failures and, under `--isolation none`, skip results assembly entirely.
+- **Crashing-daemon recovery was computed but never wired up (GH #5).** The controller already
+  produced `requeue_units`, quarantine state and a synthetic crash record, and the meta-suite
+  asserted all three - but the runner read none of them. The unit that killed the daemon was
+  never re-run, the quarantine was a label with no effect, the crash finding never reached
+  `report.jsonl`, and `unit_hint_rvs` was a hardcoded empty set that made the configurable
+  `hint_rvs` dead code. The green meta-suite was the trap: it covered the calculation, not the
+  wiring. Results recorded while a daemon was going down are now deleted and their units
+  re-queued - those were never the module's verdict, only the shape of talking to a corpse.
+  Still open, unchanged: a daemon that is reachable but degraded is not detected.
+- **A failed collection could not say why (GH #3).** A Windows user got "found no collectors"
+  and nothing else: no exit code, no pytest args, nothing about whether the target existed, was
+  readable or held any test files - and only one of the two streams, because the message was
+  `stderr.strip() or stdout.strip()`, so pytest writing its collection error to stdout meant a
+  non-empty stderr hid it. Both collectors carried their own copy of that blind message; they
+  now share `collection_errors.collection_failure_message`, which reports both streams, the exit
+  code, every target with exists/readable/test-file count, the pytest args, the interpreter and
+  cwd. This does not fix that user's underlying cause, which remains unknown; it makes the next
+  occurrence diagnosable instead of mute.
+- **`list-tests` ignored the entire config layer (GH #6).** `list_tests_cmd` never built a
+  config object, so the four-layer config - TOML and every `P11TEST_*` variable - applied to
+  `test` and not to `list-tests`. The reporter saw identical counts with and without
+  `P11TEST_DISABLED_TESTS_FILE`. Disabled node-ids are now excluded by default, since the
+  command exists to build disabled-tests files; baseline resolution moved to
+  `core/disabled_baseline.py` and both commands use it, so they cannot disagree again; and a
+  configured-but-missing baseline exits 2 as it does from `test`, rather than silently listing
+  everything.
+- **`CK_ULONG` attributes were decoded with a hardcoded byte order.** `CKA_HW_FEATURE_TYPE`
+  and `CKA_PROFILE_ID` are `CK_ULONG`; a module writes them as a C `unsigned long`, so their
+  byte order is the platform's. Six sites assumed little-endian - correct on x86, silently wrong
+  on a big-endian host. Latent today, but a blocker for an s390x lane, and s390x is the only
+  architecture that would catch the NSS-822365 class of bug. `testcases/acvp/aes/test_xts.py` is
+  deliberately exempt: IEEE 1619 defines the XTS tweak as little-endian by specification, so the
+  new guard test carries an exemption list requiring a citation per entry.
+
 ## [0.1.8] - 2026-07-30
 
 A portability and oracles release. pkcs11-check now runs on Windows, macOS and FreeBSD as
