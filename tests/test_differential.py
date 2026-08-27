@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from pkcs11_check.cli.app import app
+from pkcs11_check.cli.differential_cmd import _err as differential_error_console
 from pkcs11_check.core.differential import (
     find_disagreements,
     is_kat_nodeid,
@@ -458,14 +459,15 @@ def test_differential_rejects_malformed_report_log(tmp_path) -> None:
     ],
 )
 def test_differential_rejects_structurally_malformed_report_log(
-    tmp_path, records: list[object], message: str
+    tmp_path, monkeypatch: pytest.MonkeyPatch, records: list[object], message: str
 ) -> None:
+    monkeypatch.setattr(differential_error_console, "_width", 30)
     a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = tmp_path / "structurally-invalid.jsonl"
     _write_records(b, records)
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
     assert result.exit_code == 2
-    assert message in result.output
+    assert message in " ".join(result.output.split())
 
 
 def test_differential_rejects_invalid_utf8_report_log(tmp_path) -> None:
