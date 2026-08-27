@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
 from pkcs11_check.cli.app import app
 from pkcs11_check.core.differential import (
@@ -15,8 +14,11 @@ from pkcs11_check.core.differential import (
     load_provider_outcomes,
     provenance_fingerprint,
 )
+from tests._plain_cli_runner import PlainCliRunner
 
-runner = CliRunner()
+# Strips ANSI so assertions on message content hold regardless of the caller's
+# terminal environment (FORCE_COLOR/TERM). See tests/_plain_cli_runner.py.
+runner = PlainCliRunner()
 
 
 def _write_records(path: Path, records: list[object]) -> None:

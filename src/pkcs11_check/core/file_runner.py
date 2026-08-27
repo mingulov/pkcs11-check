@@ -427,10 +427,21 @@ def _unit_plugin_addopts(file_path: str) -> str | None:
     return " ".join(f"-p {name}" for name in plugins)
 
 
+# Kept as a literal rather than imported from plugin.py: the runner must not import
+# the pytest plugin, which is loaded inside the children it launches.
+_UNIT_CHILD_ENV = "PKCS11_CHECK_UNIT_CHILD"
+
+
 def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, str]:
     """Per-unit env that disables pytest plugin autoload and enables only the
     plugins the unit needs. Behavior-preserving; only trims startup cost."""
     env = dict(base_env)
+    # Mark this as an isolated child unit. plugin.py arms its own per-test timeout timer
+    # only when this is set: that timer calls os._exit(124) from a watchdog thread, which
+    # is the only thing that can stop a hang inside native code -- but it must never run
+    # in-process (`--isolation none`), where it would kill the CLI before results.json is
+    # written. Set BEFORE the early return below so units without plugin addopts get it.
+    env[_UNIT_CHILD_ENV] = "1"
     # UTF-8 so a unit's pytest subprocess output (rich marks etc.) does not crash on a
     # Windows cp1252 console; no-op off Windows. setdefault respects an explicit value.
     if sys.platform == "win32":

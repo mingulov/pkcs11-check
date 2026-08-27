@@ -15,6 +15,7 @@ gracefully when none are found.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 import pytest
@@ -105,7 +106,7 @@ class TestHwFeatureEnumeration:
                 )
                 raw_val = attrs[CKA_HW_FEATURE_TYPE]
                 hw_type = (
-                    int.from_bytes(raw_val, "little")
+                    int.from_bytes(raw_val, byteorder=sys.byteorder)
                     if isinstance(raw_val, bytes)
                     else int(raw_val)
                 )
@@ -142,7 +143,7 @@ class TestHwFeatureClock:
                 )
                 raw_val = attrs[CKA_HW_FEATURE_TYPE]
                 hw_type = (
-                    int.from_bytes(raw_val, "little")
+                    int.from_bytes(raw_val, byteorder=sys.byteorder)
                     if isinstance(raw_val, bytes)
                     else int(raw_val)
                 )
@@ -196,7 +197,7 @@ class TestHwFeatureCounter:
                 )
                 raw_val = attrs[CKA_HW_FEATURE_TYPE]
                 hw_type = (
-                    int.from_bytes(raw_val, "little")
+                    int.from_bytes(raw_val, byteorder=sys.byteorder)
                     if isinstance(raw_val, bytes)
                     else int(raw_val)
                 )

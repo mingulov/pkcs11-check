@@ -60,7 +60,10 @@ def test_env_unchanged_when_file_unreadable() -> None:
     # on a cp1252 console. That baseline is deliberate and unrelated to plugin selection,
     # so the property under test is "nothing beyond the platform baseline was added", not
     # "the mapping is byte-identical".
-    expected = {"FOO": "bar"}
+    # PKCS11_CHECK_UNIT_CHILD is the same kind of deliberate baseline: it marks the
+    # process as an isolated child so plugin.py arms its own FFI-proof per-test timeout,
+    # and it is unrelated to plugin selection.
+    expected = {"FOO": "bar", "PKCS11_CHECK_UNIT_CHILD": "1"}
     if sys.platform == "win32":
         expected["PYTHONUTF8"] = "1"
     assert env == expected

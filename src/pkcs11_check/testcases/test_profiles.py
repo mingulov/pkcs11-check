@@ -7,6 +7,7 @@ v2.40 modules.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 import pytest
@@ -110,7 +111,7 @@ class TestProfileObjects:
                 )
                 raw_val = attrs[CKA_PROFILE_ID]
                 if isinstance(raw_val, bytes):
-                    pid = int.from_bytes(raw_val, "little")
+                    pid = int.from_bytes(raw_val, byteorder=sys.byteorder)
                 else:
                     pid = int(raw_val)
             except (AssertionError, KeyError):
@@ -138,7 +139,7 @@ class TestProfileObjects:
                 )
                 raw_val = attrs[CKA_PROFILE_ID]
                 if isinstance(raw_val, bytes):
-                    pids.add(int.from_bytes(raw_val, "little"))
+                    pids.add(int.from_bytes(raw_val, byteorder=sys.byteorder))
                 else:
                     pids.add(int(raw_val))
             except (AssertionError, KeyError):
@@ -177,7 +178,7 @@ def _read_profile_ids(rs: Any) -> set[int]:
             continue
         raw_val = attrs[CKA_PROFILE_ID]
         if isinstance(raw_val, bytes):
-            pids.add(int.from_bytes(raw_val, "little"))
+            pids.add(int.from_bytes(raw_val, byteorder=sys.byteorder))
         else:
             try:
                 pids.add(int(raw_val))

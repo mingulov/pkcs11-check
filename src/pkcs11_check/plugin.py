@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import faulthandler
 import os
+import sys
+import threading
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -253,6 +256,80 @@ _LEGACY_FLAG_BY_FIXTURE: dict[str, int] = {
     "mech_message_verify_entry": int(CKF_MESSAGE_VERIFY),
     "mech_any_entry": 0,
 }
+
+
+# --- per-test timeout, owned so a hang is reported as a timeout -------------------
+#
+# pytest-timeout's signal method cannot interrupt a thread blocked in an FFI call, and
+# its thread method exits with os._exit(1) -- pytest's ordinary "tests failed" code --
+# so a provider deadlock would be recorded as ordinary failures. The runner already maps
+# 124 to `timeout` and already preserves partial report records on that path, so owning
+# the timer and exiting 124 is the whole fix.
+#
+# pytest_timeout_set_timer is a firstresult=True hookspec and pytest-timeout implements
+# it `trylast`, so this implementation wins while pytest-timeout keeps doing settings
+# resolution, marker precedence, cancellation and pdb suppression.
+UNIT_CHILD_ENV = "PKCS11_CHECK_UNIT_CHILD"
+
+# Kept local rather than imported from core.file_runner: importing the runner from the
+# pytest plugin would make every child pull in the orchestration layer it is run BY.
+_TIMEOUT_EXIT_CODE = 124
+
+
+def _on_timeout_expired(item: Any) -> None:
+    """Dump every thread's stack, then exit with the framework's timeout code.
+
+    Runs on a watchdog thread, so it works while the main thread is stuck in native
+    code -- which is the entire point. os._exit is deliberate: the main thread cannot be
+    unwound, so a clean shutdown is not available. Records already written to the report
+    log survive, because pytest-reportlog opens line-buffered and flushes per record.
+    """
+    # Suspend pytest's capture FIRST. It redirects stdout/stderr at the fd level, and
+    # os._exit discards the capture buffer, so anything written while capture is active
+    # is lost -- verified against a real native hang, where the exit code was correct but
+    # the stack dump never reached the unit log. That dump is most of the diagnostic
+    # value: without it a deadlock is only "a timeout happened", with no hung frame.
+    try:
+        capman = item.config.pluginmanager.getplugin("capturemanager")
+        if capman is not None:
+            capman.suspend_global_capture(in_=True)
+    except Exception as exc:  # noqa: BLE001 - never let diagnosis block the exit
+        sys.stderr.write(f"(could not suspend capture: {exc!r})\n")
+    sys.stderr.write(f"\n=== pkcs11-check: per-test timeout expired in {item.nodeid} ===\n")
+    sys.stderr.flush()
+    try:
+        faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+    except Exception as exc:  # noqa: BLE001 - diagnosis is best-effort; the exit is not
+        sys.stderr.write(f"(stack dump unavailable: {exc!r})\n")
+    sys.stderr.flush()
+    sys.stdout.flush()
+    os._exit(_TIMEOUT_EXIT_CODE)
+
+
+def pytest_timeout_set_timer(item: Any, settings: Any) -> bool | None:
+    """Arm our own timer for isolated child units; delegate for in-process runs.
+
+    Returning None lets pytest-timeout's own (trylast) implementation handle it. That
+    matters for `--isolation none`, where pytest.main() runs inside the CLI process: a
+    self-exit there would skip results.json assembly and produce no output at all.
+    """
+    if not os.environ.get(UNIT_CHILD_ENV):
+        return None
+    timer = threading.Timer(settings.timeout, _on_timeout_expired, (item,))
+    timer.name = f"pkcs11-check-timeout:{item.nodeid}"
+    timer.daemon = True
+    item._pkcs11_check_timeout_timer = timer
+    timer.start()
+    return True
+
+
+def pytest_timeout_cancel_timer(item: Any) -> bool | None:
+    timer = getattr(item, "_pkcs11_check_timeout_timer", None)
+    if timer is None:
+        return None
+    timer.cancel()
+    del item._pkcs11_check_timeout_timer
+    return True
 
 
 def pytest_addoption(parser: Any) -> None:

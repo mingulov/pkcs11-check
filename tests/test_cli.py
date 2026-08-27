@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from typer.testing import CliRunner
 
 from pkcs11_check import __version__
 from pkcs11_check.cli import test_cmd
@@ -17,8 +16,11 @@ from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.core.test_selection import DisabledBaseline
+from tests._plain_cli_runner import PlainCliRunner
 
-runner = CliRunner()
+# Strips ANSI so assertions on message content hold regardless of the caller's
+# terminal environment (FORCE_COLOR/TERM). See tests/_plain_cli_runner.py.
+runner = PlainCliRunner()
 
 
 class TestVersionCommand:

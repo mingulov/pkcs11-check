@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from typer.testing import CliRunner
-
 from pkcs11_check.cli.app import app
+from tests._plain_cli_runner import PlainCliRunner
 
-runner = CliRunner()
+# Strips ANSI so assertions on message content hold regardless of the caller's
+# terminal environment (FORCE_COLOR/TERM). See tests/_plain_cli_runner.py.
+runner = PlainCliRunner()
 
 
 def test_state_command_renders_state_file(tmp_path: Path) -> None:
