@@ -1,0 +1,155 @@
+name: TestPyPI
+
+# Manual-only package rehearsal: verify -> build -> optional TestPyPI upload.
+#
+# TestPyPI Trusted Publishing must be configured separately from production PyPI with:
+#   Owner = mingulov, Repository = pkcs11-check,
+#   Workflow name = publish-testpypi.yml, Environment = testpypi
+#
+# This workflow never tags a commit or creates a GitHub Release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to test, e.g. 0.1.9 (a leading 'v' is accepted)"
+        required: true
+        type: string
+      dry_run:
+        description: "Build only; untick to upload the artifacts to TestPyPI"
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: testpypi
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the TestPyPI state
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.normalize.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Refuse to publish from anywhere but main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::TestPyPI runs publish from main only, got $GITHUB_REF"
+            exit 1
+          fi
+
+      - name: Normalize the requested version
+        id: normalize
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check version consistency
+        env:
+          VERSION: ${{ steps.normalize.outputs.version }}
+        run: python3 scripts/release_check.py --version "$VERSION"
+
+      - name: Check the lockfile is current
+        run: uv lock --check
+
+      - name: Require green CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > runs.json
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open("runs.json", encoding="utf-8") as handle:
+              data = json.load(handle)
+
+          ci_runs = [run for run in data["workflow_runs"] if run["name"] == "CI"]
+          if not ci_runs:
+              sys.exit("::error::no CI run found for this commit; push it and let CI finish")
+
+          bad = [run for run in ci_runs if run["conclusion"] != "success"]
+          for run in bad:
+              print(f"::error::CI run {run['html_url']} is {run['status']}/{run['conclusion']}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Summarize what this run would do
+        env:
+          VERSION: ${{ steps.normalize.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### TestPyPI $VERSION"
+            echo
+            echo "- commit: \`$GITHUB_SHA\`"
+            echo "- dry run: \`$DRY_RUN\`"
+            echo "- destination: \`https://test.pypi.org/p/pkcs11-check\`"
+            echo
+            echo "This workflow does not create a tag or GitHub Release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build sdist + wheel
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - run: uv build
+
+      - name: Assert the artifacts carry the requested version
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          ls -lh dist/
+          for artifact in "dist/pkcs11_check-$VERSION.tar.gz" \
+                          "dist/pkcs11_check-$VERSION-py3-none-any.whl"; do
+            if [ ! -f "$artifact" ]; then
+              echo "::error::$artifact was not built"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to TestPyPI
+    needs: [verify, build]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pkcs11-check
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: distributions
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
