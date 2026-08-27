@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from pkcs11_check import __version__
 from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
+from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.core.test_selection import DisabledBaseline
@@ -1081,7 +1082,7 @@ class TestTestCommand:
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
         monkeypatch.setattr(
-            test_cmd,
+            disabled_baseline_mod,
             "load_disabled_baseline",
             lambda path: DisabledBaseline(
                 source_path=Path("config/disabled-tests.txt"),
@@ -1126,7 +1127,7 @@ class TestTestCommand:
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
         monkeypatch.setattr(
-            test_cmd,
+            disabled_baseline_mod,
             "load_disabled_baseline",
             lambda path: pytest.fail("disabled baseline should be ignored"),
             raising=False,
@@ -1162,7 +1163,7 @@ class TestTestCommand:
         module.write_text("", encoding="utf-8")
 
         monkeypatch.setattr(
-            test_cmd,
+            disabled_baseline_mod,
             "load_disabled_baseline",
             lambda path: (_ for _ in ()).throw(
                 FileNotFoundError("disabled baseline file not found: broken")
@@ -1244,7 +1245,7 @@ class TestTestCommand:
             lambda targets, default_root, *, granularity, pytest_args: [unit_a, unit_b],  # type: ignore[arg-type]
         )
         monkeypatch.setattr(
-            test_cmd,
+            disabled_baseline_mod,
             "load_disabled_baseline",
             lambda path: DisabledBaseline(
                 source_path=Path("config/disabled-tests.txt"),
@@ -1353,7 +1354,7 @@ class TestTestCommand:
             raising=False,
         )
         monkeypatch.setattr(
-            test_cmd,
+            disabled_baseline_mod,
             "load_disabled_baseline",
             lambda path: DisabledBaseline(
                 source_path=Path("config/disabled-tests.txt"),

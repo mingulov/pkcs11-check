@@ -177,6 +177,7 @@ src/pkcs11_check/
 ## Documentation
 
 - `docs/interpreting-results.md` - what the pass/xfail/fail/skip counts mean (read this first)
+- `docs/configuration.md` - every setting, its env var and TOML key, and the merge order
 - `docs/architecture.md` - codebase structure and test writing guide
 - `docs/commands.md` - build, test, and Docker commands
 - `docs/test-universe.md` - collected product-test counts by group

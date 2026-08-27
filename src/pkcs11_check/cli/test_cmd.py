@@ -17,6 +17,7 @@ from rich.console import Console
 from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.disabled_baseline import resolve_disabled_nodeids
 from pkcs11_check.core.file_runner import (
     IsolatedReportConfig,
     _emit_external_provision_banner,
@@ -36,7 +37,6 @@ from pkcs11_check.core.recovery import build_recovery_config
 from pkcs11_check.core.test_selection import (
     DisabledSelectionPlan,
     build_disabled_selection_plan,
-    load_disabled_baseline,
     write_deselect_file,
 )
 from pkcs11_check.testcases.data import SOURCES_TOML, resolve_data_dir
@@ -530,23 +530,14 @@ def test_command(
                 allow_external_provision=allow_external_provision,
                 external_provision_cmd=external_provision_cmd,
             )
-            baseline = None
-            if not ignore_disabled_tests:
-                disabled_path = runtime_config.disabled_tests_file
-                if disabled_path is None:
-                    from pkcs11_check.core.test_selection import (
-                        auto_discover_disabled_baseline,
-                    )
-
-                    disabled_path = auto_discover_disabled_baseline()
-                    if disabled_path is not None:
-                        console.print(
-                            f"[dim]Using auto-discovered disabled baseline: {disabled_path}[/dim]"
-                        )
-                baseline = load_disabled_baseline(disabled_path)
-            disabled_nodeids = set(baseline.disabled_nodeids) if baseline is not None else set()
-            baseline_fingerprint = (
-                baseline.fingerprint if baseline is not None else "disabled-baseline:none"
+            # Shared with list-tests so the two commands cannot disagree about which
+            # node-ids are in play (GH #6).
+            disabled_nodeids, baseline_fingerprint = resolve_disabled_nodeids(
+                disabled_tests_file=runtime_config.disabled_tests_file,
+                ignore=ignore_disabled_tests,
+                on_auto_discover=lambda path: console.print(
+                    f"[dim]Using auto-discovered disabled baseline: {path}[/dim]"
+                ),
             )
         except FileNotFoundError as exc:
             console.print(f"[red]Error:[/red] {exc}")
@@ -651,8 +642,8 @@ def test_command(
             jsonl_fd, jsonl_raw = tempfile.mkstemp(prefix="pkcs11-check-jsonl-", suffix=".jsonl")
             os.close(jsonl_fd)
             os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
-        if baseline is not None and baseline.disabled_nodeids:
-            deselect_path = write_deselect_file(baseline.disabled_nodeids)
+        if disabled_nodeids:
+            deselect_path = write_deselect_file(disabled_nodeids)
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
         try:
             exit_code = pytest.main(args)

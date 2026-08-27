@@ -171,7 +171,9 @@ def test_collect_pytest_nodeids_reports_collection_failure(
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match="pytest collection failed: usage error"):
+    # The message must carry the exit code, the failing stream, and the target state --
+    # a bare "<stderr>" told a Windows user nothing about why the run could not start (GH #3).
+    with pytest.raises(ValueError, match=r"(?s)exit code 4.*usage error"):
         collect_pytest_nodeids([str(target)], ["--p11-module", "/tmp/module.so"])
 
 

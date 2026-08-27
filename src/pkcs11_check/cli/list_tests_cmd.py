@@ -12,7 +12,10 @@ import typer
 from rich.console import Console
 
 from pkcs11_check.cli.test_cmd import _TESTCASES_DIR, _combine_marker
+from pkcs11_check.config import SelectionConfig
+from pkcs11_check.core.disabled_baseline import resolve_disabled_nodeids
 from pkcs11_check.core.file_runner import collect_pytest_nodeids
+from pkcs11_check.core.nodeids import normalize_nodeid
 
 _err = Console(stderr=True)
 
@@ -53,11 +56,17 @@ def enumerate_nodeids(
     module: Path | None,
     interface: str,
     slot: int,
+    include_disabled: bool = False,
 ) -> list[str]:
     """Collect node-ids matching the selection, sorted and de-duplicated.
 
     Empty ``targets`` defaults to the testcases dir. Raises ValueError on a pytest
-    collection error (propagated from collect_pytest_nodeids)."""
+    collection error (propagated from collect_pytest_nodeids).
+
+    Disabled node-ids are excluded by default, so the listing matches what ``test`` would
+    actually run; ``include_disabled`` keeps them (useful to audit an existing baseline).
+    The baseline comes from the same four-layer config ``test`` uses, so
+    ``P11TEST_DISABLED_TESTS_FILE`` and the TOML key apply here too (GH #6)."""
     collect_targets = targets or [_TESTCASES_DIR]
     args = _build_list_selection_args(
         match=match,
@@ -69,7 +78,17 @@ def enumerate_nodeids(
         interface=interface,
         slot=slot,
     )
-    return sorted(set(collect_pytest_nodeids(collect_targets, args)))
+    nodeids = set(collect_pytest_nodeids(collect_targets, args))
+    if not include_disabled:
+        disabled, _ = resolve_disabled_nodeids(
+            disabled_tests_file=SelectionConfig().disabled_tests_file,
+            on_auto_discover=lambda path: _err.print(
+                f"[dim]Excluding the auto-discovered disabled baseline: {path}[/dim]"
+            ),
+        )
+        if disabled:
+            nodeids = {n for n in nodeids if normalize_nodeid(n) not in disabled}
+    return sorted(nodeids)
 
 
 def _emit_nodeids(nodeids: list[str]) -> None:
@@ -92,6 +111,11 @@ def list_tests_command(
     ),
     interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
     slot: int = typer.Option(0, "--slot", help="Slot index"),
+    include_disabled: bool = typer.Option(
+        False,
+        "--include-disabled",
+        help="Also list node-ids the configured disabled baseline excludes",
+    ),
 ) -> None:
     """Enumerate pytest node-ids matching a selection, one per line to stdout.
 
@@ -110,10 +134,14 @@ def list_tests_command(
             module=module,
             interface=interface,
             slot=slot,
+            include_disabled=include_disabled,
         )
     except ValueError as exc:
         _err.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(code=1) from exc
+    except FileNotFoundError as exc:
+        _err.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=2) from exc
     _emit_nodeids(nodeids)
     selection = match or marker or category or "all"
     _err.print(f"[dim]{len(nodeids)} node-ids matched ({selection})[/dim]")
