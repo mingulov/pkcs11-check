@@ -35,6 +35,7 @@ jobs:
   verify:
     name: Verify the release state
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
       actions: read
@@ -93,29 +94,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > runs.json
-          python3 - <<'PY'
-          import json
-          import os
-          import sys
-
-          with open("runs.json", encoding="utf-8") as handle:
-              data = json.load(handle)
-
-          this_run = int(os.environ["GITHUB_RUN_ID"])
-          ci_runs = [
-              run
-              for run in data["workflow_runs"]
-              if run["id"] != this_run and run["name"] == "CI"
-          ]
-          if not ci_runs:
-              sys.exit("::error::no CI run found for this commit; push it and let CI finish")
-
-          bad = [run for run in ci_runs if run["conclusion"] != "success"]
-          for run in bad:
-              print(f"::error::CI run {run['html_url']} is {run['status']}/{run['conclusion']}")
-          sys.exit(1 if bad else 0)
-          PY
+          for _ in {1..12}; do
+            run_id=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" \
+              --branch "$GITHUB_REF_NAME" --event push --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+            [ -n "$run_id" ] && break
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::no CI push run found for $GITHUB_SHA on $GITHUB_REF_NAME"
+            exit 1
+          fi
+          gh run watch "$run_id" --exit-status --interval 10
 
       - name: Warn if the changelog date is not today
         run: |
@@ -216,12 +206,12 @@ jobs:
     permissions:
       id-token: write  # Trusted Publishing (OIDC); this job gets no other scope
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: distributions
           path: dist/
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           # Makes a re-run after a later-step failure idempotent instead of fatal.
           skip-existing: true
