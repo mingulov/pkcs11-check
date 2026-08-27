@@ -1,27 +1,28 @@
 """Regression: the output_length oracle must survive its own teardown (GH #9 / #11).
 
-_run_oracle passed its from_buffer views through ctypes.cast, which leaves the mmap's
-buffer export outstanding. The subsequent mmap.close() then raised
+The original _run_oracle passed its from_buffer views through ctypes.cast, which left
+the mmap's buffer export outstanding. The subsequent mmap.close() then raised
 
     BufferError: cannot close exported pointers exist
 
-*after* the probe had already printed TARGET_RV. Every run exited 1, so both oversize
-truncation tests failed for any module that did not crash -- including a conforming one
-that correctly returned CKR_DATA_LEN_RANGE -- and the probe could never deliver the
-truncation verdict it exists to detect, in either direction.
+*after* the probe had already printed TARGET_RV. Replacing cast with byref avoided that
+direct export but produced pointer-to-array, which the real typed CK_BYTE_PTR argument
+rejects before provider dispatch. Both forms prevented a usable truncation verdict.
 
-Drives the real _run_oracle with a stub in place of the FFI call, so no PKCS#11 module
-is involved.
+Drives the real _run_oracle through the generated ``CK_C_Encrypt`` callback type, so
+ctypes performs the same pointer conversion as a real PKCS#11 call without requiring a
+provider.
 """
 
 from __future__ import annotations
 
+import ctypes
 import mmap
 from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.types_std import CK_MECHANISM, CKR_OK
+from pkcs11_check.raw.types_std import CK_MECHANISM, CKR_OK, CK_C_Encrypt
 from pkcs11_check.testcases._probes._emit import HARNESS_ERROR_MARKER
 from pkcs11_check.testcases._probes.output_length import _run_oracle
 from pkcs11_check.testcases.security._boundary_values import OVERSIZE_WRITE_LEN
@@ -35,13 +36,27 @@ class _StubRaw:
     def __init__(self, op_rv: int) -> None:
         self._op_rv = op_rv
         self.op_called = False
+        self._typed_encrypt = CK_C_Encrypt(self._encrypt)
+
+    def C_EncryptInit(self, *_args: Any) -> int:  # noqa: N802
+        return CKR_OK
+
+    def _encrypt(self, *_args: Any) -> int:
+        self.op_called = True
+        return self._op_rv
+
+    def C_Encrypt(self, *args: Any) -> int:  # noqa: N802
+        return int(self._typed_encrypt(*args))
+
+
+class _DispatchErrorRaw:
+    """Simulate a harness-side ctypes conversion failure before provider dispatch."""
 
     def C_EncryptInit(self, *_args: Any) -> int:  # noqa: N802
         return CKR_OK
 
     def C_Encrypt(self, *_args: Any) -> int:  # noqa: N802
-        self.op_called = True
-        return self._op_rv
+        raise ctypes.ArgumentError("typed pointer conversion failed")
 
 
 @pytest.fixture
@@ -79,3 +94,22 @@ def test_run_oracle_reports_a_clean_rejection_without_dying_in_teardown(
     assert "TARGET_RV_NAME:CKR_DATA_LEN_RANGE" in out
     # The teardown guard must not have fired: the release path is expected to be clean.
     assert HARNESS_ERROR_MARKER not in out
+
+
+@pytest.mark.usefixtures("_demand_zero_capable")
+def test_run_oracle_attributes_typed_dispatch_errors_to_the_harness(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(ctypes.ArgumentError, match="typed pointer conversion failed"):
+        _run_oracle(
+            _DispatchErrorRaw(),
+            1,
+            init_fn="C_EncryptInit",
+            op_fn="C_Encrypt",
+            mech=CK_MECHANISM(),
+            key=2,
+        )
+
+    out = capsys.readouterr().out
+    assert f"{HARNESS_ERROR_MARKER}C_Encrypt dispatch: ArgumentError" in out
+    assert "TARGET_RV:" not in out

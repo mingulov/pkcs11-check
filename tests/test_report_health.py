@@ -159,3 +159,45 @@ def test_incomplete_banner_names_abandoned_unit() -> None:
     assert "test_wycheproof_hkdf.py" in banner
     assert "62" in banner
     assert "1017s" in banner
+
+
+def test_incomplete_banner_describes_watchdog_unit_timeout_without_test_timeout() -> None:
+    summary = {"incomplete": True, "crash_limited": 0, "timeout": 0}
+    units = [
+        {
+            "target": "test_wycheproof_ecdsa.py",
+            "status": "timeout",
+            "duration_s": 5400.1,
+            "counts": {},
+        }
+    ]
+
+    banner = incomplete_banner(summary, units)
+
+    assert banner is not None
+    assert "1 unit timed out" in banner
+    assert "crash limit" not in banner
+
+
+def test_incomplete_banner_keeps_status_only_timeout_beside_test_timeouts() -> None:
+    summary = {"incomplete": True, "crash_limited": 0, "timeout": 2}
+    units = [
+        {
+            "target": "test_with_attributed_timeout.py",
+            "status": "timeout",
+            "duration_s": 180.0,
+            "counts": {"timeout": 2},
+        },
+        {
+            "target": "test_watchdog_only.py",
+            "status": "timeout",
+            "duration_s": 5400.1,
+            "counts": {"timeout": 0},
+        },
+    ]
+
+    banner = incomplete_banner(summary, units)
+
+    assert banner is not None
+    assert "2 timed out" in banner
+    assert "1 unit timed out" in banner

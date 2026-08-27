@@ -5,7 +5,8 @@ points write coverage and emit the rv-trace line using these functions so there 
 ONE implementation of each protocol.
 
 Coverage shape (I6):
-    {"call_log": dict[str, int], "mechanism_counts": dict[str, int]}
+    {"call_log": dict[str, int], "mechanism_counts": dict[str, int],
+     "call_log_ok": dict[str, int], "mechanism_rv_counts": dict[str, dict[str, int]]}
 
 RV-trace shape (I7):
     "P11_RV_TRACE_JSON:" + json.dumps(list[dict])
@@ -57,13 +58,13 @@ def write_coverage(
     call_log: dict[str, int],
     mechanism_counts: dict[str, int],
     call_log_ok: dict[str, int] | None = None,
+    mechanism_rv_counts: dict[str, dict[str, int]] | None = None,
 ) -> None:
-    """Write call_log + mechanism_counts (+ optional call_log_ok) to the coverage file (I6).
+    """Write function/mechanism counts and their successful/return-value subsets (I6).
 
-    Key shape: {"call_log": dict, "mechanism_counts": dict, "call_log_ok": dict}. The parent's
-    get_preamble_subprocess_coverage / get_raw_subprocess_coverage read exactly this shape;
-    call_log_ok (per-function CKR_OK counts) feeds the hollow-pass oracle. No-op when the env
-    var is absent.
+    The parent's subprocess coverage readers consume exactly this shape. ``call_log_ok`` feeds
+    the hollow-pass oracle; ``mechanism_rv_counts`` feeds accepted/rejected mechanism state.
+    No-op when the environment variable is absent.
     """
     path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
     if not path:
@@ -73,6 +74,7 @@ def write_coverage(
             "call_log": call_log,
             "mechanism_counts": mechanism_counts,
             "call_log_ok": call_log_ok or {},
+            "mechanism_rv_counts": mechanism_rv_counts or {},
         }
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)

@@ -72,13 +72,17 @@ def _provenance_line(provenance: dict[str, Any] | None) -> str:
     prov = provenance.get("provider")
     if isinstance(prov, dict):
         ref = prov.get("ref") or ""
+        version = prov.get("version") or ""
         commit = (prov.get("commit") or "")[:8]
         pin = ""
         if prov.get("matches_manifest_pin") is True:
             pin = " (matches pin)"
         elif prov.get("matches_manifest_pin") is False:
             pin = " (NOT pinned source)"
-        head = f"{prov.get('name', '?')} {ref}@{commit}".replace(" @", " ").strip()
+        identity = ref or version
+        if commit:
+            identity = f"{identity}@{commit}" if identity else commit
+        head = f"{prov.get('name', '?')} {identity}".strip()
         parts.append(f"tested: {head}{pin}")
     fw = provenance.get("framework")
     if isinstance(fw, dict) and fw.get("version"):

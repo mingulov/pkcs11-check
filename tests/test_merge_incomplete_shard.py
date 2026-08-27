@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pkcs11_check.core.file_runner import postprocess_jsonl_to_unified
 from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
 
 
@@ -76,6 +77,8 @@ def test_shard_without_results_json_is_not_dropped_from_summary(tmp_path: Path) 
     # And it is surfaced as a warning, not hidden.
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("reconstructed" in w for w in warnings), warnings
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
 
 
 def test_corrupt_results_json_does_not_abort_merge(tmp_path: Path) -> None:
@@ -96,6 +99,8 @@ def test_corrupt_results_json_does_not_abort_merge(tmp_path: Path) -> None:
     assert merged["summary"]["failed"] >= 1, merged["summary"]
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("unreadable" in w for w in warnings), warnings
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
 
 
 def test_partial_shard_results_are_warned_not_silent(tmp_path: Path) -> None:
@@ -117,6 +122,8 @@ def test_partial_shard_results_are_warned_not_silent(tmp_path: Path) -> None:
 
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("partial" in w and "223/246" in w for w in warnings), warnings
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
 
 
 def test_total_loss_shard_is_warned_not_silent(tmp_path: Path) -> None:
@@ -133,6 +140,8 @@ def test_total_loss_shard_is_warned_not_silent(tmp_path: Path) -> None:
     # Merge still completes, and the loss is loudly recorded (never silent).
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("LOST" in w for w in warnings), warnings
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
 
 
 def test_corrupt_results_with_empty_jsonl_is_warned_lost(tmp_path: Path) -> None:
@@ -150,6 +159,50 @@ def test_corrupt_results_with_empty_jsonl_is_warned_lost(tmp_path: Path) -> None
 
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("LOST" in w for w in warnings), warnings
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_missing_shard_artifacts_are_lost_and_incomplete(tmp_path: Path) -> None:
+    s0 = _make_shard(
+        tmp_path, "shard-0", results=True, jsonl=[_call("test_ok.py::test_pass", "passed")]
+    )
+    s1 = tmp_path / "shard-1"
+    s1.mkdir()
+
+    merged = merge_shard_dirs([s0, s1], tmp_path / "out")
+
+    warnings = merged.get("shards", {}).get("warnings", [])
+    assert any("LOST" in warning for warning in warnings), warnings
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_jsonl_without_session_finish_is_incomplete_without_timeout(tmp_path: Path) -> None:
+    report_log = tmp_path / "report.jsonl"
+    _write_jsonl(report_log, [_call("test_partial.py::test_pass", "passed")])
+
+    payload = postprocess_jsonl_to_unified(report_log, tmp_path / "results.json")
+
+    assert payload["summary"]["passed"] == 1
+    assert payload["summary"]["timeout"] == 0
+    assert payload["summary"]["incomplete"] is True
+
+
+def test_jsonl_with_session_finish_is_complete(tmp_path: Path) -> None:
+    report_log = tmp_path / "report.jsonl"
+    _write_jsonl(
+        report_log,
+        [
+            _call("test_complete.py::test_pass", "passed"),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+
+    payload = postprocess_jsonl_to_unified(report_log, tmp_path / "results.json")
+
+    assert payload["summary"]["timeout"] == 0
+    assert payload["summary"]["incomplete"] is False
 
 
 def _summary(**over: int) -> dict[str, object]:
@@ -171,6 +224,33 @@ def _summary(**over: int) -> dict[str, object]:
 
 def test_incomplete_set_on_timeout_even_without_crash_limit() -> None:
     merged = merge_results_payloads([_summary(passed=1, timeout=2)], coverage=None)
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_merge_preserves_incoming_incomplete_without_timeout() -> None:
+    payload = _summary(passed=1)
+    payload["summary"]["incomplete"] = True
+
+    merged = merge_results_payloads([payload], coverage=None)
+
+    assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_incomplete_set_on_watchdog_unit_timeout_without_test_timeout() -> None:
+    payload = _summary(passed=3809)
+    payload["units"] = [
+        {
+            "target": "test_wycheproof_ecdsa.py",
+            "status": "timeout",
+            "returncode": 124,
+            "duration_s": 5400.1,
+        }
+    ]
+
+    merged = merge_results_payloads([payload], coverage=None)
+
+    assert merged["summary"]["timeout"] == 0
     assert merged["summary"]["incomplete"] is True
 
 

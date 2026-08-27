@@ -25,14 +25,14 @@ def test_ingest_and_drain_propagate_call_log_ok(tmp_path) -> None:
     pre.get_preamble_subprocess_coverage()
 
     pre.ingest_subprocess_coverage(str(cov))
-    func, _mech, func_ok = pre.get_preamble_subprocess_coverage()
+    func, _mech, func_ok, _mech_rv = pre.get_preamble_subprocess_coverage()
 
     assert func["C_Sign"] == 5
     assert func_ok["C_Sign"] == 4
     assert func_ok.get("C_Verify", 0) == 0  # no OK key -> zero
 
     # Draining cleared the OK accumulator too (no leak into the next run).
-    _f, _m, func_ok_again = pre.get_preamble_subprocess_coverage()
+    _f, _m, func_ok_again, _mr = pre.get_preamble_subprocess_coverage()
     assert func_ok_again == {}
 
 
@@ -44,6 +44,6 @@ def test_missing_call_log_ok_key_is_tolerated(tmp_path) -> None:
     )
     pre.get_preamble_subprocess_coverage()
     pre.ingest_subprocess_coverage(str(cov))
-    func, _mech, func_ok = pre.get_preamble_subprocess_coverage()
+    func, _mech, func_ok, _mech_rv = pre.get_preamble_subprocess_coverage()
     assert func["C_Sign"] == 1
     assert func_ok == {}

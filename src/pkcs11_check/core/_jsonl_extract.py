@@ -6,7 +6,7 @@ Moved verbatim from file_runner.py (god-module split, 2026-07-17).
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -156,7 +156,11 @@ from pkcs11_check.core.report_log import (
 from pkcs11_check.core.report_log import (
     map_report_outcome as _map_outcome,
 )
-from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
+from pkcs11_check.core.run_metrics import (
+    RESULT_OUTCOME_KEYS,
+    compute_child_subprocess_counts,
+    run_is_incomplete,
+)
 
 
 def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
@@ -354,6 +358,7 @@ def postprocess_jsonl_to_unified(
     If ``provenance`` is provided, it is included in the output payload.
     """
     file_counts: dict[str, dict[str, int]] = {}
+    session_finished = False
 
     def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
         nodeid = str(rec.get("nodeid", ""))
@@ -365,10 +370,20 @@ def postprocess_jsonl_to_unified(
         outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
+    def _records_with_completion() -> Iterator[dict[str, Any]]:
+        nonlocal session_finished
+        for record in _iter_report_log_records(jsonl_path):
+            if (
+                record.get("$report_type") == "SessionFinish"
+                and type(record.get("exitstatus")) is int
+            ):
+                session_finished = True
+            yield record
+
     # Parse the JSONL once: build the aggregate detail and the per-file counts
     # from the same streaming record pass.
     detail = _build_detail_from_report_records(
-        _iter_report_log_records(jsonl_path),
+        _records_with_completion(),
         call_record_hook=_accumulate_file_count,
     )
     # An empty / vacuous JSONL (no records at all) returns None from the builder;
@@ -422,7 +437,8 @@ def postprocess_jsonl_to_unified(
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
+    summary["incomplete"] = not session_finished
+    summary["incomplete"] = run_is_incomplete(summary, units)
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",

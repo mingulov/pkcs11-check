@@ -5651,6 +5651,36 @@ def test_incomplete_is_true_when_a_unit_times_out() -> None:
     assert s["incomplete"] is True  # timeout > 0, even with no crash_limited
 
 
+def test_status_only_unit_timeout_keeps_partial_counts_without_synthetic_timeout() -> None:
+    """A watchdog timeout after partial results is incomplete without inventing a test timeout."""
+    state = FileRunState(
+        units=["test_wycheproof_ecdsa.py"],
+        fingerprint="abc",
+        results=[
+            FileRunResult(
+                target="test_wycheproof_ecdsa.py",
+                status="timeout",
+                returncode=124,
+                duration_s=5400.1,
+            ),
+        ],
+    )
+    details = {
+        "test_wycheproof_ecdsa.py": {
+            "counts": {"passed": 3809},
+            "tests": [],
+        }
+    }
+
+    payload = _build_isolated_json_payload(state, per_unit_details=details)
+    summary = payload["summary"]
+
+    assert payload["units"][0]["status"] == "timeout"
+    assert summary["passed"] == 3809
+    assert summary["timeout"] == 0
+    assert summary["incomplete"] is True
+
+
 def test_child_metrics_and_incomplete_excluded_from_total() -> None:
     # Two test-level results so _group_results_by_file uses the test-level grouping
     # path (has_test_level=True): test_x ran and failed (child-crash marker),

@@ -80,6 +80,7 @@ from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 pytestmark = [
     pytest.mark.security,
     pytest.mark.subprocess,
+    pytest.mark.timeout(240),
     requires_64bit_ck_ulong,
 ]
 

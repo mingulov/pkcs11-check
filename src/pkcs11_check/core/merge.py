@@ -41,7 +41,11 @@ from pkcs11_check.core.file_runner import (
     write_quality_json_report,
 )
 from pkcs11_check.core.report_log import user_property_names as _user_property_names
-from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
+from pkcs11_check.core.run_metrics import (
+    RESULT_OUTCOME_KEYS,
+    compute_child_subprocess_counts,
+    run_is_incomplete,
+)
 from pkcs11_check.core.subprocess_trace import extract_subprocess_rv_trace
 
 _SUMMARY_KEYS = RESULT_OUTCOME_KEYS
@@ -203,12 +207,15 @@ def merge_results_payloads(
     *,
     coverage: dict[str, Any] | None,
     shard_meta: dict[str, Any] | None = None,
+    incomplete_evidence: bool = False,
 ) -> dict[str, Any]:
     """Combine N ``results.json`` payloads (summary summed, units concatenated)."""
     summary: dict[str, int] = {key: 0 for key in _SUMMARY_KEYS}
     units: list[dict[str, Any]] = []
+    incoming_incomplete = False
     for payload in payloads:
         psum = payload.get("summary", {}) or {}
+        incoming_incomplete = incoming_incomplete or bool(psum.get("incomplete", False))
         for key in _SUMMARY_KEYS:
             summary[key] += int(psum.get(key, 0) or 0)
         units.extend(payload.get("units", []) or [])
@@ -216,11 +223,15 @@ def merge_results_payloads(
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
+    summary["incomplete"] = incoming_incomplete or incomplete_evidence
+    summary["incomplete"] = run_is_incomplete(summary, units)
 
-    merged_provenance = next(
-        (p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)), None
-    )
+    shard_provenance = [p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)]
+    merged_provenance = shard_provenance[0] if shard_provenance else None
+    if merged_provenance is not None and any(
+        provenance != merged_provenance for provenance in shard_provenance[1:]
+    ):
+        raise ValueError("shard provenance differs; refusing to merge mismatched test inputs")
     merged: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",
@@ -276,6 +287,9 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
                         f"{shard_dir.name}: partial results ({completed}/{planned} "
                         f"units completed): {reason}"
                     )
+                    summary = data.setdefault("summary", {})
+                    if isinstance(summary, dict):
+                        summary["incomplete"] = True
                 return data
             warnings.append(
                 f"{shard_dir.name}: results.json is not an object; "
@@ -290,6 +304,7 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
     if report_path.exists():
         with tempfile.TemporaryDirectory() as tmp:
             payload = postprocess_jsonl_to_unified(report_path, Path(tmp) / "results.json")
+        payload["summary"]["incomplete"] = True
         total = int(payload.get("summary", {}).get("total", 0) or 0)
         if not results_path.exists() and total > 0:
             warnings.append(
@@ -307,6 +322,11 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
         # Corrupt results.json AND no salvageable report.jsonl: a genuine loss.
         warnings.append(
             f"{shard_dir.name}: results.json corrupt and report.jsonl missing/empty; "
+            "shard findings LOST from the merged summary"
+        )
+    else:
+        warnings.append(
+            f"{shard_dir.name}: results.json and report.jsonl missing; "
             "shard findings LOST from the merged summary"
         )
     return None
@@ -353,7 +373,12 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
     }
     if warnings:
         shard_meta["warnings"] = list(warnings)
-    merged = merge_results_payloads(payloads, coverage=coverage, shard_meta=shard_meta)
+    merged = merge_results_payloads(
+        payloads,
+        coverage=coverage,
+        shard_meta=shard_meta,
+        incomplete_evidence=bool(warnings),
+    )
     (output_dir / "results.json").write_text(
         json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

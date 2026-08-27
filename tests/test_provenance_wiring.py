@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from pkcs11_check.core.file_runner import (
     FileRunState,
     _build_isolated_json_payload,
@@ -45,6 +47,14 @@ def test_merge_omits_provenance_when_absent_in_all_payloads() -> None:
     p2 = {"summary": {"passed": 2}, "units": []}
     merged = merge_results_payloads([p1, p2], coverage=None)
     assert "provenance" not in merged
+
+
+def test_merge_rejects_different_nonempty_shard_provenance() -> None:
+    p1 = {"summary": {"passed": 1}, "units": [], "provenance": {"provider": {"version": "1"}}}
+    p2 = {"summary": {"passed": 1}, "units": [], "provenance": {"provider": {"version": "2"}}}
+
+    with pytest.raises(ValueError, match="provenance differs"):
+        merge_results_payloads([p1, p2], coverage=None)
 
 
 # ---------------------------------------------------------------------------

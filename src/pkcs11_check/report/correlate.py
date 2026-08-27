@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from pkcs11_check.classification import HARNESS_REASONS
+
 ThemeKey = tuple[str, str | None, str | None]
 
 
@@ -121,6 +123,7 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
 
     * fails default to ``category=PROVIDER_BUG`` / ``routing=PROVIDER_REPORT``
     * xfails -> ``category="deviation"`` / ``routing=DOCS_ONLY``
+    * harness errors -> ``category=HARNESS_OR_UNMIGRATED`` / ``routing=HARNESS_FIX``
     * unclassified -> ``category=HARNESS_OR_UNMIGRATED`` / ``routing=HARNESS_FIX``
     * a module-issues match re-tags ``category=KNOWN_ISSUE`` / ``routing=DOCS_ONLY``
     * oracle/crypto (padding-oracle class) get ``soft_token_caveat=True``
@@ -130,7 +133,10 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
         reason = str(group.get("reason", ""))
         outcome = group.get("outcome")
 
-        if reason == "unclassified":
+        if reason in HARNESS_REASONS:
+            group["category"] = "HARNESS_OR_UNMIGRATED"
+            group["routing"] = "HARNESS_FIX"
+        elif reason == "unclassified":
             group["category"] = "HARNESS_OR_UNMIGRATED"
             group["routing"] = "HARNESS_FIX"
         elif outcome == "xfail":

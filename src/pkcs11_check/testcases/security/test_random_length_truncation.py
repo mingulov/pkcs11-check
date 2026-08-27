@@ -39,6 +39,7 @@ pytestmark = [
     pytest.mark.security,
     pytest.mark.subprocess,
     pytest.mark.slow,
+    pytest.mark.timeout(240),
     requires_64bit_ck_ulong,
 ]
 

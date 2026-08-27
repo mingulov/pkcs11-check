@@ -63,3 +63,18 @@ def compute_child_subprocess_counts(units: Iterable[Mapping[str, Any]]) -> tuple
             elif any(marker in longrepr for marker in _CHILD_TIMEOUT_MARKERS):
                 child_timeout += 1
     return child_crash, child_timeout
+
+
+def run_is_incomplete(summary: Mapping[str, Any], units: Iterable[Mapping[str, Any]]) -> bool:
+    """Return whether a run abandoned test coverage.
+
+    A watchdog may time out after pytest has already reported partial test counts. In that
+    case the unit status carries the timeout while the test-level timeout counter correctly
+    remains zero.
+    """
+    return (
+        bool(summary.get("incomplete", False))
+        or int(summary.get("crash_limited", 0) or 0) > 0
+        or int(summary.get("timeout", 0) or 0) > 0
+        or any(unit.get("status") == "timeout" for unit in units)
+    )

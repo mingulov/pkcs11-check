@@ -34,11 +34,11 @@ import ctypes
 import mmap
 from typing import Any
 
+from pkcs11_check.raw.pack import mech_chacha20
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_AES_CTR_PARAMS,
-    CK_CHACHA20_PARAMS,
     CK_MECHANISM,
     CK_ULONG,
     CKM_AES_CFB8,
@@ -49,7 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKM_CHACHA20_KEY_GEN,
     CKR_OK,
 )
-from pkcs11_check.testcases._probes._emit import cleanup_guard
+from pkcs11_check.testcases._probes._emit import cleanup_guard, emit_harness_error
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
 from pkcs11_check.testcases.security._boundary_values import OVERSIZE_WRITE_LEN, PROBE_OFFSET
@@ -120,19 +120,9 @@ def _make_aes_iv16_mech(mech_const: int) -> tuple[CK_MECHANISM, tuple[Any, ...]]
 
 
 def _make_chacha20_mech() -> tuple[CK_MECHANISM, tuple[Any, ...]]:
-    """Build a CK_MECHANISM for ChaCha20 (CK_CHACHA20_PARAMS: 128-bit counter + 96-bit nonce)."""
-    counter = (ctypes.c_ubyte * 16)()  # all-zero counter at position 0
-    nonce = (ctypes.c_ubyte * 12)(*range(12))
-    chacha_params = CK_CHACHA20_PARAMS()
-    chacha_params.pBlockCounter = ctypes.cast(counter, ctypes.c_void_p)
-    chacha_params.blockCounterBits = 128
-    chacha_params.pNonce = ctypes.cast(nonce, ctypes.c_void_p)
-    chacha_params.ulNonceBits = 96
-    mech = CK_MECHANISM()
-    mech.mechanism = CKM_CHACHA20
-    mech.pParameter = ctypes.cast(ctypes.pointer(chacha_params), ctypes.c_void_p)
-    mech.ulParameterLen = ctypes.sizeof(chacha_params)
-    return mech, (counter, nonce, chacha_params)
+    """Build canonical ChaCha20 params: 32-bit counter and 96-bit nonce."""
+    packed = mech_chacha20(CKM_CHACHA20, bytes(range(12)))
+    return packed.ck, (packed,)
 
 
 # ---------------------------------------------------------------------------
@@ -197,17 +187,21 @@ def _run_oracle(
         out_view = (ctypes.c_ubyte * OVERSIZE_WRITE_LEN).from_buffer(out_mm)
         out_len = CK_ULONG(OVERSIZE_WRITE_LEN)
 
-        # byref, NOT ctypes.cast: cast on a from_buffer array leaves the mmap's buffer
-        # export outstanding, so close() below raises BufferError and the probe exits 1
-        # after a correct measurement -- the module then gets a crash finding it did not
-        # earn (GH #11). byref passes the identical address and releases the export.
-        rv = getattr(raw, op_fn)(
-            sh,
-            ctypes.byref(in_view),
-            OVERSIZE_WRITE_LEN,
-            ctypes.byref(out_view),
-            ctypes.byref(out_len),
-        )
+        # Pass the arrays directly: ctypes converts them to the CK_BYTE_PTR arguments
+        # declared by the real PKCS#11 function type without creating another exported
+        # pointer that keeps the mmap alive. ``cast`` leaks an export into teardown, while
+        # ``byref`` produces pointer-to-array and fails typed argument conversion (GH #11).
+        try:
+            rv = getattr(raw, op_fn)(
+                sh,
+                in_view,
+                OVERSIZE_WRITE_LEN,
+                out_view,
+                ctypes.byref(out_len),
+            )
+        except ctypes.ArgumentError as exc:
+            emit_harness_error(exc, phase=f"{op_fn} dispatch")
+            raise
         print(f"TARGET_RV:0x{rv:08x}")
         print(f"TARGET_RV_NAME:{ckr_name(rv)}")
         if rv == CKR_OK:

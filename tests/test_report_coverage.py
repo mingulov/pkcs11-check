@@ -184,6 +184,14 @@ def test_report_header_provenance_absent_is_silent() -> None:
     assert "tested:" not in out
 
 
+def test_report_header_uses_observed_package_version_without_source_ref() -> None:
+    prov = {"provider": {"name": "nss", "install": "apk", "version": "3.128-r0"}}
+
+    out = render_provider("nss-musl-edge", [_group()], provenance=prov)
+
+    assert "tested: nss 3.128-r0" in out
+
+
 def test_end_to_end_kitchensink_surfaces_all_signals(tmp_path: Path) -> None:
     """Drive the full generator (extract -> enrich -> render) over one rich dataset
     spanning every signal, and assert each surfaces in the produced .md."""

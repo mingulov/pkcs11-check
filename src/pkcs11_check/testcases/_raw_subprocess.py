@@ -7,7 +7,7 @@ Since the probe-script extraction (Phase 3) the inline ``python -c`` launcher
 still shared with that launcher path:
 
 - :func:`ingest_raw_subprocess_coverage` / :func:`get_raw_subprocess_coverage`
-  -- the parent-side raw-path coverage accumulators (Invariant I6).
+  -- the parent-side raw-path function/mechanism/RV coverage accumulators (Invariant I6).
 - :func:`parse_output` -- parse ``KEY:value`` lines from child stdout, used by
   the migrated test_operation_state / test_dual_function / test_sign_recover
   parents.
@@ -17,11 +17,17 @@ from __future__ import annotations
 
 import json
 import os
-from collections import Counter
+from collections import Counter, defaultdict
+
+from pkcs11_check.testcases._subprocess_coverage import (
+    normalize_mechanism_counts,
+    normalize_mechanism_rv_counts,
+)
 
 _subprocess_call_counts: Counter[str] = Counter()
-_subprocess_mechanism_counts: Counter[str] = Counter()
+_subprocess_mechanism_counts: Counter[int] = Counter()
 _subprocess_call_ok_counts: Counter[str] = Counter()
+_subprocess_mechanism_rv_counts: defaultdict[int, Counter[int]] = defaultdict(Counter)
 
 
 def ingest_raw_subprocess_coverage(path: str) -> None:
@@ -41,19 +47,27 @@ def ingest_raw_subprocess_coverage(path: str) -> None:
     except (OSError, ValueError):
         return
     _subprocess_call_counts.update(data.get("call_log", {}))
-    _subprocess_mechanism_counts.update(data.get("mechanism_counts", {}))
+    _subprocess_mechanism_counts.update(normalize_mechanism_counts(data.get("mechanism_counts")))
     _subprocess_call_ok_counts.update(data.get("call_log_ok", {}))
+    for mechanism, counts in normalize_mechanism_rv_counts(data.get("mechanism_rv_counts")).items():
+        _subprocess_mechanism_rv_counts[mechanism].update(counts)
 
 
-def get_raw_subprocess_coverage() -> tuple[Counter[str], Counter[str], Counter[str]]:
-    """Return accumulated subprocess coverage (func, mech, func_ok) and clear it."""
+def get_raw_subprocess_coverage() -> tuple[
+    Counter[str], Counter[int], Counter[str], dict[int, Counter[int]]
+]:
+    """Return accumulated subprocess coverage (func, mech, func_ok, mech_rv) and clear it."""
     func = Counter(_subprocess_call_counts)
     mech = Counter(_subprocess_mechanism_counts)
     func_ok = Counter(_subprocess_call_ok_counts)
+    mech_rv = {
+        mechanism: Counter(counts) for mechanism, counts in _subprocess_mechanism_rv_counts.items()
+    }
     _subprocess_call_counts.clear()
     _subprocess_mechanism_counts.clear()
     _subprocess_call_ok_counts.clear()
-    return func, mech, func_ok
+    _subprocess_mechanism_rv_counts.clear()
+    return func, mech, func_ok, mech_rv
 
 
 def parse_output(stdout: str) -> dict[str, str]:

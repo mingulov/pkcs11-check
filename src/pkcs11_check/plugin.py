@@ -6,7 +6,7 @@ import faulthandler
 import os
 import sys
 import threading
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +161,9 @@ from pkcs11_check._plugin_state import (
 )
 from pkcs11_check._plugin_state import (
     _CUMULATIVE_MECHANISM_DETAILS as _CUMULATIVE_MECHANISM_DETAILS,
+)
+from pkcs11_check._plugin_state import (
+    _CUMULATIVE_MECHANISM_RV_COUNTS as _CUMULATIVE_MECHANISM_RV_COUNTS,
 )
 from pkcs11_check._plugin_state import (
     _CUMULATIVE_MECHANISMS as _CUMULATIVE_MECHANISMS,
@@ -494,6 +497,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_CUMULATIVE_FUNCTION_COUNTS] = Counter()
     config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS] = Counter()
     config.stash[_CUMULATIVE_MECHANISM_COUNTS] = Counter()
+    mechanism_rv_counts: defaultdict[int, Counter[int]] = defaultdict(Counter)
+    config.stash[_CUMULATIVE_MECHANISM_RV_COUNTS] = mechanism_rv_counts
     config.stash[_CUMULATIVE_DETAIL_COUNTS] = Counter()
     config.stash[_BOOTSTRAP_FUNCTION_COUNTS] = {}
     config.stash[_BOOTSTRAP_COLLECTED] = False
@@ -639,6 +644,17 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     _attach_claimed_op_to_report(item, report)
 
 
+def _accumulate_mechanism_rv_counts(
+    target: defaultdict[int, Counter[int]],
+    incoming: Any,
+) -> None:
+    if not isinstance(incoming, dict):
+        return
+    for mechanism, counts in incoming.items():
+        if isinstance(mechanism, int) and isinstance(counts, dict):
+            target[mechanism].update(counts)
+
+
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
     """Clear per-item state after each test to prevent cross-item leakage."""
     if _is_testcase_item(item):
@@ -748,13 +764,20 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                     mc.update(rs.raw.mechanism_counts)
                 except (KeyError, AttributeError):
                     pass
+                try:
+                    _accumulate_mechanism_rv_counts(
+                        session.config.stash[_CUMULATIVE_MECHANISM_RV_COUNTS],
+                        rs.raw.mechanism_rv_counts,
+                    )
+                except (KeyError, AttributeError):
+                    pass
                 break
 
     # Drain subprocess coverage (from _raw_subprocess and _subprocess_preamble tests)
     try:
         from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
 
-        sub_func, _sub_mech, sub_func_ok = get_raw_subprocess_coverage()
+        sub_func, _sub_mech, sub_func_ok, sub_mech_rv = get_raw_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
@@ -762,12 +785,25 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                 session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(sub_func_ok)
             except KeyError:
                 pass
+        if _sub_mech:
+            try:
+                session.config.stash[_CUMULATIVE_MECHANISM_COUNTS].update(_sub_mech)
+                session.config.stash[_CUMULATIVE_USED_MECHANISMS].update(_sub_mech)
+            except KeyError:
+                pass
+        try:
+            _accumulate_mechanism_rv_counts(
+                session.config.stash[_CUMULATIVE_MECHANISM_RV_COUNTS],
+                sub_mech_rv,
+            )
+        except KeyError:
+            pass
     except ImportError:
         pass
     try:
         from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
 
-        sub_func, _sub_mech, sub_func_ok = get_preamble_subprocess_coverage()
+        sub_func, _sub_mech, sub_func_ok, sub_mech_rv = get_preamble_subprocess_coverage()
         if sub_func:
             cumulative.update(sub_func.keys())
             try:
@@ -775,6 +811,19 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
                 session.config.stash[_CUMULATIVE_FUNCTION_OK_COUNTS].update(sub_func_ok)
             except KeyError:
                 pass
+        if _sub_mech:
+            try:
+                session.config.stash[_CUMULATIVE_MECHANISM_COUNTS].update(_sub_mech)
+                session.config.stash[_CUMULATIVE_USED_MECHANISMS].update(_sub_mech)
+            except KeyError:
+                pass
+        try:
+            _accumulate_mechanism_rv_counts(
+                session.config.stash[_CUMULATIVE_MECHANISM_RV_COUNTS],
+                sub_mech_rv,
+            )
+        except KeyError:
+            pass
     except ImportError:
         pass
 
@@ -849,8 +898,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             _reported_names_for_mechanism(mid, ckm_alias_map, ckm_name, available_set)
         )
     selected_names_set, selection_rejected_names_set = _selection_state_names(selection_telemetry)
+    mechanism_rv_counts_for_report: Any = config.stash.get(_CUMULATIVE_MECHANISM_RV_COUNTS, None)
+    if mechanism_rv_counts_for_report is None:
+        mechanism_rv_counts_for_report = getattr(raw, "mechanism_rv_counts", {})
     accepted_names_set, rejected_cleanly_names_set = _mechanism_rv_state_names(
-        getattr(raw, "mechanism_rv_counts", {}),
+        mechanism_rv_counts_for_report,
         ckm_alias_map,
         ckm_name,
         available_set,

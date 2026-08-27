@@ -146,9 +146,21 @@ def incomplete_banner(summary: dict[str, Any], units: list[dict[str, Any]]) -> s
 
     crash_limited_total = int(summary.get("crash_limited", 0) or 0)
     timeout_total = int(summary.get("timeout", 0) or 0)
-    cause = f"{crash_limited_total} tests abandoned (crash limit)"
+    status_only_timed_out_units = sum(
+        1
+        for unit in units
+        if unit.get("status") == "timeout"
+        and int((unit.get("counts") or {}).get("timeout", 0) or 0) == 0
+    )
+    summary_causes: list[str] = []
+    if crash_limited_total:
+        summary_causes.append(f"{crash_limited_total} tests abandoned (crash limit)")
     if timeout_total:
-        cause += f" + {timeout_total} timed out"
+        summary_causes.append(f"{timeout_total} timed out")
+    if status_only_timed_out_units:
+        noun = "unit" if status_only_timed_out_units == 1 else "units"
+        summary_causes.append(f"{status_only_timed_out_units} {noun} timed out")
+    cause = " + ".join(summary_causes) or "unit execution abandoned"
     detail = "; ".join(abandoned) if abandoned else "see results.json units"
     return (
         f"INCOMPLETE COVERAGE: {cause}. Affected: {detail}. "

@@ -74,7 +74,7 @@ def test_subprocess_coverage_ingest_reads_utf8(tmp_path, monkeypatch) -> None:
 
     # Both ingests pinned utf-8 (fails before the fix, where encoding defaults to None).
     assert seen_encodings == ["utf-8", "utf-8"], seen_encodings
-    func_raw, _, _ = _raw_subprocess.get_raw_subprocess_coverage()
-    func_pre, _, _ = _subprocess_preamble.get_preamble_subprocess_coverage()
+    func_raw, _, _, _ = _raw_subprocess.get_raw_subprocess_coverage()
+    func_pre, _, _, _ = _subprocess_preamble.get_preamble_subprocess_coverage()
     assert func_raw[utf8_canary_key] == 1
     assert func_pre[utf8_canary_key] == 1

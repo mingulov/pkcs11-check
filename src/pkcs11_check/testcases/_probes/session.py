@@ -10,6 +10,7 @@ Real API names resolved from _subprocess_preamble.subprocess_session_preamble:
 - close_session_quietly(raw, sh)                                    from bootstrap
 - raw.call_log          -> dict[str, int]  (already str-keyed)
 - raw.mechanism_counts  -> dict[int, int]  (must str()-convert keys for JSON, I6)
+- raw.mechanism_rv_counts -> dict[int, dict[int, int]] (same JSON key normalization)
 - raw.rv_trace          -> list[dict]      (I7)
 - raw.enable_rv_trace(maxlen=...) to activate tracing
 """
@@ -76,15 +77,18 @@ def _emit_rv_trace(raw: RawPKCS11) -> None:
 
 
 def _write_coverage(raw: RawPKCS11) -> None:
-    """Write call_log + mechanism_counts to _P11CHECK_SUBPROCESS_COVERAGE (I6).
+    """Write function/mechanism counts and RV state to subprocess coverage (I6).
 
-    Key shape: {"call_log": dict[str, int], "mechanism_counts": dict[str, int]}.
-    CKM int keys are converted to str for JSON compatibility.
+    Integer mechanism and return-value keys are converted to strings for JSON compatibility.
     """
     write_coverage(
         raw.call_log,
         {str(k): v for k, v in raw.mechanism_counts.items()},
         raw.call_log_ok,
+        {
+            str(mechanism): {str(rv): count for rv, count in counts.items()}
+            for mechanism, counts in raw.mechanism_rv_counts.items()
+        },
     )
 
 
@@ -134,7 +138,7 @@ def probe_main(
          C_Login is skipped when the env var is absent.
     I4 — child never calls classify()/fail_as()/xfail_as(); a clean setup failure
          prints SETUP_XFAIL:<reason> to stdout and exits 0.
-    I6 — atexit writes {"call_log": …, "mechanism_counts": …} to
+    I6 — atexit writes call, mechanism, OK, and mechanism-RV counts to
          _P11CHECK_SUBPROCESS_COVERAGE so the parent's get_preamble_subprocess_coverage()
          can aggregate it.
     I7 — atexit emits P11_RV_TRACE_JSON:<json> when PKCS11_CHECK_RV_TRACE is set,

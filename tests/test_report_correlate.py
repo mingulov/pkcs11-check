@@ -104,6 +104,20 @@ def test_enrich_unclassified_routes_to_harness() -> None:
     assert groups[0]["routing"] == "HARNESS_FIX"
 
 
+def test_enrich_harness_error_routes_to_harness() -> None:
+    groups = [
+        _group(
+            reason="harness_error",
+            outcome="fail",
+            severity="HIGH",
+            kind=None,
+        )
+    ]
+    enrich(groups, module_issues_text="", provider="p")
+    assert groups[0]["category"] == "HARNESS_OR_UNMIGRATED"
+    assert groups[0]["routing"] == "HARNESS_FIX"
+
+
 def test_enrich_soft_token_caveat_for_oracle() -> None:
     groups = [_group(reason="oracle", kind="crypto", severity="HIGH")]
     enrich(groups, module_issues_text="", provider="p")

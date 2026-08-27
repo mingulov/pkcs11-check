@@ -289,7 +289,11 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
-from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS, compute_child_subprocess_counts
+from pkcs11_check.core.run_metrics import (
+    RESULT_OUTCOME_KEYS,
+    compute_child_subprocess_counts,
+    run_is_incomplete,
+)
 
 
 def write_isolated_json_report(
@@ -379,7 +383,7 @@ def _build_isolated_json_payload(
     child_crash, child_timeout = compute_child_subprocess_counts(units_out)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = summary["crash_limited"] > 0 or summary["timeout"] > 0
+    summary["incomplete"] = run_is_incomplete(summary, units_out)
 
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",

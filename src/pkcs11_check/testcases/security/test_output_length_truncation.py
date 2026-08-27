@@ -7,7 +7,7 @@ dangerous under-fill.  The ONLY way to PROVE this (vs a clean rejection) is the
 demand-zero ``mmap`` oracle: allocate the full 64-bit size as a ``MAP_PRIVATE |
 MAP_ANONYMOUS`` (demand-zero, lazy) buffer, run the op, and on ``CKR_OK`` sample
 bytes at an offset PAST the 32-bit boundary.  All-zero there means the provider
-wrote only the truncated amount -> ``accepted_invalid``.
+wrote only the truncated amount -> ``wrong_result`` / ``crypto``.
 
 Oracle precondition -- where this oracle applies (and where it does NOT)
 -----------------------------------------------------------------------
@@ -55,6 +55,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
@@ -79,6 +80,7 @@ from pkcs11_check.testcases.conftest import (
 )
 from pkcs11_check.testcases.security._boundary_values import (
     OVERSIZE_WRITE_LEN,
+    PROBE_OFFSET,
     requires_64bit_ck_ulong,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
@@ -87,6 +89,7 @@ pytestmark = [
     pytest.mark.security,
     pytest.mark.subprocess,
     pytest.mark.slow,
+    pytest.mark.timeout(240),
     requires_64bit_ck_ulong,
 ]
 
@@ -134,9 +137,11 @@ def _classify_oracle(
     *,
     reject_rvs: tuple[Any, ...],
     op_name: str,
+    operation: str,
+    mechanism: str,
     test_id: str,
 ) -> None:
-    """Shared oracle verdict: reject -> classify; CKR_OK+all-zero -> accepted_invalid.
+    """Shared oracle verdict: reject -> classify; CKR_OK+all-zero -> wrong_result.
 
     CKR_OK with a non-zero probe means the provider wrote ciphertext spanning past
     the 1 MiB offset -- it honored the full 4 GiB+ length, conformant -> note.
@@ -157,14 +162,36 @@ def _classify_oracle(
         )
     elif underfill == 1:
         # CKR_OK but only the truncated low-32 bytes written: silent under-fill.
-        classify_negative_rv(
-            rv,
-            reject_rvs,
-            label=(
-                f"{op_name} 64-bit data length truncated (silent under-fill): "
-                "returned CKR_OK but wrote only truncated-low-32 bytes "
-                "(output probe past the 32-bit boundary is all-zero)"
+        out_len = _parse_prefixed_int(stdout, "OUT_LEN:")
+        expected = (
+            f"nonzero output at offset 0x{PROBE_OFFSET:x} after successful "
+            f"0x{OVERSIZE_WRITE_LEN:x}-byte operation"
+        )
+        actual = (
+            f"all-zero output at offset 0x{PROBE_OFFSET:x}; reported output length 0x{out_len:x}"
+        )
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label=f"{mechanism}:{operation} output-length underfill",
+            operation=operation,
+            mechanism=mechanism,
+            expected=(expected,),
+            actual=actual,
+            summary=(
+                f"{op_name} returned CKR_OK but silently under-filled the output: "
+                f"expected {expected}, observed {actual}"
             ),
+            detail={
+                "expected": {
+                    "output_length": OVERSIZE_WRITE_LEN,
+                    "probe_offset_nonzero": PROBE_OFFSET,
+                },
+                "actual": {
+                    "reported_output_length": out_len,
+                    "probe_offset_all_zero": PROBE_OFFSET,
+                },
+            },
         )
     else:
         # CKR_OK and the probe past the boundary is non-zero: full 4 GiB+ honored.
@@ -187,7 +214,7 @@ class TestEncryptOutputLengthTruncation:
     input length.  A truncating provider casts the input length to 32 bits (=8),
     encrypts 8 bytes, writes ~8 output bytes, and returns CKR_OK -- leaving the
     output past offset 8 (and certainly at 1 MiB) zero.  That is a silent
-    cryptographic-contract violation -> accepted_invalid.
+    cryptographic-contract violation -> wrong_result / crypto.
     """
 
     def test_encrypt_oversized_length_rejects_or_honors(
@@ -226,6 +253,8 @@ class TestEncryptOutputLengthTruncation:
             result.stdout,
             reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
             op_name="C_Encrypt",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_CTR",
             test_id=(
                 "TestEncryptOutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
             ),
@@ -277,6 +306,8 @@ class TestDecryptOutputLengthTruncation:
             result.stdout,
             reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
             op_name="C_Decrypt",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_CTR",
             test_id=(
                 "TestDecryptOutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
             ),
@@ -333,6 +364,8 @@ class TestAesOFBOutputLengthTruncation:
             result.stdout,
             reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
             op_name="C_Encrypt(AES-OFB)",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_OFB",
             test_id=(
                 "TestAesOFBOutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
             ),
@@ -374,6 +407,8 @@ class TestAesOFBOutputLengthTruncation:
             result.stdout,
             reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
             op_name="C_Decrypt(AES-OFB)",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_OFB",
             test_id=(
                 "TestAesOFBOutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
             ),
@@ -429,6 +464,8 @@ class TestAesCFB128OutputLengthTruncation:
             result.stdout,
             reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
             op_name="C_Encrypt(AES-CFB128)",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_CFB128",
             test_id=(
                 "TestAesCFB128OutputLengthTruncation"
                 ".test_encrypt_oversized_length_rejects_or_honors"
@@ -471,6 +508,8 @@ class TestAesCFB128OutputLengthTruncation:
             result.stdout,
             reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
             op_name="C_Decrypt(AES-CFB128)",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_CFB128",
             test_id=(
                 "TestAesCFB128OutputLengthTruncation"
                 ".test_decrypt_oversized_length_rejects_or_honors"
@@ -527,6 +566,8 @@ class TestAesCFB8OutputLengthTruncation:
             result.stdout,
             reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
             op_name="C_Encrypt(AES-CFB8)",
+            operation="C_Encrypt",
+            mechanism="CKM_AES_CFB8",
             test_id=(
                 "TestAesCFB8OutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
             ),
@@ -568,6 +609,8 @@ class TestAesCFB8OutputLengthTruncation:
             result.stdout,
             reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
             op_name="C_Decrypt(AES-CFB8)",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_CFB8",
             test_id=(
                 "TestAesCFB8OutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
             ),
@@ -620,6 +663,8 @@ class TestChaCha20OutputLengthTruncation:
             result.stdout,
             reject_rvs=_OUTPUT_LENGTH_REJECT_RVS,
             op_name="C_Encrypt(ChaCha20)",
+            operation="C_Encrypt",
+            mechanism="CKM_CHACHA20",
             test_id=(
                 "TestChaCha20OutputLengthTruncation.test_encrypt_oversized_length_rejects_or_honors"
             ),
@@ -657,6 +702,8 @@ class TestChaCha20OutputLengthTruncation:
             result.stdout,
             reject_rvs=_DECRYPT_LENGTH_REJECT_RVS,
             op_name="C_Decrypt(ChaCha20)",
+            operation="C_Decrypt",
+            mechanism="CKM_CHACHA20",
             test_id=(
                 "TestChaCha20OutputLengthTruncation.test_decrypt_oversized_length_rejects_or_honors"
             ),

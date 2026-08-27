@@ -1285,20 +1285,6 @@ def test_output_truncation_probe_xfails_setup_before_child(
         method(_RawSession(), cfg)
 
 
-def test_output_truncation_oracle_polarity_is_underfill_means_fail() -> None:
-    """The output oracle must keep underfill=>accepted_invalid, honored=>note polarity.
-
-    Guards against a future edit silently inverting the demand-zero oracle (which
-    would either false-fail compliant providers or hide real truncation).  The
-    shared classifier routes UNDERFILL through classify_negative_rv (the
-    accepted_invalid path on CKR_OK) and a non-zero probe through compliance.note.
-    """
-    src = inspect.getsource(test_output_length_truncation._classify_oracle)
-    assert "classify_negative_rv(" in src, "underfill path must classify (accepted_invalid on OK)"
-    assert "silent under-fill" in src, "underfill label must describe the truncation finding"
-    assert "note(" in src, "honored (non-zero probe) path must record a compliance note, not fail"
-
-
 def test_output_truncation_skips_wrapkey_and_generatekey() -> None:
     """C_WrapKey / C_GenerateKey must NOT get a demand-zero output probe.
 

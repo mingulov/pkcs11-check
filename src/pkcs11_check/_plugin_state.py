@@ -7,7 +7,7 @@ modules all import them from here.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any
 
 import pytest
@@ -57,6 +57,8 @@ _CUMULATIVE_FUNCTION_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 _CUMULATIVE_FUNCTION_OK_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 
 _CUMULATIVE_MECHANISM_COUNTS: pytest.StashKey[Counter[int]] = pytest.StashKey()
+
+_CUMULATIVE_MECHANISM_RV_COUNTS: pytest.StashKey[defaultdict[int, Counter[int]]] = pytest.StashKey()
 
 _CUMULATIVE_DETAIL_COUNTS: pytest.StashKey[Counter[str]] = pytest.StashKey()
 

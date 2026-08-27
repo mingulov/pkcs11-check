@@ -35,8 +35,9 @@ report.jsonl + results.json
   one-liners for sanctioned-refusal compliance and the unclassified backlog. The fail sections plus
   the folded tail stay near one screen even at thousands of findings.
 - **correlate** (`correlate.py`) - `enrich()` annotates each group in place with a triage
-  `category` / `routing` (fails → `PROVIDER_BUG`/`PROVIDER_REPORT`, xfails → `deviation`/`DOCS_ONLY`,
-  unclassified → `HARNESS_OR_UNMIGRATED`/`HARNESS_FIX`, a known-issue match → `KNOWN_ISSUE`)
+  `category` / `routing` (provider fails → `PROVIDER_BUG`/`PROVIDER_REPORT`, xfails →
+  reason-specific deviation routes, harness errors and unclassified results →
+  `HARNESS_OR_UNMIGRATED`/`HARNESS_FIX`, a known-issue match → `KNOWN_ISSUE`)
   and flags the soft-token padding-oracle caveat. `correlate()` finds *universal themes* - the same
   `(reason, kind, mechanism)` signature seen across two or more providers - plus single-provider
   *outliers*.
