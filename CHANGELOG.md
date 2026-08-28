@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.9] - 2026-08-23
+## [0.1.9] - 2026-08-28
 
 A diagnosis release. Every fix here is about the suite telling the truth about itself: a
 harness bug is no longer published as a provider crash, a native-code hang is no longer a
