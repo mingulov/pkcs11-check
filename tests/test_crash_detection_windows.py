@@ -13,7 +13,8 @@ def _fake_completed(returncode: int) -> subprocess.CompletedProcess[str]:
 
 
 def test_preflight_windows_crash_is_crashed(tmp_path):
-    with patch.object(preflight.subprocess, "run", return_value=_fake_completed(0xC0000005)):
+    with patch.object(preflight.subprocess, "Popen") as popen:
+        popen.return_value.wait.return_value = 0xC0000005
         manifest = preflight.run_preflight_subprocess(
             tmp_path / "m.dll",
             interface="auto",

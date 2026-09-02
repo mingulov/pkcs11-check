@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ from pkcs11_check.core.preflight import (
     CapabilityManifest,
     load_manifest,
     probe_capabilities,
+    run_preflight_subprocess,
     save_manifest,
 )
 
@@ -138,4 +140,205 @@ def test_manifest_serialization_roundtrip_with_and_without_functions(tmp_path: P
     }
     legacy_path = tmp_path / "legacy.json"
     legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
-    assert load_manifest(legacy_path).functions == []
+    loaded = load_manifest(legacy_path)
+    assert loaded.functions == []
+    assert loaded.process_observation is None
+
+
+def test_preflight_timeout_returns_structured_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "module.so"
+    wait_calls: list[int | None] = []
+
+    class FakeProcess:
+        returncode: int | None = None
+        killed = False
+
+        def wait(self, timeout: int | None = None) -> int:
+            wait_calls.append(timeout)
+            if len(wait_calls) == 1:
+                raise subprocess.TimeoutExpired(cmd="preflight", timeout=timeout or 0)
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = FakeProcess()
+
+    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+    monkeypatch.setattr(
+        "pkcs11_check.core.preflight.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("subprocess.run should not handle preflight timeouts"),
+    )
+
+    manifest = run_preflight_subprocess(
+        module,
+        interface="auto",
+        slot=0,
+        timeout=1,
+        output_path=tmp_path / "manifest.json",
+    )
+
+    assert manifest.status == "timeout"
+    assert wait_calls == [1, None]
+    assert process.killed is True
+    assert manifest.process_observation == {
+        "target": str(module),
+        "parent_nodeid": None,
+        "role": "preflight",
+        "attempt": 0,
+        "termination": {
+            "kind": "timeout",
+            "raw_code": -9,
+            "signal_name": None,
+            "windows_status": None,
+        },
+        "memory": {"peak_rss_bytes": None, "limit_bytes": None},
+        "oom": {"status": "unknown", "sources": []},
+    }
+
+
+def test_preflight_keyboard_interrupt_kills_and_reaps_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "module.so"
+    wait_calls: list[int | None] = []
+    interrupt = KeyboardInterrupt()
+
+    class FakeProcess:
+        killed = False
+
+        def wait(self, timeout: int | None = None) -> int:
+            wait_calls.append(timeout)
+            if len(wait_calls) == 1:
+                raise interrupt
+            return -2
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = FakeProcess()
+    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        run_preflight_subprocess(
+            module,
+            interface="auto",
+            slot=0,
+            timeout=1,
+            output_path=tmp_path / "manifest.json",
+        )
+
+    assert exc_info.value is interrupt
+    assert process.killed is True
+    assert wait_calls == [1, None]
+
+
+def test_preflight_interrupt_preserved_when_cleanup_kill_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "module.so"
+    wait_calls: list[int | None] = []
+    kill_calls = 0
+    interrupt = KeyboardInterrupt()
+
+    class FakeProcess:
+        def wait(self, timeout: int | None = None) -> int:
+            wait_calls.append(timeout)
+            if len(wait_calls) == 1:
+                raise interrupt
+            if timeout is None:
+                raise AssertionError("must not reap after cleanup kill fails")
+            return -2
+
+        def kill(self) -> None:
+            nonlocal kill_calls
+            kill_calls += 1
+            raise RuntimeError("cleanup failed")
+
+    process = FakeProcess()
+    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        run_preflight_subprocess(
+            module,
+            interface="auto",
+            slot=0,
+            timeout=1,
+            output_path=tmp_path / "manifest.json",
+        )
+
+    assert exc_info.value is interrupt
+    assert kill_calls == 1
+    assert wait_calls == [1]
+
+
+def test_preflight_interrupt_during_timeout_reap_is_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "module.so"
+    wait_calls: list[int | None] = []
+    kill_calls = 0
+    interrupt = KeyboardInterrupt()
+
+    class FakeProcess:
+        def wait(self, timeout: int | None = None) -> int:
+            wait_calls.append(timeout)
+            if len(wait_calls) == 1:
+                raise subprocess.TimeoutExpired(cmd="preflight", timeout=timeout or 0)
+            if len(wait_calls) == 2:
+                raise interrupt
+            return -9
+
+        def kill(self) -> None:
+            nonlocal kill_calls
+            kill_calls += 1
+
+    process = FakeProcess()
+    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        run_preflight_subprocess(
+            module,
+            interface="auto",
+            slot=0,
+            timeout=1,
+            output_path=tmp_path / "manifest.json",
+        )
+
+    assert exc_info.value is interrupt
+    assert kill_calls == 2
+    assert wait_calls == [1, None, None]
+
+
+def test_preflight_crash_returns_exact_structured_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "module.so"
+
+    class FakeProcess:
+        def wait(self, timeout: int | None = None) -> int:
+            return -11
+
+    monkeypatch.setattr(
+        "pkcs11_check.core.preflight.subprocess.Popen", lambda command: FakeProcess()
+    )
+
+    manifest = run_preflight_subprocess(
+        module,
+        interface="auto",
+        slot=0,
+        timeout=1,
+        output_path=tmp_path / "manifest.json",
+    )
+
+    assert manifest.status == "crashed"
+    assert manifest.process_observation is not None
+    assert manifest.process_observation["role"] == "preflight"
+    assert manifest.process_observation["target"] == str(module)
+    assert manifest.process_observation["attempt"] == 0
+    termination = manifest.process_observation["termination"]
+    assert isinstance(termination, dict)
+    assert termination["raw_code"] == -11

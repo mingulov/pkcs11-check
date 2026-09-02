@@ -6,6 +6,7 @@ Moved verbatim from file_runner.py (god-module split, 2026-07-17).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET  # nosec B405
@@ -38,10 +39,16 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _canonical_executions as _canonical_executions,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
     _delete_unit_report_record_cache as _delete_unit_report_record_cache,
+)
+from pkcs11_check.core._report_records import (
+    _execution_owner_file as _execution_owner_file,
 )
 from pkcs11_check.core._report_records import (
     _extract_unit_report_records_from_jsonl as _extract_unit_report_records_from_jsonl,
@@ -63,6 +70,9 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _ordered_report_record_units as _ordered_report_record_units,
+)
+from pkcs11_check.core._report_records import (
+    _reconcile_process_observations as _reconcile_process_observations,
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_dir as _report_record_cache_dir,
@@ -330,6 +340,73 @@ def _build_isolated_json_payload(
     grouped = _group_results_by_file(state.results, details)
     units_out: list[dict[str, Any]] = []
 
+    executions_by_unit: dict[str, list[list[Mapping[str, Any]]]] = {}
+    state_outer = [
+        observation
+        for observation in state.process_observations
+        if isinstance(observation, Mapping) and observation.get("parent_nodeid") is None
+    ]
+
+    if state.process_observations_complete:
+        for observation in state_outer:
+            target = str(observation.get("target", "")).split("::", 1)[0]
+            if target:
+                executions_by_unit.setdefault(target, []).append([observation])
+        for detail in details.values():
+            if not isinstance(detail, Mapping):
+                continue
+            executions = detail.get("executions")
+            if not isinstance(executions, list):
+                continue
+            nested_executions = [
+                execution
+                for execution in executions
+                if isinstance(execution, Mapping)
+                and execution.get("parent_nodeid") is not None
+                and _execution_owner_file(execution) is not None
+            ]
+            for execution in nested_executions:
+                owner = _execution_owner_file(execution)
+                if owner is not None:
+                    executions_by_unit.setdefault(owner, []).append([execution])
+    else:
+        # Legacy direct helpers have no canonical global sequence. Keep recovered
+        # detail observations in source order and append only unmatched state entries.
+        cached_outer: list[Mapping[str, Any]] = []
+        nested_by_unit: dict[str, list[list[Mapping[str, Any]]]] = {}
+        for detail in details.values():
+            if not isinstance(detail, Mapping):
+                continue
+            executions = detail.get("executions")
+            if not isinstance(executions, list):
+                continue
+            outer = [
+                execution
+                for execution in executions
+                if isinstance(execution, Mapping) and execution.get("parent_nodeid") is None
+            ]
+            nested = [
+                execution
+                for execution in executions
+                if isinstance(execution, Mapping)
+                and execution.get("parent_nodeid") is not None
+                and _execution_owner_file(execution) is not None
+            ]
+            if outer:
+                cached_outer.extend(outer)
+            if nested:
+                for execution in nested:
+                    owner = _execution_owner_file(execution)
+                    if owner is not None:
+                        nested_by_unit.setdefault(owner, []).append([execution])
+
+        for observation in _reconcile_process_observations(cached_outer, state_outer):
+            owner = _execution_owner_file(observation)
+            if owner is not None:
+                executions_by_unit.setdefault(owner, []).append([observation])
+        for target, groups in nested_by_unit.items():
+            executions_by_unit.setdefault(target, []).extend(groups)
+
     for file_target, file_results, merged_detail in grouped:
         overall_status = _overall_unit_status(file_results)
         special_entries = [
@@ -376,6 +453,9 @@ def _build_isolated_json_payload(
             unit["skip_reasons"] = sr
         if detail.get("file_skip"):
             unit["file_skip"] = True
+        executions = _canonical_executions(*executions_by_unit.get(file_target, []))
+        if executions:
+            unit["executions"] = executions
 
         units_out.append(unit)
 

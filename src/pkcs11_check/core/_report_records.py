@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,42 @@ from pkcs11_check.core.report_log import (
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
     """Load parseable JSONL report-log records from disk (streamed line-by-line)."""
     return list(_iter_report_log_records(jsonl_path))
+
+
+def _canonical_executions(
+    *groups: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Canonicalize executions in their supplied order."""
+    executions: list[dict[str, Any]] = []
+    attempts: dict[tuple[str, str, str], int] = {}
+    for group in groups:
+        for raw in group:
+            if not isinstance(raw, Mapping):
+                continue
+            execution = dict(raw)
+            key = (
+                str(execution.get("parent_nodeid") or ""),
+                str(execution.get("role") or ""),
+                str(execution.get("target") or ""),
+            )
+            execution["attempt"] = attempts.get(key, 0)
+            attempts[key] = execution["attempt"] + 1
+            executions.append(execution)
+    return executions
+
+
+def _process_observations_from_user_properties(user_properties: Any) -> list[dict[str, Any]]:
+    if not isinstance(user_properties, list):
+        return []
+    observations: list[dict[str, Any]] = []
+    for prop in user_properties:
+        if not isinstance(prop, (list, tuple)) or len(prop) != 2:
+            continue
+        name, value = prop
+        if name != "pkcs11_process_observations" or not isinstance(value, list):
+            continue
+        observations.extend(dict(item) for item in value if isinstance(item, Mapping))
+    return observations
 
 
 def _report_record_cache_dir(state_file: Path) -> Path:
@@ -183,6 +220,89 @@ def _iter_unit_report_record_source(
             yield inline_record
 
 
+def _saved_process_observations(state_file: Path) -> list[dict[str, Any]]:
+    """Read saved outer observations without making run-state a module dependency."""
+    try:
+        raw = json.loads(state_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return []
+    observations = raw.get("process_observations", []) if isinstance(raw, dict) else []
+    if not isinstance(observations, list):
+        return []
+    return [dict(item) for item in observations if isinstance(item, Mapping)]
+
+
+def _saved_process_observations_complete(state_file: Path) -> bool:
+    try:
+        raw = json.loads(state_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    observations = raw.get("process_observations") if isinstance(raw, dict) else None
+    return (
+        raw.get("process_observations_complete") is True
+        and isinstance(observations, list)
+        and all(isinstance(observation, Mapping) for observation in observations)
+    )
+
+
+def _process_observation_key(observation: Mapping[str, Any]) -> str:
+    return json.dumps(observation, sort_keys=True, separators=(",", ":"))
+
+
+def _execution_owner_file(execution: Mapping[str, Any]) -> str | None:
+    """Return the owning file, rejecting malformed nested ownership."""
+    target = str(execution.get("target", "")).strip()
+    parent_value = execution.get("parent_nodeid")
+    if parent_value is None:
+        if execution.get("role") == "probe":
+            return None
+        return target.split("::", 1)[0] or None
+    if not isinstance(parent_value, str):
+        return None
+    parent_nodeid = parent_value.strip()
+    if not parent_nodeid:
+        return None
+    return parent_nodeid.split("::", 1)[0] or None
+
+
+def _reconcile_process_observations(
+    prior_observations: Sequence[Mapping[str, Any]],
+    saved_observations: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge saved occurrences not already present in prior source history."""
+    reconciled = [dict(observation) for observation in prior_observations]
+    prior_counts = Counter(_process_observation_key(observation) for observation in reconciled)
+    for observation in saved_observations:
+        key = _process_observation_key(observation)
+        if prior_counts[key] > 0:
+            prior_counts[key] -= 1
+            continue
+        reconciled.append(dict(observation))
+    return reconciled
+
+
+def _hydrate_process_observations(
+    saved_observations: Sequence[Mapping[str, Any]],
+    jsonl_path: Path | None,
+) -> list[dict[str, Any]]:
+    """Recover outer observations from a legacy state and its global JSONL log."""
+    recovered: list[dict[str, Any]] = []
+    seen_records: set[str] = set()
+    if jsonl_path is not None:
+        for record in _iter_report_log_records(jsonl_path):
+            if record.get("$report_type") != "ProcessReport":
+                continue
+            source_key = json.dumps(record, sort_keys=True, separators=(",", ":"))
+            if source_key in seen_records:
+                continue
+            seen_records.add(source_key)
+            observation = record.get("observation")
+            if isinstance(observation, Mapping) and observation.get("parent_nodeid") is None:
+                recovered.append(dict(observation))
+
+    return _canonical_executions(_reconcile_process_observations(recovered, saved_observations))
+
+
 def _write_report_jsonl_from_record_sources(
     state_file: Path,
     *,
@@ -196,10 +316,68 @@ def _write_report_jsonl_from_record_sources(
     wrote = False
     try:
         with tmp_path.open("w", encoding="utf-8") as out_fh:
+            saved_observations = [
+                observation
+                for observation in _saved_process_observations(state_file)
+                if observation.get("parent_nodeid") is None
+            ]
+            if _saved_process_observations_complete(state_file):
+                for observation in saved_observations:
+                    out_fh.write(
+                        json.dumps(
+                            {
+                                "$report_type": "ProcessReport",
+                                "target": observation.get("target", ""),
+                                "observation": observation,
+                            }
+                        )
+                        + "\n"
+                    )
+                    wrote = True
+            else:
+                cached_observations: list[dict[str, Any]] = []
+                seen_process_records: set[str] = set()
+
+                # Legacy state has no global sequence; recover source process history first.
+                for unit in _ordered_report_record_units(units, inline_records_by_unit):
+                    for record in _iter_unit_report_record_source(
+                        state_file, unit, inline_records_by_unit
+                    ):
+                        if record.get("$report_type") != "ProcessReport":
+                            continue
+                        source_key = json.dumps(record, sort_keys=True, separators=(",", ":"))
+                        if source_key in seen_process_records:
+                            continue
+                        seen_process_records.add(source_key)
+                        source_observation = record.get("observation")
+                        if isinstance(source_observation, Mapping) and (
+                            source_observation.get("parent_nodeid") is None
+                        ):
+                            cached_observations.append(dict(source_observation))
+
+                # Reconcile source history and saved occurrences, then canonicalize once.
+                for observation in _canonical_executions(
+                    _reconcile_process_observations(cached_observations, saved_observations)
+                ):
+                    out_fh.write(
+                        json.dumps(
+                            {
+                                "$report_type": "ProcessReport",
+                                "target": observation.get("target", ""),
+                                "observation": observation,
+                            }
+                        )
+                        + "\n"
+                    )
+                    wrote = True
+
+            # Ordinary records are always sourced from report-record shards.
             for unit in _ordered_report_record_units(units, inline_records_by_unit):
                 for record in _iter_unit_report_record_source(
                     state_file, unit, inline_records_by_unit
                 ):
+                    if record.get("$report_type") == "ProcessReport":
+                        continue
                     out_fh.write(json.dumps(record) + "\n")
                     wrote = True
         if wrote:
@@ -327,12 +505,15 @@ def _infer_unit_target_from_records(
     records: Sequence[Mapping[str, Any]],
     candidate_targets: set[str],
 ) -> str | None:
-    nodeids = [
-        str(record.get("nodeid", "")).strip()
-        for record in records
-        if record.get("$report_type", "TestReport") in {"TestReport", "CollectReport"}
-        and str(record.get("nodeid", "")).strip()
-    ]
+    nodeids = []
+    for record in records:
+        report_type = record.get("$report_type", "TestReport")
+        field = "target" if report_type == "ProcessReport" else "nodeid"
+        if report_type not in {"TestReport", "CollectReport", "ProcessReport"}:
+            continue
+        value = str(record.get(field, "")).strip()
+        if value:
+            nodeids.append(value)
     if not nodeids:
         return None
 
@@ -355,9 +536,10 @@ def _unit_candidate_from_record(
     candidate_targets: set[str],
 ) -> str | None:
     report_type = record.get("$report_type", "TestReport")
-    if report_type not in {"TestReport", "CollectReport"}:
+    if report_type not in {"TestReport", "CollectReport", "ProcessReport"}:
         return None
-    nodeid = str(record.get("nodeid", "")).strip()
+    field = "target" if report_type == "ProcessReport" else "nodeid"
+    nodeid = str(record.get(field, "")).strip()
     if not nodeid:
         return None
     file_target = nodeid.split("::", 1)[0]
@@ -557,6 +739,8 @@ def _build_detail_from_report_records(
     setup_events: list[Mapping[str, Any]] = []
     call_events: list[Mapping[str, Any]] = []
     collect_errors: list[Mapping[str, Any]] = []
+    execution_records_seen: set[str] = set()
+    execution_observations: list[dict[str, Any]] = []
 
     for rec in records:
         if not isinstance(rec, Mapping):
@@ -566,6 +750,15 @@ def _build_detail_from_report_records(
         when = rec.get("when", "")
         outcome = rec.get("outcome", "")
         nodeid = rec.get("nodeid", "")
+
+        if report_type == "ProcessReport":
+            observation = rec.get("observation")
+            if isinstance(observation, Mapping):
+                source_key = json.dumps(rec, sort_keys=True, separators=(",", ":"))
+                if source_key not in execution_records_seen:
+                    execution_records_seen.add(source_key)
+                    execution_observations.append(dict(observation))
+            continue
 
         if report_type == "CollectReport":
             if outcome == "passed":
@@ -579,6 +772,12 @@ def _build_detail_from_report_records(
         if when == "call":
             seen_call.add(str(nodeid))
             call_events.append(rec)
+            observations = _process_observations_from_user_properties(rec.get("user_properties"))
+            if observations:
+                source_key = json.dumps(rec, sort_keys=True, separators=(",", ":"))
+                if source_key not in execution_records_seen:
+                    execution_records_seen.add(source_key)
+                    execution_observations.extend(observations)
             if call_record_hook is not None:
                 call_record_hook(rec)
         elif when == "setup" and outcome in ("skipped", "failed", "error"):
@@ -677,13 +876,16 @@ def _build_detail_from_report_records(
             entry["longrepr"] = flat
         non_passing.append(entry)
 
-    if not any(counts.values()) and not compliance_notes:
+    executions = execution_observations
+    if not any(counts.values()) and not compliance_notes and not executions:
         return None
     result: dict[str, Any] = {"counts": counts, "tests": non_passing}
     if compliance_notes:
         result["compliance_notes"] = compliance_notes
     if skip_reasons:
         result["skip_reasons"] = skip_reasons
+    if executions:
+        result["executions"] = executions
     return result
 
 

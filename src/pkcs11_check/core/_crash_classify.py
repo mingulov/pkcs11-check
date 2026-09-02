@@ -335,11 +335,14 @@ def crash_classification(
     returncode: int | None,
     target: str,
     timed_out: bool = False,
+    observation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build a Classification-shaped dict for a crashed/hung test unit (process is dead, so
     this is produced runner/report-side, not via classify())."""
-    if timed_out:
-        detail: dict[str, object] = {"mode": "timeout"}
+    if observation is not None:
+        detail: dict[str, object] = {"observation": dict(observation)}
+    elif timed_out:
+        detail = {"mode": "timeout"}
     else:
         detail = {"signal": _crash_detail_name(returncode), "returncode": returncode}
     return {

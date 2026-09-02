@@ -6,11 +6,15 @@ timeout -> rc 124 + marker, and coverage routing to the correct accumulator (I6)
 
 from __future__ import annotations
 
+import signal
+import subprocess
 import tempfile
 from pathlib import Path
 
 import pytest
 
+from pkcs11_check.core import process_observation
+from pkcs11_check.core.process_observation import drain_process_observations
 from pkcs11_check.testcases._probes.runner import ProbeResult, run_probe
 from pkcs11_check.testcases._raw_subprocess import get_raw_subprocess_coverage
 from pkcs11_check.testcases._subprocess_preamble import get_preamble_subprocess_coverage
@@ -32,6 +36,80 @@ def test_run_probe_passes_extra_and_injects_pin_via_env() -> None:
     assert result.returncode == 0, result.stderr
     assert "ECHO_MARKER:hello" in result.stdout
     assert "ECHO_PIN_PRESENT:True" in result.stdout  # PIN reached child via env only
+
+
+def _fake_completed(returncode: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], returncode, "", "")
+
+
+def _assert_probe_observation(result: ProbeResult, *, returncode: int, kind: str) -> None:
+    observation = result.observation
+    assert observation is not None
+    assert observation["parent_nodeid"] is None
+    assert observation["role"] == "probe"
+    assert observation["target"] == "_echo"
+    assert observation["termination"] == {
+        "kind": kind,
+        "raw_code": returncode,
+        "signal_name": "SIGKILL" if returncode == -9 else None,
+        "windows_status": 0xC0000005 if returncode == -1073741819 else None,
+    }
+
+
+def test_run_probe_records_passing_process_observation() -> None:
+    drain_process_observations()
+    result = run_probe("_echo", {"module_path": "/nonexistent.so"}, timeout=30)
+
+    _assert_probe_observation(result, returncode=0, kind="exit")
+    assert drain_process_observations() == [result.observation]
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGKILL"), reason="SIGKILL is POSIX-only")
+def test_run_probe_records_sigkill_process_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drain_process_observations()
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *a, **k: _fake_completed(-9),
+    )
+
+    result = run_probe("_echo", {"module_path": "/x.so"})
+
+    _assert_probe_observation(result, returncode=-9, kind="signal")
+    assert drain_process_observations() == [result.observation]
+
+
+def test_run_probe_records_timeout_process_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drain_process_observations()
+
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(args[0] if args else [], 1)
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", raise_timeout)
+    result = run_probe("_echo", {"module_path": "/x.so"}, timeout=1)
+
+    assert result.returncode == 124
+    _assert_probe_observation(result, returncode=124, kind="timeout")
+    assert drain_process_observations() == [result.observation]
+
+
+def test_run_probe_records_windows_access_violation_process_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drain_process_observations()
+    monkeypatch.setattr(process_observation.sys, "platform", "win32")
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *a, **k: _fake_completed(-1073741819),
+    )
+
+    result = run_probe("_echo", {"module_path": "/x.so"})
+
+    _assert_probe_observation(result, returncode=-1073741819, kind="exception")
+    assert drain_process_observations() == [result.observation]
 
 
 # ---------------------------------------------------------------------------

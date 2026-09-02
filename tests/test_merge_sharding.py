@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
+from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
 from pkcs11_check.core.sharding import (
     duration_by_unit_from_results,
@@ -192,6 +193,46 @@ def test_merge_recomputes_child_metrics_from_units() -> None:
     assert s["incomplete"] is True
     # child_crash / child_timeout are a subset of failed — they must NOT inflate total
     assert s["total"] == sum(s[k] for k in RESULT_OUTCOME_KEYS)
+
+
+def test_merge_preserves_structured_execution_evidence() -> None:
+    observation = build_process_observation(
+        "probe", "probe", 0, -9, parent_nodeid="security/test.py::test_probe"
+    )
+    payload = {
+        "summary": {"failed": 1},
+        "units": [{"target": "security/test.py", "executions": [observation]}],
+    }
+
+    merged = merge_results_payloads([payload], coverage=None)
+
+    assert merged["units"][0]["executions"] == [observation]
+
+
+def test_merge_child_metrics_prefer_structured_execution_evidence() -> None:
+    observation = build_process_observation(
+        "probe", "probe", 0, 0, parent_nodeid="security/test.py::test_probe"
+    )
+    payload = {
+        "summary": {"failed": 1},
+        "units": [
+            {
+                "target": "security/test.py",
+                "tests": [
+                    {
+                        "outcome": "failed",
+                        "longrepr": "old child crashed with signal 11",
+                    }
+                ],
+                "executions": [observation],
+            }
+        ],
+    }
+
+    merged = merge_results_payloads([payload], coverage=None)
+
+    assert merged["summary"]["child_crash"] == 0
+    assert merged["summary"]["child_timeout"] == 0
 
 
 def test_merge_counts_crash_limited_into_total() -> None:

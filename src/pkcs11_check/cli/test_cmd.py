@@ -19,6 +19,8 @@ from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.disabled_baseline import resolve_disabled_nodeids
 from pkcs11_check.core.file_runner import (
+    FileRunResult,
+    FileRunState,
     IsolatedReportConfig,
     _emit_external_provision_banner,
     discover_auto_isolation_units,
@@ -30,6 +32,7 @@ from pkcs11_check.core.file_runner import (
     postprocess_jsonl_to_unified,
     run_isolated_pytest_units,
     validate_subprocess_per_test_expansion,
+    write_isolated_json_report,
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
@@ -460,6 +463,37 @@ def test_command(
     )
     if manifest.status != "ok":
         console.print(f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}")
+        if output == "json" and manifest.status in {"crashed", "timeout"}:
+            results_path = Path(output_file or "pkcs11-check-results.json")
+            observation = manifest.process_observation
+            raw_code = (
+                observation.get("termination", {}).get("raw_code")
+                if isinstance(observation, dict)
+                and isinstance(observation.get("termination"), dict)
+                else None
+            )
+            legacy_returncode = (
+                124
+                if manifest.status == "timeout"
+                else (int(raw_code) if isinstance(raw_code, int) else 1)
+            )
+            result = FileRunResult(
+                target=str(module),
+                status=manifest.status,
+                returncode=legacy_returncode,
+                duration_s=0.0,
+            )
+            state = FileRunState(
+                units=[str(module)],
+                fingerprint="",
+                results=[result],
+                process_observations=[observation] if isinstance(observation, dict) else [],
+            )
+            payload = write_isolated_json_report(results_path, state)
+            payload["summary"]["incomplete"] = True
+            results_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
         manifest_path.unlink(missing_ok=True)
         raise typer.Exit(code=1 if manifest.status in {"crashed", "timeout"} else 2)
 

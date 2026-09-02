@@ -15,6 +15,7 @@ from pkcs11_check.cli.app import app
 from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.preflight import CapabilityManifest
+from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.test_selection import DisabledBaseline
 from tests._plain_cli_runner import PlainCliRunner
 
@@ -1495,6 +1496,166 @@ class TestTestCommand:
 
         assert result.exit_code == 2
         assert "PKCS#11 preflight error" in result.output
+
+    @pytest.mark.parametrize(
+        ("status", "returncode", "timed_out"),
+        [("crashed", -11, False), ("timeout", -9, True)],
+    )
+    def test_test_preflight_failure_json_writes_incomplete_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        status: str,
+        returncode: int | None,
+        timed_out: bool,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "results.json"
+        observation = build_process_observation(
+            str(module), "preflight", 0, returncode, timed_out=timed_out
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status=status,
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                process_observation=observation,
+                error=f"preflight {status}",
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+
+        assert result.exit_code == 1
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+        assert len(payload["units"]) == 1
+        unit = payload["units"][0]
+        assert unit["target"] == str(module)
+        assert unit["status"] == status
+        assert unit["returncode"] == (124 if status == "timeout" else abs(returncode))
+        assert unit["executions"] == [observation]
+
+    def test_test_preflight_error_json_has_no_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "results.json"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status="error",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                error="preflight error",
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert not output_path.exists()
+
+    def test_test_preflight_crash_non_json_has_no_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "results.xml"
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status="crashed",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                process_observation=build_process_observation(str(module), "preflight", 0, -11),
+                error="preflight crashed",
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "junit",
+                "--output-file",
+                str(output_path),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert not output_path.exists()
+
+    def test_test_preflight_timeout_default_json_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        observation = build_process_observation(str(module), "preflight", 0, None, timed_out=True)
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status="timeout",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                process_observation=observation,
+                error="preflight timed out",
+            ),
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module), "--output", "json"])
+
+        assert result.exit_code == 1
+        assert (tmp_path / "pkcs11-check-results.json").exists()
 
 
 class TestInfoCommand:

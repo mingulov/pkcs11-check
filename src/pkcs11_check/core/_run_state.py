@@ -207,11 +207,26 @@ def load_run_state(path: Path) -> FileRunState | None:
             parsed_records = [record for record in records if isinstance(record, dict)]
             if parsed_records:
                 report_records_by_unit[unit] = parsed_records
+    raw_observations = raw.get("process_observations", [])
+    observations_well_formed = isinstance(raw_observations, list) and all(
+        isinstance(observation, dict) for observation in raw_observations
+    )
+    process_observations = (
+        [dict(observation) for observation in raw_observations if isinstance(observation, dict)]
+        if isinstance(raw_observations, list)
+        else []
+    )
     return FileRunState(
         units=list(raw.get("units", [])),
         fingerprint=str(raw.get("fingerprint", "")),
         results=results,
         report_records_by_unit=report_records_by_unit,
+        process_observations=process_observations,
+        process_observations_complete=(
+            "process_observations" in raw
+            and raw.get("process_observations_complete") is True
+            and observations_well_formed
+        ),
     )
 
 
@@ -236,6 +251,8 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         "fingerprint": state.fingerprint,
         "units": state.units,
         "results": [asdict(result) for result in state.results],
+        "process_observations": state.process_observations,
+        "process_observations_complete": state.process_observations_complete,
     }
     if os.environ.get("PKCS11_CHECK_STATE_INLINE_RECORDS") == "1":
         # Opt-in legacy/debug behavior: embed the per-unit report records inline.

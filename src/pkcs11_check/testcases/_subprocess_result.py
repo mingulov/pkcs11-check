@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from pkcs11_check.classification import Classification, classify, fail_as, record
+from pkcs11_check.core.process_observation import termination_from_returncode
 from pkcs11_check.core.subprocess_trace import (
     RV_TRACE_MARKER,
     record_subprocess_rv_trace,
@@ -92,6 +93,7 @@ def assert_subprocess_completed(
         classify(
             "crash",
             label=context,
+            detail={"termination": termination_from_returncode(rc, timed_out=True)},
             summary=(
                 f"{context}: module hung -- subprocess timed out without returning "
                 f"on the probe input (must reject impossible inputs, not hang)\n"
@@ -104,6 +106,7 @@ def assert_subprocess_completed(
         classify(
             "crash",
             label=context,
+            detail={"termination": termination_from_returncode(rc)},
             summary=(
                 f"{context}: module crashed with signal {-rc}\n"
                 f"stdout: {_format_subprocess_stream(stdout)}\n"
@@ -125,6 +128,7 @@ def assert_subprocess_completed(
         classify(
             "crash",
             label=context,
+            detail={"termination": termination_from_returncode(rc)},
             summary=(
                 f"{context}: subprocess failed with exit code {rc}\n"
                 f"stdout: {_format_subprocess_stream(stdout)}\n"

@@ -127,6 +127,7 @@ from pkcs11_check._plugin_state import (
     _is_testcase_item as _is_testcase_item,
 )
 from pkcs11_check.core.nodeids import item_nodeid
+from pkcs11_check.core.process_observation import drain_process_observations
 from pkcs11_check.core.subprocess_trace import (
     drain_subprocess_rv_trace,
     extract_subprocess_rv_trace,
@@ -297,8 +298,28 @@ def _report_needs_rv_trace(report: Any) -> bool:
     )
 
 
+def _attach_process_observations_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach nested probe observations to the executing call report."""
+    if getattr(report, "when", None) != "call":
+        return
+    user_properties = getattr(report, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+    observations = drain_process_observations()
+    if not observations:
+        return
+    nodeid = getattr(report, "nodeid", None)
+    enriched = []
+    for observation in observations:
+        copied = dict(observation)
+        copied["parent_nodeid"] = nodeid
+        enriched.append(copied)
+    user_properties.append(("pkcs11_process_observations", enriched))
+
+
 def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
     """Attach CK_RV trace directly to failed/xfail reports before report-log writes them."""
+    _attach_process_observations_to_report(item, report)
     if not _is_testcase_item(item) or not _report_needs_rv_trace(report):
         return
     user_properties = getattr(report, "user_properties", None)

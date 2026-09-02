@@ -15,6 +15,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core._report_writers import _build_isolated_json_payload
+from pkcs11_check.core._run_units import FileRunResult, FileRunState
+from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.report.correlate import enrich
 from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.render import render_provider
@@ -73,6 +76,42 @@ def test_golden_size_budget() -> None:
 
 def test_golden_has_no_sha1() -> None:
     assert "sha1" not in generate_markdown().lower()
+
+
+def test_unified_payload_preserves_canonical_execution_order_and_legacy_returncode() -> None:
+    outer = build_process_observation("a.py", "unit", 0, -1073741819, platform="win32")
+    first_probe = build_process_observation(
+        "probe-a", "probe", 0, 0, parent_nodeid="a.py::test_one"
+    )
+    second_probe = build_process_observation(
+        "probe-b", "probe", 0, -9, parent_nodeid="a.py::test_two"
+    )
+    state = FileRunState(
+        units=["a.py"],
+        fingerprint="",
+        results=[FileRunResult("a.py", "crashed", 1073741819, 0.1)],
+        process_observations=[outer],
+    )
+
+    payload = _build_isolated_json_payload(
+        state,
+        per_unit_details={
+            "a.py": {
+                "counts": {"passed": 2},
+                "tests": [],
+                "executions": [first_probe, second_probe],
+            }
+        },
+    )
+
+    unit = payload["units"][0]
+    assert [item["target"] for item in unit["executions"]] == [
+        "a.py",
+        "probe-a",
+        "probe-b",
+    ]
+    assert [item["attempt"] for item in unit["executions"]] == [0, 0, 0]
+    assert unit["returncode"] == 1073741819
 
 
 if __name__ == "__main__":

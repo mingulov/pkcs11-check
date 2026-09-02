@@ -107,6 +107,9 @@ from pkcs11_check.core._report_records import (
     _extract_unit_report_records_from_jsonl as _extract_unit_report_records_from_jsonl,
 )
 from pkcs11_check.core._report_records import (
+    _hydrate_process_observations as _hydrate_process_observations,
+)
+from pkcs11_check.core._report_records import (
     _infer_unit_target_from_records as _infer_unit_target_from_records,
 )
 from pkcs11_check.core._report_records import (
@@ -364,6 +367,7 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.recovery import (
     RecoveryConfig,
     RecoveryController,
@@ -469,10 +473,10 @@ def _run_subprocess_tee(
     *,
     env: dict[str, str],
     timeout: int,
-) -> tuple[int, str, str]:
+) -> tuple[int, str, str, dict[str, object]]:
     """Run a subprocess with tee-style output: live display AND capture.
 
-    Returns (returncode, captured_stdout, captured_stderr).
+    Returns (returncode, captured_stdout, captured_stderr, observation).
     If the process is killed by a signal, returncode is negative.
     """
     proc = subprocess.Popen(
@@ -523,31 +527,111 @@ def _run_subprocess_tee(
         threads.append(thread)
 
     deadline = time.monotonic() + timeout
+    timed_out = False
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        # The child is still running at the deadline -- a genuine timeout. Kill,
-        # reap (never leave a zombie behind, R5), and re-raise.
+        # The child is still running at the deadline -- a genuine timeout. Kill
+        # and reap it (never leave a zombie behind, R5), retaining the final
+        # return code in structured evidence.
+        timed_out = True
         proc.kill()
         proc.wait()
-        for thread in threads:
-            thread.join(timeout=max(0.0, deadline + 0.5 - time.monotonic()))
-        raise subprocess.TimeoutExpired(cmd, timeout)
-
-    # The child exited on its own -- cleanly OR via a crash signal (negative
-    # returncode). Drain the readers, but only for a short grace: the child is
-    # gone, so any un-read data is at most the OS pipe buffer. A surviving
-    # grandchild that inherited the pipe (R2) must NOT hold the runner for the
-    # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
-    # the grace and report the child's real returncode.
-    _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
+        _join_readers_bounded(threads, grace=max(0.0, deadline + 0.5 - time.monotonic()))
+    else:
+        # The child exited on its own -- cleanly OR via a crash signal (negative
+        # returncode). Drain the readers, but only for a short grace: the child is
+        # gone, so any un-read data is at most the OS pipe buffer. A surviving
+        # grandchild that inherited the pipe (R2) must NOT hold the runner for the
+        # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
+        # the grace and report the child's real returncode.
+        _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
 
     proc.wait()
+    returncode = proc.returncode
+    observation = build_process_observation(
+        target="",
+        role="unit",
+        attempt=0,
+        returncode=returncode,
+        timed_out=timed_out,
+    )
     return (
-        proc.returncode,
+        _TIMEOUT_RETURN_CODE if timed_out else (returncode if returncode is not None else 1),
         stdout_buf.getvalue().decode("utf-8", errors="replace"),
         stderr_buf.getvalue().decode("utf-8", errors="replace"),
+        observation,
     )
+
+
+def _append_process_observation(
+    state: FileRunState,
+    observation: Mapping[str, object],
+    *,
+    target: str,
+    role: str,
+) -> None:
+    entry = dict(observation)
+    entry["target"] = target
+    entry["parent_nodeid"] = None
+    entry["role"] = role
+    entry["attempt"] = sum(
+        1
+        for previous in state.process_observations
+        if previous.get("target") == target
+        and previous.get("parent_nodeid") is None
+        and previous.get("role") == role
+    )
+    state.process_observations.append(entry)
+
+
+def _run_outer_tee(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    timeout: int,
+    state: FileRunState,
+    state_file: Path,
+    target: str,
+    role: str,
+) -> tuple[int, str, str]:
+    """Run one outer process, append its evidence, and preserve timeout flow."""
+    try:
+        tee_result = _run_subprocess_tee(cmd, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _append_process_observation(
+            state,
+            build_process_observation(target, role, 0, _TIMEOUT_RETURN_CODE, timed_out=True),
+            target=target,
+            role=role,
+        )
+        save_run_state(state_file, state)
+        raise
+
+    returncode = tee_result[0]
+    captured_stdout = tee_result[1]
+    captured_stderr = tee_result[2]
+    if len(tee_result) > 3 and isinstance(tee_result[3], dict):
+        observation = tee_result[3]
+    else:
+        observation = build_process_observation(
+            target,
+            role,
+            0,
+            returncode,
+            timed_out=returncode == _TIMEOUT_RETURN_CODE,
+        )
+    _append_process_observation(
+        state,
+        observation,
+        target=target,
+        role=role,
+    )
+    save_run_state(state_file, state)
+    termination = observation.get("termination")
+    if isinstance(termination, Mapping) and termination.get("kind") == "timeout":
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    return returncode, captured_stdout, captured_stderr
 
 
 def _build_recovery_controller(
@@ -787,6 +871,14 @@ def run_isolated_pytest_units(
 
     state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
     pending_units = units_remaining_for_resume(units, previous_state)
+
+    if resume and previous_state is not None and not state.process_observations_complete:
+        state.process_observations = _hydrate_process_observations(
+            state.process_observations,
+            report_config.jsonl_path if report_config is not None else None,
+        )
+        state.process_observations_complete = True
+        save_run_state(state_file, state)
 
     if resume:
         if previous_state is None:
@@ -1029,10 +1121,14 @@ def run_isolated_pytest_units(
 
             try:
                 try:
-                    returncode, captured_stdout, captured_stderr = _run_subprocess_tee(
+                    returncode, captured_stdout, captured_stderr = _run_outer_tee(
                         cmd,
                         env=run_env,
                         timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                        state=state,
+                        state_file=state_file,
+                        target=unit,
+                        role="unit",
                     )
                     status = _status_from_returncode(returncode)
                 except subprocess.TimeoutExpired:
@@ -1112,7 +1208,7 @@ def run_isolated_pytest_units(
                                         f"[yellow]Confirming timeout culprit:[/yellow] {culprit}"
                                     )
                                     try:
-                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                        confirm_rc, confirm_out, confirm_err = _run_outer_tee(
                                             [
                                                 sys.executable,
                                                 "-m",
@@ -1122,6 +1218,10 @@ def run_isolated_pytest_units(
                                             ],
                                             env=env,
                                             timeout=_unit_timeout_seconds(timeout, "test"),
+                                            state=state,
+                                            state_file=state_file,
+                                            target=culprit,
+                                            role="confirmation",
                                         )
                                     except subprocess.TimeoutExpired:
                                         confirm_rc = _TIMEOUT_RETURN_CODE
@@ -1196,10 +1296,14 @@ def run_isolated_pytest_units(
                                 )
                                 retry_start = time.monotonic()
                                 try:
-                                    retry_rc, retry_out, retry_err = _run_subprocess_tee(
+                                    retry_rc, retry_out, retry_err = _run_outer_tee(
                                         retry_cmd,
                                         env=retry_env,
                                         timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                        state=state,
+                                        state_file=state_file,
+                                        target=unit,
+                                        role="retry",
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:
@@ -1476,7 +1580,7 @@ def run_isolated_pytest_units(
                                         f"[yellow]Confirming crash culprit:[/yellow] {culprit}"
                                     )
                                     try:
-                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                        confirm_rc, confirm_out, confirm_err = _run_outer_tee(
                                             [
                                                 sys.executable,
                                                 "-m",
@@ -1486,6 +1590,10 @@ def run_isolated_pytest_units(
                                             ],
                                             env=env,
                                             timeout=_unit_timeout_seconds(timeout, "test"),
+                                            state=state,
+                                            state_file=state_file,
+                                            target=culprit,
+                                            role="confirmation",
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
                                     except subprocess.TimeoutExpired:
@@ -1664,10 +1772,14 @@ def run_isolated_pytest_units(
                                 )
                                 retry_start = time.monotonic()
                                 try:
-                                    retry_rc, retry_out, retry_err = _run_subprocess_tee(
+                                    retry_rc, retry_out, retry_err = _run_outer_tee(
                                         retry_cmd,
                                         env=retry_env,
                                         timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                        state=state,
+                                        state_file=state_file,
+                                        target=unit,
+                                        role="retry",
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
                                 except subprocess.TimeoutExpired:

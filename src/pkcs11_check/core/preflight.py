@@ -12,6 +12,7 @@ from typing import Any
 
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.core.loader import load_module
+from pkcs11_check.core.process_observation import build_process_observation
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class CapabilityManifest:
     functions: list[str] = field(default_factory=list)
     error: str | None = None
     mechanism_info: dict[str, dict[str, Any]] = field(default_factory=dict)
+    process_observation: dict[str, Any] | None = None
 
 
 def _mechanism_name(value: object) -> str:
@@ -124,24 +126,42 @@ def run_preflight_subprocess(
         "--output",
         str(output_path),
     ]
+    process = subprocess.Popen(cmd)
     try:
-        completed = subprocess.run(cmd, check=False, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return CapabilityManifest(
-            status="timeout",
-            module_path=str(module),
-            requested_interface=interface,
-            interface_version=None,
-            slot_index=slot,
-            slot_count=None,
-            mechanisms=[],
-            error=f"preflight timed out after {timeout}s",
-        )
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            returncode = process.wait()
+            return CapabilityManifest(
+                status="timeout",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                error=f"preflight timed out after {timeout}s",
+                process_observation=build_process_observation(
+                    str(module), "preflight", 0, returncode, timed_out=True
+                ),
+            )
+    except BaseException:
+        try:
+            process.kill()
+        except BaseException:
+            pass
+        else:
+            try:
+                process.wait()
+            except BaseException:
+                pass
+        raise
 
-    if completed.returncode == 0 and output_path.exists():
+    if returncode == 0 and output_path.exists():
         return load_manifest(output_path)
 
-    if is_crash_returncode(completed.returncode):
+    if is_crash_returncode(returncode):
         return CapabilityManifest(
             status="crashed",
             module_path=str(module),
@@ -150,7 +170,8 @@ def run_preflight_subprocess(
             slot_index=slot,
             slot_count=None,
             mechanisms=[],
-            error=f"preflight crashed ({crash_detail_name(completed.returncode)})",
+            error=f"preflight crashed ({crash_detail_name(returncode)})",
+            process_observation=build_process_observation(str(module), "preflight", 0, returncode),
         )
 
     return CapabilityManifest(
@@ -161,7 +182,7 @@ def run_preflight_subprocess(
         slot_index=slot,
         slot_count=None,
         mechanisms=[],
-        error=f"preflight exited with code {completed.returncode}",
+        error=f"preflight exited with code {returncode}",
     )
 
 

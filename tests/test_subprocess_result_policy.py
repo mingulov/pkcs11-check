@@ -2,13 +2,61 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
+from pkcs11_check import classification, plugin
+from pkcs11_check.core.process_observation import (
+    build_process_observation,
+    drain_process_observations,
+    record_process_observation,
+)
 from pkcs11_check.core.subprocess_trace import drain_subprocess_rv_trace
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 
-def test_subprocess_result_policy_reports_signal_crash() -> None:
+def test_process_observations_attach_to_call_report_once_and_in_order() -> None:
+    drain_process_observations()
+    first = build_process_observation("_echo", "probe", 0, -9, platform="linux")
+    second = build_process_observation("_echo", "probe", 0, 0, platform="linux")
+    record_process_observation(first)
+    record_process_observation(second)
+    item = SimpleNamespace(
+        path=Path("/repo/src/pkcs11_check/testcases/test_nested.py"),
+        nodeid="wrong-item-nodeid",
+        user_properties=[],
+    )
+    report = SimpleNamespace(
+        when="call",
+        outcome="passed",
+        nodeid="src/pkcs11_check/testcases/test_nested.py::test_nested",
+        user_properties=[],
+    )
+
+    plugin._attach_rv_trace_to_report(item, report)
+
+    expected = [dict(first), dict(second)]
+    for observation in expected:
+        observation["parent_nodeid"] = report.nodeid
+    assert dict(report.user_properties)["pkcs11_process_observations"] == expected
+    assert first["parent_nodeid"] is None
+    assert second["parent_nodeid"] is None
+    assert drain_process_observations() == []
+
+    next_report = SimpleNamespace(
+        when="call",
+        outcome="passed",
+        nodeid="src/pkcs11_check/testcases/test_nested.py::test_next",
+        user_properties=[],
+    )
+    plugin._attach_rv_trace_to_report(item, next_report)
+    assert next_report.user_properties == []
+
+
+def test_subprocess_result_policy_reports_signal_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "linux")
     with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
         assert_subprocess_completed(
             -11,
@@ -16,6 +64,33 @@ def test_subprocess_result_policy_reports_signal_crash() -> None:
             "segmentation fault",
             context="C_Test boundary probe",
         )
+
+
+def test_subprocess_result_policy_records_normalized_termination_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "linux")
+    classification.clear()
+    try:
+        with pytest.raises(pytest.fail.Exception):
+            assert_subprocess_completed(
+                -11,
+                "",
+                "segmentation fault",
+                context="C_Test boundary probe",
+            )
+
+        record = classification.get_records()[-1]
+        assert record.detail == {
+            "termination": {
+                "kind": "signal",
+                "raw_code": -11,
+                "signal_name": "SIGSEGV",
+                "windows_status": None,
+            }
+        }
+    finally:
+        classification.clear()
 
 
 def test_subprocess_result_policy_reports_positive_child_failure() -> None:

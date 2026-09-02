@@ -53,6 +53,7 @@ from pkcs11_check.core.file_runner import (
     write_report_jsonl,
 )
 from pkcs11_check.core.merge import merge_results_payloads
+from pkcs11_check.core.process_observation import build_process_observation
 
 
 def test_unit_status_priority_is_the_overall_status_set() -> None:
@@ -71,6 +72,18 @@ def test_status_from_returncode_classifies_timeout_sentinel() -> None:
     assert (
         file_runner_mod._status_from_returncode(file_runner_mod._TIMEOUT_RETURN_CODE) == "timeout"
     )
+
+
+def test_crash_classification_prefers_structured_observation() -> None:
+    observation = build_process_observation("test.py", "unit", 0, -11)
+
+    record = file_runner_mod.crash_classification(
+        returncode=-11,
+        target="test.py",
+        observation=observation,
+    )
+
+    assert record["detail"] == {"observation": observation}
 
 
 def test_discover_pytest_units_from_directory(tmp_path: Path) -> None:
@@ -417,6 +430,343 @@ def test_state_round_trip(tmp_path: Path) -> None:
     loaded = load_run_state(state_file)
 
     assert loaded == state
+    assert loaded is not None
+    assert loaded.process_observations_complete is True
+
+
+def test_process_observations_survive_replacement_and_resume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    console = Console(file=StringIO(), force_terminal=False)
+
+    def fake_run(
+        cmd: list[str], *, env: dict[str, str] | None = None, timeout: int = 0
+    ) -> tuple[int, str, str, dict[str, object]]:
+        del env, timeout
+        rc = -11 if not calls else 0
+        calls.append(cmd[3])
+        return rc, "", "", build_process_observation(cmd[3], "unit", 0, rc)
+
+    calls: list[str] = []
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_analyze_report_jsonl",
+        lambda _path: ({"counts": file_runner_mod._empty_counts(), "tests": []}, "culprit", []),
+    )
+
+    assert (
+        run_isolated_pytest_units(
+            [str(target)],
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=False,
+            stop_on_failure=False,
+            console=console,
+            granularity="mixed",
+        )
+        == 1
+    )
+
+    resumed = load_run_state(state_file)
+    assert resumed is not None
+    assert [item["role"] for item in resumed.process_observations] == [
+        "unit",
+        "confirmation",
+        "retry",
+    ]
+    assert resumed.process_observations[0]["attempt"] == 0
+
+    resumed.results[0] = FileRunResult(str(target), "passed", 0, 0.1)
+    save_run_state(state_file, resumed)
+    assert (
+        run_isolated_pytest_units(
+            [str(target)],
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=True,
+            stop_on_failure=False,
+            console=console,
+            granularity="mixed",
+        )
+        == 0
+    )
+    assert load_run_state(state_file).process_observations == resumed.process_observations  # type: ignore[union-attr]
+    assert calls == [str(target), "culprit", str(target)]
+
+
+def test_resume_hydrates_incomplete_process_history_before_outer_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    old_zero = build_process_observation("old.py", "unit", 0, 0)
+    old_one = dict(old_zero, attempt=1, termination={**old_zero["termination"], "raw_code": -11})
+    units = ["old.py", "new.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    fingerprint = build_state_fingerprint(units, pytest_args, os.environ.copy())
+    state_file.write_text(
+        json.dumps(
+            {
+                "units": units,
+                "fingerprint": fingerprint,
+                "results": [FileRunResult("old.py", "passed", 0, 0.1).__dict__],
+                "process_observations": [old_zero],
+                "process_observations_complete": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path.write_text(
+        "".join(
+            json.dumps({"$report_type": "ProcessReport", "target": "old.py", "observation": item})
+            + "\n"
+            for item in (old_zero, old_one, old_zero)
+        ),
+        encoding="utf-8",
+    )
+
+    observed_complete: list[bool] = []
+
+    def fake_run(
+        cmd: list[str], *, env: dict[str, str] | None = None, timeout: int = 0
+    ) -> tuple[int, str, str, dict[str, object]]:
+        del env, timeout
+        loaded = load_run_state(state_file)
+        assert loaded is not None
+        observed_complete.append(loaded.process_observations_complete)
+        return 0, "", "", build_process_observation(cmd[3], "unit", 0, 0)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_analyze_report_jsonl",
+        lambda _path, **_kwargs: (
+            {"counts": file_runner_mod._empty_counts(), "tests": []},
+            None,
+            [],
+        ),
+    )
+
+    assert (
+        run_isolated_pytest_units(
+            units,
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig(
+                "json", tmp_path / "results.json", jsonl_path=report_path
+            ),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="file",
+        )
+        == 0
+    )
+
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert observed_complete == [True]
+    assert saved.process_observations_complete is True
+    assert [(item["target"], item["attempt"]) for item in saved.process_observations] == [
+        ("old.py", 0),
+        ("old.py", 1),
+        ("new.py", 0),
+    ]
+
+
+def test_resume_marks_incomplete_process_state_complete_without_prior_jsonl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    old = build_process_observation("old.py", "unit", 7, 0)
+    units = ["old.py", "new.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    fingerprint = build_state_fingerprint(units, pytest_args, os.environ.copy())
+    state_file.write_text(
+        json.dumps(
+            {
+                "units": units,
+                "fingerprint": fingerprint,
+                "results": [FileRunResult("old.py", "passed", 0, 0.1).__dict__],
+                "process_observations": [old],
+                "process_observations_complete": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    observed: list[list[int]] = []
+
+    def fake_run(
+        cmd: list[str], *, env: dict[str, str] | None = None, timeout: int = 0
+    ) -> tuple[int, str, str, dict[str, object]]:
+        del env, timeout
+        loaded = load_run_state(state_file)
+        assert loaded is not None
+        observed.append([int(item["attempt"]) for item in loaded.process_observations])
+        return 0, "", "", build_process_observation(cmd[3], "unit", 0, 0)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_analyze_report_jsonl",
+        lambda _path, **_kwargs: (
+            {"counts": file_runner_mod._empty_counts(), "tests": []},
+            None,
+            [],
+        ),
+    )
+
+    assert (
+        run_isolated_pytest_units(
+            units,
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig(
+                "json", tmp_path / "results.json", jsonl_path=tmp_path / "missing.jsonl"
+            ),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="file",
+        )
+        == 0
+    )
+
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert observed == [[0]]
+    assert saved.process_observations_complete is True
+
+
+def test_process_observations_checkpoint_before_empty_escalation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_file = tmp_path / "state.json"
+    calls: list[str] = []
+
+    def fake_run(
+        cmd: list[str], *, env: dict[str, str] | None = None, timeout: int = 0
+    ) -> tuple[int, str, str, dict[str, object]]:
+        del env, timeout
+        calls.append(cmd[3])
+        return (
+            124,
+            "",
+            "",
+            build_process_observation(cmd[3], "unit", 0, -9, platform="linux", timed_out=True),
+        )
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_analyze_report_jsonl",
+        lambda _path: ({"counts": file_runner_mod._empty_counts(), "tests": []}, "culprit", []),
+    )
+    monkeypatch.setattr(file_runner_mod, "_escalate_current_file", lambda **_kwargs: [])
+
+    assert (
+        run_isolated_pytest_units(
+            [str(target)],
+            ["--p11-module", "/tmp/module.so"],
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=False,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="mixed",
+        )
+        == 1
+    )
+
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert [item["role"] for item in saved.process_observations] == [
+        "unit",
+        "confirmation",
+        "retry",
+        "confirmation",
+        "retry",
+        "confirmation",
+        "retry",
+    ]
+    assert [item["attempt"] for item in saved.process_observations] == [0, 0, 0, 1, 1, 2, 2]
+    assert len(calls) == 7
+
+
+def test_old_or_malformed_process_observations_load_empty(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "units": ["test_a.py"],
+                "fingerprint": "abc123",
+                "results": [],
+                "process_observations_complete": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_run_state(state_file)
+
+    assert loaded is not None
+    assert loaded.process_observations == []
+    assert loaded.process_observations_complete is False
+
+    state_file.write_text(
+        json.dumps(
+            {
+                "units": ["test_a.py"],
+                "fingerprint": "abc123",
+                "results": [],
+                "process_observations": [
+                    {"role": "unit"},
+                    "not-an-object",
+                    42,
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_run_state(state_file)
+    assert loaded is not None
+    assert loaded.process_observations == [{"role": "unit"}]
+    assert loaded.process_observations_complete is False
+
+    state_file.write_text(
+        json.dumps(
+            {
+                "units": ["test_a.py"],
+                "fingerprint": "abc123",
+                "results": [],
+                "process_observations": "bad",
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_run_state(state_file)
+    assert loaded is not None
+    assert loaded.process_observations == []
+    assert loaded.process_observations_complete is False
 
 
 def test_save_run_state_does_not_embed_report_records(tmp_path: Path) -> None:

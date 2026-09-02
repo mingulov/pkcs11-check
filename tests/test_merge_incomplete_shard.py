@@ -15,6 +15,7 @@ from pathlib import Path
 
 from pkcs11_check.core.file_runner import postprocess_jsonl_to_unified
 from pkcs11_check.core.merge import merge_results_payloads, merge_shard_dirs
+from pkcs11_check.core.process_observation import build_process_observation
 
 
 def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
@@ -100,6 +101,48 @@ def test_corrupt_results_json_does_not_abort_merge(tmp_path: Path) -> None:
     warnings = merged.get("shards", {}).get("warnings", [])
     assert any("unreadable" in w for w in warnings), warnings
     assert merged["summary"]["timeout"] == 0
+    assert merged["summary"]["incomplete"] is True
+
+
+def test_incomplete_shard_salvage_preserves_process_and_passing_probe_evidence(
+    tmp_path: Path,
+) -> None:
+    s0 = _make_shard(
+        tmp_path, "shard-0", results=True, jsonl=[_call("test_ok.py::test_pass", "passed")]
+    )
+    outer = build_process_observation("test_partial.py", "unit", 0, -9)
+    probe = build_process_observation(
+        "probe", "probe", 0, 0, parent_nodeid="test_partial.py::test_pass"
+    )
+    s1 = _make_shard(
+        tmp_path,
+        "shard-1",
+        results=False,
+        jsonl=[
+            {"$report_type": "ProcessReport", "target": "test_partial.py", "observation": outer},
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_partial.py::test_pass",
+                "when": "call",
+                "outcome": "passed",
+                "user_properties": [["pkcs11_process_observations", [probe]]],
+            },
+        ],
+    )
+
+    merged = merge_shard_dirs([s0, s1], tmp_path / "out")
+
+    partial = next(unit for unit in merged["units"] if unit["target"] == "test_partial.py")
+    assert partial["status"] == "passed"
+    assert [execution["target"] for execution in partial["executions"]] == [
+        "test_partial.py",
+        "probe",
+    ]
+    merged_records = [
+        json.loads(line)
+        for line in (tmp_path / "out" / "report.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(record.get("$report_type") == "ProcessReport" for record in merged_records)
     assert merged["summary"]["incomplete"] is True
 
 

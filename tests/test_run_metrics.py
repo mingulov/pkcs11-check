@@ -1,3 +1,4 @@
+from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.run_metrics import (
     RESULT_OUTCOME_KEYS,
     compute_child_subprocess_counts,
@@ -52,3 +53,50 @@ def test_reload_cycle_crash_variant_is_counted_as_child_crash():
         },
     ]
     assert compute_child_subprocess_counts(units) == (1, 0)
+
+
+def test_structured_child_crash_requires_failed_parent() -> None:
+    probe = build_process_observation("probe", "probe", 0, -11, parent_nodeid="t.py::test_pass")
+    units = [
+        {
+            "tests": [{"nodeid": "t.py::test_pass", "outcome": "passed"}],
+            "executions": [probe],
+        }
+    ]
+
+    assert compute_child_subprocess_counts(units) == (0, 0)
+
+
+def test_legacy_marker_is_kept_when_structured_probe_belongs_to_passing_test() -> None:
+    probe = build_process_observation("probe", "probe", 0, -11, parent_nodeid="t.py::test_pass")
+    units = [
+        {
+            "tests": [
+                {"nodeid": "t.py::test_pass", "outcome": "passed"},
+                {
+                    "nodeid": "t.py::test_legacy",
+                    "outcome": "failed",
+                    "longrepr": "module crashed with signal 11",
+                },
+            ],
+            "executions": [probe],
+        }
+    ]
+
+    assert compute_child_subprocess_counts(units) == (1, 0)
+
+
+def test_structured_retries_count_once_per_failed_test() -> None:
+    parent = "t.py::test_failed"
+    first = build_process_observation("probe", "probe", 0, -11, parent_nodeid=parent)
+    last = build_process_observation(
+        "probe", "probe", 1, None, timed_out=True, parent_nodeid=parent
+    )
+    units = [
+        {
+            "tests": [{"nodeid": parent, "outcome": "failed"}],
+            "executions": [first, last],
+        }
+    ]
+
+    assert compute_child_subprocess_counts(units) == (0, 1)

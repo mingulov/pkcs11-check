@@ -70,6 +70,8 @@ class FileRunState:
     fingerprint: str
     results: list[FileRunResult]
     report_records_by_unit: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    process_observations: list[dict[str, Any]] = field(default_factory=list)
+    process_observations_complete: bool = True
 
 
 @dataclass

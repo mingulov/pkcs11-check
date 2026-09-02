@@ -12,11 +12,8 @@ from __future__ import annotations
 
 import os
 import signal
-import subprocess
 import sys
 import time
-
-import pytest
 
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.core.file_runner import _run_subprocess_tee
@@ -53,7 +50,7 @@ _CRASH_WITH_LINGERING_GRANDCHILD = (
 
 def test_crash_is_not_misreported_as_timeout_when_grandchild_holds_pipe() -> None:
     start = time.monotonic()
-    rc, _out, _err = _run_subprocess_tee(
+    rc, _out, _err, _observation = _run_subprocess_tee(
         [sys.executable, "-c", _CRASH_WITH_LINGERING_GRANDCHILD],
         env=dict(os.environ),
         timeout=2,
@@ -74,14 +71,23 @@ def test_crash_is_not_misreported_as_timeout_when_grandchild_holds_pipe() -> Non
 
 
 def test_genuinely_hung_child_still_times_out() -> None:
-    # A live child producing no output must still raise TimeoutExpired (and be
-    # reaped, not leaked, by the kill+wait on the timeout path).
-    with pytest.raises(subprocess.TimeoutExpired):
-        _run_subprocess_tee(
-            [sys.executable, "-c", "import time; time.sleep(30)"],
-            env=dict(os.environ),
-            timeout=1,
-        )
+    # A live child producing no output must be killed, reaped, and returned as
+    # the legacy timeout code while retaining the post-kill raw code.
+    rc, _out, _err, observation = _run_subprocess_tee(
+        [
+            sys.executable,
+            "-c",
+            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)",
+        ],
+        env=dict(os.environ),
+        timeout=1,
+    )
+    assert rc == 124
+    assert observation["termination"]["kind"] == "timeout"  # type: ignore[index]
+    if sys.platform == "win32":
+        assert isinstance(observation["termination"]["raw_code"], int)  # type: ignore[index]
+    else:
+        assert observation["termination"]["raw_code"] == -signal.SIGKILL  # type: ignore[index]
 
 
 def test_tee_captures_both_streams_and_returncode() -> None:
@@ -94,7 +100,7 @@ def test_tee_captures_both_streams_and_returncode() -> None:
         "sys.stderr.write('ERR-marker\\n'); sys.stderr.flush()\n"
         "sys.exit(3)\n"
     )
-    rc, out, err = _run_subprocess_tee(
+    rc, out, err, _observation = _run_subprocess_tee(
         [sys.executable, "-c", script], env=dict(os.environ), timeout=10
     )
     assert rc == 3, rc
@@ -108,7 +114,7 @@ def test_tee_captures_output_larger_than_pipe_buffer() -> None:
     # or the child blocks on a full pipe and we deadlock/truncate.
     n = 300_000
     script = f"import sys\nsys.stdout.write('x' * {n})\nsys.stdout.flush()\n"
-    rc, out, _err = _run_subprocess_tee(
+    rc, out, _err, _observation = _run_subprocess_tee(
         [sys.executable, "-c", script], env=dict(os.environ), timeout=10
     )
     assert rc == 0, rc

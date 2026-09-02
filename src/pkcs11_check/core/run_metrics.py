@@ -44,18 +44,56 @@ _CHILD_TIMEOUT_MARKERS = (
 def compute_child_subprocess_counts(units: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
     """Count child-subprocess crash/timeout findings across ``units``.
 
-    Scans ``units[].tests[]`` for ``outcome == "failed"`` entries whose ``longrepr``
-    contains a crash or timeout marker. Returns ``(child_crash, child_timeout)``.
-    These are a SUBSET of ``failed`` and must never be added to ``summary["total"]``.
+    Associates nested structured executions with failed ``tests[]`` by parent nodeid, using
+    the latest execution per failed test. Unmatched failed tests fall back to legacy ``longrepr``
+    markers. Returns ``(child_crash, child_timeout)``; these are a SUBSET of ``failed`` and must
+    never be added to ``summary["total"]``.
     """
     child_crash = 0
     child_timeout = 0
     for unit in units:
         tests = unit.get("tests")
-        if not isinstance(tests, list):
-            continue
-        for record in tests:
-            if not isinstance(record, Mapping) or record.get("outcome") != "failed":
+        test_records = (
+            [record for record in tests if isinstance(record, Mapping)]
+            if isinstance(tests, list)
+            else []
+        )
+        failed_nodeids = {
+            str(record.get("nodeid"))
+            for record in test_records
+            if record.get("outcome") == "failed" and record.get("nodeid")
+        }
+        structured = unit.get("executions")
+        structured_nested = (
+            [
+                record
+                for record in structured
+                if isinstance(record, Mapping) and record.get("parent_nodeid")
+            ]
+            if isinstance(structured, list)
+            else []
+        )
+        structured_by_parent: dict[str, Mapping[str, Any]] = {}
+        if structured_nested:
+            for record in structured_nested:
+                parent_nodeid = str(record.get("parent_nodeid") or "")
+                if parent_nodeid not in failed_nodeids:
+                    continue
+                structured_by_parent[parent_nodeid] = record
+            for record in structured_by_parent.values():
+                termination = record.get("termination")
+                kind = termination.get("kind") if isinstance(termination, Mapping) else None
+                if kind in {"signal", "exception", "external-kill"}:
+                    child_crash += 1
+                elif kind == "timeout":
+                    child_timeout += 1
+        for record in test_records:
+            if record.get("outcome") != "failed":
+                continue
+            nodeid = str(record.get("nodeid") or "")
+            # Old unified artifacts may omit the failed test's nodeid. With structured
+            # executions present there is no safe ownership match, so keep their precedence.
+            if nodeid in structured_by_parent or (not nodeid and structured_nested):
                 continue
             longrepr = str(record.get("longrepr", "")).lower()
             if any(marker in longrepr for marker in _CHILD_CRASH_MARKERS):

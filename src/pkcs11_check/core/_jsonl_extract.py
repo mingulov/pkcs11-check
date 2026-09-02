@@ -28,10 +28,16 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _canonical_executions as _canonical_executions,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
     _delete_unit_report_record_cache as _delete_unit_report_record_cache,
+)
+from pkcs11_check.core._report_records import (
+    _execution_owner_file as _execution_owner_file,
 )
 from pkcs11_check.core._report_records import (
     _extract_unit_report_records_from_jsonl as _extract_unit_report_records_from_jsonl,
@@ -406,11 +412,27 @@ def postprocess_jsonl_to_unified(
             continue
         compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
 
+    raw_executions = [
+        execution
+        for execution in detail.get("executions", [])
+        if isinstance(execution, Mapping) and _execution_owner_file(execution) is not None
+    ]
+    executions_by_file: dict[str, list[dict[str, Any]]] = {}
+    for execution in _canonical_executions(raw_executions):
+        file_part = _execution_owner_file(execution)
+        if file_part is not None:
+            executions_by_file.setdefault(file_part, []).append(execution)
+
     summary: dict[str, int] = _empty_counts()
     units: list[dict[str, Any]] = []
 
     for target in sorted(
-        set(list(by_file.keys()) + list(file_counts.keys()) + list(compliance_notes_by_file.keys()))
+        set(
+            list(by_file.keys())
+            + list(file_counts.keys())
+            + list(compliance_notes_by_file.keys())
+            + list(executions_by_file.keys())
+        )
     ):
         counts = file_counts.get(target, _empty_counts())
         for key in summary:
@@ -431,6 +453,9 @@ def postprocess_jsonl_to_unified(
         compliance_notes = compliance_notes_by_file.get(target, [])
         if compliance_notes:
             unit["compliance_notes"] = compliance_notes
+        executions = executions_by_file.get(target, [])
+        if executions:
+            unit["executions"] = executions
         units.append(unit)
 
     summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)

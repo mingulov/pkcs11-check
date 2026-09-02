@@ -74,10 +74,49 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
         if status == "crashed":
             rc_raw = unit.get("returncode")
             rc = -abs(int(rc_raw)) if isinstance(rc_raw, int) and rc_raw else None
-            crashes.append(crash_classification(returncode=rc, target=target))
+            observation = _outer_execution(unit.get("executions"), status=status)
+            if observation is not None:
+                termination = observation.get("termination")
+                raw_code = termination.get("raw_code") if isinstance(termination, dict) else None
+                if isinstance(raw_code, int):
+                    rc = raw_code
+            crashes.append(
+                crash_classification(returncode=rc, target=target, observation=observation)
+            )
         elif status == "timeout":
-            crashes.append(crash_classification(returncode=None, target=target, timed_out=True))
+            crashes.append(
+                crash_classification(
+                    returncode=None,
+                    target=target,
+                    timed_out=True,
+                    observation=_outer_execution(unit.get("executions"), status=status),
+                )
+            )
     return crashes
+
+
+def _outer_execution(value: Any, *, status: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(value, list):
+        return None
+    executions = [
+        execution
+        for execution in value
+        if isinstance(execution, dict) and execution.get("parent_nodeid") is None
+    ]
+    if status is None:
+        return executions[0] if executions else None
+    if status == "crashed":
+        desired_kinds = {"signal", "exception", "external-kill"}
+    elif status == "timeout":
+        desired_kinds = {"timeout"}
+    else:
+        desired_kinds = set()
+    for execution in reversed(executions):
+        termination = execution.get("termination")
+        kind = termination.get("kind") if isinstance(termination, dict) else None
+        if kind in desired_kinds:
+            return execution
+    return None
 
 
 def _payload_from_results(results_json: Path | None) -> dict[str, Any]:

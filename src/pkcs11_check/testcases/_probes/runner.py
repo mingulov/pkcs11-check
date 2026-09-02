@@ -19,6 +19,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pkcs11_check.core.process_observation import (
+    build_process_observation,
+    record_process_observation,
+)
 from pkcs11_check.core.subprocess_trace import record_subprocess_rv_trace
 from pkcs11_check.testcases._probes.params import ProbeParams
 from pkcs11_check.testcases._raw_subprocess import ingest_raw_subprocess_coverage
@@ -51,6 +55,7 @@ class ProbeResult:
     returncode: int
     stdout: str
     stderr: str
+    observation: dict[str, object] | None = None
 
 
 def run_probe(
@@ -96,6 +101,7 @@ def run_probe(
     rc: int | None = None
     out: str = ""
     err: str = ""
+    timed_out = False
 
     try:
         with os.fdopen(params_fd, "w", encoding="utf-8") as fh:
@@ -115,6 +121,7 @@ def run_probe(
         except subprocess.TimeoutExpired as exc:
             # TimeoutExpired.stdout/.stderr can be bytes even with text=True
             # (raised mid-communicate() before decoding) -- use _as_text (I8).
+            timed_out = True
             out = _as_text(exc.stdout)
             err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
             rc = SUBPROCESS_TIMEOUT_RC
@@ -126,7 +133,9 @@ def run_probe(
         else:
             ingest_subprocess_coverage(cov_path)  # I6
 
-        return ProbeResult(returncode=rc, stdout=out, stderr=err)
+        observation = build_process_observation(probe, "probe", 0, rc, timed_out=timed_out)
+        record_process_observation(observation)
+        return ProbeResult(returncode=rc, stdout=out, stderr=err, observation=observation)
     finally:
         # The params file is a standalone-repro artifact, useful only for a
         # failed probe. Retain it only when the debug env var is set AND the probe
