@@ -17,10 +17,10 @@ from typing import Any
 
 import pytest
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
 from pkcs11_check.raw.pack_mechanisms import mech_ecdh, mech_gcm, mech_oaep, mech_pss
@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_EC_PARAMS,
+    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -55,8 +56,6 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKD_NULL,
-    CKF_EC_COMPRESS,
-    CKF_EC_UNCOMPRESS,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
     CKK_AES,
@@ -87,11 +86,6 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
-)
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import (
-    read_conventional_ec_point_or_xfail,
-    select_ecdh_point_form,
 )
 from pkcs11_check.testcases._local_verify import rsa_pss_local
 from pkcs11_check.testcases._probes.runner import run_probe
@@ -958,24 +952,13 @@ class TestEcPointValidation:
                 pytest.skip(f"EC keygen for invalid-point probe not operational: {exc}")
             raise
         try:
-            # Validate the provider's conventional point before selecting the raw
-            # form advertised by CKM_ECDH1_DERIVE. The crafted invalid bytes below
-            # must never be parsed or normalized again: they are the exact negative
-            # evidence sent to the provider mechanism.
-            valid_point = read_conventional_ec_point_or_xfail(
-                rs,
-                pub,
-                ec.SECP256R1(),
-                label="CKM_ECDH1_DERIVE: invalid-point baseline",
-            )
-            selected_point = select_ecdh_point_form(
-                valid_point,
-                supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
-                supports_uncompressed=rs.has_mechanism_flag(
-                    CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)
-                ),
-            )
-            invalid_point = self._craft_invalid_point(selected_point, point_type)
+            # Read the valid EC point to use as a base for crafting invalid ones
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])
+            ec_point_val = attrs[CKA_EC_POINT]
+            assert isinstance(ec_point_val, bytes)
+            raw_point = decode_ec_point(ec_point_val)
+
+            invalid_point = self._craft_invalid_point(raw_point, point_type)
 
             # crypto-correctness: deriving a shared secret from an
             # off-curve / infinity / truncated public point enables an
@@ -1013,7 +996,6 @@ class TestEcPointValidation:
                     reject_exc,
                     _WEAK_PARAM_REJECT_RVS,
                     label=f"ECDH derive with {point_type} EC public point (invalid-curve attack)",
-                    kind="crypto",
                 )
             finally:
                 if derived:
@@ -1114,6 +1096,7 @@ class TestEcPointValidation:
             # Derive succeeded -- read the shared secret value.
             try:
                 result = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+                secret = result[CKA_VALUE]
             except AssertionError:
                 xfail_as(
                     "not_operational",
@@ -1123,20 +1106,6 @@ class TestEcPointValidation:
                         "but shared secret is unreadable"
                     ),
                 )
-
-            secret = attr_or_record(
-                result,
-                CKA_VALUE,
-                label=(
-                    f"{curve_name} ECDH low-order point: derive returned CKR_OK "
-                    "but shared secret is unreadable"
-                ),
-                reason="not_operational",
-                kind="crypto",
-                inherit_mechanism=False,
-            )
-            if secret is MISSING_ATTRIBUTE:
-                return
 
             assert isinstance(secret, bytes)
             if secret == b"\x00" * len(secret):
@@ -1170,33 +1139,20 @@ class TestEcPointValidation:
 
     @staticmethod
     def _craft_invalid_point(valid_point: bytes, point_type: str) -> bytes:
-        """Craft an invalid EC point while preserving the selected SEC1 form.
+        """Craft an invalid EC point from a valid uncompressed point.
 
         Args:
-            valid_point: Valid raw SEC1 point for P-256 (compressed or uncompressed).
+            valid_point: Uncompressed point (0x04 || x || y) for P-256 (65 bytes).
             point_type: Type of invalidity to introduce.
 
         Returns:
             Invalid point bytes.
         """
         if point_type == "off_curve":
-            if len(valid_point) < 2 or valid_point[0] not in (0x02, 0x03, 0x04):
-                raise ValueError("Cannot craft an off-curve point from an invalid SEC1 form")
-            # A one-byte mutation can accidentally remain on the curve, especially
-            # for compressed points. Search deterministically while preserving the
-            # SEC1 prefix and exact selected length, and prove local invalidity before
-            # returning the bytes to the provider.
-            for index in range(len(valid_point) - 1, 0, -1):
-                original = valid_point[index]
-                for delta in range(1, 256):
-                    modified = bytearray(valid_point)
-                    modified[index] = original ^ delta
-                    candidate = bytes(modified)
-                    try:
-                        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), candidate)
-                    except ValueError:
-                        return candidate
-            raise ValueError("Unable to find a locally invalid mutation of the EC point")
+            # Flip the last byte of Y coordinate to move point off curve
+            modified = bytearray(valid_point)
+            modified[-1] ^= 0x01
+            return bytes(modified)
         elif point_type == "infinity":
             # Point at infinity encoded as a single 0x00 byte
             return b"\x00"

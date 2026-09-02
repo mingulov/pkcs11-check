@@ -437,32 +437,3 @@ def test_user_property_names_returns_all_property_names() -> None:
     record = {"user_properties": [["k1", "v1"], ["k2", "v2"], []]}  # empty pair ignored
     assert user_property_names(record) == {"k1", "k2"}
     assert user_property_names({}) == set()
-
-
-def test_static_skip_detail_rehydrates_from_enriched_marker() -> None:
-    from pkcs11_check.core._report_records import _isolated_unit_report
-
-    reason = "CKM_FAKE_MECH not supported by module"
-    records = [_isolated_unit_report("test_demo.py", 0, reason=reason, skipped=3)]
-    detail = _build_detail_from_report_records(records)
-    assert detail is not None
-    assert detail["counts"]["skipped"] == 3
-    assert sum(detail["counts"].values()) == 3
-    assert detail["skip_reasons"] == {reason: 3}
-    assert detail["file_skip"] is True
-    assert detail["tests"] == []
-
-
-def test_plain_attempt_marker_never_synthesizes_skip_evidence() -> None:
-    from pkcs11_check.core._report_records import _isolated_unit_report
-
-    assert _build_detail_from_report_records([_isolated_unit_report("test_demo.py", 0)]) is None
-    assert (
-        _build_detail_from_report_records(
-            [
-                _isolated_unit_report("test_demo.py", 0),
-                _isolated_unit_report("test_demo.py", 1, reason="x", skipped=2),
-            ]
-        )
-        is not None
-    )

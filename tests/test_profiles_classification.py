@@ -31,7 +31,7 @@ def _profile(**kw: Any) -> SimpleNamespace:
 
 
 def test_missing_functions_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tp, "_read_profile_ids_detailed", lambda _rs: ({0x10}, False))
+    monkeypatch.setattr(tp, "_read_profile_ids", lambda _rs: {0x10})
     monkeypatch.setattr(cp, "lookup_profile", lambda _pid: _profile(required_functions={"C_Foo"}))
     monkeypatch.setattr(cp, "PROFILE_TEST_EXCLUDED", set(), raising=False)
     rs = SimpleNamespace(raw=SimpleNamespace(available_function_names=lambda: []))
@@ -40,7 +40,7 @@ def test_missing_functions_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_missing_mechanisms_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tp, "_read_profile_ids_detailed", lambda _rs: ({0x10}, False))
+    monkeypatch.setattr(tp, "_read_profile_ids", lambda _rs: {0x10})
     monkeypatch.setattr(
         cp, "lookup_profile", lambda _pid: _profile(required_mechanisms={0x00001234})
     )
@@ -51,7 +51,7 @@ def test_missing_mechanisms_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pubcert_find_failure_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tp, "_read_profile_ids_detailed", lambda _rs: ({0x00000004}, False))
+    monkeypatch.setattr(tp, "_read_profile_ids", lambda _rs: {0x00000004})
     monkeypatch.setattr(cp, "lookup_profile", lambda _pid: _profile())
     monkeypatch.setattr(cp, "PROFILE_TEST_EXCLUDED", set(), raising=False)
 
@@ -67,7 +67,7 @@ def test_pubcert_find_failure_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pubcert_plain_assertion_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tp, "_read_profile_ids_detailed", lambda _rs: ({0x00000004}, False))
+    monkeypatch.setattr(tp, "_read_profile_ids", lambda _rs: {0x00000004})
     monkeypatch.setattr(cp, "lookup_profile", lambda _pid: _profile())
     monkeypatch.setattr(cp, "PROFILE_TEST_EXCLUDED", set(), raising=False)
     monkeypatch.setattr(
@@ -83,7 +83,7 @@ def test_pubcert_plain_assertion_propagates(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_pubcert_no_certs_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tp, "_read_profile_ids_detailed", lambda _rs: ({0x00000004}, False))
+    monkeypatch.setattr(tp, "_read_profile_ids", lambda _rs: {0x00000004})
     monkeypatch.setattr(cp, "lookup_profile", lambda _pid: _profile())
     monkeypatch.setattr(cp, "PROFILE_TEST_EXCLUDED", set(), raising=False)
     monkeypatch.setattr(tp, "find_objects", lambda *_a, **_k: [])

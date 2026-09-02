@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.classification import classify
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -62,7 +62,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -167,17 +166,6 @@ def _gen_api_security_rsa_keypair(rs: Any, bits: int = 2048) -> tuple[int, int]:
     raise
 
 
-def _readback_repr(raw: Any) -> str:
-    """Render an attribute readback for a summary without inventing a value.
-
-    A provider omission is NOT ``None``: rendering the sentinel as ``None`` would
-    put a value the provider never returned into the record.
-    """
-    if raw is MISSING_ATTRIBUTE:
-        return "<unavailable>"
-    return repr(raw)
-
-
 def _return_if_policy_reject(exc: AssertionError, allowed_rvs: tuple[Any, ...]) -> None:
     if is_known_error(exc, allowed_rvs):
         return
@@ -252,33 +240,7 @@ class TestWrapDecryptOracle:
                     raw_key = decrypt_single(rs.raw, rs.sh, dual_key_h, CKM_AES_ECB, wrapped)
                     # Claim-check: did the target actually hold its protection?
                     tgt = read_attributes(rs.raw, rs.sh, target_h, [CKA_EXTRACTABLE])
-                    tgt_extractable_raw = attr_or_record(
-                        tgt,
-                        CKA_EXTRACTABLE,
-                        label="wrap-decrypt oracle target CKA_EXTRACTABLE readback",
-                        reason="not_operational",
-                        kind="policy",
-                        inherit_mechanism=False,
-                    )
-                    claimed: bool
-                    if tgt_extractable_raw is MISSING_ATTRIBUTE:
-                        # The readback is unavailable, but the CLAIM is not: the
-                        # module ACCEPTED a CKA_EXTRACTABLE=False template at
-                        # C_GenerateKey (_gen_api_security_aes_key above raises /
-                        # xfails otherwise), and that acceptance is independent
-                        # claim evidence.  Deriving `claimed` from the readback
-                        # alone would let one unreadable attribute downgrade a
-                        # proven key-extraction break to an xfail.  The
-                        # attr_or_record() record above keeps the unreadable
-                        # readback itself visible.
-                        claimed = True
-                    else:
-                        claimed = tgt_extractable_raw is False
-                    # Neither half of this oracle depends on the claim-check
-                    # readback: `extracted` is direct evidence of the violation
-                    # (the raw key bytes came back from C_Decrypt) and `claimed`
-                    # falls back to creation-time template acceptance, so a
-                    # missing claim-check attribute can never mask this finding.
+                    claimed = tgt.get(CKA_EXTRACTABLE) is False
                     extracted = bool(raw_key) and len(raw_key) > 0
                     classify_policy_enforcement(
                         claimed=claimed,
@@ -319,21 +281,9 @@ class TestSensitiveExtraction:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
-            # Membership is resolved into a plain bool *before* branching: the
-            # `in` test itself is safe (it never returns provider-backed data),
-            # so pre-computing it leaves no absence branch that could silently
-            # fabricate a value -- CKA_VALUE correctly absent needs no record.
-            value_present = CKA_VALUE in attrs
-            if value_present:
-                fail_as(
-                    "self_contradiction",
-                    kind="policy",
-                    label="CKA_VALUE readable on CKA_SENSITIVE key",
-                    operation="C_GetAttributeValue",
-                    summary=(
-                        "SECURITY: CKA_VALUE readable on SENSITIVE key -- key material exposed"
-                    ),
-                )
+            assert CKA_VALUE not in attrs, (
+                "SECURITY: CKA_VALUE readable on SENSITIVE key -- key material exposed"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -348,68 +298,16 @@ class TestSensitiveExtraction:
                 priv_h,
                 [CKA_SENSITIVE, CKA_EXTRACTABLE],
             )
-            sensitive_raw = attr_or_record(
-                policy_attrs,
-                CKA_SENSITIVE,
-                label="RSA private-key CKA_SENSITIVE readback",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            sensitive_value: Any
-            if sensitive_raw is MISSING_ATTRIBUTE:
-                sensitive_value = None
-            else:
-                sensitive_value = sensitive_raw
-            extractable_raw = attr_or_record(
-                policy_attrs,
-                CKA_EXTRACTABLE,
-                label="RSA private-key CKA_EXTRACTABLE readback",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            extractable_value: Any
-            if extractable_raw is MISSING_ATTRIBUTE:
-                extractable_value = None
-            else:
-                extractable_value = extractable_raw
-            sensitive_shown = _readback_repr(sensitive_raw)
-            extractable_shown = _readback_repr(extractable_raw)
+            sensitive_value = policy_attrs.get(CKA_SENSITIVE)
+            extractable_value = policy_attrs.get(CKA_EXTRACTABLE)
             sensitive_claimed = sensitive_value is True
             non_extractable_claimed = extractable_value is False
-            # Absence is already an emitted observation (the attr_or_record() calls
-            # above): only a PRESENT-but-malformed value is recorded again here, so
-            # one provider omission yields exactly one record.
-            policy_readback_malformed = (
-                sensitive_raw is not MISSING_ATTRIBUTE and type(sensitive_value) is not bool
-            ) or (extractable_raw is not MISSING_ATTRIBUTE and type(extractable_value) is not bool)
-            exponent_attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
-            # CKA_PRIVATE_EXPONENT is the protected secret this test probes for exposure.
-            # It legitimately CAN be sensitive (it is the private-key component this whole
-            # test is about), so a clean CKR_ATTRIBUTE_SENSITIVE refusal here is conformant,
-            # not a deviation -- sensitive_is_conformant=True lets attr_or_record record it
-            # that way. A missing CKR (silent omission) or CKR_ATTRIBUTE_TYPE_INVALID is
-            # still a deviation via `reason`. Previously this branch bypassed attr_or_record
-            # entirely via a membership guard, so a correctly-protected key produced ZERO
-            # report.jsonl record for this absence (N16) -- calling attr_or_record
-            # unconditionally makes the absence visible without changing which case is
-            # conformant vs. a deviation.
-            exponent_raw = attr_or_record(
-                exponent_attrs,
-                CKA_PRIVATE_EXPONENT,
-                label="RSA private-key CKA_PRIVATE_EXPONENT readback",
-                reason="honest_deviation",
-                kind="metadata",
-                inherit_mechanism=False,
-                sensitive_is_conformant=True,
+            policy_readback_valid = (
+                type(sensitive_value) is bool and type(extractable_value) is bool
             )
-            exponent_value: Any
-            if exponent_raw is MISSING_ATTRIBUTE:
-                exponent_value = None
-            else:
-                exponent_value = exponent_raw
-            exponent_returned = exponent_raw is not MISSING_ATTRIBUTE
+            exponent_attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
+            exponent_value = exponent_attrs.get(CKA_PRIVATE_EXPONENT)
+            exponent_returned = CKA_PRIVATE_EXPONENT in exponent_attrs
             exponent_readback_valid = type(exponent_value) is bytes and bool(exponent_value)
 
             if exponent_readback_valid and (sensitive_claimed or non_extractable_claimed):
@@ -420,21 +318,21 @@ class TestSensitiveExtraction:
                     operation="C_GetAttributeValue",
                     summary=(
                         "SECURITY: RSA private exponent is readable while the same key "
-                        f"reports CKA_SENSITIVE={sensitive_shown} and "
-                        f"CKA_EXTRACTABLE={extractable_shown}"
+                        f"reports CKA_SENSITIVE={sensitive_value!r} and "
+                        f"CKA_EXTRACTABLE={extractable_value!r}"
                     ),
                 )
 
-            if policy_readback_malformed:
+            if not policy_readback_valid:
                 classify(
                     "honest_deviation",
                     kind="metadata",
-                    label="RSA private-key protection attributes malformed",
+                    label="RSA private-key protection attributes unreadable or malformed",
                     operation="C_GetAttributeValue",
                     summary=(
-                        "RSA private-key protection readback returned a malformed value: "
-                        f"CKA_SENSITIVE={sensitive_shown}, "
-                        f"CKA_EXTRACTABLE={extractable_shown}; private exponent returned="
+                        "RSA private-key protection readback is incomplete or malformed: "
+                        f"CKA_SENSITIVE={sensitive_value!r}, "
+                        f"CKA_EXTRACTABLE={extractable_value!r}; private exponent returned="
                         f"{exponent_returned!r}"
                     ),
                 )
@@ -447,16 +345,16 @@ class TestSensitiveExtraction:
                     operation="C_GetAttributeValue",
                     summary=(
                         "RSA private exponent readback is empty or malformed: "
-                        f"{exponent_value!r}; CKA_SENSITIVE={sensitive_shown}, "
-                        f"CKA_EXTRACTABLE={extractable_shown}"
+                        f"{exponent_value!r}; CKA_SENSITIVE={sensitive_value!r}, "
+                        f"CKA_EXTRACTABLE={extractable_value!r}"
                     ),
                 )
 
             if exponent_readback_valid and not (sensitive_claimed or non_extractable_claimed):
                 note(
                     "RSA private exponent is readable; the same key reports no protective "
-                    f"claim (CKA_SENSITIVE={sensitive_shown}, "
-                    f"CKA_EXTRACTABLE={extractable_shown}), so this is "
+                    f"claim (CKA_SENSITIVE={sensitive_value!r}, "
+                    f"CKA_EXTRACTABLE={extractable_value!r}), so this is "
                     "a token-posture observation rather than a provider contradiction.",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 CKA_SENSITIVE/CKA_EXTRACTABLE attribute semantics",
@@ -465,8 +363,8 @@ class TestSensitiveExtraction:
                 note(
                     "RSA private-exponent exposure was not observed through "
                     "C_GetAttributeValue; same-key "
-                    f"CKA_SENSITIVE={sensitive_shown}, "
-                    f"CKA_EXTRACTABLE={extractable_shown} protective attributes "
+                    f"CKA_SENSITIVE={sensitive_value!r}, "
+                    f"CKA_EXTRACTABLE={extractable_value!r} protective attributes "
                     "remain consistent with an unavailable private exponent.",
                     ComplianceLevel.STANDARD,
                     reference="PKCS#11 CKA_SENSITIVE/CKA_EXTRACTABLE attribute semantics",
@@ -475,8 +373,8 @@ class TestSensitiveExtraction:
                 note(
                     "RSA private-exponent exposure was not observed through "
                     "C_GetAttributeValue; same-key "
-                    f"CKA_SENSITIVE={sensitive_shown}, "
-                    f"CKA_EXTRACTABLE={extractable_shown} attributes remain a "
+                    f"CKA_SENSITIVE={sensitive_value!r}, "
+                    f"CKA_EXTRACTABLE={extractable_value!r} attributes remain a "
                     "token-posture observation, not proof of protection.",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 CKA_SENSITIVE/CKA_EXTRACTABLE attribute semantics",
@@ -553,22 +451,7 @@ class TestAttributeLaunderingViaCopy:
             # CKA_EXTRACTABLE=False (the module honored the protection); violated
             # = the escalated copy actually exposes CKA_VALUE.
             orig = read_attributes(rs.raw, rs.sh, key_h, [CKA_EXTRACTABLE])
-            orig_extractable_raw = attr_or_record(
-                orig,
-                CKA_EXTRACTABLE,
-                label="C_CopyObject source CKA_EXTRACTABLE readback",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            claimed: bool
-            if orig_extractable_raw is MISSING_ATTRIBUTE:
-                # Creation-time acceptance of the CKA_EXTRACTABLE=False template is
-                # independent claim evidence; an unreadable readback must not
-                # downgrade a proven escalation-plus-exposure to an xfail.
-                claimed = True
-            else:
-                claimed = orig_extractable_raw is False
+            claimed = orig.get(CKA_EXTRACTABLE) is False
             try:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: True})
                 try:
@@ -600,12 +483,8 @@ class TestAttributeLaunderingViaCopy:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
                 try:
                     attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    # Membership is resolved into a plain bool *before* branching (the
-                    # `in` test itself is safe): CKA_VALUE correctly absent needs no
-                    # record, and there is no absence branch left to fabricate a value.
-                    value_present = CKA_VALUE in attrs
-                    if value_present:
-                        fail_as(
+                    if CKA_VALUE in attrs:
+                        classify(
                             "self_contradiction",
                             kind="policy",
                             label="CKA_SENSITIVE downgrade via C_CopyObject",
@@ -633,17 +512,7 @@ class TestKeyUsageRestrictions:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_ENCRYPT])
-            encrypt_value = attr_or_record(
-                attrs,
-                CKA_ENCRYPT,
-                label="CKA_ENCRYPT=False readback",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            if encrypt_value is MISSING_ATTRIBUTE:
-                return
-            assert encrypt_value is False
+            assert attrs[CKA_ENCRYPT] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -656,21 +525,9 @@ class TestKeyUsageRestrictions:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
-            # Membership is resolved into a plain bool *before* branching (the `in`
-            # test itself is safe): CKA_VALUE correctly absent needs no record, and
-            # there is no absence branch left to fabricate a value.
-            value_present = CKA_VALUE in attrs
-            if value_present:
-                fail_as(
-                    "self_contradiction",
-                    kind="policy",
-                    label="CKA_VALUE readable on non-extractable key",
-                    operation="C_GetAttributeValue",
-                    summary=(
-                        "SECURITY: CKA_VALUE readable on non-extractable key -- "
-                        "key material exposed"
-                    ),
-                )
+            assert CKA_VALUE not in attrs, (
+                "SECURITY: CKA_VALUE readable on non-extractable key -- key material exposed"
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -688,28 +545,8 @@ class TestKeyUsageRestrictions:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_DECRYPT, CKA_ENCRYPT])
-            decrypt_value = attr_or_record(
-                attrs,
-                CKA_DECRYPT,
-                label="CKA_DECRYPT=True readback (decrypt-only key)",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            # Each attribute is an independent check on the same key: a missing
-            # CKA_DECRYPT readback must not suppress the CKA_ENCRYPT check below.
-            if decrypt_value is not MISSING_ATTRIBUTE:
-                assert decrypt_value is True
-            encrypt_value = attr_or_record(
-                attrs,
-                CKA_ENCRYPT,
-                label="CKA_ENCRYPT=False readback (decrypt-only key)",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            if encrypt_value is not MISSING_ATTRIBUTE:
-                assert encrypt_value is False
+            assert attrs[CKA_DECRYPT] is True
+            assert attrs[CKA_ENCRYPT] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 

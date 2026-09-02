@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check import classification
 from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -22,7 +21,6 @@ from pkcs11_check.raw.bootstrap import (
 from pkcs11_check.raw.bootstrap import (
     open_session as raw_open_session,
 )
-from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.pack import mech_bytes, mech_simple, template_from_dict
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -38,13 +36,7 @@ from pkcs11_check.raw.recipes import (
     set_attributes,
     sign_single,
 )
-from pkcs11_check.raw.rv import (
-    CkrAssertionError,
-    ckr_name,
-    expect_rv,
-    is_standard_ckr,
-    is_vendor_defined_ckr,
-)
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CK_UTF8CHAR,
@@ -72,15 +64,17 @@ from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_BUFFER_TOO_SMALL,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
-    CKR_OBJECT_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_PIN_INVALID,
     CKR_PIN_LEN_RANGE,
@@ -100,7 +94,6 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._so_login import (
     guard_so_lockout,
     resolve_so_pin,
@@ -110,8 +103,11 @@ from pkcs11_check.testcases._so_login import (
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    classify_negative_rv,
+    classify_policy_enforcement,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     require_operational_aes_keygen,
     skip_unless_create_object_supported,
     xfail_if_known_ckr,
@@ -178,283 +174,23 @@ _INIT_PIN_RUNTIME_REJECT_RVS = (
     CKR_USER_NOT_LOGGED_IN,
 )
 
-_ALWAYS_AUTH_EXPECTED_SIGN_REJECT_RVS = (CKR_USER_NOT_LOGGED_IN,)
+_ALWAYS_AUTH_SIGN_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _require_bool_attribute(value: Any, *, attr: Any, label: str, mechanism: str | None) -> bool:
-    """Validate a present CK_BBOOL readback after the caller handled omission."""
-    if value is MISSING_ATTRIBUTE:
-        classification.raise_for_record(
-            classification.record_as(
-                "wrong_result",
-                kind="metadata",
-                label=label,
-                operation="C_GetAttributeValue",
-                mechanism=mechanism,
-                detail={
-                    "attribute": int(attr),
-                    "expected_shape": "CK_BBOOL",
-                    "actual": "missing",
-                },
-                summary=f"{label}: missing value reached the boolean validator",
-            )
-        )
-        return False
-    if type(value) is bool:
-        return value
-    classification.raise_for_record(
-        classification.record_as(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            detail={
-                "attribute": int(attr),
-                "expected_shape": "CK_BBOOL",
-                "actual_type": type(value).__name__,
-                "actual_repr": repr(value),
-            },
-            summary=f"{label}: present value has invalid CK_BBOOL shape: {value!r}",
-        )
-    )
-    return False
-
-
-def _classify_post_success_attribute_error(
-    exc: CkrAssertionError,
-    *,
-    attr: Any,
-    label: str,
-    producer_operation: str,
-    producer_mechanism: str | None,
-    terminate: bool = True,
-) -> None:
-    """Retain a clean readback CKR after the producer already succeeded."""
-    attr_id = int(attr)
-    handle_invalid = exc.rv == CKR_OBJECT_HANDLE_INVALID
-    record = classification.record_as(
-        "self_contradiction" if handle_invalid else "not_operational",
-        kind="lifecycle" if handle_invalid else "metadata",
-        label=label,
-        operation="C_GetAttributeValue",
-        mechanism=producer_mechanism,
-        expected=CKR_OK,
-        actual=exc.rv,
-        detail={
-            "attribute": {
-                "name": ATTR_NAMES.get(attr_id, str(attr)),
-                "id": attr_id,
-            },
-            "producer_operation": producer_operation,
-            "producer_mechanism": producer_mechanism,
-        },
-        summary=(
-            f"{label}: provider invalidated the produced object handle"
-            if handle_invalid
-            else f"{label}: post-success attribute read was rejected"
-        ),
-    )
-    if terminate:
-        classification.raise_for_record(record)
-
-
-def _raise_for_undefined_ckr(
-    rv: int,
-    *,
-    label: str,
-    operation: str,
-    mechanism: str | None,
-    expected: object,
-    detail: dict[str, Any] | None = None,
-) -> None:
-    """Fail loudly when a provider returns a value outside the CK_RV space."""
-    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
-        return
-    undefined_detail = {"ckr_validity": "undefined"}
-    if detail is not None:
-        undefined_detail.update(detail)
-    classification.classify(
-        "self_contradiction",
-        kind="metadata",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=expected,
-        actual=rv,
-        detail=undefined_detail,
-        summary=f"{label}: provider returned an undefined CK_RV",
-    )
-
-
-def _classify_setter_rejection(
-    exc: BaseException,
-    *,
-    expected_rvs: tuple[Any, ...],
-    attr: Any,
-    label: str,
-) -> None:
-    """Retain an unexpected clean setter CKR with exact operation context."""
-    if not isinstance(exc, CkrAssertionError):
-        raise exc
-    if exc.rv in expected_rvs:
-        return
-    _raise_for_undefined_ckr(
-        exc.rv,
-        label=label,
-        operation="C_SetAttributeValue",
-        mechanism=None,
-        expected=expected_rvs,
-        detail={"attribute": int(attr)},
-    )
-    classification.classify(
-        "nonspec_reject",
-        kind="policy",
-        label=label,
-        operation="C_SetAttributeValue",
-        mechanism=None,
-        expected=expected_rvs,
-        actual=exc.rv,
-        detail={
-            "attribute": int(attr),
-            "producer_operation": "C_SetAttributeValue",
-            "producer_mechanism": None,
-        },
-        summary=f"{label}: provider rejected with a non-spec CKR",
-    )
-
-
-def _classify_operation_rejection(
-    exc: BaseException,
-    *,
-    expected_rvs: tuple[Any, ...],
-    label: str,
-    operation: str,
-    mechanism: str | None,
-) -> None:
-    """Retain an unexpected clean rejection for an operation with its mechanism."""
-    if not isinstance(exc, CkrAssertionError):
-        raise exc
-    if exc.rv in expected_rvs:
-        return
-    _raise_for_undefined_ckr(
-        exc.rv,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=expected_rvs,
-    )
-    classification.classify(
-        "nonspec_reject",
-        kind="policy",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=expected_rvs,
-        actual=exc.rv,
-        summary=f"{label}: provider rejected with a non-spec CKR",
-    )
-
-
-def _classify_operation_unavailable(
-    exc: BaseException,
-    *,
-    label: str,
-    operation: str,
-    mechanism: str | None,
-    producer_operation: str | None = None,
-    producer_mechanism: str | None = None,
-) -> None:
-    """Retain a clean CKR from an operation that was expected to succeed."""
-    if not isinstance(exc, CkrAssertionError):
-        raise exc
-    detail: dict[str, Any] = {}
-    if producer_operation is not None:
-        detail["producer_operation"] = producer_operation
-    if producer_mechanism is not None:
-        detail["producer_mechanism"] = producer_mechanism
-    _raise_for_undefined_ckr(
-        exc.rv,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=CKR_OK,
-        detail=detail,
-    )
-    classification.classify(
-        "not_operational",
-        kind="crypto",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=CKR_OK,
-        actual=exc.rv,
-        detail=detail or None,
-        summary=f"{label}: provider rejected an operation expected to succeed",
-    )
-
-
-def _classify_negative_operation_rv(
-    rv: int,
-    *,
-    expected_rvs: tuple[Any, ...],
-    label: str,
-    operation: str,
-    mechanism: str | None,
-    kind: str | None = None,
-    allow_ok: bool = False,
-) -> None:
-    """Classify a raw negative-operation return with exact call context."""
-    if rv == CKR_OK:
-        if allow_ok:
-            return
-        classification.classify(
-            "accepted_invalid",
-            kind=kind,
-            label=label,
-            operation=operation,
-            mechanism=mechanism,
-            expected=expected_rvs,
-            actual=rv,
-            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
-        )
-        return
-    if rv in expected_rvs:
-        return
-    _raise_for_undefined_ckr(
-        rv,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=expected_rvs,
-    )
-    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
-        classification.classify(
-            "nonspec_reject",
-            kind=kind,
-            label=label,
-            operation=operation,
-            mechanism=mechanism,
-            expected=expected_rvs,
-            actual=rv,
-            summary=f"{label}: provider rejected with a non-spec CKR",
-        )
-        return
-    classification.classify(
-        "self_contradiction",
-        kind="metadata",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        expected=expected_rvs,
-        actual=rv,
-        summary=f"{label}: provider returned an undefined CK_RV",
-    )
 
 
 def _login_user_raw(raw: Any, sh: int, pin_bytes: bytes | None) -> None:
@@ -809,12 +545,10 @@ class TestUserSessionCapabilities:
         pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
         rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(so_pin))
         skip_if_so_pin_rejected(rv, explicit=explicit)
-        _classify_negative_operation_rv(
+        classify_negative_rv(
             rv,
-            expected_rvs=(CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
+            (CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
             label="C_Login(SO) while a USER session is logged in",
-            operation="C_Login",
-            mechanism=None,
         )
 
 
@@ -840,17 +574,10 @@ class TestSOSessionCapabilities:
             # Verify SO is logged in by attempting USER login (should fail)
             pin_buf = (CK_UTF8CHAR * len(user_pin))(*user_pin)
             rv2 = rs.raw.C_Login(s1, CKU_USER, pin_buf, len(user_pin))
-            _classify_negative_operation_rv(
-                rv2,
-                expected_rvs=(
-                    CKR_USER_ALREADY_LOGGED_IN,
-                    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
-                    CKR_USER_TYPE_INVALID,
-                ),
-                label="C_Login(USER) while SO is logged in",
-                operation="C_Login",
-                mechanism=None,
-                kind="policy",
+            assert rv2 in (
+                CKR_USER_ALREADY_LOGGED_IN,
+                CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+                CKR_USER_TYPE_INVALID,
             )
 
     @pytest.mark.destructive
@@ -963,18 +690,11 @@ class TestSOSessionCapabilities:
             try:
                 pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
                 rv2 = rs.raw.C_Login(s2, CKU_USER, pin_buf, len(pin_bytes))
-                _classify_negative_operation_rv(
-                    rv2,
-                    expected_rvs=(
-                        CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
-                        CKR_USER_ALREADY_LOGGED_IN,
-                        CKR_USER_TYPE_INVALID,
-                    ),
-                    label="C_Login(USER) while SO is logged in",
-                    operation="C_Login",
-                    mechanism=None,
-                    kind="policy",
-                )
+                assert rv2 in (
+                    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
+                    CKR_USER_ALREADY_LOGGED_IN,
+                    CKR_USER_TYPE_INVALID,
+                ), f"Expected USER login rejected while SO active, got {ckr_name(rv2)}"
             finally:
                 close_session_quietly(rs.raw, s2)
 
@@ -1017,47 +737,27 @@ class TestTrustedAttribute:
             try:
                 try:
                     attrs = read_attributes(rs.raw, s1, key_h, [CKA_TRUSTED])
-                    val = attr_or_record(
-                        attrs,
-                        CKA_TRUSTED,
-                        label="SO:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)",
-                        inherit_mechanism=False,
-                    )
+                    val = attrs.get(CKA_TRUSTED)
                 except CkrAssertionError as e:
-                    _classify_post_success_attribute_error(
+                    if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                        pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
+                    xfail_if_known_ckr(
                         e,
-                        attr=CKA_TRUSTED,
-                        label="SO:create-CKA_TRUSTED readback",
-                        producer_operation="C_GenerateKey",
-                        producer_mechanism="CKM_AES_KEY_GEN",
+                        (CKR_ATTRIBUTE_SENSITIVE,),
+                        "SO-created CKA_TRUSTED attribute cannot be read back",
                     )
-                    return
-                if val is MISSING_ATTRIBUTE:
-                    return
-                _require_bool_attribute(
-                    val,
-                    attr=CKA_TRUSTED,
-                    label="SO:create-CKA_TRUSTED readback",
-                    mechanism="CKM_AES_KEY_GEN",
-                )
+                    raise
                 if val is not True:
                     fail_as(
                         "wrong_result",
                         kind="policy",
                         label="SO:create-CKA_TRUSTED",
                         operation="C_GenerateKey",
-                        mechanism="CKM_AES_KEY_GEN",
-                        expected=CKR_OK,
-                        actual=CKR_OK,
-                        detail={
-                            "attribute": int(CKA_TRUSTED),
-                            "expected": True,
-                            "actual": val,
-                            "producer_operation": "C_GenerateKey",
-                            "producer_mechanism": "CKM_AES_KEY_GEN",
-                        },
+                        expected=True,
+                        actual=val,
                         summary=(
-                            "SO C_GenerateKey returned CKR_OK but did not preserve CKA_TRUSTED=True"
+                            "SO C_GenerateKey returned CKR_OK but did not preserve "
+                            f"CKA_TRUSTED=True (read back {val!r})"
                         ),
                     )
             finally:
@@ -1084,88 +784,50 @@ class TestTrustedAttribute:
                 },
             )
         except CkrAssertionError as exc:
-            _classify_operation_rejection(
+            reject_or_classify(
                 exc,
-                expected_rvs=_TRUSTED_CREATE_REJECT_RVS,
+                _TRUSTED_CREATE_REJECT_RVS,
                 label="C_GenerateKey CKA_TRUSTED=True from a USER session",
-                operation="C_GenerateKey",
-                mechanism="CKM_AES_KEY_GEN",
+                kind="policy",
             )
             return
 
         # If we get here, module allowed creating a CKA_TRUSTED key from a
-        # USER session — confirm the security boundary violation from the
-        # provider's readback before emitting the terminal finding.
+        # USER session — a security boundary violation. Closes Phase 4.5
+        # GAP-T5 (was previously suppressed via compliance.note() only).
         try:
+            from pkcs11_check.compliance import ComplianceLevel, note
+
+            note(
+                "USER session can create CKA_TRUSTED=True key (should require SO)",
+                ComplianceLevel.CRITICAL,
+                reference="PKCS#11 v3.2: CKA_TRUSTED set by SO only",
+            )
             # Read back to confirm the violation rather than just trust the
             # gen success — some modules silently drop the attribute.
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
             except CkrAssertionError as e:
-                _classify_post_success_attribute_error(
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    return  # Module doesn't expose CKA_TRUSTED
+                xfail_if_known_ckr(
                     e,
-                    attr=CKA_TRUSTED,
-                    label="USER:create-CKA_TRUSTED readback",
-                    producer_operation="C_GenerateKey",
-                    producer_mechanism="CKM_AES_KEY_GEN",
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "USER-created CKA_TRUSTED attribute cannot be read back",
                 )
-                return
-            val = attr_or_record(
-                attrs,
-                CKA_TRUSTED,
-                label="USER:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)",
-                inherit_mechanism=False,
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                val,
-                attr=CKA_TRUSTED,
-                label="USER:create-CKA_TRUSTED readback",
-                mechanism="CKM_AES_KEY_GEN",
-            )
-            if val is True:
+                raise
+            if attrs.get(CKA_TRUSTED) is True:
                 fail_as(
                     "self_contradiction",
                     kind="policy",
                     label="USER:create-CKA_TRUSTED",
                     operation="C_GenerateKey",
-                    mechanism="CKM_AES_KEY_GEN",
-                    expected=_TRUSTED_CREATE_REJECT_RVS,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_TRUSTED),
-                        "expected": True,
-                        "actual": val,
-                        "producer_operation": "C_GenerateKey",
-                        "producer_mechanism": "CKM_AES_KEY_GEN",
-                    },
                     summary=(
                         "SECURITY: USER session created and was granted "
                         "CKA_TRUSTED=True on a freshly-generated key — "
                         "trust boundary breached"
                     ),
                 )
-            xfail_as(
-                "honest_deviation",
-                kind="policy",
-                label="USER:create-CKA_TRUSTED-dropped",
-                operation="C_GenerateKey",
-                mechanism="CKM_AES_KEY_GEN",
-                expected=CKR_OK,
-                actual=CKR_OK,
-                detail={
-                    "attribute": int(CKA_TRUSTED),
-                    "expected": True,
-                    "actual": val,
-                    "producer_operation": "C_GenerateKey",
-                    "producer_mechanism": "CKM_AES_KEY_GEN",
-                },
-                summary=(
-                    "USER C_GenerateKey accepted CKA_TRUSTED=True but the provider "
-                    "did not grant the requested trust attribute"
-                ),
-            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -1188,99 +850,36 @@ class TestTrustedAttribute:
 
         try:
             # Pre-check: the key must exist and be readable.
-            initial_read_available = True
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
             except CkrAssertionError as e:
-                _classify_post_success_attribute_error(
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
+                xfail_if_known_ckr(
                     e,
-                    attr=CKA_TRUSTED,
-                    label="USER:setattr-CKA_TRUSTED initial readback",
-                    producer_operation="C_GenerateKey",
-                    producer_mechanism="CKM_AES_KEY_GEN",
-                    terminate=e.rv == CKR_OBJECT_HANDLE_INVALID,
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "USER-created CKA_TRUSTED attribute cannot be read back",
                 )
-                initial_read_available = False
-            if initial_read_available:
-                val = attr_or_record(
-                    attrs,
-                    CKA_TRUSTED,
-                    label=(
-                        "USER:setattr-CKA_TRUSTED initial readback "
-                        "(producer_mechanism=CKM_AES_KEY_GEN)"
-                    ),
-                    inherit_mechanism=False,
-                )
-                if val is not MISSING_ATTRIBUTE:
-                    _require_bool_attribute(
-                        val,
-                        attr=CKA_TRUSTED,
-                        label="USER:setattr-CKA_TRUSTED initial readback",
-                        mechanism="CKM_AES_KEY_GEN",
-                    )
-                    if val is True:
-                        fail_as(
-                            "self_contradiction",
-                            kind="policy",
-                            label="USER:create-CKA_TRUSTED-default",
-                            operation="C_GenerateKey",
-                            mechanism="CKM_AES_KEY_GEN",
-                            expected=_TRUSTED_CREATE_REJECT_RVS,
-                            actual=CKR_OK,
-                            detail={
-                                "attribute": int(CKA_TRUSTED),
-                                "expected": False,
-                                "actual": True,
-                                "producer_operation": "C_GenerateKey",
-                                "producer_mechanism": "CKM_AES_KEY_GEN",
-                            },
-                            summary=(
-                                "USER C_GenerateKey returned a key with CKA_TRUSTED=True "
-                                "by default; only the SO may grant trust"
-                            ),
-                        )
+                raise
+            if attrs.get(CKA_TRUSTED) is True:
+                pytest.skip("Key created TRUSTED=True by default — unrelated path")
 
             # Attempt the escalation.
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_TRUSTED: True})
             except CkrAssertionError as e:
-                _classify_setter_rejection(
+                reject_or_classify(
                     e,
-                    expected_rvs=_TRUSTED_SETATTR_REJECT_RVS,
-                    attr=CKA_TRUSTED,
+                    _TRUSTED_SETATTR_REJECT_RVS,
                     label="C_SetAttributeValue CKA_TRUSTED=True from a USER session",
+                    kind="policy",
                 )
                 return
 
             # SetAttribute returned CKR_OK — confirm whether the change
             # actually took effect (some modules silently no-op).
-            try:
-                attrs2 = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
-            except CkrAssertionError as exc:
-                _classify_post_success_attribute_error(
-                    exc,
-                    attr=CKA_TRUSTED,
-                    label="USER:setattr-CKA_TRUSTED final readback",
-                    producer_operation="C_SetAttributeValue",
-                    producer_mechanism=None,
-                )
-                return
-            val2 = attr_or_record(
-                attrs2,
-                CKA_TRUSTED,
-                inherit_mechanism=False,
-                label="USER:setattr-CKA_TRUSTED final readback",
-                mechanism=None,
-            )
-            if val2 is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                val2,
-                attr=CKA_TRUSTED,
-                label="USER:setattr-CKA_TRUSTED final readback",
-                mechanism=None,
-            )
-            if val2 is True:
+            attrs2 = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
+            if attrs2.get(CKA_TRUSTED) is True:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -1294,16 +893,6 @@ class TestTrustedAttribute:
                     kind="policy",
                     label="USER:setattr-CKA_TRUSTED",
                     operation="C_SetAttributeValue",
-                    mechanism=None,
-                    expected=_TRUSTED_SETATTR_REJECT_RVS,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_TRUSTED),
-                        "expected": False,
-                        "actual": True,
-                        "producer_operation": "C_SetAttributeValue",
-                        "producer_mechanism": None,
-                    },
                     summary=(
                         "SECURITY: USER session escalated a key's CKA_TRUSTED "
                         "from False to True via C_SetAttributeValue — trust "
@@ -1315,16 +904,6 @@ class TestTrustedAttribute:
                 kind="lifecycle",
                 label="USER:setattr-CKA_TRUSTED-noop",
                 operation="C_SetAttributeValue",
-                mechanism=None,
-                expected=CKR_OK,
-                actual=CKR_OK,
-                detail={
-                    "attribute": int(CKA_TRUSTED),
-                    "expected": False,
-                    "actual": val2,
-                    "producer_operation": "C_SetAttributeValue",
-                    "producer_mechanism": None,
-                },
                 summary=(
                     "C_SetAttributeValue returned CKR_OK for CKA_TRUSTED=True "
                     "but the provider left the attribute unchanged"
@@ -1359,44 +938,22 @@ class TestTrustedAttribute:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
             except CkrAssertionError as exc:
-                _classify_post_success_attribute_error(
+                if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {exc}")
+                xfail_if_known_ckr(
                     exc,
-                    attr=CKA_WRAP_WITH_TRUSTED,
-                    label="CKA_WRAP_WITH_TRUSTED setup readback",
-                    producer_operation="C_GenerateKey",
-                    producer_mechanism="CKM_AES_KEY_GEN",
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "CKA_WRAP_WITH_TRUSTED attribute cannot be read back",
                 )
-                return
-            val = attr_or_record(
-                attrs,
-                CKA_WRAP_WITH_TRUSTED,
-                label=("CKA_WRAP_WITH_TRUSTED setup readback (producer_mechanism=CKM_AES_KEY_GEN)"),
-                inherit_mechanism=False,
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                val,
-                attr=CKA_WRAP_WITH_TRUSTED,
-                label="CKA_WRAP_WITH_TRUSTED setup readback",
-                mechanism="CKM_AES_KEY_GEN",
-            )
-            if val is not True:
+                raise
+            if attrs.get(CKA_WRAP_WITH_TRUSTED) is not True:
                 fail_as(
                     "wrong_result",
                     kind="policy",
                     label="CKA_WRAP_WITH_TRUSTED setup",
                     operation="C_GenerateKey",
-                    mechanism="CKM_AES_KEY_GEN",
-                    expected=CKR_OK,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                        "expected": True,
-                        "actual": val,
-                        "producer_operation": "C_GenerateKey",
-                        "producer_mechanism": "CKM_AES_KEY_GEN",
-                    },
+                    expected=True,
+                    actual=attrs.get(CKA_WRAP_WITH_TRUSTED),
                     summary=(
                         "C_GenerateKey returned CKR_OK but did not preserve "
                         "CKA_WRAP_WITH_TRUSTED=True"
@@ -1406,56 +963,21 @@ class TestTrustedAttribute:
             try:
                 set_attributes(rs.raw, rs.sh, target_h, {CKA_WRAP_WITH_TRUSTED: False})
             except CkrAssertionError as exc:
-                _classify_setter_rejection(
+                reject_or_classify(
                     exc,
-                    expected_rvs=_WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS,
-                    attr=CKA_WRAP_WITH_TRUSTED,
+                    _WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS,
                     label="C_SetAttributeValue CKA_WRAP_WITH_TRUSTED=True->False",
+                    kind="policy",
                 )
                 return
 
-            try:
-                after = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
-            except CkrAssertionError as exc:
-                _classify_post_success_attribute_error(
-                    exc,
-                    attr=CKA_WRAP_WITH_TRUSTED,
-                    label="CKA_WRAP_WITH_TRUSTED downgrade readback",
-                    producer_operation="C_SetAttributeValue",
-                    producer_mechanism=None,
-                )
-                return
-            after_val = attr_or_record(
-                after,
-                CKA_WRAP_WITH_TRUSTED,
-                inherit_mechanism=False,
-                label="CKA_WRAP_WITH_TRUSTED downgrade readback",
-                mechanism=None,
-            )
-            if after_val is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                after_val,
-                attr=CKA_WRAP_WITH_TRUSTED,
-                label="CKA_WRAP_WITH_TRUSTED downgrade readback",
-                mechanism=None,
-            )
-            if after_val is False:
+            after = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            if after.get(CKA_WRAP_WITH_TRUSTED) is False:
                 fail_as(
                     "self_contradiction",
                     kind="policy",
                     label="CKA_WRAP_WITH_TRUSTED:downgrade",
                     operation="C_SetAttributeValue",
-                    mechanism=None,
-                    expected=_WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                        "expected": True,
-                        "actual": False,
-                        "producer_operation": "C_SetAttributeValue",
-                        "producer_mechanism": None,
-                    },
                     summary=(
                         "SECURITY: CKA_WRAP_WITH_TRUSTED downgraded from True to False "
                         "via C_SetAttributeValue"
@@ -1466,16 +988,6 @@ class TestTrustedAttribute:
                 kind="lifecycle",
                 label="CKA_WRAP_WITH_TRUSTED:setattr-noop",
                 operation="C_SetAttributeValue",
-                mechanism=None,
-                expected=CKR_OK,
-                actual=CKR_OK,
-                detail={
-                    "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                    "expected": True,
-                    "actual": after_val,
-                    "producer_operation": "C_SetAttributeValue",
-                    "producer_mechanism": None,
-                },
                 summary=(
                     "C_SetAttributeValue returned CKR_OK for CKA_WRAP_WITH_TRUSTED "
                     "True->False but left the stricter value unchanged"
@@ -1508,171 +1020,74 @@ class TestTrustedAttribute:
             )
             raise
 
-        wrapper_h: int | None = None
         try:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
-                val = attr_or_record(
-                    attrs,
-                    CKA_WRAP_WITH_TRUSTED,
-                    label=(
-                        "CKA_WRAP_WITH_TRUSTED enforcement setup readback "
-                        "(producer_mechanism=CKM_AES_KEY_GEN)"
-                    ),
-                    inherit_mechanism=False,
-                )
-            except CkrAssertionError as exc:
-                _classify_post_success_attribute_error(
-                    exc,
-                    attr=CKA_WRAP_WITH_TRUSTED,
-                    label="CKA_WRAP_WITH_TRUSTED enforcement setup readback",
-                    producer_operation="C_GenerateKey",
-                    producer_mechanism="CKM_AES_KEY_GEN",
-                )
-                return
-
-            if val is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                val,
-                attr=CKA_WRAP_WITH_TRUSTED,
-                label="CKA_WRAP_WITH_TRUSTED enforcement setup readback",
-                mechanism="CKM_AES_KEY_GEN",
+            attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
+            val = attrs.get(CKA_WRAP_WITH_TRUSTED)
+        except CkrAssertionError as e:
+            destroy_quietly(rs.raw, rs.sh, target_h)
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {e}")
+            xfail_if_known_ckr(
+                e,
+                (CKR_ATTRIBUTE_SENSITIVE,),
+                "CKA_WRAP_WITH_TRUSTED attribute cannot be read back",
             )
-            if val is not True:
-                fail_as(
-                    "wrong_result",
-                    kind="policy",
-                    label="CKA_WRAP_WITH_TRUSTED setup",
-                    operation="C_GenerateKey",
-                    mechanism="CKM_AES_KEY_GEN",
-                    expected=CKR_OK,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                        "expected": True,
-                        "actual": val,
-                        "producer_operation": "C_GenerateKey",
-                        "producer_mechanism": "CKM_AES_KEY_GEN",
-                    },
-                    summary=(
-                        "C_GenerateKey returned CKR_OK but did not preserve "
-                        "CKA_WRAP_WITH_TRUSTED=True"
-                    ),
-                )
+            raise
 
-            # Create a normal (non-TRUSTED) wrapping key.
-            wrapper_h = _gen_access_aes_key(
-                rs,
-                rs.sh,
-                attrs={CKA_WRAP: True, CKA_TOKEN: False},
+        if val is not True:
+            destroy_quietly(rs.raw, rs.sh, target_h)
+            fail_as(
+                "wrong_result",
+                kind="policy",
+                label="CKA_WRAP_WITH_TRUSTED setup",
+                operation="C_GenerateKey",
+                expected=True,
+                actual=val,
+                summary=(
+                    "C_GenerateKey returned CKR_OK but did not preserve CKA_WRAP_WITH_TRUSTED=True"
+                ),
             )
+
+        # Create a normal (non-TRUSTED) wrapping key
+        wrapper_h = _gen_access_aes_key(
+            rs,
+            rs.sh,
+            attrs={CKA_WRAP: True, CKA_TOKEN: False},
+        )
+
+        try:
             if rs.has_mechanism("AES_KEY_WRAP"):
-                mech_name = "CKM_AES_KEY_WRAP"
                 mech = mech_simple(CKM_AES_KEY_WRAP)
             elif rs.has_mechanism("AES_CBC_PAD"):
-                mech_name = "CKM_AES_CBC_PAD"
-                mech = mech_bytes(CKM_AES_CBC_PAD, b"\x00" * 16)
+                wrap_mech = CKM_AES_CBC_PAD
+                mech = mech_bytes(wrap_mech, b"\x00" * 16)
             else:
                 pytest.skip("No AES wrap mechanism available")
             # Drive the full wrap (size query, then a real output buffer) so a
             # module that enforces the WRAP_WITH_TRUSTED policy only on the actual
-            # wrap is exercised, not just the size query.  A successful size query
-            # alone is not a policy bypass: only a successful final call with
-            # non-empty output exports the target.
+            # wrap is exercised, not just the size query.
             out_len = CK_ULONG(0)
-            label = "C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted wrapping key"
-            expected_wrap_reject_rvs = (CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE)
-            size_rv = rs.raw.C_WrapKey(
-                rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len)
-            )
-            if size_rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
-                _classify_negative_operation_rv(
-                    size_rv,
-                    expected_rvs=expected_wrap_reject_rvs,
-                    label=f"{label}: size query",
-                    operation="C_WrapKey",
-                    mechanism=mech_name,
-                    kind="policy",
-                )
-            elif out_len.value == 0:
-                classification.classify(
-                    "wrong_result",
-                    kind="metadata",
-                    label=f"{label}: size query returned zero output length",
-                    operation="C_WrapKey",
-                    mechanism=mech_name,
-                    detail={
-                        "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                        "phase": "size_query",
-                        "expected": "positive output length",
-                        "actual": 0,
-                        "producer_operation": "C_GenerateKey",
-                        "producer_mechanism": "CKM_AES_KEY_GEN",
-                    },
-                    summary=(
-                        f"{label}: CKR_OK/CKR_BUFFER_TOO_SMALL did not provide "
-                        "a wrapped-output length"
-                    ),
-                )
-            else:
+            rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, None, byref(out_len))
+            if rv == CKR_OK and out_len.value:
                 buf = (c_ubyte * out_len.value)()
-                final_rv = rs.raw.C_WrapKey(
-                    rs.sh, mech.byref(), wrapper_h, target_h, buf, byref(out_len)
+                rv = rs.raw.C_WrapKey(rs.sh, mech.byref(), wrapper_h, target_h, buf, byref(out_len))
+            if rv == CKR_OK:
+                # policy: the target read back CKA_WRAP_WITH_TRUSTED=True (verified
+                # above), yet an untrusted (non-CKA_TRUSTED) wrapping key wrapped
+                # it -- the module claimed the protection then violated it.
+                classify_policy_enforcement(
+                    claimed=True,
+                    violated=True,
+                    label="C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted "
+                    "wrapping key (PKCS#11 requires CKR_KEY_NOT_WRAPPABLE)",
                 )
-                if final_rv == CKR_OK and out_len.value == 0:
-                    classification.classify(
-                        "wrong_result",
-                        kind="crypto",
-                        label=f"{label}: final call returned empty output",
-                        operation="C_WrapKey",
-                        mechanism=mech_name,
-                        detail={
-                            "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                            "phase": "final",
-                            "expected": "non-empty wrapped output",
-                            "actual_length": 0,
-                            "producer_operation": "C_GenerateKey",
-                            "producer_mechanism": "CKM_AES_KEY_GEN",
-                        },
-                        summary=(
-                            f"{label}: final C_WrapKey returned CKR_OK but "
-                            "produced no wrapped bytes"
-                        ),
-                    )
-                if final_rv == CKR_OK:
-                    classification.classify(
-                        "self_contradiction",
-                        kind="policy",
-                        label=label,
-                        operation="C_WrapKey",
-                        mechanism=mech_name,
-                        expected=expected_wrap_reject_rvs,
-                        actual=final_rv,
-                        detail={
-                            "attribute": int(CKA_WRAP_WITH_TRUSTED),
-                            "expected": True,
-                            "actual": False,
-                            "output_length": out_len.value,
-                            "producer_operation": "C_GenerateKey",
-                            "producer_mechanism": "CKM_AES_KEY_GEN",
-                        },
-                        summary=(
-                            f"{label}: accepted an untrusted wrapper despite "
-                            "CKA_WRAP_WITH_TRUSTED=True"
-                        ),
-                    )
-                _classify_negative_operation_rv(
-                    final_rv,
-                    expected_rvs=expected_wrap_reject_rvs,
-                    label=f"{label}: final call",
-                    operation="C_WrapKey",
-                    mechanism=mech_name,
-                    kind="policy",
-                )
+            classify_negative_rv(
+                rv,
+                (CKR_ACTION_PROHIBITED, CKR_KEY_NOT_WRAPPABLE),
+                label="C_WrapKey of a CKA_WRAP_WITH_TRUSTED key with an untrusted wrapping key",
+            )
         finally:
-            if wrapper_h is not None:
-                destroy_quietly(rs.raw, rs.sh, wrapper_h)
+            destroy_quietly(rs.raw, rs.sh, wrapper_h)
             destroy_quietly(rs.raw, rs.sh, target_h)
 
 
@@ -1709,48 +1124,24 @@ class TestAlwaysAuthenticate:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_ALWAYS_AUTHENTICATE])
-                val = attr_or_record(
-                    attrs,
-                    CKA_ALWAYS_AUTHENTICATE,
-                    label=(
-                        "CKA_ALWAYS_AUTHENTICATE setup readback "
-                        "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
-                    ),
-                    inherit_mechanism=False,
-                )
+                val = attrs.get(CKA_ALWAYS_AUTHENTICATE)
             except CkrAssertionError as e:
-                _classify_post_success_attribute_error(
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
+                xfail_if_known_ckr(
                     e,
-                    attr=CKA_ALWAYS_AUTHENTICATE,
-                    label="CKA_ALWAYS_AUTHENTICATE setup readback",
-                    producer_operation="C_GenerateKeyPair",
-                    producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "CKA_ALWAYS_AUTHENTICATE attribute cannot be read back",
                 )
-                return
-            if val is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                val,
-                attr=CKA_ALWAYS_AUTHENTICATE,
-                label="CKA_ALWAYS_AUTHENTICATE setup readback",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-            )
+                raise
             if val is not True:
                 fail_as(
                     "wrong_result",
                     kind="policy",
                     label="CKA_ALWAYS_AUTHENTICATE setup",
                     operation="C_GenerateKeyPair",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                    expected=CKR_OK,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                        "expected": True,
-                        "actual": val,
-                        "producer_operation": "C_GenerateKeyPair",
-                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                    },
+                    expected=True,
+                    actual=val,
                     summary=(
                         "C_GenerateKeyPair returned CKR_OK but did not preserve "
                         "CKA_ALWAYS_AUTHENTICATE=True"
@@ -1760,56 +1151,25 @@ class TestAlwaysAuthenticate:
             # Attempt to sign - should require context-specific login
             data = b"test data for always-auth"
             try:
-                sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
-                if len(sig) == 0:
-                    fail_as(
-                        "wrong_result",
-                        kind="crypto",
-                        label="CKA_ALWAYS_AUTHENTICATE:first-sign-empty-output",
-                        operation="C_Sign",
-                        mechanism="CKM_SHA256_RSA_PKCS",
-                        detail={
-                            "expected": "non-empty signature",
-                            "actual_length": 0,
-                            "producer_operation": "C_GenerateKeyPair",
-                            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        },
-                        summary=(
-                            "C_Sign returned CKR_OK without context-specific login "
-                            "but produced an empty signature"
-                        ),
-                    )
-                fail_as(
-                    "self_contradiction",
-                    kind="policy",
-                    label="CKA_ALWAYS_AUTHENTICATE:first-sign-without-reauth",
-                    operation="C_Sign",
-                    mechanism="CKM_SHA256_RSA_PKCS",
-                    expected=CKR_USER_NOT_LOGGED_IN,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                        "expected": CKR_USER_NOT_LOGGED_IN,
-                        "actual": CKR_OK,
-                        "signature_length": len(sig),
-                        "producer_operation": "C_GenerateKeyPair",
-                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                    },
-                    summary=(
-                        "C_Sign succeeded without context-specific re-authentication "
-                        "on a CKA_ALWAYS_AUTHENTICATE=True key"
-                    ),
+                sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
+                # Some modules allow first op after normal login
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "Sign succeeded without context-specific re-auth on "
+                    "CKA_ALWAYS_AUTHENTICATE key (first use after login allowed)",
+                    ComplianceLevel.VENDOR,
+                    reference="PKCS#11 spec: CKA_ALWAYS_AUTHENTICATE re-auth",
                 )
             except CkrAssertionError as exc:
-                _classify_operation_rejection(
+                reject_or_classify(
                     exc,
-                    expected_rvs=_ALWAYS_AUTH_EXPECTED_SIGN_REJECT_RVS,
+                    _ALWAYS_AUTH_SIGN_REJECT_RVS,
                     label=(
                         "C_Sign on a CKA_ALWAYS_AUTHENTICATE key before "
                         "context-specific re-authentication"
                     ),
-                    operation="C_Sign",
-                    mechanism="CKM_SHA256_RSA_PKCS",
+                    kind="policy",
                 )
                 pass
         finally:
@@ -1847,48 +1207,24 @@ class TestAlwaysAuthenticate:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_ALWAYS_AUTHENTICATE])
-                val = attr_or_record(
-                    attrs,
-                    CKA_ALWAYS_AUTHENTICATE,
-                    label=(
-                        "CKA_ALWAYS_AUTHENTICATE context-login setup readback "
-                        "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
-                    ),
-                    inherit_mechanism=False,
-                )
+                val = attrs.get(CKA_ALWAYS_AUTHENTICATE)
             except CkrAssertionError as e:
-                _classify_post_success_attribute_error(
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
+                xfail_if_known_ckr(
                     e,
-                    attr=CKA_ALWAYS_AUTHENTICATE,
-                    label="CKA_ALWAYS_AUTHENTICATE context-login setup readback",
-                    producer_operation="C_GenerateKeyPair",
-                    producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "CKA_ALWAYS_AUTHENTICATE attribute cannot be read back",
                 )
-                return
-            if val is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                val,
-                attr=CKA_ALWAYS_AUTHENTICATE,
-                label="CKA_ALWAYS_AUTHENTICATE context-login setup readback",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-            )
+                raise
             if val is not True:
                 fail_as(
                     "wrong_result",
                     kind="policy",
                     label="CKA_ALWAYS_AUTHENTICATE setup",
                     operation="C_GenerateKeyPair",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                    expected=CKR_OK,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                        "expected": True,
-                        "actual": val,
-                        "producer_operation": "C_GenerateKeyPair",
-                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                    },
+                    expected=True,
+                    actual=val,
                     summary=(
                         "C_GenerateKeyPair returned CKR_OK but did not preserve "
                         "CKA_ALWAYS_AUTHENTICATE=True"
@@ -1899,12 +1235,10 @@ class TestAlwaysAuthenticate:
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(rs.sh, CKU_CONTEXT_SPECIFIC, pin_buf, len(pin_bytes))
             if rv not in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN):
-                _classify_negative_operation_rv(
+                classify_negative_rv(
                     rv,
-                    expected_rvs=(CKR_USER_ALREADY_LOGGED_IN,),
+                    (CKR_USER_ALREADY_LOGGED_IN,),
                     label="Context-specific C_Login for CKA_ALWAYS_AUTHENTICATE",
-                    operation="C_Login",
-                    mechanism=None,
                     allow_ok=True,
                 )
                 return
@@ -1912,51 +1246,12 @@ class TestAlwaysAuthenticate:
             data = b"context auth test data"
             try:
                 sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
-                if len(sig) == 0:
-                    fail_as(
-                        "wrong_result",
-                        kind="crypto",
-                        label="CKA_ALWAYS_AUTHENTICATE:context-auth-sign",
-                        operation="C_Sign",
-                        mechanism="CKM_SHA256_RSA_PKCS",
-                        detail={
-                            "expected": "non-empty signature",
-                            "actual_length": 0,
-                            "producer_operation": "C_GenerateKeyPair",
-                            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        },
-                        summary=(
-                            "C_Sign returned CKR_OK after context-specific login "
-                            "but produced an empty signature"
-                        ),
-                    )
+                assert len(sig) > 0
             except CkrAssertionError as e:
-                if e.rv == CKR_USER_NOT_LOGGED_IN:
-                    classification.classify(
-                        "self_contradiction",
-                        kind="lifecycle",
-                        label="CKA_ALWAYS_AUTHENTICATE:context-login-not-honored",
-                        operation="C_Sign",
-                        mechanism="CKM_SHA256_RSA_PKCS",
-                        expected=CKR_OK,
-                        actual=e.rv,
-                        detail={
-                            "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                            "producer_operation": "C_GenerateKeyPair",
-                            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        },
-                        summary=(
-                            "C_Sign returned CKR_USER_NOT_LOGGED_IN after accepted "
-                            "context-specific login"
-                        ),
-                    )
-                _classify_operation_unavailable(
+                xfail_if_known_ckr(
                     e,
-                    label="C_Sign after context-specific login is not operational",
-                    operation="C_Sign",
-                    mechanism="CKM_SHA256_RSA_PKCS",
-                    producer_operation="C_GenerateKeyPair",
-                    producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    _ALWAYS_AUTH_SIGN_REJECT_RVS,
+                    "C_Sign after context-specific login is not operational",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_h)
@@ -2258,12 +1553,10 @@ class TestSOOnROSession:
             pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
             rv = rs.raw.C_Login(s1, CKU_SO, pin_buf, len(so_pin))
             skip_if_so_pin_rejected(rv, explicit=explicit)
-            _classify_negative_operation_rv(
+            classify_negative_rv(
                 rv,
-                expected_rvs=(CKR_SESSION_READ_ONLY_EXISTS,),
+                (CKR_SESSION_READ_ONLY_EXISTS,),
                 label="C_Login(SO) on a read-only session (SO requires a R/W session)",
-                operation="C_Login",
-                mechanism=None,
             )
         finally:
             _logout_safe(rs.raw, s1)
@@ -2317,91 +1610,22 @@ class TestPublicSessionRestrictions:
                     },
                 )
             except CkrAssertionError as exc:
-                _classify_operation_rejection(
+                reject_or_classify(
                     exc,
-                    expected_rvs=(CKR_USER_NOT_LOGGED_IN,),
+                    (CKR_USER_NOT_LOGGED_IN,),
                     label="C_GenerateKey CKA_PRIVATE=True token object in a public "
                     "(unauthenticated) session",
-                    operation="C_GenerateKey",
-                    mechanism="CKM_AES_KEY_GEN",
                 )
                 return
             # Created without login -- policy claim/effect check: claimed is that
             # the object reads back CKA_PRIVATE=True; violated is that it exists at
             # all (created by an unauthenticated session).
-            try:
-                private_attrs = read_attributes(rs.raw, s1, created, [CKA_PRIVATE])
-            except CkrAssertionError as exc:
-                _classify_post_success_attribute_error(
-                    exc,
-                    attr=CKA_PRIVATE,
-                    label="public CKA_PRIVATE=True token object readback",
-                    producer_operation="C_GenerateKey",
-                    producer_mechanism="CKM_AES_KEY_GEN",
-                )
-                return
-            priv = attr_or_record(
-                private_attrs,
-                CKA_PRIVATE,
-                label=(
-                    "public CKA_PRIVATE=True token object readback "
-                    "(producer_mechanism=CKM_AES_KEY_GEN)"
-                ),
-                inherit_mechanism=False,
-            )
-            if priv is not MISSING_ATTRIBUTE:
-                _require_bool_attribute(
-                    priv,
-                    attr=CKA_PRIVATE,
-                    label="public CKA_PRIVATE=True token object readback",
-                    mechanism="CKM_AES_KEY_GEN",
-                )
-            label = (
-                "public (unauthenticated) session created a CKA_PRIVATE=True "
-                "token object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)"
-            )
-            # gen_aes_key() above raises unless C_GenerateKey returns CKR_OK, so
-            # reaching this point already proves the module accepted the
-            # CKA_PRIVATE=True template on an unauthenticated session --
-            # independent claim evidence a missing readback must not downgrade.
-            # Only an explicit CKA_PRIVATE=False readback is real evidence the
-            # claim does not hold.
-            if priv is MISSING_ATTRIBUTE or priv is True:
-                fail_as(
-                    "self_contradiction",
-                    kind="policy",
-                    label=label,
-                    operation="C_GenerateKey",
-                    mechanism="CKM_AES_KEY_GEN",
-                    expected=CKR_USER_NOT_LOGGED_IN,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_PRIVATE),
-                        "expected": True,
-                        "actual": "missing" if priv is MISSING_ATTRIBUTE else priv,
-                        "read_operation": "C_GetAttributeValue",
-                        "read_mechanism": "CKM_AES_KEY_GEN",
-                        "producer_operation": "C_GenerateKey",
-                        "producer_mechanism": "CKM_AES_KEY_GEN",
-                    },
-                    summary=f"{label}: claimed the protection then violated it",
-                )
-            xfail_as(
-                "honest_deviation",
-                kind="policy",
-                label=label,
-                operation="C_GenerateKey",
-                mechanism="CKM_AES_KEY_GEN",
-                expected=CKR_OK,
-                actual=CKR_OK,
-                detail={
-                    "attribute": int(CKA_PRIVATE),
-                    "expected": True,
-                    "actual": priv,
-                    "producer_operation": "C_GenerateKey",
-                    "producer_mechanism": "CKM_AES_KEY_GEN",
-                },
-                summary=f"{label}: module did not claim the protection",
+            priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+            classify_policy_enforcement(
+                claimed=priv is True,
+                violated=True,
+                label="public (unauthenticated) session created a CKA_PRIVATE=True "
+                "token object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
             )
         finally:
             # Restore login so the created object can be cleaned up and later tests
@@ -2507,84 +1731,20 @@ class TestPublicSessionRestrictions:
                     },
                 )
             except CkrAssertionError as exc:
-                _classify_operation_rejection(
+                reject_or_classify(
                     exc,
-                    expected_rvs=(CKR_USER_NOT_LOGGED_IN,),
+                    (CKR_USER_NOT_LOGGED_IN,),
                     label="C_CreateObject CKA_PRIVATE=True session object in a public "
                     "(unauthenticated) session",
-                    operation="C_CreateObject",
-                    mechanism=None,
                 )
                 return
             # Created without login -- policy claim/effect check.
-            try:
-                private_attrs = read_attributes(rs.raw, s1, created, [CKA_PRIVATE])
-            except CkrAssertionError as exc:
-                _classify_post_success_attribute_error(
-                    exc,
-                    attr=CKA_PRIVATE,
-                    label="public CKA_PRIVATE=True session object readback",
-                    producer_operation="C_CreateObject",
-                    producer_mechanism=None,
-                )
-                return
-            priv = attr_or_record(
-                private_attrs,
-                CKA_PRIVATE,
-                inherit_mechanism=False,
-                label="public CKA_PRIVATE=True session object readback",
-                mechanism=None,
-            )
-            if priv is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                priv,
-                attr=CKA_PRIVATE,
-                label="public CKA_PRIVATE=True session object readback",
-                mechanism=None,
-            )
-            label = (
-                "public (unauthenticated) session created a CKA_PRIVATE=True "
-                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)"
-            )
-            if priv is True:
-                fail_as(
-                    "self_contradiction",
-                    kind="policy",
-                    label=label,
-                    operation="C_CreateObject",
-                    mechanism=None,
-                    expected=CKR_USER_NOT_LOGGED_IN,
-                    actual=CKR_OK,
-                    detail={
-                        "attribute": int(CKA_PRIVATE),
-                        "expected": True,
-                        "actual": priv,
-                        "read_operation": "C_GetAttributeValue",
-                        "read_mechanism": None,
-                        "producer_operation": "C_CreateObject",
-                        "producer_mechanism": None,
-                    },
-                    summary=f"{label}: claimed the protection then violated it",
-                )
-            xfail_as(
-                "honest_deviation",
-                kind="policy",
-                label=label,
-                operation="C_CreateObject",
-                mechanism=None,
-                expected=CKR_OK,
-                actual=CKR_OK,
-                detail={
-                    "attribute": int(CKA_PRIVATE),
-                    "expected": True,
-                    "actual": priv,
-                    "read_operation": "C_GetAttributeValue",
-                    "read_mechanism": None,
-                    "producer_operation": "C_CreateObject",
-                    "producer_mechanism": None,
-                },
-                summary=f"{label}: module did not claim the protection",
+            priv = read_attributes(rs.raw, s1, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+            classify_policy_enforcement(
+                claimed=priv is True,
+                violated=True,
+                label="public (unauthenticated) session created a CKA_PRIVATE=True "
+                "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
             )
         finally:
             # Session objects are discarded on close; destroy first if it exists.

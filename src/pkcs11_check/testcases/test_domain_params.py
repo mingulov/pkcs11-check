@@ -46,7 +46,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
 
 pytestmark = pytest.mark.object
@@ -131,15 +130,7 @@ class TestEcDomainParameters:
             pytest.skip("Module does not support EC domain parameter creation")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                inherit_mechanism=False,
-                label="CKA_KEY_TYPE:EC-domain-parameters",
-            )
-            if key_type is MISSING_ATTRIBUTE:
-                return
-            assert key_type == CKK_EC, f"Expected CKK_EC, got {key_type}"
+            assert attrs[CKA_KEY_TYPE] == CKK_EC, f"Expected CKK_EC, got {attrs[CKA_KEY_TYPE]}"
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -156,15 +147,7 @@ class TestEcDomainParameters:
             pytest.skip("Module does not support EC domain parameter creation on token")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                inherit_mechanism=False,
-                label="CKA_KEY_TYPE:token-EC-domain-parameters",
-            )
-            if key_type is MISSING_ATTRIBUTE:
-                return
-            assert key_type == CKK_EC, f"Expected CKK_EC, got {key_type}"
+            assert attrs[CKA_KEY_TYPE] == CKK_EC, f"Expected CKK_EC, got {attrs[CKA_KEY_TYPE]}"
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -181,14 +164,7 @@ class TestEcDomainParameters:
             pytest.skip("Module does not support EC domain parameter creation on token")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_PARAMS])
-            ec_params = attr_or_record(
-                attrs,
-                CKA_EC_PARAMS,
-                inherit_mechanism=False,
-                label="CKA_EC_PARAMS:domain-parameters",
-            )
-            if ec_params is MISSING_ATTRIBUTE:
-                return
+            ec_params = attrs[CKA_EC_PARAMS]
             assert ec_params is not None, "CKA_EC_PARAMS should not be None"
             assert len(ec_params) > 0, "CKA_EC_PARAMS should not be empty"
             expected = encode_named_curve_parameters("secp256r1")
@@ -209,14 +185,7 @@ class TestEcDomainParameters:
             pytest.skip("Module does not support EC domain parameter creation on token")
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_LOCAL])
-            local = attr_or_record(
-                attrs,
-                CKA_LOCAL,
-                inherit_mechanism=False,
-                label="CKA_LOCAL:domain-parameters",
-            )
-            if local is MISSING_ATTRIBUTE:
-                return
+            local = attrs[CKA_LOCAL]
             assert local is False, (
                 f"Expected CKA_LOCAL=False for created domain params, got {local}"
             )
@@ -268,14 +237,7 @@ class TestDomainParameterEnumeration:
         for handle in params:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-                key_type = attr_or_record(
-                    attrs,
-                    CKA_KEY_TYPE,
-                    inherit_mechanism=False,
-                    label="CKA_KEY_TYPE:enumerated-domain-parameters",
-                )
-                if key_type is MISSING_ATTRIBUTE:
-                    continue
+                key_type = attrs[CKA_KEY_TYPE]
                 assert isinstance(key_type, int), f"Expected int for KEY_TYPE, got {type(key_type)}"
             except CkrAssertionError as e:
                 xfail_if_known_ckr(
@@ -322,15 +284,7 @@ class TestMultipleCurveDomainParams:
             _xfail_if_ec_domain_param_create_runtime_reject(e, curve)
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                inherit_mechanism=False,
-                label=f"CKA_KEY_TYPE:{curve}-domain-parameters",
-            )
-            if key_type is MISSING_ATTRIBUTE:
-                return
-            assert key_type == CKK_EC
+            assert attrs[CKA_KEY_TYPE] == CKK_EC
         finally:
             if handle:
                 destroy_quietly(rs.raw, rs.sh, handle)

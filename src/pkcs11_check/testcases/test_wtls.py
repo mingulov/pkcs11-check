@@ -21,9 +21,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
-from _pytest.outcomes import Failed
 
-from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
@@ -70,7 +68,6 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     destroy_returned_handles,
@@ -100,289 +97,6 @@ _SERVER_RANDOM = bytes(range(16, 32))
 _WTLS_PRF_SECRET = bytes(range(20))
 _WTLS_PRF_LABEL = b"key expansion"
 _WTLS_PRF_SEED = bytes(range(32))
-
-_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
-_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-
-
-class _ClassificationFailureError(Failed, AssertionError):
-    """Keep migrated failures compatible with callers expecting AssertionError."""
-
-
-def _read_attribute(attrs: Mapping[Any, Any], attr: Any, *, label: str, mechanism: str) -> Any:
-    """Read an attribute while retaining a structured unavailable-value observation."""
-    return attr_or_record(
-        attrs,
-        attr,
-        label=f"{label} (producer_mechanism={mechanism})",
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-
-
-def _read_provider_attribute(
-    raw: Any,
-    session: int,
-    handle: int,
-    attr: Any,
-    *,
-    label: str,
-    mechanism: str,
-    error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
-) -> Any:
-    """Read one provider attribute and classify typed readback errors accurately."""
-    try:
-        return _read_attribute(
-            read_attributes(raw, session, handle, [attr]),
-            attr,
-            label=label,
-            mechanism=mechanism,
-        )
-    except AssertionError as exc:
-        if is_known_error(exc, error_rvs):
-            C.record_as(
-                "not_operational",
-                kind="metadata",
-                label=label,
-                operation="C_GetAttributeValue",
-                mechanism=mechanism,
-                actual=getattr(exc, "rv", None),
-                summary=f"{label}: C_GetAttributeValue not operational: {exc}",
-            )
-            return MISSING_ATTRIBUTE
-        raise
-
-
-def _record_wrong_attribute(
-    *,
-    attr: Any,
-    label: str,
-    expected: Any,
-    actual: Any,
-    kind: str,
-    mechanism: str,
-    operation: str,
-) -> C.Classification:
-    # Missing attributes are tracked as operability evidence, not interpreted
-    # as a false-like provider value by this wrong-result helper.
-    if actual is MISSING_ATTRIBUTE:
-        attr_name = "CKA_KEY_TYPE" if attr == CKA_KEY_TYPE else "CKA_VALUE"
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            summary=f"{label}: provider did not return the requested attribute",
-            detail={"attribute": {"name": attr_name, "id": int(attr)}},
-        )
-    attr_name = "CKA_KEY_TYPE" if attr == CKA_KEY_TYPE else "CKA_VALUE"
-    return C.record_as(
-        "wrong_result",
-        kind=kind,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
-        detail={
-            "attribute": {
-                "name": attr_name,
-                "id": int(attr),
-                "expected": repr(expected),
-                "actual": repr(actual),
-            }
-        },
-    )
-
-
-def _record_relation_mismatch(
-    *,
-    label: str,
-    expected: str,
-    left: Any,
-    left_label: str,
-    left_mechanism: str,
-    right: Any,
-    right_label: str,
-    right_mechanism: str,
-) -> C.Classification:
-    """Record a relation over both WTLS derive legs without choosing one leg."""
-    # The caller normally proves both values are present bytes.  Keep a
-    # defensive absence branch here as well so relation evidence can never turn
-    # a missing provider attribute into a wrong-result finding.
-    if left is MISSING_ATTRIBUTE:
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=f"{label}:{left_label}",
-            operation="C_GetAttributeValue",
-            mechanism=left_mechanism,
-            summary=f"{label}: {left_label} attribute was not returned",
-            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
-        )
-    if right is MISSING_ATTRIBUTE:
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=f"{label}:{right_label}",
-            operation="C_GetAttributeValue",
-            mechanism=right_mechanism,
-            summary=f"{label}: {right_label} attribute was not returned",
-            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
-        )
-    return C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label=label,
-        operation="C_DeriveKey",
-        # This finding is about the relation, so neither leg is a truthful
-        # single mechanism identity.  Both identities remain in detail.
-        mechanism=None,
-        summary=f"{label}: provider outputs violate the required relation",
-        detail={
-            "relation": {
-                "operator": "must_differ",
-                "expected": expected,
-                "left": {
-                    "label": left_label,
-                    "mechanism": left_mechanism,
-                    "actual": repr(left),
-                },
-                "right": {
-                    "label": right_label,
-                    "mechanism": right_mechanism,
-                    "actual": repr(right),
-                },
-            }
-        },
-    )
-
-
-def _validate_output(
-    value: Any,
-    *,
-    label: str,
-    mechanism: str,
-    operation: str,
-    expected_len: int | None = None,
-) -> C.Classification | None:
-    """Validate a present CKA_VALUE without terminating independent checks early."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    if not isinstance(value, bytes):
-        return _record_wrong_attribute(
-            attr=CKA_VALUE,
-            label=label,
-            expected="bytes",
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    if not value:
-        return _record_wrong_attribute(
-            attr=CKA_VALUE,
-            label=label,
-            expected="non-empty bytes",
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    if expected_len is not None and len(value) != expected_len:
-        return _record_wrong_attribute(
-            attr=CKA_VALUE,
-            label=label,
-            expected=f"{expected_len}-byte bytes",
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    return None
-
-
-def _raise_strongest(records: list[C.Classification]) -> None:
-    """Raise the strongest hard output finding after all cleanup has completed."""
-    if not records:
-        return
-    strongest = max(
-        records,
-        key=lambda record: (
-            _KIND_PRIORITY.get(record.kind or "", 0),
-            _SEVERITY_PRIORITY.get(record.severity, 0),
-        ),
-    )
-    try:
-        C.raise_for_record(strongest)
-    except Failed as exc:
-        failure = _ClassificationFailureError(str(exc))
-        setattr(failure, "_pkcs11_check_classification", strongest)
-        raise failure from exc
-
-
-def _record_handle_mismatch(
-    *,
-    label: str,
-    actual: Any,
-    operation: str,
-    mechanism: str,
-) -> C.Classification:
-    """Record CKR_OK producer success that returned the null object handle."""
-    return C.record_as(
-        "self_contradiction",
-        kind="lifecycle",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        actual=CKR_OK,
-        summary=f"{label}: {operation} returned CKR_OK with handle {actual!r}",
-        detail={"handle": {"actual": actual, "expected": "non-zero"}},
-    )
-
-
-def _record_parameter_mismatch(
-    *, label: str, parameter: str, expected: Any, actual: Any, mechanism: str
-) -> C.Classification:
-    """Record provider-written mechanism output without inventing CKR data."""
-    return C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label=label,
-        operation="C_DeriveKey",
-        mechanism=mechanism,
-        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
-        detail={
-            "parameter": {
-                "name": parameter,
-                "expected": repr(expected),
-                "actual": repr(actual),
-            }
-        },
-    )
-
-
-def _guard_producer_handle(
-    handle: Any,
-    *,
-    label: str,
-    operation: str,
-    mechanism: str,
-    records: list[C.Classification],
-) -> bool:
-    """Record a null successful output and tell callers to skip dependent reads."""
-    if handle != 0:
-        return True
-    records.append(
-        _record_handle_mismatch(
-            label=label,
-            actual=handle,
-            operation=operation,
-            mechanism=mechanism,
-        )
-    )
-    return False
 
 
 def _wtls_prf_sha256_reference(
@@ -645,55 +359,18 @@ class TestWTLSPreMasterKeyGen:
             )
             expect_rv(rv, CKR_OK)
             try:
-                if key.value == 0:
-                    C.fail_as(
-                        "self_contradiction",
-                        kind="lifecycle",
-                        label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey handle",
-                        operation="C_GenerateKey",
-                        mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                        actual=rv,
-                        summary=(
-                            "CKM_WTLS_PRE_MASTER_KEY_GEN returned CKR_OK without a key handle"
-                        ),
-                        detail={"handle": {"actual": 0, "expected": "non-zero"}},
-                    )
-                key_type = _read_provider_attribute(
-                    rs.raw,
-                    rs.sh,
-                    key.value,
-                    CKA_KEY_TYPE,
+                assert key.value != 0
+                attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_KEY_TYPE])
+                assert_correct(
+                    actual=attrs[CKA_KEY_TYPE],
+                    expected=CKK_GENERIC_SECRET,
                     label="CKM_WTLS_PRE_MASTER_KEY_GEN:CKA_KEY_TYPE readback",
+                    operation="C_GenerateKey",
                     mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    error_rvs=_WTLS_ERROR_RVS,
+                    kind="metadata",
                 )
-                if key_type is not MISSING_ATTRIBUTE:
-                    mismatch: C.Classification | None = None
-                    if not isinstance(key_type, int):
-                        mismatch = _record_wrong_attribute(
-                            attr=CKA_KEY_TYPE,
-                            label="CKM_WTLS_PRE_MASTER_KEY_GEN:CKA_KEY_TYPE readback",
-                            expected="integer",
-                            actual=key_type,
-                            kind="metadata",
-                            mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                            operation="C_GenerateKey",
-                        )
-                    elif key_type != CKK_GENERIC_SECRET:
-                        mismatch = _record_wrong_attribute(
-                            attr=CKA_KEY_TYPE,
-                            label="CKM_WTLS_PRE_MASTER_KEY_GEN:CKA_KEY_TYPE readback",
-                            expected=CKK_GENERIC_SECRET,
-                            actual=key_type,
-                            kind="metadata",
-                            mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                            operation="C_GenerateKey",
-                        )
-                    if mismatch is not None:
-                        _raise_strongest([mismatch])
             finally:
-                if key.value != 0:
-                    destroy_quietly(rs.raw, rs.sh, key.value)
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _WTLS_ERROR_RVS):
                 classify(
@@ -702,7 +379,6 @@ class TestWTLSPreMasterKeyGen:
                     label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
                     operation="C_GenerateKey",
                     mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
@@ -739,53 +415,11 @@ class TestWTLSPreMasterKeyGen:
             )
             expect_rv(rv, CKR_OK)
             try:
-                value = MISSING_ATTRIBUTE
-                hard_results: list[C.Classification] = []
-                if _guard_producer_handle(
-                    key.value,
-                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey output handle",
-                    operation="C_GenerateKey",
-                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    records=hard_results,
-                ):
-                    value = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        key.value,
-                        CKA_VALUE,
-                        label="CKM_WTLS_PRE_MASTER_KEY_GEN:CKA_VALUE readback",
-                        mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                        error_rvs=_WTLS_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    value,
-                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:CKA_VALUE readback",
-                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    operation="C_GenerateKey",
-                    expected_len=20,
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
-                elif (
-                    value is not MISSING_ATTRIBUTE
-                    and isinstance(value, bytes)
-                    and value == bytes(len(value))
-                ):
-                    hard_results.append(
-                        _record_wrong_attribute(
-                            attr=CKA_VALUE,
-                            label="CKM_WTLS_PRE_MASTER_KEY_GEN:randomness",
-                            expected="non-zero output",
-                            actual=value,
-                            kind="crypto",
-                            mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                            operation="C_GenerateKey",
-                        )
-                    )
-                _raise_strongest(hard_results)
+                value = read_attributes(rs.raw, rs.sh, key.value, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                assert value != bytes(len(value)), "Pre-master key must not be all zeros"
             finally:
-                if key.value != 0:
-                    destroy_quietly(rs.raw, rs.sh, key.value)
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _WTLS_ERROR_RVS):
                 classify(
@@ -794,7 +428,6 @@ class TestWTLSPreMasterKeyGen:
                     label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
                     operation="C_GenerateKey",
                     mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
@@ -823,7 +456,6 @@ class TestWTLSPreMasterKeyGen:
             )
             key1 = CK_OBJECT_HANDLE(0)
             key2 = CK_OBJECT_HANDLE(0)
-            hard_results: list[C.Classification] = []
             rv = rs.raw.C_GenerateKey(
                 rs.sh,
                 mech.byref(),
@@ -832,100 +464,21 @@ class TestWTLSPreMasterKeyGen:
                 byref(key1),
             )
             expect_rv(rv, CKR_OK)
+            rv = rs.raw.C_GenerateKey(
+                rs.sh,
+                mech.byref(),
+                tmpl.ptr,
+                tmpl.count,
+                byref(key2),
+            )
+            expect_rv(rv, CKR_OK)
             try:
-                val1 = MISSING_ATTRIBUTE
-                if key1.value == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_WTLS_PRE_MASTER_KEY_GEN:first output handle",
-                            actual=key1.value,
-                            operation="C_GenerateKey",
-                            mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                        )
-                    )
-                else:
-                    val1 = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        key1.value,
-                        CKA_VALUE,
-                        label="CKM_WTLS_PRE_MASTER_KEY_GEN:first CKA_VALUE readback",
-                        mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                        error_rvs=_WTLS_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    val1,
-                    label="CKM_WTLS_PRE_MASTER_KEY_GEN:first CKA_VALUE readback",
-                    mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    operation="C_GenerateKey",
-                    expected_len=20,
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
-
-                try:
-                    rv = rs.raw.C_GenerateKey(
-                        rs.sh,
-                        mech.byref(),
-                        tmpl.ptr,
-                        tmpl.count,
-                        byref(key2),
-                    )
-                    expect_rv(rv, CKR_OK)
-                    val2 = MISSING_ATTRIBUTE
-                    if key2.value == 0:
-                        hard_results.append(
-                            _record_handle_mismatch(
-                                label="CKM_WTLS_PRE_MASTER_KEY_GEN:second output handle",
-                                actual=key2.value,
-                                operation="C_GenerateKey",
-                                mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                            )
-                        )
-                    else:
-                        val2 = _read_provider_attribute(
-                            rs.raw,
-                            rs.sh,
-                            key2.value,
-                            CKA_VALUE,
-                            label="CKM_WTLS_PRE_MASTER_KEY_GEN:second CKA_VALUE readback",
-                            mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                            error_rvs=_WTLS_ERROR_RVS,
-                        )
-                    mismatch = _validate_output(
-                        val2,
-                        label="CKM_WTLS_PRE_MASTER_KEY_GEN:second CKA_VALUE readback",
-                        mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                        operation="C_GenerateKey",
-                        expected_len=20,
-                    )
-                    if mismatch is not None:
-                        hard_results.append(mismatch)
-                    if (
-                        val1 is not MISSING_ATTRIBUTE
-                        and val2 is not MISSING_ATTRIBUTE
-                        and isinstance(val1, bytes)
-                        and isinstance(val2, bytes)
-                        and val1 == val2
-                    ):
-                        hard_results.append(
-                            _record_wrong_attribute(
-                                attr=CKA_VALUE,
-                                label="CKM_WTLS_PRE_MASTER_KEY_GEN:randomness",
-                                expected="different outputs for independent generations",
-                                actual=val1,
-                                kind="crypto",
-                                mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                                operation="C_GenerateKey",
-                            )
-                        )
-                finally:
-                    if key2.value != 0:
-                        destroy_quietly(rs.raw, rs.sh, key2.value)
+                val1 = read_attributes(rs.raw, rs.sh, key1.value, [CKA_VALUE])[CKA_VALUE]
+                val2 = read_attributes(rs.raw, rs.sh, key2.value, [CKA_VALUE])[CKA_VALUE]
+                assert val1 != val2, "Two independently generated pre-master keys must differ"
             finally:
-                if key1.value != 0:
-                    destroy_quietly(rs.raw, rs.sh, key1.value)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, key2.value)
+                destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if is_known_error(exc, _WTLS_ERROR_RVS):
                 classify(
@@ -934,7 +487,6 @@ class TestWTLSPreMasterKeyGen:
                     label="CKM_WTLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
                     operation="C_GenerateKey",
                     mechanism="CKM_WTLS_PRE_MASTER_KEY_GEN",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
@@ -955,7 +507,6 @@ class TestWTLSMasterKeyDerive:
             pytest.skip("CKM_WTLS_MASTER_KEY_DERIVE not supported")
 
         pms = _create_generic_secret(rs, 20)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_wtls_master_key_derive(
                 CKM_WTLS_MASTER_KEY_DERIVE,
@@ -979,17 +530,9 @@ class TestWTLSMasterKeyDerive:
                     mech_param=mech,
                 )
                 try:
-                    if not _guard_producer_handle(
-                        derived,
-                        label="CKM_WTLS_MASTER_KEY_DERIVE:C_DeriveKey output handle",
-                        operation="C_DeriveKey",
-                        mechanism="CKM_WTLS_MASTER_KEY_DERIVE",
-                        records=hard_results,
-                    ):
-                        _raise_strongest(hard_results)
+                    assert derived != 0
                 finally:
-                    if derived != 0:
-                        destroy_quietly(rs.raw, rs.sh, derived)
+                    destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     classify(
@@ -1037,7 +580,6 @@ class TestWTLSMasterKeyDeriveDHECC:
             pytest.skip("CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC not supported")
 
         pms = _create_generic_secret(rs, 32)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_wtls_master_key_derive(
                 CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC,
@@ -1062,17 +604,9 @@ class TestWTLSMasterKeyDeriveDHECC:
                     mech_param=mech,
                 )
                 try:
-                    if not _guard_producer_handle(
-                        derived,
-                        label="CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC:C_DeriveKey output handle",
-                        operation="C_DeriveKey",
-                        mechanism="CKM_WTLS_MASTER_KEY_DERIVE_DH_ECC",
-                        records=hard_results,
-                    ):
-                        _raise_strongest(hard_results)
+                    assert derived != 0
                 finally:
-                    if derived != 0:
-                        destroy_quietly(rs.raw, rs.sh, derived)
+                    destroy_quietly(rs.raw, rs.sh, derived)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     classify(
@@ -1126,7 +660,6 @@ class TestWTLSKeyAndMacDerive:
             pytest.skip("CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE not supported")
 
         master = _create_generic_secret(rs, 20)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_wtls_key_mat(
                 CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
@@ -1150,32 +683,11 @@ class TestWTLSKeyAndMacDerive:
                 )
                 try:
                     out = mech.key_mat_out
-                    for handle, label in (
-                        (out.hMacSecret, "MAC secret"),
-                        (out.hKey, "key"),
-                    ):
-                        _guard_producer_handle(
-                            handle,
-                            label=f"CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE:{label} output handle",
-                            operation="C_DeriveKey",
-                            mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
-                            records=hard_results,
-                        )
-                    iv = mech.buffer_bytes("iv")
-                    if not iv:
-                        hard_results.append(
-                            _record_parameter_mismatch(
-                                label="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE:IV output",
-                                parameter="pIV",
-                                expected="non-empty bytes",
-                                actual=iv,
-                                mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
-                            )
-                        )
+                    assert out.hKey != 0
+                    assert any(mech.buffer_bytes("iv"))
                 finally:
                     out = mech.key_mat_out
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
-                _raise_strongest(hard_results)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     classify(
@@ -1231,7 +743,6 @@ class TestWTLSKeyAndMacDerive:
             pytest.skip("CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not supported")
 
         master = _create_generic_secret(rs, 20)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_wtls_key_mat(
                 CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
@@ -1255,32 +766,11 @@ class TestWTLSKeyAndMacDerive:
                 )
                 try:
                     out = mech.key_mat_out
-                    for handle, label in (
-                        (out.hMacSecret, "MAC secret"),
-                        (out.hKey, "key"),
-                    ):
-                        _guard_producer_handle(
-                            handle,
-                            label=f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE:{label} output handle",
-                            operation="C_DeriveKey",
-                            mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
-                            records=hard_results,
-                        )
-                    iv = mech.buffer_bytes("iv")
-                    if not iv:
-                        hard_results.append(
-                            _record_parameter_mismatch(
-                                label="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE:IV output",
-                                parameter="pIV",
-                                expected="non-empty bytes",
-                                actual=iv,
-                                mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
-                            )
-                        )
+                    assert out.hKey != 0
+                    assert any(mech.buffer_bytes("iv"))
                 finally:
                     out = mech.key_mat_out
                     destroy_returned_handles(rs, out.hMacSecret, out.hKey)
-                _raise_strongest(hard_results)
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     classify(
@@ -1338,12 +828,9 @@ class TestWTLSKeyAndMacDerive:
             pytest.skip("CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE not supported")
 
         master = _create_generic_secret(rs, 20)
-        hard_results: list[C.Classification] = []
         try:
             srv_out: Any | None = None
             cli_out: Any | None = None
-            active_operation = "C_DeriveKey"
-            active_mechanism = "CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE"
             try:
                 srv_mech = mech_wtls_key_mat(
                     CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE,
@@ -1351,10 +838,6 @@ class TestWTLSKeyAndMacDerive:
                     client_random=_CLIENT_RANDOM,
                     server_random=_SERVER_RANDOM,
                 )
-                # Capture each output structure before its provider call.  If
-                # a provider rejects a leg after writing handles, cleanup must
-                # still cover those handles.
-                srv_out = srv_mech.key_mat_out
                 _derive_key_material_to_params(
                     rs,
                     master,
@@ -1367,51 +850,13 @@ class TestWTLSKeyAndMacDerive:
                     },
                     srv_mech,
                 )
-                for handle, label in (
-                    (srv_out.hMacSecret, "server MAC secret"),
-                    (srv_out.hKey, "server key"),
-                ):
-                    _guard_producer_handle(
-                        handle,
-                        label=f"CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE:{label} output handle",
-                        operation="C_DeriveKey",
-                        mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
-                        records=hard_results,
-                    )
-                # Finish the successful server leg's independent readback
-                # before starting the client leg.  A clean client rejection
-                # must not discard evidence already obtained from the server.
-                active_operation = "C_GetAttributeValue"
-                active_mechanism = "CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE"
-                srv_val = MISSING_ATTRIBUTE
-                if srv_out.hKey != 0:
-                    srv_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        srv_out.hKey,
-                        CKA_VALUE,
-                        label="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE:CKA_VALUE readback",
-                        mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
-                        error_rvs=_WTLS_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    srv_val,
-                    label="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE:CKA_VALUE readback",
-                    mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
-                    operation="C_DeriveKey",
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
-
-                active_operation = "C_DeriveKey"
-                active_mechanism = "CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE"
+                srv_out = srv_mech.key_mat_out
                 cli_mech = mech_wtls_key_mat(
                     CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE,
                     digest_mechanism=CKM_SHA256,
                     client_random=_CLIENT_RANDOM,
                     server_random=_SERVER_RANDOM,
                 )
-                cli_out = cli_mech.key_mat_out
                 _derive_key_material_to_params(
                     rs,
                     master,
@@ -1424,67 +869,21 @@ class TestWTLSKeyAndMacDerive:
                     },
                     cli_mech,
                 )
-                for handle, label in (
-                    (cli_out.hMacSecret, "client MAC secret"),
-                    (cli_out.hKey, "client key"),
-                ):
-                    _guard_producer_handle(
-                        handle,
-                        label=f"CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE:{label} output handle",
-                        operation="C_DeriveKey",
-                        mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
-                        records=hard_results,
-                    )
-                active_operation = "C_GetAttributeValue"
-                active_mechanism = "CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE"
-                cli_val = MISSING_ATTRIBUTE
-                if cli_out.hKey != 0:
-                    cli_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        cli_out.hKey,
-                        CKA_VALUE,
-                        label="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE:CKA_VALUE readback",
-                        mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
-                        error_rvs=_WTLS_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    cli_val,
-                    label="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE:CKA_VALUE readback",
-                    mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
-                    operation="C_DeriveKey",
+                cli_out = cli_mech.key_mat_out
+                srv_val = read_attributes(rs.raw, rs.sh, srv_out.hKey, [CKA_VALUE])[CKA_VALUE]
+                cli_val = read_attributes(rs.raw, rs.sh, cli_out.hKey, [CKA_VALUE])[CKA_VALUE]
+                assert srv_val != cli_val, (
+                    "Server and client key derivation must produce different keys"
                 )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
-                if (
-                    srv_val is not MISSING_ATTRIBUTE
-                    and cli_val is not MISSING_ATTRIBUTE
-                    and isinstance(srv_val, bytes)
-                    and isinstance(cli_val, bytes)
-                    and srv_val == cli_val
-                ):
-                    hard_results.append(
-                        _record_relation_mismatch(
-                            label="WTLS server/client key separation",
-                            expected="different server and client CKA_VALUE outputs",
-                            left=srv_val,
-                            left_label="server",
-                            left_mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
-                            right=cli_val,
-                            right_label="client",
-                            right_mechanism="CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
-                        )
-                    )
             except AssertionError as exc:
                 if is_known_error(exc, _WTLS_ERROR_RVS):
                     classify(
                         "not_operational",
                         kind="crypto",
-                        label=f"{active_mechanism}:{active_operation}",
-                        operation=active_operation,
-                        mechanism=active_mechanism,
-                        actual=getattr(exc, "rv", None),
-                        summary=f"{active_mechanism} {active_operation} not operational: {exc}",
+                        label="CKM_WTLS_SERVER/CLIENT_KEY_AND_MAC_DERIVE:C_DeriveKey",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
+                        summary=f"WTLS key-and-MAC derivation not operational: {exc}",
                     )
                 raise
             finally:
@@ -1492,7 +891,6 @@ class TestWTLSKeyAndMacDerive:
                     destroy_returned_handles(rs, cli_out.hMacSecret, cli_out.hKey)
                 if srv_out is not None:
                     destroy_returned_handles(rs, srv_out.hMacSecret, srv_out.hKey)
-            _raise_strongest(hard_results)
         finally:
             destroy_quietly(rs.raw, rs.sh, master)
 

@@ -73,7 +73,6 @@ def test_session_probe_runs_teardown_in_normal_control_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An atexit exception cannot change rc; probe_main must invoke teardown explicitly."""
-    monkeypatch.setattr(session_probe.sys, "argv", ["session-probe", "params.json"])
     monkeypatch.setattr(session_probe.atexit, "register", lambda *_args: None)
     monkeypatch.setattr(
         session_probe.ProbeParams,

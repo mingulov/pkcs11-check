@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pkcs11_check.report.correlate import _mechanism_sort_label, correlate, enrich
+from pkcs11_check.report.correlate import correlate, enrich
 
 
 def _group(**over: Any) -> dict[str, Any]:
@@ -193,45 +193,3 @@ def test_enrich_xfail_not_operational_routes_to_capability_audit() -> None:
     groups = [_group(reason="not_operational", outcome="xfail", severity="INFO", kind=None)]
     enrich(groups, module_issues_text="", provider="p")
     assert groups[0]["routing"] == "CAPABILITY_AUDIT"
-
-
-def test_mechanism_sort_label_is_honest_about_missing_mechanism() -> None:
-    """F6 made readback records deliberately mechanism-free, so this is now common.
-
-    Before the fix the sort key was ``str(e["mechanism"])``, which renders a mechanism-free
-    record under the literal string "None" -- a dishonest label that also collides
-    lexicographically between real mechanism names.
-    """
-    assert _mechanism_sort_label(None) == "(no mechanism)"
-    assert _mechanism_sort_label(None) != "None"
-    assert _mechanism_sort_label("CKM_AES_GCM") == "CKM_AES_GCM"
-
-
-def test_universal_theme_sort_places_mechanism_free_entries_honestly() -> None:
-    """Mutation: a mechanism-free universal theme sorted alongside two real mechanisms
-    whose names straddle the literal word "None" alphabetically ("AES_..." < "None" <
-    "RSA_..."). The old ``str(e["mechanism"])`` sort key would interleave the
-    mechanism-free entry between them as if its mechanism were the word "None". The fixed
-    sort key must not do that -- the mechanism-free entry must not land between them.
-    """
-    pg = {
-        "softhsm2": [
-            _group(reason="not_operational", mechanism="AES_MECH"),
-            _group(reason="not_operational", mechanism=None),
-            _group(reason="not_operational", mechanism="RSA_MECH"),
-        ],
-        "kryoptic": [
-            _group(reason="not_operational", mechanism="AES_MECH"),
-            _group(reason="not_operational", mechanism=None),
-            _group(reason="not_operational", mechanism="RSA_MECH"),
-        ],
-    }
-    result = correlate(pg)
-    mechs = [theme["mechanism"] for theme in result["universal_themes"]]
-    # Fixed sort key ("(no mechanism)" sorts before any uppercase mechanism name) puts the
-    # mechanism-free entry first, NOT interleaved between AES_MECH and RSA_MECH the way the
-    # old str(None) == "None" key would have (it sorts between "AES_MECH" and "RSA_MECH").
-    assert mechs == [None, "AES_MECH", "RSA_MECH"]
-    # The dict field itself stays a real None -- only the *sort key* is relabeled.
-    assert None in mechs
-    assert "None" not in mechs

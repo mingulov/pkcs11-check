@@ -1,11 +1,11 @@
 """Probe: PKCS#11 v3.2 function error conditions via a raw session.
 
-Eight child bodies ported from the legacy ``ckr/test_ckr_v32_raw.py`` scripts,
+Eight child bodies ported verbatim from the legacy ``ckr/test_ckr_v32_raw.py`` scripts,
 dispatched on ``extra["probe"]``.  Each drives a v3.2 function
 (``C_VerifySignatureInit`` / ``C_VerifySignature`` / ``C_EncapsulateKey`` /
 ``C_DecapsulateKey`` / ``C_AsyncGetID`` / ``C_WrapKeyAuthenticated``) through a
-logged-in ``RawPKCS11`` session and emits phase-labelled results for the parent-side
-``_check`` classifier.
+logged-in ``RawPKCS11`` session and prints the resulting ``CKR:0x...`` line for the
+parent-side ``_check`` classifier.
 
 Runs through ``probe_main`` at ``Level.LOGIN``: the infra does C_Initialize + slot
 discovery + ``C_OpenSession`` + (only when ``_P11CHECK_PIN`` is set) ``C_Login`` before
@@ -22,15 +22,18 @@ top of ``_run`` before dispatching, exactly as the legacy template did before th
 the output, and the parent gates every method with ``@pytest.mark.needs_function`` so a
 non-v3.2 module never reaches the probe).
 
-Output protocol:
+Output protocol (byte-identical to the legacy child, for ``_check``):
   ``SKIP:no_v32``                            -- module does not advertise the v3.2 interface
   ``SKIP:no_v32_funcs``                      -- module lacks ``C_VerifySignatureInit``
-  ``RESULT:<phase>:CKR:0x{rv:08x}``           -- return value of each tested call
-  ``OK:<phase>``                              -- probe reached its expected point
+  ``CKR:0x{rv:08x}``                         -- return value of the tested v3.2 call
+  ``NULL pMechanism -> CKR:0x{rv:08x}``      -- NULL-pointer sub-probes (Encapsulate/Decapsulate)
+  ``NULL pulCiphertextLen -> CKR:0x{rv:08x}``
+  ``NULL phKey -> CKR:0x{rv:08x}``
+  ``NULL pCiphertext with length>0 -> CKR:0x{rv:08x}``
+  ``OK``                                     -- probe reached its expected point
 
-Provider CKRs, including unexpected clean codes, are emitted and returned normally so
-the parent can distinguish provider deviations from harness failures. A crash
-(returncode < 0) remains a provider crash finding.
+A wrong CK_RV trips the child ``assert`` (non-zero exit) -> the parent reports a child
+failure; a crash (returncode < 0) is a provider crash finding.
 
 Required ``extra`` keys:
   ``"probe"`` -- one of the dispatch keys below.
@@ -47,17 +50,16 @@ from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_MECHANISM_INVALID,
+    CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
-
-
-def _emit_result(phase: str, rv: int) -> None:
-    """Emit one provider measurement without making a child assertion."""
-    print(f"RESULT:{phase}:CKR:0x{rv:08x}", flush=True)
-
-
-def _emit_complete(probe: str) -> None:
-    print(f"OK:{probe}", flush=True)
 
 
 def _verify_signature_mech_invalid(ctx: ProbeContext) -> None:
@@ -65,16 +67,18 @@ def _verify_signature_mech_invalid(ctx: ProbeContext) -> None:
     mech = mech_simple(CKM_AES_ECB)  # AES_ECB - not a verify mechanism
     sig = (ctypes.c_ubyte * 32)(*([0] * 32))
     rv = ctx.raw.C_VerifySignatureInit(ctx.sh, mech.byref(), 0, sig, 32)
-    _emit_result("C_VerifySignatureInit", rv)
-    _emit_complete("C_VerifySignatureInit")
+    print(f"CKR:0x{rv:08x}")
+    assert rv != CKR_OK, "Should have rejected AES_ECB for VerifySignature"
+    print("OK")
 
 
 def _verify_signature_no_init(ctx: ProbeContext) -> None:
     """C_VerifySignature without Init -> CKR_OPERATION_NOT_INITIALIZED."""
     data = (ctypes.c_ubyte * 16)(*([0] * 16))
     rv = ctx.raw.C_VerifySignature(ctx.sh, data, 16)
-    _emit_result("C_VerifySignature", rv)
-    _emit_complete("C_VerifySignature")
+    print(f"CKR:0x{rv:08x}")
+    assert rv in (CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED), f"Got 0x{rv:08x}"
+    print("OK")
 
 
 def _encapsulate_wrong_mechanism(ctx: ProbeContext) -> None:
@@ -86,8 +90,9 @@ def _encapsulate_wrong_mechanism(ctx: ProbeContext) -> None:
     rv = ctx.raw.C_EncapsulateKey(
         ctx.sh, mech.byref(), 0, None, 0, ct, ctypes.byref(ct_len), ctypes.byref(enc_key)
     )
-    _emit_result("C_EncapsulateKey", rv)
-    _emit_complete("C_EncapsulateKey")
+    print(f"CKR:0x{rv:08x}")
+    assert rv != CKR_OK, "Should have rejected AES_ECB for Encapsulate"
+    print("OK")
 
 
 def _encapsulate_null_pointers(ctx: ProbeContext) -> None:
@@ -101,12 +106,15 @@ def _encapsulate_null_pointers(ctx: ProbeContext) -> None:
     rv = ctx.raw.C_EncapsulateKey(
         ctx.sh, None, 0, None, 0, ct, ctypes.byref(ct_len), ctypes.byref(enc_key)
     )
-    _emit_result("C_EncapsulateKey.pMechanism", rv)
+    print(f"NULL pMechanism -> CKR:0x{rv:08x}")
+    assert rv == CKR_ARGUMENTS_BAD, "NULL pMechanism should yield CKR_ARGUMENTS_BAD"
 
     # Pass NULL for pulCiphertextLen
     rv = ctx.raw.C_EncapsulateKey(ctx.sh, mech.byref(), 0, None, 0, ct, None, ctypes.byref(enc_key))
-    _emit_result("C_EncapsulateKey.pulCiphertextLen", rv)
-    _emit_complete("C_EncapsulateKey_NULLs")
+    print(f"NULL pulCiphertextLen -> CKR:0x{rv:08x}")
+    assert rv == CKR_ARGUMENTS_BAD, "NULL pulCiphertextLen should yield CKR_ARGUMENTS_BAD"
+
+    print("OK")
 
 
 def _decapsulate_wrong_mechanism(ctx: ProbeContext) -> None:
@@ -115,8 +123,9 @@ def _decapsulate_wrong_mechanism(ctx: ProbeContext) -> None:
     ct = (ctypes.c_ubyte * 1088)(*([0xFF] * 1088))
     key = ctypes.c_ulong(0)
     rv = ctx.raw.C_DecapsulateKey(ctx.sh, mech.byref(), 0, None, 0, ct, 1088, ctypes.byref(key))
-    _emit_result("C_DecapsulateKey", rv)
-    _emit_complete("C_DecapsulateKey")
+    print(f"CKR:0x{rv:08x}")
+    assert rv != CKR_OK, "Should have rejected AES_ECB for Decapsulate"
+    print("OK")
 
 
 def _decapsulate_null_pointers(ctx: ProbeContext) -> None:
@@ -127,16 +136,26 @@ def _decapsulate_null_pointers(ctx: ProbeContext) -> None:
 
     # Pass NULL for pMechanism
     rv = ctx.raw.C_DecapsulateKey(ctx.sh, None, 0, None, 0, ct, 1088, ctypes.byref(key))
-    _emit_result("C_DecapsulateKey.pMechanism", rv)
+    print(f"NULL pMechanism -> CKR:0x{rv:08x}")
+    assert rv == CKR_ARGUMENTS_BAD, "NULL pMechanism should yield CKR_ARGUMENTS_BAD"
 
     # Pass NULL for phKey
     rv = ctx.raw.C_DecapsulateKey(ctx.sh, mech.byref(), 0, None, 0, ct, 1088, None)
-    _emit_result("C_DecapsulateKey.phKey", rv)
+    print(f"NULL phKey -> CKR:0x{rv:08x}")
+    assert rv in (
+        CKR_ARGUMENTS_BAD,
+        CKR_MECHANISM_INVALID,
+        CKR_KEY_HANDLE_INVALID,
+        CKR_TEMPLATE_INCOMPLETE,
+        CKR_TEMPLATE_INCONSISTENT,
+    ), f"NULL phKey rejected with unexpected CKR 0x{rv:08x}"
 
     # Note: OASIS may allow pCiphertext=None if ulCiphertextLen=0, but otherwise ARGUMENTS_BAD
     rv = ctx.raw.C_DecapsulateKey(ctx.sh, mech.byref(), 0, None, 0, None, 1088, ctypes.byref(key))
-    _emit_result("C_DecapsulateKey.pCiphertext", rv)
-    _emit_complete("C_DecapsulateKey_NULLs")
+    print(f"NULL pCiphertext with length>0 -> CKR:0x{rv:08x}")
+    assert rv == CKR_ARGUMENTS_BAD, "NULL pCiphertext should yield CKR_ARGUMENTS_BAD"
+
+    print("OK")
 
 
 def _async_get_id_no_operation(ctx: ProbeContext) -> None:
@@ -144,8 +163,10 @@ def _async_get_id_no_operation(ctx: ProbeContext) -> None:
     id_buf = (ctypes.c_ubyte * 256)()
     id_len = ctypes.c_ulong(256)
     rv = ctx.raw.C_AsyncGetID(ctx.sh, id_buf, ctypes.byref(id_len))
-    _emit_result("C_AsyncGetID", rv)
-    _emit_complete("C_AsyncGetID")
+    print(f"CKR:0x{rv:08x}")
+    # OPERATION_NOT_INITIALIZED or FUNCTION_NOT_SUPPORTED - both acceptable
+    assert rv != CKR_OK, "Should have failed with no async operation"
+    print("OK")
 
 
 def _wrap_auth_wrong_mechanism(ctx: ProbeContext) -> None:
@@ -158,8 +179,9 @@ def _wrap_auth_wrong_mechanism(ctx: ProbeContext) -> None:
     rv = ctx.raw.C_WrapKeyAuthenticated(
         ctx.sh, mech.byref(), 0, 0, ct, ct_len, out, ctypes.byref(out_len)
     )
-    _emit_result("C_WrapKeyAuthenticated", rv)
-    _emit_complete("C_WrapKeyAuthenticated")
+    print(f"CKR:0x{rv:08x}")
+    assert rv != CKR_OK, "Should have rejected SHA256 for WrapAuth"
+    print("OK")
 
 
 _PROBES = {

@@ -42,7 +42,6 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._rsa_export import rsa_public_key_from_attrs_or_xfail
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -69,15 +68,7 @@ class TestSessionObjects:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL])
-            label_value = attr_or_record(
-                attrs,
-                CKA_LABEL,
-                label="CKA_LABEL:session AES key",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if label_value is not MISSING_ATTRIBUTE:
-                assert label_value == "test-key-object"
+            assert attrs[CKA_LABEL] == "test-key-object"
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -108,24 +99,8 @@ class TestSessionObjects:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE, CKA_CLASS])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                label="CKA_KEY_TYPE:session AES key",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            obj_class = attr_or_record(
-                attrs,
-                CKA_CLASS,
-                label="CKA_CLASS:session AES key",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if key_type is not MISSING_ATTRIBUTE:
-                assert key_type == CKK_AES
-            if obj_class is not MISSING_ATTRIBUTE:
-                assert obj_class == CKO_SECRET_KEY
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            assert attrs[CKA_CLASS] == CKO_SECRET_KEY
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -162,27 +137,11 @@ class TestSessionObjects:
             tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY))
             found = find_objects(rs.raw, rs.sh, tmpl)
             labels = set()
-            label_omitted = False
             for h in found:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
-                label_value = attr_or_record(
-                    a,
-                    CKA_LABEL,
-                    label="CKA_LABEL:multi-key search result",
-                    reason="not_operational",
-                    inherit_mechanism=False,
-                )
-                if label_value is MISSING_ATTRIBUTE:
-                    label_omitted = True
-                else:
-                    labels.add(label_value)
-            # The aggregate membership oracle below depends on EVERY found handle's label
-            # having been readable; a single omission means we cannot tell whether the
-            # missing label belonged to "multi-1"/"multi-2", so it must disable only this
-            # dependent oracle, not surface as a hard AssertionError (contract rule 4).
-            if not label_omitted:
-                assert "multi-1" in labels
-                assert "multi-2" in labels
+                labels.add(a[CKA_LABEL])
+            assert "multi-1" in labels
+            assert "multi-2" in labels
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)
             destroy_quietly(rs.raw, rs.sh, k2)
@@ -201,15 +160,7 @@ class TestSessionObjects:
             found = find_objects(rs.raw, rs.sh, tmpl)
             for h in found:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_CLASS])
-                obj_class = attr_or_record(
-                    a,
-                    CKA_CLASS,
-                    label="CKA_CLASS:class search result",
-                    reason="not_operational",
-                    inherit_mechanism=False,
-                )
-                if obj_class is not MISSING_ATTRIBUTE:
-                    assert obj_class == CKO_SECRET_KEY
+                assert a[CKA_CLASS] == CKO_SECRET_KEY
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -229,42 +180,10 @@ class TestKeyPairAttributes:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS, CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS, CKA_KEY_TYPE])
-            pub_class = attr_or_record(
-                pub_attrs,
-                CKA_CLASS,
-                label="CKA_CLASS:RSA-public",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            priv_class = attr_or_record(
-                priv_attrs,
-                CKA_CLASS,
-                label="CKA_CLASS:RSA-private",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            pub_key_type = attr_or_record(
-                pub_attrs,
-                CKA_KEY_TYPE,
-                label="CKA_KEY_TYPE:RSA-public",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            priv_key_type = attr_or_record(
-                priv_attrs,
-                CKA_KEY_TYPE,
-                label="CKA_KEY_TYPE:RSA-private",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if pub_class is not MISSING_ATTRIBUTE:
-                assert pub_class == CKO_PUBLIC_KEY
-            if priv_class is not MISSING_ATTRIBUTE:
-                assert priv_class == CKO_PRIVATE_KEY
-            if pub_key_type is not MISSING_ATTRIBUTE:
-                assert pub_key_type == CKK_RSA
-            if priv_key_type is not MISSING_ATTRIBUTE:
-                assert priv_key_type == CKK_RSA
+            assert pub_attrs[CKA_CLASS] == CKO_PUBLIC_KEY
+            assert priv_attrs[CKA_CLASS] == CKO_PRIVATE_KEY
+            assert pub_attrs[CKA_KEY_TYPE] == CKK_RSA
+            assert priv_attrs[CKA_KEY_TYPE] == CKK_RSA
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -275,15 +194,8 @@ class TestKeyPairAttributes:
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
-            modulus = attr_or_record(
-                attrs,
-                CKA_MODULUS,
-                label="CKA_MODULUS:RSA-public",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if modulus is not MISSING_ATTRIBUTE:
-                assert len(modulus) == 256  # 2048 bits = 256 bytes
+            modulus = attrs[CKA_MODULUS]
+            assert len(modulus) == 256  # 2048 bits = 256 bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -294,16 +206,9 @@ class TestKeyPairAttributes:
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_PUBLIC_EXPONENT])
-            exp = attr_or_record(
-                attrs,
-                CKA_PUBLIC_EXPONENT,
-                label="CKA_PUBLIC_EXPONENT:RSA-public",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if exp is not MISSING_ATTRIBUTE:
-                exp_int = int.from_bytes(exp, "big")
-                assert exp_int in (3, 17, 65537)  # Common RSA exponents
+            exp = attrs[CKA_PUBLIC_EXPONENT]
+            exp_int = int.from_bytes(exp, "big")
+            assert exp_int in (3, 17, 65537)  # Common RSA exponents
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -316,24 +221,8 @@ class TestKeyPairAttributes:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            pub_key_type = attr_or_record(
-                pub_attrs,
-                CKA_KEY_TYPE,
-                label="CKA_KEY_TYPE:EC-public",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            priv_key_type = attr_or_record(
-                priv_attrs,
-                CKA_KEY_TYPE,
-                label="CKA_KEY_TYPE:EC-private",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if pub_key_type is not MISSING_ATTRIBUTE:
-                assert pub_key_type == CKK_EC
-            if priv_key_type is not MISSING_ATTRIBUTE:
-                assert priv_key_type == CKK_EC
+            assert pub_attrs[CKA_KEY_TYPE] == CKK_EC
+            assert priv_attrs[CKA_KEY_TYPE] == CKK_EC
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -345,15 +234,8 @@ class TestKeyPairAttributes:
         pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])
-            point = attr_or_record(
-                attrs,
-                CKA_EC_POINT,
-                label="CKA_EC_POINT:EC-public",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if point is not MISSING_ATTRIBUTE:
-                assert len(point) > 0
+            point = attrs[CKA_EC_POINT]
+            assert len(point) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -367,15 +249,7 @@ class TestKeyImportExport:
         key = import_secret_key(rs.raw, rs.sh, CKK_AES, key_bytes)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                label="CKA_KEY_TYPE:imported AES key",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if key_type is not MISSING_ATTRIBUTE:
-                assert key_type == CKK_AES
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -386,26 +260,9 @@ class TestKeyImportExport:
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = attr_or_record(
-                attrs,
-                CKA_MODULUS,
-                label="CKA_MODULUS:RSA-public for import",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            exponent = attr_or_record(
-                attrs,
-                CKA_PUBLIC_EXPONENT,
-                label="CKA_PUBLIC_EXPONENT:RSA-public for import",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if modulus is MISSING_ATTRIBUTE or exponent is MISSING_ATTRIBUTE:
-                return
-            rsa_public_key_from_attrs_or_xfail(
-                {CKA_MODULUS: modulus, CKA_PUBLIC_EXPONENT: exponent},
-                label="generated RSA public key for import",
-            )
+            rsa_public_key_from_attrs_or_xfail(attrs, label="generated RSA public key for import")
+            modulus = attrs[CKA_MODULUS]
+            exponent = attrs[CKA_PUBLIC_EXPONENT]
 
             try:
                 imported = create_object(
@@ -429,15 +286,7 @@ class TestKeyImportExport:
                 raise
             try:
                 imp_attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
-                imp_key_type = attr_or_record(
-                    imp_attrs,
-                    CKA_KEY_TYPE,
-                    label="CKA_KEY_TYPE:imported RSA public key",
-                    reason="not_operational",
-                    inherit_mechanism=False,
-                )
-                if imp_key_type is not MISSING_ATTRIBUTE:
-                    assert imp_key_type == CKK_RSA
+                assert imp_attrs[CKA_KEY_TYPE] == CKK_RSA
             finally:
                 destroy_quietly(rs.raw, rs.sh, imported)
         finally:
@@ -460,24 +309,8 @@ class TestKeyImportExport:
 
             # Import a copy of the public key
             orig_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            orig_modulus = attr_or_record(
-                orig_attrs,
-                CKA_MODULUS,
-                label="CKA_MODULUS:RSA-public for signature import",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            orig_exponent = attr_or_record(
-                orig_attrs,
-                CKA_PUBLIC_EXPONENT,
-                label="CKA_PUBLIC_EXPONENT:RSA-public for signature import",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if orig_modulus is MISSING_ATTRIBUTE or orig_exponent is MISSING_ATTRIBUTE:
-                return
             rsa_public_key_from_attrs_or_xfail(
-                {CKA_MODULUS: orig_modulus, CKA_PUBLIC_EXPONENT: orig_exponent},
+                orig_attrs,
                 label="generated RSA public key for import",
             )
             try:
@@ -487,8 +320,8 @@ class TestKeyImportExport:
                     {
                         CKA_CLASS: CKO_PUBLIC_KEY,
                         CKA_KEY_TYPE: CKK_RSA,
-                        CKA_MODULUS: orig_modulus,
-                        CKA_PUBLIC_EXPONENT: orig_exponent,
+                        CKA_MODULUS: orig_attrs[CKA_MODULUS],
+                        CKA_PUBLIC_EXPONENT: orig_attrs[CKA_PUBLIC_EXPONENT],
                         CKA_TOKEN: False,
                         CKA_VERIFY: True,
                     },
@@ -524,14 +357,6 @@ class TestKeyImportExport:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKA_VALUE:extractable AES key",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if value is not MISSING_ATTRIBUTE:
-                assert value == key_bytes
+            assert attrs[CKA_VALUE] == key_bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

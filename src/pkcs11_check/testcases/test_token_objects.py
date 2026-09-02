@@ -40,7 +40,6 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKU_USER,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import get_pin_bytes
 
 pytestmark = [pytest.mark.keymgmt, pytest.mark.destructive]
@@ -67,15 +66,7 @@ class TestTokenObjectLifecycle:
         try:
             assert key_h != 0
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TOKEN])
-            token = attr_or_record(
-                attrs,
-                CKA_TOKEN,
-                label="CKA_TOKEN:token-AES-key",
-                reason="honest_deviation",
-                inherit_mechanism=False,
-            )
-            if token is not MISSING_ATTRIBUTE:
-                assert token is True
+            assert attrs[CKA_TOKEN] is True
 
             # Findable by label
             tmpl = template_from_dict({CKA_LABEL: label})
@@ -230,24 +221,8 @@ class TestTokenObjectAttributes:
         try:
             tok_attrs = read_attributes(rs.raw, rs.sh, tok_key_h, [CKA_TOKEN])
             ses_attrs = read_attributes(rs.raw, rs.sh, ses_key_h, [CKA_TOKEN])
-            tok_token = attr_or_record(
-                tok_attrs,
-                CKA_TOKEN,
-                label="CKA_TOKEN:token-object",
-                reason="honest_deviation",
-                inherit_mechanism=False,
-            )
-            ses_token = attr_or_record(
-                ses_attrs,
-                CKA_TOKEN,
-                label="CKA_TOKEN:session-object",
-                reason="honest_deviation",
-                inherit_mechanism=False,
-            )
-            if tok_token is not MISSING_ATTRIBUTE:
-                assert tok_token is True
-            if ses_token is not MISSING_ATTRIBUTE:
-                assert ses_token is False
+            assert tok_attrs[CKA_TOKEN] is True
+            assert ses_attrs[CKA_TOKEN] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, tok_key_h)
             destroy_quietly(rs.raw, rs.sh, ses_key_h)

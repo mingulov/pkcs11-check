@@ -42,7 +42,6 @@ from pkcs11_check.core.file_runner import (
     discover_pytest_units,
     extract_coverage_from_jsonl,
     extract_provisioning_from_jsonl,
-    extract_quality_report_evidence_from_jsonl,
     extract_quality_report_records_from_jsonl,
     load_run_state,
     postprocess_jsonl_to_unified,
@@ -382,9 +381,6 @@ def _persist_collection_failure(
                 if jsonl_path is not None
                 else []
             ),
-            quality_report_evidence=extract_quality_report_evidence_from_jsonl(
-                [jsonl_path] if jsonl_path is not None else []
-            ),
         )
     else:
         write_isolated_report(report_config, reporting_state, per_unit_details=details)
@@ -421,9 +417,6 @@ def _assemble_json_artifacts_from_jsonl(
         )
     coverage_data = extract_coverage_from_jsonl(report_path)
     quality_records = extract_quality_report_records_from_jsonl(report_path)
-    # The single-run raw report.jsonl IS the declared authoritative source for this run's
-    # classification observability.
-    quality_report_evidence = extract_quality_report_evidence_from_jsonl([report_path])
     if coverage_data:
         (unified_path.parent / "coverage.json").write_text(
             json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
@@ -457,7 +450,6 @@ def _assemble_json_artifacts_from_jsonl(
         results_payload,
         coverage=coverage_data,
         report_log_records=quality_records,
-        quality_report_evidence=quality_report_evidence,
     )
     return results_payload
 

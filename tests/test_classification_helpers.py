@@ -7,8 +7,6 @@ docs/classification-model-design.md.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from _pytest.outcomes import Failed
 
@@ -18,7 +16,6 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_PIN_INCORRECT,
-    CKR_USER_NOT_LOGGED_IN,
     CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
@@ -320,137 +317,6 @@ def test_xfail_if_known_ckr_reraises_on_prefix_collision() -> None:
             raise exc
         except CkrAssertionError as e:
             xfail_if_known_ckr(e, set(_KNOWN), "ckr probe")
-
-
-# --- Positive key-generation setup classifications ------------------------
-
-
-def _fake_keygen_rs(mechanism: str) -> Any:
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        raw=object(),
-        sh=1,
-        has_mechanism=lambda name: name == mechanism,
-    )
-
-
-def test_rsa_setup_unlisted_clean_ckr_fails_instead_of_xfail(monkeypatch: Any) -> None:
-    """An out-of-tuple setup CKR (e.g. session/login damage) is a finding, not
-    an advertised-but-not-operational xfail: it must propagate."""
-    from pkcs11_check import classification as C
-    from pkcs11_check.raw import recipes
-    from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
-
-    error = CkrAssertionError(
-        "C_GenerateKeyPair: Unexpected CK_RV CKR_USER_NOT_LOGGED_IN",
-        int(CKR_USER_NOT_LOGGED_IN),
-    )
-
-    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        raise error
-
-    monkeypatch.setattr(recipes, "gen_rsa_keypair", _raise)
-
-    with pytest.raises(CkrAssertionError, match="CKR_USER_NOT_LOGGED_IN"):
-        gen_rsa_keypair_or_xfail(_fake_keygen_rs("RSA_PKCS_KEY_PAIR_GEN"))
-
-    assert C.get_records() == []
-
-
-def test_rsa_setup_listed_ckr_stays_structured_xfail(monkeypatch: Any) -> None:
-    """A listed advertised-setup refusal still carries operation context and CKR."""
-    from pkcs11_check import classification as C
-    from pkcs11_check.raw import recipes
-    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
-    from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
-
-    error = CkrAssertionError(
-        "C_GenerateKeyPair: Unexpected CK_RV CKR_FUNCTION_FAILED",
-        int(CKR_FUNCTION_FAILED),
-    )
-
-    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        raise error
-
-    monkeypatch.setattr(recipes, "gen_rsa_keypair", _raise)
-
-    with pytest.raises(pytest.xfail.Exception):
-        gen_rsa_keypair_or_xfail(_fake_keygen_rs("RSA_PKCS_KEY_PAIR_GEN"))
-
-    [record] = C.get_records()
-    assert record.reason == "not_operational"
-    assert record.operation == "C_GenerateKeyPair"
-    assert record.mechanism == "CKM_RSA_PKCS_KEY_PAIR_GEN"
-    assert record.expected_ckr == ["CKR_OK"]
-    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
-
-
-def test_ec_setup_unlisted_clean_ckr_fails_instead_of_xfail(monkeypatch: Any) -> None:
-    """An out-of-tuple EC setup CKR is a finding and must propagate."""
-    from pkcs11_check import classification as C
-    from pkcs11_check.raw import recipes
-    from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail
-
-    error = CkrAssertionError(
-        "C_GenerateKeyPair: Unexpected CK_RV CKR_USER_NOT_LOGGED_IN",
-        int(CKR_USER_NOT_LOGGED_IN),
-    )
-
-    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        raise error
-
-    monkeypatch.setattr(recipes, "gen_ec_keypair", _raise)
-
-    with pytest.raises(CkrAssertionError, match="CKR_USER_NOT_LOGGED_IN"):
-        gen_ec_keypair_or_xfail(_fake_keygen_rs("EC_KEY_PAIR_GEN"), b"curve")
-
-    assert C.get_records() == []
-
-
-def test_ec_setup_listed_ckr_preserves_operation_context(monkeypatch: Any) -> None:
-    """A listed advertised EC setup refusal identifies the EC keygen mechanism."""
-    from pkcs11_check import classification as C
-    from pkcs11_check.raw import recipes
-    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
-    from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail
-
-    error = CkrAssertionError(
-        "C_GenerateKeyPair: Unexpected CK_RV CKR_FUNCTION_FAILED",
-        int(CKR_FUNCTION_FAILED),
-    )
-
-    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        raise error
-
-    monkeypatch.setattr(recipes, "gen_ec_keypair", _raise)
-
-    with pytest.raises(pytest.xfail.Exception):
-        gen_ec_keypair_or_xfail(_fake_keygen_rs("EC_KEY_PAIR_GEN"), b"curve")
-
-    [record] = C.get_records()
-    assert record.reason == "not_operational"
-    assert record.operation == "C_GenerateKeyPair"
-    assert record.mechanism == "CKM_EC_KEY_PAIR_GEN"
-    assert record.expected_ckr == ["CKR_OK"]
-    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
-
-
-def test_setup_plain_assertion_remains_unclassified_harness_visible(monkeypatch: Any) -> None:
-    """A Python assertion from setup must not be relabeled as a provider refusal."""
-    from pkcs11_check import classification as C
-    from pkcs11_check.raw import recipes
-    from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
-
-    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        raise AssertionError("setup harness assertion")
-
-    monkeypatch.setattr(recipes, "gen_rsa_keypair", _raise)
-
-    with pytest.raises(AssertionError, match="setup harness assertion"):
-        gen_rsa_keypair_or_xfail(_fake_keygen_rs("RSA_PKCS_KEY_PAIR_GEN"))
-
-    assert C.get_records() == []
 
 
 # --- Direct unit tests for the shared setup/op helpers ----------------------

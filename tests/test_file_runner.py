@@ -58,8 +58,6 @@ from pkcs11_check.core.file_runner import (
 )
 from pkcs11_check.core.merge import merge_results_payloads
 from pkcs11_check.core.process_observation import build_process_observation
-from pkcs11_check.core.report_log import iter_classification_occurrences
-from pkcs11_check.report.extract import extract_groups
 
 
 def test_unit_status_priority_is_the_overall_status_set() -> None:
@@ -1286,173 +1284,6 @@ def test_harness_returncodes_are_incomplete_and_public_two(
     assert payload["units"][0]["returncode"] == returncode
     assert payload["summary"]["failed"] == 0
     assert payload["summary"]["incomplete"] is True
-
-
-def _abrupt_stream(target: Path, *, with_finish: bool, traceback: bool) -> str:
-    lines = [
-        json.dumps({"$report_type": "SessionStart"}),
-        _jsonl_line(nodeid=f"{target}::test_case", when="call", outcome="passed"),
-    ]
-    if with_finish:
-        lines.append(json.dumps({"$report_type": "SessionFinish", "exitstatus": 1}))
-    return "\n".join(lines) + "\n"
-
-
-@pytest.mark.parametrize("returncode", [1, 5])
-def test_module_self_termination_is_a_provider_crash_not_harness_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
-) -> None:
-    """A module exit() mid-run (test records present, no SessionFinish, no
-    traceback) is a provider crash finding and must never be inferred as a
-    harness defect."""
-
-    target = tmp_path / "test_abrupt.py"
-    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
-    state_path = tmp_path / "state.json"
-    report_path = tmp_path / "report.jsonl"
-    results_path = tmp_path / "results.json"
-
-    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
-        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
-        report_path_arg.write_text(
-            _abrupt_stream(target, with_finish=False, traceback=False), encoding="utf-8"
-        )
-        return returncode, "module stdout", "module stderr"
-
-    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    exit_code = run_isolated_pytest_units(
-        [str(target)],
-        ["--p11-module", "/tmp/module.so"],
-        timeout=12,
-        state_file=state_path,
-        policy_file=None,
-        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
-        resume=False,
-        stop_on_failure=False,
-        console=Console(file=StringIO(), force_terminal=False),
-        granularity="test",
-    )
-
-    # A provider crash is a test failure at the public boundary (exit 1);
-    # exit 2 stays reserved for harness-incomplete runs.
-    assert exit_code == 1
-    state = load_run_state(state_path)
-    assert state is not None
-    assert state.results[0].completion_verified is False
-    records = [
-        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
-    ]
-    assert not [rec for rec in records if rec.get("$report_type") == "HarnessError"]
-    classifications = [
-        prop[1]
-        for rec in records
-        for prop in rec.get("user_properties", [])
-        if isinstance(prop, (list, tuple)) and len(prop) == 2 and prop[0] == "pkcs11_classification"
-    ]
-    # The F11 extractor contract requires a LIST of classification dicts: a bare
-    # dict is skipped and counted as a malformed property (round-0197 evidence),
-    # so the crash occurrence never reaches rendered reports.
-    assert len(classifications) == 1
-    assert isinstance(classifications[0], list)
-    assert len(classifications[0]) == 1
-    assert classifications[0][0].get("reason") == "crash"
-    malformed: list[str] = []
-    occurrences = list(
-        iter_classification_occurrences(
-            records,
-            on_malformed_marker=lambda: malformed.append("marker"),
-            on_malformed_property=lambda: malformed.append("property"),
-            on_malformed_entry=lambda: malformed.append("entry"),
-        )
-    )
-    assert malformed == []
-    assert len(occurrences) == 1
-    assert occurrences[0].reason == "crash"
-    assert occurrences[0].classification.get("outcome") == "fail"
-    assert occurrences[0].classification.get("severity") == "HIGH"
-
-
-@pytest.mark.parametrize("returncode", [1, 5])
-def test_traceback_death_stays_harness_evidence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
-) -> None:
-    """A Python-level death (traceback present) is never attributed to the
-    provider, even with test records in the stream."""
-
-    target = tmp_path / "test_traceback.py"
-    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
-    state_path = tmp_path / "state.json"
-    report_path = tmp_path / "report.jsonl"
-    results_path = tmp_path / "results.json"
-
-    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
-        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
-        report_path_arg.write_text(
-            _abrupt_stream(target, with_finish=False, traceback=False), encoding="utf-8"
-        )
-        return returncode, "", "Traceback (most recent call last):\n  File pytest, line 1\nError"
-
-    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    run_isolated_pytest_units(
-        [str(target)],
-        ["--p11-module", "/tmp/module.so"],
-        timeout=12,
-        state_file=state_path,
-        policy_file=None,
-        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
-        resume=False,
-        stop_on_failure=False,
-        console=Console(file=StringIO(), force_terminal=False),
-        granularity="test",
-    )
-    records = [
-        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
-    ]
-    assert [rec for rec in records if rec.get("$report_type") == "HarnessError"]
-
-
-def test_silent_death_before_any_record_stays_harness_evidence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """An abrupt death before any test record cannot be attributed to the
-    provider (it only loads inside test setup)."""
-
-    target = tmp_path / "test_silent.py"
-    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
-    state_path = tmp_path / "state.json"
-    report_path = tmp_path / "report.jsonl"
-    results_path = tmp_path / "results.json"
-
-    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
-        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
-        report_path_arg.write_text(
-            json.dumps({"$report_type": "SessionStart"}) + "\n", encoding="utf-8"
-        )
-        return 1, "", ""
-
-    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
-    run_isolated_pytest_units(
-        [str(target)],
-        ["--p11-module", "/tmp/module.so"],
-        timeout=12,
-        state_file=state_path,
-        policy_file=None,
-        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
-        resume=False,
-        stop_on_failure=False,
-        console=Console(file=StringIO(), force_terminal=False),
-        granularity="test",
-    )
-    records = [
-        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
-    ]
-    assert [rec for rec in records if rec.get("$report_type") == "HarnessError"]
-    assert not [
-        rec
-        for rec in records
-        if rec.get("$report_type") == "TestReport"
-        and "abrupt-exit" in json.dumps(rec.get("user_properties", []))
-    ]
 
 
 def test_same_unit_provider_failure_wins_over_harness_exit(
@@ -4308,77 +4139,6 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
     ]
 
 
-def test_write_unit_report_record_cache_bool_attempt_marker_not_treated_as_valid(
-    tmp_path: Path,
-) -> None:
-    """N13 (second half): writer/parser must agree that a bool is not a valid attempt.
-
-    ``isinstance(x, int)`` is True for ``x = True`` in Python, so a marker with
-    ``"attempt": True`` would previously make the writer's ``next_attempt``
-    tracking treat it as a real attempt 0 (bumping to 1) even though the shared
-    parser (``report_log.iter_classification_occurrences``) rejects a bool
-    attempt as malformed and never establishes attribution from it. A second,
-    unmarked source processed afterwards exposes the disagreement: its
-    synthesized marker's attempt number reveals what the writer believed
-    ``next_attempt`` was.
-    """
-    state_file = tmp_path / "state.json"
-    first = tmp_path / "first.jsonl"
-    first.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": True}
-                ),
-                json.dumps(
-                    {
-                        "$report_type": "TestReport",
-                        "nodeid": "test_a.py::test_one",
-                        "when": "call",
-                        "outcome": "passed",
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    second = tmp_path / "second.jsonl"
-    second.write_text(
-        json.dumps(
-            {
-                "$report_type": "TestReport",
-                "nodeid": "test_a.py::test_two",
-                "when": "call",
-                "outcome": "passed",
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    file_runner_mod._write_unit_report_record_cache_from_jsonl_paths(
-        state_file, "test_a.py", [first, second]
-    )
-
-    cache_text = file_runner_mod._report_record_cache_path(state_file, "test_a.py").read_text(
-        encoding="utf-8"
-    )
-    recs = [json.loads(line) for line in cache_text.splitlines()]
-    synthesized_markers = [
-        r
-        for r in recs
-        if r.get("$report_type") == "IsolatedUnitReport" and r.get("attempt") is not True
-    ]
-    # `second` has no marker of its own, so one is synthesized for it. The bool
-    # marker in `first` must NOT have counted toward next_attempt (the parser never
-    # honors it either), so the synthesized marker must start back at attempt 0 --
-    # not attempt 2, which is what `True + 1` would have produced.
-    assert synthesized_markers == [
-        {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": 0}
-    ]
-
-
 def test_write_report_jsonl_adds_owner_boundaries_to_legacy_cache_shards(
     tmp_path: Path,
 ) -> None:
@@ -4466,15 +4226,11 @@ def test_cache_attempt_checkpoint_keeps_all_attempt_sources(tmp_path: Path) -> N
     )
 
     cached = _load_cached_report_records_by_unit(state_file, ["test_a.py"])["test_a.py"]
-    # The second source's first record is a SessionStart: the marker is written AFTER it
-    # (not before), so a reader resetting attribution provenance on SessionStart resets
-    # BEFORE the marker establishes it, not after (M1 fix) -- see
-    # `_write_unit_report_record_cache_from_jsonl_paths`.
     assert [record["$report_type"] for record in cached] == [
         "IsolatedUnitReport",
         "TestReport",
-        "SessionStart",
         "IsolatedUnitReport",
+        "SessionStart",
         "SessionFinish",
     ]
 
@@ -4857,13 +4613,9 @@ def test_run_isolated_pytest_units_persists_report_records_into_state(
     # Records are persisted as per-unit shards, not inline in state.json.
     records_by_unit = _load_cached_report_records_by_unit(state_file, units)
     assert list(records_by_unit) == ["test_a.py"]
-    # The source's first record is a SessionStart: the marker is written AFTER it (not
-    # before), so a reader resetting attribution provenance on SessionStart resets BEFORE
-    # the marker establishes it, not after (M1 fix) -- see
-    # `_write_unit_report_record_cache_from_jsonl_paths`.
     assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
-        "SessionStart",
         "IsolatedUnitReport",
+        "SessionStart",
         "TestReport",
         "SelectionReport",
         "CoverageReport",
@@ -8772,107 +8524,6 @@ def test_retry_pass_does_not_erase_prior_finding(first: dict[str, object], expec
     assert [test["outcome"] for test in detail["tests"]] == [expected]
 
 
-def test_retry_pass_keeps_real_setup_finding_and_conservative_outcome(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The real pytest/file-runner retry path keeps phase ownership and xfail status."""
-    target = tmp_path / "test_retry_provider.py"
-    marker = tmp_path / "crasher-ran"
-    target.write_text(
-        f"""
-import ctypes
-import os
-import signal
-import sys
-from pathlib import Path
-
-import pytest
-from pkcs11_check.classification import Classification, record
-
-@pytest.fixture(autouse=True)
-def setup_observation(request):
-    if request.node.name == "test_observed":
-        record(Classification(
-            reason="nonspec_reject", outcome="xfail", severity="LOW",
-            label="setup deviation", summary="setup deviation",
-        ))
-
-def test_observed():
-    pass
-
-def test_crasher():
-    marker = Path({str(marker)!r})
-    if marker.exists():
-        return
-    marker.write_text("first attempt", encoding="utf-8")
-    if sys.platform == "win32":
-        kernel = ctypes.windll.kernel32
-        kernel.GetCurrentProcess.restype = ctypes.c_void_p
-        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-        kernel.TerminateProcess(kernel.GetCurrentProcess(), 0xC0000005)
-    else:
-        os.kill(os.getpid(), signal.SIGSEGV)
-
-def test_remaining():
-    pass
-""",
-        encoding="utf-8",
-    )
-    state_file = tmp_path / "state.json"
-    results_path = tmp_path / "results.json"
-    report_jsonl_path = tmp_path / "report.jsonl"
-    monkeypatch.setattr(
-        file_runner_mod,
-        "_unit_plugin_addopts",
-        lambda _path: "-p pkcs11-check -p pytest_reportlog -p timeout",
-    )
-
-    exit_code = run_isolated_pytest_units(
-        [str(target)],
-        [],
-        timeout=12,
-        state_file=state_file,
-        policy_file=None,
-        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path),
-        resume=False,
-        stop_on_failure=False,
-        console=Console(file=StringIO(), force_terminal=False),
-        granularity="mixed",
-    )
-
-    assert exit_code == 1
-    unified = json.loads(results_path.read_text(encoding="utf-8"))
-    unit_report = unified["units"][0]
-    assert unit_report["counts"]["xfailed"] == 1
-    assert unit_report["counts"]["passed"] >= 1
-    assert unit_report["counts"]["crashed"] == 1
-    observed = next(test for test in unit_report["tests"] if "test_observed" in test["nodeid"])
-    assert observed["outcome"] == "xfailed"
-
-    merged_records = [
-        json.loads(line)
-        for line in report_jsonl_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    classification_phases = [
-        report["when"]
-        for report in merged_records
-        if report.get("$report_type") == "TestReport"
-        and dict(report.get("user_properties", [])).get("pkcs11_classification")
-    ]
-    assert classification_phases == ["setup"]
-    assert any(
-        record.get("nodeid", "").endswith("::test_remaining")
-        and record.get("when") == "call"
-        and record.get("outcome") == "passed"
-        for record in merged_records
-    )
-    groups = extract_groups(report_jsonl_path, crashes=[])
-    assert len(groups) == 1
-    assert groups[0]["reason"] == "nonspec_reject"
-    assert groups[0]["count"] == 1
-
-
 @pytest.mark.parametrize(
     ("higher", "lower"),
     [
@@ -10232,7 +9883,6 @@ def test_file_skip_counts_collected_tests_as_skipped(
         encoding="utf-8",
     )
     report_path = tmp_path / "results.json"
-    report_jsonl_path = tmp_path / "report.jsonl"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
 
@@ -10257,7 +9907,7 @@ def test_file_skip_counts_collected_tests_as_skipped(
         timeout=12,
         state_file=tmp_path / "state.json",
         policy_file=None,
-        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl_path),
+        report_config=IsolatedReportConfig("json", report_path),
         resume=False,
         stop_on_failure=False,
         console=Console(file=StringIO(), force_terminal=False),
@@ -10276,23 +9926,6 @@ def test_file_skip_counts_collected_tests_as_skipped(
     assert quality["file_skipped_units"] == [
         {"target": str(test_file), "reason": "AES_CCM not supported by module"}
     ]
-    report_records = [
-        json.loads(line) for line in report_jsonl_path.read_text(encoding="utf-8").splitlines()
-    ]
-    assert report_records == [
-        {
-            "$report_type": "IsolatedUnitReport",
-            "target": str(test_file),
-            "attempt": 0,
-            "reason": "AES_CCM not supported by module",
-            "skipped": 2,
-        }
-    ]
-    observability = quality["classification_observability"]
-    assert observability["status"] == "complete"
-    assert observability["expected_sources"] == 1
-    assert observability["readable_sources"] == 1
-    assert observability["missing_sources"] == 0
 
 
 def test_mechanism_coverage_buckets_required_mechanisms_for_unit_outcomes(

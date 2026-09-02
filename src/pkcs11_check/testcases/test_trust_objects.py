@@ -7,13 +7,10 @@ have any trust objects present.  Tests skip gracefully when none are found.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
-from pkcs11_check.compliance import ComplianceLevel, note
-from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import find_objects, read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError
@@ -32,7 +29,6 @@ from pkcs11_check.raw.types_std import (
     CKT_TRUST_UNKNOWN,
     CKT_TRUSTED,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = [pytest.mark.object]
@@ -45,62 +41,6 @@ _KNOWN_TRUST_VALUES = {
     CKT_NOT_TRUSTED,
     CKT_TRUST_MUST_VERIFY_TRUST,
 }
-
-# The CKA_TRUST_* usage-attribute family (PKCS#11 v3.2 Table 25) this module reads.
-# Bounds the Table-25-footnote-3 absent-default below to *only* these attributes --
-# an explicit membership guard, not a file/provider/path allowlist -- so the default
-# can never be misapplied to an unrelated attribute id.
-_CKA_TRUST_USAGE_ATTRS = frozenset(
-    {
-        CKA_TRUST_SERVER_AUTH,
-        CKA_TRUST_CLIENT_AUTH,
-        CKA_TRUST_CODE_SIGNING,
-        CKA_TRUST_EMAIL_PROTECTION,
-    }
-)
-
-
-def _trust_usage_value_or_unknown(attrs: Mapping[int, Any], attr_id: int) -> tuple[bool, Any]:
-    """Return an optional trust usage value with Table 25's absent default.
-
-    PKCS#11 v3.2 Table 25 footnote 3 treats an absent ``CKA_TRUST_XXX`` as
-    ``CKT_TRUST_UNKNOWN`` -- this IS the spec-defined case, not a deviation from
-    it: v3.2 defines seven ``CKA_TRUST_*`` usages and no ``CKO_TRUST`` object sets
-    all seven, so each is optional-with-default (the provider omits the key on
-    ``CKR_ATTRIBUTE_TYPE_INVALID``/``CKR_ATTRIBUTE_SENSITIVE``, which is the
-    conformant answer for an object that simply does not carry that usage). A
-    membership guard (not ``attr_or_record()``) is used deliberately: recording
-    this as a *classification* would manufacture a finding against a conformant
-    provider -- unlike ``CKA_ISSUER``/``CKA_SERIAL_NUMBER`` elsewhere in this file,
-    which ARE required for ``CKO_TRUST`` and so DO get recorded (and classified)
-    on absence.
-
-    The omission is still a real, non-gating cross-provider signal worth keeping
-    (one provider advertising four usages versus zero is a genuine observable
-    difference), so it is logged via ``compliance.note()`` -- the project's
-    channel for a conformant-but-notable difference -- rather than dropped
-    silently. Preserve the presence bit so an actual on-the-wire
-    ``CKT_TRUST_UNKNOWN`` remains distinct from the spec-defined absent case.
-
-    ``attr_id`` MUST be one of ``_CKA_TRUST_USAGE_ATTRS`` -- the spec default this
-    function applies is defined only for that trust-usage-attribute family, never
-    for an arbitrary attribute.
-    """
-    if attr_id not in _CKA_TRUST_USAGE_ATTRS:
-        raise ValueError(
-            "_trust_usage_value_or_unknown is bounded to the CKA_TRUST_* usage-attribute "
-            f"family (Table 25); got attribute id 0x{attr_id:08X}"
-        )
-    if attr_id in attrs:
-        return True, attrs[attr_id]
-    attr_name = ATTR_NAMES.get(attr_id, f"0x{attr_id:08X}")
-    note(
-        f"CKO_TRUST object omits {attr_name} (PKCS#11 v3.2 Table 25 footnote 3: an "
-        "absent trust usage attribute defaults to CKT_TRUST_UNKNOWN)",
-        ComplianceLevel.STANDARD,
-        reference="PKCS#11 v3.2 Table 25 footnote 3",
-    )
-    return False, CKT_TRUST_UNKNOWN
 
 
 def _find_trust_objects(raw: Any, sh: int) -> list[int]:
@@ -131,6 +71,8 @@ class TestTrustObjects:
         for h in trusts:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
+                issuer = attrs[CKA_ISSUER]
+                assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
@@ -139,15 +81,6 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
-            issuer = attr_or_record(
-                attrs,
-                CKA_ISSUER,
-                inherit_mechanism=False,
-                label="CKO_TRUST CKA_ISSUER",
-            )
-            if issuer is MISSING_ATTRIBUTE:
-                continue
-            assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
 
     def test_trust_objects_have_serial_number(self, p11_raw_session: Any) -> None:
         """Each CKO_TRUST object has a readable CKA_SERIAL_NUMBER."""
@@ -158,6 +91,10 @@ class TestTrustObjects:
         for h in trusts:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
+                serial = attrs[CKA_SERIAL_NUMBER]
+                assert isinstance(serial, bytes), (
+                    f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
+                )
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
@@ -166,15 +103,6 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
-            serial = attr_or_record(
-                attrs,
-                CKA_SERIAL_NUMBER,
-                inherit_mechanism=False,
-                label="CKO_TRUST CKA_SERIAL_NUMBER",
-            )
-            if serial is MISSING_ATTRIBUTE:
-                continue
-            assert isinstance(serial, bytes), f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
 
     def test_trust_server_auth_is_known_value(self, p11_raw_session: Any) -> None:
         """CKA_TRUST_SERVER_AUTH is a known CK_TRUST value if present."""
@@ -193,9 +121,9 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
-            present, val = _trust_usage_value_or_unknown(attrs, CKA_TRUST_SERVER_AUTH)
-            if not present:
-                continue  # Table 25 footnote 3: absent means CKT_TRUST_UNKNOWN
+            if CKA_TRUST_SERVER_AUTH not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            val = attrs[CKA_TRUST_SERVER_AUTH]
             assert val in _KNOWN_TRUST_VALUES, f"Unknown TRUST_SERVER_AUTH value 0x{val:08X}"
 
     def test_trust_usage_attributes_readable(self, p11_raw_session: Any) -> None:
@@ -223,9 +151,9 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
-            present, val = _trust_usage_value_or_unknown(attrs, attr_id)
-            if not present:
-                continue  # Table 25 footnote 3: absent means CKT_TRUST_UNKNOWN
+            if attr_id not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            val = attrs[attr_id]
             assert val in _KNOWN_TRUST_VALUES, (
                 f"Unknown trust value 0x{val:08X} for attr 0x{attr_id:08X}"
             )

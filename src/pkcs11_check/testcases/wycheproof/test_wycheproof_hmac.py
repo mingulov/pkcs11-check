@@ -30,25 +30,15 @@ from pkcs11_check.raw.types_std import (
     CKK_SHA512_HMAC,
     CKK_SHA_1_HMAC,
     CKM_SHA3_224_HMAC,
-    CKM_SHA3_224_HMAC_GENERAL,
     CKM_SHA3_256_HMAC,
-    CKM_SHA3_256_HMAC_GENERAL,
     CKM_SHA3_384_HMAC,
-    CKM_SHA3_384_HMAC_GENERAL,
     CKM_SHA3_512_HMAC,
-    CKM_SHA3_512_HMAC_GENERAL,
     CKM_SHA224_HMAC,
-    CKM_SHA224_HMAC_GENERAL,
     CKM_SHA384_HMAC,
-    CKM_SHA384_HMAC_GENERAL,
     CKM_SHA512_224_HMAC,
-    CKM_SHA512_224_HMAC_GENERAL,
     CKM_SHA512_256_HMAC,
-    CKM_SHA512_256_HMAC_GENERAL,
     CKM_SHA512_HMAC,
-    CKM_SHA512_HMAC_GENERAL,
     CKM_SHA_1_HMAC,
-    CKM_SHA_1_HMAC_GENERAL,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -68,10 +58,6 @@ from pkcs11_check.testcases.conftest import (
     is_known_error,
     reject_or_classify,
     xfail_if_known_ckr,
-)
-from pkcs11_check.testcases.wycheproof._hmac_routing import (
-    hmac_tag_size_bytes,
-    route_hmac_mechanism,
 )
 
 pytestmark = pytest.mark.wycheproof
@@ -113,42 +99,6 @@ _MECH_NAMES: dict[int, str] = {
     CKM_SHA3_256_HMAC: "SHA3_256_HMAC",
     CKM_SHA3_384_HMAC: "SHA3_384_HMAC",
     CKM_SHA3_512_HMAC: "SHA3_512_HMAC",
-    CKM_SHA_1_HMAC_GENERAL: "SHA_1_HMAC_GENERAL",
-    CKM_SHA224_HMAC_GENERAL: "SHA224_HMAC_GENERAL",
-    CKM_SHA384_HMAC_GENERAL: "SHA384_HMAC_GENERAL",
-    CKM_SHA512_HMAC_GENERAL: "SHA512_HMAC_GENERAL",
-    CKM_SHA512_224_HMAC_GENERAL: "SHA512_224_HMAC_GENERAL",
-    CKM_SHA512_256_HMAC_GENERAL: "SHA512_256_HMAC_GENERAL",
-    CKM_SHA3_224_HMAC_GENERAL: "SHA3_224_HMAC_GENERAL",
-    CKM_SHA3_256_HMAC_GENERAL: "SHA3_256_HMAC_GENERAL",
-    CKM_SHA3_384_HMAC_GENERAL: "SHA3_384_HMAC_GENERAL",
-    CKM_SHA3_512_HMAC_GENERAL: "SHA3_512_HMAC_GENERAL",
-}
-
-_HMAC_GENERAL_MECHANISMS: dict[int, int] = {
-    CKM_SHA_1_HMAC: CKM_SHA_1_HMAC_GENERAL,
-    CKM_SHA224_HMAC: CKM_SHA224_HMAC_GENERAL,
-    CKM_SHA384_HMAC: CKM_SHA384_HMAC_GENERAL,
-    CKM_SHA512_HMAC: CKM_SHA512_HMAC_GENERAL,
-    CKM_SHA512_224_HMAC: CKM_SHA512_224_HMAC_GENERAL,
-    CKM_SHA512_256_HMAC: CKM_SHA512_256_HMAC_GENERAL,
-    CKM_SHA3_224_HMAC: CKM_SHA3_224_HMAC_GENERAL,
-    CKM_SHA3_256_HMAC: CKM_SHA3_256_HMAC_GENERAL,
-    CKM_SHA3_384_HMAC: CKM_SHA3_384_HMAC_GENERAL,
-    CKM_SHA3_512_HMAC: CKM_SHA3_512_HMAC_GENERAL,
-}
-
-_HMAC_DIGEST_SIZES: dict[int, int] = {
-    CKM_SHA_1_HMAC: 20,
-    CKM_SHA224_HMAC: 28,
-    CKM_SHA384_HMAC: 48,
-    CKM_SHA512_HMAC: 64,
-    CKM_SHA512_224_HMAC: 28,
-    CKM_SHA512_256_HMAC: 32,
-    CKM_SHA3_224_HMAC: 28,
-    CKM_SHA3_256_HMAC: 32,
-    CKM_SHA3_384_HMAC: 48,
-    CKM_SHA3_512_HMAC: 64,
 }
 
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached  # noqa: E402
@@ -209,24 +159,19 @@ _HMAC_FILES: dict[str, tuple[int | None, int | None, int | None]] = {
 def _load_hmac_vectors() -> list[tuple[str, dict[str, Any]]]:
     vectors = []
     for filename, (key_type, mechanism, fallback_type) in _HMAC_FILES.items():
-        if key_type is None or mechanism is None:
+        if key_type is None:
             continue  # skip sha256 - already covered
         path = WYCHEPROOF_DIR / filename
         if not path.exists():
             continue
         data = load_json_cached(path)
         for group in data["testGroups"]:
-            tag_size = hmac_tag_size_bytes(
-                group.get("tagSize", _HMAC_DIGEST_SIZES[mechanism] * 8),
-                digest_size=_HMAC_DIGEST_SIZES[mechanism],
-            )
+            tag_size = group.get("tagSize", 256) // 8
             for test in group["tests"]:
                 test["_key_type"] = key_type
                 test["_mechanism"] = mechanism
                 test["_fallback_type"] = fallback_type
                 test["_tag_size"] = tag_size
-                test["_general_mechanism"] = _HMAC_GENERAL_MECHANISMS[mechanism]
-                test["_digest_size"] = _HMAC_DIGEST_SIZES[mechanism]
                 test["_file"] = filename
                 vectors.append((f"{filename}:tc{test['tcId']}-{test['result']}", test))
     return vectors
@@ -262,38 +207,16 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
     msg = bytes.fromhex(vec["msg"])
     tag_expected = bytes.fromhex(vec["tag"])
     result = vec["result"]
-    fixed_mechanism = vec["_mechanism"]
-    digest_size = int(vec.get("_digest_size", _HMAC_DIGEST_SIZES[fixed_mechanism]))
-    group_tag_size = (vec.get("_group") or {}).get("tagSize")
-    if "_tag_size" in vec:
-        expected_tag_size = int(vec["_tag_size"])
-    elif group_tag_size is not None:
-        expected_tag_size = hmac_tag_size_bytes(
-            group_tag_size,
-            digest_size=digest_size,
-        )
-    else:
-        expected_tag_size = len(tag_expected)
-    general_mechanism = vec.get("_general_mechanism", _HMAC_GENERAL_MECHANISMS[fixed_mechanism])
-    fixed_display = _MECH_NAMES[fixed_mechanism]
-    general_display = _MECH_NAMES[general_mechanism]
-    route = route_hmac_mechanism(
-        expected_tag_size=expected_tag_size,
-        digest_size=digest_size,
-        fixed_mechanism=fixed_mechanism,
-        fixed_name=fixed_display,
-        general_mechanism=general_mechanism,
-        general_name=general_display,
-    )
+    mechanism = vec["_mechanism"]
 
     # Check mechanism availability from the module's mechanism list
-    mech_display = route.display_name
+    mech_display = _MECH_NAMES.get(mechanism, f"0x{mechanism:08x}")
     if not rs.has_mechanism(mech_display):
         pytest.skip(f"{mech_display} not supported by module")
-    set_params({"hash": fixed_display})
+    set_params({"hash": mech_display})
     set_mechanism(mech_display, operation="C_Verify", expect_success=(result == "valid"))
 
-    cache_key = (fixed_mechanism, len(key_bytes))
+    cache_key = (mechanism, len(key_bytes))
     if cache_key in _UNSUPPORTED_HMAC_KEYS:
         pytest.skip(f"{mech_display} {len(key_bytes)}-byte key not supported (cached)")
 
@@ -342,18 +265,7 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
         )
 
     try:
-        if route.mech_param is None:
-            verified = verify_single(rs.raw, rs.sh, key, route.mechanism, msg, tag_expected)
-        else:
-            verified = verify_single(
-                rs.raw,
-                rs.sh,
-                key,
-                route.mechanism,
-                msg,
-                tag_expected,
-                mech_param=route.mech_param,
-            )
+        verified = verify_single(rs.raw, rs.sh, key, mechanism, msg, tag_expected)
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_hmac_runtime_reject(exc, vec_id)

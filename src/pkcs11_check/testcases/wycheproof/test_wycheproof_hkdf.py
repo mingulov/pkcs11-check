@@ -35,7 +35,6 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA_1,
     CKR_KEY_SIZE_RANGE,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases.conftest import (
     assert_correct,
@@ -197,16 +196,20 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             )
 
         attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-        okm = attr_or_record(
-            attrs,
-            CKA_VALUE,
-            label=f"HKDF:{vec_id}",
-            reason="not_operational",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
-        if okm is MISSING_ATTRIBUTE:
+        if CKA_VALUE not in attrs:
+            if result in ("valid", "acceptable"):
+                classify(
+                    "not_operational",
+                    label=f"HKDF:{vec_id}",
+                    summary=(
+                        f"HKDF derived key value unavailable for {result} vector {vec_id}; "
+                        "the result cannot be verified"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             return
+        okm = attrs[CKA_VALUE]
         assert isinstance(okm, bytes)
     finally:
         if derived is not None:

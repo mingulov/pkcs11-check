@@ -30,7 +30,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_raw,
@@ -149,15 +148,8 @@ class TestLimboCertImport:
             )
             # Sanity: label round-trips
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
-            label = attr_or_record(
-                attrs,
-                CKA_LABEL,
-                label="X509:CKA_LABEL round-trips on raw cert import",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if label is not MISSING_ATTRIBUTE and label != "Pkcs11Interop":
+            label = attrs[CKA_LABEL]
+            if label != "Pkcs11Interop":
                 assert_correct(
                     actual=label,
                     expected=_portable_label(tc["id"]),
@@ -312,15 +304,8 @@ def test_import_limbo_failure_cert_raw(
             )
         # Cert stored - verify VALUE round-trips
         attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-        stored_value = attr_or_record(
-            attrs,
-            CKA_VALUE,
-            label=f"X509:CKA_VALUE round-trips on FAILURE cert import ({tc['id']})",
-            reason="not_operational",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
-        if stored_value is not MISSING_ATTRIBUTE and stored_value != der:
+        stored_value = attrs[CKA_VALUE]
+        if stored_value != der:
             classify(
                 "self_contradiction",
                 kind="metadata",

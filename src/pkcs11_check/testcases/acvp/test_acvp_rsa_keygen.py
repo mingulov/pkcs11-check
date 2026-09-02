@@ -59,7 +59,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
 from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import load_keygen_vectors
@@ -85,23 +84,18 @@ _RSA_KEYGEN_CAPABILITY_CKRS = (
 def _require_rsa_keygen_attribute(
     attrs: dict[int, Any], attr_id: int, vec_id: str, name: str
 ) -> Any:
-    """Return a generated RSA public-key attribute, or hard-fail its absence.
-
-    A module that reports success generating the key and answering the
-    attribute query, yet omits a required attribute from the readback, is
-    self-contradicting: this is a metadata ``wrong_result`` failure, not
-    missing evidence -- it must never be downgraded to an xfail.
-    """
-    if attr_id in attrs:
-        return attrs[attr_id]
-    fail_as(
-        "wrong_result",
-        kind="metadata",
-        label=f"{vec_id}:{name}",
-        operation="C_GetAttributeValue",
-        inherit_mechanism=False,
-        summary=f"{vec_id}: generated RSA public key omitted required {name}",
-    )
+    """Require a generated RSA public-key attribute instead of ignoring absence."""
+    value = attrs.get(attr_id)
+    if value is None:
+        fail_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"{vec_id}:{name}",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            summary=f"{vec_id}: generated RSA public key omitted required {name}",
+        )
+    return value
 
 
 class TestRsaKeyGen:
@@ -202,34 +196,33 @@ class TestRsaKeyGen:
             actual_bits = _require_rsa_keygen_attribute(
                 attrs, CKA_MODULUS_BITS, vec_id, "CKA_MODULUS_BITS"
             )
-            if actual_bits is not MISSING_ATTRIBUTE:
-                if isinstance(actual_bits, bool) or not isinstance(actual_bits, int):
-                    fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label=f"{vec_id}:CKA_MODULUS_BITS",
-                        operation="C_GetAttributeValue",
-                        mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        expected="int",
-                        actual=type(actual_bits).__name__,
-                        summary=f"{vec_id}: CKA_MODULUS_BITS has malformed readback",
-                    )
-                if actual_bits != modulo:
-                    fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label=f"{vec_id}:CKA_MODULUS_BITS",
-                        operation="C_GetAttributeValue",
-                        mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        expected=modulo,
-                        actual=actual_bits,
-                        summary=(
-                            f"{vec_id}: Modulus size mismatch: expected {modulo}, got {actual_bits}"
-                        ),
-                    )
+            if isinstance(actual_bits, bool) or not isinstance(actual_bits, int):
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_MODULUS_BITS",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="int",
+                    actual=type(actual_bits).__name__,
+                    summary=f"{vec_id}: CKA_MODULUS_BITS has malformed readback",
+                )
+            if actual_bits != modulo:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_MODULUS_BITS",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=modulo,
+                    actual=actual_bits,
+                    summary=(
+                        f"{vec_id}: Modulus size mismatch: expected {modulo}, got {actual_bits}"
+                    ),
+                )
 
             modulus = _require_rsa_keygen_attribute(attrs, CKA_MODULUS, vec_id, "CKA_MODULUS")
-            if modulus is not MISSING_ATTRIBUTE and (not isinstance(modulus, bytes) or not modulus):
+            if not isinstance(modulus, bytes) or not modulus:
                 fail_as(
                     "wrong_result",
                     kind="metadata",
@@ -244,57 +237,56 @@ class TestRsaKeyGen:
             exp_val = _require_rsa_keygen_attribute(
                 attrs, CKA_PUBLIC_EXPONENT, vec_id, "CKA_PUBLIC_EXPONENT"
             )
-            if exp_val is not MISSING_ATTRIBUTE:
-                if isinstance(exp_val, bytes) and exp_val:
-                    actual_exp = int.from_bytes(exp_val, "big")
-                elif isinstance(exp_val, int) and not isinstance(exp_val, bool):
-                    actual_exp = exp_val
-                else:
-                    fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
-                        operation="C_GetAttributeValue",
-                        mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        expected="non-empty bytes or int",
-                        actual=type(exp_val).__name__,
-                        summary=f"{vec_id}: CKA_PUBLIC_EXPONENT has malformed readback",
-                    )
+            if isinstance(exp_val, bytes) and exp_val:
+                actual_exp = int.from_bytes(exp_val, "big")
+            elif isinstance(exp_val, int) and not isinstance(exp_val, bool):
+                actual_exp = exp_val
+            else:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="non-empty bytes or int",
+                    actual=type(exp_val).__name__,
+                    summary=f"{vec_id}: CKA_PUBLIC_EXPONENT has malformed readback",
+                )
 
-                # Public exponent should be odd and > 2 (FIPS 186-4/5 requirement).
-                if actual_exp % 2 != 1:
-                    fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
-                        operation="C_GetAttributeValue",
-                        mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        expected="odd integer",
-                        actual=actual_exp,
-                        summary=f"{vec_id}: Public exponent must be odd",
-                    )
-                if actual_exp <= 2:
-                    fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
-                        operation="C_GetAttributeValue",
-                        mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        expected="> 2",
-                        actual=actual_exp,
-                        summary=f"{vec_id}: Public exponent must be > 2",
-                    )
-                if actual_exp >= (1 << 256):
-                    fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
-                        operation="C_GetAttributeValue",
-                        mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        expected="< 2**256",
-                        actual=actual_exp,
-                        summary=f"{vec_id}: Public exponent unreasonably large",
-                    )
+            # Public exponent should be odd and > 2 (FIPS 186-4/5 requirement).
+            if actual_exp % 2 != 1:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="odd integer",
+                    actual=actual_exp,
+                    summary=f"{vec_id}: Public exponent must be odd",
+                )
+            if actual_exp <= 2:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="> 2",
+                    actual=actual_exp,
+                    summary=f"{vec_id}: Public exponent must be > 2",
+                )
+            if actual_exp >= (1 << 256):
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="< 2**256",
+                    actual=actual_exp,
+                    summary=f"{vec_id}: Public exponent unreasonably large",
+                )
 
         except AssertionError as exc:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):

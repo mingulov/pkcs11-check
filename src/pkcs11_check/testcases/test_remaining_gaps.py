@@ -38,14 +38,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import (
-    Classification,
-    classify,
-    derive_verdict,
-    fail_as,
-    raise_for_record,
-    record,
-)
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import mech_ulong
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -54,7 +47,6 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import (
     CkrAssertionError,
-    ckr_name,
     expect_rv,
     is_standard_ckr,
     is_vendor_defined_ckr,
@@ -105,7 +97,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_NO_EVENT,
     CKR_OK,
-    CKR_OPERATION_NOT_INITIALIZED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_UNWRAPPING_KEY_HANDLE_INVALID,
@@ -115,10 +106,8 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_HANDLE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
-from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
@@ -243,201 +232,6 @@ def _run_gap_probe(
     return result.returncode, result.stdout, result.stderr
 
 
-def _inspect_gap_probe(
-    returncode: int,
-    stdout: str,
-    stderr: str,
-    *,
-    context: str,
-    ckr_prefix: str | None = None,
-    operation: str | None = None,
-) -> tuple[int | None, Classification | None]:
-    """Record terminal semantic markers before applying process disposition."""
-    semantic: list[Classification] = []
-    malformed = False
-    for line in stdout.splitlines():
-        if line.startswith("SETUP_XFAIL:"):
-            reason, kind, prefix = "not_operational", None, "SETUP_XFAIL:"
-        elif line.startswith("BREAK:"):
-            reason, kind, prefix = "self_contradiction", "crypto", "BREAK:"
-        elif line.startswith("DEVIATION_XFAIL:"):
-            reason, kind, prefix = "honest_deviation", None, "DEVIATION_XFAIL:"
-        else:
-            continue
-        payload = line.removeprefix(prefix).strip()
-        if not payload:
-            malformed = True
-            continue
-        outcome, severity = derive_verdict(reason, kind)
-        semantic.append(
-            Classification(
-                reason=reason,
-                outcome=outcome,
-                severity=severity,
-                kind=kind,
-                label=context,
-                summary=f"{context}: {payload}",
-                detail={"protocol_marker": prefix.removesuffix(":")},
-            )
-        )
-    provider_rv: int | None = None
-    provider_record: Classification | None = None
-    malformed_ckr = False
-    if ckr_prefix is not None:
-        provider_rv, provider_record, malformed_ckr = _parse_gap_ckr_marker(
-            stdout,
-            ckr_prefix,
-            context=context,
-            operation=operation or context,
-            allow_missing=bool(semantic) or "SKIP:" in stdout,
-        )
-    for item in semantic:
-        record(item)
-    if provider_record is not None:
-        record(provider_record)
-    _termination, explicit_harness = assert_subprocess_completed(
-        returncode, stdout, stderr, context=context
-    )
-    if explicit_harness:
-        return provider_rv, provider_record
-    if malformed or malformed_ckr:
-        fail_as(
-            "harness_error",
-            label=context,
-            summary=f"{context}: malformed semantic or CKR protocol marker",
-            detail={"probe_incomplete": True, "protocol": "malformed_marker"},
-        )
-    for item in semantic:
-        raise_for_record(item)
-    return provider_rv, provider_record
-
-
-def _parse_gap_ckr_marker(
-    stdout: str,
-    prefix: str,
-    *,
-    context: str,
-    operation: str,
-    allow_missing: bool = False,
-) -> tuple[int | None, Classification | None, bool]:
-    """Parse one complete dual-function CKR marker without raising.
-
-    The returned classification is recorded before subprocess disposition.  This keeps a
-    clean provider rejection visible when teardown later terminates the child abnormally;
-    normal callers raise it only after ``assert_subprocess_completed`` has run.
-    """
-    marker = f"{prefix}:"
-    lines = [line for line in stdout.splitlines() if line.startswith(marker)]
-    if not lines:
-        return None, None, not allow_missing
-    if len(lines) != 1:
-        return None, None, True
-    raw_rv = lines[0].removeprefix(marker).strip()
-    try:
-        rv = int(raw_rv, 0)
-    except ValueError:
-        return None, None, True
-    if rv == CKR_OK:
-        return rv, None, False
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_NOT_INITIALIZED):
-        # CKR_FUNCTION_NOT_SUPPORTED is the spec-defined way to say the function isn't
-        # implemented (capability absence); CKR_OPERATION_NOT_INITIALIZED is the
-        # spec-required answer to this dual-function call, which is probed with no
-        # sign/encrypt (or decrypt/verify) operation initialised. Mechanism advertisement
-        # is orthogonal to function support and cannot promote either into a deviation.
-        return rv, None, False
-    if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
-        outcome, severity = derive_verdict("self_contradiction", "metadata")
-        return (
-            rv,
-            Classification(
-                reason="self_contradiction",
-                outcome=outcome,
-                severity=severity,
-                kind="metadata",
-                label=context,
-                operation=operation,
-                actual_ckr=ckr_name(rv),
-                summary=f"{context}: returned undefined CK_RV {ckr_name(rv)}",
-                detail={"protocol_marker": prefix, "probe_incomplete": True},
-            ),
-            False,
-        )
-    outcome, severity = derive_verdict("not_operational", "crypto")
-    return (
-        rv,
-        Classification(
-            reason="not_operational",
-            outcome=outcome,
-            severity=severity,
-            kind="crypto",
-            label=context,
-            operation=operation,
-            actual_ckr=ckr_name(rv),
-            summary=f"{context}: advertised function is not operational ({ckr_name(rv)})",
-            detail={"protocol_marker": prefix, "operation": operation},
-        ),
-        False,
-    )
-
-
-def _probe_ckr(
-    stdout: str,
-    prefix: str,
-    *,
-    context: str,
-) -> int:
-    """Parse one dual-function CKR marker, treating malformed output as harness error."""
-    marker = f"{prefix}:"
-    lines = [line for line in stdout.splitlines() if line.startswith(marker)]
-    if not lines:
-        fail_as(
-            "harness_error",
-            label=context,
-            summary=f"{context}: missing {prefix} result",
-            detail={"probe_incomplete": True, "protocol": "missing_result"},
-        )
-    line = lines[0]
-    raw_rv = line.removeprefix(marker).strip()
-    try:
-        rv = int(raw_rv, 0)
-    except ValueError:
-        fail_as(
-            "harness_error",
-            label=context,
-            summary=f"{context}: malformed {prefix} CKR {raw_rv!r}",
-            detail={"probe_incomplete": True, "protocol": "malformed_result"},
-        )
-    _validate_defined_ckr(rv, context)
-    return rv
-
-
-def _classify_dual_ckr(
-    rv: int,
-    *,
-    context: str,
-    operation: str,
-    recorded: Classification | None = None,
-) -> None:
-    """CKR_OK passes. CKR_FUNCTION_NOT_SUPPORTED is capability absence (skip) and
-    CKR_OPERATION_NOT_INITIALIZED is the spec-required answer to this uninitialised
-    dual-function call -- neither is a deviation. Any other defined CKR refusal is."""
-    if rv in (CKR_OK, CKR_OPERATION_NOT_INITIALIZED):
-        return
-    if rv == CKR_FUNCTION_NOT_SUPPORTED:
-        pytest.skip(f"{context}: CKR_FUNCTION_NOT_SUPPORTED - dual function not implemented")
-    if recorded is not None:
-        raise_for_record(recorded)
-    classify(
-        "not_operational",
-        kind="crypto",
-        label=context,
-        operation=operation,
-        actual=rv,
-        summary=f"{context}: advertised dual function is not operational ({ckr_name(rv)})",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Template constraint attributes (Phase B gap)
 # ---------------------------------------------------------------------------
@@ -465,21 +259,14 @@ class TestTemplateConstraintAttributes:
         try:
             try:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_WRAP_TEMPLATE])
+                wt = vals[CKA_WRAP_TEMPLATE]
+                assert wt is not None or wt == b""
+            except KeyError:
+                pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
             except CkrAssertionError as exc:
-                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
-                    raise
-                return
-            wt = attr_or_record(
-                vals,
-                CKA_WRAP_TEMPLATE,
-                inherit_mechanism=False,
-                label="CKA_WRAP_TEMPLATE:generated-AES-wrap-key readback",
-                reason="honest_deviation",
-                kind="metadata",
-            )
-            if wt is MISSING_ATTRIBUTE:
-                return
-            assert wt is not None or wt == b""
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -502,21 +289,14 @@ class TestTemplateConstraintAttributes:
         try:
             try:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_UNWRAP_TEMPLATE])
+                ut = vals[CKA_UNWRAP_TEMPLATE]
+                assert ut is not None or ut == b""
+            except KeyError:
+                pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
             except CkrAssertionError as exc:
-                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
-                    raise
-                return
-            ut = attr_or_record(
-                vals,
-                CKA_UNWRAP_TEMPLATE,
-                inherit_mechanism=False,
-                label="CKA_UNWRAP_TEMPLATE:generated-AES-unwrap-key readback",
-                reason="honest_deviation",
-                kind="metadata",
-            )
-            if ut is MISSING_ATTRIBUTE:
-                return
-            assert ut is not None or ut == b""
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -538,21 +318,14 @@ class TestTemplateConstraintAttributes:
         try:
             try:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_DERIVE_TEMPLATE])
+                dt = vals[CKA_DERIVE_TEMPLATE]
+                assert dt is not None or dt == b""
+            except KeyError:
+                pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
             except CkrAssertionError as exc:
-                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
-                    raise
-                return
-            dt = attr_or_record(
-                vals,
-                CKA_DERIVE_TEMPLATE,
-                inherit_mechanism=False,
-                label="CKA_DERIVE_TEMPLATE:generated-AES-derive-key readback",
-                reason="honest_deviation",
-                kind="metadata",
-            )
-            if dt is MISSING_ATTRIBUTE:
-                return
-            assert dt is not None or dt == b""
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -606,32 +379,20 @@ class TestTemplateConstraintAttributes:
                     label="CKA_WRAP_TEMPLATE wrapping key generation",
                 )
 
-            # C_GenerateKey/C_CreateObject above already returned CKR_OK
-            # (not one of the unsupported-attribute rejection codes), which
-            # already proves the module accepted the nested-template attribute
-            # at creation -- independent claim evidence a missing readback must
-            # not downgrade.  The readback below only corroborates (or, if
-            # present but malformed, weakens) the claim; it can raise it back
-            # down only when actual (not missing) evidence contradicts it.
-            claimed = True
+            claimed = False
             try:
                 attrs = read_attributes(rs.raw, rs.sh, wrapping_key.value, [CKA_WRAP_TEMPLATE])
-            except CkrAssertionError as exc:
-                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
-                    raise
-            else:
-                raw_template = attr_or_record(
-                    attrs,
-                    CKA_WRAP_TEMPLATE,
-                    inherit_mechanism=False,
-                    label="CKA_WRAP_TEMPLATE:wrapping-key readback",
-                    reason="honest_deviation",
-                    kind="metadata",
+                raw_template = attrs.get(CKA_WRAP_TEMPLATE)
+                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
+                    CK_ATTRIBUTE
                 )
-                if raw_template is not MISSING_ATTRIBUTE:
-                    claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                        CK_ATTRIBUTE
-                    )
+            except KeyError:
+                claimed = False
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    claimed = False
+                else:
+                    raise
 
             allowed_target = gen_aes_key_or_xfail(
                 rs,
@@ -749,32 +510,20 @@ class TestTemplateConstraintAttributes:
                     label="CKA_UNWRAP_TEMPLATE unwrapping key generation",
                 )
 
-            # C_GenerateKey/C_CreateObject above already returned CKR_OK
-            # (not one of the unsupported-attribute rejection codes), which
-            # already proves the module accepted the nested-template attribute
-            # at creation -- independent claim evidence a missing readback must
-            # not downgrade.  The readback below only corroborates (or, if
-            # present but malformed, weakens) the claim; it can raise it back
-            # down only when actual (not missing) evidence contradicts it.
-            claimed = True
+            claimed = False
             try:
                 attrs = read_attributes(rs.raw, rs.sh, unwrapping_key.value, [CKA_UNWRAP_TEMPLATE])
-            except CkrAssertionError as exc:
-                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
-                    raise
-            else:
-                raw_template = attr_or_record(
-                    attrs,
-                    CKA_UNWRAP_TEMPLATE,
-                    inherit_mechanism=False,
-                    label="CKA_UNWRAP_TEMPLATE:unwrapping-key readback",
-                    reason="honest_deviation",
-                    kind="metadata",
+                raw_template = attrs.get(CKA_UNWRAP_TEMPLATE)
+                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
+                    CK_ATTRIBUTE
                 )
-                if raw_template is not MISSING_ATTRIBUTE:
-                    claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                        CK_ATTRIBUTE
-                    )
+            except KeyError:
+                claimed = False
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    claimed = False
+                else:
+                    raise
 
             source_key = gen_aes_key_or_xfail(
                 rs,
@@ -938,32 +687,20 @@ class TestTemplateConstraintAttributes:
                     label="CKA_DERIVE_TEMPLATE base-key import",
                 )
 
-            # C_GenerateKey/C_CreateObject above already returned CKR_OK
-            # (not one of the unsupported-attribute rejection codes), which
-            # already proves the module accepted the nested-template attribute
-            # at creation -- independent claim evidence a missing readback must
-            # not downgrade.  The readback below only corroborates (or, if
-            # present but malformed, weakens) the claim; it can raise it back
-            # down only when actual (not missing) evidence contradicts it.
-            claimed = True
+            claimed = False
             try:
                 attrs = read_attributes(rs.raw, rs.sh, base_key.value, [CKA_DERIVE_TEMPLATE])
-            except CkrAssertionError as exc:
-                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
-                    raise
-            else:
-                raw_template = attr_or_record(
-                    attrs,
-                    CKA_DERIVE_TEMPLATE,
-                    inherit_mechanism=False,
-                    label="CKA_DERIVE_TEMPLATE:base-key readback",
-                    reason="honest_deviation",
-                    kind="metadata",
+                raw_template = attrs.get(CKA_DERIVE_TEMPLATE)
+                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
+                    CK_ATTRIBUTE
                 )
-                if raw_template is not MISSING_ATTRIBUTE:
-                    claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                        CK_ATTRIBUTE
-                    )
+            except KeyError:
+                claimed = False
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    claimed = False
+                else:
+                    raise
 
             derive_mech = mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, derive_data)
             matching_template = template(
@@ -1075,21 +812,12 @@ class TestOtpKeyAttributes:
             for attr_int in (CKA_OTP_FORMAT, CKA_OTP_LENGTH):
                 try:
                     vals = read_attributes(rs.raw, rs.sh, key_h, [attr_int])
+                    assert vals[attr_int] is not None
+                except KeyError:
+                    pass  # Optional OTP attribute is absent.
                 except CkrAssertionError as exc:
                     if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
                         raise
-                    continue
-                value = attr_or_record(
-                    vals,
-                    attr_int,
-                    inherit_mechanism=False,
-                    label=f"CKA_OTP:0x{attr_int:08X}:OTP-key readback",
-                    reason="honest_deviation",
-                    kind="metadata",
-                )
-                if value is MISSING_ATTRIBUTE:
-                    continue  # Optional OTP attribute is absent.
-                assert value is not None
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -1109,11 +837,13 @@ class TestWaitForSlotEvent:
         # flags=1 means CKF_DONT_BLOCK (non-blocking)
         rv = rs.raw.C_WaitForSlotEvent(1, byref(slot_out), None)
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
-            # C_WaitForSlotEvent is a mandatory-in-table function whose spec return-value
-            # table (v2.40+ Sec.5.6) explicitly lists CKR_FUNCTION_NOT_SUPPORTED as
-            # defined: the module implements the function pointer but declines slot-event
-            # polling entirely -- capability absence, not a deviation, so skip.
-            pytest.skip("Module exposes C_WaitForSlotEvent but does not implement it")
+            xfail_as(
+                "not_operational",
+                label="C_WaitForSlotEvent",
+                operation="C_WaitForSlotEvent",
+                actual=rv,
+                summary="Module exposes C_WaitForSlotEvent but does not implement it",
+            )
         classify_negative_rv(
             rv,
             (CKR_NO_EVENT,),
@@ -1461,53 +1191,50 @@ class TestDualFunctionRemaining:
     def test_sign_encrypt_update_callable(self, p11_config: Any) -> None:
         """C_SignEncryptUpdate (index 56) exists and returns a defined CKR code."""
         returncode, stdout, stderr = _run_gap_probe(p11_config, "sign_encrypt_update")
-        rv, measurement = _inspect_gap_probe(
-            returncode,
-            stdout,
-            stderr,
-            context="C_SignEncryptUpdate",
-            ckr_prefix="SEU",
-            operation="C_SignEncryptUpdate",
-        )
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
-        if rv is None:
-            fail_as(
-                "harness_error",
+        if returncode < 0:
+            classify(
+                "crash",
                 label="C_SignEncryptUpdate",
-                summary="C_SignEncryptUpdate: missing parsed CKR result",
-                detail={"probe_incomplete": True, "protocol": "missing_result"},
+                operation="C_SignEncryptUpdate",
+                summary=(
+                    f"C_SignEncryptUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
+                ),
             )
-        _classify_dual_ckr(
-            rv,
-            context="C_SignEncryptUpdate",
-            operation="C_SignEncryptUpdate",
-            recorded=measurement,
-        )
+        if returncode != 0:
+            classify(
+                "crash",
+                label="C_SignEncryptUpdate probe subprocess",
+                operation="C_SignEncryptUpdate",
+                summary=f"No output: {stdout!r} {stderr[:200]}",
+            )
+        seu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("SEU:")), None)
+        assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
+        # Any defined CKR response is valid - we're testing the function exists and doesn't crash.
+        _parse_defined_probe_ckr(seu_line, "SEU", "C_SignEncryptUpdate")
 
     def test_decrypt_verify_update_callable(self, p11_config: Any) -> None:
         """C_DecryptVerifyUpdate (index 57) exists and returns a defined CKR code."""
         returncode, stdout, stderr = _run_gap_probe(p11_config, "decrypt_verify_update")
-        rv, measurement = _inspect_gap_probe(
-            returncode,
-            stdout,
-            stderr,
-            context="C_DecryptVerifyUpdate",
-            ckr_prefix="DVU",
-            operation="C_DecryptVerifyUpdate",
-        )
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
-        if rv is None:
-            fail_as(
-                "harness_error",
+        if returncode < 0:
+            classify(
+                "crash",
                 label="C_DecryptVerifyUpdate",
-                summary="C_DecryptVerifyUpdate: missing parsed CKR result",
-                detail={"probe_incomplete": True, "protocol": "missing_result"},
+                operation="C_DecryptVerifyUpdate",
+                summary=(
+                    f"C_DecryptVerifyUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
+                ),
             )
-        _classify_dual_ckr(
-            rv,
-            context="C_DecryptVerifyUpdate",
-            operation="C_DecryptVerifyUpdate",
-            recorded=measurement,
-        )
+        if returncode != 0:
+            classify(
+                "crash",
+                label="C_DecryptVerifyUpdate probe subprocess",
+                operation="C_DecryptVerifyUpdate",
+                summary=f"No output: {stdout!r} {stderr[:200]}",
+            )
+        dvu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("DVU:")), None)
+        assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
+        _parse_defined_probe_ckr(dvu_line, "DVU", "C_DecryptVerifyUpdate")

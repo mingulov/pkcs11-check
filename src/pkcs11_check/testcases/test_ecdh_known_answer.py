@@ -13,10 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check import classification as C  # noqa: N812
+from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
@@ -29,6 +28,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
+    CKA_EC_POINT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
@@ -36,17 +36,9 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
-    CKF_EC_COMPRESS,
-    CKF_EC_UNCOMPRESS,
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
-)
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import (
-    ConventionalECPoint,
-    read_conventional_ec_point_or_xfail,
-    select_ecdh_point_form,
 )
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
@@ -73,92 +65,10 @@ _DERIVE_ATTRS: dict[int, Any] = {
 }
 
 
-def _ec_point_from_handle(rs: Any, handle: int) -> ConventionalECPoint:
-    """Read and validate a provider-returned P-256 public point."""
-    return read_conventional_ec_point_or_xfail(
-        rs,
-        handle,
-        ec.SECP256R1(),
-        label="ECDH P-256 public key",
-    )
-
-
-def _local_ec_point(public_key: ec.EllipticCurvePublicKey) -> ConventionalECPoint:
-    """Represent a locally generated peer using the same operational boundary."""
-    sec1_bytes = public_key.public_bytes(
-        serialization.Encoding.X962,
-        serialization.PublicFormat.UncompressedPoint,
-    )
-    return ConventionalECPoint(sec1_bytes, sec1_bytes, public_key)
-
-
-def _select_ecdh_point_for_target(rs: Any, point: ConventionalECPoint) -> bytes:
-    """Select the peer representation supported by the target ECDH mechanism."""
-    return select_ecdh_point_form(
-        point,
-        supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
-        supports_uncompressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)),
-    )
-
-
-def _assert_kat_secret(
-    actual: bytes,
-    private_key: ec.EllipticCurvePrivateKey,
-    provider_point: ConventionalECPoint,
-) -> None:
-    """Compare a provider-derived secret with the validated provider public key."""
-    crypto_secret = private_key.exchange(ec.ECDH(), provider_point.public_key)
-    assert_correct(
-        actual=actual,
-        expected=crypto_secret,
-        label="CKM_ECDH1_DERIVE:C_DeriveKey KAT (vs cryptography)",
-        operation="C_DeriveKey",
-        mechanism="CKM_ECDH1_DERIVE",
-    )
-
-
-def _read_value_or_record(rs: Any, handle: int, *, label: str) -> Any:
-    """Read CKA_VALUE while preserving an unavailable-value observation."""
-    return attr_or_record(
-        read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE]),
-        CKA_VALUE,
-        label=label,
-        reason="not_operational",
-        inherit_mechanism=False,
-    )
-
-
-def _validate_derived_value(
-    value: Any,
-    *,
-    leg: str,
-    label: str,
-) -> C.Classification | None:
-    """Retain a hard finding for a present derived value with the wrong shape."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    if type(value) is bytes and len(value) == 32:
-        return None
-    try:
-        actual_length: int | None = len(value)
-    except TypeError:
-        actual_length = None
-    return C.record_as(
-        "wrong_result",
-        kind="metadata",
-        label=label,
-        operation="C_GetAttributeValue",
-        inherit_mechanism=False,
-        summary=f"{label}: provider returned a derived CKA_VALUE with the wrong shape",
-        detail={
-            "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
-            "leg": leg,
-            "expected": {"type": "bytes", "length": 32},
-            "actual": {"type": type(value).__name__, "length": actual_length},
-            "producer_operation": "C_DeriveKey",
-            "producer_mechanism": "CKM_ECDH1_DERIVE",
-        },
-    )
+def _ec_point_from_handle(rs: Any, handle: int) -> bytes:
+    """Read and decode EC_POINT from a public key handle."""
+    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
+    return decode_ec_point(attrs[CKA_EC_POINT])
 
 
 def _gen_p256_or_skip(rs: Any) -> tuple[int, int]:
@@ -193,18 +103,24 @@ class TestECDHKnownAnswer:
         # Generate P-256 keypair in cryptography
         crypto_priv = ec.generate_private_key(ec.SECP256R1())
         crypto_pub = crypto_priv.public_key()
+        pub_numbers = crypto_pub.public_numbers()
+        x_bytes = pub_numbers.x.to_bytes(32, "big")
+        y_bytes = pub_numbers.y.to_bytes(32, "big")
+        crypto_point = b"\x04" + x_bytes + y_bytes
 
         # Generate P-256 keypair in PKCS#11
-        p11_pub = p11_priv = 0
+        p11_pub, p11_priv = _gen_p256_or_skip(rs)
+
         derived_h = 0
         try:
-            p11_pub, p11_priv = _gen_p256_or_skip(rs)
             p11_point = _ec_point_from_handle(rs, p11_pub)
 
             # PKCS#11: p11_priv x crypto_pub (NULL KDF = raw shared secret)
-            crypto_peer = _local_ec_point(crypto_pub)
-            crypto_point = _select_ecdh_point_for_target(rs, crypto_peer)
-            ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=crypto_point)
+            ecdh_param = mech_ecdh(
+                CKM_ECDH1_DERIVE,
+                kdf=CKD_NULL,
+                public_data=crypto_point,
+            )
             try:
                 derived_h = derive_key(
                     rs.raw,
@@ -222,31 +138,29 @@ class TestECDHKnownAnswer:
                 )
                 raise
 
-            p11_secret = _read_value_or_record(
-                rs,
-                derived_h,
-                label="CKM_ECDH1_DERIVE:known-answer derived CKA_VALUE",
-            )
-            if p11_secret is MISSING_ATTRIBUTE:
-                return
+            p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
 
-            shape_record = _validate_derived_value(
-                p11_secret,
-                leg="crossverify",
-                label="CKM_ECDH1_DERIVE:known-answer derived CKA_VALUE",
-            )
-            if shape_record is not None:
-                C.raise_for_record(shape_record)
+            # cryptography: crypto_priv x p11_pub
+            p11_x = int.from_bytes(p11_point[1:33], "big")
+            p11_y = int.from_bytes(p11_point[33:65], "big")
+            p11_pub_crypto = ec.EllipticCurvePublicNumbers(
+                p11_x, p11_y, ec.SECP256R1()
+            ).public_key()
+            crypto_secret = crypto_priv.exchange(ec.ECDH(), p11_pub_crypto)
 
-            # cryptography: crypto_priv x validated provider public key
-            _assert_kat_secret(p11_secret, crypto_priv, p11_point)
+            # Both should produce the same raw shared secret
+            assert_correct(
+                actual=p11_secret,
+                expected=crypto_secret,
+                label="CKM_ECDH1_DERIVE:C_DeriveKey KAT (vs cryptography)",
+                operation="C_DeriveKey",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
         finally:
             if derived_h:
                 destroy_quietly(rs.raw, rs.sh, derived_h)
-            if p11_pub:
-                destroy_quietly(rs.raw, rs.sh, p11_pub)
-            if p11_priv:
-                destroy_quietly(rs.raw, rs.sh, p11_priv)
+            destroy_quietly(rs.raw, rs.sh, p11_pub)
+            destroy_quietly(rs.raw, rs.sh, p11_priv)
 
     def test_ecdh_symmetric_agreement(self, p11_raw_session: Any) -> None:
         """Two PKCS#11 keypairs derive the same shared secret (symmetric)."""
@@ -254,21 +168,25 @@ class TestECDHKnownAnswer:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        pub_a = priv_a = 0
-        pub_b = priv_b = 0
+        pub_a, priv_a = _gen_p256_or_skip(rs)
+        pub_b, priv_b = _gen_p256_or_skip(rs)
+
         key_ab = 0
         key_ba = 0
         try:
-            pub_a, priv_a = _gen_p256_or_skip(rs)
-            pub_b, priv_b = _gen_p256_or_skip(rs)
-
             point_a = _ec_point_from_handle(rs, pub_a)
             point_b = _ec_point_from_handle(rs, pub_b)
 
-            point_b_wire = _select_ecdh_point_for_target(rs, point_b)
-            ecdh_ab = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=point_b_wire)
-            point_a_wire = _select_ecdh_point_for_target(rs, point_a)
-            ecdh_ba = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=point_a_wire)
+            ecdh_ab = mech_ecdh(
+                CKM_ECDH1_DERIVE,
+                kdf=CKD_NULL,
+                public_data=point_b,
+            )
+            ecdh_ba = mech_ecdh(
+                CKM_ECDH1_DERIVE,
+                kdf=CKD_NULL,
+                public_data=point_a,
+            )
             try:
                 key_ab = derive_key(
                     rs.raw,
@@ -294,37 +212,8 @@ class TestECDHKnownAnswer:
                 )
                 raise
 
-            secret_ab = _read_value_or_record(
-                rs,
-                key_ab,
-                label="CKM_ECDH1_DERIVE:A-to-B derived CKA_VALUE",
-            )
-            secret_ba = _read_value_or_record(
-                rs,
-                key_ba,
-                label="CKM_ECDH1_DERIVE:B-to-A derived CKA_VALUE",
-            )
-
-            shape_records = [
-                record
-                for record in (
-                    _validate_derived_value(
-                        secret_ab,
-                        leg="A-to-B",
-                        label="CKM_ECDH1_DERIVE:A-to-B derived CKA_VALUE",
-                    ),
-                    _validate_derived_value(
-                        secret_ba,
-                        leg="B-to-A",
-                        label="CKM_ECDH1_DERIVE:B-to-A derived CKA_VALUE",
-                    ),
-                )
-                if record is not None
-            ]
-            if shape_records:
-                C.raise_for_record(shape_records[0])
-            if secret_ab is MISSING_ATTRIBUTE or secret_ba is MISSING_ATTRIBUTE:
-                return
+            secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
+            secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=secret_ab,
                 expected=secret_ba,
@@ -337,11 +226,7 @@ class TestECDHKnownAnswer:
                 destroy_quietly(rs.raw, rs.sh, key_ab)
             if key_ba:
                 destroy_quietly(rs.raw, rs.sh, key_ba)
-            if pub_a:
-                destroy_quietly(rs.raw, rs.sh, pub_a)
-            if priv_a:
-                destroy_quietly(rs.raw, rs.sh, priv_a)
-            if pub_b:
-                destroy_quietly(rs.raw, rs.sh, pub_b)
-            if priv_b:
-                destroy_quietly(rs.raw, rs.sh, priv_b)
+            destroy_quietly(rs.raw, rs.sh, pub_a)
+            destroy_quietly(rs.raw, rs.sh, priv_a)
+            destroy_quietly(rs.raw, rs.sh, pub_b)
+            destroy_quietly(rs.raw, rs.sh, priv_b)

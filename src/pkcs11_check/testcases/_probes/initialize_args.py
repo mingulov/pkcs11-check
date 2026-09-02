@@ -19,12 +19,9 @@ Dispatch on ``extra["probe"]``:
   ``"partial_callbacks"``              -- 3-of-4 mutex callbacks (UnlockMutex NULL).
   ``"finalize_reserved_non_null"``     -- C_Initialize(NULL) then C_Finalize(non-NULL pReserved).
 
-Output protocol:
-  ``SETUP_XFAIL:<reason>`` -- a clean bootstrap refusal before the requested operation.
-  ``RV=0x{rv:08x}``        -- the return value of the C_Initialize call (or, for the
-                              finalize probe, the C_Finalize call).
-
-Exactly one setup refusal or RV result is emitted by each probe.
+Output protocol (byte-identical to the legacy child):
+  ``RV=0x{rv:08x}``  -- the return value of the C_Initialize call (or, for the finalize
+                        probe, the C_Finalize call).
 
 Required ``extra`` keys:
   ``"probe"`` -- one of the eight names above.
@@ -63,7 +60,7 @@ def _call_initialize(lib: ctypes.CDLL, init_args_ptr: Any) -> None:
     c_init.argtypes = [c_void_p]
 
     rv = c_init(init_args_ptr)
-    print(f"RV=0x{rv:08x}", flush=True)
+    print(f"RV=0x{rv:08x}")
 
     # Best-effort Finalize so the module is left clean.
     try:
@@ -180,12 +177,10 @@ def _finalize_reserved_non_null(lib: ctypes.CDLL) -> None:
     c_init.restype = CK_RV
     c_init.argtypes = [c_void_p]
     rv_init = c_init(None)
-    if rv_init not in (int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED)):
-        # Finalize is not meaningful when the bootstrap initialize was refused.  Emit
-        # one explicit setup state so the parent does not treat the missing finalize RV
-        # as an incomplete protocol (the setup/result states are mutually exclusive).
-        print(f"SETUP_XFAIL:C_Initialize refused with 0x{rv_init:08x}", flush=True)
-        return
+    assert rv_init in (  # audit-ok: init idempotency; asserting setup success
+        int(CKR_OK),
+        int(CKR_CRYPTOKI_ALREADY_INITIALIZED),
+    ), f"C_Initialize failed: 0x{rv_init:08x}"
 
     # Call C_Finalize with a non-NULL pReserved (spec §11.4 requires
     # CKR_ARGUMENTS_BAD; many modules tolerate it and return CKR_OK).
@@ -195,7 +190,7 @@ def _finalize_reserved_non_null(lib: ctypes.CDLL) -> None:
 
     dummy = ctypes.c_ulong(0xDEADBEEF)
     rv = c_final(cast(byref(dummy), c_void_p))
-    print(f"RV=0x{rv:08x}", flush=True)
+    print(f"RV=0x{rv:08x}")
 
 
 _PROBES = {

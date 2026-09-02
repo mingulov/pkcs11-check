@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from collections.abc import Mapping
 from ctypes import byref, sizeof, string_at
 from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
-from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_bytes, mech_simple, template
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -83,7 +82,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
@@ -126,9 +124,6 @@ _BLAKE2B_VALUE_INJECTION_REJECT_RVS = (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_READ_ONLY,
 )
-
-_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
-_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
 
 class _Blake2bKeyedCase(NamedTuple):
@@ -217,9 +212,6 @@ def _digest_empty_or_xfail(raw: Any, sh: int, mechanism: Any, mech_name: str) ->
 
 
 def _blake2b_hmac_reference(key: bytes, data: bytes, digest_size: int) -> bytes:
-    if key is MISSING_ATTRIBUTE:
-        raise ValueError("BLAKE2B HMAC reference requires key bytes")
-
     def _digest(payload: bytes = b"") -> Any:
         return hashlib.blake2b(payload, digest_size=digest_size)
 
@@ -275,166 +267,6 @@ def _generate_blake2b_hmac_key(rs: Any, case: _Blake2bKeyedCase) -> int:
     except AssertionError as e:
         _xfail_blake2b_reject(e, f"{case.key_gen_name} advertised but keygen failed")
     return handle.value
-
-
-def _read_attribute(
-    attrs: Mapping[Any, Any],
-    attr: Any,
-    *,
-    label: str,
-    mechanism: str,
-) -> Any:
-    """Read one provider attribute while retaining unavailable-value evidence."""
-    return attr_or_record(
-        attrs,
-        attr,
-        label=f"{label} (producer_mechanism={mechanism})",
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-
-
-def _record_attribute_mismatch(
-    *,
-    label: str,
-    expected: Any,
-    actual: Any,
-    kind: str,
-    mechanism: str,
-    operation: str = "C_GetAttributeValue",
-) -> C.Classification:
-    """Record malformed or contradictory provider attribute evidence."""
-    if actual is MISSING_ATTRIBUTE:
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            summary=f"{label}: provider did not return the requested attribute",
-            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
-        )
-    return C.record_as(
-        "wrong_result",
-        kind=kind,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
-        detail={
-            "attribute": {
-                "expected": repr(expected),
-                "actual": repr(actual),
-            }
-        },
-    )
-
-
-def _record_output_mismatch(
-    *,
-    label: str,
-    expected: Any,
-    actual: Any,
-    mechanism: str,
-    operation: str,
-) -> C.Classification:
-    """Record a wrong cryptographic output without stopping cleanup/evidence."""
-    if actual is MISSING_ATTRIBUTE:
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            summary=f"{label}: provider did not return the requested attribute",
-            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
-        )
-    return C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
-        detail={
-            "output": {
-                "expected": repr(expected),
-                "actual": repr(actual),
-            }
-        },
-    )
-
-
-def _check_attribute(
-    value: Any,
-    *,
-    expected: Any,
-    label: str,
-    mechanism: str,
-    kind: str = "metadata",
-    producer_operation: str = "C_GetAttributeValue",
-) -> C.Classification | None:
-    """Return a structured finding for one present attribute mismatch."""
-    if value is MISSING_ATTRIBUTE or value == expected:
-        return None
-    operation = producer_operation
-    if isinstance(expected, int) and (not isinstance(value, int) or isinstance(value, bool)):
-        operation = "C_GetAttributeValue"
-    return _record_attribute_mismatch(
-        label=label,
-        expected=expected,
-        actual=value,
-        kind=kind,
-        mechanism=mechanism,
-        operation=operation,
-    )
-
-
-def _check_bytes_attribute(
-    value: Any,
-    *,
-    expected_len: int,
-    expected: bytes | None,
-    label: str,
-    mechanism: str,
-    operation: str,
-) -> C.Classification | None:
-    """Return a structured finding for malformed or wrong key bytes."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    if not isinstance(value, bytes) or len(value) != expected_len:
-        return _record_attribute_mismatch(
-            label=label,
-            expected=f"{expected_len}-byte bytes",
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-        )
-    if expected is not None and value != expected:
-        return _record_attribute_mismatch(
-            label=label,
-            expected=expected,
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    return None
-
-
-def _raise_strongest(records: list[C.Classification]) -> None:
-    """Raise the strongest deferred hard finding after provider cleanup."""
-    if not records:
-        return
-    strongest = max(
-        records,
-        key=lambda record: (
-            _KIND_PRIORITY.get(record.kind or "", 0),
-            _SEVERITY_PRIORITY.get(record.severity, 0),
-        ),
-    )
-    C.raise_for_record(strongest)
 
 
 class TestBlake2bDigestLength:
@@ -1041,42 +873,19 @@ class TestBlake2bKeyed:
             pytest.skip(f"CKM_{case.hmac_name} not supported")
 
         key = _generate_blake2b_hmac_key(rs, case)
-        hard_results: list[C.Classification] = []
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE, CKA_VALUE])
-            mechanism_name = f"CKM_{case.key_gen_name}"
-            key_type = _read_attribute(
-                attrs,
-                CKA_KEY_TYPE,
-                label=f"{mechanism_name}:CKA_KEY_TYPE readback",
-                mechanism=mechanism_name,
-            )
-            mismatch = _check_attribute(
-                key_type,
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
                 expected=case.key_type,
-                label=f"{mechanism_name}:CKA_KEY_TYPE readback",
-                mechanism=mechanism_name,
-                producer_operation="C_GenerateKey",
-            )
-            if mismatch is not None:
-                hard_results.append(mismatch)
-
-            key_value = _read_attribute(
-                attrs,
-                CKA_VALUE,
-                label=f"{mechanism_name}:CKA_VALUE readback",
-                mechanism=mechanism_name,
-            )
-            value_mismatch = _check_bytes_attribute(
-                key_value,
-                expected_len=case.digest_len,
-                expected=None,
-                label=f"{mechanism_name}:CKA_VALUE readback",
-                mechanism=mechanism_name,
+                label=f"CKM_{case.key_gen_name}:CKA_KEY_TYPE readback",
                 operation="C_GenerateKey",
+                mechanism=f"CKM_{case.key_gen_name}",
+                kind="metadata",
             )
-            if value_mismatch is not None:
-                hard_results.append(value_mismatch)
+            key_value = attrs[CKA_VALUE]
+            assert isinstance(key_value, bytes)
+            assert len(key_value) == case.digest_len
 
             try:
                 mac = sign_single(
@@ -1092,32 +901,20 @@ class TestBlake2bKeyed:
                     f"{case.key_gen_name} produced key but {case.hmac_name} sign failed",
                 )
 
-            if (
-                key_value is not MISSING_ATTRIBUTE
-                and isinstance(key_value, bytes)
-                and len(key_value) == case.digest_len
-            ):
-                expected = _blake2b_hmac_reference(
-                    key_value,
-                    _BLAKE2B_TEST_DATA,
-                    case.digest_len,
-                )
-                output_mismatch = (
-                    _record_output_mismatch(
-                        label=f"CKM_{case.hmac_name}:C_Sign KAT (generated key)",
-                        expected=expected,
-                        actual=mac,
-                        operation="C_Sign",
-                        mechanism=f"CKM_{case.hmac_name}",
-                    )
-                    if mac != expected
-                    else None
-                )
-                if output_mismatch is not None:
-                    hard_results.append(output_mismatch)
+            expected = _blake2b_hmac_reference(
+                key_value,
+                _BLAKE2B_TEST_DATA,
+                case.digest_len,
+            )
+            assert_correct(
+                actual=mac,
+                expected=expected,
+                label=f"CKM_{case.hmac_name}:C_Sign KAT (generated key)",
+                operation="C_Sign",
+                mechanism=f"CKM_{case.hmac_name}",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
-        _raise_strongest(hard_results)
 
     @pytest.mark.parametrize(
         "case",
@@ -1180,7 +977,6 @@ class TestBlake2bKeyed:
 
         base = _import_blake2b_setup_key(rs, derive=True)
         derived = 0
-        hard_results: list[C.Classification] = []
         try:
             try:
                 derived = derive_key(
@@ -1202,28 +998,19 @@ class TestBlake2bKeyed:
                     f"{case.key_derive_name} advertised but derive failed",
                 )
 
-            mechanism_name = f"CKM_{case.key_derive_name}"
-            value = _read_attribute(
-                read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
-                CKA_VALUE,
-                label=f"{mechanism_name}:CKA_VALUE readback",
-                mechanism=mechanism_name,
-            )
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
-            mismatch = _check_bytes_attribute(
-                value,
-                expected_len=case.digest_len,
+            assert_correct(
+                actual=value,
                 expected=expected,
-                label=f"{mechanism_name}:C_DeriveKey KAT",
-                mechanism=mechanism_name,
+                label=f"CKM_{case.key_derive_name}:C_DeriveKey KAT",
                 operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
             )
-            hard_results = [mismatch] if mismatch is not None else []
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
-        _raise_strongest(hard_results)
 
     def _key_derive_default_template_value(
         self,
@@ -1236,7 +1023,6 @@ class TestBlake2bKeyed:
 
         base = _import_blake2b_setup_key(rs, derive=True)
         derived = 0
-        hard_results: list[C.Classification] = []
         try:
             try:
                 derived = derive_key(
@@ -1256,45 +1042,28 @@ class TestBlake2bKeyed:
                     f"{case.key_derive_name} advertised but default-template derive failed",
                 )
 
-            mechanism_name = f"CKM_{case.key_derive_name}"
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
-            key_type = _read_attribute(
-                attrs,
-                CKA_KEY_TYPE,
-                label=f"{mechanism_name}:CKA_KEY_TYPE readback (default template)",
-                mechanism=mechanism_name,
-            )
-            mismatch = _check_attribute(
-                key_type,
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
                 expected=CKK_GENERIC_SECRET,
-                label=f"{mechanism_name}:CKA_KEY_TYPE readback (default template)",
-                mechanism=mechanism_name,
-                producer_operation="C_DeriveKey",
-            )
-            if mismatch is not None:
-                hard_results.append(mismatch)
-            value = _read_attribute(
-                attrs,
-                CKA_VALUE,
-                label=f"{mechanism_name}:CKA_VALUE readback (default template)",
-                mechanism=mechanism_name,
-            )
-            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
-            mismatch = _check_bytes_attribute(
-                value,
-                expected_len=case.digest_len,
-                expected=expected,
-                label=f"{mechanism_name}:C_DeriveKey KAT (default template)",
-                mechanism=mechanism_name,
+                label=f"CKM_{case.key_derive_name}:CKA_KEY_TYPE readback (default template)",
                 operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+                kind="metadata",
             )
-            if mismatch is not None:
-                hard_results.append(mismatch)
+            value = attrs[CKA_VALUE]
+            expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
+            assert_correct(
+                actual=value,
+                expected=expected,
+                label=f"CKM_{case.key_derive_name}:C_DeriveKey KAT (default template)",
+                operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
-        _raise_strongest(hard_results)
 
     def _key_derive_length_only_template_value(
         self,
@@ -1308,7 +1077,6 @@ class TestBlake2bKeyed:
         requested_len = 12
         base = _import_blake2b_setup_key(rs, derive=True)
         derived = 0
-        hard_results: list[C.Classification] = []
         try:
             try:
                 derived = derive_key(
@@ -1329,44 +1097,22 @@ class TestBlake2bKeyed:
                     f"{case.key_derive_name} advertised but length-only derive failed",
                 )
 
-            mechanism_name = f"CKM_{case.key_derive_name}"
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
-            key_type = _read_attribute(
-                attrs,
-                CKA_KEY_TYPE,
-                label=f"{mechanism_name}:CKA_KEY_TYPE readback (length-only template)",
-                mechanism=mechanism_name,
-            )
-            mismatch = _check_attribute(
-                key_type,
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
                 expected=CKK_GENERIC_SECRET,
-                label=f"{mechanism_name}:CKA_KEY_TYPE readback (length-only template)",
-                mechanism=mechanism_name,
-                producer_operation="C_DeriveKey",
-            )
-            if mismatch is not None:
-                hard_results.append(mismatch)
-            value = _read_attribute(
-                attrs,
-                CKA_VALUE,
-                label=f"{mechanism_name}:CKA_VALUE readback (length-only template)",
-                mechanism=mechanism_name,
-            )
-            mismatch = _check_bytes_attribute(
-                value,
-                expected_len=requested_len,
-                expected=None,
-                label=f"{mechanism_name}:CKA_VALUE readback (length-only template)",
-                mechanism=mechanism_name,
+                label=f"CKM_{case.key_derive_name}:CKA_KEY_TYPE readback (length-only template)",
                 operation="C_DeriveKey",
+                mechanism=f"CKM_{case.key_derive_name}",
+                kind="metadata",
             )
-            if mismatch is not None:
-                hard_results.append(mismatch)
+            value = attrs[CKA_VALUE]
+            assert isinstance(value, bytes)
+            assert len(value) == requested_len
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
-        _raise_strongest(hard_results)
 
     def _key_derive_rejects_overlong_requested_key(
         self,
@@ -1547,8 +1293,6 @@ class TestBlake2bKeyed:
         injected = b"\xa5" * case.digest_len
         base = _import_blake2b_setup_key(rs, derive=True)
         derived = 0
-        hard_results: list[C.Classification] = []
-        soft_results: list[C.Classification] = []
         try:
             try:
                 derived = derive_key(
@@ -1573,65 +1317,33 @@ class TestBlake2bKeyed:
                 )
                 return
 
-            mechanism_name = f"CKM_{case.key_derive_name}"
-            value = _read_attribute(
-                read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
-                CKA_VALUE,
-                label=f"{mechanism_name}:CKA_VALUE readback (injection)",
-                mechanism=mechanism_name,
-            )
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = hashlib.blake2b(_BLAKE2B_TEST_KEY, digest_size=case.digest_len).digest()
-            mismatch = _check_bytes_attribute(
-                value,
-                expected_len=case.digest_len,
-                expected=None,
-                label=f"{mechanism_name}:CKA_VALUE readback (injection)",
-                mechanism=mechanism_name,
-                operation="C_DeriveKey",
+            if value == injected:
+                raise AssertionError(
+                    f"{case.key_derive_name} accepted caller-supplied CKA_VALUE in a derive "
+                    "template instead of deriving the secret bytes"
+                )
+            if value == expected:
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{case.key_derive_name} CKA_VALUE injection (derive template)",
+                    operation="C_DeriveKey",
+                    mechanism=f"CKM_{case.key_derive_name}",
+                    summary=(
+                        f"{case.key_derive_name} accepted and ignored caller-supplied CKA_VALUE "
+                        "in a derive template"
+                    ),
+                )
+            raise AssertionError(
+                f"{case.key_derive_name} accepted caller-supplied CKA_VALUE in a derive "
+                "template and produced an unexpected derived value"
             )
-            if mismatch is not None:
-                hard_results.append(mismatch)
-            elif value is not MISSING_ATTRIBUTE and isinstance(value, bytes) and value == injected:
-                hard_results.append(
-                    _record_output_mismatch(
-                        label=f"{mechanism_name} CKA_VALUE injection",
-                        expected="derived secret bytes",
-                        actual=value,
-                        operation="C_DeriveKey",
-                        mechanism=mechanism_name,
-                    )
-                )
-            elif value is not MISSING_ATTRIBUTE and isinstance(value, bytes) and value == expected:
-                soft_results.append(
-                    C.record_as(
-                        "honest_deviation",
-                        kind="metadata",
-                        label=f"{case.key_derive_name} CKA_VALUE injection (derive template)",
-                        operation="C_DeriveKey",
-                        mechanism=mechanism_name,
-                        summary=(
-                            f"{case.key_derive_name} accepted and ignored caller-supplied "
-                            "CKA_VALUE in a derive template"
-                        ),
-                    )
-                )
-            elif value is not MISSING_ATTRIBUTE and isinstance(value, bytes):
-                hard_results.append(
-                    _record_output_mismatch(
-                        label=f"{mechanism_name} CKA_VALUE injection",
-                        expected=expected,
-                        actual=value,
-                        operation="C_DeriveKey",
-                        mechanism=mechanism_name,
-                    )
-                )
         finally:
             destroy_quietly(rs.raw, rs.sh, base)
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
-        if hard_results:
-            _raise_strongest(hard_results)
-        _raise_strongest(soft_results)
 
     @pytest.mark.parametrize(
         "case",

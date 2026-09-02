@@ -28,7 +28,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
@@ -134,48 +133,21 @@ class TestCertificateSearchExtended:
             subject = issuer = serial = None
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT])
-                subject_value = attr_or_record(
-                    a,
-                    CKA_SUBJECT,
-                    label="X509:optional derived attribute CKA_SUBJECT readback",
-                    reason="honest_deviation",
-                    kind="metadata",
-                    inherit_mechanism=False,
-                )
-                if subject_value is not MISSING_ATTRIBUTE:
-                    subject = subject_value
+                subject = a[CKA_SUBJECT]
             except CkrAssertionError as exc:
                 if not is_known_error(exc, _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS):
                     raise
                 pass  # audit-ok: CKR error reading CKA_SUBJECT is acceptable; search skipped
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
-                issuer_value = attr_or_record(
-                    a,
-                    CKA_ISSUER,
-                    label="X509:optional derived attribute CKA_ISSUER readback",
-                    reason="honest_deviation",
-                    kind="metadata",
-                    inherit_mechanism=False,
-                )
-                if issuer_value is not MISSING_ATTRIBUTE:
-                    issuer = issuer_value
+                issuer = a[CKA_ISSUER]
             except CkrAssertionError as exc:
                 if not is_known_error(exc, _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS):
                     raise
                 pass  # audit-ok: CKR error reading CKA_ISSUER is acceptable; search skipped
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
-                serial_value = attr_or_record(
-                    a,
-                    CKA_SERIAL_NUMBER,
-                    label="X509:optional derived attribute CKA_SERIAL_NUMBER readback",
-                    reason="honest_deviation",
-                    kind="metadata",
-                    inherit_mechanism=False,
-                )
-                if serial_value is not MISSING_ATTRIBUTE:
-                    serial = serial_value
+                serial = a[CKA_SERIAL_NUMBER]
             except CkrAssertionError as exc:
                 if not is_known_error(exc, _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS):
                     raise

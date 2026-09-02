@@ -10,7 +10,6 @@ import ctypes
 import sys
 from collections.abc import Callable, Mapping
 from ctypes import byref
-from dataclasses import dataclass
 from enum import Flag, auto
 from typing import Any
 
@@ -1103,86 +1102,23 @@ def digest_single_with_key(
     return _two_call_output(raw, "C_DigestFinal", session)
 
 
-@dataclass(frozen=True)
-class AttrRefusal:
-    """Why an attribute type is absent from an :class:`AttrReadResult`.
-
-    ``ckr`` is the actual CK_RV the module returned for the read attempt that
-    produced this absence -- ``CKR_ATTRIBUTE_SENSITIVE`` or
-    ``CKR_ATTRIBUTE_TYPE_INVALID``. These are opposite provider behaviours
-    (a legitimate refusal vs. an unrecognised attribute type) and callers
-    must distinguish them; this class exists so ``read_attributes`` never has
-    to collapse them into one undifferentiated omission.
-
-    ``leaked_len`` is not ``None`` when the module answered with a refusal
-    CKR but *also* wrote ``leaked_len`` bytes of real attribute data into the
-    template -- a self-contradiction worth recording. The decoded bytes
-    themselves are never carried here or anywhere derived from this class;
-    only the length is bounded metadata.
-
-    Whether a given refusal is *conformant* (the attribute may legitimately
-    be sensitive, e.g. a private-key component) or a *defect* (refused an
-    attribute -- e.g. public metadata -- that can never legitimately be
-    sensitive) is not decidable here: only the call site knows which
-    attribute it asked for and why. This class only carries the observation;
-    classifying it is deliberately left to the caller.
-    """
-
-    ckr: int
-    leaked_len: int | None = None
-
-
-class AttrReadResult(dict[int, Any]):
-    """``read_attributes``' return type.
-
-    A plain ``dict[int, Any]`` -- unchanged external shape, so existing
-    callers keep working -- plus an additive ``refusals`` channel.
-
-    ``refusals`` maps an attribute type absent from this mapping to the
-    :class:`AttrRefusal` describing the module's refusal, *when one was
-    actually observed*. An attribute type absent from both this mapping and
-    ``refusals`` is a plain absence with no CK_RV observed for it -- callers
-    must never invent a CKR for that case.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.refusals: dict[int, AttrRefusal] = {}
-
-
-# CK_RVs that mean "this attribute's value was not returned", per spec --
-# opposite provider behaviours (see AttrRefusal) that read_attributes must
-# still distinguish for callers rather than collapsing into one omission.
-_ATTR_REFUSAL_CODES = (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
-
-
 def read_attributes(
     raw: RawPKCS11,
     session: int,
     handle: int,
     attr_types: list[int] | tuple[int, ...] | set[int] | frozenset[int],
-) -> AttrReadResult:
+) -> dict[int, Any]:
     """Read attribute values from an object.
 
-    Returns an :class:`AttrReadResult` (a ``dict[int, Any]`` subclass, so it
-    is fully backward compatible with plain dict use) mapping attribute type
-    to its value. Uses the generated ATTR_VALUE_TYPES table for
-    spec-correct decoding: bool attrs as bool, ulong attrs as int, str attrs
-    as str, date attrs as 'YYYYMMDD' str, ulong_array attrs as list[int],
-    template and unknown attrs as bytes.
+    Returns a dict mapping attribute type to its value. Uses the generated
+    ATTR_VALUE_TYPES table for spec-correct decoding: bool attrs as bool,
+    ulong attrs as int, str attrs as str, date attrs as 'YYYYMMDD' str,
+    ulong_array attrs as list[int], template and unknown attrs as bytes.
 
-    An attribute type that the module refused (CKR_ATTRIBUTE_SENSITIVE or
-    CKR_ATTRIBUTE_TYPE_INVALID) is never a key in the returned mapping, and
-    the actual observed CKR is additionally carried in
-    ``result.refusals[attr_type]`` so callers can distinguish "legitimately
-    sensitive" from "unrecognised attribute type" instead of seeing one
-    undifferentiated omission. A plain absence with no CKR observed for that
-    attribute carries no ``refusals`` entry.
-
-    Returns `dict[int, Any]`-shaped values (not a precise union) because
-    callers typically know the expected attribute type and call
-    type-specific methods (`.hex()`, `len()`, etc.); a precise union would
-    force `isinstance` narrowing at every callsite without adding safety.
+    Returns `dict[int, Any]` (not the precise union) because callers
+    typically know the expected attribute type and call type-specific
+    methods (`.hex()`, `len()`, etc.); a precise union would force
+    `isinstance` narrowing at every callsite without adding safety.
     """
     count = len(attr_types)
     tmpl = (CK_ATTRIBUTE * count)()
@@ -1201,8 +1137,8 @@ def read_attributes(
         return val == _ck_unavailable_64 or val == _ck_unavailable_32
 
     # First call: query sizes
-    rv1 = raw.C_GetAttributeValue(session, handle, tmpl, count)
-    expect_rv(rv1, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
+    rv = raw.C_GetAttributeValue(session, handle, tmpl, count)
+    expect_rv(rv, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
     # Allocate buffers (skip unavailable attributes)
     buffers: list[Any] = []
@@ -1217,61 +1153,25 @@ def read_attributes(
         buffers.append(buf)
 
     # Second call: read values
-    rv2 = raw.C_GetAttributeValue(session, handle, tmpl, count)
-    expect_rv(rv2, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
+    rv = raw.C_GetAttributeValue(session, handle, tmpl, count)
+    expect_rv(rv, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
-    # The CKR actually observed for this read attempt, when it was a refusal code --
-    # used below to populate AttrRefusal.ckr. Prefer rv2 (the call that actually
-    # produced the returned/omitted values); fall back to rv1 so a refusal signalled
-    # only on the size-query call is not lost.
-    _observed_refusal_ckr = (
-        rv2 if rv2 in _ATTR_REFUSAL_CODES else (rv1 if rv1 in _ATTR_REFUSAL_CODES else None)
-    )
-
-    result = AttrReadResult()
+    result: dict[int, bytes | int | bool | str | list[int]] = {}
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
         if _is_unavailable(size) or buffers[i] is None:
-            # Attribute sensitive or type invalid, correctly signalled via the
-            # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
-            # record a refusal when one was actually observed on this call.
-            if _observed_refusal_ckr is not None:
-                result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr)
-            continue
+            continue  # Attribute sensitive or type invalid -- skip
         raw_bytes = bytes(buffers[i][:size])
-        if _observed_refusal_ckr is not None and count == 1:
-            # This is the sole requested attribute, so an observed refusal CKR is
-            # unambiguously about it -- even though the module used a real
-            # length/buffer instead of the CK_UNAVAILABLE_INFORMATION sentinel.
-            # Never surface this as a present value (that would hand back
-            # material the module just declared sensitive/invalid); when the
-            # module also wrote real bytes (size > 0) that is itself a
-            # self-contradiction worth recording (bounded length only, never
-            # the bytes). With multiple requested attributes this per-attribute
-            # attribution is not reliable from the overall rv alone, so it is
-            # intentionally left as a residual gap (documented, not guessed at).
-            result.refusals[at] = AttrRefusal(
-                ckr=_observed_refusal_ckr, leaked_len=size if size > 0 else None
-            )
-            continue
         vtype = ATTR_VALUE_TYPES.get(at, "bytes")
         if vtype == "bool" and size == ctypes.sizeof(CK_BBOOL):
             result[at] = raw_bytes[0] != 0
         elif vtype == "ulong" and size == ctypes.sizeof(CK_ULONG):
             result[at] = int.from_bytes(raw_bytes, byteorder=sys.byteorder)
         elif vtype == "str":
-            try:
-                result[at] = raw_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                # Malformed encoding readback: surface raw bytes rather than
-                # crash the harness on an unclassified Python exception.
-                result[at] = raw_bytes
+            result[at] = raw_bytes.decode("utf-8")
         elif vtype == "date":
             # Return as str 'YYYYMMDD' -- callers can parse if needed
-            try:
-                result[at] = raw_bytes.decode("ascii") if raw_bytes else ""
-            except UnicodeDecodeError:
-                result[at] = raw_bytes
+            result[at] = raw_bytes.decode("ascii") if raw_bytes else ""
         elif vtype == "ulong_array":
             # Decode CK_ULONG array
             ulong_size = ctypes.sizeof(CK_ULONG)
@@ -2067,8 +1967,6 @@ def unwrap_key_authenticated(
 
 
 __all__ = [
-    "AttrReadResult",
-    "AttrRefusal",
     "copy_object",
     "create_object",
     "decapsulate_key",

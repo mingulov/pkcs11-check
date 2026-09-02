@@ -11,13 +11,12 @@ OASIS PKCS#11 v3.2 spec: elliptic curves.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.classification import Classification, classify, raise_for_record, record_as
+from pkcs11_check.classification import classify
+from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
     attr_bytes,
@@ -39,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_DERIVE,
     CKA_EC_PARAMS,
+    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -48,8 +48,6 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
-    CKF_EC_COMPRESS,
-    CKF_EC_UNCOMPRESS,
     CKK_AES,
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
@@ -69,14 +67,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
-)
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import (
-    ConventionalECPoint,
-    RawECPointFamily,
-    read_conventional_ec_point_or_xfail,
-    read_raw_ec_point_or_xfail,
-    select_ecdh_point_form,
 )
 from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
@@ -126,270 +116,25 @@ _OPERATIONAL_ERROR_CKRS = (
 )
 
 
-def _p256_point(
-    rs: Any,
-    handle: int,
-    *,
-    mechanism: int,
-    label: str = "ECDH extended P-256 public key",
-) -> bytes:
-    """Read a P-256 point and select its wire form for the target mechanism."""
-    point = read_conventional_ec_point_or_xfail(
-        rs,
-        handle,
-        ec.SECP256R1(),
-        label=label,
-    )
-    return select_ecdh_point_form(
-        point,
-        supports_compressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_COMPRESS)),
-        supports_uncompressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_UNCOMPRESS)),
-    )
+def _ec_point(rs: Any, handle: int) -> bytes:
+    """Read and decode EC_POINT from a public key handle.
 
-
-def _p256_conventional_point(
-    rs: Any,
-    handle: int,
-    *,
-    label: str = "ECDH extended P-256 public key",
-) -> ConventionalECPoint:
-    """Read one validated P-256 point before selecting per-mechanism wire forms."""
-    return read_conventional_ec_point_or_xfail(
-        rs,
-        handle,
-        ec.SECP256R1(),
-        label=label,
-    )
-
-
-def _select_p256_point_for_mechanism(
-    rs: Any,
-    point: ConventionalECPoint,
-    mechanism: int,
-) -> bytes:
-    """Select one validated P-256 point for an exact ECDH mechanism."""
-    return select_ecdh_point_form(
-        point,
-        supports_compressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_COMPRESS)),
-        supports_uncompressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_UNCOMPRESS)),
-    )
-
-
-def _read_value(rs: Any, handle: int, *, label: str = "derived CKA_VALUE") -> Any:
-    """Read CKA_VALUE while preserving an unavailable-value observation."""
-    return attr_or_record(
-        read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE]),
-        CKA_VALUE,
-        inherit_mechanism=False,
-        label=label,
-        reason="not_operational",
-    )
-
-
-def _read_montgomery_key_type(rs: Any, handle: int, *, label: str) -> Any:
-    """Read CKA_KEY_TYPE without hiding an unavailable provider attribute."""
-    return attr_or_record(
-        read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE]),
-        CKA_KEY_TYPE,
-        inherit_mechanism=False,
-        label=label,
-        reason="not_operational",
-    )
-
-
-def _read_montgomery_point(
-    rs: Any,
-    handle: int,
-    family: RawECPointFamily,
-    *,
-    label: str,
-) -> bytes:
-    """Read and validate a raw Montgomery public point for its exact family."""
-    return read_raw_ec_point_or_xfail(rs, handle, family, label=label)
-
-
-def _validate_derived_value(
-    value: Any,
-    *,
-    label: str,
-    mechanism: str,
-) -> Classification | None:
-    """Validate a present derived CKA_VALUE without terminating its caller early."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    detail: dict[str, Any] = {
-        "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
-        "length": {"expected": 32, "actual": None},
-    }
-    if not isinstance(value, bytes):
-        detail["type"] = {"expected": "bytes", "actual": type(value).__name__}
-        return record_as(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            summary=f"{label}: CKA_VALUE is not bytes",
-            detail=detail,
-        )
-
-    actual_length = len(value)
-    detail["length"] = {"expected": 32, "actual": actual_length}
-    if actual_length != 32:
-        return record_as(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            summary=f"{label}: CKA_VALUE length is not the requested 32 bytes",
-            detail=detail,
-        )
-    return None
-
-
-def _raise_first_derived_error(errors: list[Classification | None]) -> None:
-    """Raise the first recorded derived-value failure after all values are checked."""
-    for error in errors:
-        if error is not None:
-            raise_for_record(error)
-
-
-def _read_two_points(
-    rs: Any,
-    first_handle: int,
-    second_handle: int,
-    read_point: Callable[[Any, int, str], bytes],
-    *,
-    label: str,
-) -> tuple[bytes, bytes]:
-    """Read both independent points before raising either classified outcome."""
-    first: bytes | None = None
-    second: bytes | None = None
-    first_error: BaseException | None = None
-    second_error: BaseException | None = None
-    try:
-        first = read_point(rs, first_handle, f"{label}:first CKA_EC_POINT readback")
-    except (pytest.xfail.Exception, pytest.fail.Exception) as exc:
-        first_error = exc
-    try:
-        second = read_point(rs, second_handle, f"{label}:second CKA_EC_POINT readback")
-    except (pytest.xfail.Exception, pytest.fail.Exception) as exc:
-        second_error = exc
-
-    if first_error is not None and isinstance(first_error, pytest.fail.Exception):
-        raise first_error
-    if second_error is not None and isinstance(second_error, pytest.fail.Exception):
-        raise second_error
-    if second_error is not None:
-        raise second_error
-    if first_error is not None:
-        raise first_error
-    assert first is not None and second is not None
-    return first, second
-
-
-def _read_montgomery_public_key(
-    rs: Any,
-    handle: int,
-    family: RawECPointFamily,
-    *,
-    label: str,
-) -> bytes:
-    """Validate a Montgomery key's type and exact raw public-point family."""
-    key_type = _read_montgomery_key_type(
-        rs,
-        handle,
-        label=f"{label}:CKA_KEY_TYPE readback",
-    )
-    point_error: BaseException | None = None
-    point = b""
-    try:
-        point = _read_montgomery_point(rs, handle, family, label=f"{label}:CKA_EC_POINT readback")
-    except (pytest.xfail.Exception, pytest.fail.Exception) as exc:
-        point_error = exc
-
-    if key_type is MISSING_ATTRIBUTE:
-        if point_error is not None:
-            raise point_error
-        return point
-    assert_correct(
-        actual=key_type,
-        expected=CKK_EC_MONTGOMERY,
-        label=f"{label}:CKA_KEY_TYPE readback",
-        operation="C_GetAttributeValue",
-        mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
-        kind="metadata",
-    )
-    if point_error is not None:
-        raise point_error
-    return point
-
-
-def _read_two_montgomery_points(
-    rs: Any,
-    first_handle: int,
-    second_handle: int,
-    family: RawECPointFamily,
-    *,
-    label: str,
-) -> tuple[bytes, bytes]:
-    """Read both independent raw points, retaining classified outcomes from either."""
-    return _read_two_points(
-        rs,
-        first_handle,
-        second_handle,
-        lambda current_rs, handle, point_label: _read_montgomery_point(
-            current_rs,
-            handle,
-            family,
-            label=point_label,
-        ),
-        label=label,
-    )
-
-
-def _read_two_p256_points(
-    rs: Any,
-    first_handle: int,
-    second_handle: int,
-    *,
-    mechanism: int,
-    label: str,
-) -> tuple[bytes, bytes]:
-    """Read both P-256 points and select each for the exact target mechanism."""
-    return _read_two_points(
-        rs,
-        first_handle,
-        second_handle,
-        lambda current_rs, handle, point_label: _p256_point(
-            current_rs,
-            handle,
-            mechanism=mechanism,
-            label=point_label,
-        ),
-        label=label,
-    )
+    For Weierstrass curves (P-256, P-384, P-521) the attribute is DER OCTET STRING
+    wrapping 0x04||x||y.  For Montgomery curves (X25519, X448) the value is raw
+    little-endian bytes with no DER wrapper (RFC 7748 / OASIS PKCS#11 v3.2).
+    """
+    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
+    raw = attrs[CKA_EC_POINT]
+    if isinstance(raw, bytes) and len(raw) > 0 and raw[0] == 0x04:
+        return decode_ec_point(raw)
+    assert isinstance(raw, bytes)
+    return raw
 
 
 def _gen_ec(rs: Any) -> tuple[int, int]:
     """Generate EC P-256 keypair with derive permission."""
     curve_oid = encode_named_curve_parameters("secp256r1")
     return gen_ec_keypair(rs.raw, rs.sh, curve_oid, private_attrs=_PRIV_DERIVE)
-
-
-def _gen_ec_pairs(rs: Any, count: int) -> list[tuple[int, int]]:
-    """Generate several P-256 pairs and clean up completed pairs on later failure."""
-    pairs: list[tuple[int, int]] = []
-    try:
-        for _ in range(count):
-            pairs.append(_gen_ec(rs))
-    except (Exception, pytest.xfail.Exception, pytest.fail.Exception):
-        for public, private in pairs:
-            destroy_quietly(rs.raw, rs.sh, private)
-            destroy_quietly(rs.raw, rs.sh, public)
-        raise
-    return pairs
 
 
 def _gen_montgomery(
@@ -420,24 +165,6 @@ def _gen_montgomery(
     )
 
 
-def _gen_montgomery_pairs(
-    rs: Any,
-    curve_oid: bytes,
-    count: int,
-) -> list[tuple[int, int]]:
-    """Generate several Montgomery pairs and clean up completed pairs on later failure."""
-    pairs: list[tuple[int, int]] = []
-    try:
-        for _ in range(count):
-            pairs.append(_gen_montgomery(rs, curve_oid))
-    except (Exception, pytest.xfail.Exception, pytest.fail.Exception):
-        for public, private in pairs:
-            destroy_quietly(rs.raw, rs.sh, private)
-            destroy_quietly(rs.raw, rs.sh, public)
-        raise
-    return pairs
-
-
 def _ecdh_derive(
     rs: Any,
     priv_key: int,
@@ -457,6 +184,14 @@ def _ecdh_derive(
     )
 
 
+def _read_value(rs: Any, handle: int) -> bytes:
+    """Read CKA_VALUE from a derived key."""
+    result = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+    val = result[CKA_VALUE]
+    assert isinstance(val, bytes)
+    return val
+
+
 class TestECDH1CofactorDerive:
     """CKM_ECDH1_COFACTOR_DERIVE - ECDH with cofactor multiplication.
 
@@ -470,51 +205,19 @@ class TestECDH1CofactorDerive:
         if not rs.has_mechanism("ECDH1_COFACTOR_DERIVE"):
             pytest.skip("CKM_ECDH1_COFACTOR_DERIVE not supported")
 
-        (pub_a, priv_a), (pub_b, priv_b) = _gen_ec_pairs(rs, 2)
+        pub_a, priv_a = _gen_ec(rs)
+        pub_b, priv_b = _gen_ec(rs)
         shared_ab = 0
         shared_ba = 0
         try:
-            point_a, point_b = _read_two_p256_points(
-                rs,
-                pub_a,
-                pub_b,
-                mechanism=CKM_ECDH1_COFACTOR_DERIVE,
-                label="CKM_ECDH1_COFACTOR_DERIVE:shared-secret peers",
-            )
+            point_a = _ec_point(rs, pub_a)
+            point_b = _ec_point(rs, pub_b)
 
             shared_ab = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
             shared_ba = _ecdh_derive(rs, priv_b, point_a, CKM_ECDH1_COFACTOR_DERIVE)
-            value_ab = _read_value(
-                rs,
-                shared_ab,
-                label="CKM_ECDH1_COFACTOR_DERIVE:A-to-B derived CKA_VALUE",
-            )
-            value_ba = _read_value(
-                rs,
-                shared_ba,
-                label="CKM_ECDH1_COFACTOR_DERIVE:B-to-A derived CKA_VALUE",
-            )
-            _raise_first_derived_error(
-                [
-                    _validate_derived_value(
-                        value_ab,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:A-to-B derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    ),
-                    _validate_derived_value(
-                        value_ba,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:B-to-A derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    ),
-                ]
-            )
-            if value_ab is MISSING_ATTRIBUTE:
-                return
-            if value_ba is MISSING_ATTRIBUTE:
-                return
             assert_correct(
-                actual=value_ab,
-                expected=value_ba,
+                actual=_read_value(rs, shared_ab),
+                expected=_read_value(rs, shared_ba),
                 label="CKM_ECDH1_COFACTOR_DERIVE:shared-secret agreement (A<->B)",
                 operation="C_DeriveKey",
                 mechanism="CKM_ECDH1_COFACTOR_DERIVE",
@@ -537,66 +240,19 @@ class TestECDH1CofactorDerive:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        (pub_a, priv_a), (pub_b, priv_b) = _gen_ec_pairs(rs, 2)
+        pub_a, priv_a = _gen_ec(rs)
+        pub_b, priv_b = _gen_ec(rs)
         shared_standard = 0
         shared_cofactor = 0
         try:
-            point_b_conventional = _p256_conventional_point(rs, pub_b)
-            point_b_standard = _select_p256_point_for_mechanism(
-                rs,
-                point_b_conventional,
-                CKM_ECDH1_DERIVE,
-            )
-            point_b_cofactor = _select_p256_point_for_mechanism(
-                rs,
-                point_b_conventional,
-                CKM_ECDH1_COFACTOR_DERIVE,
-            )
+            point_b = _ec_point(rs, pub_b)
 
-            shared_standard = _ecdh_derive(
-                rs,
-                priv_a,
-                point_b_standard,
-                CKM_ECDH1_DERIVE,
-            )
-            shared_cofactor = _ecdh_derive(
-                rs,
-                priv_a,
-                point_b_cofactor,
-                CKM_ECDH1_COFACTOR_DERIVE,
-            )
+            shared_standard = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_DERIVE)
+            shared_cofactor = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
             # secp256r1 has cofactor=1 so results must match
-            value_standard = _read_value(
-                rs,
-                shared_standard,
-                label="CKM_ECDH1_COFACTOR_DERIVE:standard derived CKA_VALUE",
-            )
-            value_cofactor = _read_value(
-                rs,
-                shared_cofactor,
-                label="CKM_ECDH1_COFACTOR_DERIVE:cofactor derived CKA_VALUE",
-            )
-            _raise_first_derived_error(
-                [
-                    _validate_derived_value(
-                        value_standard,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:standard derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_DERIVE",
-                    ),
-                    _validate_derived_value(
-                        value_cofactor,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:cofactor derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    ),
-                ]
-            )
-            if value_standard is MISSING_ATTRIBUTE:
-                return
-            if value_cofactor is MISSING_ATTRIBUTE:
-                return
             assert_correct(
-                actual=value_standard,
-                expected=value_cofactor,
+                actual=_read_value(rs, shared_standard),
+                expected=_read_value(rs, shared_cofactor),
                 label="CKM_ECDH1_COFACTOR_DERIVE:matches standard derive (cofactor=1)",
                 operation="C_DeriveKey",
                 mechanism="CKM_ECDH1_COFACTOR_DERIVE",
@@ -617,49 +273,18 @@ class TestECDH1CofactorDerive:
         if not rs.has_mechanism("ECDH1_COFACTOR_DERIVE"):
             pytest.skip("CKM_ECDH1_COFACTOR_DERIVE not supported")
 
-        (pub_a, priv_a), (pub_b, priv_b), (pub_c, priv_c) = _gen_ec_pairs(rs, 3)
+        _, priv_a = _gen_ec(rs)
+        pub_b, _ = _gen_ec(rs)
+        pub_c, _ = _gen_ec(rs)
         shared_ab = 0
         shared_ac = 0
         try:
-            point_b, point_c = _read_two_p256_points(
-                rs,
-                pub_b,
-                pub_c,
-                mechanism=CKM_ECDH1_COFACTOR_DERIVE,
-                label="CKM_ECDH1_COFACTOR_DERIVE:different peer keys",
-            )
+            point_b = _ec_point(rs, pub_b)
+            point_c = _ec_point(rs, pub_c)
 
             shared_ab = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
             shared_ac = _ecdh_derive(rs, priv_a, point_c, CKM_ECDH1_COFACTOR_DERIVE)
-            value_ab = _read_value(
-                rs,
-                shared_ab,
-                label="CKM_ECDH1_COFACTOR_DERIVE:A-to-B derived CKA_VALUE",
-            )
-            value_ac = _read_value(
-                rs,
-                shared_ac,
-                label="CKM_ECDH1_COFACTOR_DERIVE:A-to-C derived CKA_VALUE",
-            )
-            _raise_first_derived_error(
-                [
-                    _validate_derived_value(
-                        value_ab,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:A-to-B derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    ),
-                    _validate_derived_value(
-                        value_ac,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:A-to-C derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    ),
-                ]
-            )
-            if value_ab is MISSING_ATTRIBUTE:
-                return
-            if value_ac is MISSING_ATTRIBUTE:
-                return
-            if value_ab == value_ac:
+            if _read_value(rs, shared_ab) == _read_value(rs, shared_ac):
                 classify(
                     "wrong_result",
                     kind="crypto",
@@ -675,10 +300,7 @@ class TestECDH1CofactorDerive:
             if shared_ac:
                 destroy_quietly(rs.raw, rs.sh, shared_ac)
             destroy_quietly(rs.raw, rs.sh, priv_a)
-            destroy_quietly(rs.raw, rs.sh, pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_b)
             destroy_quietly(rs.raw, rs.sh, pub_b)
-            destroy_quietly(rs.raw, rs.sh, priv_c)
             destroy_quietly(rs.raw, rs.sh, pub_c)
 
     def test_cofactor_derive_as_aes_key(self, p11_raw_session: Any) -> None:
@@ -687,14 +309,11 @@ class TestECDH1CofactorDerive:
         if not rs.has_mechanism("ECDH1_COFACTOR_DERIVE"):
             pytest.skip("CKM_ECDH1_COFACTOR_DERIVE not supported")
 
-        (pub_a, priv_a), (pub_b, priv_b) = _gen_ec_pairs(rs, 2)
+        pub_a, priv_a = _gen_ec(rs)
+        pub_b, _ = _gen_ec(rs)
         derived = 0
         try:
-            point_b = _p256_point(
-                rs,
-                pub_b,
-                mechanism=CKM_ECDH1_COFACTOR_DERIVE,
-            )
+            point_b = _ec_point(rs, pub_b)
 
             try:
                 derived = _ecdh_derive(
@@ -713,49 +332,22 @@ class TestECDH1CofactorDerive:
                 raise  # unreachable
 
             attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_KEY_TYPE, CKA_VALUE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                inherit_mechanism=False,
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_AES,
                 label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_KEY_TYPE readback",
-                reason="not_operational",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_ECDH1_COFACTOR_DERIVE",
+                kind="metadata",
             )
-            val = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                inherit_mechanism=False,
-                label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_VALUE readback",
-                reason="not_operational",
-            )
-            _raise_first_derived_error(
-                [
-                    _validate_derived_value(
-                        val,
-                        label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_VALUE readback",
-                        mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    )
-                ]
-            )
-            if key_type is MISSING_ATTRIBUTE:
-                if val is MISSING_ATTRIBUTE:
-                    return
-            else:
-                assert_correct(
-                    actual=key_type,
-                    expected=CKK_AES,
-                    label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_KEY_TYPE readback",
-                    operation="C_GetAttributeValue",
-                    mechanism="CKM_ECDH1_COFACTOR_DERIVE",
-                    kind="metadata",
-                )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = attrs[CKA_VALUE]
+            assert isinstance(val, bytes)
+            assert len(val) == 32
         finally:
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)
             destroy_quietly(rs.raw, rs.sh, priv_a)
             destroy_quietly(rs.raw, rs.sh, pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_b)
             destroy_quietly(rs.raw, rs.sh, pub_b)
 
 
@@ -790,18 +382,11 @@ class TestECMQVDerive:
         # ECMQV requires complex params (CK_ECMQV_DERIVE_PARAMS) not easily
         # constructible. We verify the mechanism is listed but expect the derive
         # call to fail with a parameter error since we pass ECDH1 params.
-        (pub_a_static, priv_a_static), (pub_b_static, priv_b_static) = _gen_ec_pairs(rs, 2)
+        pub_a_static, priv_a_static = _gen_ec(rs)
+        pub_b_static, priv_b_static = _gen_ec(rs)
         shared = 0
         try:
-            # ECMQV deliberately receives an ECDH1 parameter structure below;
-            # point preparation may honor ECMQV's own advertised form flags, but
-            # this remains a malformed-parameter negative probe, never positive
-            # ECMQV evidence.
-            point_b = _p256_point(
-                rs,
-                pub_b_static,
-                mechanism=CKM_ECMQV_DERIVE,
-            )
+            point_b = _ec_point(rs, pub_b_static)
 
             # Attempt derive - expect failure due to missing ECMQV param support
             try:
@@ -820,22 +405,8 @@ class TestECMQVDerive:
                 raise
             else:
                 # Unlikely to succeed, but if it does, verify and clean up
-                val = _read_value(
-                    rs,
-                    shared,
-                    label="CKM_ECMQV_DERIVE:derived CKA_VALUE",
-                )
-                _raise_first_derived_error(
-                    [
-                        _validate_derived_value(
-                            val,
-                            label="CKM_ECMQV_DERIVE:derived CKA_VALUE",
-                            mechanism="CKM_ECMQV_DERIVE",
-                        )
-                    ]
-                )
-                if val is MISSING_ATTRIBUTE:
-                    return
+                val = _read_value(rs, shared)
+                assert val is not None
         finally:
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
@@ -1001,12 +572,18 @@ class TestECMontgomeryKeyPairGen:
             raise  # unreachable
 
         try:
-            _read_montgomery_public_key(
-                rs,
-                pub,
-                RawECPointFamily.X25519,
-                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X25519",
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_EC_MONTGOMERY,
+                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X25519 CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
+                kind="metadata",
             )
+            ec_point = attrs[CKA_EC_POINT]
+            assert ec_point is not None
+            assert len(ec_point) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -1028,12 +605,18 @@ class TestECMontgomeryKeyPairGen:
             raise
 
         try:
-            _read_montgomery_public_key(
-                rs,
-                pub,
-                RawECPointFamily.X448,
-                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X448",
+            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE, CKA_EC_POINT])
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_EC_MONTGOMERY,
+                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X448 CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_EC_MONTGOMERY_KEY_PAIR_GEN",
+                kind="metadata",
             )
+            ec_point = attrs[CKA_EC_POINT]
+            assert ec_point is not None
+            assert len(ec_point) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -1045,7 +628,8 @@ class TestECMontgomeryKeyPairGen:
             pytest.skip("CKM_EC_MONTGOMERY_KEY_PAIR_GEN not supported")
 
         try:
-            (pub_a, priv_a), (pub_b, priv_b) = _gen_montgomery_pairs(rs, _X25519_OID, 2)
+            pub_a, priv_a = _gen_montgomery(rs, _X25519_OID)
+            pub_b, priv_b = _gen_montgomery(rs, _X25519_OID)
         except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
@@ -1055,13 +639,8 @@ class TestECMontgomeryKeyPairGen:
             raise  # unreachable
 
         try:
-            point_a, point_b = _read_two_montgomery_points(
-                rs,
-                pub_a,
-                pub_b,
-                RawECPointFamily.X25519,
-                label="CKM_EC_MONTGOMERY_KEY_PAIR_GEN:X25519 keypair uniqueness",
-            )
+            point_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_EC_POINT])[CKA_EC_POINT]
+            point_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
             if point_a == point_b:
                 classify(
                     "wrong_result",
@@ -1087,7 +666,8 @@ class TestECMontgomeryKeyPairGen:
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
         try:
-            (pub_a, priv_a), (pub_b, priv_b) = _gen_montgomery_pairs(rs, _X25519_OID, 2)
+            pub_a, priv_a = _gen_montgomery(rs, _X25519_OID)
+            pub_b, priv_b = _gen_montgomery(rs, _X25519_OID)
         except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
@@ -1099,45 +679,14 @@ class TestECMontgomeryKeyPairGen:
         shared_ab = 0
         shared_ba = 0
         try:
-            point_a, point_b = _read_two_montgomery_points(
-                rs,
-                pub_a,
-                pub_b,
-                RawECPointFamily.X25519,
-                label="CKM_ECDH1_DERIVE:X25519 derive peers",
-            )
+            point_a = _ec_point(rs, pub_a)
+            point_b = _ec_point(rs, pub_b)
 
             shared_ab = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_DERIVE)
             shared_ba = _ecdh_derive(rs, priv_b, point_a, CKM_ECDH1_DERIVE)
 
-            val_ab = _read_value(
-                rs,
-                shared_ab,
-                label="CKM_ECDH1_DERIVE:X25519 A-to-B derived CKA_VALUE",
-            )
-            val_ba = _read_value(
-                rs,
-                shared_ba,
-                label="CKM_ECDH1_DERIVE:X25519 B-to-A derived CKA_VALUE",
-            )
-            _raise_first_derived_error(
-                [
-                    _validate_derived_value(
-                        val_ab,
-                        label="CKM_ECDH1_DERIVE:X25519 A-to-B derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_DERIVE",
-                    ),
-                    _validate_derived_value(
-                        val_ba,
-                        label="CKM_ECDH1_DERIVE:X25519 B-to-A derived CKA_VALUE",
-                        mechanism="CKM_ECDH1_DERIVE",
-                    ),
-                ]
-            )
-            if val_ab is MISSING_ATTRIBUTE:
-                return
-            if val_ba is MISSING_ATTRIBUTE:
-                return
+            val_ab = _read_value(rs, shared_ab)
+            val_ba = _read_value(rs, shared_ba)
             assert_correct(
                 actual=val_ab,
                 expected=val_ba,
@@ -1145,6 +694,7 @@ class TestECMontgomeryKeyPairGen:
                 operation="C_DeriveKey",
                 mechanism="CKM_ECDH1_DERIVE",
             )
+            assert len(val_ab) == 32
         finally:
             if shared_ab:
                 destroy_quietly(rs.raw, rs.sh, shared_ab)

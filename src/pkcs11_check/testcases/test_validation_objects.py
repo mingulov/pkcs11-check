@@ -34,7 +34,6 @@ from pkcs11_check.raw.types_std import (
     CKV_TYPE_SOFTWARE,
     CKV_TYPE_UNSPECIFIED,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = [pytest.mark.object]
@@ -85,6 +84,7 @@ class TestValidationObjects:
         for h in validations:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_TYPE])
+                vtype = attrs[CKA_VALIDATION_TYPE]
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
@@ -93,14 +93,6 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            vtype = attr_or_record(
-                attrs,
-                CKA_VALIDATION_TYPE,
-                inherit_mechanism=False,
-                label="CKA_VALIDATION_TYPE:validation-object",
-            )
-            if vtype is MISSING_ATTRIBUTE:
-                continue
             if vtype < vendor_base:
                 assert vtype in _KNOWN_VALIDATION_TYPES, (
                     f"Unknown non-vendor validation type 0x{vtype:08X}"
@@ -123,14 +115,7 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            level = attr_or_record(
-                attrs,
-                CKA_VALIDATION_LEVEL,
-                inherit_mechanism=False,
-                label="CKA_VALIDATION_LEVEL:validation-object",
-            )
-            if level is MISSING_ATTRIBUTE:
-                continue
+            level = attrs[CKA_VALIDATION_LEVEL]
             assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
 
     def test_validation_authority_type_is_known(self, p11_raw_session: Any) -> None:
@@ -151,19 +136,14 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            auth = attr_or_record(
-                attrs,
-                CKA_VALIDATION_AUTHORITY_TYPE,
-                inherit_mechanism=False,
-                label="CKA_VALIDATION_AUTHORITY_TYPE:validation-object",
-            )
-            if auth is MISSING_ATTRIBUTE:
-                continue  # required metadata was recorded; continue to later objects
+            if CKA_VALIDATION_AUTHORITY_TYPE not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
             if auth < vendor_base:
                 assert auth in _KNOWN_AUTHORITY_TYPES, f"Unknown authority type 0x{auth:08X}"
 
     def test_validation_module_id_is_string(self, p11_raw_session: Any) -> None:
-        """CKA_VALIDATION_MODULE_ID is a readable UTF-8 string."""
+        """CKA_VALIDATION_MODULE_ID is a readable UTF-8 string if present."""
         rs = p11_raw_session
         validations = _find_validation_objects(rs.raw, rs.sh)
         if not validations:
@@ -179,14 +159,9 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            mod_id = attr_or_record(
-                attrs,
-                CKA_VALIDATION_MODULE_ID,
-                inherit_mechanism=False,
-                label="CKA_VALIDATION_MODULE_ID:validation-object",
-            )
-            if mod_id is MISSING_ATTRIBUTE:
-                continue  # required metadata was recorded; continue to later objects
+            if CKA_VALIDATION_MODULE_ID not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            mod_id = attrs[CKA_VALIDATION_MODULE_ID]
             assert isinstance(mod_id, (str, bytes)), (
                 f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
             )

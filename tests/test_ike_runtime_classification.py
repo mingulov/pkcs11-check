@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from _pytest.outcomes import Failed
 
-from pkcs11_check import classification as C  # noqa: N812 - existing convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
@@ -18,17 +16,9 @@ from pkcs11_check.raw.types_std import (
     CKM_IKE2_PRF_PLUS_DERIVE,
     CKM_IKE_PRF_DERIVE,
     CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_ike
-
-
-@pytest.fixture(autouse=True)
-def _clear_classifications() -> Generator[None, None, None]:
-    C.clear()
-    yield
-    C.clear()
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -48,18 +38,12 @@ def test_ike2_prf_plus_base_key_sensitivity_fails_on_same_output(
 
     monkeypatch.setattr(test_ike, "_create_base_key", lambda *_args, **_kwargs: next(base_keys))
     monkeypatch.setattr(test_ike, "_derive_generic", lambda *_args, **_kwargs: next(derived_keys))
-    monkeypatch.setattr(test_ike, "_get_value", lambda *_args, **_kwargs: b"x" * 32)
+    monkeypatch.setattr(test_ike, "_get_value", lambda *_args, **_kwargs: b"same-ike2-output")
     monkeypatch.setattr(test_ike, "destroy_quietly", lambda *_args, **_kwargs: None)
 
     rs = _session_with_mechanisms("IKE2_PRF_PLUS_DERIVE")
-    with pytest.raises(Failed, match="base-key separation"):
+    with pytest.raises(AssertionError, match="IKE2 PRF\\+ base key"):
         test_ike.TestIKE2PRFPlusDerive().test_base_key_affects_output(rs)
-
-    record = C.get_records()[0]
-    assert record.reason == "wrong_result"
-    assert record.outcome == "fail"
-    assert record.operation == "C_DeriveKey"
-    assert record.mechanism == "CKM_IKE2_PRF_PLUS_DERIVE"
 
 
 def test_ike_invalid_prf_mechanism_uses_negative_classifier(
@@ -78,7 +62,7 @@ def test_ike_invalid_prf_mechanism_uses_negative_classifier(
         *_args: object,
         **kwargs: object,
     ) -> int:
-        mech_param: Any = kwargs["mech_param"]
+        mech_param = kwargs["mech_param"]
         derive_calls.append(
             (
                 int(base_key),
@@ -141,35 +125,6 @@ def test_ike_invalid_prf_mechanism_uses_negative_classifier(
     assert all(int(CKR_MECHANISM_PARAM_INVALID) in call[1] for call in classifier_calls)
 
 
-def test_ike_invalid_prf_unexpected_rejection_keeps_derive_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        test_ike,
-        "derive_key",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            CkrAssertionError(
-                "Unexpected CK_RV CKR_ATTRIBUTE_TYPE_INVALID", int(CKR_ATTRIBUTE_TYPE_INVALID)
-            )
-        ),
-    )
-
-    with pytest.raises(pytest.xfail.Exception):
-        test_ike._classify_invalid_prf_derive(
-            _session_with_mechanisms("IKE2_PRF_PLUS_DERIVE"),
-            1,
-            CKM_IKE2_PRF_PLUS_DERIVE,
-            object(),
-            label="IKE2 PRF+ invalid PRF mechanism",
-        )
-
-    record = C.get_records()[0]
-    assert record.reason == "nonspec_reject"
-    assert record.operation == "C_DeriveKey"
-    assert record.mechanism == "CKM_IKE2_PRF_PLUS_DERIVE"
-    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
-
-
 def test_ike_prf_rejects_data_as_key_rekey_combination(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -185,7 +140,7 @@ def test_ike_prf_rejects_data_as_key_rekey_combination(
         *_args: object,
         **kwargs: object,
     ) -> int:
-        mech_param: Any = kwargs["mech_param"]
+        mech_param = kwargs["mech_param"]
         derive_calls.append(
             (
                 int(base_key),
@@ -219,66 +174,6 @@ def test_ike_prf_rejects_data_as_key_rekey_combination(
     assert isinstance(exc, CkrAssertionError)
     assert expected_rvs == (int(CKR_ARGUMENTS_BAD),)
     assert label == "IKE PRF data-as-key rekey combination"
-
-
-def test_ike_prf_rekey_zero_handle_is_lifecycle_failure_without_zero_destroy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base_keys = iter((1, 2))
-    destroyed: list[int] = []
-
-    monkeypatch.setattr(test_ike, "_create_base_key", lambda *_args, **_kwargs: next(base_keys))
-    monkeypatch.setattr(test_ike, "derive_key", lambda *_args, **_kwargs: 0)
-    monkeypatch.setattr(
-        test_ike,
-        "destroy_quietly",
-        lambda _raw, _sh, handle: destroyed.append(handle),
-    )
-
-    rs = _session_with_mechanisms("IKE_PRF_DERIVE")
-    with pytest.raises(Failed):
-        test_ike.TestIKEPRFDerive().test_rejects_data_as_key_rekey_combination(rs)
-
-    record = C.get_records()[0]
-    assert record.reason == "self_contradiction"
-    assert record.kind == "lifecycle"
-    assert record.operation == "C_DeriveKey"
-    assert record.mechanism == "CKM_IKE_PRF_DERIVE"
-    assert destroyed == [2, 1]
-
-
-def test_ike_prf_rekey_unexpected_rejection_keeps_derive_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base_keys = iter((1, 2))
-    destroyed: list[int] = []
-
-    monkeypatch.setattr(test_ike, "_create_base_key", lambda *_args, **_kwargs: next(base_keys))
-    monkeypatch.setattr(
-        test_ike,
-        "derive_key",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            CkrAssertionError(
-                "Unexpected CK_RV CKR_ATTRIBUTE_TYPE_INVALID", int(CKR_ATTRIBUTE_TYPE_INVALID)
-            )
-        ),
-    )
-    monkeypatch.setattr(
-        test_ike,
-        "destroy_quietly",
-        lambda _raw, _sh, handle: destroyed.append(handle),
-    )
-
-    rs = _session_with_mechanisms("IKE_PRF_DERIVE")
-    with pytest.raises(pytest.xfail.Exception):
-        test_ike.TestIKEPRFDerive().test_rejects_data_as_key_rekey_combination(rs)
-
-    record = C.get_records()[0]
-    assert record.reason == "nonspec_reject"
-    assert record.operation == "C_DeriveKey"
-    assert record.mechanism == "CKM_IKE_PRF_DERIVE"
-    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
-    assert destroyed == [2, 1]
 
 
 def test_ike1_prf_exact_vector_uses_typed_helper_and_fails_on_wrong_output(

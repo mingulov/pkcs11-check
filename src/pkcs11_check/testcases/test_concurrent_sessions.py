@@ -43,7 +43,6 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKO_DATA,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     skip_if_data_objects_unsupported,
@@ -272,15 +271,7 @@ class TestConcurrentDataObjects:
             found = find_objects(rs.raw, sh2, tmpl)
             assert len(found) >= 1
             attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKA_VALUE:cross-session-data-visibility",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if value is not MISSING_ATTRIBUTE:
-                assert value == b"shared-data"
+            assert attrs[CKA_VALUE] == b"shared-data"
         finally:
             close_session_quietly(rs.raw, sh2)
 

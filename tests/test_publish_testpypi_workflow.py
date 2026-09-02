@@ -14,22 +14,6 @@ import yaml  # type: ignore[import-untyped]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/publish-testpypi.yml"
-
-
-def _package_version() -> str:
-    """Read the package's current version from its source of truth.
-
-    The staging step this test exercises rewrites ``__version__`` in place, so the
-    test has to agree with whatever the tree currently declares. Deriving it here
-    keeps the contract test from having to be edited on every release bump.
-    """
-    text = (REPO_ROOT / "src/pkcs11_check/__init__.py").read_text(encoding="utf-8")
-    for line in text.splitlines():
-        if line.startswith("__version__ = "):
-            return line.split('"')[1]
-    raise AssertionError("src/pkcs11_check/__init__.py declares no __version__")
-
-
 DOWNLOAD_ARTIFACT_ACTION = (
     "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"  # v8
 )
@@ -164,41 +148,24 @@ def test_testpypi_stages_the_candidate_before_its_only_build(tmp_path: Path) -> 
         ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", "build", "data", "dist"),
     )
     output = tmp_path / "github-output"
-    base = _package_version()
-    candidate_version = f"{base}rc1"
-    environment = {**os.environ, "CANDIDATE": base, "GITHUB_OUTPUT": str(output)}
+    environment = {**os.environ, "CANDIDATE": "0.1.9", "GITHUB_OUTPUT": str(output)}
     invalid = subprocess.run(
-        ["bash", "-e", "-c", candidate["run"]],
-        cwd=repository,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
+        ["bash", "-e", "-c", candidate["run"]], cwd=repository, env=environment, check=False
     )
     assert invalid.returncode != 0
-    assert "candidate must be canonical X.Y.ZrcN" in invalid.stdout
 
-    environment["CANDIDATE"] = candidate_version
+    environment["CANDIDATE"] = "0.1.9rc1"
     subprocess.run(
-        ["bash", "-e", "-c", candidate["run"]],
-        cwd=repository,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
+        ["bash", "-e", "-c", candidate["run"]], cwd=repository, env=environment, check=True
     )
-    assert (
-        output.read_text(encoding="utf-8") == f"version={candidate_version}\nbase_version={base}\n"
-    )
+    assert output.read_text(encoding="utf-8") == "version=0.1.9rc1\nbase_version=0.1.9\n"
 
     subprocess.run(
         ["bash", "-e", "-c", stage["run"]],
         cwd=repository,
-        env={**os.environ, "VERSION": candidate_version, "BASE_VERSION": base},
+        env={**os.environ, "VERSION": "0.1.9rc1", "BASE_VERSION": "0.1.9"},
         check=True,
     )
     subprocess.run(["uv", "build"], cwd=repository, check=True, capture_output=True)
-    assert (repository / f"dist/pkcs11_check-{candidate_version}-py3-none-any.whl").is_file()
-    assert (repository / f"dist/pkcs11_check-{candidate_version}.tar.gz").is_file()
+    assert (repository / "dist/pkcs11_check-0.1.9rc1-py3-none-any.whl").is_file()
+    assert (repository / "dist/pkcs11_check-0.1.9rc1.tar.gz").is_file()

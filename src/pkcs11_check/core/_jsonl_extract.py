@@ -205,46 +205,56 @@ def extract_coverage_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     all_detail_counts: Counter[str] = Counter()
     found = False
 
-    # Streamed via the shared binary-decode iterator (report_log.iter_report_log_records)
-    # rather than a text-mode `for line in fh` loop, so a single undecodable byte anywhere
-    # in the file only drops that one line instead of raising UnicodeDecodeError and losing
-    # every remaining record.
-    for rec in _iter_report_log_records(jsonl_path):
-        if rec.get("$report_type") != "CoverageReport":
-            continue
-        found = True
-        fc = rec.get("function_coverage", {})
-        func_available = max(func_available, fc.get("available", 0))
-        all_called.update(fc.get("called_names", []))
-        all_uncalled.update(fc.get("uncalled_names", []))
-        all_func_counts.update(fc.get("called_counts", {}))
-        # ok_counts (per-function CKR_OK counts) feed the hollow-pass oracle's productive
-        # numerator; without carrying it here productive_ok is always empty (every claimed
-        # operation would look hollow).
-        all_ok_counts.update(fc.get("ok_counts", {}))
-        all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
-        module_session_health = fc.get("module_session_health", {})
-        if isinstance(module_session_health, dict):
-            all_module_session_health_checks += int(module_session_health.get("checks", 0) or 0)
-            all_module_session_health_duration_s += float(
-                module_session_health.get("duration_s", 0.0) or 0.0
-            )
-        mc = rec.get("mechanism_coverage", {})
-        all_available_mechs.update(mc.get("available_names", []))
-        all_invoked.update(mc.get("invoked_names", []))
-        all_not_invoked.update(mc.get("not_invoked_names", []))
-        all_advertised_mechs.update(mc.get("advertised_names", mc.get("available_names", [])))
-        all_selected_mechs.update(mc.get("selected_names", []))
-        all_selection_rejected_mechs.update(mc.get("selection_rejected_names", []))
-        all_attempted_mechs.update(mc.get("attempted_names", mc.get("invoked_names", [])))
-        all_accepted_mechs.update(mc.get("accepted_names", []))
-        all_rejected_cleanly_mechs.update(mc.get("rejected_cleanly_names", []))
-        all_skipped_by_capability_mechs.update(mc.get("skipped_by_capability_names", []))
-        all_crashed_mechs.update(mc.get("crashed_names", []))
-        all_timeout_mechs.update(mc.get("timeout_names", []))
-        all_detail.update(mc.get("invoked_detail", []))
-        all_mech_counts.update(mc.get("invoked_counts", {}))
-        all_detail_counts.update(mc.get("invoked_detail_counts", {}))
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return None
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("$report_type") != "CoverageReport":
+                continue
+            found = True
+            fc = rec.get("function_coverage", {})
+            func_available = max(func_available, fc.get("available", 0))
+            all_called.update(fc.get("called_names", []))
+            all_uncalled.update(fc.get("uncalled_names", []))
+            all_func_counts.update(fc.get("called_counts", {}))
+            # ok_counts (per-function CKR_OK counts) feed the hollow-pass oracle's productive
+            # numerator; without carrying it here productive_ok is always empty (every claimed
+            # operation would look hollow).
+            all_ok_counts.update(fc.get("ok_counts", {}))
+            all_bootstrap_counts.update(fc.get("bootstrap_counts", {}))
+            module_session_health = fc.get("module_session_health", {})
+            if isinstance(module_session_health, dict):
+                all_module_session_health_checks += int(module_session_health.get("checks", 0) or 0)
+                all_module_session_health_duration_s += float(
+                    module_session_health.get("duration_s", 0.0) or 0.0
+                )
+            mc = rec.get("mechanism_coverage", {})
+            all_available_mechs.update(mc.get("available_names", []))
+            all_invoked.update(mc.get("invoked_names", []))
+            all_not_invoked.update(mc.get("not_invoked_names", []))
+            all_advertised_mechs.update(mc.get("advertised_names", mc.get("available_names", [])))
+            all_selected_mechs.update(mc.get("selected_names", []))
+            all_selection_rejected_mechs.update(mc.get("selection_rejected_names", []))
+            all_attempted_mechs.update(mc.get("attempted_names", mc.get("invoked_names", [])))
+            all_accepted_mechs.update(mc.get("accepted_names", []))
+            all_rejected_cleanly_mechs.update(mc.get("rejected_cleanly_names", []))
+            all_skipped_by_capability_mechs.update(mc.get("skipped_by_capability_names", []))
+            all_crashed_mechs.update(mc.get("crashed_names", []))
+            all_timeout_mechs.update(mc.get("timeout_names", []))
+            all_detail.update(mc.get("invoked_detail", []))
+            all_mech_counts.update(mc.get("invoked_counts", {}))
+            all_detail_counts.update(mc.get("invoked_detail_counts", {}))
 
     if not found:
         return None
@@ -298,19 +308,29 @@ def extract_provisioning_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     by_class: dict[str, dict[str, int]] = {}
     found = False
 
-    # Streamed via the shared binary-decode iterator (report_log.iter_report_log_records)
-    # rather than a text-mode `for line in fh` loop, so a single undecodable byte anywhere
-    # in the file only drops that one line instead of raising UnicodeDecodeError and losing
-    # every remaining record.
-    for rec in _iter_report_log_records(jsonl_path):
-        if rec.get("$report_type") != "ProvisioningReport":
-            continue
-        found = True
-        for cls, counts in rec.get("by_class", {}).items():
-            if cls not in by_class:
-                by_class[cls] = {}
-            for method, val in counts.items():
-                by_class[cls][method] = by_class[cls].get(method, 0) + int(val)
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return None
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("$report_type") != "ProvisioningReport":
+                continue
+            found = True
+            for cls, counts in rec.get("by_class", {}).items():
+                if cls not in by_class:
+                    by_class[cls] = {}
+                for method, val in counts.items():
+                    by_class[cls][method] = by_class[cls].get(method, 0) + int(val)
 
     if not found:
         return None

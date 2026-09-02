@@ -16,7 +16,6 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
-from pkcs11_check import classification as C  # noqa: N812 - matches project convention
 from pkcs11_check.compliance import ComplianceLevel
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
@@ -167,36 +166,19 @@ def test_rsa_non_extractable_claim_alone_makes_readable_exponent_fail(
         )
 
 
-def test_rsa_missing_policy_readback_records_once_after_exponent_probe(
+def test_rsa_missing_policy_readback_xfails_after_exponent_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing CKA_SENSITIVE yields ONE record, not a second "missing or malformed" one.
-
-    The omission is already an emitted observation (``attr_or_record`` records it
-    as ``not_operational``/``policy``); the sibling ``classify`` now fires only for
-    a PRESENT-but-malformed value, so one provider omission is one record.  The
-    exponent probe still runs, and the omission is never rendered as ``None`` --
-    a value the provider did not return.
-    """
-    C.clear()
-    try:
-        reads: list[list[int]] = []
-        notes = _run_private_exponent(
+    reads: list[list[int]] = []
+    with pytest.raises(XFailed, match="CKA_SENSITIVE=None.*CKA_EXTRACTABLE=True"):
+        _run_private_exponent(
             monkeypatch,
             sensitive=_MISSING,
             extractable=True,
             readable=True,
             read_log=reads,
         )
-        assert reads == [[CKA_SENSITIVE, CKA_EXTRACTABLE], [CKA_PRIVATE_EXPONENT]]
-        records = C.get_records()
-        assert [r.reason for r in records] == ["not_operational"]
-        assert records[0].kind == "policy"
-        assert records[0].label == "RSA private-key CKA_SENSITIVE readback"
-        assert records[0].operation == "C_GetAttributeValue"
-        assert notes and "CKA_SENSITIVE=<unavailable>" in notes[0]
-    finally:
-        C.clear()
+    assert reads == [[CKA_SENSITIVE, CKA_EXTRACTABLE], [CKA_PRIVATE_EXPONENT]]
 
 
 def test_rsa_protected_missing_exponent_is_standard(
@@ -212,24 +194,6 @@ def test_rsa_protected_missing_exponent_is_standard(
     )
     assert notes and "exposure was not observed" in notes[0]
     assert levels == [ComplianceLevel.STANDARD]
-    # N16: CKA_PRIVATE_EXPONENT's absence used to be read via a bare membership check
-    # (bypassing attr_or_record entirely), so a correctly-protected key produced ZERO
-    # report.jsonl record for it -- only the ComplianceNote above, which never reaches
-    # report.jsonl. It must now be a visible record too.
-    records = C.get_records()
-    assert len(records) == 1
-    assert records[0].label == "RSA private-key CKA_PRIVATE_EXPONENT readback"
-    assert records[0].reason == "honest_deviation"
-    # This absence is the CONFORMANT case for a protected key: it never
-    # disables the self_contradiction oracle above (that already fired, or
-    # didn't, based on exponent_readback_valid, which absence forces False
-    # regardless of *why* it's absent) -- it is posture-only evidence of how
-    # honestly the module communicated the refusal, so kind must be
-    # "metadata", not "policy".
-    assert records[0].kind == "metadata"
-    # The mock returns a plain dict with no refusals channel: no CKR was actually
-    # observed for this absence, so none may be invented.
-    assert records[0].actual_ckr is None
 
 
 @pytest.mark.parametrize("exponent_value", [b"", "not-bytes"])
@@ -286,16 +250,6 @@ def test_rsa_unprotected_unreadable_private_exponent_is_hardened_posture_note(
     assert notes and "exposure was not observed through C_GetAttributeValue" in notes[0]
     assert "hardened" not in notes[0]
     assert levels == [ComplianceLevel.NOT_RECOMMENDED]
-    # N16: this is the specific dead branch named in the fix -- no protective claim was
-    # made (sensitive=False, extractable=True) AND the exponent is absent, so previously
-    # NEITHER classify() nor note() emitted anything to report.jsonl for this absence
-    # (only the compliance note above, which is a separate, non-report.jsonl channel).
-    # It must now be a visible record.
-    records = C.get_records()
-    assert len(records) == 1
-    assert records[0].label == "RSA private-key CKA_PRIVATE_EXPONENT readback"
-    assert records[0].reason == "honest_deviation"
-    assert records[0].actual_ckr is None
 
 
 # --- :363 copy extractable-escalation -------------------------------------

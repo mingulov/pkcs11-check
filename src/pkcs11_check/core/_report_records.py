@@ -84,24 +84,6 @@ from pkcs11_check.core.crash_codes import (
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
-    F11_CONTRACT_VERSION as _F11_CONTRACT_VERSION,
-)
-from pkcs11_check.core.report_log import (
-    F11_COUNT_SEMANTICS as _F11_COUNT_SEMANTICS,
-)
-from pkcs11_check.core.report_log import (
-    ClassificationOccurrence as ClassificationOccurrence,
-)
-from pkcs11_check.core.report_log import (
-    QualityReportEvidence as QualityReportEvidence,
-)
-from pkcs11_check.core.report_log import (
-    UnclassifiedEvidence as UnclassifiedEvidence,
-)
-from pkcs11_check.core.report_log import (
-    iter_classification_occurrences as _iter_classification_occurrences,
-)
-from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
@@ -252,24 +234,12 @@ def _build_report_owner_aliases(
     )
 
 
-def _isolated_unit_report(
-    unit: str, attempt: int, *, reason: str | None = None, skipped: int | None = None
-) -> dict[str, Any]:
-    record: dict[str, Any] = {
+def _isolated_unit_report(unit: str, attempt: int) -> dict[str, Any]:
+    return {
         "$report_type": _ISOLATED_UNIT_REPORT_TYPE,
         "target": unit,
         "attempt": attempt,
     }
-    # Static-skip provenance only: a unit skipped before pytest execution
-    # records why and how many collected tests were skipped, so resume and
-    # merge paths can rebuild the same file-skip detail the fresh run held in
-    # memory.  Plain attempt markers (stream framing) carry neither field and
-    # must never synthesize evidence.
-    if reason is not None:
-        record["reason"] = reason
-    if skipped is not None:
-        record["skipped"] = skipped
-    return record
 
 
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -334,23 +304,6 @@ def _write_unit_report_record_cache(
     )
 
 
-def _write_static_skip_report_record_cache(
-    state_file: Path, unit: str, *, reason: str, skipped: int
-) -> None:
-    """Persist authoritative unit provenance when collection skips the whole unit.
-
-    A static capability skip never starts pytest, so it has no pytest ``TestReport`` to
-    serialize.  The isolated-unit marker is the truthful raw evidence: the scheduler did
-    account for this unit, while no call-phase record is fabricated for tests that did not
-    execute.  The reason and skipped count ride on the marker so resume and merge paths
-    rebuild the identical file-skip detail instead of zeroing it.
-    """
-
-    _write_unit_report_record_cache(
-        state_file, unit, [_isolated_unit_report(unit, 0, reason=reason, skipped=skipped)]
-    )
-
-
 def _write_unit_report_record_cache_from_jsonl_paths(
     state_file: Path,
     unit: str,
@@ -367,31 +320,12 @@ def _write_unit_report_record_cache_from_jsonl_paths(
             for jsonl_path in jsonl_paths:
                 source_started = False
                 for record in _iter_report_log_records(jsonl_path):
-                    report_type = record.get("$report_type")
-                    if report_type == _ISOLATED_UNIT_REPORT_TYPE:
+                    if record.get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE:
                         source_started = True
                         raw_attempt = record.get("attempt")
-                        if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool):
+                        if isinstance(raw_attempt, int):
                             next_attempt = max(next_attempt, raw_attempt + 1)
-                        out_fh.write(json.dumps(record) + "\n")
-                        wrote = True
-                        continue
-                    if not source_started and report_type == "SessionStart":
-                        # iter_classification_occurrences() resets attribution
-                        # provenance on SessionStart (a real, necessary guard against an
-                        # unmarked shard inheriting a previous shard's marker). A pytest
-                        # report log always opens with SessionStart, so a marker written
-                        # before it here would be wiped by that same reset the instant
-                        # it is read back. Emit the session bookend first, THEN the
-                        # marker, so the reset fires before attribution is established
-                        # rather than after it.
-                        out_fh.write(json.dumps(record) + "\n")
-                        out_fh.write(json.dumps(_isolated_unit_report(unit, next_attempt)) + "\n")
-                        next_attempt += 1
-                        source_started = True
-                        wrote = True
-                        continue
-                    if not source_started:
+                    elif not source_started:
                         out_fh.write(json.dumps(_isolated_unit_report(unit, next_attempt)) + "\n")
                         next_attempt += 1
                         source_started = True
@@ -745,202 +679,24 @@ def extract_quality_report_records_from_jsonl(jsonl_path: Path) -> list[dict[str
     never materialized.
     """
     records: list[dict[str, Any]] = []
-    # Streamed via the shared binary-decode iterator (see report_log.py's
-    # iter_report_log_records) rather than a text-mode `for line in fh` loop, so a
-    # single undecodable byte anywhere in the file only drops that one line instead
-    # of raising UnicodeDecodeError and losing every remaining record.
-    for rec in _iter_report_log_records(jsonl_path):
-        if rec.get("$report_type", "TestReport") in {"TestReport", "SelectionReport"}:
-            records.append({k: v for k, v in rec.items() if k in _QUALITY_AUDIT_RECORD_FIELDS})
+    try:
+        fh = jsonl_path.open(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return []
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("$report_type", "TestReport") in {"TestReport", "SelectionReport"}:
+                records.append({k: v for k, v in rec.items() if k in _QUALITY_AUDIT_RECORD_FIELDS})
     return records
-
-
-# Bounded sample size for QualityReportEvidence.unclassified.samples. Bounding the
-# sample list keeps this extractor's memory footprint small even on a chatty run; the
-# authoritative counts (occurrences, unique_testcases, phase/target/attempt counts,
-# per_file_counts) are always computed from the full stream and are never derived from
-# len(samples) or otherwise capped by it.
-_MAX_UNCLASSIFIED_SAMPLES = 20
-
-_UNCLASSIFIED_REASON = "unclassified"
-
-
-def extract_quality_report_evidence_from_jsonl(
-    jsonl_paths: Sequence[Path],
-) -> QualityReportEvidence:
-    """Extract raw ``unclassified``-classification occurrence evidence from JSONL sources.
-
-    ``jsonl_paths`` is the full list of declared authoritative raw report-log sources (one
-    per shard/isolated-run artifact the caller expects to exist) -- NOT the six re-exporting
-    modules' single merged ``report.jsonl`` path, though a single-element list is exactly
-    that common case. A path that does not exist on disk counts as a missing source and
-    contributes to a ``"partial"`` status with lower-bound counts; this function never
-    raises for a missing or unreadable source.
-
-    This reads the immutable, unmodified raw stream directly (via
-    :func:`iter_classification_occurrences` over :func:`iter_report_log_records`), entirely
-    separate from :func:`extract_quality_report_records_from_jsonl`'s repaired/projected
-    stream -- the two must never be conflated (see the shared F11 contract). Marker
-    provenance (``IsolatedUnitReport`` target/attempt) is reset for every source in
-    ``jsonl_paths`` (a fresh :func:`iter_classification_occurrences` call per source) and at
-    every ``SessionStart`` within a source, so an unmarked shard never inherits a prior
-    shard's marker.
-
-    Returns a :class:`QualityReportEvidence` whose ``unclassified`` block is ``None`` --
-    never a zero-valued block -- when no declared source could be inspected at all
-    (``status == "unavailable"``, including when ``jsonl_paths`` is empty).
-    """
-    malformed_records = 0
-    malformed_markers = 0
-    malformed_properties = 0
-    malformed_entries = 0
-
-    def _on_invalid() -> None:
-        nonlocal malformed_records
-        malformed_records += 1
-
-    def _on_malformed_marker() -> None:
-        nonlocal malformed_markers
-        malformed_markers += 1
-
-    def _on_malformed_property() -> None:
-        nonlocal malformed_properties
-        malformed_properties += 1
-
-    def _on_malformed_entry() -> None:
-        nonlocal malformed_entries
-        malformed_entries += 1
-
-    expected_sources = len(jsonl_paths)
-    readable_sources = 0
-    missing_sources = 0
-
-    occurrences_total = 0
-    canonical_nodeids: set[str] = set()
-    exact_duplicates = 0
-    phase_counts: Counter[str] = Counter()
-    target_counts: Counter[str] = Counter()
-    attempt_counts: Counter[int] = Counter()
-    unattributed = 0
-    per_file_counts: Counter[str] = Counter()
-    samples: list[ClassificationOccurrence] = []
-    seen_duplicate_keys: set[tuple[str, int, str, str, str]] = set()
-
-    for source_index, path in enumerate(jsonl_paths):
-        if not path.is_file():
-            missing_sources += 1
-            continue
-        # A source that exists but cannot actually be opened (permissions, a race
-        # where it disappears between is_file() and open(), ...) must not inflate
-        # readable_sources -- that would overstate how much evidence was actually
-        # inspected. Probe the open here so the count reflects success/failure
-        # precisely; _iter_report_log_records's own on_invalid callback (invoked
-        # below for the identical open failure) keeps malformed-record accounting
-        # unchanged.
-        try:
-            _probe_fh = path.open("rb")
-        except OSError:
-            _on_invalid()
-            continue
-        _probe_fh.close()
-        readable_sources += 1
-        raw_records = _iter_report_log_records(path, on_invalid=_on_invalid)
-        for occurrence in _iter_classification_occurrences(
-            raw_records,
-            source_index=source_index,
-            reason_filter=_UNCLASSIFIED_REASON,
-            on_malformed_marker=_on_malformed_marker,
-            on_malformed_property=_on_malformed_property,
-            on_malformed_entry=_on_malformed_entry,
-        ):
-            occurrences_total += 1
-            canonical_nodeids.add(occurrence.canonical_nodeid)
-            phase_counts[occurrence.phase] += 1
-            per_file_counts[occurrence.canonical_nodeid.split("::", 1)[0]] += 1
-            if occurrence.target is not None and occurrence.attempt is not None:
-                target_counts[occurrence.target] += 1
-                attempt_counts[occurrence.attempt] += 1
-                dup_key = (
-                    occurrence.target,
-                    occurrence.attempt,
-                    occurrence.nodeid,
-                    occurrence.phase,
-                    json.dumps(occurrence.classification, sort_keys=True, separators=(",", ":")),
-                )
-                if dup_key in seen_duplicate_keys:
-                    exact_duplicates += 1
-                else:
-                    seen_duplicate_keys.add(dup_key)
-            else:
-                unattributed += 1
-            if len(samples) < _MAX_UNCLASSIFIED_SAMPLES:
-                samples.append(occurrence)
-
-    malformed_total = (
-        malformed_records + malformed_markers + malformed_properties + malformed_entries
-    )
-
-    if readable_sources == 0:
-        status_reasons = (
-            ("no declared raw source was inspectable",)
-            if expected_sources
-            else ("no raw source declared",)
-        )
-        return QualityReportEvidence(
-            contract_version=_F11_CONTRACT_VERSION,
-            status="unavailable",
-            status_reasons=status_reasons,
-            expected_sources=expected_sources,
-            readable_sources=readable_sources,
-            missing_sources=missing_sources,
-            malformed_records=malformed_records,
-            malformed_markers=malformed_markers,
-            malformed_properties=malformed_properties,
-            malformed_entries=malformed_entries,
-            count_semantics=_F11_COUNT_SEMANTICS,
-            unclassified=None,
-        )
-
-    lower_bound = missing_sources > 0 or malformed_total > 0
-    status_reasons_list: list[str] = []
-    if missing_sources:
-        status_reasons_list.append(f"missing raw source(s): {missing_sources}")
-    if malformed_records:
-        status_reasons_list.append(f"malformed JSON/object record(s): {malformed_records}")
-    if malformed_markers:
-        status_reasons_list.append(f"malformed isolation marker(s): {malformed_markers}")
-    if malformed_properties:
-        status_reasons_list.append(
-            f"malformed classification propert(y/ies): {malformed_properties}"
-        )
-    if malformed_entries:
-        status_reasons_list.append(f"malformed classification entr(y/ies): {malformed_entries}")
-
-    return QualityReportEvidence(
-        contract_version=_F11_CONTRACT_VERSION,
-        status="partial" if lower_bound else "complete",
-        status_reasons=tuple(status_reasons_list),
-        expected_sources=expected_sources,
-        readable_sources=readable_sources,
-        missing_sources=missing_sources,
-        malformed_records=malformed_records,
-        malformed_markers=malformed_markers,
-        malformed_properties=malformed_properties,
-        malformed_entries=malformed_entries,
-        count_semantics=_F11_COUNT_SEMANTICS,
-        unclassified=UnclassifiedEvidence(
-            occurrences=occurrences_total,
-            lower_bound=lower_bound,
-            unique_testcases=len(canonical_nodeids),
-            exact_duplicate_occurrences=exact_duplicates,
-            phase_counts=dict(phase_counts),
-            target_counts=dict(target_counts),
-            attempt_counts=dict(attempt_counts),
-            unattributed_occurrences=unattributed,
-            per_file_counts=dict(per_file_counts),
-            samples=tuple(samples),
-        ),
-    )
 
 
 def write_quality_json_report(
@@ -949,20 +705,13 @@ def write_quality_json_report(
     *,
     coverage: Mapping[str, Any] | None = None,
     report_log_records: Iterable[Mapping[str, Any]] | None = None,
-    quality_report_evidence: QualityReportEvidence | None = None,
 ) -> None:
-    """Write the quality audit artifact.
-
-    ``quality_report_evidence`` is passed straight through to
-    :func:`build_quality_audit` -- see its docstring. Plumbing only: this function does not
-    compute or interpret it.
-    """
+    """Write the quality audit artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_quality_audit(
         results=results,
         coverage=coverage,
         report_log_records=report_log_records,
-        quality_report_evidence=quality_report_evidence,
     )
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -1331,30 +1080,6 @@ def _outcome_is_higher(candidate: str, current: str | None) -> bool:
     )
 
 
-def _static_skip_from_markers(
-    markers: Sequence[Mapping[str, Any]],
-) -> tuple[str, int] | None:
-    """Recover static-skip provenance from enriched isolated-unit markers.
-
-    Returns (reason, skipped) from the last enriched static-skip marker.
-    Plain attempt markers carry no reason and never synthesize evidence; the
-    caller guarantees no other evidence record was seen.
-    """
-
-    found: tuple[str, int] | None = None
-    for rec in markers:
-        marker_reason = rec.get("reason")
-        marker_skipped = rec.get("skipped")
-        if (
-            isinstance(marker_reason, str)
-            and marker_reason
-            and isinstance(marker_skipped, int)
-            and marker_skipped > 0
-        ):
-            found = (marker_reason, marker_skipped)
-    return found
-
-
 def _build_detail_from_report_records(
     records: Iterable[Mapping[str, Any]],
     *,
@@ -1381,8 +1106,6 @@ def _build_detail_from_report_records(
     diagnostic_counts = _empty_counts()
     collect_errors: list[Mapping[str, Any]] = []
     harness_errors: list[Mapping[str, Any]] = []
-    static_markers: list[Mapping[str, Any]] = []
-    saw_evidence = False
     collect_error_files: set[str] = set()
     finalize_events: list[Mapping[str, Any]] = []
     execution_records_seen: set[str] = set()
@@ -1414,21 +1137,14 @@ def _build_detail_from_report_records(
             if outcome != "failed":
                 continue
             collect_errors.append(rec)
-            saw_evidence = True
             continue
 
         if report_type == "HarnessError":
             harness_errors.append(rec)
-            saw_evidence = True
-            continue
-
-        if report_type == _ISOLATED_UNIT_REPORT_TYPE:
-            static_markers.append(rec)
             continue
 
         if report_type != "TestReport":
             continue
-        saw_evidence = True
 
         if when not in {"setup", "call", "teardown"}:
             continue
@@ -1598,21 +1314,6 @@ def _build_detail_from_report_records(
 
     executions = execution_observations
     if not any(counts.values()) and not compliance_notes and not executions:
-        if not saw_evidence:
-            static_skip = _static_skip_from_markers(static_markers)
-            if static_skip is not None:
-                reason, skipped = static_skip
-                file_counts = dict(counts)
-                file_counts["skipped"] = skipped
-                return {
-                    "counts": file_counts,
-                    "tests": [],
-                    _LOGICAL_TEST_OUTCOMES: {},
-                    _DIAGNOSTIC_COUNTS: _empty_counts(),
-                    _LOGICAL_SKIP_REASONS: {reason: skipped},
-                    "skip_reasons": {reason: skipped},
-                    "file_skip": True,
-                }
         return None
     result: dict[str, Any] = {
         "counts": counts,

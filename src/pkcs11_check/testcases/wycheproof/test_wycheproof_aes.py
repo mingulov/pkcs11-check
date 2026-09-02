@@ -68,7 +68,6 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases._aes_operability import xts_encrypt_operability
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._negotiation import (
     TEMPLATE_SHAPE_REJECTS,
     negotiate_request,
@@ -415,16 +414,15 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
         attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
     finally:
         destroy_quietly(rs.raw, rs.sh, unwrapped)
-    recovered = attr_or_record(
-        attrs,
-        CKA_VALUE,
-        label=f"AES-KW:{vec_id}",
-        reason="honest_deviation",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-    if recovered is MISSING_ATTRIBUTE:
-        return
+    recovered = attrs.get(CKA_VALUE)
+    if recovered is None:
+        classify(
+            "honest_deviation",
+            label="AES-KW",
+            summary=f"AES-KW {vec_id}: unwrapped key material unreadable; cannot verify",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
     assert_correct(
         actual=recovered,
         expected=msg_expected,

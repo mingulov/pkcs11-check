@@ -47,24 +47,10 @@ _REASON_OUTCOME: dict[str, Outcome] = {
     # Not a provider verdict: OUR code broke (GH #9/#11). Still a fail so it is loud and
     # can never pass silently, but reports must not count it against the module.
     "harness_error": "fail",
-    # Attribution genuinely unresolved: a probe child exited without completing a
-    # recognized protocol, so we know the measurement is missing but NOT whose fault that
-    # is. Deliberately NOT a harness reason -- claiming "our bug" here suppressed real
-    # provider findings (a module writing past a caller-declared output length reached the
-    # report as a pkcs11-check defect, excluded from the provider's counts). It stays a
-    # loud provider-side fail until something identifies the cause.
-    "probe_incomplete": "fail",
 }
 
 # Reasons that describe the harness rather than the module under test. Report surfaces
 # use this to keep them out of provider finding counts.
-#
-# Membership is a POSITIVE claim that pkcs11-check itself is at fault, and it is costly:
-# a reason in this set is removed from the provider fail total and severity sections
-# (report/render.py), from the fail buckets (report/health.py), and from cross-provider
-# correlation (report/correlate.py). Only add a reason here when the harness announced its
-# own defect -- never on inference from an exit code we do not recognize. Unresolved
-# attribution belongs in "probe_incomplete", which stays in the provider's counts.
 HARNESS_REASONS = frozenset({"harness_error"})
 
 
@@ -73,7 +59,7 @@ def _severity(reason: str, kind: str | None) -> Severity:
         return "CRITICAL" if kind == "crypto" else "MEDIUM"
     if reason in ("accepted_invalid", "self_contradiction"):
         return "CRITICAL" if kind in ("crypto", "policy") else "HIGH"
-    if reason in ("oracle", "crash", "unclassified", "harness_error", "probe_incomplete"):
+    if reason in ("oracle", "crash", "unclassified", "harness_error"):
         return "HIGH"
     if reason in ("not_operational", "nonspec_reject", "honest_deviation", "undeclared_capability"):
         return "LOW"
@@ -241,26 +227,6 @@ def record(rec: Classification) -> None:
     _records.append(rec)
 
 
-def raise_for_record(rec: Classification) -> NoReturn:
-    """Raise the pytest outcome represented by an already-recorded classification.
-
-    The record is deliberately not added to the collector here.  This is useful for
-    wrappers that collect several semantic observations before choosing the strongest
-    terminal outcome; tagging the exact exception lets the report hook distinguish that
-    originating classification from an unrelated raw failure.
-    """
-    summary = rec.summary or rec.label or rec.reason
-    try:
-        if rec.outcome == "fail":
-            pytest.fail(summary)
-        if rec.outcome == "xfail":
-            pytest.xfail(summary)
-    except BaseException as exc:
-        setattr(exc, "_pkcs11_check_classification", rec)
-        raise
-    raise ValueError(f"record is not terminating: {rec.outcome!r}")
-
-
 def get_records() -> list[Classification]:
     """Return all classification records collected so far."""
     return list(_records)
@@ -337,7 +303,6 @@ def classify(
     label: str = "",
     operation: str | None = None,
     mechanism: str | None = None,
-    inherit_mechanism: bool = True,
     expected: object = None,
     actual: object = None,
     spec_ref: str | None = None,
@@ -353,51 +318,13 @@ def classify(
     or strings (passed through unchanged).  A ``fail`` raises ``pytest.fail`` and an
     ``xfail`` raises ``pytest.xfail``; ``pass`` returns normally.
     """
-    rec = record_as(
-        reason,
-        kind=kind,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        inherit_mechanism=inherit_mechanism,
-        expected=expected,
-        actual=actual,
-        spec_ref=spec_ref,
-        source=source,
-        vector_id=vector_id,
-        params=params,
-        summary=summary,
-        detail=detail,
-    )
-    if rec.outcome in {"fail", "xfail"}:
-        raise_for_record(rec)
-
-
-def record_as(
-    reason: str,
-    *,
-    kind: str | None = None,
-    label: str = "",
-    operation: str | None = None,
-    mechanism: str | None = None,
-    inherit_mechanism: bool = True,
-    expected: object = None,
-    actual: object = None,
-    spec_ref: str | None = None,
-    source: str | None = None,
-    vector_id: str | None = None,
-    params: dict[str, str] | None = None,
-    summary: str | None = None,
-    detail: dict[str, Any] | None = None,
-) -> Classification:
-    """Record a classification without raising its pytest outcome."""
     if params is None and _active_params is not None:
         params = dict(_active_params)
     if source is None:
         source = _active_source
     if vector_id is None:
         vector_id = _active_vector_id
-    if mechanism is None and inherit_mechanism:
+    if mechanism is None:
         mechanism = _active_mechanism
     if operation is None:
         operation = _active_operation
@@ -410,25 +337,29 @@ def record_as(
         from pkcs11_check.spec_refs import lookup
 
         spec_ref = lookup(operation, mechanism, expected)
-    rec = Classification(
-        reason=reason,
-        outcome=outcome,
-        severity=severity,
-        kind=kind,
-        label=label,
-        summary=summary,
-        operation=operation,
-        mechanism=mechanism,
-        expected_ckr=expected_names,
-        actual_ckr=actual_name,
-        spec_ref=spec_ref or "",
-        source=source,
-        vector_id=vector_id,
-        params=params,
-        detail=detail,
+    record(
+        Classification(
+            reason=reason,
+            outcome=outcome,
+            severity=severity,
+            kind=kind,
+            label=label,
+            summary=summary,
+            operation=operation,
+            mechanism=mechanism,
+            expected_ckr=expected_names,
+            actual_ckr=actual_name,
+            spec_ref=spec_ref or "",
+            source=source,
+            vector_id=vector_id,
+            params=params,
+            detail=detail,
+        )
     )
-    record(rec)
-    return rec
+    if outcome == "fail":
+        pytest.fail(summary)
+    if outcome == "xfail":
+        pytest.xfail(summary)
 
 
 def fail_as(reason: str, **kw: Any) -> NoReturn:

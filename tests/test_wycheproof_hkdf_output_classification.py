@@ -79,23 +79,14 @@ def _setup(
 def test_missing_value_on_valid_vector_is_visible_not_operational_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Missing CKA_VALUE now goes through attr_or_record (record_as), which records
-    # the finding without raising -- the test function returns normally instead of
-    # propagating pytest.xfail.Exception. The observation still reaches the report:
-    # pytest_runtest_makereport's _apply_recorded_outcome (_plugin_report_attach.py)
-    # converts a passed call report carrying an unraised outcome=="xfail" record into
-    # report.outcome == "skipped" + report.wasxfail, i.e. a reported xfail, exactly as
-    # test_classification_plugin.py::test_setup_only_recorded_xfail_controls_passing_call
-    # demonstrates end-to-end for the identical record()-without-raise pattern.
     destroyed = _setup(monkeypatch)
 
-    result = hkdf.test_hkdf(_session(), "hkdf-tc-valid", _vector())
+    with pytest.raises(pytest.xfail.Exception):
+        hkdf.test_hkdf(_session(), "hkdf-tc-valid", _vector())
 
-    assert result is None
     record = classification.get_records()[-1]
     assert record.reason == "not_operational"
     assert record.outcome == "xfail"
-    assert record.operation == "C_GetAttributeValue"
     assert destroyed == [202, 101]
 
 
@@ -307,17 +298,14 @@ def test_unexpected_local_derive_errors_propagate(
 def test_acceptable_vector_with_missing_value_is_visible_not_operational(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # See test_missing_value_on_valid_vector_is_visible_not_operational_and_cleans_up
-    # for why the non-raising attr_or_record path still yields a reported xfail.
     destroyed = _setup(monkeypatch)
 
-    result = hkdf.test_hkdf(_session(), "hkdf-tc-acceptable", _vector("acceptable"))
+    with pytest.raises(pytest.xfail.Exception):
+        hkdf.test_hkdf(_session(), "hkdf-tc-acceptable", _vector("acceptable"))
 
-    assert result is None
     record = classification.get_records()[-1]
     assert record.reason == "not_operational"
     assert record.outcome == "xfail"
-    assert record.operation == "C_GetAttributeValue"
     assert destroyed == [202, 101]
 
 

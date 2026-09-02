@@ -17,16 +17,10 @@ from pkcs11_check.testcases import data as data_mod
 from pkcs11_check.testcases.data import load_json_cached
 
 _TESTCASE_ROOT = Path(__file__).resolve().parents[1] / "src" / "pkcs11_check" / "testcases"
-# The rule is about TEST VECTORS, which must go through the mtime-validating cache.
-# These files read per-run subprocess plumbing instead (the coverage temp a probe child
-# writes, the probe params file). Caching those would be wrong, not just unnecessary:
-# they are rewritten every run and the cache is keyed on path + mtime.
 _DIRECT_JSON_LOAD_EXCEPTIONS = {
     "data/__init__.py",
     "_raw_subprocess.py",
     "_subprocess_preamble.py",
-    "_probes/_emit.py",
-    "_probes/runner.py",
 }
 
 

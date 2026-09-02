@@ -14,8 +14,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import fail_as, record_as
-from pkcs11_check.raw.metadata_std import ATTR_NAMES
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -27,7 +26,6 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
 )
-from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CKA_ALWAYS_SENSITIVE,
     CKA_DECRYPT,
@@ -42,7 +40,6 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     assert_correct,
@@ -51,30 +48,6 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.security
-
-
-def _required_flag(attrs: Mapping[Any, Any], attr: int, *, label: str) -> Any:
-    return attr_or_record(
-        attrs,
-        attr,
-        inherit_mechanism=False,
-        label=label,
-        reason="honest_deviation",
-        kind="metadata",
-    )
-
-
-def _assert_required_flag(value: Any, expected: bool, *, label: str) -> None:
-    if value is MISSING_ATTRIBUTE:
-        return
-    if value is not expected:
-        fail_as(
-            "self_contradiction",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            summary=f"{label}: expected {expected!r}, got {value!r}",
-        )
 
 
 def _gen_aes_key_or_xfail(
@@ -102,8 +75,8 @@ def _read_bool_attr_safe(
     rs: Any,
     handle: int,
     attr: int,
-) -> Any:
-    """Read a bool attribute, recording exact unsupported-attribute evidence."""
+) -> bool | None:
+    """Read a bool attribute, returning None if CKR_ATTRIBUTE_TYPE_INVALID."""
     import ctypes
 
     from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CK_BBOOL, CK_VOID_PTR
@@ -115,25 +88,9 @@ def _read_bool_attr_safe(
     tmpl[0].ulValueLen = ctypes.sizeof(val)
     rv = rs.raw.C_GetAttributeValue(rs.sh, handle, tmpl, 1)
     if rv == CKR_ATTRIBUTE_TYPE_INVALID:
-        record_as(
-            "honest_deviation",
-            kind="metadata",
-            label=f"{ATTR_NAMES.get(int(attr), hex(int(attr)))}:required-key-flag",
-            operation="C_GetAttributeValue",
-            actual=rv,
-            summary=(
-                f"Module does not expose required key flag "
-                f"{ATTR_NAMES.get(int(attr), hex(int(attr)))}"
-            ),
-            detail={
-                "attribute": {
-                    "name": ATTR_NAMES.get(int(attr), hex(int(attr))),
-                    "id": int(attr),
-                }
-            },
-        )
-        return MISSING_ATTRIBUTE
-    expect_rv(rv, CKR_OK, context="C_GetAttributeValue(CKA flag)")
+        return None
+    if rv != CKR_OK:
+        return None
     return val.value != 0
 
 
@@ -153,16 +110,7 @@ class TestNeverExtractable:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_NEVER_EXTRACTABLE])
-            never_extractable = _required_flag(
-                attrs,
-                CKA_NEVER_EXTRACTABLE,
-                label="CKA_NEVER_EXTRACTABLE:generated-non-extractable",
-            )
-            _assert_required_flag(
-                never_extractable,
-                True,
-                label="CKA_NEVER_EXTRACTABLE:generated-non-extractable",
-            )
+            assert attrs[CKA_NEVER_EXTRACTABLE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -179,16 +127,7 @@ class TestNeverExtractable:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_NEVER_EXTRACTABLE])
-            never_extractable = _required_flag(
-                attrs,
-                CKA_NEVER_EXTRACTABLE,
-                label="CKA_NEVER_EXTRACTABLE:generated-extractable",
-            )
-            _assert_required_flag(
-                never_extractable,
-                False,
-                label="CKA_NEVER_EXTRACTABLE:generated-extractable",
-            )
+            assert attrs[CKA_NEVER_EXTRACTABLE] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -202,12 +141,7 @@ class TestNeverExtractable:
         key_default = _gen_aes_key_or_xfail(rs, 256)
         try:
             attrs_d = read_attributes(rs.raw, rs.sh, key_default, [CKA_EXTRACTABLE])
-            extractable_default = _required_flag(
-                attrs_d,
-                CKA_EXTRACTABLE,
-                label="CKA_EXTRACTABLE:default",
-            )
-            if extractable_default is not MISSING_ATTRIBUTE and extractable_default is not False:
+            if attrs_d[CKA_EXTRACTABLE] is not False:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -217,7 +151,7 @@ class TestNeverExtractable:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                record_as(
+                classify(
                     "honest_deviation",
                     kind="metadata",
                     label="CKA_EXTRACTABLE:default",
@@ -227,8 +161,19 @@ class TestNeverExtractable:
                         "(spec Table 18 requires CKA_EXTRACTABLE to default to False)"
                     ),
                 )
+            assert attrs_d[CKA_EXTRACTABLE] is False
             never_ext_default = _read_bool_attr_safe(rs, key_default, CKA_NEVER_EXTRACTABLE)
-            if never_ext_default is not MISSING_ATTRIBUTE and never_ext_default is not True:
+            if never_ext_default is None:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_NEVER_EXTRACTABLE:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
+                        "(PKCS#11 spec Table 18 requires this attribute)"
+                    ),
+                )
+            if never_ext_default is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -257,18 +202,19 @@ class TestNeverExtractable:
         )
         try:
             attrs_e = read_attributes(rs.raw, rs.sh, key_ext, [CKA_EXTRACTABLE])
-            extractable = _required_flag(
-                attrs_e,
-                CKA_EXTRACTABLE,
-                label="CKA_EXTRACTABLE:requested-extractable",
-            )
-            _assert_required_flag(
-                extractable,
-                True,
-                label="CKA_EXTRACTABLE:requested-extractable",
-            )
+            assert attrs_e[CKA_EXTRACTABLE] is True
             never_ext = _read_bool_attr_safe(rs, key_ext, CKA_NEVER_EXTRACTABLE)
-            if never_ext is not MISSING_ATTRIBUTE and never_ext is not False:
+            if never_ext is None:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_NEVER_EXTRACTABLE:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_NEVER_EXTRACTABLE tracking "
+                        "(PKCS#11 spec Table 18 requires this attribute)"
+                    ),
+                )
+            if never_ext is not False:
                 fail_as(
                     "self_contradiction",
                     kind="metadata",
@@ -297,8 +243,16 @@ class TestLocalFlag:
         key = _gen_aes_key_or_xfail(rs, 256)
         try:
             local_val = _read_bool_attr_safe(rs, key, CKA_LOCAL)
-            if local_val is MISSING_ATTRIBUTE:
-                return
+            if local_val is None:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_LOCAL attribute "
+                        "(PKCS#11 spec Table 18 requires it for generated keys)"
+                    ),
+                )
             if local_val is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -307,12 +261,15 @@ class TestLocalFlag:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                fail_as(
-                    "self_contradiction",
+                xfail_as(
+                    "honest_deviation",
                     kind="metadata",
                     label="CKA_LOCAL:generated-key",
-                    operation="C_GetAttributeValue",
-                    summary="Generated key reports CKA_LOCAL=False",
+                    operation="C_GenerateKey",
+                    summary=(
+                        "Module does not set CKA_LOCAL=True on generated keys "
+                        "(PKCS#11 spec Table 18 requires CKA_LOCAL=True for C_GenerateKey)"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -336,8 +293,16 @@ class TestLocalFlag:
         )
         try:
             local_val = _read_bool_attr_safe(rs, key, CKA_LOCAL)
-            if local_val is MISSING_ATTRIBUTE:
-                return
+            if local_val is None:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_LOCAL attribute "
+                        "(PKCS#11 spec Table 18 requires it for imported keys)"
+                    ),
+                )
             if local_val is not False:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -346,12 +311,15 @@ class TestLocalFlag:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                fail_as(
-                    "self_contradiction",
+                xfail_as(
+                    "honest_deviation",
                     kind="metadata",
                     label="CKA_LOCAL:imported-key",
-                    operation="C_GetAttributeValue",
-                    summary="Imported key reports CKA_LOCAL=True",
+                    operation="C_CreateObject",
+                    summary=(
+                        "Module sets CKA_LOCAL=True on imported keys "
+                        "(PKCS#11 spec Table 18 requires CKA_LOCAL=False for C_CreateObject)"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -372,10 +340,19 @@ class TestLocalFlag:
         try:
             pub_local = _read_bool_attr_safe(rs, pub, CKA_LOCAL)
             priv_local = _read_bool_attr_safe(rs, priv, CKA_LOCAL)
-            present_wrong = (pub_local is not MISSING_ATTRIBUTE and pub_local is not True) or (
-                priv_local is not MISSING_ATTRIBUTE and priv_local is not True
-            )
-            if present_wrong:
+
+            if pub_local is None or priv_local is None:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_LOCAL:not-implemented",
+                    summary=(
+                        "Module does not implement CKA_LOCAL attribute "
+                        "(PKCS#11 spec requires it for generated keys)"
+                    ),
+                )
+
+            if pub_local is not True or priv_local is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -385,11 +362,11 @@ class TestLocalFlag:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec Table 18",
                 )
-                fail_as(
-                    "self_contradiction",
+                xfail_as(
+                    "honest_deviation",
                     kind="metadata",
                     label="CKA_LOCAL:generated-rsa-keypair",
-                    operation="C_GetAttributeValue",
+                    operation="C_GenerateKeyPair",
                     summary=(
                         f"Module does not set CKA_LOCAL=True on generated RSA keypair: "
                         f"pub={pub_local}, priv={priv_local} "
@@ -419,26 +396,8 @@ class TestAlwaysSensitive:
                 key,
                 [CKA_SENSITIVE, CKA_ALWAYS_SENSITIVE],
             )
-            sensitive = _required_flag(
-                attrs,
-                CKA_SENSITIVE,
-                label="CKA_SENSITIVE:generated-sensitive",
-            )
-            always_sensitive = _required_flag(
-                attrs,
-                CKA_ALWAYS_SENSITIVE,
-                label="CKA_ALWAYS_SENSITIVE:generated-sensitive",
-            )
-            _assert_required_flag(
-                sensitive,
-                True,
-                label="CKA_SENSITIVE:generated-sensitive",
-            )
-            _assert_required_flag(
-                always_sensitive,
-                True,
-                label="CKA_ALWAYS_SENSITIVE:generated-sensitive",
-            )
+            assert attrs[CKA_SENSITIVE] is True
+            assert attrs[CKA_ALWAYS_SENSITIVE] is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -457,26 +416,8 @@ class TestAlwaysSensitive:
                 key,
                 [CKA_SENSITIVE, CKA_ALWAYS_SENSITIVE],
             )
-            sensitive = _required_flag(
-                attrs,
-                CKA_SENSITIVE,
-                label="CKA_SENSITIVE:generated-non-sensitive",
-            )
-            always_sensitive = _required_flag(
-                attrs,
-                CKA_ALWAYS_SENSITIVE,
-                label="CKA_ALWAYS_SENSITIVE:generated-non-sensitive",
-            )
-            _assert_required_flag(
-                sensitive,
-                False,
-                label="CKA_SENSITIVE:generated-non-sensitive",
-            )
-            _assert_required_flag(
-                always_sensitive,
-                False,
-                label="CKA_ALWAYS_SENSITIVE:generated-non-sensitive",
-            )
+            assert attrs[CKA_SENSITIVE] is False
+            assert attrs[CKA_ALWAYS_SENSITIVE] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

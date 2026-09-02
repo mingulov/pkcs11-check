@@ -122,27 +122,21 @@ def _classify_unexpected_login_rv(rv: int, label: str) -> None:
         classify_negative_rv(rv, (), label=label)
 
 
-def _skip_login_user_not_implemented() -> None:
-    """Skip: C_LoginUser is an optional v3.0 function with no mechanism
-    parameter. A module may list a non-null C_LoginUser pointer in its
-    function table (passing the ``available_function_names()`` guard) yet
-    stub the call with CKR_FUNCTION_NOT_SUPPORTED -- that is capability
-    absence, not a deviation, so it is a skip, not an xfail.
-    """
-    pytest.skip("Module exposes C_LoginUser but returns CKR_FUNCTION_NOT_SUPPORTED (stub)")
-
-
 def _handle_cancel_rv(rv: int, label: str) -> None:
     """Classify a C_SessionCancel result without hiding unknown return codes."""
     if rv == CKR_OK:
         return
     if rv == CKR_FUNCTION_NOT_SUPPORTED:
-        # C_SessionCancel is an optional v3.0 function with no mechanism
-        # parameter: a module may expose a non-null function-table pointer yet
-        # stub the call with CKR_FUNCTION_NOT_SUPPORTED. That is capability
-        # absence, not a deviation -- skip, not xfail (the caller's own
-        # available_function_names() guard cannot catch a stub implementation).
-        pytest.skip("Module exposes v3.0 interface but C_SessionCancel returns FNS (stub)")
+        xfail_as(
+            "not_operational",
+            label=label,
+            operation="C_SessionCancel",
+            actual=rv,
+            summary=(
+                "Module exposes v3.0 interface but C_SessionCancel returns "
+                "CKR_FUNCTION_NOT_SUPPORTED"
+            ),
+        )
     classify_negative_rv(rv, (), label=label)
 
 
@@ -185,7 +179,16 @@ class TestCLoginUser:
         if rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Acceptable: we are already logged in as USER.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            _skip_login_user_not_implemented()
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
+            )
         elif rv == CKR_OK:
             pass  # Accepted.
         else:
@@ -241,7 +244,16 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Accepted or already logged in.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            _skip_login_user_not_implemented()
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
+            )
         elif rv in _LOGIN_REJECT:
             pass  # Module does not support named users - acceptable.
         else:
@@ -279,7 +291,16 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass  # Module accepted the multi-byte username.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            _skip_login_user_not_implemented()
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
+            )
         elif rv in _LOGIN_REJECT:
             pass  # Reject is OK; named-users not implemented.
         else:
@@ -321,7 +342,16 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            _skip_login_user_not_implemented()
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
+            )
         elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
             pass
         else:
@@ -362,7 +392,16 @@ class TestCLoginUser:
         if rv == CKR_OK or rv == CKR_USER_ALREADY_LOGGED_IN:
             pass
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            _skip_login_user_not_implemented()
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser",
+                operation="C_LoginUser",
+                actual=rv,
+                summary=(
+                    "Module exposes v3.0 interface but C_LoginUser returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
+            )
         elif rv in _LOGIN_REJECT or rv == CKR_ARGUMENTS_BAD:
             pass
         else:
@@ -559,7 +598,13 @@ class TestContextSpecificLogin:
         elif rv == CKR_USER_NOT_LOGGED_IN:
             pass  # Acceptable.
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-            _skip_login_user_not_implemented()
+            xfail_as(
+                "not_operational",
+                label="C_LoginUser:context-specific",
+                operation="C_LoginUser",
+                actual=rv,
+                summary="Module does not support CKU_CONTEXT_SPECIFIC via C_LoginUser",
+            )
         else:
             _classify_unexpected_login_rv(rv, "CKU_CONTEXT_SPECIFIC")
             xfail_as(
@@ -639,7 +684,13 @@ class TestLoginLogoutCycle:
             elif rv == CKR_USER_ALREADY_LOGGED_IN:
                 logged_in = True
             elif rv == CKR_FUNCTION_NOT_SUPPORTED:
-                _skip_login_user_not_implemented()
+                xfail_as(
+                    "not_operational",
+                    label="C_LoginUser:positive-login",
+                    operation="C_LoginUser",
+                    actual=rv,
+                    summary="Module exposes C_LoginUser but does not implement it",
+                )
             else:
                 _classify_unexpected_login_rv(rv, "C_LoginUser:positive-login")
                 xfail_as(
@@ -707,7 +758,13 @@ class TestLoginLogoutCycle:
                     ),
                 )
             elif rv2 == CKR_FUNCTION_NOT_SUPPORTED:
-                _skip_login_user_not_implemented()
+                xfail_as(
+                    "not_operational",
+                    label="C_LoginUser:double-login",
+                    operation="C_LoginUser",
+                    actual=rv2,
+                    summary="Module exposes C_LoginUser but does not implement it",
+                )
             else:
                 _classify_unexpected_login_rv(rv2, "C_LoginUser:double-login")
                 xfail_as(
@@ -848,8 +905,15 @@ class TestSessionCancel:
             )
 
         if "CANCEL:NOT_SUPPORTED" in stdout:
-            # Capability absence (see _handle_cancel_rv) -- skip, not xfail.
-            pytest.skip("Module exposes v3.0 interface but C_SessionCancel returns FNS (stub)")
+            xfail_as(
+                "not_operational",
+                label="C_SessionCancel",
+                operation="C_SessionCancel",
+                summary=(
+                    "Module exposes v3.0 interface but C_SessionCancel returns "
+                    "CKR_FUNCTION_NOT_SUPPORTED"
+                ),
+            )
 
         # OASIS PKCS#11 v3.0 spec C_SessionCancel: with flags=0 the spec says
         # "the session state will not be modified and CKR_OK will be returned".
@@ -906,11 +970,9 @@ class TestLoginUserWithNameRecipe:
             from pkcs11_check.raw.types_std import CKR_OPERATION_NOT_INITIALIZED
             from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
-            if exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
-                _skip_login_user_not_implemented()
             xfail_if_known_ckr(
                 exc,
-                {CKR_OPERATION_NOT_INITIALIZED},
+                {CKR_OPERATION_NOT_INITIALIZED, CKR_FUNCTION_NOT_SUPPORTED},
                 "Module exposes C_LoginUser but returns a known unsupported/deviation CKR "
                 "(expected CKR_OK or CKR_USER_ALREADY_LOGGED_IN per PKCS#11 v3.0 spec)",
             )
@@ -934,11 +996,9 @@ class TestLoginUserWithNameRecipe:
             login_user_with_name(rs.raw, rs.sh, CKU_USER, pin, username=b"testuser")
             logout_quietly(rs.raw, rs.sh)
         except CkrAssertionError as exc:
-            if exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
-                _skip_login_user_not_implemented()
             xfail_if_known_ckr(
                 exc,
-                _LOGIN_REJECT,
+                _LOGIN_REJECT | {CKR_FUNCTION_NOT_SUPPORTED},
                 "C_LoginUser with a non-empty username is not operational",
             )
             raise

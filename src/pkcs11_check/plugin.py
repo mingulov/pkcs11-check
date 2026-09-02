@@ -142,9 +142,6 @@ from pkcs11_check._plugin_state import (
     _BOOTSTRAP_FUNCTION_COUNTS as _BOOTSTRAP_FUNCTION_COUNTS,
 )
 from pkcs11_check._plugin_state import (
-    _CLASSIFICATION_CURSOR as _CLASSIFICATION_CURSOR,
-)
-from pkcs11_check._plugin_state import (
     _COVERAGE_DATA as _COVERAGE_DATA,
 )
 from pkcs11_check._plugin_state import (
@@ -188,9 +185,6 @@ from pkcs11_check._plugin_state import (
 )
 from pkcs11_check._plugin_state import (
     _P11_MODULE as _P11_MODULE,
-)
-from pkcs11_check._plugin_state import (
-    _PENDING_CLASSIFICATIONS as _PENDING_CLASSIFICATIONS,
 )
 from pkcs11_check._plugin_state import (
     _PROVISIONING_COUNTS as _PROVISIONING_COUNTS,
@@ -735,12 +729,6 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     _attach_rv_trace_to_report(item, report)
     _attach_compliance_notes_to_report(item, report)
     _attach_classification_to_report(item, report, call=call)
-    if getattr(report, "when", None) == "teardown":
-        item.stash[_CLASSIFICATION_CURSOR] = 0
-        item.stash[_PENDING_CLASSIFICATIONS] = []
-        from pkcs11_check.classification import clear as clear_classifications
-
-        clear_classifications()
     _remember_module_session_call_outcome(item, report)
     _attach_claimed_op_to_report(item, report)
 
@@ -764,6 +752,12 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
         from pkcs11_check.compliance import clear_notes
 
         clear_notes()
+
+    # Classification records can originate from ANY test (attach is likewise ungated);
+    # clear unconditionally to prevent cross-item leakage.
+    from pkcs11_check.classification import clear as clear_classifications
+
+    clear_classifications()
 
     # Provisioning events can originate from any test file; drain and clear unconditionally.
     from pkcs11_check.testcases._provisioning import (

@@ -3,34 +3,21 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from _pytest.outcomes import Failed
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
-    CKF_EC_COMPRESS,
-    CKF_EC_UNCOMPRESS,
-    CKM_ECDH1_DERIVE,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases._ec_export import parse_provider_ec_point
 from pkcs11_check.testcases.security import test_parameter_validation as pv
 
 
 def _session() -> SimpleNamespace:
-    return SimpleNamespace(
-        raw=object(),
-        sh=1,
-        has_mechanism=lambda _name: True,
-        has_mechanism_flag=lambda _mechanism, _flag: False,
-    )
+    return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
 
 
 def _raise(rv: int):  # type: ignore[no-untyped-def]
@@ -448,24 +435,19 @@ def test_rsa_exp_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 def _run_ecdh(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, rv: int = 0) -> None:
     monkeypatch.setattr(pv, "gen_ec_keypair", lambda *_a, **_k: (1, 2))
     monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
-    key = ec.derive_private_key(7, ec.SECP256R1()).public_key()
-    provider = key.public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
+    monkeypatch.setattr(
+        pv,
+        "read_attributes",
+        lambda *_a, **_k: {pv.CKA_EC_POINT: b"\x04" + b"\x01" * 64},
     )
-    conventional = parse_provider_ec_point(provider, ec.SECP256R1(), label="test peer")
-    monkeypatch.setattr(pv, "read_conventional_ec_point_or_xfail", lambda *_a, **_k: conventional)
-    monkeypatch.setattr(pv, "select_ecdh_point_form", lambda point, **_k: point.sec1_bytes)
+    monkeypatch.setattr(pv, "decode_ec_point", lambda data: b"\x04" + b"\x01" * 64)
     monkeypatch.setattr(pv, "derive_key", (lambda *_a, **_k: 9) if accepted else _raise(rv))
     pv.TestEcPointValidation().test_ecdh_invalid_point(_session(), "off_curve")
 
 
 def test_ecdh_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    classification.clear()
     with pytest.raises(Failed):
         _run_ecdh(monkeypatch, accepted=True)
-    record = classification.get_records()[-1]
-    assert record.reason == "accepted_invalid"
-    assert record.kind == "crypto"
 
 
 def test_ecdh_expected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -473,131 +455,5 @@ def test_ecdh_expected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_ecdh_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
-    classification.clear()
     with pytest.raises(pytest.xfail.Exception):
         _run_ecdh(monkeypatch, accepted=False, rv=_OTHER)
-    record = classification.get_records()[-1]
-    assert record.reason == "nonspec_reject"
-    assert record.kind == "crypto"
-
-
-@pytest.mark.parametrize(
-    "form",
-    [serialization.PublicFormat.CompressedPoint, serialization.PublicFormat.UncompressedPoint],
-)
-def test_invalid_point_crafting_preserves_form_and_is_locally_invalid(
-    form: serialization.PublicFormat,
-) -> None:
-    key = ec.derive_private_key(1, ec.SECP256R1()).public_key()
-    selected = key.public_bytes(serialization.Encoding.X962, form)
-
-    crafted = pv.TestEcPointValidation._craft_invalid_point(selected, "off_curve")
-
-    assert len(crafted) == len(selected)
-    assert crafted[0] == selected[0]
-    with pytest.raises(ValueError):
-        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), crafted)
-
-
-def test_ecdh_selects_advertised_form_before_crafting_and_passes_exact_bytes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = ec.derive_private_key(7, ec.SECP256R1()).public_key()
-    provider = key.public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
-    )
-    conventional = parse_provider_ec_point(provider, ec.SECP256R1(), label="test peer")
-    selected = key.public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.CompressedPoint
-    )
-    flags: list[tuple[int, int]] = []
-    passed: list[bytes] = []
-
-    def _has_flag(mechanism: Any, flag: Any) -> bool:
-        flags.append((int(mechanism), int(flag)))
-        return int(flag) == int(CKF_EC_COMPRESS)
-
-    rs = SimpleNamespace(
-        raw=object(),
-        sh=1,
-        has_mechanism=lambda name: True,
-        has_mechanism_flag=_has_flag,
-    )
-    monkeypatch.setattr(pv, "gen_ec_keypair", lambda *_a, **_k: (1, 2))
-    monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
-    monkeypatch.setattr(pv, "read_conventional_ec_point_or_xfail", lambda *_a, **_k: conventional)
-    monkeypatch.setattr(pv, "select_ecdh_point_form", lambda point, **_k: selected)
-
-    def _mech(*_args: Any, **kwargs: Any) -> object:
-        passed.append(kwargs["public_data"])
-        return object()
-
-    monkeypatch.setattr(pv, "mech_ecdh", _mech)
-    monkeypatch.setattr(pv, "derive_key", _raise(_EXPECTED))
-
-    pv.TestEcPointValidation().test_ecdh_invalid_point(rs, "off_curve")
-
-    assert flags == [
-        (int(CKM_ECDH1_DERIVE), int(CKF_EC_COMPRESS)),
-        (int(CKM_ECDH1_DERIVE), int(CKF_EC_UNCOMPRESS)),
-    ]
-    assert passed and passed[0] != selected
-    assert passed[0][0] == selected[0]
-    assert len(passed[0]) == len(selected)
-
-
-@pytest.mark.parametrize("point_type", ["off_curve", "infinity", "truncated"])
-def test_ecdh_negative_vectors_reach_mechanism_exactly(
-    monkeypatch: pytest.MonkeyPatch,
-    point_type: str,
-) -> None:
-    """Each crafted byte string is passed to CKM_ECDH1_DERIVE unchanged."""
-    key = ec.derive_private_key(7, ec.SECP256R1()).public_key()
-    selected = key.public_bytes(
-        serialization.Encoding.X962, serialization.PublicFormat.CompressedPoint
-    )
-    conventional = parse_provider_ec_point(
-        key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint),
-        ec.SECP256R1(),
-        label="test peer",
-    )
-    passed: list[bytes] = []
-    flags: list[tuple[int, int]] = []
-
-    def _has_flag(mechanism: Any, flag: Any) -> bool:
-        flags.append((int(mechanism), int(flag)))
-        return int(flag) == int(CKF_EC_COMPRESS)
-
-    rs = SimpleNamespace(
-        raw=object(),
-        sh=1,
-        has_mechanism=lambda _name: True,
-        has_mechanism_flag=_has_flag,
-    )
-    monkeypatch.setattr(pv, "gen_ec_keypair", lambda *_a, **_k: (1, 2))
-    monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
-    monkeypatch.setattr(pv, "read_conventional_ec_point_or_xfail", lambda *_a, **_k: conventional)
-    monkeypatch.setattr(pv, "select_ecdh_point_form", lambda *_a, **_k: selected)
-
-    def _mech(*_args: Any, **kwargs: Any) -> object:
-        passed.append(kwargs["public_data"])
-        return object()
-
-    monkeypatch.setattr(pv, "mech_ecdh", _mech)
-    monkeypatch.setattr(pv, "derive_key", _raise(_EXPECTED))
-
-    pv.TestEcPointValidation().test_ecdh_invalid_point(rs, point_type)
-
-    assert flags == [
-        (int(CKM_ECDH1_DERIVE), int(CKF_EC_COMPRESS)),
-        (int(CKM_ECDH1_DERIVE), int(CKF_EC_UNCOMPRESS)),
-    ]
-    assert len(passed) == 1
-    expected = (
-        pv.TestEcPointValidation._craft_invalid_point(selected, point_type)
-        if point_type == "off_curve"
-        else b"\x00"
-        if point_type == "infinity"
-        else selected[: len(selected) // 2]
-    )
-    assert passed[0] == expected

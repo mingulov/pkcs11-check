@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     copy_object,
@@ -63,7 +63,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     classify_discrimination,
@@ -238,23 +237,7 @@ class TestSensitivePreservation:
         key = gen_aes_key_or_xfail(rs, 256, attrs={CKA_SENSITIVE: True})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
-            sensitive_value = attr_or_record(
-                attrs,
-                CKA_SENSITIVE,
-                label="CKA_SENSITIVE=True readback (pre-copy baseline)",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            # A missing baseline disables ONLY the baseline claim check.  The copy
-            # must still be created and its CKA_SENSITIVE still observed: a module
-            # that omits the baseline attribute but reports CKA_SENSITIVE=False on
-            # the copy is the exact Tookan SENSITIVE-loss this probe exists to find,
-            # and returning here would never probe it.  Creation-time acceptance of
-            # the CKA_SENSITIVE=True template (gen_aes_key_or_xfail above) is the
-            # claim that the post-copy check is measured against.
-            if sensitive_value is not MISSING_ATTRIBUTE:
-                assert sensitive_value is True
+            assert attrs[CKA_SENSITIVE] is True
 
             try:
                 copied = copy_object(
@@ -269,17 +252,7 @@ class TestSensitivePreservation:
                 raise
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_SENSITIVE])
-                copy_sensitive_value = attr_or_record(
-                    copy_attrs,
-                    CKA_SENSITIVE,
-                    label="CKA_SENSITIVE=True readback (post-copy)",
-                    reason="not_operational",
-                    kind="policy",
-                    inherit_mechanism=False,
-                )
-                if copy_sensitive_value is MISSING_ATTRIBUTE:
-                    return
-                assert copy_sensitive_value is True, (
+                assert copy_attrs[CKA_SENSITIVE] is True, (
                     "SENSITIVE flag lost on copy - Tookan vulnerability"
                 )
             finally:
@@ -304,27 +277,7 @@ class TestSensitivePreservation:
             # policy claim/effect-check. claimed = the original key reads back
             # CKA_EXTRACTABLE=False; violated = the copy reads back True.
             orig = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
-            orig_extractable_raw = attr_or_record(
-                orig,
-                CKA_EXTRACTABLE,
-                label="C_CopyObject source CKA_EXTRACTABLE readback",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            claimed: bool
-            if orig_extractable_raw is MISSING_ATTRIBUTE:
-                # The readback is unavailable, but the CLAIM is not: the module
-                # ACCEPTED a CKA_EXTRACTABLE=False template at C_GenerateKey
-                # (gen_aes_key_or_xfail above raises/xfails otherwise), and that
-                # acceptance is independent claim evidence.  Deriving `claimed`
-                # from the readback alone would let one unreadable attribute
-                # downgrade a proven copy-escalation to an xfail.  The
-                # attr_or_record() record above keeps the unreadable readback
-                # itself visible.
-                claimed = True
-            else:
-                claimed = orig_extractable_raw is False
+            claimed = orig.get(CKA_EXTRACTABLE) is False
 
             try:
                 copied = copy_object(
@@ -344,20 +297,7 @@ class TestSensitivePreservation:
 
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_EXTRACTABLE])
-                copy_extractable_raw = attr_or_record(
-                    copy_attrs,
-                    CKA_EXTRACTABLE,
-                    label="C_CopyObject result CKA_EXTRACTABLE readback",
-                    reason="not_operational",
-                    kind="policy",
-                    inherit_mechanism=False,
-                )
-                copy_extractable: Any
-                if copy_extractable_raw is MISSING_ATTRIBUTE:
-                    copy_extractable = None
-                else:
-                    copy_extractable = copy_extractable_raw
-                violated = copy_extractable is True
+                violated = copy_attrs.get(CKA_EXTRACTABLE) is True
                 classify_policy_enforcement(
                     claimed=claimed,
                     violated=violated,
@@ -430,25 +370,7 @@ class TestWrapExtraction:
             # Wrap succeeded. Claim-check: did the target actually hold its
             # protection?
             tgt = read_attributes(rs.raw, rs.sh, target_h, [CKA_EXTRACTABLE])
-            tgt_extractable_raw = attr_or_record(
-                tgt,
-                CKA_EXTRACTABLE,
-                label="wrap-extraction target CKA_EXTRACTABLE claim-check readback",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
-            )
-            claimed: bool
-            if tgt_extractable_raw is MISSING_ATTRIBUTE:
-                # The readback is unavailable, but the CLAIM is not: gen_aes_key
-                # above ACCEPTED a CKA_EXTRACTABLE=False / CKA_SENSITIVE=True
-                # template, and that acceptance is independent claim evidence.
-                # Without this, an unreadable attribute would downgrade a proven
-                # key extraction to an xfail.  The attr_or_record() record above
-                # keeps the unreadable readback itself visible.
-                claimed = True
-            else:
-                claimed = tgt_extractable_raw is False
+            claimed = tgt.get(CKA_EXTRACTABLE) is False
 
             # Attacker decrypts the wrapped blob with the dual-purpose key.
             try:
@@ -568,28 +490,10 @@ class TestWrapExtraction:
 
                 # Claim-check: does the module actually hold the non-extractable claim?
                 tgt_attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_EXTRACTABLE])
-                tgt_attrs_extractable_raw = attr_or_record(
-                    tgt_attrs,
-                    CKA_EXTRACTABLE,
-                    label="type-confusion wrap target CKA_EXTRACTABLE claim-check readback",
-                    reason="not_operational",
-                    kind="policy",
-                    inherit_mechanism=False,
-                )
-                if tgt_attrs_extractable_raw is MISSING_ATTRIBUTE:
-                    # ABSENT is not OBSERVED-TRUE.  The module ACCEPTED the
-                    # CKA_EXTRACTABLE=False template at C_GenerateKey, so the claim
-                    # stands on creation-time acceptance and the oracle remains
-                    # applicable; only the readback is unavailable, and
-                    # attr_or_record() above already recorded exactly that.  Xfailing
-                    # here would both suppress a real extraction and assert something
-                    # ("module did not honor CKA_EXTRACTABLE=False") that was never
-                    # observed.
-                    pass
-                elif tgt_attrs_extractable_raw is not False:
-                    # OBSERVED: the module ignored the non-extractable request — a
-                    # separate metadata deviation, not this probe's verdict.  The
-                    # extraction oracle is not applicable to a key that was never made
+                if tgt_attrs.get(CKA_EXTRACTABLE) is not False:
+                    # The module ignored the non-extractable request — a separate
+                    # metadata deviation, not this probe's verdict.  The extraction
+                    # oracle is not applicable to a key that was never made
                     # non-extractable, so record an honest deviation and stop.
                     xfail_as(
                         "honest_deviation",
@@ -801,22 +705,7 @@ class TestKeyTypeConfusionOnUnwrap:
         try:
             # Capture the original AES-128 key bytes so the valid leg can be
             # confirmed by material comparison (never a literal valid_accepted).
-            original_attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_VALUE])
-            original_raw = attr_or_record(
-                original_attrs,
-                CKA_VALUE,
-                label="Tookan key-type-confusion target CKA_VALUE readback (round-trip reference)",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            # The sentinel is deliberately NOT collapsed into None: `None` would be
-            # indistinguishable from a real readback and would flow into
-            # valid_accepted=False below, manufacturing a CRITICAL crypto verdict for
-            # a provider that merely omits CKA_VALUE.
-            reference_len: int | None = None
-            if original_raw is not MISSING_ATTRIBUTE:
-                reference_len = len(original_raw)
+            original = read_attributes(rs.raw, rs.sh, target_h, [CKA_VALUE]).get(CKA_VALUE)
 
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
@@ -847,7 +736,7 @@ class TestKeyTypeConfusionOnUnwrap:
                         CKA_EXTRACTABLE: True,
                         CKA_SENSITIVE: False,
                     },
-                    value_len=reference_len,
+                    value_len=len(original) if original is not None else None,
                     purpose="tookan AES valid leg",
                 )
             except AssertionError as exc:
@@ -857,21 +746,9 @@ class TestKeyTypeConfusionOnUnwrap:
                     "Tookan key-type-confusion valid-leg AES unwrap not operational",
                 )
                 raise
-            good_value_attrs = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE])
-            good_value_raw = attr_or_record(
-                good_value_attrs,
-                CKA_VALUE,
-                label="Tookan key-type-confusion valid-leg unwrap CKA_VALUE readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
+            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
             destroy_quietly(rs.raw, rs.sh, good)
-            readback_complete = False
-            valid_accepted = False
-            if original_raw is not MISSING_ATTRIBUTE and good_value_raw is not MISSING_ATTRIBUTE:
-                readback_complete = True
-                valid_accepted = good_value_raw == original_raw
+            valid_accepted = good_value is not None and good_value == original
 
             # Invalid leg (D3): unwrap the SAME blob while requesting CKK_DES3.
             # The wrapped blob carries an AES-128 (16-byte) key, but DES3 requires
@@ -898,34 +775,11 @@ class TestKeyTypeConfusionOnUnwrap:
             except AssertionError as exc:
                 invalid_outcome = exc
 
-            confusion_label = "Tookan: unwrap AES-KW blob as CKK_DES3 must be refused"
-            if readback_complete:
-                classify_discrimination(
-                    valid_accepted=valid_accepted,
-                    invalid_outcome=invalid_outcome,
-                    label=confusion_label,
-                )
-            else:
-                # An unreadable CKA_VALUE disables ONLY the "did the valid leg produce
-                # the right material" oracle -- the not_operational records above
-                # already say why it is unverifiable.  It must not fabricate
-                # valid_accepted=False (which classify_discrimination reports as a
-                # CRITICAL crypto break for a provider that correctly REFUSED the
-                # type confusion), and it must not suppress the invalid leg, which is
-                # independently observable without any readback: the module either
-                # raised a clean CkrAssertionError or handed back a live DES3 handle.
-                if isinstance(invalid_outcome, CkrAssertionError):
-                    pass  # cleanly refused -- the protection held; nothing to classify
-                elif isinstance(invalid_outcome, BaseException):
-                    raise invalid_outcome
-                else:
-                    classify(
-                        "accepted_invalid",
-                        kind="crypto",
-                        label=confusion_label,
-                        summary=f"{confusion_label}: accepted the tampered/forged/confused "
-                        "input (security break)",
-                    )
+            classify_discrimination(
+                valid_accepted=valid_accepted,
+                invalid_outcome=invalid_outcome,
+                label="Tookan: unwrap AES-KW blob as CKK_DES3 must be refused",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target_h)

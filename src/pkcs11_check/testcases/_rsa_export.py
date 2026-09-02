@@ -8,7 +8,6 @@ from typing import Any
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from pkcs11_check.classification import xfail_as
-from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -39,7 +38,7 @@ _RSA_PRIVATE_ATTRS = (
 
 
 def _attr_name(attr: int) -> str:
-    return ATTR_NAMES.get(int(attr), str(attr))
+    return str(attr)
 
 
 def _rsa_int_attr(
@@ -56,9 +55,6 @@ def _rsa_int_attr(
             "not_operational",
             kind="metadata",
             label=label,
-            operation="C_GetAttributeValue",
-            inherit_mechanism=False,
-            detail={"attribute": {"name": _attr_name(attr), "id": int(attr)}},
             summary=f"{label}: missing RSA {kind} attribute {_attr_name(attr)}",
         )
 

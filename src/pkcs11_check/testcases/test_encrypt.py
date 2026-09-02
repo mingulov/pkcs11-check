@@ -35,7 +35,6 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -172,16 +171,7 @@ class TestAESEncryption:
         try:
             assert key is not None
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                label=f"CKA_KEY_TYPE:generated-AES-{key_bits}",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if key_type is MISSING_ATTRIBUTE:
-                return
-            assert key_type == CKK_AES
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

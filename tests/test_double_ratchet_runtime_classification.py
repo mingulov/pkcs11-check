@@ -256,7 +256,7 @@ def test_x2ratchet_initialize_sensitivity_probe_uses_spec_params(
     def _read_attributes(
         _raw: object, _sh: int, handle: int, _attrs: list[int]
     ) -> dict[int, bytes]:
-        return {CKA_VALUE: handle.to_bytes(32, "big")}
+        return {CKA_VALUE: f"x2ratchet-{handle}".encode("ascii")}
 
     monkeypatch.setattr(test_double_ratchet, "_create_ec_keypair", _create_keypair)
     monkeypatch.setattr(test_double_ratchet, "derive_key", _derive_key)

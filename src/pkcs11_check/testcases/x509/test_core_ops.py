@@ -41,7 +41,6 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     _build_cert_template,
@@ -146,22 +145,13 @@ class TestCertificateImport:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
-            ct_value = attr_or_record(
-                attrs,
-                CKA_CERTIFICATE_TYPE,
+            assert_correct(
+                actual=attrs[CKA_CERTIFICATE_TYPE],
+                expected=CKC_X_509,
                 label="X509:CKA_CERTIFICATE_TYPE readback",
-                reason="not_operational",
+                operation="C_GetAttributeValue",
                 kind="metadata",
-                inherit_mechanism=False,
             )
-            if ct_value is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=ct_value,
-                    expected=CKC_X_509,
-                    label="X509:CKA_CERTIFICATE_TYPE readback",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
         except CkrAssertionError as exc:
             if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 classify_positive_ckr(
@@ -238,18 +228,8 @@ class TestCertificateExtractFields:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-            val = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="X509:CKA_VALUE matches imported DER",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if (
-                val is not MISSING_ATTRIBUTE
-                and val != b"Hello world!"  # mock sentinel value used by some test modules
-            ):
+            val = attrs[CKA_VALUE]
+            if val != b"Hello world!":  # mock sentinel value used by some test modules
                 assert_correct(
                     actual=val,
                     expected=ca_cert_der,
@@ -288,17 +268,9 @@ class TestCertificateExtractFields:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT])
-            subject = attr_or_record(
-                attrs,
-                CKA_SUBJECT,
-                label="X509:CKA_SUBJECT readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if subject is not MISSING_ATTRIBUTE:
-                assert isinstance(subject, bytes)
-                assert len(subject) > 0
+            subject = attrs[CKA_SUBJECT]
+            assert isinstance(subject, bytes)
+            assert len(subject) > 0
         except CkrAssertionError as exc:
             if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 classify_positive_ckr(
@@ -330,17 +302,9 @@ class TestCertificateExtractFields:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
-            issuer = attr_or_record(
-                attrs,
-                CKA_ISSUER,
-                label="X509:CKA_ISSUER readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if issuer is not MISSING_ATTRIBUTE:
-                assert isinstance(issuer, bytes)
-                assert len(issuer) > 0
+            issuer = attrs[CKA_ISSUER]
+            assert isinstance(issuer, bytes)
+            assert len(issuer) > 0
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_ISSUER")
@@ -368,17 +332,9 @@ class TestCertificateExtractFields:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
-            serial = attr_or_record(
-                attrs,
-                CKA_SERIAL_NUMBER,
-                label="X509:CKA_SERIAL_NUMBER readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if serial is not MISSING_ATTRIBUTE:
-                assert isinstance(serial, bytes)
-                assert len(serial) > 0
+            serial = attrs[CKA_SERIAL_NUMBER]
+            assert isinstance(serial, bytes)
+            assert len(serial) > 0
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract CKA_SERIAL_NUMBER")
@@ -411,30 +367,13 @@ class TestCertificateExtractFields:
                 h,
                 [CKA_SUBJECT, CKA_ISSUER],
             )
-            subject = attr_or_record(
-                attrs,
-                CKA_SUBJECT,
+            assert_correct(
+                actual=attrs[CKA_SUBJECT],
+                expected=attrs[CKA_ISSUER],
                 label="X509:self-signed CA CKA_SUBJECT == CKA_ISSUER",
-                reason="not_operational",
+                operation="C_GetAttributeValue",
                 kind="metadata",
-                inherit_mechanism=False,
             )
-            issuer = attr_or_record(
-                attrs,
-                CKA_ISSUER,
-                label="X509:self-signed CA CKA_SUBJECT == CKA_ISSUER",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if subject is not MISSING_ATTRIBUTE and issuer is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=subject,
-                    expected=issuer,
-                    label="X509:self-signed CA CKA_SUBJECT == CKA_ISSUER",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
         except AssertionError as e:
             if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                 pytest.skip("Module does not extract Subject/Issuer")

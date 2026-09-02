@@ -15,12 +15,10 @@ from _pytest.outcomes import XFailed
 
 from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
-    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_USER_ALREADY_LOGGED_IN,
 )
 from pkcs11_check.testcases import test_v30_session as tv
-from tests._skip_assert import assert_skips
 
 
 class _Cfg:
@@ -89,81 +87,3 @@ def test_login_then_logout_positive_unexpected_clean_ckr_xfails(
     fn = _drive_positive_login_unexpected(monkeypatch, "test_c_login_user_then_logout")
     with pytest.raises(XFailed):
         fn(_session_with_login_user(), _Cfg())
-
-
-# ---------------------------------------------------------------------------
-# CKR_FUNCTION_NOT_SUPPORTED from C_LoginUser / C_SessionCancel is capability
-# absence (both are optional v3.0 functions with no mechanism parameter): a
-# module may list a non-null function-table pointer yet stub the call. That
-# must skip, never record an "advertised but not operational" xfail finding.
-# ---------------------------------------------------------------------------
-
-
-def test_login_user_function_not_supported_is_skip(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
-    monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: int(CKR_FUNCTION_NOT_SUPPORTED))
-    assert_skips(
-        tv.TestCLoginUser().test_c_login_user_empty_username_user_type,
-        _session_with_login_user(),
-        _Cfg(),
-        match="C_LoginUser",
-    )
-
-
-def test_login_user_context_specific_function_not_supported_is_skip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
-    monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: int(CKR_FUNCTION_NOT_SUPPORTED))
-    assert_skips(
-        tv.TestContextSpecificLogin().test_context_specific_via_c_login_user,
-        _session_with_login_user(),
-        _Cfg(),
-        match="C_LoginUser",
-    )
-
-
-def test_double_login_function_not_supported_is_skip(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
-    monkeypatch.setattr(tv, "_raw_login", lambda *_a, **_k: int(CKR_OK))
-    monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: int(CKR_FUNCTION_NOT_SUPPORTED))
-    monkeypatch.setattr(tv, "_raw_logout", lambda *_a, **_k: int(CKR_OK))
-    monkeypatch.setattr(tv, "raw_open_session", lambda *_a, **_k: 2)
-    monkeypatch.setattr(tv, "close_session_quietly", lambda *_a, **_k: None)
-    assert_skips(
-        tv.TestLoginLogoutCycle().test_double_login_rejected,
-        _session_with_login_user(),
-        _Cfg(),
-        match="C_LoginUser",
-    )
-
-
-def test_login_then_logout_positive_function_not_supported_is_skip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
-    monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: int(CKR_FUNCTION_NOT_SUPPORTED))
-    monkeypatch.setattr(tv, "_raw_logout", lambda *_a, **_k: int(CKR_OK))
-    monkeypatch.setattr(tv, "raw_open_session", lambda *_a, **_k: 2)
-    monkeypatch.setattr(tv, "close_session_quietly", lambda *_a, **_k: None)
-    assert_skips(
-        tv.TestLoginLogoutCycle().test_c_login_user_then_logout,
-        _session_with_login_user(),
-        _Cfg(),
-        match="C_LoginUser",
-    )
-
-
-def test_session_cancel_function_not_supported_is_skip() -> None:
-    assert_skips(
-        tv._handle_cancel_rv,
-        int(CKR_FUNCTION_NOT_SUPPORTED),
-        "C_SessionCancel",
-        match="C_SessionCancel",
-    )
-
-
-def test_session_cancel_device_error_still_xfails() -> None:
-    """A genuine clean-reject CKR (not FNS) must stay xfail, not turn into a skip."""
-    with pytest.raises(XFailed):
-        tv._handle_cancel_rv(int(CKR_DEVICE_ERROR), "C_SessionCancel")

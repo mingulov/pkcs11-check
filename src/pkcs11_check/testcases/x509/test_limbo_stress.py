@@ -16,7 +16,6 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
-    AttrReadResult,
     create_object,
     destroy_quietly,
     get_object_size,
@@ -33,7 +32,6 @@ from pkcs11_check.raw.types_std import (
     CKC_X_509,
     CKO_CERTIFICATE,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.x509.conftest import (
     get_unique_limbo_certs,
     get_unique_limbo_crls,
@@ -104,31 +102,13 @@ def test_exhaustive_cert_import_no_crash(
     try:
         # Verify CKA_VALUE round-trips correctly.  If the module corrupts
         # stored cert data, this will FAIL (not just silently pass).
-        read_failed = False
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
         except CkrAssertionError as exc:
             _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(CKA_VALUE)")
-            attrs = AttrReadResult()  # CKR error reading VALUE is acceptable
-            read_failed = True
-        stored = (
-            MISSING_ATTRIBUTE
-            if read_failed
-            else attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label=f"X.509 Limbo crash probe CKA_VALUE round-trip ({tc_id})",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-        )
-        if (
-            stored is not MISSING_ATTRIBUTE
-            and isinstance(stored, bytes)
-            and stored
-            and stored != der_bytes
-        ):
+            attrs = {}  # CKR error reading VALUE is acceptable
+        stored = attrs.get(CKA_VALUE, b"")
+        if isinstance(stored, bytes) and stored and stored != der_bytes:
             classify(
                 "self_contradiction",
                 kind="metadata",
@@ -191,31 +171,13 @@ def test_exhaustive_crl_import_no_crash(
 
     try:
         # Verify CKA_VALUE round-trips correctly.
-        read_failed = False
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
         except CkrAssertionError as exc:
             _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(CKA_VALUE)")
-            attrs = AttrReadResult()  # CKR error reading VALUE is acceptable
-            read_failed = True
-        stored = (
-            MISSING_ATTRIBUTE
-            if read_failed
-            else attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label=f"X.509 Limbo CRL crash probe CKA_VALUE round-trip ({tc_id})",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-        )
-        if (
-            stored is not MISSING_ATTRIBUTE
-            and isinstance(stored, bytes)
-            and stored
-            and stored != der_bytes
-        ):
+            attrs = {}  # CKR error reading VALUE is acceptable
+        stored = attrs.get(CKA_VALUE, b"")
+        if isinstance(stored, bytes) and stored and stored != der_bytes:
             classify(
                 "self_contradiction",
                 kind="metadata",

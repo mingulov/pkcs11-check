@@ -5,10 +5,8 @@ to detect the CS variant (CS1/CS2/CS3) and marks non-matching tests as
 skipped before they execute.  This keeps the full vector universe visible in
 reported totals without paying per-test provider setup costs.
 
-If detection fails (module errors on CTS encrypt), CS variant tests are
-collection-skipped only when the detection sentinel is part of the selected
-run; an exact standalone vector selection keeps its own runtime guard so the
-failure evidence is not lost.
+If detection fails (module errors on CTS encrypt), all CS variant tests
+are skipped -- test_cts_detect.py will catch this as a failure.
 """
 
 from __future__ import annotations
@@ -19,23 +17,12 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
-from pkcs11_check.testcases.acvp.aes.base_cts import (
-    CtsDetectionResult as _CtsDetectionResult,
-)
-from pkcs11_check.testcases.acvp.aes.base_cts import (
-    CtsDetectionStatus as _CtsDetectionStatus,
-)
-
 _DISABLE_COLLECTION_PROBES_ENV = "PKCS11_CHECK_DISABLE_COLLECTION_PROBES"
 
 
-@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Mark CTS tests for non-matching CS variants as counted skips."""
     if os.environ.get(_DISABLE_COLLECTION_PROBES_ENV):
-        return
-    if getattr(getattr(config, "option", None), "collectonly", False):
         return
 
     # Classify CTS variant test items
@@ -52,43 +39,23 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if not cts_variant_items:
         return
 
-    detection = _probe_cts_variant(config)
+    variant = _probe_cts_variant(config)
 
-    if detection.status is not _CtsDetectionStatus.DETECTED:
-        # A standalone exact selection may contain only a vector node.  Do not
-        # turn that selected test into a collection-time skip: its normal
-        # ``skip_unless_cts_variant`` guard must run and retain the
-        # detection-failure classification.  The sentinel is skipped only when
-        # it is actually part of this selection; never assume pytest selected a
-        # sibling test or add one to the run.
-        sentinel_selected = any(
-            item.nodeid.rsplit("::", maxsplit=1)[-1] == "test_cts_variant_detected"
-            for item in items
-        )
-        if sentinel_selected:
-            # Detection failed: skip all CS variant tests.  The selected
-            # sentinel remains the sole reporter.
-            reason = _detection_skip_reason(detection)
-            for vitems in cts_variant_items.values():
-                for item in vitems:
-                    item.add_marker(pytest.mark.skip(reason=reason))
-        else:
-            # An exact/targeted selection may contain only vector nodes.  Keep
-            # one deterministic node runnable so its runtime guard emits the
-            # detection result, and count the rest as skips.
-            all_variant_items = [
-                item for v in ("1", "2", "3") for item in cts_variant_items.get(v, [])
-            ]
-            for item in all_variant_items[1:]:
+    if variant is None:
+        # Detection failed: skip all CS variant tests.
+        # test_cts_detect.py (no "_cs{N}_" in its nodeid) will still run and FAIL.
+        for vitems in cts_variant_items.values():
+            for item in vitems:
                 item.add_marker(
                     pytest.mark.skip(
-                        reason="CKM_AES_CTS detection reporter is retained by the selected CTS item"
+                        reason=(
+                            "CKM_AES_CTS variant detection failed; "
+                            "test_cts_detect reports the provider finding"
+                        )
                     )
                 )
         return
 
-    variant = detection.variant
-    assert variant is not None
     for v, vitems in cts_variant_items.items():
         if v == variant:
             continue
@@ -98,60 +65,19 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             )
 
 
-def _detection_skip_reason(detection: _CtsDetectionResult) -> str:
-    """Explain collection skips while leaving the selected detector reporter runnable."""
-    if detection.status is _CtsDetectionStatus.ABSENT:
-        return "CKM_AES_CTS not supported by module"
-    if detection.status is _CtsDetectionStatus.SETUP_UNAVAILABLE:
-        reason = detection.detail.get("reason")
-        if isinstance(reason, str) and reason:
-            return reason
-        return "C_CreateObject capability unavailable for CKM_AES_CTS detection"
-    if detection.status is _CtsDetectionStatus.SETUP_ERROR:
-        ckr = ckr_name(detection.error_rv) if detection.error_rv is not None else "unknown CKR"
-        return (
-            f"CKM_AES_CTS variant detection failed with {ckr}; "
-            "the selected CTS reporter records the provider finding"
-        )
-    return (
-        "CKM_AES_CTS variant detection failed; the selected CTS reporter records "
-        "the provider finding"
-    )
-
-
-def _probe_cts_variant(config: pytest.Config) -> _CtsDetectionResult:
+def _probe_cts_variant(config: pytest.Config) -> str | None:
     """Detect CTS variant using a lightweight PKCS#11 probe.
 
-    Returns the structured detection result; absent CTS is represented by
-    ``CtsDetectionStatus.ABSENT`` and setup capability gaps by
-    ``CtsDetectionStatus.SETUP_UNAVAILABLE``.
+    Returns "1", "2", "3", or None if detection fails.
     """
     module_path = config.getoption("p11_module", default=None)
     if module_path is None:
-        return _CtsDetectionResult(_CtsDetectionStatus.ABSENT)
+        return None
 
     try:
         return _detect_variant_via_pkcs11(config)
-    except pytest.skip.Exception as exc:
-        # A missing setup capability (for example C_CreateObject) is still a
-        # genuine skip, but it is distinct from an absent mechanism. Catch
-        # only pytest's explicit skip signal; ordinary Python/ctypes
-        # exceptions must remain visible to the collection gate.
-        return _CtsDetectionResult(
-            _CtsDetectionStatus.SETUP_UNAVAILABLE,
-            detail={"reason": str(exc)},
-        )
-    except CkrAssertionError as exc:
-        # Detection scaffolding (login, session, mechanism list) answers in
-        # CKRs: provider answers, contained like any detector result. Only
-        # non-CKR exceptions (true harness bugs) propagate to the gate.
-        # Nothing was detected, so the process cache stays unprimed and the
-        # runtime guard re-probes instead of reusing this result.
-        return _CtsDetectionResult(
-            _CtsDetectionStatus.SETUP_ERROR,
-            error_rv=exc.rv,
-            detail={"reason": str(exc), "attempts": []},
-        )
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class _MinimalSession:
@@ -168,7 +94,7 @@ class _MinimalSession:
         return name in self._mechs or f"CKM_{name}" in self._mechs
 
 
-def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
+def _detect_variant_via_pkcs11(config: pytest.Config) -> str | None:
     """Load module, open session, detect CTS variant, clean up."""
     from pkcs11_check.core.loader import load_module
     from pkcs11_check.raw.bootstrap import (
@@ -179,16 +105,9 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     )
     from pkcs11_check.raw.bootstrap import open_session as raw_open_session
     from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
-    from pkcs11_check.raw.recipes import get_mechanism_info, get_mechanism_list
-    from pkcs11_check.raw.types_std import (
-        CKF_DECRYPT,
-        CKF_ENCRYPT,
-        CKF_RW_SESSION,
-        CKF_SERIAL_SESSION,
-        CKM_AES_CTS,
-        CKU_USER,
-    )
-    from pkcs11_check.testcases.acvp.aes.base_cts import get_cts_detection
+    from pkcs11_check.raw.recipes import get_mechanism_list
+    from pkcs11_check.raw.types_std import CKF_RW_SESSION, CKF_SERIAL_SESSION, CKU_USER
+    from pkcs11_check.testcases.acvp.aes.base_cts import _detect_cts_variant
 
     module_path = config.getoption("p11_module")
     interface = config.getoption("p11_interface", default="auto")
@@ -212,25 +131,7 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
                 names.add(mname[4:])
 
     if "AES_CTS" not in names:
-        return _CtsDetectionResult(_CtsDetectionStatus.ABSENT)
-
-    # Metadata is the capability boundary.  Do not open a session or touch
-    # key/crypto operations when the advertised CTS mechanism does not claim
-    # both directions required by this test file.
-    info = get_mechanism_info(raw, slot_id, CKM_AES_CTS)
-    required_flags = int(CKF_ENCRYPT) | int(CKF_DECRYPT)
-    if int(info["flags"]) & required_flags != required_flags:
-        return _CtsDetectionResult(
-            _CtsDetectionStatus.SETUP_UNAVAILABLE,
-            detail={
-                "reason": "CKM_AES_CTS does not advertise CKF_ENCRYPT|CKF_DECRYPT",
-                "stage": "metadata",
-                "operation": "C_GetMechanismInfo",
-                "key_bits": None,
-                "case": None,
-                "ckr": None,
-            },
-        )
+        return None  # No CTS support; file-skip should handle this
 
     flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
     sh = raw_open_session(raw, slot_id, flags)
@@ -241,10 +142,7 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
             logged_in = True
 
         rs = _MinimalSession(raw, sh, frozenset(names))
-        # Use the structured process cache so the selected sentinel/vector
-        # runtime guard reuses this collection result instead of touching the
-        # provider a second time.
-        return get_cts_detection(rs)
+        return _detect_cts_variant(rs)
     finally:
         if logged_in:
             logout_quietly(raw, sh)

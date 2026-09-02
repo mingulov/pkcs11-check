@@ -18,13 +18,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec as _crypto_ec
 from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 import pkcs11_check.testcases._provisioning as _prov
-from pkcs11_check.raw.types_std import CKK_EC_EDWARDS, CKK_EC_MONTGOMERY
 
 # ---------------------------------------------------------------------------
 # Test fixtures: a real P-256 keypair and RSA-2048 keypair for material tests
@@ -37,8 +35,6 @@ _EC_RAW_POINT = _EC_PUB.public_bytes(Encoding.X962, PublicFormat.UncompressedPoi
 # DER OCTET STRING wrapper
 EC_POINT = bytes([0x04, len(_EC_RAW_POINT)]) + _EC_RAW_POINT
 EC_PARAMS = bytes.fromhex("06082a8648ce3d030107")  # P-256 OID
-EC_P384_PARAMS = bytes.fromhex("06052b81040022")
-EC_P521_PARAMS = bytes.fromhex("06052b81040023")
 
 # RSA-2048 key material
 _RSA_KEY = _crypto_rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -93,37 +89,6 @@ def _pin_verdict(monkeypatch: pytest.MonkeyPatch, rs: Any, verdict: str) -> None
     # Override _verdicts directly to bypass any real probe
     for cls in ("public", "cert", "data"):
         prof._verdicts[cls] = verdict
-
-
-def _der_octet_string(value: bytes) -> bytes:
-    """Encode one value as a canonical DER OCTET STRING."""
-    if len(value) < 0x80:
-        return b"\x04" + bytes([len(value)]) + value
-    length = len(value).to_bytes((len(value).bit_length() + 7) // 8, "big")
-    return b"\x04" + bytes([0x80 | len(length)]) + length + value
-
-
-def _capture_external_material(
-    monkeypatch: pytest.MonkeyPatch, rs: Any, *, handle: int = 556
-) -> list[bytes]:
-    captured: list[bytes] = []
-
-    def fake_external(
-        _rs: Any,
-        _cfg: Any,
-        *,
-        material: bytes,
-        label: str,
-        key_type: Any,
-        obj_class: str,
-    ) -> int:
-        captured.append(material)
-        return handle
-
-    monkeypatch.setattr(_prov, "external_provision", fake_external)
-    _reset_cache()
-    _pin_verdict(monkeypatch, rs, "create_absent")
-    return captured
 
 
 # ===========================================================================
@@ -182,8 +147,6 @@ def test_public_ec_create_available(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert h == 11, "must return negotiated-import handle"
     assert len(imported) == 1, "import_ec_public_key_negotiated must be called once"
-    assert imported[0]["ec_params"] == EC_PARAMS
-    assert imported[0]["ec_point"] == EC_POINT
     assert not external_called, "external_provision must NOT be called on create path"
     events = get_provisioning_events()
     assert any(e.obj_class == "public" and e.method == "ran_via_create" for e in events), (
@@ -238,187 +201,6 @@ def test_public_ec_create_absent_external_configured(monkeypatch: pytest.MonkeyP
     assert not any(e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must NOT be recorded when external succeeds"
     )
-
-
-@pytest.mark.parametrize(
-    ("curve", "ec_params"),
-    [
-        (_crypto_ec.SECP256R1(), EC_PARAMS),
-        (_crypto_ec.SECP384R1(), EC_P384_PARAMS),
-        (_crypto_ec.SECP521R1(), EC_P521_PARAMS),
-    ],
-    ids=["p256", "p384", "p521"],
-)
-def test_public_ec_external_der_is_loadable_equivalent(
-    monkeypatch: pytest.MonkeyPatch,
-    curve: _crypto_ec.EllipticCurve,
-    ec_params: bytes,
-) -> None:
-    """External conventional EC material is a loadable equivalent SPKI."""
-    from pkcs11_check.raw.types_std import CKK_EC
-    from pkcs11_check.testcases._provisioning import provision_public_key
-
-    key = _crypto_ec.generate_private_key(curve)
-    point = key.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-    rs = _make_rs(sh=503)
-    captured = _capture_external_material(monkeypatch, rs)
-
-    handle = provision_public_key(
-        rs,
-        _make_cfg(allow_external=True, external_cmd="fake {keyfile} {label}"),
-        key_type=int(CKK_EC),
-        attrs={},
-        label="external conventional EC",
-        ec_params=ec_params,
-        ec_point=_der_octet_string(point),
-    )
-
-    assert handle == 556
-    assert len(captured) == 1
-    loaded = serialization.load_der_public_key(captured[0])
-    assert isinstance(loaded, _crypto_ec.EllipticCurvePublicKey)
-    assert loaded.public_numbers() == key.public_key().public_numbers()
-
-
-@pytest.mark.parametrize(
-    ("curve", "ec_params"),
-    [
-        (_crypto_ec.SECP256R1(), EC_PARAMS),
-        (_crypto_ec.SECP384R1(), EC_P384_PARAMS),
-        (_crypto_ec.SECP521R1(), EC_P521_PARAMS),
-    ],
-    ids=["p256", "p384", "p521-long-form"],
-)
-def test_public_ec_external_wrapped_compressed_is_loadable_equivalent(
-    monkeypatch: pytest.MonkeyPatch,
-    curve: _crypto_ec.EllipticCurve,
-    ec_params: bytes,
-) -> None:
-    """External wrapped compressed SEC1 points become equivalent SPKI material."""
-    from pkcs11_check.raw.types_std import CKK_EC
-    from pkcs11_check.testcases._provisioning import provision_public_key
-
-    key = _crypto_ec.generate_private_key(curve)
-    point = key.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
-    rs = _make_rs(sh=504)
-    captured = _capture_external_material(monkeypatch, rs)
-
-    provision_public_key(
-        rs,
-        _make_cfg(allow_external=True, external_cmd="fake {keyfile} {label}"),
-        key_type=int(CKK_EC),
-        attrs={},
-        label="external compressed EC",
-        ec_params=ec_params,
-        ec_point=_der_octet_string(point),
-    )
-
-    assert len(captured) == 1
-    loaded = serialization.load_der_public_key(captured[0])
-    assert isinstance(loaded, _crypto_ec.EllipticCurvePublicKey)
-    assert loaded.public_numbers() == key.public_key().public_numbers()
-
-
-@pytest.mark.parametrize(
-    ("ec_params", "ec_point"),
-    [
-        (EC_PARAMS, _EC_RAW_POINT),
-        (EC_PARAMS, EC_POINT + b"\x00"),
-        (EC_PARAMS, b"\x04\x81\x41" + _EC_RAW_POINT),
-        (EC_PARAMS + b"\x00", EC_POINT),
-        (b"\x06", EC_POINT),
-        (EC_PARAMS, b"\x04\x81"),
-        (bytes.fromhex("06092a808648ce3d030107"), EC_POINT),
-        (bytes.fromhex("06032b6570"), EC_POINT),
-    ],
-    ids=[
-        "raw-point",
-        "trailing-wrapper",
-        "noncanonical-wrapper",
-        "trailing-oid",
-        "malformed-oid",
-        "malformed-wrapper",
-        "noncanonical-oid",
-        "unsupported-oid",
-    ],
-)
-def test_public_ec_external_conversion_fallback_is_exact(
-    monkeypatch: pytest.MonkeyPatch, ec_params: bytes, ec_point: bytes
-) -> None:
-    """Malformed, noncanonical, and unsupported EC material remains byte-exact."""
-    from pkcs11_check.raw.types_std import CKK_EC
-    from pkcs11_check.testcases._provisioning import provision_public_key
-
-    rs = _make_rs(sh=505)
-    captured = _capture_external_material(monkeypatch, rs)
-
-    provision_public_key(
-        rs,
-        _make_cfg(allow_external=True, external_cmd="fake {keyfile} {label}"),
-        key_type=int(CKK_EC),
-        attrs={},
-        label="external fallback EC",
-        ec_params=ec_params,
-        ec_point=ec_point,
-    )
-
-    assert captured == [ec_point]
-
-
-@pytest.mark.parametrize(
-    "key_type",
-    [
-        pytest.param(CKK_EC_EDWARDS, id="edwards"),
-        pytest.param(CKK_EC_MONTGOMERY, id="montgomery"),
-    ],
-)
-def test_public_ec_external_raw_nonconventional_key_types_are_exact(
-    monkeypatch: pytest.MonkeyPatch, key_type: int
-) -> None:
-    """Raw Edwards/Montgomery public material never enters conventional EC conversion."""
-    from pkcs11_check.testcases._provisioning import provision_public_key
-
-    raw = bytes(range(32))
-    rs = _make_rs(sh=506)
-    captured = _capture_external_material(monkeypatch, rs)
-
-    provision_public_key(
-        rs,
-        _make_cfg(allow_external=True, external_cmd="fake {keyfile} {label}"),
-        key_type=key_type,
-        attrs={},
-        label="external raw nonconventional key",
-        ec_params=bytes.fromhex("06032b6570"),
-        ec_point=raw,
-    )
-
-    assert captured == [raw]
-
-
-def test_public_ec_external_unexpected_backend_error_propagates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unexpected backend/programming errors must not become a fallback provider result."""
-    from pkcs11_check.raw.types_std import CKK_EC
-    from pkcs11_check.testcases._provisioning import provision_public_key
-
-    def fail_unexpectedly(_curve: Any, _data: bytes) -> Any:
-        raise RuntimeError("backend invariant violated")
-
-    monkeypatch.setattr(_crypto_ec.EllipticCurvePublicKey, "from_encoded_point", fail_unexpectedly)
-    rs = _make_rs(sh=507)
-    _capture_external_material(monkeypatch, rs)
-
-    with pytest.raises(RuntimeError, match="backend invariant violated"):
-        provision_public_key(
-            rs,
-            _make_cfg(allow_external=True, external_cmd="fake {keyfile} {label}"),
-            key_type=int(CKK_EC),
-            attrs={},
-            label="external unexpected EC",
-            ec_params=EC_PARAMS,
-            ec_point=EC_POINT,
-        )
 
 
 def test_public_ec_create_absent_no_external_skips(monkeypatch: pytest.MonkeyPatch) -> None:

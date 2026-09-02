@@ -23,18 +23,11 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import (
-    Classification,
-    derive_verdict,
-    fail_as,
-    raise_for_record,
-    record,
-)
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.classification import classify
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
-from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 from pkcs11_check.testcases.conftest import assert_correct
 
 pytestmark = pytest.mark.full
@@ -44,156 +37,6 @@ def _skip_missing_mechanisms(rs: Any, names: tuple[str, ...]) -> None:
     for name in names:
         if not rs.has_mechanism(name):
             pytest.skip(f"{name} not supported by module")
-
-
-def _skip_missing_functions(rs: Any, names: tuple[str, ...]) -> None:
-    """Gate function capabilities independently from mechanism advertisement."""
-    available_fn = getattr(rs.raw, "available_function_names", None)
-    if not callable(available_fn):
-        return
-    available = set(available_fn())
-    missing = [name for name in names if name not in available]
-    if missing:
-        pytest.skip(f"required PKCS#11 function(s) not available: {', '.join(missing)}")
-
-
-def _protocol_records(stdout: str, context: str) -> tuple[list[Classification], bool]:
-    """Collect semantic child markers before applying process disposition."""
-    records: list[Classification] = []
-    malformed = False
-    for line in stdout.splitlines():
-        if line.startswith("SETUP_XFAIL:"):
-            reason, kind, prefix = "not_operational", None, "SETUP_XFAIL:"
-        elif line.startswith("BREAK:"):
-            reason, kind, prefix = "self_contradiction", "crypto", "BREAK:"
-        elif line.startswith("DEVIATION_XFAIL:"):
-            reason, kind, prefix = "honest_deviation", None, "DEVIATION_XFAIL:"
-        else:
-            continue
-        payload = line.removeprefix(prefix).strip()
-        if not payload:
-            malformed = True
-            continue
-        outcome, severity = derive_verdict(reason, kind)
-        records.append(
-            Classification(
-                reason=reason,
-                outcome=outcome,
-                severity=severity,
-                kind=kind,
-                label=context,
-                summary=f"{context}: {payload}",
-                detail={"protocol_marker": prefix.removesuffix(":")},
-            )
-        )
-    return records, malformed
-
-
-def _ckr_records(stdout: str, context: str) -> tuple[list[Classification], bool]:
-    """Parse CKR:<operation>:<value> measurements without terminating early."""
-    records: list[Classification] = []
-    malformed = False
-    for line in stdout.splitlines():
-        if not line.startswith("CKR:"):
-            continue
-        parts = line.split(":")
-        if len(parts) != 3 or not parts[1].strip():
-            malformed = True
-            continue
-        try:
-            rv = int(parts[2].strip(), 0)
-        except ValueError:
-            malformed = True
-            continue
-        if rv == 0:
-            continue
-        outcome, severity = derive_verdict("not_operational", "crypto")
-        operation = parts[1].strip()
-        records.append(
-            Classification(
-                reason="not_operational",
-                outcome=outcome,
-                severity=severity,
-                kind="crypto",
-                label=context,
-                operation=operation,
-                actual_ckr=ckr_name(rv),
-                summary=f"{context}: {operation} is not operational ({ckr_name(rv)})",
-                detail={"protocol_marker": "CKR", "operation": operation},
-            )
-        )
-    return records, malformed
-
-
-def _inspect_probe(
-    returncode: int,
-    stdout: str,
-    stderr: str,
-    *,
-    context: str,
-) -> tuple[list[Classification], list[Classification]]:
-    """Record complete semantic evidence before signal/SEH/timeout disposition."""
-    semantic, malformed_semantic = _protocol_records(stdout, context)
-    measurements, malformed_ckr = _ckr_records(stdout, context)
-    for item in (*semantic, *measurements):
-        record(item)
-    _termination, explicit_harness = assert_subprocess_completed(
-        returncode, stdout, stderr, context=context
-    )
-    if explicit_harness:
-        return semantic, measurements
-    if malformed_semantic or malformed_ckr:
-        fail_as(
-            "harness_error",
-            label=context,
-            summary=f"{context}: malformed CKR or semantic protocol marker",
-            detail={"probe_incomplete": True, "protocol": "malformed_marker"},
-        )
-    return semantic, measurements
-
-
-def _require_result_fields(
-    stdout: str,
-    fields: dict[str, str],
-    *,
-    context: str,
-    semantic: list[Classification],
-    measurements: list[Classification],
-    required: tuple[str, ...],
-) -> None:
-    """Require complete result fields after process disposition has been checked."""
-    if measurements:
-        _raise_provider_disposition(semantic, measurements)
-    if semantic and not any(line == "OK" or line.startswith("OK:") for line in stdout.splitlines()):
-        _raise_provider_disposition(semantic, measurements)
-    if not any(line == "OK" or line.startswith("OK:") for line in stdout.splitlines()):
-        fail_as(
-            "harness_error",
-            label=context,
-            summary=f"{context}: child subprocess did not emit a complete result",
-            detail={"probe_incomplete": True, "protocol": "missing_terminal_marker"},
-        )
-    missing = [name for name in required if name not in fields]
-    if missing:
-        fail_as(
-            "harness_error",
-            label=context,
-            summary=f"{context}: missing result field(s): {', '.join(missing)}",
-            detail={"probe_incomplete": True, "protocol": "missing_result"},
-        )
-
-
-def _raise_provider_disposition(
-    semantic: list[Classification], measurements: list[Classification]
-) -> None:
-    """Raise the strongest provider disposition already recorded."""
-    for item in (*measurements, *semantic):
-        if item.outcome == "fail":
-            raise_for_record(item)
-    if measurements:
-        raise_for_record(measurements[0])
-    if semantic:
-        raise_for_record(semantic[0])
 
 
 # ---------------------------------------------------------------------------
@@ -238,18 +81,6 @@ class TestDigestEncryptUpdate:
         Source: PKCS#11 v3.2.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
-        _skip_missing_functions(
-            p11_raw_session,
-            (
-                "C_GenerateKey",
-                "C_EncryptInit",
-                "C_EncryptUpdate",
-                "C_EncryptFinal",
-                "C_DigestInit",
-                "C_DigestFinal",
-                "C_DigestEncryptUpdate",
-            ),
-        )
 
         result = run_probe(
             "dual_function",
@@ -265,22 +96,31 @@ class TestDigestEncryptUpdate:
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
-        semantic, measurements = _inspect_probe(
-            returncode,
-            stdout,
-            stderr,
-            context="C_DigestEncryptUpdate",
-        )
         if "SKIP" in lines_map:
             pytest.skip(f"Module does not support dual-function: {lines_map['SKIP']}")
-        _require_result_fields(
-            stdout,
-            lines_map,
-            context="C_DigestEncryptUpdate",
-            semantic=semantic,
-            measurements=measurements,
-            required=("DIGEST_REF", "CT_REF", "CT_DUAL", "DIGEST_DUAL"),
-        )
+
+        if returncode != 0:
+            fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
+            detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
+            if is_crash_returncode(returncode):
+                classify(
+                    "crash",
+                    label="C_DigestEncryptUpdate",
+                    operation="C_DigestEncryptUpdate",
+                    summary=f"Subprocess crashed ({crash_detail_name(returncode)}): {detail}",
+                )
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="C_DigestEncryptUpdate",
+                operation="C_DigestEncryptUpdate",
+                summary=f"Subprocess failed: {detail}",
+            )
+
+        assert "DIGEST_REF" in lines_map, f"Missing DIGEST_REF in output: {stdout!r}"
+        assert "CT_REF" in lines_map, f"Missing CT_REF in output: {stdout!r}"
+        assert "CT_DUAL" in lines_map, f"Missing CT_DUAL in output: {stdout!r}"
+        assert "DIGEST_DUAL" in lines_map, f"Missing DIGEST_DUAL in output: {stdout!r}"
 
         ct_ref = lines_map["CT_REF"]
         ct_dual = lines_map["CT_DUAL"]
@@ -336,20 +176,6 @@ class TestDecryptDigestUpdate:
         Source: PKCS#11 v3.2.
         """
         _skip_missing_mechanisms(p11_raw_session, ("AES_KEY_GEN", "AES_CBC", "SHA256"))
-        _skip_missing_functions(
-            p11_raw_session,
-            (
-                "C_GenerateKey",
-                "C_EncryptInit",
-                "C_EncryptUpdate",
-                "C_EncryptFinal",
-                "C_DigestInit",
-                "C_DigestFinal",
-                "C_DecryptInit",
-                "C_DecryptDigestUpdate",
-                "C_DecryptFinal",
-            ),
-        )
 
         result = run_probe(
             "dual_function",
@@ -365,22 +191,31 @@ class TestDecryptDigestUpdate:
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
-        semantic, measurements = _inspect_probe(
-            returncode,
-            stdout,
-            stderr,
-            context="C_DecryptDigestUpdate",
-        )
         if "SKIP" in lines_map:
             pytest.skip(f"Module does not support dual-function: {lines_map['SKIP']}")
-        _require_result_fields(
-            stdout,
-            lines_map,
-            context="C_DecryptDigestUpdate",
-            semantic=semantic,
-            measurements=measurements,
-            required=("PT_REF", "DIGEST_REF", "RECOVERED", "DIGEST_DUAL"),
-        )
+
+        if returncode != 0:
+            fatals = [ln for ln in stdout.splitlines() if ln.startswith("FATAL:")]
+            detail = fatals[0] if fatals else f"stdout={stdout!r} stderr={stderr!r}"
+            if is_crash_returncode(returncode):
+                classify(
+                    "crash",
+                    label="C_DecryptDigestUpdate",
+                    operation="C_DecryptDigestUpdate",
+                    summary=f"Subprocess crashed ({crash_detail_name(returncode)}): {detail}",
+                )
+            classify(
+                "not_operational",
+                kind="crypto",
+                label="C_DecryptDigestUpdate",
+                operation="C_DecryptDigestUpdate",
+                summary=f"Subprocess failed: {detail}",
+            )
+
+        assert "PT_REF" in lines_map, f"Missing PT_REF in output: {stdout!r}"
+        assert "DIGEST_REF" in lines_map, f"Missing DIGEST_REF in output: {stdout!r}"
+        assert "RECOVERED" in lines_map, f"Missing RECOVERED in output: {stdout!r}"
+        assert "DIGEST_DUAL" in lines_map, f"Missing DIGEST_DUAL in output: {stdout!r}"
 
         pt_ref = lines_map["PT_REF"]
         digest_ref = lines_map["DIGEST_REF"]

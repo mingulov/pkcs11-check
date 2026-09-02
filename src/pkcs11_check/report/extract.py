@@ -21,7 +21,6 @@ Crash findings have no nodeid; their ``label`` is the crashing target/file.
 
 from __future__ import annotations
 
-import json
 from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Any
@@ -32,10 +31,10 @@ from pkcs11_check.core.crash_codes import (
     ctypes_access_violation_from_stderr,
 )
 from pkcs11_check.core.report_log import (
-    iter_classification_occurrences as _iter_classification_occurrences,
+    iter_report_log_records as _iter_report_records,
 )
 from pkcs11_check.core.report_log import (
-    iter_report_log_records as _iter_report_records,
+    user_property as _user_property,
 )
 
 # How many sample nodeids / vector ids to retain per group.
@@ -44,6 +43,18 @@ _MAX_VECTOR_IDS = 8
 _MAX_PARAMS = 20
 
 GroupKey = tuple[str, str, str | None, str | None, str | None, tuple[str, ...], str | None]
+
+
+def _classifications_from_report(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pull phase-scoped classifications off a setup/call/teardown TestReport."""
+    if report.get("$report_type", "TestReport") != "TestReport":
+        return []
+    if report.get("when") not in {"setup", "call", "teardown"}:
+        return []
+    value = _user_property(report, "pkcs11_classification")
+    if not isinstance(value, list):
+        return []
+    return [rec for rec in value if isinstance(rec, dict)]
 
 
 def _classification_from_teardown_finalize(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -130,35 +141,14 @@ def _new_group(rec: dict[str, Any], test_file: str) -> dict[str, Any]:
         "vector_ids": [],
         "sources": [],
         "param_breakdown": {},
-        # Additive F11 metadata: never fed back into the existing group keys/counts
-        # above (those stay exactly as before -- see extract_groups), only surfaced
-        # alongside them. phase_counts/target_counts/attempt_counts/
-        # exact_duplicate_count are 0/empty for crash and C_Finalize findings (they
-        # carry no IsolatedUnitReport marker provenance of their own), which also
-        # counts them under unattributed_count -- consistent with "leave unmarked
-        # records unattributed" rather than reconstructing a fake attribution.
-        "phase_counts": {},
-        "target_counts": {},
-        "attempt_counts": {},
-        "unattributed_count": 0,
-        "exact_duplicate_count": 0,
         # internal accumulators (dropped on finalize)
         "_vector_id_set": set(),
         "_source_set": set(),
         "_param_counter": Counter(),
-        "_dedup_keys": set(),
     }
 
 
-def _accumulate(
-    group: dict[str, Any],
-    rec: dict[str, Any],
-    nodeid: str | None,
-    *,
-    phase: str | None = None,
-    target: str | None = None,
-    attempt: int | None = None,
-) -> None:
+def _accumulate(group: dict[str, Any], rec: dict[str, Any], nodeid: str | None) -> None:
     group["count"] += 1
     if nodeid and len(group["nodeids"]) < _MAX_NODEIDS and nodeid not in group["nodeids"]:
         group["nodeids"].append(nodeid)
@@ -173,25 +163,6 @@ def _accumulate(
         key = ",".join(f"{k}={normalize_param(k, str(params[k]))}" for k in sorted(params))
         group["_param_counter"][key] += 1
 
-    if phase is not None:
-        group["phase_counts"][phase] = group["phase_counts"].get(phase, 0) + 1
-    if target is not None and attempt is not None:
-        group["target_counts"][target] = group["target_counts"].get(target, 0) + 1
-        group["attempt_counts"][attempt] = group["attempt_counts"].get(attempt, 0) + 1
-        dedup_key = (
-            target,
-            attempt,
-            nodeid or "",
-            phase or "",
-            json.dumps(rec, sort_keys=True, separators=(",", ":")),
-        )
-        if dedup_key in group["_dedup_keys"]:
-            group["exact_duplicate_count"] += 1
-        else:
-            group["_dedup_keys"].add(dedup_key)
-    else:
-        group["unattributed_count"] += 1
-
 
 def _finalize(group: dict[str, Any]) -> dict[str, Any]:
     """Turn accumulators into sorted, capped public fields."""
@@ -204,7 +175,6 @@ def _finalize(group: dict[str, Any]) -> dict[str, Any]:
         group["vector_ids"] = vids
     group["sources"] = sorted(group.pop("_source_set"))
     group["param_breakdown"] = dict(group.pop("_param_counter").most_common(_MAX_PARAMS))
-    group.pop("_dedup_keys")
     return group
 
 
@@ -215,47 +185,25 @@ def extract_groups(
 
     Returns a list of group dicts, each with classification-occurrence ``count``, sample
     ``nodeids``, sorted unique ``vector_ids`` (capped, with a ``+N`` overflow marker),
-    ``sources``, first-member metadata
-    (severity/summary/spec_ref/reason/kind/operation/mechanism/expected_ckr/actual_ckr/detail),
-    and additive F11 observability metadata (``phase_counts``, ``target_counts``,
-    ``attempt_counts``, ``unattributed_count``, ``exact_duplicate_count``).
-
-    Classification occurrences are read via
-    :func:`pkcs11_check.core.report_log.iter_classification_occurrences` -- the single shared
-    phase/attempt parser (do not re-derive this parsing here); this call carries every reason,
-    not just ``unclassified``, so the existing group keys/counts (computed from
-    ``occurrence.classification`` verbatim) are unchanged from the previous ad hoc parser -- only
-    the additive metadata above is new.
+    ``sources``, and first-member metadata
+    (severity/summary/spec_ref/reason/kind/operation/mechanism/expected_ckr/actual_ckr/detail).
     """
     path = Path(report_jsonl_path)
     groups: OrderedDict[GroupKey, dict[str, Any]] = OrderedDict()
 
-    def ingest(
-        rec: dict[str, Any],
-        nodeid: str | None,
-        *,
-        phase: str | None = None,
-        target: str | None = None,
-        attempt: int | None = None,
-    ) -> None:
+    def ingest(rec: dict[str, Any], nodeid: str | None) -> None:
         test_file = _test_file_for(rec, nodeid)
         key = _group_key(rec, test_file)
         group = groups.get(key)
         if group is None:
             group = _new_group(rec, test_file)
             groups[key] = group
-        _accumulate(group, rec, nodeid, phase=phase, target=target, attempt=attempt)
-
-    for occurrence in _iter_classification_occurrences(_iter_report_records(path)):
-        ingest(
-            dict(occurrence.classification),
-            occurrence.nodeid,
-            phase=occurrence.phase,
-            target=occurrence.target,
-            attempt=occurrence.attempt,
-        )
+        _accumulate(group, rec, nodeid)
 
     for report in _iter_report_records(path):
+        nodeid = report.get("nodeid")
+        for rec in _classifications_from_report(report):
+            ingest(rec, nodeid)
         finalize = _classification_from_teardown_finalize(report)
         if finalize is not None:
             ingest(finalize, "C_Finalize::teardown")

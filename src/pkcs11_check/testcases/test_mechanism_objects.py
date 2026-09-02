@@ -28,7 +28,6 @@ from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_READ_ONLY,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = pytest.mark.object
@@ -46,7 +45,7 @@ def _mechanism_objects(rs: Any) -> list[int]:
         raise
 
 
-def _mechanism_type(rs: Any, handle: int) -> Any:
+def _mechanism_type(rs: Any, handle: int) -> int:
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_MECHANISM_TYPE])
     except CkrAssertionError as exc:
@@ -57,15 +56,7 @@ def _mechanism_type(rs: Any, handle: int) -> Any:
             kind="metadata",
         )
         raise
-    value = attr_or_record(
-        attrs,
-        CKA_MECHANISM_TYPE,
-        label="CKA_MECHANISM_TYPE:mechanism-object",
-        reason="not_operational",
-        inherit_mechanism=False,
-    )
-    if value is MISSING_ATTRIBUTE:
-        return MISSING_ATTRIBUTE
+    value = attrs[CKA_MECHANISM_TYPE]
     assert isinstance(value, int), f"Expected int MECHANISM_TYPE, got {type(value)}"
     return value
 
@@ -99,7 +90,7 @@ class TestMechanismObjects:
         vendor_base = 0x80000000
         for obj_h in mechs:
             mtype = _mechanism_type(rs, obj_h)
-            if mtype is not MISSING_ATTRIBUTE and mtype < vendor_base and mtype not in known:
+            if isinstance(mtype, int) and mtype < vendor_base and mtype not in known:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(

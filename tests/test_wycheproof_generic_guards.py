@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ctypes
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,8 +13,6 @@ from pkcs11_check import classification
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
-    CK_ULONG,
-    CKM_SHA256_HMAC_GENERAL,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
@@ -40,19 +37,6 @@ class _NoMechanismSession:
     def has_mechanism(self, name: str) -> bool:
         self.checked.append(name)
         return False
-
-
-class _Sha256HmacMechanismSession:
-    raw = object()
-    sh = 1
-
-    def __init__(self, *mechanisms: str) -> None:
-        self.mechanisms = set(mechanisms)
-        self.checked: list[str] = []
-
-    def has_mechanism(self, name: str) -> bool:
-        self.checked.append(name)
-        return name in self.mechanisms
 
 
 def _fail_if_called(*_args: Any, **_kwargs: Any) -> int:
@@ -276,104 +260,6 @@ def test_generic_hmac_key_import_reject_is_xfail() -> None:
 
     with pytest.raises(pytest.xfail.Exception, match="HMAC-SHA256 key import"):
         wy._xfail_if_generic_runtime_reject(exc, "tc163-valid", "HMAC-SHA256 key import")
-
-
-def _sha256_truncated_vector() -> dict[str, Any]:
-    return {
-        **_negative_vector("hmac"),
-        # Route from the expected group size, while forwarding this malformed
-        # three-byte supplied tag unchanged to C_Verify.
-        "tag": "ff" * 3,
-        "_group": {"tagSize": 128},
-    }
-
-
-def test_generic_hmac_sha256_truncated_uses_general_and_group_size(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """SHA256 truncated vectors need only GENERAL and use native CK_ULONG params."""
-    session = _Sha256HmacMechanismSession("SHA256_HMAC_GENERAL")
-    vec = _sha256_truncated_vector()
-    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
-    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
-    calls: list[tuple[Any, ...]] = []
-
-    def _verify(*args: Any, **kwargs: Any) -> bool:
-        calls.append((args, kwargs))
-        return False
-
-    monkeypatch.setattr(wy, "verify_single", _verify)
-
-    wy.TestHMACSHA256Wycheproof().test_hmac_sha256(session, _STUB_CFG, vec)
-
-    assert session.checked == ["SHA256_HMAC_GENERAL"]
-    assert len(calls) == 1
-    args, kwargs = calls[0]
-    assert args[3] == CKM_SHA256_HMAC_GENERAL
-    assert args[-1] == bytes.fromhex(vec["tag"])
-    param = kwargs["mech_param"]
-    assert int(param.ck.mechanism) == int(CKM_SHA256_HMAC_GENERAL)
-    assert int(param.ck.ulParameterLen) == ctypes.sizeof(CK_ULONG)
-    assert CK_ULONG.from_buffer_copy(bytes(param.storage)).value == 16
-
-
-def test_generic_hmac_sha256_truncated_skips_when_general_is_absent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """SHA256 fixed support cannot make a missing GENERAL path operational."""
-    session = _Sha256HmacMechanismSession("SHA256_HMAC")
-    monkeypatch.setattr(
-        wy,
-        "provision_secret_key",
-        lambda *_a, **_k: pytest.fail("key provisioning reached after missing GENERAL"),
-    )
-
-    with pytest.raises(pytest.skip.Exception, match="SHA256_HMAC_GENERAL not supported"):
-        wy.TestHMACSHA256Wycheproof().test_hmac_sha256(
-            session, _STUB_CFG, _sha256_truncated_vector()
-        )
-
-    assert session.checked == ["SHA256_HMAC_GENERAL"]
-
-
-def test_generic_hmac_sha256_full_uses_fixed_without_params(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Full SHA256 tags use fixed HMAC with no GENERAL parameter."""
-    session = _Sha256HmacMechanismSession("SHA256_HMAC")
-    vec = _negative_vector("hmac")
-    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
-    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
-    calls: list[tuple[Any, ...]] = []
-
-    def _verify(*args: Any, **kwargs: Any) -> bool:
-        calls.append((args, kwargs))
-        return False
-
-    monkeypatch.setattr(wy, "verify_single", _verify)
-
-    wy.TestHMACSHA256Wycheproof().test_hmac_sha256(session, _STUB_CFG, vec)
-
-    assert session.checked == ["SHA256_HMAC"]
-    args, kwargs = calls[0]
-    assert args[-1] == bytes.fromhex(vec["tag"])
-    assert kwargs == {}
-
-
-def test_generic_hmac_sha256_truncated_accepted_invalid_remains_crypto_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """GENERAL routing must not downgrade an accepted invalid tag."""
-    session = _Sha256HmacMechanismSession("SHA256_HMAC_GENERAL")
-    vec = _sha256_truncated_vector()
-    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
-    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
-    monkeypatch.setattr(wy, "verify_single", lambda *_a, **_k: True)
-
-    with pytest.raises(pytest.fail.Exception, match="Invalid HMAC tag"):
-        wy.TestHMACSHA256Wycheproof().test_hmac_sha256(session, _STUB_CFG, vec)
-
-    assert classification.get_records()[-1].reason == "accepted_invalid"
 
 
 @pytest.mark.parametrize("case", ["gcm", "hmac", "cbc"])
