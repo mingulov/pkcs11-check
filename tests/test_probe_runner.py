@@ -38,18 +38,6 @@ def test_run_probe_passes_extra_and_injects_pin_via_env() -> None:
     assert "ECHO_PIN_PRESENT:True" in result.stdout  # PIN reached child via env only
 
 
-def test_run_probe_preserves_unflushed_output_before_abrupt_exit() -> None:
-    """A real abruptly exiting child retains plain print output from the runner."""
-    result = run_probe(
-        "_abrupt_exit",
-        {"module_path": "/nonexistent.so"},
-        timeout=30,
-    )
-
-    assert result.returncode == 17
-    assert result.stdout == "ABRUPT_MARKER\n"
-
-
 def _fake_completed(returncode: int) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], returncode, "", "")
 

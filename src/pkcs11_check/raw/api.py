@@ -368,7 +368,6 @@ class RawPKCS11:
         funclist32_ptr: int = 0,
     ) -> None:
         self._funcs: dict[str, Any] = {}
-        self._missing_function_list_names: set[str] = set()
         self._lib: ctypes.CDLL | None = None
         # Windows DLL-search handles kept alive for the process (see _windows_dll_directory).
         self._dll_dir_handles: list[Any] = []
@@ -402,10 +401,6 @@ class RawPKCS11:
     def available_function_names(self) -> set[str]:
         return set(self._funcs)
 
-    def missing_function_list_names(self) -> set[str]:
-        """Return names whose pointer was NULL in a selected function table."""
-        return set(getattr(self, "_missing_function_list_names", set()))
-
     @property
     def interface_version(self) -> str:
         """Detect negotiated PKCS#11 interface version."""
@@ -417,20 +412,12 @@ class RawPKCS11:
         return "2.40"
 
     def _load_functions_from_ptr(self, ptr: int, names: tuple[str, ...]) -> None:
-        missing = getattr(self, "_missing_function_list_names", None)
-        if missing is None:
-            missing = set()
-            self._missing_function_list_names = missing
         for name in names:
             offset = _VERSION_SIZE + (metadata_std.FUNCTION_INDICES[name] * _PTR_SIZE)
             addr_ptr = cast(ptr + offset, ctypes.POINTER(c_void_p))
             addr = addr_ptr.contents.value
             if addr:
                 self._funcs[name] = _FUNCTION_TYPES[name](addr)
-                missing.discard(name)
-            else:
-                self._funcs.pop(name, None)
-                missing.add(name)
 
     def _load_optional_exported_functions(self) -> None:
         """Load draft/extension C_* exports without changing function-list ABI."""

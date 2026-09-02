@@ -100,13 +100,8 @@ class TestWrapKeyErrors:
                     (CKR_ATTRIBUTE_TYPE_INVALID,),
                     label="C_GetAttributeValue:CKA_EXTRACTABLE enforcement precondition",
                 )
-            # policy claim-check: gen_aes_key() above raises unless C_GenerateKey
-            # returns CKR_OK, so reaching this point already proves the module
-            # accepted the CKA_EXTRACTABLE=False template at creation --
-            # independent claim evidence a missing/unreadable readback must not
-            # downgrade.  Only an explicit readback showing the key IS
-            # extractable is real evidence contradicting the claim.
-            claimed = True if rv != CKR_OK else val.value == 0
+            # policy claim-check: did the module honour CKA_EXTRACTABLE=False?
+            claimed = rv == CKR_OK and val.value == 0
 
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)

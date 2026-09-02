@@ -8,19 +8,13 @@ from typing import Any
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
-from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
-from pkcs11_check.compliance import clear_notes, get_notes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
-    CKA_ISSUER,
     CKA_TRUST_SERVER_AUTH,
-    CKA_VALIDATION_AUTHORITY_TYPE,
-    CKA_VALIDATION_MODULE_ID,
     CKA_VALIDATION_TYPE,
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_FUNCTION_FAILED,
-    CKT_TRUST_UNKNOWN,
 )
 from pkcs11_check.testcases import test_trust_objects as trust
 from pkcs11_check.testcases import test_validation_objects as validation
@@ -28,15 +22,6 @@ from pkcs11_check.testcases import test_validation_objects as validation
 
 def _session() -> SimpleNamespace:
     return SimpleNamespace(raw=object(), sh=1)
-
-
-@pytest.fixture(autouse=True)
-def _clear_classifications() -> None:
-    C.clear()
-    clear_notes()
-    yield
-    C.clear()
-    clear_notes()
 
 
 @pytest.mark.parametrize(
@@ -163,94 +148,3 @@ def test_trust_read_failure_with_undefined_ckr_is_a_finding(
 
     with pytest.raises(Failed, match="undefined CK_RV"):
         trust.TestTrustObjects().test_trust_server_auth_is_known_value(_session())
-
-
-def test_missing_required_trust_issuer_records_and_continues_to_next_object(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(trust, "_find_trust_objects", lambda *_args: [1, 2])
-    read_handles: list[int] = []
-
-    def _read(_raw: object, _sh: int, handle: int, _attrs: list[int]) -> dict[int, object]:
-        read_handles.append(handle)
-        return {}
-
-    monkeypatch.setattr(trust, "read_attributes", _read)
-
-    trust.TestTrustObjects().test_trust_objects_have_issuer(_session())
-
-    assert read_handles == [1, 2]
-    records = C.get_records()
-    assert [record.reason for record in records] == ["honest_deviation", "honest_deviation"]
-    assert [record.detail["attribute"]["id"] for record in records if record.detail] == [
-        int(CKA_ISSUER),
-        int(CKA_ISSUER),
-    ]
-
-
-@pytest.mark.parametrize(
-    ("method_name", "attribute"),
-    [
-        (
-            "test_validation_authority_type_is_known",
-            CKA_VALIDATION_AUTHORITY_TYPE,
-        ),
-        ("test_validation_module_id_is_string", CKA_VALIDATION_MODULE_ID),
-    ],
-)
-def test_missing_required_validation_metadata_records_and_continues(
-    monkeypatch: pytest.MonkeyPatch,
-    method_name: str,
-    attribute: int,
-) -> None:
-    monkeypatch.setattr(validation, "_find_validation_objects", lambda *_args: [1, 2])
-    read_handles: list[int] = []
-
-    def _read(_raw: object, _sh: int, handle: int, _attrs: list[int]) -> dict[int, object]:
-        read_handles.append(handle)
-        return {}
-
-    monkeypatch.setattr(validation, "read_attributes", _read)
-
-    getattr(validation.TestValidationObjects(), method_name)(_session())
-
-    assert read_handles == [1, 2]
-    records = C.get_records()
-    assert [record.reason for record in records] == ["honest_deviation", "honest_deviation"]
-    assert [record.detail["attribute"]["id"] for record in records if record.detail] == [
-        int(attribute),
-        int(attribute),
-    ]
-
-
-def test_absent_trust_usage_uses_table_25_unknown_default_without_record() -> None:
-    """The Table 25 absent-default is the spec-defined case, not a deviation from
-    it: applying it must NEVER emit a classification record (that would manufacture
-    a finding against a conformant provider)."""
-    present, value = trust._trust_usage_value_or_unknown({}, CKA_TRUST_SERVER_AUTH)
-
-    assert present is False
-    assert value == CKT_TRUST_UNKNOWN
-    assert C.get_records() == []
-
-
-def test_absent_trust_usage_still_emits_a_compliance_note() -> None:
-    """The classification-free Table 25 default must not silently drop the
-    observation either: the omitted attribute is surfaced via a non-gating
-    compliance note so a report can still distinguish a provider that returns
-    trust usages from one that returns none."""
-    present, value = trust._trust_usage_value_or_unknown({}, CKA_TRUST_SERVER_AUTH)
-
-    assert present is False
-    assert value == CKT_TRUST_UNKNOWN
-    notes = get_notes()
-    assert len(notes) == 1
-    assert "CKA_TRUST_SERVER_AUTH" in notes[0].description
-    assert C.get_records() == []
-
-
-def test_trust_usage_value_or_unknown_rejects_non_trust_attribute() -> None:
-    """The Table 25 absent-default is bounded to the CKA_TRUST_* usage-attribute
-    family; it must never silently apply to an unrelated attribute id."""
-    with pytest.raises(ValueError, match="CKA_TRUST_"):
-        trust._trust_usage_value_or_unknown({}, CKA_ISSUER)

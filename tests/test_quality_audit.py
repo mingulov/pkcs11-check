@@ -28,13 +28,6 @@ def test_classify_skip_reason_treats_cts_variant_selection_as_framework_constrai
         )
         == "framework_constraint"
     )
-
-
-def test_classify_skip_reason_treats_cts_reporter_sibling_skip_as_framework_constraint() -> None:
-    assert (
-        classify_skip_reason("CKM_AES_CTS detection reporter is retained by the selected CTS item")
-        == "framework_constraint"
-    )
     assert (
         classify_skip_reason("Module implements CS1, skipping CS3 vectors")
         == "framework_constraint"

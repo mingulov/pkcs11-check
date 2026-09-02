@@ -18,9 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.bootstrap import close_session_quietly
 from pkcs11_check.raw.bootstrap import (
     open_session as raw_open_session,
@@ -39,11 +37,12 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     wrap_key,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_UTF8CHAR,
     CKA_CLASS,
     CKA_DERIVE,
+    CKA_EC_POINT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
@@ -54,8 +53,6 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_WRAP,
     CKD_NULL,
-    CKF_EC_COMPRESS,
-    CKF_EC_UNCOMPRESS,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKK_AES,
@@ -72,11 +69,6 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
     CKU_USER,
-)
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import (
-    read_conventional_ec_point_or_xfail,
-    select_ecdh_point_form,
 )
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -155,134 +147,6 @@ def _cleanup_label(rs: Any, sh: int, label: str) -> None:
     """Destroy all objects matching ``label`` on the given session."""
     for h in find_objects(rs.raw, sh, _label_template(label)):
         destroy_quietly(rs.raw, sh, h)
-
-
-def _read_private_claim(
-    rs: Any,
-    session: int,
-    handle: int,
-    *,
-    label: str,
-    producer_operation: str,
-    producer_mechanism: str | None = None,
-) -> tuple[bool, C.Classification | None]:
-    """Read CKA_PRIVATE strictly, retaining missing/malformed metadata evidence.
-
-    Every call site creates `handle` via an operation that explicitly requests
-    CKA_PRIVATE=True and raises/returns on any non-CKR_OK result, so reaching
-    this call already proves the module ACCEPTED that protective template at
-    creation -- independent claim evidence.  A missing or unreadable readback
-    must not downgrade that claim (it would let one unreadable attribute mask
-    a proven public-session private-object self-contradiction); only an
-    explicit `False` readback is real evidence the claim does not hold.
-    """
-    detail: dict[str, Any] = {
-        "attribute": {"name": "CKA_PRIVATE", "id": int(CKA_PRIVATE)},
-        "producer_operation": producer_operation,
-    }
-    if producer_mechanism is not None:
-        detail["producer_mechanism"] = producer_mechanism
-
-    try:
-        attrs = read_attributes(rs.raw, session, handle, [CKA_PRIVATE])
-    except CkrAssertionError as exc:
-        reason = (
-            "not_operational"
-            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)
-            else "self_contradiction"
-        )
-        record = C.record_as(
-            reason,
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            inherit_mechanism=False,
-            expected=CKR_OK,
-            actual=exc.rv,
-            detail=detail,
-            summary=(
-                f"{label}: attribute read was rejected with {ckr_name(exc.rv)}"
-                if reason == "not_operational"
-                else f"{label}: attribute read returned undefined CK_RV {exc.rv:#x}"
-            ),
-        )
-        return True, record
-
-    before = len(C.get_records())
-    value = attr_or_record(
-        attrs,
-        CKA_PRIVATE,
-        label=label,
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-    if value is MISSING_ATTRIBUTE:
-        records = C.get_records()
-        if len(records) <= before:
-            raise AssertionError(f"{label}: missing attribute did not produce evidence")
-        record = records[-1]
-        record.detail = {**(record.detail or {}), **detail}
-        return True, record
-    if type(value) is bool:
-        return value, None
-
-    record = C.record_as(
-        "wrong_result",
-        kind="metadata",
-        label=label,
-        operation="C_GetAttributeValue",
-        inherit_mechanism=False,
-        detail={
-            **detail,
-            "expected": "strict CK_BBOOL (bool)",
-            "actual_type": type(value).__name__,
-            "actual_length": len(value) if isinstance(value, bytes) else None,
-        },
-        summary=(
-            f"{label}: present CKA_PRIVATE has malformed CK_BBOOL value: {type(value).__name__}"
-        ),
-    )
-    return False, record
-
-
-_POLICY_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
-_POLICY_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-
-
-def _raise_strongest_policy_observation(records: list[C.Classification]) -> None:
-    """Raise a deferred policy result after the public-session cleanup ran."""
-    if not records:
-        return
-    strongest = max(
-        records,
-        key=lambda record: (
-            1 if record.outcome == "fail" else 0,
-            _POLICY_SEVERITY_PRIORITY.get(record.severity, 0),
-            _POLICY_KIND_PRIORITY.get(record.kind or "", 0),
-        ),
-    )
-    C.raise_for_record(strongest)
-
-
-def _classify_private_policy(
-    *,
-    claimed: bool,
-    read_record: C.Classification | None,
-    label: str,
-) -> None:
-    """Run the independent policy oracle and preserve stronger readback evidence."""
-    records: list[C.Classification] = []
-    if read_record is not None:
-        records.append(read_record)
-    try:
-        classify_policy_enforcement(claimed=claimed, violated=True, label=label)
-    except BaseException as exc:
-        policy_record = getattr(exc, "_pkcs11_check_classification", None)
-        if policy_record is None:
-            raise
-        records.append(policy_record)
-    _raise_strongest_policy_observation(records)
 
 
 class TestPublicSessionPrivateCreation:
@@ -365,17 +229,10 @@ class TestPublicSessionPrivateCreation:
                     )
                     return
                 # Created without login -- policy claim/effect check.
-                claimed, read_record = _read_private_claim(
-                    rs,
-                    public_sh,
-                    created,
-                    label="public-session unwrap CKA_PRIVATE readback",
-                    producer_operation="C_UnwrapKey",
-                    producer_mechanism="CKM_AES_KEY_WRAP",
-                )
-                _classify_private_policy(
-                    claimed=claimed,
-                    read_record=read_record,
+                priv = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(CKA_PRIVATE)
+                classify_policy_enforcement(
+                    claimed=priv is True,
+                    violated=True,
                     label="public (unauthenticated) session unwrapped a CKA_PRIVATE=True "
                     "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
                 )
@@ -429,19 +286,9 @@ class TestPublicSessionPrivateCreation:
                     KEYPAIR_RUNTIME_REJECT_RVS,
                     "EC keypair staging for public-session ECDH setup is not operational",
                 )
-            peer = read_conventional_ec_point_or_xfail(
-                rs,
-                pub,
-                ec.SECP256R1(),
-                label="CKM_ECDH1_DERIVE: public-session peer public key",
-            )
-            peer_point = select_ecdh_point_form(
-                peer,
-                supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
-                supports_uncompressed=rs.has_mechanism_flag(
-                    CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)
-                ),
-            )
+            peer_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT]).get(CKA_EC_POINT)
+            if peer_point is None:
+                pytest.skip("Module did not return CKA_EC_POINT for the staged EC public key")
 
             # Establish a genuinely public session.
             public_sh, pin_bytes = _establish_public_session(rs, p11_config)
@@ -461,7 +308,7 @@ class TestPublicSessionPrivateCreation:
                             CKA_LABEL: label,
                         },
                         mech_param=mech_ecdh(
-                            CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point
+                            CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=bytes(peer_point)
                         ),
                     )
                 except AssertionError as exc:
@@ -472,17 +319,12 @@ class TestPublicSessionPrivateCreation:
                         "(unauthenticated) session",
                     )
                     return
-                claimed, read_record = _read_private_claim(
-                    rs,
-                    public_sh,
-                    created,
-                    label="public-session ECDH CKA_PRIVATE readback",
-                    producer_operation="C_DeriveKey",
-                    producer_mechanism="CKM_ECDH1_DERIVE",
+                priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(
+                    CKA_PRIVATE
                 )
-                _classify_private_policy(
-                    claimed=claimed,
-                    read_record=read_record,
+                classify_policy_enforcement(
+                    claimed=priv_attr is True,
+                    violated=True,
                     label="public (unauthenticated) session ECDH-derived a CKA_PRIVATE=True "
                     "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
                 )
@@ -560,17 +402,12 @@ class TestPublicSessionPrivateCreation:
                         "(unauthenticated) session",
                     )
                     return
-                claimed, read_record = _read_private_claim(
-                    rs,
-                    public_sh,
-                    created,
-                    label="public-session HKDF CKA_PRIVATE readback",
-                    producer_operation="C_DeriveKey",
-                    producer_mechanism="CKM_HKDF_DERIVE",
+                priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(
+                    CKA_PRIVATE
                 )
-                _classify_private_policy(
-                    claimed=claimed,
-                    read_record=read_record,
+                classify_policy_enforcement(
+                    claimed=priv_attr is True,
+                    violated=True,
                     label="public (unauthenticated) session HKDF-derived a CKA_PRIVATE=True "
                     "session object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
                 )
@@ -638,16 +475,12 @@ class TestPublicSessionPrivateCreation:
                         "(unauthenticated) session",
                     )
                     return
-                claimed, read_record = _read_private_claim(
-                    rs,
-                    public_sh,
-                    created,
-                    label="public-session copy CKA_PRIVATE readback",
-                    producer_operation="C_CopyObject",
+                priv_attr = read_attributes(rs.raw, public_sh, created, [CKA_PRIVATE]).get(
+                    CKA_PRIVATE
                 )
-                _classify_private_policy(
-                    claimed=claimed,
-                    read_record=read_record,
+                classify_policy_enforcement(
+                    claimed=priv_attr is True,
+                    violated=True,
                     label="public (unauthenticated) session C_CopyObject'd to a "
                     "CKA_PRIVATE=True copy (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)",
                 )

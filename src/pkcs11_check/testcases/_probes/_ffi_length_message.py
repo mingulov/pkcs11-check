@@ -26,7 +26,6 @@ from pkcs11_check.raw.types_std import (
     CKF_END_OF_MESSAGE,
     CKM_AES_GCM,
     CKM_SHA256_RSA_PKCS,
-    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
 )
 from pkcs11_check.testcases._probes._ffi_length_base import (
@@ -43,23 +42,6 @@ from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
 )
-
-_SKIP_PREFIX = "SKIP:"
-
-
-def _message_setup_reject(rv: int, purpose: str) -> None:
-    """Print the setup-rejection marker for a message-family Init/Begin call and raise.
-
-    The v3.0 message functions (C_Message*Init, C_*MessageBegin) are optional: a module
-    may expose non-null function-table pointers (passing the parent test's
-    available_function_names() gate) yet stub the call with CKR_FUNCTION_NOT_SUPPORTED --
-    capability absence, not a deviation, so it prints SKIP_PREFIX for the parent to
-    pytest.skip() on. Any other clean CKR is a genuine mechanism-level setup reject and
-    keeps printing SETUP_XFAIL_PREFIX (parent xfails as not_operational).
-    """
-    prefix = _SKIP_PREFIX if rv == int(CKR_FUNCTION_NOT_SUPPORTED) else SETUP_XFAIL_PREFIX
-    print(f"{prefix}{purpose} rejected: {ckr_name(rv)}")
-    raise _SetupRejected
 
 
 def _run_encrypt_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
@@ -99,7 +81,8 @@ def _run_encrypt_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
         rv = raw.C_MessageEncryptInit(sh, ctypes.byref(init_mech), key)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageEncryptInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageEncryptInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         msg_iv = (ctypes.c_ubyte * 12)(*range(12, 24))
         msg_tag = (ctypes.c_ubyte * 16)()
@@ -172,7 +155,8 @@ def _run_decrypt_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
         rv = raw.C_MessageDecryptInit(sh, ctypes.byref(init_mech), key)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageDecryptInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageDecryptInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         msg_iv = (ctypes.c_ubyte * 12)(*range(12, 24))
         msg_tag = (ctypes.c_ubyte * 16)(*range(24, 40))
@@ -245,7 +229,8 @@ def _run_decrypt_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> 
 
         rv = raw.C_MessageDecryptInit(sh, ctypes.byref(init_mech), key)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageDecryptInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageDecryptInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         msg_iv = (ctypes.c_ubyte * 12)(*range(28, 40))
         msg_tag = (ctypes.c_ubyte * 16)(*range(40, 56))
@@ -278,7 +263,8 @@ def _run_decrypt_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> 
                 16,
             )
             if rv != CKR_OK:
-                _message_setup_reject(rv, "C_DecryptMessageBegin")
+                print(f"{SETUP_XFAIL_PREFIX}C_DecryptMessageBegin rejected: {ckr_name(rv)}")
+                raise _SetupRejected
             rv = raw.C_DecryptMessageNext(
                 sh,
                 None,
@@ -329,7 +315,8 @@ def _run_sign_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.ulParameterLen = 0
         rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), priv)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageSignInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageSignInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         sig_len = CK_ULONG(512)
         sig_buf = (ctypes.c_ubyte * 512)()
@@ -385,7 +372,8 @@ def _run_verify_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.ulParameterLen = 0
         rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), pub)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageVerifyInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageVerifyInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         data = (
             buf
@@ -443,7 +431,8 @@ def _run_sign_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> Non
         mech.ulParameterLen = 0
         rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), priv)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageSignInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageSignInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         sig_len = CK_ULONG(512)
         sig_buf = (ctypes.c_ubyte * 512)()
@@ -454,7 +443,8 @@ def _run_sign_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> Non
             data = (ctypes.c_ubyte * 16)(*range(16))
             rv = raw.C_SignMessageBegin(sh, None, 0, data, 16)
             if rv != CKR_OK:
-                _message_setup_reject(rv, "C_SignMessageBegin")
+                print(f"{SETUP_XFAIL_PREFIX}C_SignMessageBegin rejected: {ckr_name(rv)}")
+                raise _SetupRejected
             rv = raw.C_SignMessageNext(
                 sh,
                 None,
@@ -519,7 +509,8 @@ def _run_verify_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> N
         mech.ulParameterLen = 0
         rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), pub)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageVerifyInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageVerifyInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         if field == "begin_parameter":
             rv = raw.C_VerifyMessageBegin(
@@ -530,7 +521,8 @@ def _run_verify_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> N
         else:
             rv = raw.C_VerifyMessageBegin(sh, None, 0)
             if rv != CKR_OK:
-                _message_setup_reject(rv, "C_VerifyMessageBegin")
+                print(f"{SETUP_XFAIL_PREFIX}C_VerifyMessageBegin rejected: {ckr_name(rv)}")
+                raise _SetupRejected
             data = (
                 buf
                 if next_data_len != normal_data_len
@@ -596,7 +588,8 @@ def _run_encrypt_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> 
 
         rv = raw.C_MessageEncryptInit(sh, ctypes.byref(init_mech), key)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageEncryptInit")
+            print(f"{SETUP_XFAIL_PREFIX}C_MessageEncryptInit rejected: {ckr_name(rv)}")
+            raise _SetupRejected
 
         msg_iv = (ctypes.c_ubyte * 12)(*range(12, 24))
         msg_tag = (ctypes.c_ubyte * 16)()
@@ -629,7 +622,8 @@ def _run_encrypt_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> 
                 16,
             )
             if rv != CKR_OK:
-                _message_setup_reject(rv, "C_EncryptMessageBegin")
+                print(f"{SETUP_XFAIL_PREFIX}C_EncryptMessageBegin rejected: {ckr_name(rv)}")
+                raise _SetupRejected
             rv = raw.C_EncryptMessageNext(
                 sh,
                 None,

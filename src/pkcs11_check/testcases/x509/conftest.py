@@ -45,7 +45,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_TYPE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.data import X509_LIMBO_DIR, load_json_cached
 
 _LIMBO_FILE = X509_LIMBO_DIR / "limbo.json"
@@ -318,27 +317,24 @@ def verify_attribute_parity(
     # CKA_SUBJECT (Mandatory)
     try:
         attrs = read_attributes(raw, sh, handle, [CKA_SUBJECT])
-        p11_subject = attr_or_record(
-            attrs,
-            CKA_SUBJECT,
-            label="X509:attribute-parity CKA_SUBJECT readback",
-            reason="not_operational",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
+        p11_subject = attrs[CKA_SUBJECT]
         expected_subject = cert.subject.public_bytes(serialization.Encoding.DER)
-        if p11_subject is MISSING_ATTRIBUTE:
-            results["SUBJECT"] = (None, None, _to_hex(expected_subject), True)
-        else:
-            results["SUBJECT"] = (
-                p11_subject == expected_subject,
-                _to_hex(p11_subject),
-                _to_hex(expected_subject),
-                True,
-            )
+        results["SUBJECT"] = (
+            p11_subject == expected_subject,
+            _to_hex(p11_subject),
+            _to_hex(expected_subject),
+            True,
+        )
     except CkrAssertionError as exc:
         if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
             raise
+        results["SUBJECT"] = (
+            None,
+            None,
+            _to_hex(cert.subject.public_bytes(serialization.Encoding.DER)),
+            True,
+        )
+    except KeyError:
         results["SUBJECT"] = (
             None,
             None,
@@ -349,27 +345,24 @@ def verify_attribute_parity(
     # CKA_ISSUER (Mandatory in v3.0+)
     try:
         attrs = read_attributes(raw, sh, handle, [CKA_ISSUER])
-        p11_issuer = attr_or_record(
-            attrs,
-            CKA_ISSUER,
-            label="X509:attribute-parity CKA_ISSUER readback",
-            reason="not_operational",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
+        p11_issuer = attrs[CKA_ISSUER]
         expected_issuer = cert.issuer.public_bytes(serialization.Encoding.DER)
-        if p11_issuer is MISSING_ATTRIBUTE:
-            results["ISSUER"] = (None, None, _to_hex(expected_issuer), True)
-        else:
-            results["ISSUER"] = (
-                p11_issuer == expected_issuer,
-                _to_hex(p11_issuer),
-                _to_hex(expected_issuer),
-                True,
-            )
+        results["ISSUER"] = (
+            p11_issuer == expected_issuer,
+            _to_hex(p11_issuer),
+            _to_hex(expected_issuer),
+            True,
+        )
     except CkrAssertionError as exc:
         if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
             raise
+        results["ISSUER"] = (
+            None,
+            None,
+            _to_hex(cert.issuer.public_bytes(serialization.Encoding.DER)),
+            True,
+        )
+    except KeyError:
         results["ISSUER"] = (
             None,
             None,
@@ -380,14 +373,7 @@ def verify_attribute_parity(
     # CKA_SERIAL_NUMBER (Mandatory in v3.0+)
     try:
         attrs = read_attributes(raw, sh, handle, [CKA_SERIAL_NUMBER])
-        p11_serial = attr_or_record(
-            attrs,
-            CKA_SERIAL_NUMBER,
-            label="X509:attribute-parity CKA_SERIAL_NUMBER readback",
-            reason="not_operational",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
+        p11_serial = attrs[CKA_SERIAL_NUMBER]
 
         def to_der_int(n: int) -> bytes:
             if n == 0:
@@ -395,36 +381,26 @@ def verify_attribute_parity(
             b = n.to_bytes((n.bit_length() + 8) // 8, "big", signed=True)
             return b"\x02" + bytes([len(b)]) + b
 
-        if p11_serial is MISSING_ATTRIBUTE:
-            results["SERIAL_NUMBER"] = (None, None, None, True)
-        else:
-            expected_serial_der = to_der_int(cert.serial_number)
-            results["SERIAL_NUMBER"] = (
-                p11_serial == expected_serial_der,
-                _to_hex(p11_serial),
-                _to_hex(expected_serial_der),
-                True,
-            )
+        expected_serial_der = to_der_int(cert.serial_number)
+        results["SERIAL_NUMBER"] = (
+            p11_serial == expected_serial_der,
+            _to_hex(p11_serial),
+            _to_hex(expected_serial_der),
+            True,
+        )
     except CkrAssertionError as exc:
         if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
             raise
+        results["SERIAL_NUMBER"] = (None, None, None, True)
+    except KeyError:
         results["SERIAL_NUMBER"] = (None, None, None, True)
 
     # CKA_START_DATE (Optional)
     try:
         attrs = read_attributes(raw, sh, handle, [CKA_START_DATE])
-        p11_start = attr_or_record(
-            attrs,
-            CKA_START_DATE,
-            label="X509:attribute-parity CKA_START_DATE readback",
-            reason="honest_deviation",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
+        p11_start = attrs[CKA_START_DATE]
         expected_start = cert.not_valid_before_utc.date()
-        if p11_start is MISSING_ATTRIBUTE:
-            results["START_DATE"] = (None, None, None, False)
-        elif not p11_start:
+        if not p11_start:
             results["START_DATE"] = (None, "empty", str(expected_start), False)
         else:
             results["START_DATE"] = (
@@ -437,22 +413,15 @@ def verify_attribute_parity(
         if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
             raise
         results["START_DATE"] = (None, None, None, False)
+    except KeyError:
+        results["START_DATE"] = (None, None, None, False)
 
     # CKA_END_DATE (Optional)
     try:
         attrs = read_attributes(raw, sh, handle, [CKA_END_DATE])
-        p11_end = attr_or_record(
-            attrs,
-            CKA_END_DATE,
-            label="X509:attribute-parity CKA_END_DATE readback",
-            reason="honest_deviation",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
+        p11_end = attrs[CKA_END_DATE]
         expected_end = cert.not_valid_after_utc.date()
-        if p11_end is MISSING_ATTRIBUTE:
-            results["END_DATE"] = (None, None, None, False)
-        elif not p11_end:
+        if not p11_end:
             results["END_DATE"] = (None, "empty", str(expected_end), False)
         else:
             results["END_DATE"] = (
@@ -465,34 +434,28 @@ def verify_attribute_parity(
         if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
             raise
         results["END_DATE"] = (None, None, None, False)
+    except KeyError:
+        results["END_DATE"] = (None, None, None, False)
 
     # CKA_PUBLIC_KEY_INFO (v3.0+)
     try:
         attrs = read_attributes(raw, sh, handle, [CKA_PUBLIC_KEY_INFO])
-        p11_pk_info = attr_or_record(
-            attrs,
-            CKA_PUBLIC_KEY_INFO,
-            label="X509:attribute-parity CKA_PUBLIC_KEY_INFO readback",
-            reason="honest_deviation",
-            kind="metadata",
-            inherit_mechanism=False,
+        p11_pk_info = attrs[CKA_PUBLIC_KEY_INFO]
+        expected_pk_info = cert.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        if p11_pk_info is MISSING_ATTRIBUTE:
-            results["PUBLIC_KEY_INFO"] = (None, None, None, False)
-        else:
-            expected_pk_info = cert.public_key().public_bytes(
-                serialization.Encoding.DER,
-                serialization.PublicFormat.SubjectPublicKeyInfo,
-            )
-            results["PUBLIC_KEY_INFO"] = (
-                p11_pk_info == expected_pk_info if p11_pk_info else None,
-                _to_hex(p11_pk_info),
-                _to_hex(expected_pk_info),
-                False,
-            )
+        results["PUBLIC_KEY_INFO"] = (
+            p11_pk_info == expected_pk_info if p11_pk_info else None,
+            _to_hex(p11_pk_info),
+            _to_hex(expected_pk_info),
+            False,
+        )
     except CkrAssertionError as exc:
         if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
             raise
+        results["PUBLIC_KEY_INFO"] = (None, None, None, False)
+    except KeyError:
         results["PUBLIC_KEY_INFO"] = (None, None, None, False)
 
     return results

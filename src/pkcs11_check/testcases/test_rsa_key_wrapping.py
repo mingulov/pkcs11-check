@@ -51,7 +51,6 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_NOT_WRAPPABLE,
     CKR_KEY_UNEXTRACTABLE,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     assert_correct,
@@ -115,15 +114,7 @@ class TestRSAPKCSWrap:
         pub, priv = _make_rsa_pair(rs)
         aes_key = _make_extractable_aes(rs, 128)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKM_RSA_PKCS:wrap AES-128 original key value",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
+            original_value = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])[CKA_VALUE]
 
             wrapped = wrap_key_recipe(
                 rs.raw,
@@ -132,7 +123,7 @@ class TestRSAPKCSWrap:
                 aes_key,
                 CKM_RSA_PKCS,
             )
-            if original_value is not MISSING_ATTRIBUTE and wrapped == original_value:
+            if wrapped == original_value:
                 classify(
                     "wrong_result",
                     kind="crypto",
@@ -165,26 +156,14 @@ class TestRSAPKCSWrap:
                 # C_UnwrapKey: advertised but not operational, not a break.
                 xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
-                unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
-                unwrapped_value = attr_or_record(
-                    unwrapped_attrs,
-                    CKA_VALUE,
-                    label="CKM_RSA_PKCS:unwrap AES-128 roundtrip material",
-                    reason="not_operational",
-                    kind="metadata",
-                    inherit_mechanism=False,
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_RSA_PKCS:unwrap AES-128 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_PKCS",
                 )
-                if (
-                    original_value is not MISSING_ATTRIBUTE
-                    and unwrapped_value is not MISSING_ATTRIBUTE
-                ):
-                    assert_correct(
-                        actual=unwrapped_value,
-                        expected=original_value,
-                        label="CKM_RSA_PKCS:unwrap AES-128 roundtrip",
-                        operation="C_UnwrapKey",
-                        mechanism="CKM_RSA_PKCS",
-                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -201,15 +180,7 @@ class TestRSAPKCSWrap:
         pub, priv = _make_rsa_pair(rs)
         aes_key = _make_extractable_aes(rs, 256)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKM_RSA_PKCS:wrap AES-256 original key value",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
+            original_value = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])[CKA_VALUE]
 
             wrapped = wrap_key_recipe(
                 rs.raw,
@@ -239,26 +210,14 @@ class TestRSAPKCSWrap:
                 # C_UnwrapKey: advertised but not operational, not a break.
                 xfail_if_op_not_operational(exc, "CKM_RSA_PKCS unwrap (key transport)")
             try:
-                unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
-                unwrapped_value = attr_or_record(
-                    unwrapped_attrs,
-                    CKA_VALUE,
-                    label="CKM_RSA_PKCS:unwrap AES-256 roundtrip material",
-                    reason="not_operational",
-                    kind="metadata",
-                    inherit_mechanism=False,
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_RSA_PKCS:unwrap AES-256 roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_PKCS",
                 )
-                if (
-                    original_value is not MISSING_ATTRIBUTE
-                    and unwrapped_value is not MISSING_ATTRIBUTE
-                ):
-                    assert_correct(
-                        actual=unwrapped_value,
-                        expected=original_value,
-                        label="CKM_RSA_PKCS:unwrap AES-256 roundtrip",
-                        operation="C_UnwrapKey",
-                        mechanism="CKM_RSA_PKCS",
-                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -317,15 +276,7 @@ class TestRSAOAEPWrap:
         pub, priv = _make_rsa_pair(rs)
         aes_key = _make_extractable_aes(rs, 128)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKM_RSA_PKCS_OAEP:wrap AES original key value",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
+            original_value = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])[CKA_VALUE]
 
             oaep = mech_oaep(
                 CKM_RSA_PKCS_OAEP,
@@ -362,26 +313,14 @@ class TestRSAOAEPWrap:
                 purpose="RSA-OAEP AES wrap/unwrap roundtrip",
             )
             try:
-                unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
-                unwrapped_value = attr_or_record(
-                    unwrapped_attrs,
-                    CKA_VALUE,
-                    label="CKM_RSA_PKCS_OAEP:unwrap AES roundtrip material",
-                    reason="not_operational",
-                    kind="metadata",
-                    inherit_mechanism=False,
+                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
+                assert_correct(
+                    actual=unwrapped_value,
+                    expected=original_value,
+                    label="CKM_RSA_PKCS_OAEP:unwrap AES roundtrip",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_RSA_PKCS_OAEP",
                 )
-                if (
-                    original_value is not MISSING_ATTRIBUTE
-                    and unwrapped_value is not MISSING_ATTRIBUTE
-                ):
-                    assert_correct(
-                        actual=unwrapped_value,
-                        expected=original_value,
-                        label="CKM_RSA_PKCS_OAEP:unwrap AES roundtrip",
-                        operation="C_UnwrapKey",
-                        mechanism="CKM_RSA_PKCS_OAEP",
-                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -479,9 +418,6 @@ class TestWrappedKeyUsability:
             pytest.skip("CKM_RSA_PKCS not supported")
 
         pub, priv = _make_rsa_pair(rs)
-        # gen_aes_key() raises unless C_GenerateKey returns CKR_OK, so reaching
-        # this point already proves the module ACCEPTED the CKA_EXTRACTABLE=False
-        # template at creation -- that acceptance is independent claim evidence.
         non_extractable = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -490,31 +426,19 @@ class TestWrappedKeyUsability:
         )
 
         try:
-            # Corroborate the claim with a readback where available, but never
-            # let a missing readback downgrade the creation-time claim: deriving
-            # `claimed` from the readback alone would let one unreadable
-            # attribute mask a proven wrap-extraction break.
-            extractable_attrs = read_attributes(rs.raw, rs.sh, non_extractable, [CKA_EXTRACTABLE])
-            extractable = attr_or_record(
-                extractable_attrs,
-                CKA_EXTRACTABLE,
-                label="C_GenerateKey:CKA_EXTRACTABLE",
-                reason="not_operational",
-                kind="policy",
-                inherit_mechanism=False,
+            # Establish the claim: the key must actually read back
+            # CKA_EXTRACTABLE=False. If the module did not honour the flag at
+            # creation, it never claimed the protection -> honest non-support.
+            extractable = read_attributes(rs.raw, rs.sh, non_extractable, [CKA_EXTRACTABLE]).get(
+                CKA_EXTRACTABLE
             )
-            claimed: bool
-            if extractable is MISSING_ATTRIBUTE:
-                claimed = True
-            else:
-                claimed = extractable is False
-                if not claimed:
-                    xfail_as(
-                        "honest_deviation",
-                        kind="metadata",
-                        label="C_GenerateKey:CKA_EXTRACTABLE",
-                        summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
-                    )
+            if extractable is not False:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="C_GenerateKey:CKA_EXTRACTABLE",
+                    summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
+                )
 
             try:
                 wrap_key_recipe(
@@ -571,40 +495,21 @@ class TestNonExtractableWrapRefusal:
     ) -> None:
         """Core: try to wrap a verified non-extractable key, classify the outcome.
 
-        Claim: gen_aes_key() already proved creation-time acceptance of
-        CKA_EXTRACTABLE=False (it raises unless C_GenerateKey returns CKR_OK),
-        so `claimed` defaults to True and a missing readback cannot downgrade
-        it; only an explicit readback showing the key IS extractable disables
-        the claim (-> honest_deviation/xfail, not fail). Wrap refused -> pass.
-        Wrap accepted on a claimed key -> self_contradiction policy fail (key
-        material exfiltration).
+        Readback guard: if the module did not honour CKA_EXTRACTABLE=False at
+        creation it never made the claim -> honest_deviation/xfail, not fail.
+        Wrap refused -> pass. Wrap accepted on a claimed key -> self_contradiction
+        policy fail (key material exfiltration).
         """
-        # Corroborate the claim with a readback where available, but never let
-        # a missing readback downgrade the creation-time claim: `target` was
-        # produced by gen_aes_key(attrs={CKA_EXTRACTABLE: False}), which raises
-        # unless C_GenerateKey returns CKR_OK, so reaching this call already
-        # proves the module accepted the protective template.
-        extractable_attrs = read_attributes(rs.raw, rs.sh, target, [CKA_EXTRACTABLE])
-        extractable = attr_or_record(
-            extractable_attrs,
-            CKA_EXTRACTABLE,
-            label=f"C_GenerateKey:CKA_EXTRACTABLE ({mech_label})",
-            reason="not_operational",
-            kind="policy",
-            inherit_mechanism=False,
-        )
-        claimed: bool
-        if extractable is MISSING_ATTRIBUTE:
-            claimed = True
-        else:
-            claimed = extractable is False
-            if not claimed:
-                xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"C_GenerateKey:CKA_EXTRACTABLE ({mech_label})",
-                    summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
-                )
+        # Verify the claim before probing the enforcement.
+        extractable = read_attributes(rs.raw, rs.sh, target, [CKA_EXTRACTABLE]).get(CKA_EXTRACTABLE)
+        claimed = extractable is False
+        if not claimed:
+            xfail_as(
+                "honest_deviation",
+                kind="metadata",
+                label=f"C_GenerateKey:CKA_EXTRACTABLE ({mech_label})",
+                summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
+            )
 
         # Probe enforcement for this mechanism.
         try:

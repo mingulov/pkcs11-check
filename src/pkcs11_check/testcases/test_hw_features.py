@@ -35,7 +35,6 @@ from pkcs11_check.raw.types_std import (
     CKH_VENDOR_DEFINED,
     CKO_HW_FEATURE,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 _KNOWN_HW_FEATURE_TYPES = {
@@ -59,7 +58,7 @@ def _hw_features(rs: Any) -> list[int]:
         raise
 
 
-def _hw_type(rs: Any, handle: int) -> Any:
+def _hw_type(rs: Any, handle: int) -> int:
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_HW_FEATURE_TYPE])
     except CkrAssertionError as exc:
@@ -70,16 +69,7 @@ def _hw_type(rs: Any, handle: int) -> Any:
             kind="metadata",
         )
         raise
-    raw_value = attr_or_record(
-        attrs,
-        CKA_HW_FEATURE_TYPE,
-        inherit_mechanism=False,
-        label="CKA_HW_FEATURE_TYPE:hardware-feature",
-        reason="honest_deviation",
-        kind="metadata",
-    )
-    if raw_value is MISSING_ATTRIBUTE:
-        return MISSING_ATTRIBUTE
+    raw_value = attrs[CKA_HW_FEATURE_TYPE]
     assert isinstance(raw_value, (int, bytes)), (
         f"Expected int or bytes CKA_HW_FEATURE_TYPE, got {type(raw_value)}"
     )
@@ -119,8 +109,6 @@ class TestHwFeatureEnumeration:
             pytest.skip("No CKO_HW_FEATURE objects present")
         for feat in features:
             hw_type = _hw_type(rs, feat)
-            if hw_type is MISSING_ATTRIBUTE:
-                continue
             if hw_type < CKH_VENDOR_DEFINED:
                 assert hw_type in _KNOWN_HW_FEATURE_TYPES, (
                     f"Unknown non-vendor HW feature type 0x{hw_type:08X}"
@@ -135,10 +123,7 @@ class TestHwFeatureClock:
         features = _hw_features(rs)
         clocks = []
         for feat in features:
-            hw_type = _hw_type(rs, feat)
-            if hw_type is MISSING_ATTRIBUTE:
-                continue
-            if hw_type == CKH_CLOCK:
+            if _hw_type(rs, feat) == CKH_CLOCK:
                 clocks.append(feat)
         return clocks
 
@@ -150,16 +135,7 @@ class TestHwFeatureClock:
             pytest.skip("No CKH_CLOCK hardware feature objects present")
         for clock in clocks:
             attrs = read_attributes(rs.raw, rs.sh, clock, [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                inherit_mechanism=False,
-                label="CKA_VALUE:hardware-clock",
-                reason="honest_deviation",
-                kind="metadata",
-            )
-            if value is MISSING_ATTRIBUTE:
-                continue
+            value = attrs[CKA_VALUE]
             if isinstance(value, bytes):
                 value_str = value.decode("ascii", errors="replace")
             else:
@@ -178,10 +154,7 @@ class TestHwFeatureCounter:
         features = _hw_features(rs)
         counters = []
         for feat in features:
-            hw_type = _hw_type(rs, feat)
-            if hw_type is MISSING_ATTRIBUTE:
-                continue
-            if hw_type == CKH_MONOTONIC_COUNTER:
+            if _hw_type(rs, feat) == CKH_MONOTONIC_COUNTER:
                 counters.append(feat)
         return counters
 
@@ -192,16 +165,7 @@ class TestHwFeatureCounter:
             pytest.skip("No CKH_MONOTONIC_COUNTER objects present")
         for counter in counters:
             attrs = read_attributes(rs.raw, rs.sh, counter, [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                inherit_mechanism=False,
-                label="CKA_VALUE:monotonic-counter",
-                reason="honest_deviation",
-                kind="metadata",
-            )
-            if value is MISSING_ATTRIBUTE:
-                continue
+            value = attrs[CKA_VALUE]
             assert value is not None
 
     def test_counter_reset_attributes(self, p11_raw_session: Any) -> None:
@@ -217,22 +181,8 @@ class TestHwFeatureCounter:
                     counter,
                     [CKA_RESET_ON_INIT, CKA_HAS_RESET],
                 )
-                attr_or_record(
-                    attrs,
-                    CKA_RESET_ON_INIT,
-                    inherit_mechanism=False,
-                    label="CKA_RESET_ON_INIT:monotonic-counter",
-                    reason="honest_deviation",
-                    kind="metadata",
-                )
-                attr_or_record(
-                    attrs,
-                    CKA_HAS_RESET,
-                    inherit_mechanism=False,
-                    label="CKA_HAS_RESET:monotonic-counter",
-                    reason="honest_deviation",
-                    kind="metadata",
-                )
+                assert CKA_RESET_ON_INIT in attrs
+                assert CKA_HAS_RESET in attrs
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,

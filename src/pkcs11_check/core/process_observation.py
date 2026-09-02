@@ -16,14 +16,6 @@ _OBSERVATIONS: ContextVar[list[dict[str, object]] | None] = ContextVar(
 )
 
 
-# Appended to a probe child's stderr by the launcher when the child exited non-zero
-# WITHOUT running its own finalizer (observed via the coverage file the finalizer always
-# writes). That distinguishes "the module called exit() from inside the PKCS#11 call and
-# took the process down" from "Python raised and died normally" -- two situations that
-# are otherwise byte-identical at the parent, and that must not share a verdict.
-SUBPROCESS_ABRUPT_EXIT_MARKER = "_P11CHECK_SUBPROCESS_ABRUPT_EXIT"
-
-
 def termination_from_returncode(
     returncode: int | None,
     *,
@@ -63,13 +55,6 @@ def termination_from_returncode(
         else:
             termination["kind"] = "signal"
             termination["signal_name"] = signal_name
-    elif returncode > 0 and stderr is not None and SUBPROCESS_ABRUPT_EXIT_MARKER in stderr:
-        # The child process ended without running its own exit path. Only the module can
-        # do that on a positive exit code: a C ``exit()``/``_exit()`` from inside a
-        # PKCS#11 call bypasses CPython finalization entirely. A positive exit is NOT by
-        # itself evidence of this -- the marker is appended only when the launcher
-        # observed that the child's own finalizer never ran.
-        termination["kind"] = "abrupt_exit"
     else:
         termination["kind"] = "exit"
     return termination

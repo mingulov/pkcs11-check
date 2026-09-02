@@ -43,7 +43,6 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_HANDLE_INVALID,
     CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._ec_export import coord_len_for_curve, read_ec_public_key_or_xfail
 from pkcs11_check.testcases._local_verify import ecdsa_local, rsa_pkcs15_local, verify_roundtrip
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
@@ -73,15 +72,7 @@ _MECH_NOT_FOR_KEY = (
 def _match_public(rs: Any, priv_attrs: dict[Any, Any]) -> int | None:
     """Find the public key paired with a private key (by CKA_ID, then CKA_LABEL)."""
     for key in (CKA_ID, CKA_LABEL):
-        val = attr_or_record(
-            priv_attrs,
-            key,
-            label=f"provisioned private key: {key} linking attribute readback",
-            reason="honest_deviation",
-            inherit_mechanism=False,
-        )
-        if val is MISSING_ATTRIBUTE:
-            continue
+        val = priv_attrs.get(key)
         if val:
             handles = find_objects(
                 rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, key: val})
@@ -97,27 +88,12 @@ def test_provisioned_signing_keys_are_coherent(p11_module_session: Any) -> None:
     verified = 0
     for priv in priv_handles:
         attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SIGN, CKA_KEY_TYPE, CKA_ID, CKA_LABEL])
-        sign_flag = attr_or_record(
-            attrs,
-            CKA_SIGN,
-            label="provisioned private key: CKA_SIGN readback",
-            reason="not_operational",
-            inherit_mechanism=False,
-        )
-        if sign_flag is MISSING_ATTRIBUTE or not sign_flag:
+        if not attrs.get(CKA_SIGN):
             continue
         pub = _match_public(rs, attrs)
         if pub is None:
             continue
-        kt = attr_or_record(
-            attrs,
-            CKA_KEY_TYPE,
-            label="provisioned private key: CKA_KEY_TYPE readback",
-            reason="not_operational",
-            inherit_mechanism=False,
-        )
-        if kt is MISSING_ATTRIBUTE:
-            continue
+        kt = attrs.get(CKA_KEY_TYPE)
 
         if kt == int(CKK_RSA):
             try:
@@ -140,15 +116,7 @@ def test_provisioned_signing_keys_are_coherent(p11_module_session: Any) -> None:
             verified += 1
 
         elif kt == int(CKK_EC):
-            ec_params = attr_or_record(
-                read_attributes(rs.raw, rs.sh, priv, [CKA_EC_PARAMS]),
-                CKA_EC_PARAMS,
-                label="provisioned private key: CKA_EC_PARAMS readback",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if ec_params is MISSING_ATTRIBUTE:
-                continue
+            ec_params = read_attributes(rs.raw, rs.sh, priv, [CKA_EC_PARAMS]).get(CKA_EC_PARAMS)
             spec = _EC_PARAMS.get(bytes(ec_params)) if ec_params else None
             if spec is None:
                 continue  # curve not in the small map -> not covered here

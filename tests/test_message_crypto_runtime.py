@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
@@ -15,7 +14,6 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases import test_message_crypto
-from tests._skip_assert import assert_skips
 
 
 class _MessageVerifyRaw:
@@ -133,47 +131,3 @@ def test_message_encrypt_uses_aes_keygen_xfail_helper(
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_message_crypto.TestMessageEncryptDecrypt().test_message_encrypt_single(rs)
-
-
-def test_skip_if_message_op_not_implemented_skips_on_fns() -> None:
-    exc = CkrAssertionError("CKR_FUNCTION_NOT_SUPPORTED", int(CKR_FUNCTION_NOT_SUPPORTED))
-    assert_skips(
-        test_message_crypto._skip_if_message_op_not_implemented,
-        exc,
-        "message encrypt",
-        match="message encrypt",
-    )
-
-
-def test_skip_if_message_op_not_implemented_ignores_other_ckr() -> None:
-    exc = CkrAssertionError("CKR_MECHANISM_INVALID", int(CKR_MECHANISM_INVALID))
-    # Must return quietly so the caller's own xfail_if_known_ckr path runs.
-    test_message_crypto._skip_if_message_op_not_implemented(exc, "message encrypt")
-
-
-def test_message_encrypt_single_fns_is_skip_not_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
-    """C_MessageEncryptInit/C_EncryptMessage are optional v3.0 functions; FNS from
-    message_encrypt() is capability absence, not a deviation (site: line ~262)."""
-    rs = SimpleNamespace(
-        raw=_MessageEncryptRaw(),
-        sh=1,
-        has_mechanism=lambda name: name in {"AES_CBC", "AES_KEY_GEN"},
-    )
-    monkeypatch.setattr(test_message_crypto, "gen_aes_key_or_xfail", lambda *_a, **_k: 42)
-    monkeypatch.setattr(test_message_crypto, "destroy_quietly", lambda *_a, **_k: None)
-
-    def _raise(*_a: object, **_k: object) -> bytes:
-        raise CkrAssertionError("CKR_FUNCTION_NOT_SUPPORTED", int(CKR_FUNCTION_NOT_SUPPORTED))
-
-    # test_message_encrypt_single() does `from pkcs11_check.raw.recipes import
-    # message_encrypt` locally, so the patch target is the recipes module, not
-    # the test_message_crypto module namespace.
-    import pkcs11_check.raw.recipes as recipes
-
-    monkeypatch.setattr(recipes, "message_encrypt", _raise)
-
-    assert_skips(
-        test_message_crypto.TestMessageEncryptDecrypt().test_message_encrypt_single,
-        rs,
-        match="message encrypt",
-    )

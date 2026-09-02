@@ -63,10 +63,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import (
-    MISSING_ATTRIBUTE as _MISSING_ATTRIBUTE,
-)
-from pkcs11_check.testcases._attribute_values import attr_or_record as _attr_or_record
 from pkcs11_check.testcases._capability import Capability, capability_for
 from pkcs11_check.testcases._error_tuples import MECH_PARAM_UNSUPPORTED_ERRORS
 
@@ -449,26 +445,8 @@ def gen_aes_key_or_xfail(
     kwargs: dict[str, Any] = {"attrs": attrs}
     if mechanism is not None:
         kwargs["mechanism"] = mech
-    setup_message = (
-        f"{mechanism_label} advertised but {bits}-bit key generation for {purpose} "
-        "is not operational"
-    )
     try:
         return gen_aes_key(rs.raw, session, bits, **kwargs)
-    except CkrAssertionError as exc:
-        # Keep the exact CKR gate provider-general, but preserve the positive
-        # producer operation and mechanism when setup is cleanly refused.
-        if exc.rv in AES_KEYGEN_RUNTIME_REJECT_RVS:
-            _classification.xfail_as(
-                "not_operational",
-                label=setup_message,
-                operation="C_GenerateKey",
-                mechanism=ckm_name(int(mech)),
-                expected=CKR_OK,
-                actual=exc.rv,
-                summary=f"{setup_message}: {ckr_name(exc.rv)}",
-            )
-        raise
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
@@ -661,31 +639,13 @@ def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) 
         attrs = read_attributes(rs.raw, rs.sh, handle, [int(CKA_EC_PARAMS)])
     except CkrAssertionError as exc:
         return f"object incoherent after CKR_OK create: {exc}"
-    attr_id = int(CKA_EC_PARAMS)
-    got = _attr_or_record(
-        attrs,
-        attr_id,
-        label="EC public key CKA_EC_PARAMS",
-        reason="honest_deviation",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-    if got is _MISSING_ATTRIBUTE:
-        record = _classification.get_records()[-1]
-        if record.detail is not None:
-            record.detail["attribute"]["name"] = "CKA_EC_PARAMS"
-            record.detail["producer_operation"] = "C_CreateObject"
+    got = attrs.get(int(CKA_EC_PARAMS))
+    if got is None:
         return "CKA_EC_PARAMS unavailable after CKR_OK create"
-    if not isinstance(got, bytes) or not got:
-        shape = "empty bytes" if isinstance(got, bytes) else type(got).__name__
-        return (
-            "object incoherent after CKR_OK create: malformed CKA_EC_PARAMS "
-            f"(expected non-empty bytes, got {shape})"
-        )
-    if got != requested_params:
+    if bytes(got) != bytes(requested_params):
         return (
             f"module silently rebound curve: requested CKA_EC_PARAMS "
-            f"{bytes(requested_params).hex()}, object reports {got.hex()}"
+            f"{bytes(requested_params).hex()}, object reports {bytes(got).hex()}"
         )
     return None
 
@@ -803,18 +763,6 @@ def gen_rsa_keypair_or_xfail(
             public_attrs=public_attrs,
             private_attrs=private_attrs,
         )
-    except CkrAssertionError as exc:
-        if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
-            _classification.xfail_as(
-                "not_operational",
-                label="RSA keypair setup",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                expected=CKR_OK,
-                actual=exc.rv,
-                summary=(f"advertised RSA keypair generation rejected setup: {ckr_name(exc.rv)}"),
-            )
-        raise
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
@@ -844,18 +792,6 @@ def gen_ec_keypair_or_xfail(
             public_attrs=public_attrs,
             private_attrs=private_attrs,
         )
-    except CkrAssertionError as exc:
-        if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
-            _classification.xfail_as(
-                "not_operational",
-                label="EC keypair setup",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_EC_KEY_PAIR_GEN",
-                expected=CKR_OK,
-                actual=exc.rv,
-                summary=(f"advertised EC keypair generation rejected setup: {ckr_name(exc.rv)}"),
-            )
-        raise
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
@@ -916,6 +852,20 @@ def get_pin_bytes(p11_config: Any) -> bytes | None:
     pin = p11_config.pin
     pin_str = pin.get_secret_value() if hasattr(pin, "get_secret_value") else str(pin)
     return pin_str.encode("utf-8")
+
+
+def extract_ec_point(ec_point_der: Any) -> Any:
+    """Extract raw uncompressed EC point from DER OCTET STRING wrapper.
+
+    PKCS#11 EC_POINT attribute is DER-encoded: 0x04 <length> <point_bytes>.
+    Returns the raw point bytes (starting with 0x04 uncompressed prefix).
+    """
+    from pkcs11_check.raw.der import decode_ec_point
+
+    data = bytes(ec_point_der)
+    if not data or data[0] != 0x04:
+        return ec_point_der
+    return decode_ec_point(data)
 
 
 def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:

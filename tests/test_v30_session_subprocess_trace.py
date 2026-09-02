@@ -24,14 +24,7 @@ def test_session_cancel_subprocess_failure_records_child_rv_trace(
     class _Result:
         returncode = 1
         stdout = marker
-        # A real child that dies of a Python exception prints a full traceback; the
-        # header is what tells the parent this was a Python-level death rather than
-        # the module tearing the process down from inside a PKCS#11 call.
-        stderr = (
-            "Traceback (most recent call last):\n"
-            '  File "probe.py", line 1, in <module>\n'
-            "AssertionError: C_OpenSession: 0x000000b1"
-        )
+        stderr = "AssertionError: C_OpenSession: 0x000000b1"
 
     def _fake_run(args: list[str], **_kwargs: Any) -> _Result:
         return _Result()
@@ -41,7 +34,7 @@ def test_session_cancel_subprocess_failure_records_child_rv_trace(
     test_case = test_v30_session.TestSessionCancel()
     p11_config = type("Config", (), {"module": "/tmp/fake-module.so", "pin": None, "slot": None})()
 
-    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
         test_case.test_cancel_after_digest_init_subprocess(p11_config)
 
     assert drain_subprocess_rv_trace() == [
@@ -65,14 +58,7 @@ def test_session_cancel_subprocess_launches_probe_with_teardown(
     class _Result:
         returncode = 1
         stdout = "P11_RV_TRACE_JSON:[]"
-        # A real child that dies of a Python exception prints a full traceback; the
-        # header is what tells the parent this was a Python-level death rather than
-        # the module tearing the process down from inside a PKCS#11 call.
-        stderr = (
-            "Traceback (most recent call last):\n"
-            '  File "probe.py", line 1, in <module>\n'
-            "AssertionError: C_OpenSession: 0x000000b1"
-        )
+        stderr = "AssertionError: C_OpenSession: 0x000000b1"
 
     def _fake_run(args: list[str], **_kwargs: Any) -> _Result:
         captured["args"] = args
@@ -83,7 +69,7 @@ def test_session_cancel_subprocess_launches_probe_with_teardown(
     test_case = test_v30_session.TestSessionCancel()
     p11_config = type("Config", (), {"module": "/tmp/fake-module.so", "pin": None, "slot": None})()
 
-    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
         test_case.test_cancel_after_digest_init_subprocess(p11_config)
 
     # The child is launched as the v30_session probe module (python -m ...), not an inline script.

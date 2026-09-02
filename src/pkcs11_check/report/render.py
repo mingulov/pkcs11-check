@@ -24,13 +24,9 @@ from collections import Counter
 from typing import Any
 
 from pkcs11_check.classification import HARNESS_REASONS
-from pkcs11_check.core.report_log import F11_CONTRACT_VERSION
 from pkcs11_check.report import health
 from pkcs11_check.report.capability import render_capability_gaps
 from pkcs11_check.report.sanitize import sanitize_line, summarize_crash, truncate_ckr_list
-
-# How many top targets/files to surface in the classification observability section.
-_MAX_OBSERVABILITY_TOP_ITEMS = 5
 
 # Parse a coverage.invoked_detail entry: ``CKM_X[k1=v1,k2=v2]`` -> mechanism, params.
 _INVOKED_DETAIL_RE = re.compile(r"^(CKM_[A-Z0-9_]+)\[(.+)\]$")
@@ -386,116 +382,6 @@ def _in_range_contradiction_line(groups: list[dict[str, Any]]) -> str:
     return f"- advertised IN-RANGE then refused (contradiction candidates): {total}: {examples}"
 
 
-def _format_observability_count(value: Any, *, lower_bound: bool) -> str:
-    """Render one observability count: exact ``N``, lower bound ``>=N``, or ``--``.
-
-    Never a fabricated zero: a non-``int`` (missing/malformed) value renders ``--``, never
-    ``0``. A genuine exact zero (``lower_bound`` False and ``value == 0``) still renders
-    ``"0"`` -- that is a real, not fabricated, observation.
-    """
-    if not isinstance(value, int) or isinstance(value, bool):
-        return "--"
-    return f">={value}" if lower_bound else str(value)
-
-
-def _top_count_items(counts: Any, *, lower_bound: bool, limit: int) -> str:
-    """Format the highest-count ``name (count)`` entries from a raw counts mapping."""
-    if not isinstance(counts, dict) or not counts:
-        return ""
-    pairs: list[tuple[str, int]] = [
-        (str(name), n)
-        for name, n in counts.items()
-        if isinstance(n, int) and not isinstance(n, bool)
-    ]
-    pairs.sort(key=lambda kv: (-kv[1], kv[0]))
-    shown = pairs[:limit]
-    return ", ".join(
-        f"{name} ({_format_observability_count(n, lower_bound=lower_bound)})" for name, n in shown
-    )
-
-
-def _classification_observability_section(quality: dict[str, Any] | None) -> list[str]:
-    """Render the ``classification_observability`` block from ``quality.json``, if present.
-
-    Absent/legacy ``quality`` (no ``classification_observability`` key, e.g. an older
-    ``quality.json``) or an unsupported declared ``contract_version`` renders nothing beyond an
-    explicit ``--`` marker -- never a fabricated zero, and never silently omitted once a caller
-    opts in by passing ``quality``. A caller that never passes ``quality`` (e.g. group-only
-    rendering) gets no section at all, matching every other ``quality``-derived section here.
-    """
-    block = (quality or {}).get("classification_observability")
-    if not isinstance(block, dict):
-        return []
-
-    out = ["## classification observability", ""]
-    contract_version = block.get("contract_version")
-    status = block.get("status")
-    if contract_version != F11_CONTRACT_VERSION or status not in {
-        "complete",
-        "partial",
-        "unavailable",
-    }:
-        out.append(
-            "- status: -- (unsupported or legacy classification_observability contract"
-            f" {contract_version!r})"
-        )
-        out.append("")
-        return out
-
-    reasons = ", ".join(str(r) for r in (block.get("status_reasons") or []) if str(r))
-    reasons_suffix = f" ({reasons})" if reasons else ""
-    out.append(f"- source: {block.get('source_artifact', '--')} - status: {status}{reasons_suffix}")
-
-    unclassified = block.get("unclassified")
-    if status == "unavailable" or not isinstance(unclassified, dict):
-        out.append("- unclassified occurrences: --")
-        out.append("")
-        return out
-
-    lower_bound = status == "partial"
-    occ = _format_observability_count(unclassified.get("occurrences"), lower_bound=lower_bound)
-    unique = _format_observability_count(
-        unclassified.get("unique_testcases"), lower_bound=lower_bound
-    )
-    out.append(f"- unclassified occurrences: {occ} across {unique} logical testcase(s)")
-
-    phase_counts = unclassified.get("phase_counts")
-    if isinstance(phase_counts, dict) and phase_counts:
-        phases = ", ".join(
-            f"{phase}={_format_observability_count(n, lower_bound=lower_bound)}"
-            for phase, n in sorted(phase_counts.items())
-        )
-        out.append(f"- by phase: {phases}")
-
-    dup = unclassified.get("exact_duplicate_occurrences")
-    unattributed = unclassified.get("unattributed_occurrences")
-    out.append(
-        "- exact duplicate occurrences: "
-        f"{_format_observability_count(dup, lower_bound=lower_bound)}"
-        " · unattributed (no isolation marker) occurrences: "
-        f"{_format_observability_count(unattributed, lower_bound=lower_bound)}"
-    )
-
-    top_targets = _top_count_items(
-        unclassified.get("target_counts"),
-        lower_bound=lower_bound,
-        limit=_MAX_OBSERVABILITY_TOP_ITEMS,
-    )
-    if top_targets:
-        out.append(f"- top retry targets: {top_targets}")
-
-    top_files = _top_count_items(
-        unclassified.get("per_file_counts"),
-        lower_bound=lower_bound,
-        limit=_MAX_OBSERVABILITY_TOP_ITEMS,
-    )
-    if top_files:
-        out.append(f"- top files: {top_files}")
-
-    out.append("")
-    return out
-
-
 def render_provider(
     provider: str,
     groups: list[dict[str, Any]],
@@ -510,9 +396,9 @@ def render_provider(
 
     ``summary``/``coverage`` are the results.json blocks; ``units`` the results.json
     unit list (for the incomplete banner); ``quality`` the quality.json payload (for
-    the not-supported skip counts and, when present, the ``classification_observability``
-    section); ``provenance`` the results.json provenance block (for the compact header
-    attribution line). All are optional so callers can render from groups alone.
+    the not-supported skip counts); ``provenance`` the results.json provenance block
+    (for the compact header attribution line). All are optional so callers can render
+    from groups alone.
     """
     summary = summary or {}
     out: list[str] = [f"# {provider} - conformance report", ""]
@@ -561,7 +447,6 @@ def render_provider(
 
     out.extend(_invoked_params_section(coverage))
     out.extend(_xfail_section(groups))
-    out.extend(_classification_observability_section(quality))
     out.extend(_appendix(groups))
 
     return "\n".join(out).rstrip() + "\n"

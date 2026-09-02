@@ -89,7 +89,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
@@ -130,17 +129,6 @@ _WRAP_UNWRAP_OP_REJECT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-
-
-def _readback_repr(raw: Any) -> str:
-    """Render an attribute readback for a summary without inventing a value.
-
-    A provider omission is NOT ``None``: rendering the sentinel as ``None`` would
-    put a value the provider never returned into the record.
-    """
-    if raw is MISSING_ATTRIBUTE:
-        return "<unavailable>"
-    return repr(raw)
 
 
 def _read_unwrap_template_claim(raw: Any, session: int, handle: int) -> str | None:
@@ -292,68 +280,13 @@ class TestDefaultStripIsPermitted:
                     unwrapped_h,
                     [CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_VALUE],
                 )
-                sensitive_after_raw = attr_or_record(
-                    attrs,
-                    CKA_SENSITIVE,
-                    label="Default-strip unwrap result CKA_SENSITIVE readback",
-                    reason="not_operational",
-                    kind="policy",
-                    inherit_mechanism=False,
-                )
-                sensitive_after: Any
-                if sensitive_after_raw is MISSING_ATTRIBUTE:
-                    sensitive_after = None
-                else:
-                    sensitive_after = sensitive_after_raw
-                extractable_after_raw = attr_or_record(
-                    attrs,
-                    CKA_EXTRACTABLE,
-                    label="Default-strip unwrap result CKA_EXTRACTABLE readback",
-                    reason="not_operational",
-                    kind="policy",
-                    inherit_mechanism=False,
-                )
-                extractable_after: Any
-                if extractable_after_raw is MISSING_ATTRIBUTE:
-                    extractable_after = None
-                else:
-                    extractable_after = extractable_after_raw
-                # CKA_VALUE is the protected secret this oracle probes for exposure.
-                # It legitimately CAN be sensitive (that is the point of the
-                # protection this test probes), so a clean CKR_ATTRIBUTE_SENSITIVE
-                # refusal is conformant, not a deviation -- sensitive_is_conformant=True
-                # records it as such. A missing CKR (silent omission) or
-                # CKR_ATTRIBUTE_TYPE_INVALID is still a deviation via `reason`. The
-                # CKA_SENSITIVE/CKA_EXTRACTABLE attr_or_record() calls above read
-                # DIFFERENT attributes and record nothing about CKA_VALUE itself --
-                # recording it here, unconditionally, is what makes a refusal vs. a
-                # silent omission vs. a refusal-with-leaked-data visible per provider.
-                value_raw = attr_or_record(
-                    attrs,
-                    CKA_VALUE,
-                    label="Default-strip unwrap result CKA_VALUE readback",
-                    reason="honest_deviation",
-                    kind="metadata",
-                    inherit_mechanism=False,
-                    sensitive_is_conformant=True,
-                )
-                value: Any
-                if value_raw is MISSING_ATTRIBUTE:
-                    value = None
-                else:
-                    value = value_raw
-                policy_readback_malformed = (
-                    sensitive_after_raw is not MISSING_ATTRIBUTE
-                    and type(sensitive_after) is not bool
-                ) or (
-                    extractable_after_raw is not MISSING_ATTRIBUTE
-                    and type(extractable_after) is not bool
+                sensitive_after = attrs.get(CKA_SENSITIVE)
+                extractable_after = attrs.get(CKA_EXTRACTABLE)
+                value = attrs.get(CKA_VALUE)
+                policy_readback_valid = (
+                    type(sensitive_after) is bool and type(extractable_after) is bool
                 )
                 has_value = type(value) is bytes and bool(value)
-                # Deliberately NOT gated on the readback being complete: an observed
-                # protective attribute plus readable CKA_VALUE is a hard
-                # self-contradiction on its own, and a missing sibling must never
-                # mask it.
                 if has_value and (sensitive_after is True or extractable_after is False):
                     classify(
                         "self_contradiction",
@@ -363,34 +296,25 @@ class TestDefaultStripIsPermitted:
                         summary=(
                             "SECURITY: default-strip C_UnwrapKey result contains nonempty "
                             "CKA_VALUE while the same result key reports protective "
-                            "attributes (CKA_SENSITIVE="
-                            f"{_readback_repr(sensitive_after_raw)}, "
-                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)})"
+                            f"attributes (CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r})"
                         ),
                     )
-                if policy_readback_malformed:
+                if not policy_readback_valid:
                     classify(
                         "honest_deviation",
                         kind="metadata",
                         label="Default-strip result-key protection readback",
                         operation="C_GetAttributeValue",
                         summary=(
-                            "Default-strip result-key protection readback is malformed: "
-                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}, "
-                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}"
+                            "Default-strip result-key protection readback is missing or "
+                            "malformed: "
+                            f"CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r}"
                         ),
                     )
 
-                # The template-honouring oracle is evaluated only over the halves the
-                # module actually returned: an omitted attribute disables its own half
-                # (already recorded above) without suppressing a deviation observed on
-                # the other half, and without recording the same omission twice.
-                template_deviation_observed = (
-                    sensitive_after_raw is not MISSING_ATTRIBUTE and sensitive_after is not False
-                ) or (
-                    extractable_after_raw is not MISSING_ATTRIBUTE and extractable_after is not True
-                )
-                if template_deviation_observed:
+                if sensitive_after is not False or extractable_after is not True:
                     classify(
                         "honest_deviation",
                         kind="metadata",
@@ -399,8 +323,8 @@ class TestDefaultStripIsPermitted:
                         summary=(
                             "Default-strip C_UnwrapKey result did not honor the requested "
                             "output template (CKA_SENSITIVE=False, CKA_EXTRACTABLE=True): "
-                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}, "
-                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}"
+                            f"CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r}"
                         ),
                     )
 
@@ -414,10 +338,8 @@ class TestDefaultStripIsPermitted:
                         "wrapping key binds output attributes (tested separately); "
                         "CKA_WRAP_WITH_TRUSTED on the wrapped key and CKA_TRUSTED on the "
                         f"wrapping key govern trusted wrapping, but not output "
-                        "sensitivity. CKA_SENSITIVE after unwrap: "
-                        f"{_readback_repr(sensitive_after_raw)}, "
-                        "CKA_EXTRACTABLE after unwrap: "
-                        f"{_readback_repr(extractable_after_raw)}, "
+                        f"sensitivity. CKA_SENSITIVE after unwrap: {sensitive_after!r}, "
+                        f"CKA_EXTRACTABLE after unwrap: {extractable_after!r}, "
                         f"CKA_VALUE readable: {has_value!r}.",
                         ComplianceLevel.NOT_RECOMMENDED,
                         reference="PKCS#11 C_UnwrapKey template semantics; "
@@ -596,19 +518,7 @@ class TestUnwrapTemplateBinding:
 
             try:
                 unwrap_attrs = read_attributes(rs.raw, rs.sh, unwrapped_h, [CKA_SENSITIVE])
-                sensitive_after_raw = attr_or_record(
-                    unwrap_attrs,
-                    CKA_SENSITIVE,
-                    label="CKA_UNWRAP_TEMPLATE binding result CKA_SENSITIVE readback",
-                    reason="not_operational",
-                    kind="policy",
-                    inherit_mechanism=False,
-                )
-                sensitive_after: Any
-                if sensitive_after_raw is MISSING_ATTRIBUTE:
-                    sensitive_after = None
-                else:
-                    sensitive_after = sensitive_after_raw
+                sensitive_after = unwrap_attrs.get(CKA_SENSITIVE)
                 # Binding bypassed iff module delivered CKA_SENSITIVE=False despite
                 # CKA_UNWRAP_TEMPLATE constraining it to True.
                 label = (
@@ -627,27 +537,21 @@ class TestUnwrapTemplateBinding:
                         operation="C_GetAttributeValue",
                         summary=(
                             f"{template_readback_issue}; binding effect was not bypassed "
-                            f"(CKA_SENSITIVE={_readback_repr(sensitive_after_raw)})"
+                            f"(CKA_SENSITIVE={sensitive_after!r})"
                         ),
                     )
                 elif sensitive_after is True:
                     classify_policy_enforcement(claimed=True, violated=False, label=label)
-                elif sensitive_after_raw is MISSING_ATTRIBUTE:
-                    # The omission is already an emitted observation (the
-                    # attr_or_record() call above): one record per observation, so
-                    # nothing further is classified here.  The binding-effect oracle
-                    # is simply not evaluable, and nothing was bypassed.
-                    pass
                 else:
                     classify(
                         "honest_deviation",
                         kind="metadata",
-                        label="CKA_UNWRAP_TEMPLATE sensitivity result malformed",
+                        label="CKA_UNWRAP_TEMPLATE sensitivity result missing or malformed",
                         operation="C_GetAttributeValue",
                         summary=(
                             "Module accepted CKA_UNWRAP_TEMPLATE but returned "
-                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}; binding "
-                            "result cannot be verified"
+                            f"CKA_SENSITIVE={sensitive_after!r}; binding result cannot be "
+                            "verified"
                         ),
                     )
             finally:

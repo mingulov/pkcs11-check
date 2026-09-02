@@ -43,7 +43,6 @@ from pkcs11_check.raw.types_std import (
     CKR_BUFFER_TOO_SMALL,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     gen_rsa_keypair_or_xfail,
@@ -252,16 +251,7 @@ class TestKeyImportBufferSizes:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKA_VALUE:imported-AES-128",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if value is MISSING_ATTRIBUTE:
-                return
-            assert value == bytes(16)
+            assert attrs[CKA_VALUE] == bytes(16)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -276,16 +266,7 @@ class TestKeyImportBufferSizes:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKA_VALUE:imported-AES-192",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if value is MISSING_ATTRIBUTE:
-                return
-            assert value == bytes(24)
+            assert attrs[CKA_VALUE] == bytes(24)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -300,16 +281,7 @@ class TestKeyImportBufferSizes:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-            value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKA_VALUE:imported-AES-256",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if value is MISSING_ATTRIBUTE:
-                return
-            assert value == bytes(32)
+            assert attrs[CKA_VALUE] == bytes(32)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

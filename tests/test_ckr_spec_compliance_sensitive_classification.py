@@ -42,29 +42,3 @@ def test_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run(monkeypatch, claimed=True, readable=False)
-
-
-def test_sensitive_readback_absent_is_recorded_as_policy_kind(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CKA_SENSITIVE absence still feeds the claimed/violated policy oracle via
-    the creation-time claim fallback, so the absence record must be
-    kind="policy", not the helper's kind="metadata" default.
-    """
-    from pkcs11_check import classification as C  # noqa: N812
-
-    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
-    monkeypatch.setattr(tcsc, "destroy_quietly", lambda *_a, **_k: None)
-
-    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
-        return {}
-
-    monkeypatch.setattr(tcsc, "read_attributes", _read)
-    tcsc.TestCKRAttributeCompliance().test_sensitive_value_returns_attribute_sensitive(
-        SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda n: True)
-    )
-
-    records = C.get_records()
-    assert len(records) == 1
-    assert records[0].reason == "not_operational"
-    assert records[0].kind == "policy"

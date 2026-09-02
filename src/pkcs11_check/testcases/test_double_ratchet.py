@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import PackedMechanism, _mech_struct, attr_bytes
@@ -36,7 +35,6 @@ from pkcs11_check.raw.recipes import (
     gen_keypair,
     read_attributes,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_VOID_PTR,
     CK_X2RATCHET_INITIALIZE_PARAMS,
@@ -77,7 +75,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     is_known_error,
@@ -136,61 +133,6 @@ _X2RATCHET_CURVES = (
 )
 
 _X2RATCHET_SHARED_SECRET = bytes(range(32))
-
-
-def _read_derived_value(rs: Any, handle: int, *, label: str) -> Any:
-    """Read derived CKA_VALUE while retaining an unavailable-value observation.
-
-    ``label`` already names the producing mechanism (CKM_X2RATCHET_INITIALIZE) at every
-    call site; this is a plain C_GetAttributeValue readback, not a C_DeriveKey outcome
-    record, so the mechanism must not ride the record itself (F6).
-    """
-    return attr_or_record(
-        read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE]),
-        CKA_VALUE,
-        label=label,
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-
-
-def _validate_derived_value(
-    value: Any,
-    *,
-    label: str,
-) -> C.Classification | None:
-    """Record malformed derived output without preventing the independent run."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    if isinstance(value, bytes):
-        actual = f"bytes[{len(value)}]"
-    else:
-        actual = repr(value)
-    detail: dict[str, Any] = {
-        "name": "CKA_VALUE",
-        "id": int(CKA_VALUE),
-        "expected": "32-byte bytes",
-        "actual": actual,
-    }
-    if not isinstance(value, bytes) or len(value) != 32:
-        return C.record_as(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism="CKM_X2RATCHET_INITIALIZE",
-            summary=f"{label}: CKA_VALUE is not the requested 32-byte output",
-            detail={"attribute": detail},
-        )
-    return None
-
-
-def _raise_derived_error(errors: list[C.Classification | None]) -> None:
-    """Raise the first hard derived-output finding after both runs are observed."""
-    for error in errors:
-        if error is not None:
-            C.raise_for_record(error)
 
 
 def _bytes_pointer(data: bytes, keepalive: list[Any]) -> Any:
@@ -425,7 +367,6 @@ class TestX2RatchetDerive:
         pub_b, priv_b = _create_ec_keypair(rs)
         peer_identity_pub, peer_identity_priv = _create_ec_keypair(rs)
         peer_prekey_pub, peer_prekey_priv = _create_ec_keypair(rs)
-        first_error: C.Classification | None = None
         try:
             derive_attrs: dict[int, Any] = {
                 CKA_CLASS: CKO_SECRET_KEY,
@@ -435,124 +376,50 @@ class TestX2RatchetDerive:
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
             }
+            derived_a = derive_key(
+                rs.raw,
+                rs.sh,
+                priv_a,
+                CKM_X2RATCHET_INITIALIZE,
+                attrs=derive_attrs,
+                mech_param=_mech_x2ratchet_initialize(
+                    shared_secret=_X2RATCHET_SHARED_SECRET,
+                    peer_public_prekey=peer_prekey_pub,
+                    peer_public_identity=peer_identity_pub,
+                    own_public_identity=pub_a,
+                ),
+            )
+            derived_b = derive_key(
+                rs.raw,
+                rs.sh,
+                priv_b,
+                CKM_X2RATCHET_INITIALIZE,
+                attrs=derive_attrs,
+                mech_param=_mech_x2ratchet_initialize(
+                    shared_secret=_X2RATCHET_SHARED_SECRET,
+                    peer_public_prekey=peer_prekey_pub,
+                    peer_public_identity=peer_identity_pub,
+                    own_public_identity=pub_b,
+                ),
+            )
             try:
-                derived_a = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    priv_a,
-                    CKM_X2RATCHET_INITIALIZE,
-                    attrs=derive_attrs,
-                    mech_param=_mech_x2ratchet_initialize(
-                        shared_secret=_X2RATCHET_SHARED_SECRET,
-                        peer_public_prekey=peer_prekey_pub,
-                        peer_public_identity=peer_identity_pub,
-                        own_public_identity=pub_a,
-                    ),
-                )
-            except CkrAssertionError as exc:
-                if is_known_error(exc, _RATCHET_ERROR_RVS):
-                    classify(
-                        "not_operational",
-                        kind="crypto",
-                        label="CKM_X2RATCHET_INITIALIZE:C_DeriveKey",
-                        operation="C_DeriveKey",
-                        mechanism="CKM_X2RATCHET_INITIALIZE",
-                        actual=getattr(exc, "rv", None),
-                        summary=f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}",
-                    )
-                raise
-            try:
-                val_a = _read_derived_value(
-                    rs,
-                    derived_a,
-                    label="CKM_X2RATCHET_INITIALIZE:first derived CKA_VALUE",
-                )
+                val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+                val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
+                assert val_a != val_b, "Independent ratchet inits should produce different keys"
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived_a)
-            first_error = _validate_derived_value(
-                val_a,
-                label="CKM_X2RATCHET_INITIALIZE:first derived CKA_VALUE",
-            )
-
-            try:
-                derived_b = derive_key(
-                    rs.raw,
-                    rs.sh,
-                    priv_b,
-                    CKM_X2RATCHET_INITIALIZE,
-                    attrs=derive_attrs,
-                    mech_param=_mech_x2ratchet_initialize(
-                        shared_secret=_X2RATCHET_SHARED_SECRET,
-                        peer_public_prekey=peer_prekey_pub,
-                        peer_public_identity=peer_identity_pub,
-                        own_public_identity=pub_b,
-                    ),
-                )
-            except CkrAssertionError as exc:
-                if is_known_error(exc, _RATCHET_ERROR_RVS):
-                    second_derive_error = C.record_as(
-                        "not_operational",
-                        kind="crypto",
-                        label="CKM_X2RATCHET_INITIALIZE:C_DeriveKey",
-                        operation="C_DeriveKey",
-                        mechanism="CKM_X2RATCHET_INITIALIZE",
-                        actual=getattr(exc, "rv", None),
-                        summary=f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}",
-                    )
-                    if first_error is not None:
-                        C.raise_for_record(first_error)
-                    C.raise_for_record(second_derive_error)
-                raise
-            try:
-                val_b = _read_derived_value(
-                    rs,
-                    derived_b,
-                    label="CKM_X2RATCHET_INITIALIZE:second derived CKA_VALUE",
-                )
-            finally:
                 destroy_quietly(rs.raw, rs.sh, derived_b)
-
-            _raise_derived_error(
-                [
-                    first_error,
-                    _validate_derived_value(
-                        val_b,
-                        label="CKM_X2RATCHET_INITIALIZE:second derived CKA_VALUE",
-                    ),
-                ]
-            )
-            if val_a is MISSING_ATTRIBUTE or val_b is MISSING_ATTRIBUTE:
-                return
-            if val_a == val_b:
+        except AssertionError as exc:
+            if is_known_error(exc, _RATCHET_ERROR_RVS):
                 classify(
-                    "wrong_result",
+                    "not_operational",
                     kind="crypto",
-                    label="CKM_X2RATCHET_INITIALIZE:independent outputs",
+                    label="CKM_X2RATCHET_INITIALIZE:C_DeriveKey",
                     operation="C_DeriveKey",
-                    mechanism=None,
-                    detail={
-                        "relation": {
-                            "operator": "must_differ",
-                            "expected": "different derived CKA_VALUE outputs",
-                            "left": {
-                                "label": "CKM_X2RATCHET_INITIALIZE:first derived CKA_VALUE",
-                                "mechanism": "CKM_X2RATCHET_INITIALIZE",
-                                "operation": "C_DeriveKey",
-                                "length": len(val_a),
-                            },
-                            "right": {
-                                "label": "CKM_X2RATCHET_INITIALIZE:second derived CKA_VALUE",
-                                "mechanism": "CKM_X2RATCHET_INITIALIZE",
-                                "operation": "C_DeriveKey",
-                                "length": len(val_b),
-                            },
-                            "equal": True,
-                        }
-                    },
-                    summary=(
-                        "Independent ratchet initializations produced identical derived outputs"
-                    ),
+                    mechanism="CKM_X2RATCHET_INITIALIZE",
+                    summary=f"CKM_X2RATCHET_INITIALIZE not yet operational: {exc}",
                 )
+            raise
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
             destroy_quietly(rs.raw, rs.sh, priv_a)

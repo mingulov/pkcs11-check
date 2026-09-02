@@ -36,13 +36,9 @@ from typing import Any
 
 from pkcs11_check.core.file_runner import (
     extract_coverage_from_jsonl,
-    extract_quality_report_evidence_from_jsonl,
     extract_quality_report_records_from_jsonl,
     postprocess_jsonl_to_unified,
     write_quality_json_report,
-)
-from pkcs11_check.core.report_log import (
-    iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import user_property_names as _user_property_names
 from pkcs11_check.core.run_metrics import (
@@ -118,14 +114,18 @@ def _rv_trace_props(record: dict[str, Any]) -> list[list[Any]]:
 
 
 def _stream_records(jsonl_path: Path) -> Iterator[dict[str, Any]]:
-    """Yield parsed dict records from a JSONL file line-by-line (no load-all).
-
-    Delegates to the shared binary-decode iterator (report_log.iter_report_log_records)
-    rather than a text-mode `for line in fh` loop, so a single undecodable byte anywhere
-    in the file only drops that one line instead of raising UnicodeDecodeError and losing
-    every remaining record.
-    """
-    yield from _iter_report_log_records(jsonl_path)
+    """Yield parsed dict records from a JSONL file line-by-line (no load-all)."""
+    with jsonl_path.open(encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
 
 
 def _apply_trace_promotion(
@@ -569,21 +569,6 @@ def merge_shard_dirs(
 
     report_paths = [d / "report.jsonl" for d in shard_dirs]
     merged_report = output_dir / "report.jsonl"
-    # Classification observability is read from these per-shard raw sources -- each one
-    # declared separately (not the single concatenated `merged_report`) for two reasons:
-    # (1) a shard whose report.jsonl is missing is then a genuine missing declared source
-    # (-> "partial"/lower-bound), which reading only the concatenated file could never
-    # detect, since `_concat_jsonl` silently skips an absent shard file; (2) each path gets
-    # its own fresh marker-provenance scope (per the shared contract's "reset marker
-    # provenance at shard/session boundaries"), instead of one shard's trailing
-    # IsolatedUnitReport marker leaking into the next shard's leading records. These files
-    # are also untouched by the repair below -- `_promote_rv_traces_to_outcome_reports`
-    # only ever rewrites `merged_report` -- so this read is authoritative and pre-repair by
-    # construction; it must run independent of (and is safe to run before) that repair,
-    # which silently drops any malformed line on rewrite and would otherwise make a
-    # repaired, no-longer-authoritative stream look "complete". Pooled quality always
-    # regenerates from these raw sources -- never from summed shard quality.json counts.
-    quality_report_evidence = extract_quality_report_evidence_from_jsonl(report_paths)
     _concat_jsonl(report_paths, merged_report)
     _promote_rv_traces_to_outcome_reports(merged_report)
 
@@ -622,6 +607,5 @@ def merge_shard_dirs(
         merged,
         coverage=coverage,
         report_log_records=records,
-        quality_report_evidence=quality_report_evidence,
     )
     return merged

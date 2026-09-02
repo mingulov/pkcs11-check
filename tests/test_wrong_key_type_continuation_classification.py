@@ -16,7 +16,6 @@ kryoptic/NSS/opencryptoki reject at init (pass).
 
 from __future__ import annotations
 
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -58,7 +57,6 @@ def test_ok_marker_passes() -> None:
     )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_crash_is_fail() -> None:
     with pytest.raises(pytest.fail.Exception, match="crashed with signal 11"):
         assert_ckr_subprocess_ok(-11, "", "segfault", context="wrong-key continuation")

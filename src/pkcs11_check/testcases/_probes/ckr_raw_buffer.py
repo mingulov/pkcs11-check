@@ -43,10 +43,9 @@ This CLOSES the legacy leak that formatted the PIN literal into the generated ch
 (Invariant I3).  Session teardown + rv-trace are handled by ``probe_main`` atexit, matching the
 legacy ``cleanup()`` / rv-trace setup.
 
-Output protocol (consumed structurally by the parent classifier):
+Output protocol (byte-identical to the legacy child, for the parent classifier / guard asserts):
   ``CKR:0x{rv:08x}``       -- return value of the tested output call
-  ``INITIAL_COUNT:`` / ``RETURNED_COUNT:`` / ``GUARD_OVERWRITTEN:`` -- measured sizing effects
-  ``RETRY_CKR:`` / ``RETRY_LENGTH:`` / ``RETRY_OUTPUT_CORRECT:`` -- retry effects when applicable
+  ``LEN:`` / ``FOUND:`` / ``NEEDED:`` / ``OVERWRITTEN:`` / ``RETRY_*``  -- guard-preservation state
   ``SETUP_XFAIL:...``      -- a setup step (Init/keygen/size-query) cleanly failed before the probe
   ``OK``                   -- probe reached its expected point
 
@@ -64,12 +63,9 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
-import json
 from collections.abc import Callable
 from ctypes import byref, cast
 from typing import Any
-
-from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -84,7 +80,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import read_attributes
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_ATTRIBUTE_PTR,
@@ -129,19 +125,11 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKO_DATA,
     CKO_PUBLIC_KEY,
-    CKR_ATTRIBUTE_SENSITIVE,
-    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_STATE_UNSAVEABLE,
-)
-from pkcs11_check.testcases._ec_export import (
-    InvalidProviderECPointError,
-    ProviderECPointEncodingError,
-    _alternate_curve_for_point,
-    decode_provider_ec_point,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
@@ -157,132 +145,14 @@ def _der_octet_string(value: bytes) -> bytes:
     return bytes([0x04, 0x80 | len(length)]) + length + value
 
 
-def _ec_point_encoding_provenance(value: bytes) -> str:
-    if len(value) == 65 and value.startswith(b"\x04"):
-        return "raw_uncompressed"
-    if value.startswith(b"\x04") and _alternate_curve_for_point(value, ec.SECP256R1()) is not None:
-        return "raw_uncompressed"
-    try:
-        inner = decode_ec_point(value)
-    except ValueError:
-        return "unrecognized"
-    if inner.startswith((b"\x02", b"\x03")):
-        return "der_compressed"
-    if inner.startswith(b"\x04"):
-        return "der_uncompressed"
-    return "unrecognized"
-
-
-def _valid_raw_p256_compressed_point(value: bytes) -> bool:
-    if len(value) != 33 or value[0] not in (0x02, 0x03):
-        return False
-    try:
-        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), value)
-    except ValueError:
-        return False
-    return True
-
-
-def _alternate_curve_after_expected_rejection(value: bytes) -> ec.EllipticCurve | None:
-    # Raw compressed SEC1 is not one of the accepted import encodings.  It must
-    # nevertheless be checked against P-256 before considering another curve;
-    # otherwise a P-256 point can be falsely promoted through secp256k1.
-    if _valid_raw_p256_compressed_point(value):
-        return None
-    if value.startswith((b"\x02", b"\x03", b"\x04")):
-        return _alternate_curve_for_point(value, ec.SECP256R1())
-    return None
-
-
 def _compress_p256_ec_point(ec_point_der: bytes) -> bytes:
-    value = bytes(ec_point_der)
-    try:
-        raw_point = decode_provider_ec_point(value, ec.SECP256R1(), label="EC raw buffer probe")
-    except ProviderECPointEncodingError:
-        alternate_curve = _alternate_curve_after_expected_rejection(value)
-        if alternate_curve is not None:
-            raise InvalidProviderECPointError(
-                "EC raw buffer probe: CKA_EC_POINT validates on "
-                f"{alternate_curve.name}, not expected secp256r1"
-            ) from None
-        raise
-    if len(raw_point) == 33 and raw_point[0] in (0x02, 0x03):
-        return _der_octet_string(raw_point)
+    raw_point = decode_ec_point(bytes(ec_point_der))
     if len(raw_point) != 65 or raw_point[0] != 0x04:
         raise ValueError(f"expected uncompressed P-256 point, got {len(raw_point)} bytes")
     x = raw_point[1:33]
     y = raw_point[33:65]
     compressed = bytes([0x02 | (y[-1] & 1)]) + x
     return _der_octet_string(compressed)
-
-
-_EC_PROBE = "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
-_EC_ATTRS = (
-    (CKA_EC_POINT, "CKA_EC_POINT"),
-    (CKA_EC_PARAMS, "CKA_EC_PARAMS"),
-)
-
-
-def _emit_ec_setup(event: str, **fields: object) -> None:
-    payload = {"schema": 1, "probe": _EC_PROBE, "event": event, **fields}
-    print(f"EC_SETUP:{json.dumps(payload, separators=(',', ':'))}", flush=True)
-
-
-def _emit_ec_cleanup(role: str, rv: int) -> None:
-    payload = {
-        "schema": 1,
-        "probe": _EC_PROBE,
-        "object": role,
-        "operation": "C_DestroyObject",
-        "rv": int(rv),
-    }
-    print(f"EC_CLEANUP:{json.dumps(payload, separators=(',', ':'))}", flush=True)
-
-
-def _emit_ec_done(status: str) -> None:
-    _emit_ec_setup("done", status=status)
-
-
-def _bounded_diagnostic(exc: BaseException) -> str:
-    return str(exc)[:256] or type(exc).__name__[:64]
-
-
-def _read_and_observe_ec_attributes(
-    raw: Any, sh: int, handle: int
-) -> tuple[bytes | None, bytes | None]:
-    attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
-    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
-
-    point_value = observe_ec_attribute(
-        attrs,  # type: ignore[arg-type]
-        CKA_EC_POINT,
-        context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
-    )
-    params_value = observe_ec_attribute(
-        attrs,  # type: ignore[arg-type]
-        CKA_EC_PARAMS,
-        context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
-    )
-    return point_value, params_value
-
-
-def _destroy_ec_object(raw: Any, sh: int | None, handle: CK_OBJECT_HANDLE, role: str) -> None:
-    if not handle.value:
-        return
-    try:
-        rv = raw.C_DestroyObject(sh, handle.value)
-        if rv != CKR_OK:
-            _emit_ec_cleanup(role, rv)
-    except (OSError, MemoryError, SystemError):
-        raise
-    except CkrAssertionError as exc:
-        _emit_ec_cleanup(role, exc.rv)
-    except Exception as exc:
-        print(
-            f"HARNESS_ERROR:EC cleanup role={role} phase=C_DestroyObject "
-            f"type={type(exc).__name__[:64]}",
-            flush=True,
-        )
 
 
 def _digest_buffer_too_small(ctx: ProbeContext) -> None:
@@ -301,7 +171,6 @@ def _digest_buffer_too_small(ctx: ProbeContext) -> None:
         data = (ctypes.c_ubyte * 16)(*([0x42] * 16))
         buf = (ctypes.c_ubyte * buf_size)(*([guard] * buf_size))
         out_len = ctypes.c_ulong(declared)
-        print(f"INITIAL_COUNT:{len(hashlib.sha256(bytes([0x42] * 16)).digest())}")
         rv = raw.C_Digest(sh, data, 16, buf, ctypes.byref(out_len))
         print(f"CKR:0x{rv:08x}")
         print(f"LEN:{out_len.value}")
@@ -312,9 +181,6 @@ def _digest_buffer_too_small(ctx: ProbeContext) -> None:
             if buf[i] != guard:
                 overwritten += 1
         print(f"OVERWRITTEN:{overwritten}")
-        print(f"GUARD_OVERWRITTEN:{overwritten}")
-        print(f"RETURNED_COUNT:{out_len.value}")
-        print("OUTPUT_CORRECT:1")
         if rv == CKR_BUFFER_TOO_SMALL:
             retry_len = CK_ULONG(32)
             retry_buf = (ctypes.c_ubyte * retry_len.value)()
@@ -324,8 +190,13 @@ def _digest_buffer_too_small(ctx: ProbeContext) -> None:
             print(f"RETRY_CKR:0x{retry_rv:08x}")
             print(f"RETRY_LEN:{retry_len.value}")
             print(f"RETRY_MATCH:{int(retry_value == expected)}")
-            print(f"RETRY_LENGTH:{retry_len.value}")
-            print(f"RETRY_OUTPUT_CORRECT:{int(retry_value == expected)}")
+            assert retry_rv == CKR_OK, (
+                f"C_Digest retry after CKR_BUFFER_TOO_SMALL failed: {ckr_name(retry_rv)}"
+            )
+            assert retry_len.value == len(expected), (
+                f"C_Digest retry reported length {retry_len.value}, expected {len(expected)}"
+            )
+            assert retry_value == expected, "C_Digest retry returned wrong digest"
         print("OK")
 
 
@@ -353,29 +224,11 @@ def _encrypt_buffer_too_small(ctx: ProbeContext) -> None:
         else:
             # Encrypt with 1-byte output buffer
             data = (ctypes.c_ubyte * 16)(*([0] * 16))
-
-            class EncryptProbe(ctypes.Structure):
-                _fields_ = [
-                    ("data", ctypes.c_ubyte * 1),
-                    ("guard", ctypes.c_ubyte * 32),
-                ]
-
-            probe = EncryptProbe()
-            for index in range(len(probe.guard)):
-                probe.guard[index] = 0xB1
+            out = (ctypes.c_ubyte * 1)()
             out_len = ctypes.c_ulong(1)
-            rv = raw.C_Encrypt(
-                sh,
-                data,
-                16,
-                cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
-                ctypes.byref(out_len),
-            )
+            rv = raw.C_Encrypt(sh, data, 16, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            print("INITIAL_COUNT:16")
-            print(f"RETURNED_COUNT:{out_len.value}")
-            overwritten = sum(1 for byte in probe.guard if byte != 0xB1)
-            print(f"GUARD_OVERWRITTEN:{overwritten}")
+            assert rv == CKR_BUFFER_TOO_SMALL, f"Expected BUFFER_TOO_SMALL, got 0x{rv:08x}"
             print("OK")
 
 
@@ -415,36 +268,22 @@ def _sign_buffer_too_small(ctx: ProbeContext) -> None:
             print(f"SETUP_XFAIL:C_SignInit(CKM_SHA256_RSA_PKCS) failed: {ckr_name(rv)}")
         else:
             data = (ctypes.c_ubyte * 32)(*([0x42] * 32))
-
-            class SignProbe(ctypes.Structure):
-                _fields_ = [
-                    ("data", ctypes.c_ubyte * 1),
-                    ("guard", ctypes.c_ubyte * 32),
-                ]
-
-            probe = SignProbe()
-            for index in range(len(probe.guard)):
-                probe.guard[index] = 0xB2
+            out = (ctypes.c_ubyte * 1)()  # Too small for RSA-2048 sig (256 bytes)
             out_len = ctypes.c_ulong(1)
-            rv = raw.C_Sign(
-                sh,
-                data,
-                32,
-                cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
-                ctypes.byref(out_len),
-            )
+            rv = raw.C_Sign(sh, data, 32, out, ctypes.byref(out_len))
             print(f"CKR:0x{rv:08x}")
-            print("INITIAL_COUNT:256")
-            print(f"RETURNED_COUNT:{out_len.value}")
-            overwritten = sum(1 for byte in probe.guard if byte != 0xB2)
-            print(f"GUARD_OVERWRITTEN:{overwritten}")
+            assert rv == CKR_BUFFER_TOO_SMALL, f"Expected BUFFER_TOO_SMALL, got 0x{rv:08x}"
             retry_len = CK_ULONG(256)
             retry_buf = (ctypes.c_ubyte * retry_len.value)()
             retry_rv = raw.C_Sign(sh, data, 32, retry_buf, ctypes.byref(retry_len))
             print(f"RETRY_CKR:0x{retry_rv:08x}")
             print(f"RETRY_LEN:{retry_len.value}")
-            print(f"RETRY_LENGTH:{retry_len.value}")
-            print(f"RETRY_OUTPUT_CORRECT:{int(retry_rv == CKR_OK and retry_len.value == 256)}")
+            assert retry_rv == CKR_OK, (
+                f"C_Sign retry after CKR_BUFFER_TOO_SMALL failed: {ckr_name(retry_rv)}"
+            )
+            assert retry_len.value == 256, (
+                f"C_Sign retry reported length {retry_len.value}, expected 256"
+            )
             print("OK")
 
 
@@ -481,17 +320,16 @@ def _get_slot_list_guard(ctx: ProbeContext) -> None:
         print(f"LEN:{out_count.value}")
         overwritten = sum(1 for byte in probe.guard if byte != guard)
         print(f"OVERWRITTEN:{overwritten}")
-        print(f"INITIAL_COUNT:{needed.value}")
-        print(f"RETURNED_COUNT:{out_count.value}")
-        print(f"GUARD_OVERWRITTEN:{overwritten}")
-        if rv == CKR_BUFFER_TOO_SMALL:
-            retry_count = CK_ULONG(needed.value)
-            retry_items = (CK_SLOT_ID * needed.value)()
-            retry_rv = raw.C_GetSlotList(0, retry_items, byref(retry_count))
-            print(f"RETRY_CKR:0x{retry_rv:08x}")
-            print(f"RETRY_LENGTH:{retry_count.value}")
-            retry_correct = retry_rv == CKR_OK and retry_count.value == needed.value
-            print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+        assert overwritten == 0, (
+            "C_GetSlotList wrote past the declared one-entry output buffer: "
+            f"{overwritten} guard byte(s) changed"
+        )
+        assert rv == CKR_BUFFER_TOO_SMALL, (
+            f"Expected CKR_BUFFER_TOO_SMALL for one-entry slot buffer, got {ckr_name(rv)}"
+        )
+        assert out_count.value == needed.value, (
+            f"C_GetSlotList reported required count {out_count.value}, expected {needed.value}"
+        )
         print("OK")
 
 
@@ -529,17 +367,16 @@ def _get_mechanism_list_guard(ctx: ProbeContext) -> None:
         print(f"LEN:{out_count.value}")
         overwritten = sum(1 for byte in probe.guard if byte != guard)
         print(f"OVERWRITTEN:{overwritten}")
-        print(f"INITIAL_COUNT:{needed.value}")
-        print(f"RETURNED_COUNT:{out_count.value}")
-        print(f"GUARD_OVERWRITTEN:{overwritten}")
-        if rv == CKR_BUFFER_TOO_SMALL:
-            retry_count = CK_ULONG(needed.value)
-            retry_items = (CK_MECHANISM_TYPE * needed.value)()
-            retry_rv = raw.C_GetMechanismList(slot_id, retry_items, byref(retry_count))
-            print(f"RETRY_CKR:0x{retry_rv:08x}")
-            print(f"RETRY_LENGTH:{retry_count.value}")
-            retry_correct = retry_rv == CKR_OK and retry_count.value == needed.value
-            print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+        assert overwritten == 0, (
+            "C_GetMechanismList wrote past the declared one-entry output buffer: "
+            f"{overwritten} guard byte(s) changed"
+        )
+        assert rv == CKR_BUFFER_TOO_SMALL, (
+            f"Expected CKR_BUFFER_TOO_SMALL for one-entry mechanism buffer, got {ckr_name(rv)}"
+        )
+        assert out_count.value == needed.value, (
+            f"C_GetMechanismList reported required count {out_count.value}, expected {needed.value}"
+        )
         print("OK")
 
 
@@ -577,19 +414,17 @@ def _get_interface_list_guard(ctx: ProbeContext) -> None:
             print(f"LEN:{out_count.value}")
             overwritten = sum(1 for byte in probe.guard if byte != guard)
             print(f"OVERWRITTEN:{overwritten}")
-            print(f"INITIAL_COUNT:{needed.value}")
-            print(f"RETURNED_COUNT:{out_count.value}")
-            print(f"GUARD_OVERWRITTEN:{overwritten}")
-            if rv == CKR_BUFFER_TOO_SMALL:
-                retry_count = CK_ULONG(needed.value)
-                retry_items = (CK_INTERFACE * needed.value)()
-                retry_rv = raw.C_GetInterfaceList(
-                    cast(retry_items, CK_INTERFACE_PTR), byref(retry_count)
-                )
-                print(f"RETRY_CKR:0x{retry_rv:08x}")
-                print(f"RETRY_LENGTH:{retry_count.value}")
-                retry_correct = retry_rv == CKR_OK and retry_count.value == needed.value
-                print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+            assert overwritten == 0, (
+                "C_GetInterfaceList wrote past the declared one-entry output buffer: "
+                f"{overwritten} guard byte(s) changed"
+            )
+            assert rv == CKR_BUFFER_TOO_SMALL, (
+                f"Expected CKR_BUFFER_TOO_SMALL for one-entry interface buffer, got {ckr_name(rv)}"
+            )
+            assert out_count.value == needed.value, (
+                f"C_GetInterfaceList reported required count {out_count.value}, "
+                f"expected {needed.value}"
+            )
             print("OK")
 
 
@@ -657,8 +492,14 @@ def _find_objects_max_count_one_guard(ctx: ProbeContext) -> None:
                 print(f"FOUND:{found.value}")
                 overwritten = sum(1 for byte in probe.guard if byte != guard)
                 print(f"OVERWRITTEN:{overwritten}")
-                print(f"RETURNED_COUNT:{found.value}")
-                print(f"GUARD_OVERWRITTEN:{overwritten}")
+                assert rv == CKR_OK, f"Expected CKR_OK from C_FindObjects, got {ckr_name(rv)}"
+                assert found.value <= 1, (
+                    f"C_FindObjects reported {found.value} handles for ulMaxObjectCount=1"
+                )
+                assert overwritten == 0, (
+                    "C_FindObjects wrote past the declared one-handle output buffer: "
+                    f"{overwritten} guard byte(s) changed"
+                )
                 print("OK")
     finally:
         if search_active:
@@ -728,9 +569,18 @@ def _get_attribute_value_guard(ctx: ProbeContext) -> None:
                 print(f"LEN:{attr.ulValueLen}")
                 overwritten = sum(1 for byte in probe.guard if byte != guard)
                 print(f"OVERWRITTEN:{overwritten}")
-                print(f"RETURNED_COUNT:{attr.ulValueLen}")
-                print(f"GUARD_OVERWRITTEN:{overwritten}")
-                print(f"SIZE_SENTINEL_CORRECT:{int(attr.ulValueLen == CK_UNAVAILABLE_INFORMATION)}")
+                assert rv == CKR_BUFFER_TOO_SMALL, (
+                    "Expected CKR_BUFFER_TOO_SMALL for one-byte CKA_LABEL buffer, "
+                    f"got {ckr_name(rv)}"
+                )
+                assert attr.ulValueLen == CK_UNAVAILABLE_INFORMATION, (
+                    "C_GetAttributeValue must set an undersized attribute ulValueLen "
+                    f"to CK_UNAVAILABLE_INFORMATION, got {attr.ulValueLen}"
+                )
+                assert overwritten == 0, (
+                    "C_GetAttributeValue wrote past the declared one-byte attribute buffer: "
+                    f"{overwritten} guard byte(s) changed"
+                )
 
                 retry_len = query_attr.ulValueLen
                 retry_buf = (ctypes.c_ubyte * retry_len)()
@@ -743,13 +593,15 @@ def _get_attribute_value_guard(ctx: ProbeContext) -> None:
                 print(f"RETRY_LEN:{retry_attr.ulValueLen}")
                 retry_value = bytes(retry_buf[: retry_attr.ulValueLen])
                 print(f"RETRY_MATCH:{int(retry_value == label)}")
-                print(f"RETRY_LENGTH:{retry_attr.ulValueLen}")
-                retry_correct = (
-                    retry_rv == CKR_OK
-                    and retry_attr.ulValueLen == len(label)
-                    and retry_value == label
+                assert retry_rv == CKR_OK, (
+                    "C_GetAttributeValue retry with the size-query length failed: "
+                    f"{ckr_name(retry_rv)}"
                 )
-                print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+                assert retry_attr.ulValueLen == len(label), (
+                    f"C_GetAttributeValue retry reported length {retry_attr.ulValueLen}, "
+                    f"expected {len(label)}"
+                )
+                assert retry_value == label, "C_GetAttributeValue retry returned wrong CKA_LABEL"
                 print("OK")
     finally:
         if obj.value:
@@ -830,9 +682,19 @@ def _aes_cbc_pad_decrypt_buffer_too_small(ctx: ProbeContext) -> None:
                         print(f"LEN:{out_len.value}")
                         overwritten = sum(1 for byte in probe.guard if byte != guard)
                         print(f"OVERWRITTEN:{overwritten}")
-                        print(f"GUARD_OVERWRITTEN:{overwritten}")
-                        print(f"RETURNED_COUNT:{out_len.value}")
-                        print(f"INITIAL_COUNT:{len(plaintext)}")
+                        assert overwritten == 0, (
+                            "C_Decrypt wrote past the declared one-byte output buffer: "
+                            f"{overwritten} guard byte(s) changed"
+                        )
+                        assert rv == CKR_BUFFER_TOO_SMALL, (
+                            "Expected CKR_BUFFER_TOO_SMALL for one-byte AES-CBC-PAD "
+                            f"decrypt buffer, got {ckr_name(rv)}"
+                        )
+                        assert len(plaintext) <= out_len.value <= enc_len.value, (
+                            f"C_Decrypt reported retry length {out_len.value}; expected "
+                            f"between plaintext length {len(plaintext)} and ciphertext "
+                            f"length {enc_len.value}"
+                        )
 
                         retry_buf = (ctypes.c_ubyte * out_len.value)()
                         retry_len = CK_ULONG(out_len.value)
@@ -847,13 +709,15 @@ def _aes_cbc_pad_decrypt_buffer_too_small(ctx: ProbeContext) -> None:
                         print(f"RETRY_LEN:{retry_len.value}")
                         retry_value = bytes(retry_buf[: retry_len.value])
                         print(f"RETRY_MATCH:{int(retry_value == plaintext)}")
-                        print(f"RETRY_LENGTH:{retry_len.value}")
-                        retry_correct = (
-                            retry_rv == CKR_OK
-                            and retry_len.value == len(plaintext)
-                            and retry_value == plaintext
+                        assert retry_rv == CKR_OK, (
+                            "C_Decrypt retry after CKR_BUFFER_TOO_SMALL failed: "
+                            f"{ckr_name(retry_rv)}"
                         )
-                        print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+                        assert retry_len.value == len(plaintext), (
+                            f"C_Decrypt retry reported length {retry_len.value}, "
+                            f"expected {len(plaintext)}"
+                        )
+                        assert retry_value == plaintext, "C_Decrypt retry returned wrong plaintext"
                         print("OK")
     finally:
         if key.value:
@@ -936,11 +800,15 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
                         print(f"LEN:{update_len.value}")
                         overwritten = sum(1 for byte in probe.guard if byte != guard)
                         print(f"OVERWRITTEN:{overwritten}")
-                        print(f"GUARD_OVERWRITTEN:{overwritten}")
-                        print(f"RETURNED_COUNT:{update_len.value}")
-                        print(f"INITIAL_COUNT:{len(plaintext)}")
+                        assert overwritten == 0, (
+                            "C_DecryptUpdate wrote past the declared one-byte output buffer: "
+                            f"{overwritten} guard byte(s) changed"
+                        )
                         if rv == CKR_OK:
-                            print(f"OUTPUT_LENGTH_WITHIN_DECLARED:{int(update_len.value <= 1)}")
+                            assert update_len.value <= 1, (
+                                "C_DecryptUpdate returned CKR_OK but reported more bytes than "
+                                f"the declared one-byte output buffer: {update_len.value}"
+                            )
                             update_value = bytes(probe.data[: update_len.value])
                             final_buf = (ctypes.c_ubyte * 96)()
                             final_len = CK_ULONG(96)
@@ -953,7 +821,14 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
                             print(f"FINAL_CKR:0x{final_rv:08x}")
                             print(f"FINAL_LEN:{final_len.value}")
                             print(f"MATCH:{int(combined == plaintext)}")
-                            print(f"FINAL_OK:{int(final_rv == CKR_OK)}")
+                            assert final_rv == CKR_OK, (
+                                "C_DecryptFinal after CKR_OK C_DecryptUpdate failed: "
+                                f"{ckr_name(final_rv)}"
+                            )
+                            assert combined == plaintext, (
+                                "C_DecryptUpdate accepted a one-byte output buffer but "
+                                "combined plaintext was wrong"
+                            )
                         elif rv == CKR_BUFFER_TOO_SMALL:
                             retry_usable = 1 < update_len.value <= enc_len.value
                             print(f"RETRY_USABLE:{int(retry_usable)}")
@@ -979,16 +854,20 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
                                 )
                                 print(f"RETRY_CKR:0x{retry_rv:08x}")
                                 print(f"RETRY_LEN:{retry_len.value}")
-                                print(f"RETRY_LENGTH:{retry_len.value}")
                                 print(f"FINAL_CKR:0x{final_rv:08x}")
                                 print(f"FINAL_LEN:{final_len.value}")
                                 print(f"RETRY_MATCH:{int(combined == plaintext)}")
-                                retry_correct = (
-                                    retry_rv == CKR_OK
-                                    and final_rv == CKR_OK
-                                    and combined == plaintext
+                                assert retry_rv == CKR_OK, (
+                                    "C_DecryptUpdate retry after CKR_BUFFER_TOO_SMALL failed: "
+                                    f"{ckr_name(retry_rv)}"
                                 )
-                                print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+                                assert final_rv == CKR_OK, (
+                                    "C_DecryptFinal after C_DecryptUpdate retry failed: "
+                                    f"{ckr_name(final_rv)}"
+                                )
+                                assert combined == plaintext, (
+                                    "C_DecryptUpdate retry returned wrong plaintext"
+                                )
                         print("OK")
     finally:
         if key.value:
@@ -1024,9 +903,9 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
             def decrypt_ciphertext(ciphertext: bytes) -> bytes:
                 dec_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
                 dec_rv = raw.C_DecryptInit(sh, dec_mech.byref(), key.value)
-                if dec_rv != CKR_OK:
-                    print(f"VERIFY_CKR:0x{dec_rv:08x}")
-                    return b""
+                assert dec_rv == CKR_OK, (
+                    f"C_DecryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(dec_rv)}"
+                )
                 ct_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
                 plain_buf = (ctypes.c_ubyte * 64)()
                 plain_len = CK_ULONG(64)
@@ -1037,7 +916,9 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                     cast(plain_buf, ctypes.POINTER(ctypes.c_ubyte)),
                     byref(plain_len),
                 )
-                print(f"VERIFY_CKR:0x{dec_rv:08x}")
+                assert dec_rv == CKR_OK, (
+                    f"C_Decrypt(CKM_AES_CBC_PAD) failed for produced ciphertext: {ckr_name(dec_rv)}"
+                )
                 return bytes(plain_buf[: plain_len.value])
 
             enc_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
@@ -1081,17 +962,25 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                     print(f"LEN:{final_len.value}")
                     overwritten = sum(1 for byte in probe.guard if byte != guard)
                     print(f"OVERWRITTEN:{overwritten}")
-                    print(f"GUARD_OVERWRITTEN:{overwritten}")
-                    print(f"RETURNED_COUNT:{final_len.value}")
-                    print("INITIAL_COUNT:16")
+                    assert overwritten == 0, (
+                        "C_EncryptFinal wrote past the declared one-byte output buffer: "
+                        f"{overwritten} guard byte(s) changed"
+                    )
 
                     update_value = bytes(update_buf[: update_len.value])
                     if rv == CKR_OK:
-                        print(f"OUTPUT_LENGTH_WITHIN_DECLARED:{int(final_len.value <= 1)}")
+                        assert final_len.value <= 1, (
+                            "C_EncryptFinal returned CKR_OK but reported more bytes than the "
+                            f"declared one-byte output buffer: {final_len.value}"
+                        )
                         final_value = bytes(probe.data[: final_len.value])
                         combined = update_value + final_value
                         decrypted = decrypt_ciphertext(combined)
                         print(f"MATCH:{int(decrypted == plaintext)}")
+                        assert decrypted == plaintext, (
+                            "C_EncryptFinal accepted a one-byte output buffer but "
+                            "produced ciphertext that does not decrypt to the original plaintext"
+                        )
                     elif rv == CKR_BUFFER_TOO_SMALL:
                         retry_usable = 1 < final_len.value <= 64
                         print(f"RETRY_USABLE:{int(retry_usable)}")
@@ -1109,9 +998,14 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                             print(f"RETRY_CKR:0x{retry_rv:08x}")
                             print(f"RETRY_LEN:{retry_len.value}")
                             print(f"RETRY_MATCH:{int(decrypted == plaintext)}")
-                            print(f"RETRY_LENGTH:{retry_len.value}")
-                            retry_correct = retry_rv == CKR_OK and decrypted == plaintext
-                            print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+                            assert retry_rv == CKR_OK, (
+                                "C_EncryptFinal retry after CKR_BUFFER_TOO_SMALL failed: "
+                                f"{ckr_name(retry_rv)}"
+                            )
+                            assert decrypted == plaintext, (
+                                "C_EncryptFinal retry produced ciphertext that does not decrypt "
+                                "to the original plaintext"
+                            )
                     print("OK")
     finally:
         if key.value:
@@ -1202,15 +1096,20 @@ def _aes_cbc_pad_decrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                             print(f"LEN:{final_len.value}")
                             overwritten = sum(1 for byte in probe.guard if byte != guard)
                             print(f"OVERWRITTEN:{overwritten}")
-                            print(f"GUARD_OVERWRITTEN:{overwritten}")
-                            print(f"RETURNED_COUNT:{final_len.value}")
-                            print(f"INITIAL_COUNT:{len(plaintext) - update_len.value}")
+                            assert overwritten == 0, (
+                                "C_DecryptFinal wrote past the declared one-byte output buffer: "
+                                f"{overwritten} guard byte(s) changed"
+                            )
 
                             update_value = bytes(update_buf[: update_len.value])
                             if rv == CKR_OK:
                                 final_value = bytes(probe.data[: final_len.value])
                                 combined = update_value + final_value
                                 print(f"MATCH:{int(combined == plaintext)}")
+                                assert combined == plaintext, (
+                                    "C_DecryptFinal accepted a one-byte output buffer but "
+                                    "combined plaintext was wrong"
+                                )
                             elif rv == CKR_BUFFER_TOO_SMALL:
                                 retry_len = CK_ULONG(len(plaintext))
                                 retry_buf = (ctypes.c_ubyte * retry_len.value)()
@@ -1224,9 +1123,13 @@ def _aes_cbc_pad_decrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                                 print(f"RETRY_CKR:0x{retry_rv:08x}")
                                 print(f"RETRY_LEN:{retry_len.value}")
                                 print(f"RETRY_MATCH:{int(combined == plaintext)}")
-                                print(f"RETRY_LENGTH:{retry_len.value}")
-                                retry_correct = retry_rv == CKR_OK and combined == plaintext
-                                print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+                                assert retry_rv == CKR_OK, (
+                                    "C_DecryptFinal retry after CKR_BUFFER_TOO_SMALL failed: "
+                                    f"{ckr_name(retry_rv)}"
+                                )
+                                assert combined == plaintext, (
+                                    "C_DecryptFinal retry returned wrong plaintext"
+                                )
                             print("OK")
     finally:
         if key.value:
@@ -1314,9 +1217,10 @@ def _wrap_key_buffer_too_small(ctx: ProbeContext) -> None:
                     print(f"LEN:{out_len.value}")
                     overwritten = sum(1 for byte in probe.guard if byte != guard)
                     print(f"OVERWRITTEN:{overwritten}")
-                    print(f"GUARD_OVERWRITTEN:{overwritten}")
-                    print(f"INITIAL_COUNT:{needed.value}")
-                    print(f"RETURNED_COUNT:{out_len.value}")
+                    assert overwritten == 0, (
+                        "C_WrapKey wrote past the declared one-byte output buffer: "
+                        f"{overwritten} guard byte(s) changed"
+                    )
                     if rv == CKR_BUFFER_TOO_SMALL:
                         retry_len = CK_ULONG(needed.value)
                         retry_buf = (ctypes.c_ubyte * needed.value)()
@@ -1330,9 +1234,6 @@ def _wrap_key_buffer_too_small(ctx: ProbeContext) -> None:
                         )
                         print(f"RETRY_CKR:0x{retry_rv:08x}")
                         print(f"RETRY_LEN:{retry_len.value}")
-                        print(f"RETRY_LENGTH:{retry_len.value}")
-                        retry_correct = retry_rv == CKR_OK and retry_len.value == needed.value
-                        print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
                     print("OK")
     finally:
         if target_key.value:
@@ -1377,213 +1278,128 @@ def _ecdh_aes_wrap_compressed_public_key_buffer_too_small(ctx: ProbeContext) -> 
         if rv != CKR_OK:
             print(f"SETUP_XFAIL:C_GenerateKeyPair for ECDH-AES wrap failed: {ckr_name(rv)}")
         else:
-            if sh is None:
-                print("SETUP_XFAIL:login session was not established")
-                return
+            assert sh is not None  # Level.LOGIN always opens a session
+            attrs = read_attributes(raw, sh, pub.value, [CKA_EC_POINT, CKA_EC_PARAMS])
             try:
-                point_value, params_value = _read_and_observe_ec_attributes(raw, sh, pub.value)
-            except CkrAssertionError as exc:
-                _emit_ec_setup(
-                    "read_error",
-                    operation="C_GetAttributeValue",
-                    requested_attributes=[
-                        {"name": name, "id": int(attribute)} for attribute, name in _EC_ATTRS
-                    ],
-                    rv=int(exc.rv),
-                )
-                if exc.rv in (int(CKR_ATTRIBUTE_SENSITIVE), int(CKR_ATTRIBUTE_TYPE_INVALID)):
-                    _emit_ec_done("read_refused")
-                    return
-                raise
-
-            point_valid = False
-            if point_value is not None:
-                try:
-                    point_bytes = decode_provider_ec_point(
-                        point_value, ec.SECP256R1(), label="EC raw buffer probe"
-                    )
-                except ProviderECPointEncodingError as exc:
-                    alternate_curve = _alternate_curve_after_expected_rejection(point_value)
-                    if alternate_curve is not None:
-                        diagnostic = (
-                            "EC raw buffer probe: CKA_EC_POINT validates on "
-                            f"{alternate_curve.name}, not expected secp256r1"
-                        )
-                        _emit_ec_setup(
-                            "point",
-                            operation="C_GetAttributeValue",
-                            attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
-                            curve="secp256r1",
-                            state="invalid_point",
-                            encoding=_ec_point_encoding_provenance(point_value),
-                            diagnostic=diagnostic,
-                        )
-                        _emit_ec_done("invalid_point")
-                        return
-                    else:
-                        _emit_ec_setup(
-                            "point",
-                            operation="C_GetAttributeValue",
-                            attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
-                            curve="secp256r1",
-                            state="encoding_error",
-                            encoding=_ec_point_encoding_provenance(point_value),
-                            diagnostic=_bounded_diagnostic(exc),
-                        )
-                        point_bytes = None
-                except InvalidProviderECPointError as exc:
-                    _emit_ec_setup(
-                        "point",
-                        operation="C_GetAttributeValue",
-                        attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
-                        curve="secp256r1",
-                        state="invalid_point",
-                        encoding=_ec_point_encoding_provenance(point_value),
-                        diagnostic=_bounded_diagnostic(exc),
-                    )
-                    _emit_ec_done("invalid_point")
-                    return
-                else:
-                    if len(point_value) == 65 and point_value.startswith(b"\x04"):
-                        encoding = "raw_uncompressed"
-                    elif point_bytes is not None and point_bytes.startswith((b"\x02", b"\x03")):
-                        encoding = "der_compressed"
-                    else:
-                        encoding = "der_uncompressed"
-                    _emit_ec_setup(
-                        "point",
-                        operation="C_GetAttributeValue",
-                        attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
-                        curve="secp256r1",
-                        state="usable",
-                        encoding=encoding,
-                        diagnostic="",
-                    )
-                    point_valid = True
-            if point_value is None or not point_valid or params_value is None:
-                _emit_ec_done("unavailable")
-                return
-
-            _emit_ec_done("ready")
-            compressed_point = _compress_p256_ec_point(point_value)
-            imported_pub_attrs = template(
-                attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
-                attr_ulong(CKA_KEY_TYPE, CKK_EC),
-                attr_bytes(CKA_EC_PARAMS, params_value),
-                attr_bytes(CKA_EC_POINT, compressed_point),
-                attr_bool(CKA_WRAP, True),
-                attr_bool(CKA_DERIVE, True),
-                attr_bool(CKA_TOKEN, False),
-            )
-            rv = raw.C_CreateObject(
-                sh,
-                _template_ptr(imported_pub_attrs),
-                imported_pub_attrs.count,
-                byref(compressed_pub),
-            )
-            if rv != CKR_OK:
-                print(
-                    f"SETUP_XFAIL:compressed EC public-key import rejected: {ckr_name(rv)}",
-                    flush=True,
-                )
+                compressed_point = _compress_p256_ec_point(attrs[CKA_EC_POINT])
+            except ValueError as exc:
+                print(f"SETUP_XFAIL:cannot build compressed EC point: {exc}")
             else:
-                target_attrs = template(
-                    attr_ulong(CKA_VALUE_LEN, 16),
-                    attr_bool(CKA_EXTRACTABLE, True),
+                imported_pub_attrs = template(
+                    attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+                    attr_ulong(CKA_KEY_TYPE, CKK_EC),
+                    attr_bytes(CKA_EC_PARAMS, attrs[CKA_EC_PARAMS]),
+                    attr_bytes(CKA_EC_POINT, compressed_point),
+                    attr_bool(CKA_WRAP, True),
+                    attr_bool(CKA_DERIVE, True),
                     attr_bool(CKA_TOKEN, False),
                 )
-                aes_mech = mech_simple(CKM_AES_KEY_GEN)
-                rv = raw.C_GenerateKey(
+                rv = raw.C_CreateObject(
                     sh,
-                    aes_mech.byref(),
-                    _template_ptr(target_attrs),
-                    target_attrs.count,
-                    byref(target_key),
+                    _template_ptr(imported_pub_attrs),
+                    imported_pub_attrs.count,
+                    byref(compressed_pub),
                 )
                 if rv != CKR_OK:
-                    print(
-                        f"SETUP_XFAIL:C_GenerateKey for ECDH-AES target key failed: {ckr_name(rv)}",
-                        flush=True,
-                    )
+                    print(f"SETUP_XFAIL:compressed EC public-key import rejected: {ckr_name(rv)}")
                 else:
-                    mech = mech_ecdh_aes_kw(
-                        CKM_ECDH_AES_KEY_WRAP,
-                        aes_key_bits=256,
-                        kdf=CKD_SHA256_KDF,
+                    target_attrs = template(
+                        attr_ulong(CKA_VALUE_LEN, 16),
+                        attr_bool(CKA_EXTRACTABLE, True),
+                        attr_bool(CKA_TOKEN, False),
                     )
-                    needed = CK_ULONG(0)
-                    rv = raw.C_WrapKey(
+                    aes_mech = mech_simple(CKM_AES_KEY_GEN)
+                    rv = raw.C_GenerateKey(
                         sh,
-                        mech.byref(),
-                        compressed_pub.value,
-                        target_key.value,
-                        None,
-                        byref(needed),
+                        aes_mech.byref(),
+                        _template_ptr(target_attrs),
+                        target_attrs.count,
+                        byref(target_key),
                     )
                     if rv != CKR_OK:
                         print(
-                            f"SETUP_XFAIL:ECDH-AES C_WrapKey size query failed: {ckr_name(rv)}",
-                            flush=True,
-                        )
-                    elif needed.value <= 1:
-                        print(
-                            "SETUP_XFAIL:ECDH-AES C_WrapKey reported only "
-                            f"{needed.value} output byte(s)",
-                            flush=True,
+                            "SETUP_XFAIL:C_GenerateKey for ECDH-AES target key failed: "
+                            f"{ckr_name(rv)}"
                         )
                     else:
-                        guard = 0xA7
-                        guard_size = 32
-
-                        class WrapProbe(ctypes.Structure):
-                            _fields_ = [
-                                ("data", ctypes.c_ubyte * 1),
-                                ("guard", ctypes.c_ubyte * guard_size),
-                            ]
-
-                        probe = WrapProbe()
-                        for idx in range(guard_size):
-                            probe.guard[idx] = guard
-
-                        out_len = CK_ULONG(1)
-                        print(f"NEEDED:{needed.value}", flush=True)
+                        mech = mech_ecdh_aes_kw(
+                            CKM_ECDH_AES_KEY_WRAP,
+                            aes_key_bits=256,
+                            kdf=CKD_SHA256_KDF,
+                        )
+                        needed = CK_ULONG(0)
                         rv = raw.C_WrapKey(
                             sh,
                             mech.byref(),
                             compressed_pub.value,
                             target_key.value,
-                            cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
-                            byref(out_len),
+                            None,
+                            byref(needed),
                         )
-                        print(f"CKR:0x{rv:08x}", flush=True)
-                        print(f"LEN:{out_len.value}", flush=True)
-                        overwritten = sum(1 for byte in probe.guard if byte != guard)
-                        print(f"OVERWRITTEN:{overwritten}", flush=True)
-                        print(f"GUARD_OVERWRITTEN:{overwritten}", flush=True)
-                        print(f"INITIAL_COUNT:{needed.value}", flush=True)
-                        print(f"RETURNED_COUNT:{out_len.value}", flush=True)
-                        if rv == CKR_BUFFER_TOO_SMALL:
-                            retry_len = CK_ULONG(needed.value)
-                            retry_buf = (ctypes.c_ubyte * needed.value)()
-                            retry_rv = raw.C_WrapKey(
+                        if rv != CKR_OK:
+                            print(
+                                f"SETUP_XFAIL:ECDH-AES C_WrapKey size query failed: {ckr_name(rv)}"
+                            )
+                        elif needed.value <= 1:
+                            print(
+                                "SETUP_XFAIL:ECDH-AES C_WrapKey reported only "
+                                f"{needed.value} output byte(s)"
+                            )
+                        else:
+                            guard = 0xA7
+                            guard_size = 32
+
+                            class WrapProbe(ctypes.Structure):
+                                _fields_ = [
+                                    ("data", ctypes.c_ubyte * 1),
+                                    ("guard", ctypes.c_ubyte * guard_size),
+                                ]
+
+                            probe = WrapProbe()
+                            for idx in range(guard_size):
+                                probe.guard[idx] = guard
+
+                            out_len = CK_ULONG(1)
+                            print(f"NEEDED:{needed.value}")
+                            rv = raw.C_WrapKey(
                                 sh,
                                 mech.byref(),
                                 compressed_pub.value,
                                 target_key.value,
-                                cast(retry_buf, ctypes.POINTER(ctypes.c_ubyte)),
-                                byref(retry_len),
+                                cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+                                byref(out_len),
                             )
-                            print(f"RETRY_CKR:0x{retry_rv:08x}", flush=True)
-                            print(f"RETRY_LEN:{retry_len.value}", flush=True)
-                            print(f"RETRY_LENGTH:{retry_len.value}", flush=True)
-                            retry_correct = retry_rv == CKR_OK and retry_len.value == needed.value
-                            print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}", flush=True)
-                        print("OK", flush=True)
+                            print(f"CKR:0x{rv:08x}")
+                            print(f"LEN:{out_len.value}")
+                            overwritten = sum(1 for byte in probe.guard if byte != guard)
+                            print(f"OVERWRITTEN:{overwritten}")
+                            assert overwritten == 0, (
+                                "ECDH-AES C_WrapKey wrote past the declared one-byte output "
+                                f"buffer: {overwritten} guard byte(s) changed"
+                            )
+                            if rv == CKR_BUFFER_TOO_SMALL:
+                                retry_len = CK_ULONG(needed.value)
+                                retry_buf = (ctypes.c_ubyte * needed.value)()
+                                retry_rv = raw.C_WrapKey(
+                                    sh,
+                                    mech.byref(),
+                                    compressed_pub.value,
+                                    target_key.value,
+                                    cast(retry_buf, ctypes.POINTER(ctypes.c_ubyte)),
+                                    byref(retry_len),
+                                )
+                                print(f"RETRY_CKR:0x{retry_rv:08x}")
+                                print(f"RETRY_LEN:{retry_len.value}")
+                            print("OK")
     finally:
-        _destroy_ec_object(raw, sh, target_key, "target_key")
-        _destroy_ec_object(raw, sh, compressed_pub, "compressed_pub")
-        _destroy_ec_object(raw, sh, priv, "priv")
-        _destroy_ec_object(raw, sh, pub, "pub")
+        if target_key.value:
+            raw.C_DestroyObject(sh, target_key.value)
+        if compressed_pub.value:
+            raw.C_DestroyObject(sh, compressed_pub.value)
+        if priv.value:
+            raw.C_DestroyObject(sh, priv.value)
+        if pub.value:
+            raw.C_DestroyObject(sh, pub.value)
 
 
 def _get_operation_state_buffer_too_small(ctx: ProbeContext) -> None:
@@ -1635,9 +1451,10 @@ def _get_operation_state_buffer_too_small(ctx: ProbeContext) -> None:
                 print(f"LEN:{out_len.value}")
                 overwritten = sum(1 for byte in probe.guard if byte != guard)
                 print(f"OVERWRITTEN:{overwritten}")
-                print(f"GUARD_OVERWRITTEN:{overwritten}")
-                print(f"INITIAL_COUNT:{needed.value}")
-                print(f"RETURNED_COUNT:{out_len.value}")
+                assert overwritten == 0, (
+                    "C_GetOperationState wrote past the declared one-byte output buffer: "
+                    f"{overwritten} guard byte(s) changed"
+                )
                 if rv == CKR_BUFFER_TOO_SMALL:
                     retry_len = CK_ULONG(needed.value)
                     retry_buf = (ctypes.c_ubyte * needed.value)()
@@ -1648,9 +1465,6 @@ def _get_operation_state_buffer_too_small(ctx: ProbeContext) -> None:
                     )
                     print(f"RETRY_CKR:0x{retry_rv:08x}")
                     print(f"RETRY_LEN:{retry_len.value}")
-                    print(f"RETRY_LENGTH:{retry_len.value}")
-                    retry_correct = retry_rv == CKR_OK and retry_len.value == needed.value
-                    print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
                 print("OK")
 
 

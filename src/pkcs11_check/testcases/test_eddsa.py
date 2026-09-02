@@ -23,6 +23,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EC_PARAMS,
+    CKA_EC_POINT,
     CKA_KEY_TYPE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -39,8 +40,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import RawECPointFamily, read_raw_ec_point_or_xfail
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -142,36 +141,22 @@ class TestEdDSAKeyGeneration:
         """Ed25519 key should have EC_EDWARDS key type."""
         rs = p11_raw_session
         pub, priv = ed25519_keypair
-        pub_kt = attr_or_record(
-            read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE]),
-            CKA_KEY_TYPE,
+        pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+        priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
+        assert_correct(
+            actual=pub_kt,
+            expected=CKK_EC_EDWARDS,
             label="Ed25519:public CKA_KEY_TYPE readback",
-            reason="not_operational",
-            inherit_mechanism=False,
+            operation="C_GetAttributeValue",
+            kind="metadata",
         )
-        priv_kt = attr_or_record(
-            read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE]),
-            CKA_KEY_TYPE,
+        assert_correct(
+            actual=priv_kt,
+            expected=CKK_EC_EDWARDS,
             label="Ed25519:private CKA_KEY_TYPE readback",
-            reason="not_operational",
-            inherit_mechanism=False,
+            operation="C_GetAttributeValue",
+            kind="metadata",
         )
-        if pub_kt is not MISSING_ATTRIBUTE:
-            assert_correct(
-                actual=pub_kt,
-                expected=CKK_EC_EDWARDS,
-                label="Ed25519:public CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
-            )
-        if priv_kt is not MISSING_ATTRIBUTE:
-            assert_correct(
-                actual=priv_kt,
-                expected=CKK_EC_EDWARDS,
-                label="Ed25519:private CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
-            )
 
     def test_ed25519_ec_params(
         self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]
@@ -179,21 +164,14 @@ class TestEdDSAKeyGeneration:
         """Ed25519 key should have correct EC params (OID)."""
         rs = p11_raw_session
         pub, _ = ed25519_keypair
-        params = attr_or_record(
-            read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS]),
-            CKA_EC_PARAMS,
+        params = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
+        assert_correct(
+            actual=params,
+            expected=ED25519_OID,
             label="Ed25519:CKA_EC_PARAMS readback",
-            reason="not_operational",
-            inherit_mechanism=False,
+            operation="C_GetAttributeValue",
+            kind="metadata",
         )
-        if params is not MISSING_ATTRIBUTE:
-            assert_correct(
-                actual=params,
-                expected=ED25519_OID,
-                label="Ed25519:CKA_EC_PARAMS readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
-            )
 
 
 class TestEdDSASignVerify:
@@ -302,12 +280,14 @@ class TestEdDSACrossVerify:
 
         sig = _sign_eddsa(rs, priv, data)
 
-        raw_key = read_raw_ec_point_or_xfail(
-            rs,
-            pub,
-            RawECPointFamily.ED25519,
-            label="Ed25519 public key",
-        )
+        # Export the public key point
+        ec_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
+        assert isinstance(ec_point, bytes)
+        # DER OCTET STRING: 04 <len> <32-byte point>
+        if ec_point[0] == 0x04:
+            raw_key = ec_point[2:] if ec_point[1] < 128 else ec_point[3:]
+        else:
+            raw_key = ec_point
 
         pub_crypto = Ed25519PublicKey.from_public_bytes(raw_key)
         pub_crypto.verify(sig, data)  # raises on failure
@@ -363,21 +343,13 @@ class TestEd448:
         rs = p11_raw_session
         pub, _ = ed448_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
-        key_type = attr_or_record(
-            attrs,
-            CKA_KEY_TYPE,
+        assert_correct(
+            actual=attrs[CKA_KEY_TYPE],
+            expected=int(CKK_EC_EDWARDS),
             label="Ed448:CKA_KEY_TYPE readback",
-            reason="not_operational",
-            inherit_mechanism=False,
+            operation="C_GetAttributeValue",
+            kind="metadata",
         )
-        if key_type is not MISSING_ATTRIBUTE:
-            assert_correct(
-                actual=key_type,
-                expected=int(CKK_EC_EDWARDS),
-                label="Ed448:CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
-            )
 
     def test_sign_verify_roundtrip(
         self, p11_raw_session: Any, ed448_keypair: tuple[int, int]

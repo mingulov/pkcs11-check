@@ -597,17 +597,19 @@ def test_rsa_happy_path_context_probe_and_never_destroys_kek(
 
 
 # ---------------------------------------------------------------------------
-# Present but degenerate RSA components are hard provider output findings.
+# Finding 1 (final-review harden): a PRESENT-but-degenerate RSA public half
+# (e.g. zero-length CKA_MODULUS/CKA_PUBLIC_EXPONENT) must resolve to None via
+# the normal "cannot recover the RSA public half" note -- never let
+# RSAPublicNumbers(...).public_key() raise ValueError out to the test.
 # ---------------------------------------------------------------------------
 
 
-def test_rsa_degenerate_modulus_records_hard_result(
+def test_rsa_degenerate_modulus_returns_none_not_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Present empty components fail even after an unavailable ID fallback."""
-    from pkcs11_check import classification
-
-    classification.clear()
+    """Direct-read leg returns present-but-empty CKA_MODULUS/CKA_PUBLIC_EXPONENT
+    (e.g. b"") and no public object is found by CKA_ID or CKA_LABEL -> None,
+    with the standard public-half-unrecoverable note, not a raw ValueError."""
     priv_handle = 66
     captured = _notes_spy(monkeypatch)
     find_objects_calls: list[Any] = []
@@ -639,14 +641,14 @@ def test_rsa_degenerate_modulus_records_hard_result(
     rs = _make_rs(sh=25)
     cfg = _cfg(wrap_key_label="rsa-kek-label")
 
-    try:
-        with pytest.raises(pytest.fail.Exception, match="malformed RSA component"):
-            _prov.build_wrap_context(rs, cfg)
-        assert captured == []
-        assert classification.get_records()[-1].outcome == "fail"
-        assert classification.get_records()[-1].reason == "wrong_result"
-    finally:
-        classification.clear()
+    # Must not raise (ValueError from RSAPublicNumbers(0, 0).public_key() must
+    # never escape) -- a bare call is part of the assertion.
+    ctx = _prov.build_wrap_context(rs, cfg)
+
+    assert ctx is None
+    assert len(captured) == 1
+    description, _level = captured[0]
+    assert "cannot recover the RSA public half" in description
 
 
 # ---------------------------------------------------------------------------

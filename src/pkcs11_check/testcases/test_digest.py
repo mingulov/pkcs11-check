@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
@@ -48,7 +47,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     assert_correct,
@@ -141,75 +139,6 @@ def _expect_digest_rv_or_xfail(rv: Any, context: str) -> None:
         expect_rv(rv, CKR_OK)
     except AssertionError as exc:
         xfail_if_known_ckr(exc, _DIGEST_RUNTIME_REJECT_RVS, context)
-
-
-def _digest_key_reference_or_record(
-    rs: Any,
-    key: int,
-    *,
-    expected_len: int,
-    label: str,
-) -> Any:
-    """Read generated key bytes without hiding unavailable or malformed readback."""
-    attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-    # The key's CKA_VALUE was produced by C_GenerateKey(CKM_AES_KEY_GEN), not by the
-    # CKM_SHA256 digest this readback feeds into as a reference -- attributing this
-    # readback to CKM_SHA256 would corrupt spec_ref (F6). Preserve the real producer
-    # in the label instead.
-    key_bytes = attr_or_record(
-        attrs,
-        CKA_VALUE,
-        label=(
-            f"{label}:CKA_VALUE "
-            "(producer_operation=C_GenerateKey, producer_mechanism=CKM_AES_KEY_GEN)"
-        ),
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-    if key_bytes is MISSING_ATTRIBUTE:
-        return key_bytes
-    if not isinstance(key_bytes, bytes):
-        C.fail_as(
-            "wrong_result",
-            kind="metadata",
-            label=f"{label}:CKA_VALUE",
-            operation="C_GetAttributeValue",
-            inherit_mechanism=False,
-            summary=(
-                f"{label}: provider returned malformed CKA_VALUE; "
-                f"expected bytes, got {repr(key_bytes)}"
-            ),
-            detail={
-                "attribute": {
-                    "name": "CKA_VALUE",
-                    "id": int(CKA_VALUE),
-                    "expected": "bytes",
-                    "actual": repr(key_bytes),
-                }
-            },
-        )
-    if len(key_bytes) != expected_len:
-        C.fail_as(
-            "wrong_result",
-            kind="crypto",
-            label=f"{label}:CKA_VALUE",
-            operation="C_GenerateKey",
-            mechanism="CKM_AES_KEY_GEN",
-            summary=(
-                f"{label}: provider returned CKA_VALUE with length {len(key_bytes)}; "
-                f"expected CKA_VALUE_LEN={expected_len}"
-            ),
-            detail={
-                "attribute": {
-                    "name": "CKA_VALUE",
-                    "id": int(CKA_VALUE),
-                    "expected": f"{expected_len}-byte bytes (CKA_VALUE_LEN)",
-                    "actual": repr(key_bytes),
-                }
-            },
-        )
-    return key_bytes
 
 
 class TestDigestLengths:
@@ -368,14 +297,8 @@ class TestDigestKey:
         try:
             p11_digest = _digest_key_or_skip_or_xfail(rs, key)
             # Compare with hashlib
-            key_bytes = _digest_key_reference_or_record(
-                rs,
-                key,
-                expected_len=16,
-                label="CKM_SHA256:C_DigestKey KAT (AES-128)",
-            )
-            if key_bytes is MISSING_ATTRIBUTE:
-                return
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
             assert_correct(
                 actual=p11_digest,
@@ -416,14 +339,8 @@ class TestDigestKey:
             _expect_digest_rv_or_xfail(rv, "SHA256 advertised but C_DigestFinal failed")
             p11_digest = bytes(out_buf[: out_len.value])
             # Compare with hashlib
-            key_bytes = _digest_key_reference_or_record(
-                rs,
-                key,
-                expected_len=16,
-                label="CKM_SHA256:C_DigestKey KAT (data + key)",
-            )
-            if key_bytes is MISSING_ATTRIBUTE:
-                return
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(data_prefix + key_bytes).digest()
             assert_correct(
                 actual=p11_digest,
@@ -443,14 +360,8 @@ class TestDigestKey:
         try:
             p11_digest = _digest_key_or_skip_or_xfail(rs, key)
             # Compare with hashlib
-            key_bytes = _digest_key_reference_or_record(
-                rs,
-                key,
-                expected_len=32,
-                label="CKM_SHA256:C_DigestKey KAT (AES-256)",
-            )
-            if key_bytes is MISSING_ATTRIBUTE:
-                return
+            key_bytes = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert isinstance(key_bytes, bytes)
             ref_digest = hashlib.sha256(key_bytes).digest()
             assert_correct(
                 actual=p11_digest,

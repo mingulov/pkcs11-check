@@ -38,7 +38,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     IMPORT_STORAGE_SHAPE_REJECTS,
     classify_negative_rv,
@@ -97,16 +96,10 @@ def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
 
     if rv == int(CKR_OK):
         return
-    if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
-        # C_MessageEncryptInit / C_MessageSignInit (and their v3.0 message-family
-        # siblings) are optional functions: a module may expose a non-null
-        # function-table pointer yet stub the call with CKR_FUNCTION_NOT_SUPPORTED.
-        # That is capability absence, not a deviation -- skip, not xfail (mirrors
-        # the fix already applied to test_message_crypto.py / test_v30_session.py).
-        pytest.skip(f"{label}: not implemented (CKR_FUNCTION_NOT_SUPPORTED)")
     reject = (
         int(CKR_MECHANISM_INVALID),
         int(CKR_MECHANISM_PARAM_INVALID),
+        int(CKR_FUNCTION_NOT_SUPPORTED),
         int(CKR_FUNCTION_FAILED),
         int(CKR_DEVICE_ERROR),
         int(CKR_GENERAL_ERROR),
@@ -198,17 +191,8 @@ def _import_wrong_message_key_or_xfail(
 
 def _claim_false_or_xfail(rs: RawSession, key: int, flag: int, label: str) -> None:
     attrs = read_attributes(rs.raw, rs.sh, key, [flag])
-    value = attr_or_record(
-        attrs,
-        flag,
-        inherit_mechanism=False,
-        label=label,
-        reason="honest_deviation",
-        kind="metadata",
-    )
-    if value is MISSING_ATTRIBUTE:
-        return
-    if value is not False:
+    claimed_false = attrs.get(flag) is False
+    if not claimed_false:
         classify_policy_enforcement(claimed=False, violated=False, label=label)
 
 

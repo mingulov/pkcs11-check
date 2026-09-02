@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_string_data, mech_ulong
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -45,7 +44,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_secret_key_negotiated,
@@ -53,80 +51,6 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.keymgmt
-
-
-def _read_attr_or_record(
-    raw: Any,
-    sh: int,
-    handle: int,
-    attr: Any,
-    *,
-    label: str,
-) -> Any:
-    """Read one provider attribute while preserving an unavailable-value record."""
-    attrs = read_attributes(raw, sh, handle, [attr])
-    return attr_or_record(
-        attrs, attr, inherit_mechanism=False, label=label, reason="not_operational"
-    )
-
-
-def _assert_misc_bytes_length(
-    value: Any,
-    *,
-    expected_len: int,
-    label: str,
-    mechanism: str,
-) -> None:
-    """Classify malformed provider output while retaining missing-attribute evidence."""
-    if value is MISSING_ATTRIBUTE:
-        return
-    # This finding is about C_DeriveKey's output bytes, not the
-    # C_GetAttributeValue readback that retrieved it (F6): all call sites pass a
-    # C_DeriveKey-family KDF mechanism here.
-    if not isinstance(value, bytes):
-        classify(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_DeriveKey",
-            mechanism=mechanism,
-            expected="bytes",
-            actual=type(value).__name__,
-            summary=f"{label}: provider returned a non-byte value",
-        )
-    assert_correct(
-        actual=len(value),
-        expected=expected_len,
-        label=label,
-        operation="C_DeriveKey",
-        mechanism=mechanism,
-        kind="metadata",
-    )
-
-
-def _assert_misc_different(
-    first: Any,
-    second: Any,
-    *,
-    label: str,
-    mechanism: str,
-) -> None:
-    """Classify equal provider outputs where a diversity check is required."""
-    if first is MISSING_ATTRIBUTE or second is MISSING_ATTRIBUTE:
-        return
-    if first == second:
-        # This finding is about C_DeriveKey's output diversity, not the
-        # C_GetAttributeValue readback that retrieved it (F6): all call sites pass a
-        # C_DeriveKey-family KDF mechanism here.
-        classify(
-            "wrong_result",
-            kind="crypto",
-            label=label,
-            operation="C_DeriveKey",
-            mechanism=mechanism,
-            summary=f"{label}: independent provider outputs were equal",
-        )
-
 
 # ---------------------------------------------------------------------------
 # Acceptable error RVs for derive operations on non-conforming modules
@@ -225,15 +149,7 @@ class TestConcatenateBaseAndKey:
                 len(expected) * 8,
                 mech_param=mech_ulong(CKM_CONCATENATE_BASE_AND_KEY, second),
             )
-            derived_value = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_BASE_AND_KEY:CKA_VALUE readback",
-            )
-            if derived_value is MISSING_ATTRIBUTE:
-                return
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=derived_value,
                 expected=expected,
@@ -269,21 +185,8 @@ class TestConcatenateBaseAndKey:
                 32 * 8,
                 mech_param=mech_ulong(CKM_CONCATENATE_BASE_AND_KEY, second),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_BASE_AND_KEY:CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
-            _assert_misc_bytes_length(
-                val,
-                expected_len=32,
-                label="CKM_CONCATENATE_BASE_AND_KEY:CKA_VALUE readback",
-                mechanism="CKM_CONCATENATE_BASE_AND_KEY",
-            )
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            assert len(val) == 32
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_KEY derive failed")
         finally:
@@ -321,15 +224,7 @@ class TestConcatenateBaseAndData:
                 len(expected) * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_bytes),
             )
-            derived_value = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_BASE_AND_DATA:CKA_VALUE readback",
-            )
-            if derived_value is MISSING_ATTRIBUTE:
-                return
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=derived_value,
                 expected=expected,
@@ -377,28 +272,9 @@ class TestConcatenateBaseAndData:
                 32 * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, data_b),
             )
-            val_a = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived_a,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_BASE_AND_DATA:first CKA_VALUE readback",
-            )
-            val_b = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived_b,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_BASE_AND_DATA:second CKA_VALUE readback",
-            )
-            if val_a is MISSING_ATTRIBUTE or val_b is MISSING_ATTRIBUTE:
-                return
-            _assert_misc_different(
-                val_a,
-                val_b,
-                label="CKM_CONCATENATE_BASE_AND_DATA:distinct data outputs",
-                mechanism="CKM_CONCATENATE_BASE_AND_DATA",
-            )
+            val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+            val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
+            assert val_a != val_b
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_CONCATENATE_BASE_AND_DATA derive failed"
@@ -438,15 +314,7 @@ class TestConcatenateDataAndBase:
                 len(expected) * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_DATA_AND_BASE, data_bytes),
             )
-            derived_value = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_DATA_AND_BASE:CKA_VALUE readback",
-            )
-            if derived_value is MISSING_ATTRIBUTE:
-                return
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=derived_value,
                 expected=expected,
@@ -492,31 +360,9 @@ class TestConcatenateDataAndBase:
                 32 * 8,
                 mech_param=mech_string_data(CKM_CONCATENATE_DATA_AND_BASE, data_bytes),
             )
-            val_bd = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived_bd,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_BASE_AND_DATA:base-data CKA_VALUE readback",
-            )
-            val_db = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived_db,
-                CKA_VALUE,
-                label="CKM_CONCATENATE_DATA_AND_BASE:data-base CKA_VALUE readback",
-            )
-            if val_bd is MISSING_ATTRIBUTE or val_db is MISSING_ATTRIBUTE:
-                return
-            _assert_misc_different(
-                val_bd,
-                val_db,
-                label=(
-                    "CKM_CONCATENATE_BASE_AND_DATA:base-data vs "
-                    "CKM_CONCATENATE_DATA_AND_BASE:data-base"
-                ),
-                mechanism="CKM_CONCATENATE_DATA_AND_BASE",
-            )
+            val_bd = read_attributes(rs.raw, rs.sh, derived_bd, [CKA_VALUE])[CKA_VALUE]
+            val_db = read_attributes(rs.raw, rs.sh, derived_db, [CKA_VALUE])[CKA_VALUE]
+            assert val_bd != val_db
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CONCATENATE ordering test failed")
         finally:
@@ -554,15 +400,7 @@ class TestXorBaseAndData:
                 len(base_bytes) * 8,
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
-            derived_value = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_XOR_BASE_AND_DATA:CKA_VALUE readback",
-            )
-            if derived_value is MISSING_ATTRIBUTE:
-                return
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=derived_value,
                 expected=expected,
@@ -596,15 +434,7 @@ class TestXorBaseAndData:
                 len(base_bytes) * 8,
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_XOR_BASE_AND_DATA:zero-data CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=val,
                 expected=base_bytes,
@@ -639,15 +469,7 @@ class TestXorBaseAndData:
                 len(base_bytes) * 8,
                 mech_param=mech_string_data(CKM_XOR_BASE_AND_DATA, data_bytes),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_XOR_BASE_AND_DATA:all-ones CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=val,
                 expected=expected,
@@ -690,15 +512,7 @@ class TestExtractKeyFromKey:
                 128,
                 mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 0),
             )
-            derived_value = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_EXTRACT_KEY_FROM_KEY:offset-zero CKA_VALUE readback",
-            )
-            if derived_value is MISSING_ATTRIBUTE:
-                return
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=derived_value,
                 expected=expected,
@@ -732,15 +546,7 @@ class TestExtractKeyFromKey:
                 128,
                 mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 128),
             )
-            derived_value = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_EXTRACT_KEY_FROM_KEY:offset-128 CKA_VALUE readback",
-            )
-            if derived_value is MISSING_ATTRIBUTE:
-                return
+            derived_value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=derived_value,
                 expected=expected,
@@ -784,28 +590,9 @@ class TestExtractKeyFromKey:
                 128,
                 mech_param=mech_ulong(CKM_EXTRACT_KEY_FROM_KEY, 128),
             )
-            val_a = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived_a,
-                CKA_VALUE,
-                label="CKM_EXTRACT_KEY_FROM_KEY:offset-zero CKA_VALUE readback",
-            )
-            val_b = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived_b,
-                CKA_VALUE,
-                label="CKM_EXTRACT_KEY_FROM_KEY:offset-128 CKA_VALUE readback",
-            )
-            if val_a is MISSING_ATTRIBUTE or val_b is MISSING_ATTRIBUTE:
-                return
-            _assert_misc_different(
-                val_a,
-                val_b,
-                label="CKM_EXTRACT_KEY_FROM_KEY:distinct offsets",
-                mechanism="CKM_EXTRACT_KEY_FROM_KEY",
-            )
+            val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
+            val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
+            assert val_a != val_b
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "CKM_EXTRACT_KEY_FROM_KEY derive failed")
         finally:

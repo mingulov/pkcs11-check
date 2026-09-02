@@ -20,13 +20,10 @@ Dispatch on ``extra["probe"]`` (one child body each):
   ``"sign"``    -> key with CKA_SIGN=False, then ``C_SignInit`` (CKM_SHA256_HMAC)
   ``"decrypt"`` -> key with CKA_DECRYPT=False, then ``C_DecryptInit`` (CKM_AES_ECB)
 
-Output protocol (for ``assert_ckr_subprocess_ok`` plus the parent's
-permission-probe classifier):
-  ``ATTRIBUTE_EVENT:{json}``                                 -- claim readback event
-      ``event=boolean,value=false``                           -- present flag is False
-      ``event=boolean,value=true``                            -- present flag is True
-      ``event=omitted``                                      -- requested flag was absent
-      ``event=malformed,value_type/value_repr``              -- present non-bool value
+Output protocol (byte-identical to the legacy child, for ``assert_ckr_subprocess_ok``
+plus the parent's ``_classify_permission_flag``):
+  ``CLAIM:0``                                                 -- key read the flag back as False
+  ``CLAIM:1``                                                 -- flag not honored / absent
   ``CKR:0x{rv:08x}``                                          -- return value of the C_*Init call
   ``OK``                                                      -- probe reached its end
   ``SETUP_XFAIL:C_GenerateKey for CKA_ENCRYPT=False failed: {name}``  -- keygen setup reject
@@ -41,12 +38,10 @@ Launch with ``coverage="session"`` and ``pin=pin_from_config(p11_config)``.
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from ctypes import byref, cast
 from typing import Any
 
-from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.rv import ckr_name
@@ -70,38 +65,11 @@ def _template_ptr(attrs: Any) -> Any:
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
 
-def _classify_readback(vals: Mapping[int, Any], attr: int) -> dict[str, Any]:
-    """Classify one attribute readback into a self-describing partial event.
-
-    Absence and malformed values stay distinct from booleans: treating either
-    as a false claim would invent a provider assertion. Both branches below
-    are terminal returns, so there is no absence branch left to silently
-    collapse a provider omission into a fabricated value.
-    """
-    if attr in vals:
-        value = vals[attr]
-        if isinstance(value, bool):
-            return {"event": "boolean", "value": value}
-        return {
-            "event": "malformed",
-            "value_type": type(value).__name__[:64],
-            "value_repr": repr(value)[:256],
-        }
-    return {"event": "omitted"}
-
-
-def _claim(ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: str) -> None:
-    # The event is self-describing so the parent can reject output copied from
-    # another probe.
+def _claim(ctx: ProbeContext, sh: int, key_value: int, attr: int) -> None:
+    # CLAIM:0 if the key reports the permission flag back as False (module
+    # claims the restriction), CLAIM:1 otherwise (not honored / absent).
     vals = read_attributes(ctx.raw, sh, key_value, [attr])
-    attr_id = int(attr)
-    attr_descriptor = {"name": ATTR_NAMES.get(attr_id, str(attr)), "id": attr_id}
-    event: dict[str, Any] = {
-        "operation": operation,
-        "attribute": attr_descriptor,
-        **_classify_readback(vals, attr),
-    }
-    print("ATTRIBUTE_EVENT:" + json.dumps(event, separators=(",", ":")))
+    print("CLAIM:0" if vals.get(attr) is False else "CLAIM:1")
 
 
 def _flag_not_permitted(
@@ -128,7 +96,7 @@ def _flag_not_permitted(
     if rv != CKR_OK:
         print(f"SETUP_XFAIL:C_GenerateKey for {false_attr_name}=False failed: {ckr_name(rv)}")
         return
-    _claim(ctx, sh, key.value, false_attr, operation=op_init)
+    _claim(ctx, sh, key.value, false_attr)
     mech = mech_simple(op_mech)
     init = getattr(ctx.raw, op_init)
     rv = init(sh, mech.byref(), key.value)

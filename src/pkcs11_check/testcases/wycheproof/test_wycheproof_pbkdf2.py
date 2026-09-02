@@ -54,7 +54,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify, xfail_if_known_ckr
 
 pytestmark = pytest.mark.wycheproof
@@ -213,7 +212,6 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
         password=password,
     )
 
-    dk_actual: Any = None
     try:
         derived = _generate_key_with_mech(
             rs.raw,
@@ -229,16 +227,8 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
             },
         )
         attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-        dk_actual = attr_or_record(
-            attrs,
-            CKA_VALUE,
-            label=f"PBKDF2:{vec_id}",
-            reason="not_operational",
-            kind="metadata",
-            inherit_mechanism=False,
-        )
-        if dk_actual is not MISSING_ATTRIBUTE:
-            assert isinstance(dk_actual, bytes)
+        dk_actual = attrs[CKA_VALUE]
+        assert isinstance(dk_actual, bytes)
         destroy_quietly(rs.raw, rs.sh, derived)
     except AssertionError as exc:
         if result == "valid":
@@ -246,8 +236,6 @@ def test_pbkdf2(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> No
         # acceptable: reject is fine
         return
 
-    if dk_actual is MISSING_ATTRIBUTE:
-        return
     if result == "valid":
         assert_correct(
             actual=dk_actual,

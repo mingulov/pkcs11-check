@@ -69,7 +69,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     assert_correct,
@@ -1250,7 +1249,7 @@ class TestDESWeakKeys:
             pytest.skip("CKM_DES_KEY_GEN not supported")
 
         # Generate multiple keys and check none are weak
-        for generation in range(10):
+        for _ in range(10):
             key = _gen_des_key(
                 rs.raw,
                 rs.sh,
@@ -1264,15 +1263,7 @@ class TestDESWeakKeys:
             )
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-                val = attr_or_record(
-                    attrs,
-                    CKA_VALUE,
-                    inherit_mechanism=False,
-                    label=f"DES_KEY_GEN generation {generation + 1} CKA_VALUE readback",
-                    reason="not_operational",
-                )
-                if val is MISSING_ATTRIBUTE:
-                    continue
+                val = attrs[CKA_VALUE]
                 assert isinstance(val, bytes) and len(val) == 8
                 assert val not in _DES_WEAK_KEYS, (
                     f"Generated DES key is a known weak key: {val.hex()}"

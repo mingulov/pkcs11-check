@@ -36,7 +36,6 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify
 from pkcs11_check.testcases.x509.conftest import classify_positive_ckr, import_cert_object
 
@@ -83,22 +82,13 @@ class TestCertificateLifecycle:
                 extra_attrs={CKA_LABEL: label, CKA_TOKEN: True},
             )
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
-            token_value = attr_or_record(
-                attrs,
-                CKA_TOKEN,
+            assert_correct(
+                actual=attrs[CKA_TOKEN],
+                expected=True,
                 label="X509:CKA_TOKEN=True persistence readback",
-                reason="honest_deviation",
+                operation="C_GetAttributeValue",
                 kind="metadata",
-                inherit_mechanism=False,
             )
-            if token_value is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=token_value,
-                    expected=True,
-                    label="X509:CKA_TOKEN=True persistence readback",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
         except CkrAssertionError as exc:
             classify_positive_ckr(
                 exc,
@@ -183,22 +173,13 @@ class TestCertificateLifecycle:
                 extra_attrs={CKA_ID: cid, CKA_TOKEN: False},
             )
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ID])
-            id_value = attr_or_record(
-                attrs,
-                CKA_ID,
+            assert_correct(
+                actual=attrs[CKA_ID],
+                expected=cid,
                 label="X509:CKA_ID readback after set on certificate",
-                reason="honest_deviation",
+                operation="C_GetAttributeValue",
                 kind="metadata",
-                inherit_mechanism=False,
             )
-            if id_value is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=id_value,
-                    expected=cid,
-                    label="X509:CKA_ID readback after set on certificate",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
         except CkrAssertionError as exc:
             classify_positive_ckr(
                 exc,

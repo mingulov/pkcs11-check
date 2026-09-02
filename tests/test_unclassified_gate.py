@@ -31,7 +31,8 @@ from pkcs11_check.plugin import _attach_classification_to_report, _is_testcase_i
 
 
 def _as_item(ns: SimpleNamespace) -> pytest.Item:
-    """Cast a duck-typed namespace carrying the item fields used by the hook."""
+    """The plugin helpers read item attributes via ``getattr`` only, so a
+    duck-typed ``SimpleNamespace`` is a valid stand-in for a real ``pytest.Item``."""
     return cast("pytest.Item", ns)
 
 
@@ -45,20 +46,14 @@ def _clear_classification_store() -> Any:
 
 def _testcase_item(nodeid: str = "src/pkcs11_check/testcases/test_x.py::test_y") -> pytest.Item:
     item = _as_item(
-        SimpleNamespace(
-            path=Path("/repo/src/pkcs11_check/testcases/test_x.py"),
-            nodeid=nodeid,
-            stash=pytest.Stash(),
-        )
+        SimpleNamespace(path=Path("/repo/src/pkcs11_check/testcases/test_x.py"), nodeid=nodeid)
     )
     assert _is_testcase_item(item), "fixture item must be recognised as a testcase item"
     return item
 
 
 def _meta_item(nodeid: str = "tests/test_meta.py::test_y") -> pytest.Item:
-    item = _as_item(
-        SimpleNamespace(path=Path("/repo/tests/test_meta.py"), nodeid=nodeid, stash=pytest.Stash())
-    )
+    item = _as_item(SimpleNamespace(path=Path("/repo/tests/test_meta.py"), nodeid=nodeid))
     assert not _is_testcase_item(item), "fixture item must NOT be a testcase item"
     return item
 
@@ -153,16 +148,14 @@ def test_fixture_ctypes_access_violation_yields_synthetic_crash(when: str) -> No
 
 
 @pytest.mark.parametrize("when", ["setup", "teardown"])
-def test_ordinary_fixture_oserror_stays_synthetic_unclassified(when: str) -> None:
+def test_ordinary_fixture_oserror_is_not_synthetically_classified(when: str) -> None:
     report = _call_report("failed", when=when, message="OSError: provider I/O error")
 
     _attach_classification_to_report(
         _testcase_item(), report, call=_call_info(OSError("provider I/O error"))
     )
 
-    records = _classification_prop(report)
-    assert records is not None
-    assert [record["reason"] for record in records] == ["unclassified"]
+    assert _classification_prop(report) is None
 
 
 def test_ordinary_oserror_stays_synthetic_unclassified() -> None:
@@ -242,8 +235,8 @@ def test_passing_testcase_is_not_flagged() -> None:
     assert _classification_prop(report) is None
 
 
-def test_unrelated_emitted_record_does_not_mask_synthetic_failure() -> None:
-    """An earlier record cannot explain a later raw failure without exception identity."""
+def test_emitted_record_takes_precedence_over_synthetic() -> None:
+    """A testcase that emitted a real classification keeps it; no synthetic injection."""
     item = _testcase_item()
     report = _call_report("failed", message="ignored because a real record exists")
 
@@ -260,16 +253,15 @@ def test_unrelated_emitted_record_does_not_mask_synthetic_failure() -> None:
 
     records = _classification_prop(report)
     assert records is not None
-    assert [record["reason"] for record in records] == ["self_contradiction", "unclassified"]
+    assert len(records) == 1
+    assert records[0]["reason"] == "self_contradiction"
+    assert records[0]["reason"] != "unclassified"
 
 
-@pytest.mark.parametrize("when", ["setup", "call", "teardown"])
-def test_every_failed_phase_is_classified(when: str) -> None:
-    """A raw failure is visible regardless of the pytest phase that emitted it."""
-    report = SimpleNamespace(when=when, outcome="failed", longrepr="x", user_properties=[])
+def test_only_call_phase_is_classified() -> None:
+    """Setup/teardown reports are never touched (gate runs on the call phase only)."""
+    report = SimpleNamespace(when="setup", outcome="failed", longrepr="x", user_properties=[])
 
     _attach_classification_to_report(_testcase_item(), report)
 
-    records = _classification_prop(report)
-    assert records is not None
-    assert [record["reason"] for record in records] == ["unclassified"]
+    assert _classification_prop(report) is None

@@ -13,7 +13,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from pkcs11_check import classification as C  # noqa: N812
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
@@ -36,7 +36,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_TYPE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
@@ -109,22 +108,13 @@ class TestRSAPublicKeyImport:
         try:
             assert imported != 0
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_RSA,
                 label="RSA public-key import: CKA_KEY_TYPE readback",
-                reason="not_operational",
+                operation="C_GetAttributeValue",
                 kind="metadata",
-                inherit_mechanism=False,
             )
-            if key_type is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=key_type,
-                    expected=CKK_RSA,
-                    label="RSA public-key import: CKA_KEY_TYPE readback",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 
@@ -185,22 +175,13 @@ class TestRSAPrivateKeyImport:
         try:
             assert imported != 0
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
+            assert_correct(
+                actual=attrs[CKA_KEY_TYPE],
+                expected=CKK_RSA,
                 label="RSA private-key import: CKA_KEY_TYPE readback",
-                reason="not_operational",
+                operation="C_GetAttributeValue",
                 kind="metadata",
-                inherit_mechanism=False,
             )
-            if key_type is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=key_type,
-                    expected=CKK_RSA,
-                    label="RSA private-key import: CKA_KEY_TYPE readback",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)
 
@@ -250,28 +231,16 @@ class TestRSAPrivateKeyImport:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, imported, [CKA_LOCAL])
-            before = len(C.get_records())
-            local_value = attr_or_record(
-                attrs,
-                CKA_LOCAL,
-                label="imported-key:CKA_LOCAL",
-                reason="honest_deviation",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if local_value is MISSING_ATTRIBUTE:
-                # Preserve the spec citation the pre-migration classify() call
-                # carried in its summary, as bounded detail on the generic
-                # attr_or_record() omission record (the helper itself takes no
-                # summary/detail override -- see _attribute_values.py).
-                new_records = C.get_records()[before:]
-                if new_records:
-                    record = new_records[-1]
-                    record.detail = {
-                        **(record.detail or {}),
-                        "spec": "PKCS#11 §4.x requires CKA_LOCAL=False on import",
-                    }
-            if local_value is not MISSING_ATTRIBUTE:
-                assert local_value is False
+            if CKA_LOCAL not in attrs:
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="imported-key:CKA_LOCAL",
+                    summary=(
+                        "module does not expose CKA_LOCAL for imported keys "
+                        "(PKCS#11 \u00a74.x requires CKA_LOCAL=False on import)"
+                    ),
+                )
+            assert attrs[CKA_LOCAL] is False
         finally:
             destroy_quietly(rs.raw, rs.sh, imported)

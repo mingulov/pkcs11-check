@@ -24,9 +24,7 @@ from ctypes import byref
 from typing import Any
 
 import pytest
-from _pytest.outcomes import Failed
 
-from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
@@ -78,7 +76,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     destroy_returned_handles,
@@ -125,201 +122,6 @@ _MAC_ERROR_RVS = {
     CKR_GENERAL_ERROR,
     CKR_ARGUMENTS_BAD,
 }
-
-_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
-_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
-
-
-class _ClassificationFailureError(Failed, AssertionError):
-    """Keep migrated failures compatible with callers expecting AssertionError."""
-
-
-def _read_attribute(attrs: Mapping[Any, Any], attr: Any, *, label: str, mechanism: str) -> Any:
-    """Read an attribute while retaining a structured unavailable-value observation."""
-    return attr_or_record(
-        attrs,
-        attr,
-        label=f"{label} (producer_mechanism={mechanism})",
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-
-
-def _read_provider_attribute(
-    raw: Any,
-    session: int,
-    handle: int,
-    attr: Any,
-    *,
-    label: str,
-    mechanism: str,
-    error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
-) -> Any:
-    """Read one provider attribute and classify typed readback errors accurately."""
-    try:
-        return _read_attribute(
-            read_attributes(raw, session, handle, [attr]),
-            attr,
-            label=label,
-            mechanism=mechanism,
-        )
-    except AssertionError as exc:
-        if is_known_error(exc, error_rvs):
-            C.record_as(
-                "not_operational",
-                kind="metadata",
-                label=label,
-                operation="C_GetAttributeValue",
-                mechanism=mechanism,
-                actual=getattr(exc, "rv", None),
-                summary=f"{label}: C_GetAttributeValue not operational: {exc}",
-            )
-            return MISSING_ATTRIBUTE
-        raise
-
-
-def _record_wrong_attribute(
-    *,
-    label: str,
-    expected: Any,
-    actual: Any,
-    kind: str,
-    mechanism: str,
-    operation: str,
-) -> C.Classification:
-    # This defensive branch keeps absence distinct from a provider value even
-    # if a future caller bypasses _validate_output's sentinel guard.
-    if actual is MISSING_ATTRIBUTE:
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            summary=f"{label}: provider did not return the requested attribute",
-            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
-        )
-    if mechanism == "CKM_SSL3_KEY_AND_MAC_DERIVE":
-        summary_prefix = "SSL3 key material output mismatch"
-    elif isinstance(expected, bytes):
-        summary_prefix = f"{label} does not match known answer"
-    else:
-        summary_prefix = label
-    return C.record_as(
-        "wrong_result",
-        kind=kind,
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        summary=f"{summary_prefix}: provider returned {actual!r}; expected {expected!r}",
-        detail={
-            "attribute": {
-                "name": "CKA_VALUE",
-                "id": int(CKA_VALUE),
-                "expected": repr(expected),
-                "actual": repr(actual),
-            }
-        },
-    )
-
-
-def _record_parameter_mismatch(
-    *, label: str, parameter: str, expected: Any, actual: Any, mechanism: str
-) -> C.Classification:
-    """Record a mechanism-parameter output mismatch without fabricating CKR evidence."""
-    return C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label=label,
-        operation="C_DeriveKey",
-        mechanism=mechanism,
-        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
-        detail={
-            "parameter": {
-                "name": parameter,
-                "expected": repr(expected),
-                "actual": repr(actual),
-            }
-        },
-    )
-
-
-def _record_handle_mismatch(
-    *, label: str, actual: Any, mechanism: str, operation: str = "C_DeriveKey"
-) -> C.Classification:
-    """Record a successful producer that failed to return a required handle."""
-    return C.record_as(
-        "self_contradiction",
-        kind="lifecycle",
-        label=label,
-        operation=operation,
-        mechanism=mechanism,
-        actual=CKR_OK,
-        summary=f"{label}: {operation} returned CKR_OK with handle {actual!r}",
-        detail={"handle": {"actual": actual, "expected": "non-zero"}},
-    )
-
-
-def _validate_output(
-    value: Any,
-    *,
-    label: str,
-    mechanism: str,
-    operation: str,
-    expected_len: int | None = None,
-    expected: bytes | None = None,
-) -> C.Classification | None:
-    """Validate a present CKA_VALUE without terminating independent checks early."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    if not isinstance(value, bytes):
-        return _record_wrong_attribute(
-            label=label,
-            expected="bytes",
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    if expected_len is not None and len(value) != expected_len:
-        return _record_wrong_attribute(
-            label=label,
-            expected=f"{expected_len}-byte bytes",
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    if expected is not None and value != expected:
-        return _record_wrong_attribute(
-            label=label,
-            expected=expected,
-            actual=value,
-            kind="crypto",
-            mechanism=mechanism,
-            operation=operation,
-        )
-    return None
-
-
-def _raise_strongest(records: list[C.Classification]) -> None:
-    """Raise the strongest hard output finding after all cleanup has completed."""
-    if not records:
-        return
-    strongest = max(
-        records,
-        key=lambda record: (
-            _KIND_PRIORITY.get(record.kind or "", 0),
-            _SEVERITY_PRIORITY.get(record.severity, 0),
-        ),
-    )
-    try:
-        C.raise_for_record(strongest)
-    except Failed as exc:
-        failure = _ClassificationFailureError(str(exc))
-        setattr(failure, "_pkcs11_check_classification", strongest)
-        raise failure from exc
 
 
 def _create_generic_secret(rs: Any, value: bytes) -> int:
@@ -473,7 +275,6 @@ class TestSSL3PreMasterKeyGen:
             attr_ulong(CKA_DERIVE, 1),
         )
         key = CK_OBJECT_HANDLE(0)
-        hard_results: list[C.Classification] = []
         try:
             rv = rs.raw.C_GenerateKey(
                 rs.sh,
@@ -484,63 +285,15 @@ class TestSSL3PreMasterKeyGen:
             )
             expect_rv(rv, CKR_OK)
             try:
-                raw_val = MISSING_ATTRIBUTE
-                if key.value == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey output handle",
-                            actual=key.value,
-                            mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                            operation="C_GenerateKey",
-                        )
-                    )
-                else:
-                    raw_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        key.value,
-                        CKA_VALUE,
-                        label="CKM_SSL3_PRE_MASTER_KEY_GEN:CKA_VALUE readback",
-                        mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    raw_val,
-                    label="CKM_SSL3_PRE_MASTER_KEY_GEN:CKA_VALUE readback",
-                    mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                    operation="C_GenerateKey",
-                    expected_len=48,
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
-                elif raw_val is not MISSING_ATTRIBUTE and isinstance(raw_val, bytes):
-                    # First two bytes must encode the version (3, 0).
-                    if raw_val[0] != 3:
-                        hard_results.append(
-                            _record_wrong_attribute(
-                                label="CKM_SSL3_PRE_MASTER_KEY_GEN:version major",
-                                expected=3,
-                                actual=raw_val[0],
-                                kind="crypto",
-                                mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                                operation="C_GenerateKey",
-                            )
-                        )
-                    if raw_val[1] != 0:
-                        hard_results.append(
-                            _record_wrong_attribute(
-                                label="CKM_SSL3_PRE_MASTER_KEY_GEN:version minor",
-                                expected=0,
-                                actual=raw_val[1],
-                                kind="crypto",
-                                mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                                operation="C_GenerateKey",
-                            )
-                        )
+                attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_VALUE])
+                raw_val = attrs[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
+                # First two bytes must encode the version (3, 0)
+                assert raw_val[0] == 3, f"Expected major version 3, got {raw_val[0]}"
+                assert raw_val[1] == 0, f"Expected minor version 0, got {raw_val[1]}"
             finally:
-                if key.value != 0:
-                    destroy_quietly(rs.raw, rs.sh, key.value)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, key.value)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
@@ -549,7 +302,6 @@ class TestSSL3PreMasterKeyGen:
                     label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey",
                     operation="C_GenerateKey",
                     mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
@@ -571,7 +323,6 @@ class TestSSL3PreMasterKeyGen:
             attr_ulong(CKA_TOKEN, 0),
             attr_ulong(CKA_DERIVE, 1),
         )
-        hard_results: list[C.Classification] = []
         try:
             key1 = CK_OBJECT_HANDLE(0)
             key2 = CK_OBJECT_HANDLE(0)
@@ -583,99 +334,21 @@ class TestSSL3PreMasterKeyGen:
                 byref(key1),
             )
             expect_rv(rv, CKR_OK)
+            rv = rs.raw.C_GenerateKey(
+                rs.sh,
+                mech.byref(),
+                tmpl.ptr,
+                tmpl.count,
+                byref(key2),
+            )
+            expect_rv(rv, CKR_OK)
             try:
-                val1 = MISSING_ATTRIBUTE
-                if key1.value == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_SSL3_PRE_MASTER_KEY_GEN:first output handle",
-                            actual=key1.value,
-                            mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                            operation="C_GenerateKey",
-                        )
-                    )
-                else:
-                    val1 = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        key1.value,
-                        CKA_VALUE,
-                        label="CKM_SSL3_PRE_MASTER_KEY_GEN:first CKA_VALUE readback",
-                        mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    val1,
-                    label="CKM_SSL3_PRE_MASTER_KEY_GEN:first CKA_VALUE readback",
-                    mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                    operation="C_GenerateKey",
-                    expected_len=48,
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
-
-                try:
-                    rv = rs.raw.C_GenerateKey(
-                        rs.sh,
-                        mech.byref(),
-                        tmpl.ptr,
-                        tmpl.count,
-                        byref(key2),
-                    )
-                    expect_rv(rv, CKR_OK)
-                    val2 = MISSING_ATTRIBUTE
-                    if key2.value == 0:
-                        hard_results.append(
-                            _record_handle_mismatch(
-                                label="CKM_SSL3_PRE_MASTER_KEY_GEN:second output handle",
-                                actual=key2.value,
-                                mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                                operation="C_GenerateKey",
-                            )
-                        )
-                    else:
-                        val2 = _read_provider_attribute(
-                            rs.raw,
-                            rs.sh,
-                            key2.value,
-                            CKA_VALUE,
-                            label="CKM_SSL3_PRE_MASTER_KEY_GEN:second CKA_VALUE readback",
-                            mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                            error_rvs=_DERIVE_ERROR_RVS,
-                        )
-                    mismatch = _validate_output(
-                        val2,
-                        label="CKM_SSL3_PRE_MASTER_KEY_GEN:second CKA_VALUE readback",
-                        mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                        operation="C_GenerateKey",
-                        expected_len=48,
-                    )
-                    if mismatch is not None:
-                        hard_results.append(mismatch)
-                    if (
-                        val1 is not MISSING_ATTRIBUTE
-                        and val2 is not MISSING_ATTRIBUTE
-                        and isinstance(val1, bytes)
-                        and isinstance(val2, bytes)
-                        and val1 == val2
-                    ):
-                        hard_results.append(
-                            _record_wrong_attribute(
-                                label="CKM_SSL3_PRE_MASTER_KEY_GEN:randomness",
-                                expected="different outputs for independent generations",
-                                actual=val1,
-                                kind="crypto",
-                                mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                                operation="C_GenerateKey",
-                            )
-                        )
-                finally:
-                    if key2.value != 0:
-                        destroy_quietly(rs.raw, rs.sh, key2.value)
+                val1 = read_attributes(rs.raw, rs.sh, key1.value, [CKA_VALUE])[CKA_VALUE]
+                val2 = read_attributes(rs.raw, rs.sh, key2.value, [CKA_VALUE])[CKA_VALUE]
+                assert val1 != val2, "Two pre-master key generations produced identical output"
             finally:
-                if key1.value != 0:
-                    destroy_quietly(rs.raw, rs.sh, key1.value)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, key2.value)
+                destroy_quietly(rs.raw, rs.sh, key1.value)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
@@ -684,7 +357,6 @@ class TestSSL3PreMasterKeyGen:
                     label="CKM_SSL3_PRE_MASTER_KEY_GEN:C_GenerateKey",
                     operation="C_GenerateKey",
                     mechanism="CKM_SSL3_PRE_MASTER_KEY_GEN",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_SSL3_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
@@ -705,7 +377,6 @@ class TestSSL3MasterKeyDerive:
             pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE not supported")
 
         pre_master = _create_generic_secret(rs, _PRE_MASTER_SECRET)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_ssl3_master_key_derive(
                 CKM_SSL3_MASTER_KEY_DERIVE,
@@ -729,38 +400,11 @@ class TestSSL3MasterKeyDerive:
                 mech_param=mech,
             )
             try:
-                raw_val = MISSING_ATTRIBUTE
-                if derived == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey output handle",
-                            actual=derived,
-                            mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
-                        )
-                    )
-                else:
-                    raw_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        derived,
-                        CKA_VALUE,
-                        label="CKM_SSL3_MASTER_KEY_DERIVE:CKA_VALUE readback",
-                        mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    raw_val,
-                    label="CKM_SSL3_MASTER_KEY_DERIVE:CKA_VALUE readback",
-                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
-                    operation="C_DeriveKey",
-                    expected_len=48,
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
             finally:
-                if derived != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
@@ -782,7 +426,6 @@ class TestSSL3MasterKeyDerive:
             pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE not supported")
 
         pre_master = _create_generic_secret(rs, _PRE_MASTER_SECRET)
-        hard_results: list[C.Classification] = []
         expected = _ssl3_master_secret_reference(
             _PRE_MASTER_SECRET,
             _CLIENT_RANDOM,
@@ -811,39 +454,17 @@ class TestSSL3MasterKeyDerive:
                 mech_param=mech,
             )
             try:
-                raw_val = MISSING_ATTRIBUTE
-                if derived == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey output handle",
-                            actual=derived,
-                            mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
-                        )
-                    )
-                else:
-                    raw_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        derived,
-                        CKA_VALUE,
-                        label="CKM_SSL3_MASTER_KEY_DERIVE:CKA_VALUE readback",
-                        mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    raw_val,
-                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey KAT (master secret)",
-                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
-                    operation="C_DeriveKey",
-                    expected_len=48,
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert_correct(
+                    actual=raw_val,
                     expected=expected,
+                    label="CKM_SSL3_MASTER_KEY_DERIVE:C_DeriveKey KAT (master secret)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE",
                 )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
             finally:
-                if derived != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
@@ -874,7 +495,6 @@ class TestSSL3MasterKeyDeriveDH:
             pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE_DH not supported")
 
         pre_master = _create_generic_secret(rs, _PRE_MASTER_SECRET)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_ssl3_master_key_derive(
                 CKM_SSL3_MASTER_KEY_DERIVE_DH,
@@ -899,38 +519,11 @@ class TestSSL3MasterKeyDeriveDH:
                 mech_param=mech,
             )
             try:
-                raw_val = MISSING_ATTRIBUTE
-                if derived == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey output handle",
-                            actual=derived,
-                            mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
-                        )
-                    )
-                else:
-                    raw_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        derived,
-                        CKA_VALUE,
-                        label="CKM_SSL3_MASTER_KEY_DERIVE_DH:CKA_VALUE readback",
-                        mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    raw_val,
-                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:CKA_VALUE readback",
-                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
-                    operation="C_DeriveKey",
-                    expected_len=48,
-                )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert len(raw_val) == 48, f"Expected 48 bytes, got {len(raw_val)}"
             finally:
-                if derived != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
@@ -952,7 +545,6 @@ class TestSSL3MasterKeyDeriveDH:
             pytest.skip("CKM_SSL3_MASTER_KEY_DERIVE_DH not supported")
 
         pre_master = _create_generic_secret(rs, _DH_PRE_MASTER_SECRET)
-        hard_results: list[C.Classification] = []
         expected = _ssl3_master_secret_reference(
             _DH_PRE_MASTER_SECRET,
             _CLIENT_RANDOM,
@@ -982,39 +574,17 @@ class TestSSL3MasterKeyDeriveDH:
                 mech_param=mech,
             )
             try:
-                raw_val = MISSING_ATTRIBUTE
-                if derived == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey output handle",
-                            actual=derived,
-                            mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
-                        )
-                    )
-                else:
-                    raw_val = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        derived,
-                        CKA_VALUE,
-                        label="CKM_SSL3_MASTER_KEY_DERIVE_DH:CKA_VALUE readback",
-                        mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                mismatch = _validate_output(
-                    raw_val,
-                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (master secret DH)",
-                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
-                    operation="C_DeriveKey",
-                    expected_len=48,
+                raw_val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(raw_val, bytes)
+                assert_correct(
+                    actual=raw_val,
                     expected=expected,
+                    label="CKM_SSL3_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (master secret DH)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_SSL3_MASTER_KEY_DERIVE_DH",
                 )
-                if mismatch is not None:
-                    hard_results.append(mismatch)
             finally:
-                if derived != 0:
-                    destroy_quietly(rs.raw, rs.sh, derived)
-            _raise_strongest(hard_results)
+                destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
@@ -1045,7 +615,6 @@ class TestSSL3KeyAndMacDerive:
             pytest.skip("CKM_SSL3_KEY_AND_MAC_DERIVE not supported")
 
         master_secret = _create_generic_secret(rs, _PRE_MASTER_SECRET)
-        hard_results: list[C.Classification] = []
         try:
             mech = mech_ssl3_key_mat(
                 CKM_SSL3_KEY_AND_MAC_DERIVE,
@@ -1067,40 +636,10 @@ class TestSSL3KeyAndMacDerive:
                     mech,
                 )
                 out = mech.key_mat_out
-                for handle, label in (
-                    (out.hClientKey, "client key"),
-                    (out.hServerKey, "server key"),
-                ):
-                    if handle == 0:
-                        hard_results.append(
-                            _record_handle_mismatch(
-                                label=f"CKM_SSL3_KEY_AND_MAC_DERIVE:{label} output handle",
-                                actual=handle,
-                                mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                            )
-                        )
-                iv_client = mech.buffer_bytes("iv_client")
-                if not iv_client:
-                    hard_results.append(
-                        _record_parameter_mismatch(
-                            label="CKM_SSL3_KEY_AND_MAC_DERIVE:client IV output",
-                            parameter="pIVClient",
-                            expected="non-empty bytes",
-                            actual=iv_client,
-                            mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        )
-                    )
-                iv_server = mech.buffer_bytes("iv_server")
-                if not iv_server:
-                    hard_results.append(
-                        _record_parameter_mismatch(
-                            label="CKM_SSL3_KEY_AND_MAC_DERIVE:server IV output",
-                            parameter="pIVServer",
-                            expected="non-empty bytes",
-                            actual=iv_server,
-                            mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        )
-                    )
+                assert out.hClientKey != 0
+                assert out.hServerKey != 0
+                assert any(mech.buffer_bytes("iv_client"))
+                assert any(mech.buffer_bytes("iv_server"))
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -1110,16 +649,14 @@ class TestSSL3KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
-            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
                     "not_operational",
                     kind="crypto",
-                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_DeriveKey",
-                    operation="C_DeriveKey",
+                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_Sign",
+                    operation="C_Sign",
                     mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}",
                 )
             raise
@@ -1136,16 +673,14 @@ class TestSSL3KeyAndMacDerive:
             _PRE_MASTER_SECRET, _CLIENT_RANDOM, _SERVER_RANDOM
         )
         master_secret = _create_generic_secret(rs, master_secret_data)
-        hard_results: list[C.Classification] = []
         try:
-            # We request 128-bit keys (16 bytes) and two 128-bit MAC secrets (16 bytes each).
+            # We request 128-bit keys (16 bytes) and SSL3 MD5/SHA1 MACs (16/20 bytes).
             # Key block size = 2 * (16 + 16 + 16) = 96 bytes (for AES-128 with 16-byte IVs).
             key_size_bits = 128
             mech = mech_ssl3_key_mat(
                 CKM_SSL3_KEY_AND_MAC_DERIVE,
                 _CLIENT_RANDOM,
                 _SERVER_RANDOM,
-                mac_size_bits=128,
                 key_size_bits=key_size_bits,
             )
 
@@ -1157,134 +692,39 @@ class TestSSL3KeyAndMacDerive:
                 96,
             )
 
+            _derive_key_material_to_params(
+                rs,
+                master_secret,
+                {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                mech,
+            )
+
             out = mech.key_mat_out
-            try:
-                _derive_key_material_to_params(
-                    rs,
-                    master_secret,
-                    {
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_TOKEN: False,
-                    },
-                    mech,
-                )
-            except BaseException:
-                # A provider may write some output handles before returning an
-                # error.  The output structure was captured before the call so
-                # every such handle is still cleaned up.
-                destroy_returned_handles(
-                    rs,
-                    out.hClientMacSecret,
-                    out.hServerMacSecret,
-                    out.hClientKey,
-                    out.hServerKey,
-                )
-                raise
-
-            for handle, label in (
-                (out.hClientMacSecret, "client MAC secret"),
-                (out.hServerMacSecret, "server MAC secret"),
-                (out.hClientKey, "client key"),
-                (out.hServerKey, "server key"),
-            ):
-                if handle == 0:
-                    hard_results.append(
-                        _record_handle_mismatch(
-                            label=f"CKM_SSL3_KEY_AND_MAC_DERIVE:{label} output handle",
-                            actual=handle,
-                            mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        )
-                    )
-
             try:
                 # Client MAC secret (16 bytes), Server MAC secret (16 bytes),
                 # Client Key (16 bytes), Server Key (16 bytes),
                 # Client IV (16 bytes), Server IV (16 bytes).
                 # Total = 96 bytes.
-                c_mac = MISSING_ATTRIBUTE
-                if out.hClientMacSecret != 0:
-                    c_mac = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        out.hClientMacSecret,
-                        CKA_VALUE,
-                        label="CKM_SSL3_KEY_AND_MAC_DERIVE:client MAC CKA_VALUE readback",
-                        mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                s_mac = MISSING_ATTRIBUTE
-                if out.hServerMacSecret != 0:
-                    s_mac = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        out.hServerMacSecret,
-                        CKA_VALUE,
-                        label="CKM_SSL3_KEY_AND_MAC_DERIVE:server MAC CKA_VALUE readback",
-                        mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                c_key = MISSING_ATTRIBUTE
-                if out.hClientKey != 0:
-                    c_key = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        out.hClientKey,
-                        CKA_VALUE,
-                        label="CKM_SSL3_KEY_AND_MAC_DERIVE:client key CKA_VALUE readback",
-                        mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                s_key = MISSING_ATTRIBUTE
-                if out.hServerKey != 0:
-                    s_key = _read_provider_attribute(
-                        rs.raw,
-                        rs.sh,
-                        out.hServerKey,
-                        CKA_VALUE,
-                        label="CKM_SSL3_KEY_AND_MAC_DERIVE:server key CKA_VALUE readback",
-                        mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        error_rvs=_DERIVE_ERROR_RVS,
-                    )
-                for label, value, expected in (
-                    ("client MAC", c_mac, expected_block[:16]),
-                    ("server MAC", s_mac, expected_block[16:32]),
-                    ("client key", c_key, expected_block[32:48]),
-                    ("server key", s_key, expected_block[48:64]),
-                ):
-                    mismatch = _validate_output(
-                        value,
-                        label=f"CKM_SSL3_KEY_AND_MAC_DERIVE:{label} CKA_VALUE readback",
-                        mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        operation="C_DeriveKey",
-                        expected_len=16,
-                        expected=expected,
-                    )
-                    if mismatch is not None:
-                        hard_results.append(mismatch)
+                c_mac = read_attributes(rs.raw, rs.sh, out.hClientMacSecret, [CKA_VALUE])[CKA_VALUE]
+                s_mac = read_attributes(rs.raw, rs.sh, out.hServerMacSecret, [CKA_VALUE])[CKA_VALUE]
+                c_key = read_attributes(rs.raw, rs.sh, out.hClientKey, [CKA_VALUE])[CKA_VALUE]
+                s_key = read_attributes(rs.raw, rs.sh, out.hServerKey, [CKA_VALUE])[CKA_VALUE]
                 c_iv = mech.buffer_bytes("iv_client")
                 s_iv = mech.buffer_bytes("iv_server")
-                if c_iv != expected_block[64:80]:
-                    hard_results.append(
-                        _record_parameter_mismatch(
-                            label="CKM_SSL3_KEY_AND_MAC_DERIVE:client IV output",
-                            parameter="pIVClient",
-                            expected=expected_block[64:80],
-                            actual=c_iv,
-                            mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        )
-                    )
-                if s_iv != expected_block[80:96]:
-                    hard_results.append(
-                        _record_parameter_mismatch(
-                            label="CKM_SSL3_KEY_AND_MAC_DERIVE:server IV output",
-                            parameter="pIVServer",
-                            expected=expected_block[80:96],
-                            actual=s_iv,
-                            mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                        )
+
+                actual_block = c_mac + s_mac + c_key + s_key + c_iv + s_iv
+
+                if actual_block != expected_block:
+                    raise AssertionError(
+                        f"SSL3 key material output mismatch.\n"
+                        f"Actual:   {actual_block.hex()}\n"
+                        f"Expected: {expected_block.hex()}"
                     )
             finally:
                 destroy_returned_handles(
@@ -1294,16 +734,14 @@ class TestSSL3KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
-            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _DERIVE_ERROR_RVS):
                 classify(
                     "not_operational",
                     kind="crypto",
-                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_DeriveKey",
-                    operation="C_DeriveKey",
+                    label="CKM_SSL3_KEY_AND_MAC_DERIVE:C_Sign",
+                    operation="C_Sign",
                     mechanism="CKM_SSL3_KEY_AND_MAC_DERIVE",
-                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_SSL3_KEY_AND_MAC_DERIVE not operational: {exc}",
                 )
             raise

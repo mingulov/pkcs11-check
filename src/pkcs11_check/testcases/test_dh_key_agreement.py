@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bool,
@@ -73,7 +72,6 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
@@ -263,206 +261,6 @@ def _dh_setup_or_xfail(fn: Callable[[], int], label: str) -> int:
         raise
 
 
-_DH_DERIVE_MECHANISM_NAME = "CKM_DH_PKCS_DERIVE"
-_DH_KEYPAIR_MECHANISM_NAME = "CKM_DH_PKCS_KEY_PAIR_GEN"
-
-
-def _dh_attribute_info(attr: int) -> dict[str, Any]:
-    from pkcs11_check.raw.metadata_std import ATTR_NAMES
-
-    return {"name": ATTR_NAMES.get(int(attr), f"0x{int(attr):08x}"), "id": int(attr)}
-
-
-def _dh_shape_record(
-    value: Any,
-    *,
-    attr: int,
-    leg: str,
-    label: str,
-    expected: str,
-    expected_length: int | None,
-    producer_operation: str,
-    producer_mechanism: str,
-) -> C.Classification | None:
-    """Record a present provider value that cannot safely feed an oracle."""
-    if value is MISSING_ATTRIBUTE:
-        return None
-    if (
-        type(value) is bytes
-        and len(value) > 0
-        and (expected_length is None or len(value) == expected_length)
-    ):
-        return None
-    try:
-        actual_length: int | None = len(value)
-    except TypeError:
-        actual_length = None
-    detail: dict[str, Any] = {
-        "attribute": _dh_attribute_info(attr),
-        "leg": leg,
-        "expected": {
-            "type": "bytes",
-            "length": expected_length if expected_length is not None else "non-empty",
-            "shape": expected,
-        },
-        "actual": {"type": type(value).__name__, "length": actual_length},
-        "producer_operation": producer_operation,
-        "producer_mechanism": producer_mechanism,
-    }
-    return C.record_as(
-        "wrong_result",
-        kind="metadata",
-        label=label,
-        operation="C_GetAttributeValue",
-        mechanism=None,
-        inherit_mechanism=False,
-        detail=detail,
-        summary=f"{label}: provider returned a value with the wrong shape",
-    )
-
-
-def _dh_read_and_validate(
-    rs: Any,
-    handle: int,
-    *,
-    attr: int,
-    leg: str,
-    label: str,
-    expected: str,
-    expected_length: int | None,
-    producer_operation: str,
-    producer_mechanism: str,
-) -> tuple[Any, C.Classification | None]:
-    """Read one leg and retain missing/shape evidence without terminating."""
-    before = len(C.get_records())
-    attrs = read_attributes(rs.raw, rs.sh, handle, [attr])
-    value = attr_or_record(
-        attrs,
-        attr,
-        label=label,
-        reason="not_operational",
-        kind="metadata",
-        inherit_mechanism=False,
-    )
-    new_records = C.get_records()[before:]
-    if value is MISSING_ATTRIBUTE:
-        if not new_records:
-            raise AssertionError(f"{label}: missing attribute did not produce evidence")
-        record = new_records[-1]
-        if record.detail is None:
-            record.detail = {}
-        record.detail.update(
-            {
-                "leg": leg,
-                "producer_operation": producer_operation,
-                "producer_mechanism": producer_mechanism,
-            }
-        )
-        return value, None
-    return value, _dh_shape_record(
-        value,
-        attr=attr,
-        leg=leg,
-        label=label,
-        expected=expected,
-        expected_length=expected_length,
-        producer_operation=producer_operation,
-        producer_mechanism=producer_mechanism,
-    )
-
-
-def _dh_raise_hard(records: list[C.Classification | None]) -> None:
-    hard = [record for record in records if record is not None and record.outcome == "fail"]
-    if hard:
-        C.raise_for_record(hard[0])
-
-
-def _dh_check_derived_pair(
-    first: Any,
-    second: Any,
-    *,
-    first_shape: C.Classification | None,
-    second_shape: C.Classification | None,
-    label: str,
-    relation: str,
-) -> None:
-    """Raise shape evidence before absence gating and crypto relation checks."""
-    _dh_raise_hard([first_shape, second_shape])
-    if first is MISSING_ATTRIBUTE or second is MISSING_ATTRIBUTE:
-        return
-    relation_holds = first == second if relation == "equal" else first != second
-    if relation_holds:
-        return
-    record = C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label=label,
-        operation="C_DeriveKey",
-        mechanism=_DH_DERIVE_MECHANISM_NAME,
-        detail={"relation": relation, "legs": ["first", "second"]},
-        summary=f"{label}: derived outputs violate the required relation",
-    )
-    C.raise_for_record(record)
-
-
-def _dh_record_kat_mismatch(
-    value: Any,
-    *,
-    expected: bytes,
-    label: str,
-) -> C.Classification | None:
-    """Retain a wrong known-answer result until all paired reads complete."""
-    if value is MISSING_ATTRIBUTE or value == expected:
-        return None
-    return C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label=label,
-        operation="C_DeriveKey",
-        mechanism=_DH_DERIVE_MECHANISM_NAME,
-        source="RFC 3526 Group 14",
-        detail={"expected_length": len(expected), "actual_length": len(value)},
-        summary=f"{label}: derived value does not match the known answer",
-    )
-
-
-def _dh_record_duplicate_public(
-    first: Any,
-    second: Any,
-    *,
-    first_shape: C.Classification | None,
-    second_shape: C.Classification | None,
-    legs: list[str],
-) -> C.Classification | None:
-    """Record equal usable generated public values without exposing key material."""
-    if (
-        first is MISSING_ATTRIBUTE
-        or second is MISSING_ATTRIBUTE
-        or first_shape is not None
-        or second_shape is not None
-        or first != second
-    ):
-        return None
-    try:
-        actual_length: int | None = len(first)
-    except TypeError:
-        actual_length = None
-    return C.record_as(
-        "wrong_result",
-        kind="crypto",
-        label="CKM_DH_PKCS_KEY_PAIR_GEN:independent public values differ",
-        operation="C_GenerateKeyPair",
-        mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-        detail={
-            "attribute": _dh_attribute_info(CKA_VALUE),
-            "expected": "different generated public values",
-            "actual": {"type": type(first).__name__, "length": actual_length},
-            "legs": legs,
-        },
-        summary=("CKM_DH_PKCS_KEY_PAIR_GEN: independent generated public values were equal"),
-    )
-
-
 class TestDHKeyAgreement:
     """Test DH key pair generation and key derivation."""
 
@@ -478,26 +276,9 @@ class TestDHKeyAgreement:
 
             # Public key value should be non-empty
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_VALUE])
-            pub_value = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="CKM_DH_PKCS_KEY_PAIR_GEN:public CKA_VALUE readback",
-                inherit_mechanism=False,
-            )
-            if pub_value is MISSING_ATTRIBUTE:
-                return
-            shape_record = _dh_shape_record(
-                pub_value,
-                attr=CKA_VALUE,
-                leg="public",
-                label="CKM_DH_PKCS_KEY_PAIR_GEN:public CKA_VALUE readback",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            if shape_record is not None:
-                C.raise_for_record(shape_record)
+            pub_value = attrs[CKA_VALUE]
+            assert isinstance(pub_value, bytes)
+            assert len(pub_value) > 0
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -508,199 +289,91 @@ class TestDHKeyAgreement:
         _skip_no_dh(rs)
 
         # Alice and Bob each generate a keypair
-        alice_pub = alice_priv = bob_pub = bob_priv = 0
+        alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
+        bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
         try:
-            alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
-            bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
-            alice_value, alice_shape = _dh_read_and_validate(
-                rs,
-                alice_pub,
-                attr=CKA_VALUE,
-                leg="Alice public",
-                label="CKM_DH_PKCS_DERIVE:Alice public CKA_VALUE",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            bob_value, bob_shape = _dh_read_and_validate(
-                rs,
-                bob_pub,
-                attr=CKA_VALUE,
-                leg="Bob public",
-                label="CKM_DH_PKCS_DERIVE:Bob public CKA_VALUE",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            public_records: list[C.Classification | None] = [alice_shape, bob_shape]
-            duplicate = _dh_record_duplicate_public(
-                alice_value,
-                bob_value,
-                first_shape=alice_shape,
-                second_shape=bob_shape,
-                legs=["Alice public", "Bob public"],
-            )
-            if duplicate is not None:
-                public_records.append(duplicate)
+            alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])
+            bob_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])
+            alice_value = alice_attrs[CKA_VALUE]
+            bob_value = bob_attrs[CKA_VALUE]
+            assert alice_value != bob_value  # Different public keys
 
             # Each derives an AES-128 key using the other's public value
-            alice_shared = 0
-            bob_shared = 0
+            alice_shared = _dh_derive_or_xfail(
+                rs,
+                alice_priv,
+                bob_value,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                label="alice shared-secret derive",
+            )
+            bob_shared = _dh_derive_or_xfail(
+                rs,
+                bob_priv,
+                alice_value,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                label="bob shared-secret derive",
+            )
             try:
-                if bob_value is not MISSING_ATTRIBUTE and bob_shape is None:
-                    alice_shared = _dh_derive_or_xfail(
-                        rs,
-                        alice_priv,
-                        bob_value,
-                        attrs={
-                            CKA_CLASS: CKO_SECRET_KEY,
-                            CKA_KEY_TYPE: CKK_AES,
-                            CKA_VALUE_LEN: 16,
-                            CKA_SENSITIVE: False,
-                            CKA_EXTRACTABLE: True,
-                            CKA_TOKEN: False,
-                        },
-                        label="alice shared-secret derive",
-                    )
-                if alice_value is not MISSING_ATTRIBUTE and alice_shape is None:
-                    bob_shared = _dh_derive_or_xfail(
-                        rs,
-                        bob_priv,
-                        alice_value,
-                        attrs={
-                            CKA_CLASS: CKO_SECRET_KEY,
-                            CKA_KEY_TYPE: CKK_AES,
-                            CKA_VALUE_LEN: 16,
-                            CKA_SENSITIVE: False,
-                            CKA_EXTRACTABLE: True,
-                            CKA_TOKEN: False,
-                        },
-                        label="bob shared-secret derive",
-                    )
                 # Both should derive the same key material
-                a_value = b_value = MISSING_ATTRIBUTE
-                a_shape = b_shape = None
-                if alice_shared:
-                    a_value, a_shape = _dh_read_and_validate(
-                        rs,
-                        alice_shared,
-                        attr=CKA_VALUE,
-                        leg="Alice derived",
-                        label="CKM_DH_PKCS_DERIVE:Alice derived CKA_VALUE",
-                        expected="exact-length bytes",
-                        expected_length=16,
-                        producer_operation="C_DeriveKey",
-                        producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
-                    )
-                if bob_shared:
-                    b_value, b_shape = _dh_read_and_validate(
-                        rs,
-                        bob_shared,
-                        attr=CKA_VALUE,
-                        leg="Bob derived",
-                        label="CKM_DH_PKCS_DERIVE:Bob derived CKA_VALUE",
-                        expected="exact-length bytes",
-                        expected_length=16,
-                        producer_operation="C_DeriveKey",
-                        producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
-                    )
-                _dh_check_derived_pair(
-                    a_value,
-                    b_value,
-                    first_shape=a_shape,
-                    second_shape=b_shape,
-                    relation="equal",
+                a_val = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])
+                b_val = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])
+                assert_correct(
+                    actual=a_val[CKA_VALUE],
+                    expected=b_val[CKA_VALUE],
                     label="CKM_DH_PKCS_DERIVE:shared-secret agreement (A*B == B*A)",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_DH_PKCS_DERIVE",
                 )
-                _dh_raise_hard(public_records)
             finally:
-                if alice_shared:
-                    destroy_quietly(rs.raw, rs.sh, alice_shared)
-                if bob_shared:
-                    destroy_quietly(rs.raw, rs.sh, bob_shared)
+                destroy_quietly(rs.raw, rs.sh, alice_shared)
+                destroy_quietly(rs.raw, rs.sh, bob_shared)
         finally:
-            if alice_pub:
-                destroy_quietly(rs.raw, rs.sh, alice_pub)
-            if alice_priv:
-                destroy_quietly(rs.raw, rs.sh, alice_priv)
-            if bob_pub:
-                destroy_quietly(rs.raw, rs.sh, bob_pub)
-            if bob_priv:
-                destroy_quietly(rs.raw, rs.sh, bob_priv)
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
 
     def test_dh_derived_key_encrypts(self, p11_raw_session: Any) -> None:
         """Derived AES key from DH can encrypt/decrypt data."""
         rs = p11_raw_session
         _skip_no_dh(rs)
 
-        alice_pub = alice_priv = bob_pub = bob_priv = 0
+        alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
+        bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
         try:
-            alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
-            bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
-            bob_value, bob_shape = _dh_read_and_validate(
-                rs,
-                bob_pub,
-                attr=CKA_VALUE,
-                leg="Bob public",
-                label="CKM_DH_PKCS_DERIVE:Bob public CKA_VALUE for Alice",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            alice_value, alice_shape = _dh_read_and_validate(
-                rs,
-                alice_pub,
-                attr=CKA_VALUE,
-                leg="Alice public",
-                label="CKM_DH_PKCS_DERIVE:Alice public CKA_VALUE for Bob",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            public_records: list[C.Classification | None] = [bob_shape, alice_shape]
+            bob_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])
+            alice_attrs = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])
 
             # Alice derives shared key, encrypts
-            shared_key = 0
-            bob_key = 0
+            shared_key = _dh_derive_or_xfail(
+                rs,
+                alice_priv,
+                bob_attrs[CKA_VALUE],
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_VALUE_LEN: 16,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                    CKA_TOKEN: False,
+                },
+                label="alice AES derive",
+            )
             try:
-                if bob_value is not MISSING_ATTRIBUTE and bob_shape is None:
-                    shared_key = _dh_derive_or_xfail(
-                        rs,
-                        alice_priv,
-                        bob_value,
-                        attrs={
-                            CKA_CLASS: CKO_SECRET_KEY,
-                            CKA_KEY_TYPE: CKK_AES,
-                            CKA_VALUE_LEN: 16,
-                            CKA_ENCRYPT: True,
-                            CKA_DECRYPT: True,
-                            CKA_TOKEN: False,
-                        },
-                        label="alice AES derive",
-                    )
-                if not shared_key:
-                    if alice_value is not MISSING_ATTRIBUTE and alice_shape is None:
-                        bob_key = _dh_derive_or_xfail(
-                            rs,
-                            bob_priv,
-                            alice_value,
-                            attrs={
-                                CKA_CLASS: CKO_SECRET_KEY,
-                                CKA_KEY_TYPE: CKK_AES,
-                                CKA_VALUE_LEN: 16,
-                                CKA_ENCRYPT: True,
-                                CKA_DECRYPT: True,
-                                CKA_TOKEN: False,
-                            },
-                            label="bob AES derive",
-                        )
-                    _dh_raise_hard(public_records)
-                    return
-
                 plaintext = b"DH key agreement!" + b"\x00" * 15  # pad to 32 bytes
                 plaintext = plaintext[:32]
                 ct = encrypt_single(rs.raw, rs.sh, shared_key, CKM_AES_ECB, plaintext)
@@ -718,13 +391,10 @@ class TestDHKeyAgreement:
                     )
 
                 # Bob derives the same shared key, decrypts
-                if alice_value is MISSING_ATTRIBUTE or alice_shape is not None:
-                    _dh_raise_hard(public_records)
-                    return
                 bob_key = _dh_derive_or_xfail(
                     rs,
                     bob_priv,
-                    alice_value,
+                    alice_attrs[CKA_VALUE],
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_AES,
@@ -735,29 +405,24 @@ class TestDHKeyAgreement:
                     },
                     label="bob AES derive",
                 )
-                pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
-                assert_correct(
-                    actual=pt,
-                    expected=plaintext,
-                    label="CKM_DH_PKCS_DERIVE:AES-ECB roundtrip (both parties)",
-                    operation="C_Decrypt",
-                    mechanism="CKM_AES_ECB",
-                )
-                _dh_raise_hard(public_records)
-            finally:
-                if bob_key:
+                try:
+                    pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
+                    assert_correct(
+                        actual=pt,
+                        expected=plaintext,
+                        label="CKM_DH_PKCS_DERIVE:AES-ECB roundtrip (both parties)",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_ECB",
+                    )
+                finally:
                     destroy_quietly(rs.raw, rs.sh, bob_key)
-                if shared_key:
-                    destroy_quietly(rs.raw, rs.sh, shared_key)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, shared_key)
         finally:
-            if alice_pub:
-                destroy_quietly(rs.raw, rs.sh, alice_pub)
-            if alice_priv:
-                destroy_quietly(rs.raw, rs.sh, alice_priv)
-            if bob_pub:
-                destroy_quietly(rs.raw, rs.sh, bob_pub)
-            if bob_priv:
-                destroy_quietly(rs.raw, rs.sh, bob_priv)
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
 
     def test_dh_pkcs_derive_rfc3526_group14_exact_vector(
         self,
@@ -793,16 +458,7 @@ class TestDHKeyAgreement:
                 },
                 label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14 exact vector",
             )
-            value_attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-            value = attr_or_record(
-                value_attrs,
-                CKA_VALUE,
-                label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14:derived CKA_VALUE",
-                reason="not_operational",
-                inherit_mechanism=False,
-            )
-            if value is MISSING_ATTRIBUTE:
-                return
+            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=value,
                 expected=_DH_RFC3526_GROUP14_EXPECTED_SECRET_32,
@@ -838,8 +494,6 @@ class TestDHKeyAgreement:
                 "CKM_DH_PKCS_DERIVE RFC 3526 Group 14 truncation vector",
             )
             derived_values: dict[int, bytes] = {}
-            shape_records: list[C.Classification | None] = []
-            kat_records: list[C.Classification | None] = []
             for requested_len in (32, 16):
                 derived = _dh_derive_or_xfail(
                     rs,
@@ -856,51 +510,29 @@ class TestDHKeyAgreement:
                     label=(f"CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN={requested_len}"),
                 )
                 derived_keys.append(derived)
-                value, shape = _dh_read_and_validate(
-                    rs,
-                    derived,
-                    attr=CKA_VALUE,
-                    leg=f"requested length {requested_len}",
-                    label=(
-                        "CKM_DH_PKCS_DERIVE RFC 3526 Group 14:"
-                        f"CKA_VALUE_LEN={requested_len} CKA_VALUE"
-                    ),
-                    expected="exact-length bytes",
-                    expected_length=requested_len,
-                    producer_operation="C_DeriveKey",
-                    producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
+                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                assert isinstance(value, bytes)
+                assert len(value) == requested_len, (
+                    "DH RFC 3526 derived key reported "
+                    f"{len(value)} bytes for CKA_VALUE_LEN={requested_len}"
                 )
-                shape_records.append(shape)
-                if value is MISSING_ATTRIBUTE:
-                    continue
-                if type(value) is bytes:
-                    derived_values[requested_len] = value
-                if requested_len == 32 and type(value) is bytes and len(value) == requested_len:
-                    kat_records.append(
-                        _dh_record_kat_mismatch(
-                            value,
-                            expected=_DH_RFC3526_GROUP14_EXPECTED_SECRET_32,
-                            label=(
-                                "CKM_DH_PKCS_DERIVE:C_DeriveKey KAT (RFC 3526 Group 14, len=32)"
-                            ),
-                        )
-                    )
+                derived_values[requested_len] = value
 
-            _dh_raise_hard(shape_records)
-            _dh_raise_hard(kat_records)
-            if 32 not in derived_values or 16 not in derived_values:
-                return
-            if derived_values[16] != derived_values[32][-16:]:
-                record = C.record_as(
-                    "wrong_result",
-                    kind="crypto",
-                    label="CKM_DH_PKCS_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
-                    operation="C_DeriveKey",
-                    mechanism=_DH_DERIVE_MECHANISM_NAME,
-                    detail={"relation": "rightmost-bytes", "legs": ["length 32", "length 16"]},
-                    summary="DH derived value did not preserve the rightmost bytes",
-                )
-                C.raise_for_record(record)
+            assert_correct(
+                actual=derived_values[32],
+                expected=_DH_RFC3526_GROUP14_EXPECTED_SECRET_32,
+                label="CKM_DH_PKCS_DERIVE:C_DeriveKey KAT (RFC 3526 Group 14, len=32)",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
+                source="RFC 3526 Group 14",
+            )
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[32][-16:],
+                label="CKM_DH_PKCS_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
+            )
         finally:
             for derived in derived_keys:
                 destroy_quietly(rs.raw, rs.sh, derived)
@@ -966,27 +598,12 @@ class TestDHKeyAgreement:
         rs = p11_raw_session
         _skip_no_dh(rs)
 
-        alice_pub = alice_priv = bob_pub = bob_priv = 0
+        alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
+        bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
         derived_keys: list[int] = []
         try:
-            alice_pub, alice_priv = _gen_dh_keypair(rs.raw, rs.sh)
-            bob_pub, bob_priv = _gen_dh_keypair(rs.raw, rs.sh)
-            bob_value, bob_shape = _dh_read_and_validate(
-                rs,
-                bob_pub,
-                attr=CKA_VALUE,
-                leg="Bob public",
-                label="CKM_DH_PKCS_DERIVE:Bob public CKA_VALUE for truncation",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            _dh_raise_hard([bob_shape])
-            if bob_value is MISSING_ATTRIBUTE:
-                return
+            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
             derived_values: dict[int, bytes] = {}
-            shape_records: list[C.Classification | None] = []
 
             for requested_len in (32, 16):
                 key = _dh_derive_or_xfail(
@@ -1004,48 +621,26 @@ class TestDHKeyAgreement:
                     label=f"DH derive CKA_VALUE_LEN={requested_len}",
                 )
                 derived_keys.append(key)
-                value, shape = _dh_read_and_validate(
-                    rs,
-                    key,
-                    attr=CKA_VALUE,
-                    leg=f"requested length {requested_len}",
-                    label=f"DH derive CKA_VALUE_LEN={requested_len}:derived CKA_VALUE",
-                    expected="exact-length bytes",
-                    expected_length=requested_len,
-                    producer_operation="C_DeriveKey",
-                    producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
+                value = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+                assert len(value) == requested_len, (
+                    f"DH derived key reported {len(value)} bytes for CKA_VALUE_LEN={requested_len}"
                 )
-                shape_records.append(shape)
-                if value is MISSING_ATTRIBUTE:
-                    continue
-                if type(value) is bytes and len(value) == requested_len:
-                    derived_values[requested_len] = value
+                derived_values[requested_len] = value
 
-            _dh_raise_hard(shape_records)
-            if 32 not in derived_values or 16 not in derived_values:
-                return
-            if derived_values[16] != derived_values[32][-16:]:
-                record = C.record_as(
-                    "wrong_result",
-                    kind="crypto",
-                    label="CKM_DH_PKCS_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
-                    operation="C_DeriveKey",
-                    mechanism=_DH_DERIVE_MECHANISM_NAME,
-                    detail={"relation": "rightmost-bytes", "legs": ["length 32", "length 16"]},
-                    summary="DH derived value did not preserve the rightmost bytes",
-                )
-                C.raise_for_record(record)
+            assert_correct(
+                actual=derived_values[16],
+                expected=derived_values[32][-16:],
+                label="CKM_DH_PKCS_DERIVE:CKA_VALUE_LEN truncation keeps rightmost bytes",
+                operation="C_DeriveKey",
+                mechanism="CKM_DH_PKCS_DERIVE",
+            )
         finally:
             for key in derived_keys:
                 destroy_quietly(rs.raw, rs.sh, key)
-            if alice_pub:
-                destroy_quietly(rs.raw, rs.sh, alice_pub)
-            if alice_priv:
-                destroy_quietly(rs.raw, rs.sh, alice_priv)
-            if bob_pub:
-                destroy_quietly(rs.raw, rs.sh, bob_pub)
-            if bob_priv:
-                destroy_quietly(rs.raw, rs.sh, bob_priv)
+            destroy_quietly(rs.raw, rs.sh, alice_pub)
+            destroy_quietly(rs.raw, rs.sh, alice_priv)
+            destroy_quietly(rs.raw, rs.sh, bob_pub)
+            destroy_quietly(rs.raw, rs.sh, bob_priv)
 
     def test_dh_derive_rejects_missing_peer_public_value(
         self,
@@ -1133,132 +728,60 @@ class TestDHKeyAgreement:
         rs = p11_raw_session
         _skip_no_dh(rs)
 
-        _pub1 = priv1 = pub2 = _priv2 = 0
-        _pub3 = priv3 = pub4 = _priv4 = 0
-        key1 = key2 = 0
+        # Exchange 1
+        _pub1, priv1 = _gen_dh_keypair(rs.raw, rs.sh)
+        pub2, _priv2 = _gen_dh_keypair(rs.raw, rs.sh)
+        pub2_val = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
+        key1 = _dh_derive_or_xfail(
+            rs,
+            priv1,
+            pub2_val,
+            attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 16,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            label="first exchange derive",
+        )
+
+        # Exchange 2 (fresh keypairs)
+        _pub3, priv3 = _gen_dh_keypair(rs.raw, rs.sh)
+        pub4, _priv4 = _gen_dh_keypair(rs.raw, rs.sh)
+        pub4_val = read_attributes(rs.raw, rs.sh, pub4, [CKA_VALUE])[CKA_VALUE]
+        key2 = _dh_derive_or_xfail(
+            rs,
+            priv3,
+            pub4_val,
+            attrs={
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_VALUE_LEN: 16,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_TOKEN: False,
+            },
+            label="second exchange derive",
+        )
+
         try:
-            # Exchange 1
-            _pub1, priv1 = _gen_dh_keypair(rs.raw, rs.sh)
-            pub2, _priv2 = _gen_dh_keypair(rs.raw, rs.sh)
-            pub2_val, pub2_shape = _dh_read_and_validate(
-                rs,
-                pub2,
-                attr=CKA_VALUE,
-                leg="first exchange peer public",
-                label="first exchange peer public CKA_VALUE",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-
-            # Exchange 2 (fresh keypairs)
-            _pub3, priv3 = _gen_dh_keypair(rs.raw, rs.sh)
-            pub4, _priv4 = _gen_dh_keypair(rs.raw, rs.sh)
-            pub4_val, pub4_shape = _dh_read_and_validate(
-                rs,
-                pub4,
-                attr=CKA_VALUE,
-                leg="second exchange peer public",
-                label="second exchange peer public CKA_VALUE",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKeyPair",
-                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-            )
-            public_records: list[C.Classification | None] = [pub2_shape, pub4_shape]
-            duplicate = _dh_record_duplicate_public(
-                pub2_val,
-                pub4_val,
-                first_shape=pub2_shape,
-                second_shape=pub4_shape,
-                legs=["first exchange peer public", "second exchange peer public"],
-            )
-            if duplicate is not None:
-                public_records.append(duplicate)
-
-            if pub2_val is not MISSING_ATTRIBUTE and pub2_shape is None:
-                key1 = _dh_derive_or_xfail(
-                    rs,
-                    priv1,
-                    pub2_val,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_VALUE_LEN: 16,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_TOKEN: False,
-                    },
-                    label="first exchange derive",
-                )
-            if pub4_val is not MISSING_ATTRIBUTE and pub4_shape is None:
-                key2 = _dh_derive_or_xfail(
-                    rs,
-                    priv3,
-                    pub4_val,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_VALUE_LEN: 16,
-                        CKA_SENSITIVE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_TOKEN: False,
-                    },
-                    label="second exchange derive",
-                )
-
-            # Different exchanges should produce different keys.
-            v1 = v2 = MISSING_ATTRIBUTE
-            v1_shape = v2_shape = None
-            if key1:
-                v1, v1_shape = _dh_read_and_validate(
-                    rs,
-                    key1,
-                    attr=CKA_VALUE,
-                    leg="first exchange derived",
-                    label="first exchange derived CKA_VALUE",
-                    expected="exact-length bytes",
-                    expected_length=16,
-                    producer_operation="C_DeriveKey",
-                    producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
-                )
-            if key2:
-                v2, v2_shape = _dh_read_and_validate(
-                    rs,
-                    key2,
-                    attr=CKA_VALUE,
-                    leg="second exchange derived",
-                    label="second exchange derived CKA_VALUE",
-                    expected="exact-length bytes",
-                    expected_length=16,
-                    producer_operation="C_DeriveKey",
-                    producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
-                )
-            _dh_check_derived_pair(
-                v1,
-                v2,
-                first_shape=v1_shape,
-                second_shape=v2_shape,
-                relation="different",
-                label="CKM_DH_PKCS_DERIVE:independent exchanges produce different secrets",
-            )
-            _dh_raise_hard(public_records)
+            # Different exchanges should produce different keys
+            v1 = read_attributes(rs.raw, rs.sh, key1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, key2, [CKA_VALUE])[CKA_VALUE]
+            assert v1 != v2
         finally:
-            for handle in (
-                key1,
-                key2,
-                _pub1,
-                priv1,
-                pub2,
-                _priv2,
-                _pub3,
-                priv3,
-                pub4,
-                _priv4,
-            ):
-                if handle:
-                    destroy_quietly(rs.raw, rs.sh, handle)
+            destroy_quietly(rs.raw, rs.sh, key1)
+            destroy_quietly(rs.raw, rs.sh, key2)
+            destroy_quietly(rs.raw, rs.sh, _pub1)
+            destroy_quietly(rs.raw, rs.sh, priv1)
+            destroy_quietly(rs.raw, rs.sh, pub2)
+            destroy_quietly(rs.raw, rs.sh, _priv2)
+            destroy_quietly(rs.raw, rs.sh, _pub3)
+            destroy_quietly(rs.raw, rs.sh, priv3)
+            destroy_quietly(rs.raw, rs.sh, pub4)
+            destroy_quietly(rs.raw, rs.sh, _priv4)
 
 
 @pytest.mark.slow
@@ -1315,40 +838,9 @@ class TestDHParameterGeneration:
             assert dp_handle.value != 0
 
             attrs = read_attributes(rs.raw, rs.sh, dp_handle.value, [CKA_PRIME])
-            prime = attr_or_record(
-                attrs,
-                CKA_PRIME,
-                label="CKM_DH_PKCS_PARAMETER_GEN:CKA_PRIME readback",
-                inherit_mechanism=False,
-            )
-            if prime is MISSING_ATTRIBUTE:
-                return
-            if type(prime) is bytes and len(prime) * 8 >= 2048:
-                return
-            try:
-                actual: dict[str, Any] = {"type": type(prime).__name__, "bits": len(prime) * 8}
-            except TypeError:
-                actual = {"type": type(prime).__name__, "bits": None}
-            record = C.record_as(
-                "wrong_result",
-                kind="metadata",
-                label="CKM_DH_PKCS_PARAMETER_GEN:CKA_PRIME readback",
-                operation="C_GetAttributeValue",
-                mechanism="CKM_DH_PKCS_PARAMETER_GEN",
-                inherit_mechanism=False,
-                detail={
-                    "attribute": _dh_attribute_info(CKA_PRIME),
-                    "expected": {"type": "bytes", "min_bits": 2048},
-                    "actual": actual,
-                    "producer_operation": "C_GenerateKey",
-                    "producer_mechanism": "CKM_DH_PKCS_PARAMETER_GEN",
-                },
-                summary=(
-                    "CKM_DH_PKCS_PARAMETER_GEN:CKA_PRIME readback: provider returned a "
-                    "CKA_PRIME with the wrong shape"
-                ),
-            )
-            C.raise_for_record(record)
+            prime = attrs[CKA_PRIME]
+            assert isinstance(prime, bytes)
+            assert len(prime) * 8 >= 2048
         finally:
             destroy_quietly(rs.raw, rs.sh, dp_handle.value)
 
@@ -1380,159 +872,71 @@ class TestDHParameterGeneration:
             byref(dp_handle),
         )
         expect_rv(rv, CKR_OK)
-        pub_a = priv_a = pub_b = priv_b = 0
-        key_a = key_b = 0
         try:
             # Read the generated prime and base
-            prime, prime_shape = _dh_read_and_validate(
-                rs,
+            dp_attrs = read_attributes(
+                rs.raw,
+                rs.sh,
                 dp_handle.value,
-                attr=CKA_PRIME,
-                leg="generated prime",
-                label="generated DH parameters:CKA_PRIME",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKey",
-                producer_mechanism="CKM_DH_PKCS_PARAMETER_GEN",
+                [CKA_PRIME, CKA_BASE],
             )
-            base, base_shape = _dh_read_and_validate(
-                rs,
-                dp_handle.value,
-                attr=CKA_BASE,
-                leg="generated base",
-                label="generated DH parameters:CKA_BASE",
-                expected="non-empty bytes",
-                expected_length=None,
-                producer_operation="C_GenerateKey",
-                producer_mechanism="CKM_DH_PKCS_PARAMETER_GEN",
-            )
-            _dh_raise_hard([prime_shape, base_shape])
-            if prime is MISSING_ATTRIBUTE or base is MISSING_ATTRIBUTE:
-                return
+            prime = dp_attrs[CKA_PRIME]
+            base = dp_attrs[CKA_BASE]
+            assert isinstance(prime, bytes)
+            assert isinstance(base, bytes)
 
             # Generate two keypairs from the params
-            generation_complete = False
+            pub_a, priv_a = _gen_dh_keypair(rs.raw, rs.sh, prime, base)
+            pub_b, priv_b = _gen_dh_keypair(rs.raw, rs.sh, prime, base)
             try:
-                pub_a, priv_a = _gen_dh_keypair(rs.raw, rs.sh, prime, base)
-                pub_b, priv_b = _gen_dh_keypair(rs.raw, rs.sh, prime, base)
-                generation_complete = True
-            finally:
-                if not generation_complete:
-                    if pub_a:
-                        destroy_quietly(rs.raw, rs.sh, pub_a)
-                    if priv_a:
-                        destroy_quietly(rs.raw, rs.sh, priv_a)
-            try:
-                pub_b_val, pub_b_shape = _dh_read_and_validate(
-                    rs,
-                    pub_b,
-                    attr=CKA_VALUE,
-                    leg="generated-params B public",
-                    label="generated-params B public CKA_VALUE",
-                    expected="non-empty bytes",
-                    expected_length=None,
-                    producer_operation="C_GenerateKeyPair",
-                    producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-                )
-                pub_a_val, pub_a_shape = _dh_read_and_validate(
-                    rs,
-                    pub_a,
-                    attr=CKA_VALUE,
-                    leg="generated-params A public",
-                    label="generated-params A public CKA_VALUE",
-                    expected="non-empty bytes",
-                    expected_length=None,
-                    producer_operation="C_GenerateKeyPair",
-                    producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
-                )
-                public_records: list[C.Classification | None] = [pub_b_shape, pub_a_shape]
-                duplicate = _dh_record_duplicate_public(
-                    pub_a_val,
-                    pub_b_val,
-                    first_shape=pub_a_shape,
-                    second_shape=pub_b_shape,
-                    legs=["generated-params A public", "generated-params B public"],
-                )
-                if duplicate is not None:
-                    public_records.append(duplicate)
+                pub_b_val = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
+                pub_a_val = read_attributes(rs.raw, rs.sh, pub_a, [CKA_VALUE])[CKA_VALUE]
 
-                if pub_b_val is not MISSING_ATTRIBUTE and pub_b_shape is None:
-                    key_a = _dh_derive_or_xfail(
-                        rs,
-                        priv_a,
-                        pub_b_val,
-                        attrs={
-                            CKA_CLASS: CKO_SECRET_KEY,
-                            CKA_KEY_TYPE: CKK_AES,
-                            CKA_VALUE_LEN: 16,
-                            CKA_SENSITIVE: False,
-                            CKA_EXTRACTABLE: True,
-                            CKA_TOKEN: False,
-                        },
-                        label="generated-params A derive",
-                    )
-                if pub_a_val is not MISSING_ATTRIBUTE and pub_a_shape is None:
-                    key_b = _dh_derive_or_xfail(
-                        rs,
-                        priv_b,
-                        pub_a_val,
-                        attrs={
-                            CKA_CLASS: CKO_SECRET_KEY,
-                            CKA_KEY_TYPE: CKK_AES,
-                            CKA_VALUE_LEN: 16,
-                            CKA_SENSITIVE: False,
-                            CKA_EXTRACTABLE: True,
-                            CKA_TOKEN: False,
-                        },
-                        label="generated-params B derive",
-                    )
-                va = vb = MISSING_ATTRIBUTE
-                va_shape = vb_shape = None
-                if key_a:
-                    va, va_shape = _dh_read_and_validate(
-                        rs,
-                        key_a,
-                        attr=CKA_VALUE,
-                        leg="generated-params A derived",
-                        label="generated-params A derived CKA_VALUE",
-                        expected="exact-length bytes",
-                        expected_length=16,
-                        producer_operation="C_DeriveKey",
-                        producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
-                    )
-                if key_b:
-                    vb, vb_shape = _dh_read_and_validate(
-                        rs,
-                        key_b,
-                        attr=CKA_VALUE,
-                        leg="generated-params B derived",
-                        label="generated-params B derived CKA_VALUE",
-                        expected="exact-length bytes",
-                        expected_length=16,
-                        producer_operation="C_DeriveKey",
-                        producer_mechanism=_DH_DERIVE_MECHANISM_NAME,
-                    )
-                _dh_check_derived_pair(
-                    va,
-                    vb,
-                    first_shape=va_shape,
-                    second_shape=vb_shape,
-                    relation="equal",
-                    label="CKM_DH_PKCS_DERIVE:shared-secret agreement (generated params)",
+                key_a = _dh_derive_or_xfail(
+                    rs,
+                    priv_a,
+                    pub_b_val,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    label="generated-params A derive",
                 )
-                _dh_raise_hard(public_records)
-            finally:
-                if key_a:
+                key_b = _dh_derive_or_xfail(
+                    rs,
+                    priv_b,
+                    pub_a_val,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_AES,
+                        CKA_VALUE_LEN: 16,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    label="generated-params B derive",
+                )
+                try:
+                    va = read_attributes(rs.raw, rs.sh, key_a, [CKA_VALUE])[CKA_VALUE]
+                    vb = read_attributes(rs.raw, rs.sh, key_b, [CKA_VALUE])[CKA_VALUE]
+                    assert_correct(
+                        actual=va,
+                        expected=vb,
+                        label="CKM_DH_PKCS_DERIVE:shared-secret agreement (generated params)",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_DH_PKCS_DERIVE",
+                    )
+                finally:
                     destroy_quietly(rs.raw, rs.sh, key_a)
-                if key_b:
                     destroy_quietly(rs.raw, rs.sh, key_b)
-                if pub_a:
-                    destroy_quietly(rs.raw, rs.sh, pub_a)
-                if priv_a:
-                    destroy_quietly(rs.raw, rs.sh, priv_a)
-                if pub_b:
-                    destroy_quietly(rs.raw, rs.sh, pub_b)
-                if priv_b:
-                    destroy_quietly(rs.raw, rs.sh, priv_b)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, pub_a)
+                destroy_quietly(rs.raw, rs.sh, priv_a)
+                destroy_quietly(rs.raw, rs.sh, pub_b)
+                destroy_quietly(rs.raw, rs.sh, priv_b)
         finally:
             destroy_quietly(rs.raw, rs.sh, dp_handle.value)

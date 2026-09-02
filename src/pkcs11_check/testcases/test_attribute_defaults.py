@@ -12,9 +12,8 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, record_as
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
-from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
@@ -41,11 +40,7 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import (
-    MISSING_ATTRIBUTE,
-    attr_or_record,
-    require_bool_attr,
-)
+from pkcs11_check.testcases._attribute_values import require_bool_attr
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
@@ -57,35 +52,18 @@ pytestmark = [pytest.mark.object]
 
 
 def _read_attr(raw: Any, sh: int, handle: int, attr: int) -> Any:
-    """Read one required attribute while preserving unavailable provider evidence."""
+    """Read a single attribute, skipping if the module doesn't support it."""
     try:
         attrs = read_attributes(raw, sh, handle, [attr])
-        value = attr_or_record(
-            attrs,
-            attr,
-            inherit_mechanism=False,
-            label=f"attribute 0x{attr:08X}:default-readback",
-            reason="honest_deviation",
-            kind="metadata",
-        )
-        if value is MISSING_ATTRIBUTE:
-            return MISSING_ATTRIBUTE
+        if attr not in attrs:
+            pytest.skip(f"Module does not expose attribute 0x{attr:08X} (not in response)")
+        value = attrs[attr]
         if ATTR_VALUE_TYPES.get(attr) == "bool":
             return require_bool_attr(value, f"attribute 0x{attr:08X}")
         return value
     except CkrAssertionError as e:
         if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
-            attr_name = ATTR_NAMES.get(int(attr), f"0x{attr:08X}")
-            record_as(
-                "honest_deviation",
-                kind="metadata",
-                label=f"attribute 0x{attr:08X}:default-readback",
-                operation="C_GetAttributeValue",
-                actual=e.rv,
-                summary=f"Module does not expose required attribute 0x{attr:08X}: {e}",
-                detail={"attribute": {"name": attr_name, "id": int(attr)}},
-            )
-            return MISSING_ATTRIBUTE
+            pytest.skip(f"Module does not expose attribute 0x{attr:08X}: {e}")
         raise
 
 
@@ -113,23 +91,13 @@ class TestSecretKeyDefaults:
         """CKA_TOKEN is False (explicitly set)."""
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
-        token = attr_or_record(
-            attrs, CKA_TOKEN, inherit_mechanism=False, label="CKA_TOKEN:generated-AES"
-        )
-        if token is MISSING_ATTRIBUTE:
-            return
-        assert require_bool_attr(token, "CKA_TOKEN") is False
+        assert require_bool_attr(attrs[CKA_TOKEN], "CKA_TOKEN") is False
 
     def test_local_is_true(self, aes_key: Any) -> None:
         """CKA_LOCAL should be True for a generated key."""
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
-        local_raw = attr_or_record(
-            attrs, CKA_LOCAL, inherit_mechanism=False, label="CKA_LOCAL:generated-AES"
-        )
-        if local_raw is MISSING_ATTRIBUTE:
-            return
-        local = require_bool_attr(local_raw, "CKA_LOCAL")
+        local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
         if local is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -150,48 +118,36 @@ class TestSecretKeyDefaults:
         """CKA_SENSITIVE defaults to a boolean (True on most modules)."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_SENSITIVE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
     def test_extractable_is_bool(self, aes_key: Any) -> None:
         """CKA_EXTRACTABLE defaults to a boolean (False on most modules)."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_EXTRACTABLE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
     def test_modifiable_default(self, aes_key: Any) -> None:
         """CKA_MODIFIABLE defaults to True."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_MODIFIABLE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert val is True
 
     def test_copyable_default(self, aes_key: Any) -> None:
         """CKA_COPYABLE defaults to True."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_COPYABLE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert val is True
 
     def test_destroyable_default(self, aes_key: Any) -> None:
         """CKA_DESTROYABLE defaults to True."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_DESTROYABLE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert val is True
 
     def test_private_default(self, aes_key: Any) -> None:
         """CKA_PRIVATE defaults to True for secret keys."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_PRIVATE)
-        if val is MISSING_ATTRIBUTE:
-            return
         if val is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -213,8 +169,6 @@ class TestSecretKeyDefaults:
         rs, key = aes_key
         sensitive = _read_attr(rs.raw, rs.sh, key, CKA_SENSITIVE)
         always_sensitive = _read_attr(rs.raw, rs.sh, key, CKA_ALWAYS_SENSITIVE)
-        if sensitive is MISSING_ATTRIBUTE or always_sensitive is MISSING_ATTRIBUTE:
-            return
         if sensitive:
             assert always_sensitive is True
         else:
@@ -226,8 +180,6 @@ class TestSecretKeyDefaults:
         rs, key = aes_key
         extractable = _read_attr(rs.raw, rs.sh, key, CKA_EXTRACTABLE)
         never_extractable = _read_attr(rs.raw, rs.sh, key, CKA_NEVER_EXTRACTABLE)
-        if extractable is MISSING_ATTRIBUTE or never_extractable is MISSING_ATTRIBUTE:
-            return
         if not extractable:
             assert never_extractable is True
         else:
@@ -251,12 +203,7 @@ class TestKeyPairDefaults:
         """Public key CKA_LOCAL should be True."""
         rs, pub, _priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_LOCAL])
-        local_raw = attr_or_record(
-            attrs, CKA_LOCAL, inherit_mechanism=False, label="CKA_LOCAL:RSA-public-key"
-        )
-        if local_raw is MISSING_ATTRIBUTE:
-            return
-        local = require_bool_attr(local_raw, "CKA_LOCAL")
+        local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
         if local is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -279,12 +226,7 @@ class TestKeyPairDefaults:
         """Private key CKA_LOCAL should be True."""
         rs, _pub, priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_LOCAL])
-        local_raw = attr_or_record(
-            attrs, CKA_LOCAL, inherit_mechanism=False, label="CKA_LOCAL:RSA-private-key"
-        )
-        if local_raw is MISSING_ATTRIBUTE:
-            return
-        local = require_bool_attr(local_raw, "CKA_LOCAL")
+        local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
         if local is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -312,16 +254,12 @@ class TestKeyPairDefaults:
         """
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_SENSITIVE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
     def test_private_key_extractable(self, rsa_keypair: Any) -> None:
         """Private key CKA_EXTRACTABLE follows the token's default posture."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_EXTRACTABLE)
-        if val is MISSING_ATTRIBUTE:
-            return
         if val is not False:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -336,8 +274,6 @@ class TestKeyPairDefaults:
         """Private key CKA_PRIVATE defaults to True."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_PRIVATE)
-        if val is MISSING_ATTRIBUTE:
-            return
         if val is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -358,32 +294,24 @@ class TestKeyPairDefaults:
         """Public key CKA_ENCRYPT is a boolean."""
         rs, pub, _priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, pub, CKA_ENCRYPT)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
     def test_public_key_verify_is_bool(self, rsa_keypair: Any) -> None:
         """Public key CKA_VERIFY is a boolean."""
         rs, pub, _priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, pub, CKA_VERIFY)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
     def test_private_key_sign_is_bool(self, rsa_keypair: Any) -> None:
         """Private key CKA_SIGN is a boolean."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_SIGN)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
     def test_private_key_decrypt_is_bool(self, rsa_keypair: Any) -> None:
         """Private key CKA_DECRYPT is a boolean."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_DECRYPT)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)
 
 
@@ -411,25 +339,16 @@ class TestDataObjectDefaults:
         """CKA_TOKEN is False (explicitly set)."""
         rs, h = data_obj
         attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
-        token = attr_or_record(
-            attrs, CKA_TOKEN, inherit_mechanism=False, label="CKA_TOKEN:data-object"
-        )
-        if token is MISSING_ATTRIBUTE:
-            return
-        assert require_bool_attr(token, "CKA_TOKEN") is False
+        assert require_bool_attr(attrs[CKA_TOKEN], "CKA_TOKEN") is False
 
     def test_modifiable_default(self, data_obj: Any) -> None:
         """CKA_MODIFIABLE defaults to True."""
         rs, h = data_obj
         val = _read_attr(rs.raw, rs.sh, h, CKA_MODIFIABLE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert val is True
 
     def test_private_is_bool(self, data_obj: Any) -> None:
         """CKA_PRIVATE defaults to a boolean (module-dependent)."""
         rs, h = data_obj
         val = _read_attr(rs.raw, rs.sh, h, CKA_PRIVATE)
-        if val is MISSING_ATTRIBUTE:
-            return
         assert isinstance(val, bool)

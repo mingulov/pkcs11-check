@@ -23,11 +23,13 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_ec_keypair,
     gen_rsa_keypair,
+    read_attributes,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
+    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_SENSITIVE,
@@ -49,12 +51,12 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_RSA_PKCS,
     CKM_SHA_1_HMAC,
 )
-from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     assert_correct,
+    extract_ec_point,
     import_secret_key_negotiated,
     skip_unless_create_object_supported,
 )
@@ -192,18 +194,10 @@ class TestECDSAInterop:
     def _extract_ec_point_bytes(
         rs: Any,
         pub_h: int,
-        curve: ec.EllipticCurve,
     ) -> bytes:
-        public_key = read_ec_public_key_or_xfail(
-            rs,
-            pub_h,
-            curve,
-            label="ECDSA interoperability public key",
-        )
-        return public_key.public_bytes(
-            serialization.Encoding.X962,
-            serialization.PublicFormat.UncompressedPoint,
-        )
+        attrs = read_attributes(rs.raw, rs.sh, pub_h, [CKA_EC_POINT])
+        raw_point = attrs[CKA_EC_POINT]
+        return bytes(extract_ec_point(raw_point))
 
     def test_ecdsa_sign_p11_verify_crypto(self, p11_raw_session: Any) -> None:
         """Full ECDSA round-trip: sign in P11, verify in crypto."""
@@ -218,7 +212,7 @@ class TestECDSAInterop:
             sig_raw = sign_single(rs.raw, rs.sh, priv_h, CKM_ECDSA, digest)
 
             # Export point and verify in cryptography
-            point_bytes = self._extract_ec_point_bytes(rs, pub_h, ec.SECP256R1())
+            point_bytes = self._extract_ec_point_bytes(rs, pub_h)
             pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), point_bytes)
 
             r = int.from_bytes(sig_raw[:32], "big")
@@ -255,7 +249,7 @@ class TestECDSAInterop:
         try:
             sig_raw = sign_single(rs.raw, rs.sh, priv_h, CKM_ECDSA, digest)
 
-            point_bytes = self._extract_ec_point_bytes(rs, pub_h, curve_obj)
+            point_bytes = self._extract_ec_point_bytes(rs, pub_h)
             pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(curve_obj, point_bytes)
 
             r = int.from_bytes(sig_raw[:coord_size], "big")

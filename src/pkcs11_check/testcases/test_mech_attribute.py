@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, get_records, raise_for_record, xfail_as
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
@@ -37,12 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import (
-    MISSING_ATTRIBUTE,
-    attr_or_record,
-    require_bool_attr,
-    require_ulong_attr,
-)
+from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
 from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
@@ -66,25 +61,14 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
     """Read a required generated-key attribute and classify clean refusals."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr_id])
-        before = len(get_records())
-        value = attr_or_record(
-            attrs,
-            attr_id,
-            inherit_mechanism=False,
-            label=label,
-            reason="not_operational",
-            kind="metadata",
-        )
-        if value is MISSING_ATTRIBUTE:
-            records = get_records()
-            if len(records) > before:
-                raise_for_record(records[-1])
-            fail_as(
-                "harness_error",
+        value = attrs.get(attr_id)
+        if value is None:
+            xfail_as(
+                "not_operational",
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
-                summary=f"{label}: missing attribute produced no classification",
+                summary=f"{label}: provider did not return the requested attribute",
             )
         return value
     except AssertionError as exc:

@@ -18,7 +18,6 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from re import fullmatch
 from typing import Any
 
 _RV_TRACE_MARKER = "P11_RV_TRACE_JSON:"
@@ -29,130 +28,10 @@ _RV_TRACE_MARKER = "P11_RV_TRACE_JSON:"
 # OSError and a positive exit code rather than a signal -- can never be hidden by it.
 HARNESS_ERROR_MARKER = "HARNESS_ERROR:"
 
-# Child -> parent sentinel for a provider observation that was made before a later
-# Python-level cleanup/teardown failure.  The child only emits facts; the parent owns
-# classification.  Keeping this protocol separate from HARNESS_ERROR is important:
-# the latter deliberately removes a record from provider totals.
-PROVIDER_FINDING_MARKER = "PROVIDER_FINDING:"
-_PROVIDER_FINDING_SCHEMA = 1
-_PROVIDER_FINDING_KEYS = frozenset({"schema", "reason", "kind", "operation", "mechanism", "detail"})
-_PROVIDER_FINDING_REASONS = frozenset(
-    {
-        "wrong_result",
-        "accepted_invalid",
-        "self_contradiction",
-        "oracle",
-        "not_operational",
-        "nonspec_reject",
-        "honest_deviation",
-        "undeclared_capability",
-        "sanctioned_refusal",
-    }
-)
-_PROVIDER_FINDING_KINDS = frozenset({"crypto", "policy", "lifecycle", "metadata"})
-
 # Exceptions that mean "the module did something to us" and must therefore never be
 # swallowed as harness noise: they stay findings. Everything else raised while releasing
 # our own resources is our bug.
 _MODULE_FAULT_EXCEPTIONS = (OSError, MemoryError, SystemError)
-
-
-def _object_pairs_without_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Build a JSON object while rejecting duplicate keys."""
-    payload: dict[str, object] = {}
-    for key, value in pairs:
-        if key in payload:
-            raise ValueError(f"duplicate provider-finding key: {key!r}")
-        payload[key] = value
-    return payload
-
-
-def _validate_provider_finding(payload: object) -> tuple[dict[str, Any] | None, str | None]:
-    """Validate the provider-observation wire payload without importing classification."""
-    if not isinstance(payload, dict):
-        return None, "payload is not an object"
-    if set(payload) != _PROVIDER_FINDING_KEYS:
-        return None, "payload keys do not match the provider-finding schema"
-    if type(payload["schema"]) is not int or payload["schema"] != _PROVIDER_FINDING_SCHEMA:
-        return None, "unsupported provider-finding schema"
-    reason = payload["reason"]
-    if not isinstance(reason, str) or reason not in _PROVIDER_FINDING_REASONS:
-        return None, "invalid provider-finding reason"
-    kind = payload["kind"]
-    if not isinstance(kind, str) or kind not in _PROVIDER_FINDING_KINDS:
-        return None, "invalid provider-finding kind"
-    operation = payload["operation"]
-    if not isinstance(operation, str) or fullmatch(r"C_[A-Za-z0-9_]+", operation) is None:
-        return None, "invalid provider-finding operation"
-    mechanism = payload["mechanism"]
-    if mechanism is not None and (
-        not isinstance(mechanism, str) or fullmatch(r"CKM_[A-Za-z0-9_]+", mechanism) is None
-    ):
-        return None, "invalid provider-finding mechanism"
-    detail = payload["detail"]
-    if not isinstance(detail, str) or not detail:
-        return None, "invalid provider-finding detail"
-    try:
-        detail_bytes = detail.encode("utf-8")
-    except UnicodeEncodeError:
-        return None, "invalid provider-finding detail"
-    if len(detail_bytes) > 2048 or any(not char.isprintable() for char in detail):
-        return None, "invalid provider-finding detail"
-    return dict(payload), None
-
-
-def emit_provider_finding(
-    *,
-    reason: str,
-    kind: str,
-    operation: str,
-    mechanism: str | None,
-    detail: str,
-) -> None:
-    """Emit one validated provider observation for parent-side classification.
-
-    This helper intentionally has no dependency on ``classification`` or pytest.  A
-    child may be killed immediately after this line, so the marker is flushed before
-    the probe raises the assertion that describes the provider observation.
-    """
-    payload: dict[str, Any] = {
-        "schema": _PROVIDER_FINDING_SCHEMA,
-        "reason": reason,
-        "kind": kind,
-        "operation": operation,
-        "mechanism": mechanism,
-        "detail": detail,
-    }
-    valid, error = _validate_provider_finding(payload)
-    if valid is None:
-        raise ValueError(error or "invalid provider-finding payload")
-    print(PROVIDER_FINDING_MARKER + json.dumps(valid, separators=(",", ":")), flush=True)
-
-
-def parse_provider_finding(
-    stdout: str,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Parse at most one strict provider-finding marker from child stdout.
-
-    Returns ``(payload, None)`` for a valid marker, ``(None, None)`` when no marker
-    was emitted, and ``(None, error)`` for malformed/duplicate markers.  The latter
-    deliberately remains a process-protocol failure at the parent, never a synthetic
-    provider classification.
-    """
-    lines = [line for line in stdout.splitlines() if line.startswith(PROVIDER_FINDING_MARKER)]
-    if not lines:
-        return None, None
-    if len(lines) != 1:
-        return None, "duplicate provider-finding marker"
-    raw_payload = lines[0].removeprefix(PROVIDER_FINDING_MARKER)
-    try:
-        payload: object = json.loads(
-            raw_payload,
-            object_pairs_hook=_object_pairs_without_duplicates,
-        )
-    except (ValueError, json.JSONDecodeError):
-        return None, "provider-finding marker is not valid JSON"
-    return _validate_provider_finding(payload)
 
 
 def rv_trace_enabled() -> bool:
@@ -173,36 +52,6 @@ def rv_trace_maxlen() -> int | None:
     except ValueError:
         return None
     return maxlen if maxlen > 0 else None
-
-
-def mark_python_finalized() -> None:
-    """Leave proof that CPython finalization ran, if nothing else already has.
-
-    Registered by ``probe_main``/``probe_main_raw`` as their FIRST action, before the
-    params file or the module can fail to load. ``atexit`` is LIFO, so this runs last --
-    after the real coverage write -- and it never clobbers it: it writes only when the
-    coverage file is still empty or unparseable.
-
-    The parent uses the presence of a parseable coverage file to tell "the module called
-    exit() from inside a PKCS#11 call and took the process down" apart from "Python
-    raised and died normally". Without this, a child that died BEFORE registering its
-    teardown would leave the same empty file as a module-terminated process, and would be
-    reported as a provider crash. Registering first closes that window.
-    """
-    path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
-    if not path:
-        return
-    try:
-        with open(path, encoding="utf-8") as fh:
-            if isinstance(json.load(fh), dict):
-                return
-    except (OSError, ValueError):
-        pass
-    try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump({"python_finalized": True}, fh)
-    except OSError:
-        pass
 
 
 def write_coverage(

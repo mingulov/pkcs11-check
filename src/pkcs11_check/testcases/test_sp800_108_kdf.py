@@ -61,7 +61,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_secret_key_negotiated,
@@ -69,53 +68,6 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.keymgmt
-
-
-def _read_attr_or_record(
-    raw: Any,
-    sh: int,
-    handle: int,
-    attr: Any,
-    *,
-    label: str,
-) -> Any:
-    """Read one provider attribute while preserving an unavailable-value record."""
-    attrs = read_attributes(raw, sh, handle, [attr])
-    return attr_or_record(
-        attrs, attr, inherit_mechanism=False, label=label, reason="not_operational"
-    )
-
-
-def _assert_sp800_bytes(
-    value: Any,
-    *,
-    label: str,
-    mechanism: str,
-    expected_len: int,
-) -> None:
-    """Classify malformed provider byte readbacks without raw assertions."""
-    if value is MISSING_ATTRIBUTE:
-        return
-    if not isinstance(value, bytes):
-        classify(
-            "wrong_result",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            mechanism=mechanism,
-            expected="bytes",
-            actual=type(value).__name__,
-            summary=f"{label}: provider returned a non-byte value",
-        )
-    assert_correct(
-        actual=len(value),
-        expected=expected_len,
-        label=label,
-        operation="C_GetAttributeValue",
-        mechanism=mechanism,
-        kind="metadata",
-    )
-
 
 # 32-byte base key material for HMAC-SHA256 PRF
 _BASE_KEY_BYTES = bytes(range(32))
@@ -490,15 +442,7 @@ class TestSP800108CounterKDF:
         try:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 128, mp)
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_SP800_108_COUNTER_KDF:AES-128 CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = _sp800_108_counter_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
             )
@@ -529,15 +473,7 @@ class TestSP800108CounterKDF:
         try:
             mp = _build_counter_kdf_mech()
             derived = _sp800_derive(rs, base_key, CKM_SP800_108_COUNTER_KDF, 256, mp)
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_SP800_108_COUNTER_KDF:AES-256 CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = _sp800_108_counter_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
             )
@@ -583,22 +519,8 @@ class TestSP800108CounterKDF:
                 128,
                 _build_counter_kdf_mech(),
             )
-            v1 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d1,
-                CKA_VALUE,
-                label="CKM_SP800_108_COUNTER_KDF:first CKA_VALUE readback",
-            )
-            v2 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d2,
-                CKA_VALUE,
-                label="CKM_SP800_108_COUNTER_KDF:second CKA_VALUE readback",
-            )
-            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
-                return
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=v1,
                 expected=v2,
@@ -644,33 +566,9 @@ class TestSP800108CounterKDF:
                 128,
                 _build_counter_kdf_mech(label=b"label-B"),
             )
-            va = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                da,
-                CKA_VALUE,
-                label="CKM_SP800_108_COUNTER_KDF:label-A CKA_VALUE readback",
-            )
-            vb = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                db,
-                CKA_VALUE,
-                label="CKM_SP800_108_COUNTER_KDF:label-B CKA_VALUE readback",
-            )
-            if va is MISSING_ATTRIBUTE or vb is MISSING_ATTRIBUTE:
-                return
-            if va == vb:
-                # This finding is about C_DeriveKey's output diversity, not the
-                # C_GetAttributeValue readback that retrieved it (F6).
-                classify(
-                    "wrong_result",
-                    kind="crypto",
-                    label="CKM_SP800_108_COUNTER_KDF:distinct labels produce distinct outputs",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_SP800_108_COUNTER_KDF",
-                    summary="Different labels produced the same derived key",
-                )
+            va = read_attributes(rs.raw, rs.sh, da, [CKA_VALUE])[CKA_VALUE]
+            vb = read_attributes(rs.raw, rs.sh, db, [CKA_VALUE])[CKA_VALUE]
+            assert va != vb, "Different labels produced same derived key"
         except AssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DERIVE_ERROR_RVS, "CKM_SP800_108_COUNTER_KDF derivation not operational"
@@ -708,46 +606,12 @@ class TestSP800108CounterKDF:
                 raise
 
             additional_handles = [int(handle.value) for handle in handle_refs if handle.value]
-            if not primary:
-                classify(
-                    "wrong_result",
-                    kind="metadata",
-                    label="CKM_SP800_108_COUNTER_KDF:primary derived handle",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_SP800_108_COUNTER_KDF",
-                    summary="C_DeriveKey did not return a primary derived key handle",
-                )
-            if not additional_handles:
-                classify(
-                    "wrong_result",
-                    kind="metadata",
-                    label="CKM_SP800_108_COUNTER_KDF:additional derived handles",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_SP800_108_COUNTER_KDF",
-                    summary="C_DeriveKey did not return an additional derived key handle",
-                )
+            assert primary != 0
+            assert additional_handles, "C_DeriveKey did not return additional derived key handle"
             for handle in additional_handles:
-                value = _read_attr_or_record(
-                    rs.raw,
-                    rs.sh,
-                    handle,
-                    CKA_VALUE,
-                    label=(
-                        "CKM_SP800_108_COUNTER_KDF:additional derived "
-                        f"handle {handle} CKA_VALUE readback"
-                    ),
-                )
-                if value is MISSING_ATTRIBUTE:
-                    continue
-                _assert_sp800_bytes(
-                    value,
-                    label=(
-                        "CKM_SP800_108_COUNTER_KDF:additional derived "
-                        f"handle {handle} CKA_VALUE readback"
-                    ),
-                    mechanism="CKM_SP800_108_COUNTER_KDF",
-                    expected_len=16,
-                )
+                attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+                assert isinstance(attrs[CKA_VALUE], bytes)
+                assert len(attrs[CKA_VALUE]) == 16
         finally:
             destroy_quietly(rs.raw, rs.sh, primary)
             for handle in (int(handle.value) for handle in handle_refs if handle.value):
@@ -776,15 +640,7 @@ class TestSP800108FeedbackKDF:
                 128,
                 _build_feedback_kdf_mech(),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_SP800_108_FEEDBACK_KDF:AES-128 CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = _sp800_108_feedback_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
             )
@@ -817,15 +673,7 @@ class TestSP800108FeedbackKDF:
                 128,
                 _build_feedback_kdf_mech(iv=iv),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_SP800_108_FEEDBACK_KDF:IV CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = _sp800_108_feedback_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128, iv=iv
             )
@@ -867,22 +715,8 @@ class TestSP800108FeedbackKDF:
                 128,
                 _build_feedback_kdf_mech(iv=b"\xff" * 32),
             )
-            v1 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d1,
-                CKA_VALUE,
-                label="CKM_SP800_108_FEEDBACK_KDF:first CKA_VALUE readback",
-            )
-            v2 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d2,
-                CKA_VALUE,
-                label="CKM_SP800_108_FEEDBACK_KDF:second CKA_VALUE readback",
-            )
-            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
-                return
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             if v1 == v2:
                 classify(
                     "wrong_result",
@@ -926,22 +760,8 @@ class TestSP800108FeedbackKDF:
                 128,
                 _build_feedback_kdf_mech(),
             )
-            v1 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d1,
-                CKA_VALUE,
-                label="CKM_SP800_108_FEEDBACK_KDF:first CKA_VALUE readback",
-            )
-            v2 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d2,
-                CKA_VALUE,
-                label="CKM_SP800_108_FEEDBACK_KDF:second CKA_VALUE readback",
-            )
-            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
-                return
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=v1,
                 expected=v2,
@@ -980,15 +800,7 @@ class TestSP800108DoublePipelineKDF:
                 128,
                 _build_double_pipeline_kdf_mech(),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:AES-128 CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = _sp800_108_double_pipeline_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 128
             )
@@ -1022,15 +834,7 @@ class TestSP800108DoublePipelineKDF:
                 256,
                 _build_double_pipeline_kdf_mech(),
             )
-            val = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                derived,
-                CKA_VALUE,
-                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:AES-256 CKA_VALUE readback",
-            )
-            if val is MISSING_ATTRIBUTE:
-                return
+            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
             expected = _sp800_108_double_pipeline_hmac_sha256_reference(
                 _BASE_KEY_BYTES, _LABEL, _CONTEXT, 256
             )
@@ -1072,22 +876,8 @@ class TestSP800108DoublePipelineKDF:
                 128,
                 _build_double_pipeline_kdf_mech(),
             )
-            v1 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d1,
-                CKA_VALUE,
-                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:first CKA_VALUE readback",
-            )
-            v2 = _read_attr_or_record(
-                rs.raw,
-                rs.sh,
-                d2,
-                CKA_VALUE,
-                label="CKM_SP800_108_DOUBLE_PIPELINE_KDF:second CKA_VALUE readback",
-            )
-            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
-                return
+            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
+            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
             assert_correct(
                 actual=v1,
                 expected=v2,

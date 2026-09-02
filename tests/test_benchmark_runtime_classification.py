@@ -35,10 +35,7 @@ def test_benchmark_rsa_keypair_runtime_reject_is_xfail(
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
-    with pytest.raises(
-        pytest.xfail.Exception,
-        match="advertised RSA keypair generation rejected setup",
-    ):
+    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
         next(test_benchmark.rsa2048_keypair.__wrapped__(_session("RSA_PKCS_KEY_PAIR_GEN")))
 
 
@@ -55,10 +52,7 @@ def test_benchmark_ec_keypair_runtime_reject_is_xfail(
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
-    with pytest.raises(
-        pytest.xfail.Exception,
-        match="advertised EC keypair generation rejected setup",
-    ):
+    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
         next(test_benchmark.ec_p256_keypair.__wrapped__(_session("EC_KEY_PAIR_GEN")))
 
 

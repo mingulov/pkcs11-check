@@ -35,7 +35,6 @@ from pkcs11_check.raw.bootstrap import (
     open_session,
     resolve_slot_id,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
@@ -45,7 +44,6 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes._emit import (
     emit_rv_trace,
-    mark_python_finalized,
     rv_trace_enabled,
     rv_trace_maxlen,
     write_coverage,
@@ -152,11 +150,6 @@ def probe_main(
     I7 — atexit emits P11_RV_TRACE_JSON:<json> when PKCS11_CHECK_RV_TRACE is set,
          matching the format record_subprocess_rv_trace() expects.
     """
-    # FIRST, before anything can fail: proof that CPython finalization ran. atexit is
-    # LIFO so this fires last and never clobbers the real coverage write. The parent
-    # reads its absence as 'the module terminated the process from inside a PKCS#11
-    # call', so a load failure here must not look the same as one.
-    atexit.register(mark_python_finalized)
     params = ProbeParams.load(sys.argv[1])
     raw = RawPKCS11.from_lib(params.module_path)
 
@@ -181,17 +174,8 @@ def probe_main(
             return
 
         # --- C_Initialize (all levels above LOAD) ---
-        # A clean provider refusal is evidence that the advertised operation is not
-        # operational, not a Python/bootstrap failure.  Emit a terminal marker and
-        # return normally so the parent can classify it after inspecting process
-        # disposition.  Only CkrAssertionError is caught here; OSError/SEH and all
-        # other Python defects must retain their crash/harness attribution.
-        try:
-            rv = raw.C_Initialize(None)
-            expect_rv(rv, CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
-        except CkrAssertionError as exc:
-            print(f"SETUP_XFAIL:C_Initialize rejected with {ckr_name(exc.rv)}")
-            return
+        rv = raw.C_Initialize(None)
+        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
         teardown.initialized = True
 
         if level == Level.INIT:
@@ -202,11 +186,7 @@ def probe_main(
         # params.slot_id is a slot INDEX (config.slot semantics), not a raw slot ID: resolve it
         # through the present-token slot list exactly as fixtures.py does. Passing the raw index to
         # C_OpenSession crashes with CKR_SLOT_ID_INVALID on dynamic-slot modules (index != id).
-        try:
-            slots = get_slot_ids(raw)
-        except CkrAssertionError as exc:
-            print(f"SETUP_XFAIL:C_GetSlotList rejected with {ckr_name(exc.rv)}")
-            return
+        slots = get_slot_ids(raw)
         if not slots:
             print("SETUP_XFAIL:no slot with a present token")
             return
@@ -214,11 +194,7 @@ def probe_main(
         ctx.slot_id = slot_id
 
         # --- Open session ---
-        try:
-            sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
-        except CkrAssertionError as exc:
-            print(f"SETUP_XFAIL:C_OpenSession rejected with {ckr_name(exc.rv)}")
-            return
+        sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
         teardown.sh = sh
         ctx.sh = sh
 
@@ -226,11 +202,7 @@ def probe_main(
         if level == Level.LOGIN:
             pin = os.environ.get("_P11CHECK_PIN")
             if pin is not None:
-                try:
-                    login_user(raw, sh, CKU_USER, pin.encode())
-                except CkrAssertionError as exc:
-                    print(f"SETUP_XFAIL:C_Login rejected with {ckr_name(exc.rv)}")
-                    return
+                login_user(raw, sh, CKU_USER, pin.encode())
 
         run_fn(ctx, params.extra)
     finally:

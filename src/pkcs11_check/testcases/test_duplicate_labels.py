@@ -25,7 +25,6 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKO_DATA,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     skip_if_data_objects_unsupported,
@@ -87,28 +86,11 @@ class TestDuplicateLabels:
             )
             assert len(found) >= 2
 
-            values = []
-            value_omitted = False
-            for h in found:
-                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-                value = attr_or_record(
-                    attrs,
-                    CKA_VALUE,
-                    label="CKA_VALUE:duplicate-label-readback",
-                    reason="not_operational",
-                    inherit_mechanism=False,
-                )
-                if value is MISSING_ATTRIBUTE:
-                    value_omitted = True
-                    continue
-                values.append(value)
-            values.sort()
-            # A missing CKA_VALUE readback disables only the completeness oracle below
-            # (it cannot know whether the omitted handle held "first" or "second") --
-            # the omission itself is already recorded above via attr_or_record.
-            if not value_omitted:
-                assert b"first" in values
-                assert b"second" in values
+            values = sorted(
+                read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])[CKA_VALUE] for h in found
+            )
+            assert b"first" in values
+            assert b"second" in values
         finally:
             destroy_quietly(rs.raw, rs.sh, o1)
             destroy_quietly(rs.raw, rs.sh, o2)

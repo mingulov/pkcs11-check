@@ -32,7 +32,6 @@ from pkcs11_check.raw.types_std import (
     CKO_DATA,
     CKR_ARGUMENTS_BAD,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     skip_if_data_objects_unsupported,
@@ -67,15 +66,7 @@ class TestLargeDataObjects:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, obj, [CKA_VALUE])
-            stored = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                inherit_mechanism=False,
-                label="CKO_DATA:1MB CKA_VALUE readback",
-                reason="not_operational",
-            )
-            if stored is MISSING_ATTRIBUTE:
-                return
+            stored = attrs[CKA_VALUE]
             assert stored == big_data
             assert len(stored) == 1024 * 1024
         finally:
@@ -100,16 +91,7 @@ class TestLargeDataObjects:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, obj, [CKA_VALUE])
-            stored = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                inherit_mechanism=False,
-                label="CKO_DATA:100KB CKA_VALUE readback",
-                reason="not_operational",
-            )
-            if stored is MISSING_ATTRIBUTE:
-                return
-            assert stored == data
+            assert attrs[CKA_VALUE] == data
         finally:
             destroy_quietly(rs.raw, rs.sh, obj)
 

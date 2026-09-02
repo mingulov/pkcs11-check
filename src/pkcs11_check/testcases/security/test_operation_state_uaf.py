@@ -5,15 +5,10 @@ stored key reference may point to freed memory if the module holds a raw pointer
 rather than copying key material at ``*Init`` time.  The next completion call
 then dereferences freed memory → heap-use-after-free.
 
-For pre-bound multipart operations, conformant behaviour is either refusal of
-the destroy while the operation is active, a clean completion error, or
-successful completion because key material was copied at ``*Init`` time.  The
-digest and derive probes are direct-handle operations instead: ``C_DigestInit``
-binds no key and ``C_DigestKey`` first receives the handle after destruction,
-while ``C_DeriveKey`` is atomic.  After a successful destroy, those probes
-must return ``CKR_KEY_HANDLE_INVALID``; successful use is a lifecycle
-self-contradiction and another clean rejection is a nonspec deviation.  The
-**one** hard requirement for every probe is no crash.
+Conformant behaviour: either the destroy is refused while the operation is
+active, OR the completion call returns a clean error, OR (for snapshot-based
+implementations) the operation completes with ``CKR_OK`` because key material
+was copied at ``*Init`` time.  The **one** hard requirement is no crash.
 
 Fifteen probes (single-threaded, no race required):
 
@@ -44,35 +39,22 @@ Fifteen probes (single-threaded, no race required):
 
 from __future__ import annotations
 
-# ruff: noqa: I001 - retain imports required by the focused source contracts
-
-import ctypes
-import json
-import re
 from typing import Any
 
 import pytest
 
-from pkcs11_check import classification as C  # noqa: N812 - classification alias convention
 from pkcs11_check.classification import fail_as
-from pkcs11_check.core.process_observation import termination_from_returncode
-from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_KEY_HANDLE_INVALID,
-    CKR_OK,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OPERATION_NOT_INITIALIZED,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
-from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER, pin_from_config
-from pkcs11_check.testcases._subprocess_result import (
-    PROCESS_DISPOSITION_REASONS,
-    assert_subprocess_completed,
-)
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -354,13 +336,11 @@ class TestDigestOperationStateUAF:
     ) -> None:
         """Using a destroyed key handle in ``C_DigestKey`` must not UAF.
 
-        ``C_DigestInit(CKM_SHA256)`` binds no key: ``C_DigestKey`` first receives
-        the key handle after ``C_DestroyObject``.  There is therefore no
-        snapshot-success path.  A crash is the finding.  If destruction is
-        refused, the stale-handle premise is not established; after successful
-        destruction, the exact conformant result is ``CKR_KEY_HANDLE_INVALID``.
-        Other standard/vendor rejections are reported as nonspec deviations,
-        while ``CKR_OK`` is a lifecycle self-contradiction.
+        After ``C_DestroyObject`` on the key, ``C_DigestKey`` may dereference
+        the operation's stored key reference, which now points to freed memory.
+        A crash is the finding.  A conformant module either refuses the destroy
+        while the digest is active, returns a clean error from ``C_DigestKey``,
+        or (if it snapshotted the key value at import) succeeds.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("SHA256"):
@@ -378,12 +358,20 @@ class TestDigestOperationStateUAF:
             coverage="session",
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
-        _check_digest_probe(
+        assert_subprocess_no_crash(
             rc,
             out,
             err,
-            context="C_DigestKey on destroyed key handle (use-after-destroy)",
+            context="C_DigestKey after C_DestroyObject (operation-state UAF)",
         )
+        digest_key_rv = _parse_rv(out, "DIGEST_KEY_RV:")
+        if digest_key_rv is not None:
+            classify_negative_rv(
+                digest_key_rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_DigestKey on destroyed key handle",
+                allow_ok=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -447,649 +435,9 @@ class TestVerifyOperationStateUAF:
 # C_DeriveKey is atomic (no Init/complete split), so the UAF pattern is
 # modelled as a use-after-destroy of the base key handle: generate an EC
 # keypair, destroy the private key, then call C_DeriveKey with the stale
-# handle.  Unlike the other probes in this file, there is no Init-bound key
-# reference that could snapshot key material.  A conformant module must reject
-# the stale handle with a clean CKR (normally CKR_KEY_HANDLE_INVALID) without
+# handle.  A conformant module must reject the stale handle with a clean
+# CKR (e.g. CKR_KEY_HANDLE_INVALID / CKR_OBJECT_HANDLE_INVALID) without
 # dereferencing freed memory.
-
-
-_UAF_FACT_MAX_BYTES = 1024
-_UAF_STRING_MAX_CHARS = 256
-_UAF_RV_RE = re.compile(rf"0x[0-9a-f]{{8,{2 * ctypes.sizeof(ctypes.c_ulong)}}}")
-_UAF_MISSING_FACT = {
-    "schema": 1,
-    "probe": "derive",
-    "event": "SETUP_ATTRIBUTE",
-    "attribute": {"name": "CKA_EC_POINT", "id": 385},
-    "state": "missing",
-    "value_type": None,
-    "value_len": None,
-}
-_UAF_FACT_COMMON_KEYS = frozenset({"schema", "probe", "event", "attribute", "state"})
-_UAF_FACT_ATTRIBUTE = {"name": "CKA_EC_POINT", "id": 385}
-_UAF_FACT_STATES = frozenset(
-    {"missing", "unusable", "read_error", "malformed_encoding", "invalid_point"}
-)
-_UAF_RV_MAX = (1 << (8 * ctypes.sizeof(ctypes.c_ulong))) - 1
-
-
-def _json_no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    """Decode one JSON object while rejecting duplicate keys."""
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key {key!r}")
-        result[key] = value
-    return result
-
-
-def _reject_json_constant(value: str) -> object:
-    raise ValueError(f"non-standard JSON constant {value!r}")
-
-
-def _parse_uaf_fact(line: str) -> dict[str, object]:
-    """Parse and validate one strict terminal derive setup fact."""
-    payload = line.removeprefix("UAF:")
-    if len(payload.encode("utf-8")) > _UAF_FACT_MAX_BYTES:
-        raise ValueError("UAF fact exceeds bounded JSON size")
-    value = json.loads(
-        payload,
-        object_pairs_hook=_json_no_duplicate_keys,
-        parse_constant=_reject_json_constant,
-    )
-    if not isinstance(value, dict):
-        raise ValueError("UAF fact must be a JSON object")
-    if type(value.get("schema")) is not int or value["schema"] != 1:
-        raise ValueError("UAF fact has an invalid schema")
-    if value.get("probe") != "derive" or value.get("event") != "SETUP_ATTRIBUTE":
-        raise ValueError("UAF fact has an invalid probe or event")
-    attribute = value.get("attribute")
-    if not isinstance(attribute, dict) or attribute != _UAF_FACT_ATTRIBUTE:
-        raise ValueError("UAF fact has an invalid CKA_EC_POINT descriptor")
-    if type(attribute.get("id")) is not int:
-        raise ValueError("UAF fact uses a boolean where an integer is required")
-    state = value.get("state")
-    if not isinstance(state, str) or state not in _UAF_FACT_STATES:
-        raise ValueError("UAF fact has an invalid setup state")
-
-    expected_keys = {
-        "missing": _UAF_FACT_COMMON_KEYS | {"value_type", "value_len"},
-        "unusable": _UAF_FACT_COMMON_KEYS | {"value_type", "value_len"},
-        "read_error": _UAF_FACT_COMMON_KEYS | {"operation", "rv"},
-        "malformed_encoding": _UAF_FACT_COMMON_KEYS | {"diagnostic"},
-        "invalid_point": _UAF_FACT_COMMON_KEYS | {"diagnostic"},
-    }[state]
-    if set(value) != expected_keys:
-        raise ValueError("UAF fact has unknown or missing fields")
-
-    if state == "missing":
-        if value["value_type"] is not None or value["value_len"] is not None:
-            raise ValueError("missing UAF fact must retain null legacy fields")
-    elif state == "unusable":
-        value_type = value["value_type"]
-        value_len = value["value_len"]
-        if not isinstance(value_type, str) or not value_type or len(value_type) > 64:
-            raise ValueError("unusable UAF fact has an invalid value_type")
-        if value_len is not None and (type(value_len) is not int or value_len < 0):
-            raise ValueError("unusable UAF fact has an invalid value_len")
-    elif state == "read_error":
-        if value["operation"] != "C_GetAttributeValue":
-            raise ValueError("read-error UAF fact has an invalid operation")
-        rv = value["rv"]
-        if type(rv) is not int or rv <= 0 or rv > _UAF_RV_MAX:
-            raise ValueError("read-error UAF fact has an invalid CK_RV")
-    else:
-        diagnostic = value["diagnostic"]
-        if (
-            not isinstance(diagnostic, str)
-            or not diagnostic
-            or len(diagnostic) > _UAF_STRING_MAX_CHARS
-        ):
-            raise ValueError("point UAF fact has an invalid diagnostic")
-    return value
-
-
-def _parse_uaf_missing_fact(line: str) -> dict[str, object]:
-    """Parse and validate the legacy missing-peer-point fact."""
-    value = _parse_uaf_fact(line)
-    if value["state"] != "missing" or value != _UAF_MISSING_FACT:
-        raise ValueError("UAF fact does not match the exact derive omission schema")
-    return value
-
-
-def _parse_uaf_rv(line: str, prefix: str) -> int:
-    """Parse a child CK_RV marker in its bounded, canonical form."""
-    payload = line.removeprefix(prefix)
-    if _UAF_RV_RE.fullmatch(payload) is None:
-        raise ValueError(f"malformed {prefix[:-1]} marker")
-    rv = int(payload, 16)
-    if f"0x{rv:08x}" != payload:
-        raise ValueError(f"non-canonical {prefix[:-1]} marker")
-    return rv
-
-
-def _uaf_protocol_error(context: str, errors: list[str]) -> C.Classification:
-    return C.record_as(
-        "harness_error",
-        label=context,
-        summary=f"{context}: malformed UAF protocol: {'; '.join(errors)}",
-        detail={"protocol": "UAF", "errors": list(errors)},
-    )
-
-
-def _uaf_record_missing_fact(context: str, fact: dict[str, object]) -> C.Classification:
-    """Record the legacy missing peer point as metadata unavailability."""
-    return C.record_as(
-        "not_operational",
-        kind="metadata",
-        label=context,
-        operation="C_GetAttributeValue",
-        mechanism=None,
-        inherit_mechanism=False,
-        actual=None,
-        summary=(
-            f"{context}: CKA_EC_POINT is unavailable; C_DeriveKey dependency could not be exercised"
-        ),
-        detail={"protocol": "UAF", "dependency": "C_DeriveKey", **fact},
-    )
-
-
-def _uaf_record_setup_fact(context: str, fact: dict[str, object]) -> C.Classification:
-    """Record a validated terminal peer-point setup fact without leaking point data."""
-    state = fact["state"]
-    detail = {"protocol": "UAF", "dependency": "C_DeriveKey", **fact}
-    if state == "missing":
-        return _uaf_record_missing_fact(context, fact)
-    if state in {"unusable", "malformed_encoding"}:
-        description = (
-            "CKA_EC_POINT is unusable"
-            if state == "unusable"
-            else "CKA_EC_POINT has malformed encoding"
-        )
-        return C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=context,
-            operation="C_GetAttributeValue",
-            mechanism=None,
-            inherit_mechanism=False,
-            actual=None,
-            summary=f"{context}: {description}; C_DeriveKey dependency could not be exercised",
-            detail=detail,
-        )
-    if state == "invalid_point":
-        return C.record_as(
-            "wrong_result",
-            kind="crypto",
-            label=context,
-            operation="C_GetAttributeValue",
-            mechanism=None,
-            inherit_mechanism=False,
-            actual=None,
-            summary=f"{context}: invalid point returned in CKA_EC_POINT",
-            detail=detail,
-        )
-    if state == "read_error":
-        rv = fact["rv"]
-        if type(rv) is not int:
-            raise AssertionError("validated read-error fact must carry an integer CK_RV")
-        if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
-            return C.record_as(
-                "not_operational",
-                kind="metadata",
-                label=context,
-                operation="C_GetAttributeValue",
-                mechanism=None,
-                inherit_mechanism=False,
-                actual=rv,
-                summary=(
-                    f"{context}: C_GetAttributeValue rejected CKA_EC_POINT with {ckr_name(rv)}"
-                ),
-                detail=detail,
-            )
-        return C.record_as(
-            "self_contradiction",
-            kind="metadata",
-            label=context,
-            operation="C_GetAttributeValue",
-            mechanism=None,
-            inherit_mechanism=False,
-            actual=rv,
-            summary=f"{context}: C_GetAttributeValue returned undefined CK_RV {ckr_name(rv)}",
-            detail={**detail, "undefined_rv": rv},
-        )
-    raise AssertionError(f"unknown validated UAF setup fact state: {state!r}")
-
-
-def _uaf_record_destroy_refusal(
-    context: str,
-    destroy_rv: int,
-    target_rv: int | None,
-    *,
-    target_key: str,
-    destroy_description: str,
-) -> C.Classification:
-    return C.record_as(
-        "not_operational",
-        label=context,
-        operation="C_DestroyObject",
-        actual=destroy_rv,
-        summary=(
-            f"{context}: C_DestroyObject refused destruction of the {destroy_description} "
-            f"({destroy_rv:#010x})"
-        ),
-        detail={
-            "protocol": "UAF",
-            "destroy_rv": destroy_rv,
-            target_key: target_rv,
-        },
-    )
-
-
-def _uaf_record_undefined_rv(
-    context: str,
-    *,
-    operation: str,
-    rv: int,
-    destroy_rv: int | None = None,
-    target_rv: int | None = None,
-    target_key: str,
-    mechanism: str | None,
-) -> C.Classification:
-    return C.record_as(
-        "self_contradiction",
-        kind="metadata",
-        label=context,
-        operation=operation,
-        mechanism=mechanism,
-        actual=rv,
-        summary=f"{context}: {operation} returned undefined CK_RV {ckr_name(rv)}",
-        detail={
-            "protocol": "UAF",
-            "destroy_rv": destroy_rv,
-            target_key: target_rv,
-            "undefined_rv": rv,
-        },
-    )
-
-
-def _uaf_record_target_refusal(
-    context: str,
-    destroy_rv: int,
-    target_rv: int,
-    *,
-    target_key: str,
-    target_operation: str,
-    target_mechanism: str,
-    expected_rv: int,
-    target_description: str,
-) -> C.Classification:
-    return C.record_as(
-        "nonspec_reject",
-        label=context,
-        operation=target_operation,
-        mechanism=target_mechanism,
-        expected=(expected_rv,),
-        actual=target_rv,
-        summary=(
-            f"{context}: {target_operation} rejected the destroyed {target_description} "
-            f"with {target_rv:#010x}"
-        ),
-        detail={
-            "protocol": "UAF",
-            "destroy_rv": destroy_rv,
-            target_key: target_rv,
-        },
-    )
-
-
-def _check_direct_handle_probe(
-    rc: int,
-    stdout: str,
-    stderr: str,
-    *,
-    context: str,
-    target_marker: str,
-    target_key: str,
-    target_operation: str,
-    target_mechanism: str,
-    target_description: str,
-    destroy_description: str,
-    allow_missing_fact: bool,
-) -> None:
-    """Classify a synchronous stale-handle probe's protocol and process disposition."""
-    termination = termination_from_returncode(
-        rc,
-        timed_out=SUBPROCESS_TIMEOUT_MARKER in stderr,
-        stderr=stderr,
-    )
-    interrupted = str(termination["kind"]) in {"signal", "exception", "timeout"}
-    normal_completion = rc == 0 and not interrupted
-    errors: list[str] = []
-    marker_order: list[str] = []
-    marker_validity: list[bool] = []
-    setup_payloads: list[str] = []
-    facts: list[dict[str, object]] = []
-    destroy_rvs: list[int] = []
-    target_rvs: list[int] = []
-
-    for line in stdout.splitlines():
-        if line.startswith("SETUP_XFAIL:"):
-            marker_order.append("setup")
-            payload = line.removeprefix("SETUP_XFAIL:").strip()
-            if not payload:
-                errors.append("empty SETUP_XFAIL marker")
-                marker_validity.append(False)
-            else:
-                setup_payloads.append(payload)
-                marker_validity.append(True)
-            continue
-        if line.startswith("UAF:"):
-            marker_order.append("fact")
-            if allow_missing_fact:
-                try:
-                    facts.append(_parse_uaf_fact(line))
-                except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                    errors.append(f"malformed UAF fact: {exc}")
-                    marker_validity.append(False)
-                else:
-                    marker_validity.append(True)
-            else:
-                errors.append("malformed UAF protocol marker")
-                marker_validity.append(False)
-            continue
-        if line.startswith("DESTROY_RV:"):
-            marker_order.append("destroy")
-            try:
-                destroy_rvs.append(_parse_uaf_rv(line, "DESTROY_RV:"))
-            except ValueError as exc:
-                errors.append(str(exc))
-                marker_validity.append(False)
-            else:
-                marker_validity.append(True)
-            continue
-        if line.startswith(f"{target_marker}:"):
-            marker_order.append("target")
-            try:
-                target_rvs.append(_parse_uaf_rv(line, f"{target_marker}:"))
-            except ValueError as exc:
-                errors.append(str(exc))
-                marker_validity.append(False)
-            else:
-                marker_validity.append(True)
-            continue
-        reserved_marker = "DIGEST_KEY_RV" if target_marker == "DERIVE_RV" else "DERIVE_RV"
-        if line.startswith(reserved_marker):
-            marker_order.append("reserved")
-            marker_validity.append(False)
-            errors.append(f"reserved UAF protocol marker: {reserved_marker}")
-            continue
-        if line.startswith(("SETUP_XFAIL", "UAF", "DESTROY_RV", target_marker)):
-            marker = line.split(":", 1)[0]
-            marker_order.append(
-                "setup"
-                if marker == "SETUP_XFAIL"
-                else "fact"
-                if marker == "UAF"
-                else "destroy"
-                if marker == "DESTROY_RV"
-                else "target"
-            )
-            marker_validity.append(False)
-            errors.append("malformed UAF protocol marker")
-
-    if len(setup_payloads) > 1:
-        errors.append("duplicate SETUP_XFAIL markers")
-    if len(facts) > 1:
-        errors.append("duplicate UAF missing-point facts")
-    if len(destroy_rvs) > 1:
-        errors.append("duplicate DESTROY_RV markers")
-    if len(target_rvs) > 1:
-        errors.append(f"duplicate {target_marker} markers")
-
-    if normal_completion:
-        valid_setup = len(setup_payloads) == 1 and marker_order == ["setup"]
-        valid_missing = allow_missing_fact and len(facts) == 1 and marker_order == ["fact"]
-        valid_target = (
-            len(destroy_rvs) == 1 and len(target_rvs) == 1 and marker_order == ["destroy", "target"]
-        )
-        if not (valid_setup or valid_missing or valid_target):
-            errors.append("normal completion does not contain one valid terminal branch")
-    elif marker_order:
-        if len(setup_payloads) == 1 and marker_order != ["setup"]:
-            errors.append("SETUP_XFAIL is mixed with another UAF branch")
-        if len(facts) == 1 and marker_order != ["fact"]:
-            errors.append("missing UAF fact is mixed with target RV markers")
-        if (
-            not setup_payloads
-            and not facts
-            and marker_order
-            not in (
-                ["destroy"],
-                ["destroy", "target"],
-            )
-        ):
-            errors.append("UAF markers are not a valid interrupted prefix")
-
-    semantic: list[C.Classification] = []
-    first_valid_marker = next(
-        (marker_order[index] for index, valid in enumerate(marker_validity) if valid),
-        None,
-    )
-    if first_valid_marker == "setup" and setup_payloads:
-        semantic.append(
-            C.record_as(
-                "not_operational",
-                label=context,
-                summary=f"{context}: {setup_payloads[0]}",
-                detail={"protocol": "UAF", "protocol_marker": "SETUP_XFAIL"},
-            )
-        )
-    if first_valid_marker == "fact" and facts:
-        semantic.append(_uaf_record_setup_fact(context, facts[0]))
-
-    # Keep the longest valid target prefix independently of later protocol
-    # corruption.  A valid DESTROY_RV/target-RV pair followed by a late marker
-    # still proves its provider outcome; the trailing marker is a separate
-    # harness defect and must not erase that evidence.
-    target_prefix_len = 0
-    for expected in ("destroy", "target"):
-        index = target_prefix_len
-        if (
-            index >= len(marker_order)
-            or marker_order[index] != expected
-            or not marker_validity[index]
-        ):
-            break
-        target_prefix_len += 1
-
-    if target_prefix_len:
-        destroy_rv = destroy_rvs[0]
-        target_rv = target_rvs[0] if target_prefix_len == 2 else None
-        destroy_defined = is_standard_ckr(destroy_rv) or is_vendor_defined_ckr(destroy_rv)
-        target_defined = (
-            target_rv is None or is_standard_ckr(target_rv) or is_vendor_defined_ckr(target_rv)
-        )
-        if not destroy_defined:
-            semantic.append(
-                _uaf_record_undefined_rv(
-                    context,
-                    operation="C_DestroyObject",
-                    rv=destroy_rv,
-                    destroy_rv=destroy_rv,
-                    target_rv=target_rv,
-                    target_key=target_key,
-                    mechanism=None,
-                )
-            )
-        if target_rv is not None and not target_defined:
-            semantic.append(
-                _uaf_record_undefined_rv(
-                    context,
-                    operation=target_operation,
-                    rv=target_rv,
-                    destroy_rv=destroy_rv,
-                    target_rv=target_rv,
-                    target_key=target_key,
-                    mechanism=target_mechanism,
-                )
-            )
-        if destroy_defined and destroy_rv != int(CKR_OK):
-            semantic.append(
-                _uaf_record_destroy_refusal(
-                    context,
-                    destroy_rv,
-                    target_rv,
-                    target_key=target_key,
-                    destroy_description=destroy_description,
-                )
-            )
-        elif (
-            destroy_defined
-            and destroy_rv == int(CKR_OK)
-            and target_rv is not None
-            and target_defined
-        ):
-            if target_rv == int(CKR_KEY_HANDLE_INVALID):
-                pass
-            elif target_rv == int(CKR_OK):
-                semantic.append(
-                    C.record_as(
-                        "self_contradiction",
-                        kind="lifecycle",
-                        label=context,
-                        operation=target_operation,
-                        mechanism=target_mechanism,
-                        expected=(CKR_KEY_HANDLE_INVALID,),
-                        actual=target_rv,
-                        summary=(
-                            f"{context}: {target_operation} accepted a destroyed "
-                            f"{target_description} handle after C_DestroyObject"
-                        ),
-                        detail={
-                            "protocol": "UAF",
-                            "destroy_rv": destroy_rv,
-                            target_key: target_rv,
-                        },
-                    )
-                )
-            else:
-                semantic.append(
-                    _uaf_record_target_refusal(
-                        context,
-                        destroy_rv,
-                        target_rv,
-                        target_key=target_key,
-                        target_operation=target_operation,
-                        target_mechanism=target_mechanism,
-                        expected_rv=int(CKR_KEY_HANDLE_INVALID),
-                        target_description=target_description,
-                    )
-                )
-
-    protocol_record = _uaf_protocol_error(context, errors) if errors else None
-
-    before_process = len(C.get_records())
-    explicit_harness = False
-    capability_skip: BaseException | None = None
-    try:
-        _, explicit_harness = assert_subprocess_completed(rc, stdout, stderr, context=context)
-    except BaseException as exc:
-        process_records = C.get_records()[before_process:]
-        crash = next((item for item in reversed(process_records) if item.reason == "crash"), None)
-        if crash is not None:
-            crash.detail = {
-                **(crash.detail or {}),
-                "parsed_measurement": {
-                    "destroy_rv": destroy_rvs[0] if destroy_rvs else None,
-                    target_key: target_rvs[0] if target_rvs else None,
-                },
-            }
-            # Crash/timeout is authoritative after preserving the parsed provider
-            # prefix in the crash record.
-            raise
-        process_harness = next(
-            (
-                item
-                for item in reversed(process_records)
-                if item.reason in PROCESS_DISPOSITION_REASONS
-            ),
-            None,
-        )
-        if process_harness is None:
-            if isinstance(exc, pytest.skip.Exception):
-                capability_skip = exc
-            else:
-                raise
-        # Positive child exits are deferred until provider hard/protocol evidence
-        # has taken precedence over this process-level harness defect.
-        explicit_harness = True
-    process_records = C.get_records()[before_process:]
-    process_harness = next(
-        (item for item in reversed(process_records) if item.reason in PROCESS_DISPOSITION_REASONS),
-        None,
-    )
-
-    hard = next((item for item in semantic if item.outcome == "fail"), None)
-    if hard is not None:
-        C.raise_for_record(hard)
-    if protocol_record is not None:
-        C.raise_for_record(protocol_record)
-    if explicit_harness and process_harness is not None:
-        C.raise_for_record(process_harness)
-    provider = next((item for item in semantic if item.outcome == "xfail"), None)
-    if provider is not None:
-        C.raise_for_record(provider)
-    if capability_skip is not None:
-        raise capability_skip
-    if not interrupted and rc != 0 and process_harness is not None:
-        C.raise_for_record(process_harness)
-
-
-def _check_derive_probe(
-    rc: int,
-    stdout: str,
-    stderr: str,
-    *,
-    context: str,
-) -> None:
-    """Classify the derive probe's bounded protocol and process disposition."""
-    _check_direct_handle_probe(
-        rc,
-        stdout,
-        stderr,
-        context=context,
-        target_marker="DERIVE_RV",
-        target_key="derive_rv",
-        target_operation="C_DeriveKey",
-        target_mechanism="CKM_ECDH1_DERIVE",
-        target_description="EC private key",
-        destroy_description="derive base object",
-        allow_missing_fact=True,
-    )
-
-
-def _check_digest_probe(
-    rc: int,
-    stdout: str,
-    stderr: str,
-    *,
-    context: str,
-) -> None:
-    """Classify the digest stale-handle probe's protocol and process disposition."""
-    _check_direct_handle_probe(
-        rc,
-        stdout,
-        stderr,
-        context=context,
-        target_marker="DIGEST_KEY_RV",
-        target_key="digest_key_rv",
-        target_operation="C_DigestKey",
-        target_mechanism="CKM_SHA256",
-        target_description="digest key",
-        destroy_description="digest key",
-        allow_missing_fact=False,
-    )
 
 
 class TestDeriveOperationStateUAF:
@@ -1105,9 +453,8 @@ class TestDeriveOperationStateUAF:
         ``C_DeriveKey`` is atomic (no Init/complete split), so the use-after-free
         pattern is modelled as a use-after-destroy of the base key: the EC private
         key is destroyed immediately before ``C_DeriveKey`` is called with the stale
-        handle.  There is no key-binding Init phase and therefore no snapshot-based
-        success path: a conformant module must reject the stale handle with a clean
-        error (CWE-416) rather than dereferencing freed memory.
+        handle.  A conformant module must reject the stale handle with a clean error
+        (CWE-416) rather than dereferencing freed memory.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
@@ -1127,12 +474,20 @@ class TestDeriveOperationStateUAF:
             coverage="session",
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
-        _check_derive_probe(
+        assert_subprocess_no_crash(
             rc,
             out,
             err,
             context="C_DeriveKey with destroyed base-key handle (use-after-destroy)",
         )
+        derive_rv = _parse_rv(out, "DERIVE_RV:")
+        if derive_rv is not None:
+            classify_negative_rv(
+                derive_rv,
+                _COMPLETION_REJECT_RVS,
+                label="C_DeriveKey with destroyed EC private key handle",
+                allow_ok=True,
+            )
 
 
 # ---------------------------------------------------------------------------

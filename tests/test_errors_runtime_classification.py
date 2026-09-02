@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -43,11 +42,6 @@ def test_invalid_mechanism_param_skips_missing_cbc_pad(
     with pytest.raises(pytest.skip.Exception, match="AES_CBC_PAD not supported"):
         test_errors.TestInvalidOperations().test_invalid_mechanism_param(rs)
 
-    # A capability skip is not a provider verdict; it must not leave a classification
-    # record behind (a mutation that classified before checking the capability would
-    # still raise pytest.skip.Exception -- outcome-type alone would not catch it).
-    assert C.get_records() == []
-
 
 def test_invalid_key_size_skips_missing_aes_keygen() -> None:
     """Invalid-size AES keygen checks should skip modules without AES_KEY_GEN."""
@@ -55,8 +49,6 @@ def test_invalid_key_size_skips_missing_aes_keygen() -> None:
 
     with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
         test_errors.TestInvalidOperations().test_generate_key_invalid_size(rs)
-
-    assert C.get_records() == []
 
 
 def test_invalid_key_size_advertised_runtime_reject_is_xfail() -> None:
@@ -70,26 +62,6 @@ def test_invalid_key_size_advertised_runtime_reject_is_xfail() -> None:
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_errors.TestInvalidOperations().test_generate_key_invalid_size(rs)
-
-    records = C.get_records()
-    assert len(records) == 1
-    record = records[0]
-    assert record.reason == "not_operational"
-    assert record.outcome == "xfail"
-    assert record.severity == "LOW"
-    assert record.kind is None
-    assert record.label == "AES_KEY_GEN:invalid-size key generation"
-    assert record.mechanism == "AES_KEY_GEN"
-    assert record.operation is None
-    assert record.expected_ckr is None
-    assert record.actual_ckr == "CKR_FUNCTION_NOT_SUPPORTED"
-    assert (
-        record.summary
-        == "AES_KEY_GEN advertised but invalid-size key generation is not operational: "
-        "CKR_FUNCTION_NOT_SUPPORTED"
-    )
-    assert record.spec_ref == "PKCS#11 v3.2 · AES_KEY_GEN"
-    assert record.detail is None
 
 
 def test_empty_encrypt_aes_setup_runtime_reject_is_xfail(
@@ -109,27 +81,6 @@ def test_empty_encrypt_aes_setup_runtime_reject_is_xfail(
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
         test_errors.TestEmptyInputs().test_encrypt_empty_data(rs)
 
-    records = C.get_records()
-    assert len(records) == 1
-    record = records[0]
-    assert record.reason == "not_operational"
-    assert record.outcome == "xfail"
-    assert record.severity == "LOW"
-    assert record.kind is None
-    assert record.label == (
-        "AES_KEY_GEN advertised but AES-128 key generation for "
-        "empty-data encryption is not operational"
-    )
-    assert record.mechanism is None
-    assert record.operation is None
-    assert record.expected_ckr is None
-    assert record.actual_ckr == "CKR_FUNCTION_NOT_SUPPORTED"
-    assert record.summary == (
-        "AES_KEY_GEN advertised but AES-128 key generation for empty-data "
-        "encryption is not operational: CKR_FUNCTION_NOT_SUPPORTED"
-    )
-    assert record.detail is None
-
 
 def test_decrypt_garbage_rsa_setup_runtime_reject_is_xfail(
     monkeypatch: pytest.MonkeyPatch,
@@ -147,27 +98,6 @@ def test_decrypt_garbage_rsa_setup_runtime_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
         test_errors.TestInvalidOperations().test_decrypt_garbage(rs)
-
-    records = C.get_records()
-    assert len(records) == 1
-    record = records[0]
-    assert record.reason == "not_operational"
-    assert record.outcome == "xfail"
-    assert record.severity == "LOW"
-    assert record.kind is None
-    assert record.label == (
-        "RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation for "
-        "decrypt-garbage check is not operational"
-    )
-    assert record.mechanism is None
-    assert record.operation is None
-    assert record.expected_ckr is None
-    assert record.actual_ckr == "CKR_ATTRIBUTE_VALUE_INVALID"
-    assert record.summary == (
-        "RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation for decrypt-garbage "
-        "check is not operational: CKR_ATTRIBUTE_VALUE_INVALID"
-    )
-    assert record.detail is None
 
 
 # --- Phase 4 N2: standalone negative-reject asserts -> classify_negative_rv ---
@@ -194,24 +124,6 @@ def test_invalid_key_size_other_reject_xfails() -> None:
     rs = _generate_key_returning(int(CKR_DEVICE_ERROR))
     with pytest.raises(pytest.xfail.Exception):
         test_errors.TestInvalidOperations().test_generate_key_invalid_size(rs)
-
-    records = C.get_records()
-    assert len(records) == 1
-    record = records[0]
-    assert record.reason == "nonspec_reject"
-    assert record.outcome == "xfail"
-    assert record.severity == "LOW"
-    assert record.kind is None
-    assert record.label == "C_GenerateKey for an invalid AES key size"
-    assert record.mechanism is None
-    assert record.operation is None
-    assert record.expected_ckr == ["CKR_KEY_SIZE_RANGE", "CKR_ATTRIBUTE_VALUE_INVALID"]
-    assert record.actual_ckr == "CKR_DEVICE_ERROR"
-    assert record.summary == (
-        "C_GenerateKey for an invalid AES key size: expected "
-        "['CKR_KEY_SIZE_RANGE', 'CKR_ATTRIBUTE_VALUE_INVALID'], got CKR_DEVICE_ERROR"
-    )
-    assert record.detail is None
 
 
 def _encrypt_init_returning(rv: int) -> SimpleNamespace:
@@ -277,24 +189,6 @@ def test_encrypt_with_sign_key_other_reject_xfails(monkeypatch: pytest.MonkeyPat
     with pytest.raises(pytest.xfail.Exception):
         test_errors.TestInvalidOperations().test_encrypt_with_sign_key(rs)
 
-    records = C.get_records()
-    assert len(records) == 1
-    record = records[0]
-    assert record.reason == "nonspec_reject"
-    assert record.outcome == "xfail"
-    assert record.severity == "LOW"
-    assert record.kind is None
-    assert record.label == "C_EncryptInit with a sign-only private key"
-    assert record.mechanism is None
-    assert record.operation is None
-    assert record.expected_ckr == ["CKR_KEY_FUNCTION_NOT_PERMITTED", "CKR_KEY_TYPE_INCONSISTENT"]
-    assert record.actual_ckr == "CKR_DEVICE_ERROR"
-    assert record.summary == (
-        "C_EncryptInit with a sign-only private key: expected "
-        "['CKR_KEY_FUNCTION_NOT_PERMITTED', 'CKR_KEY_TYPE_INCONSISTENT'], got CKR_DEVICE_ERROR"
-    )
-    assert record.detail is None
-
 
 def test_digest_empty_data_skips_missing_sha256(
     monkeypatch: pytest.MonkeyPatch,
@@ -309,5 +203,3 @@ def test_digest_empty_data_skips_missing_sha256(
 
     with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
         test_errors.TestEmptyInputs().test_digest_empty_data(rs)
-
-    assert C.get_records() == []

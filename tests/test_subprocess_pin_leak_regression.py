@@ -99,7 +99,7 @@ def test_dual_function_pin_routed_to_run_probe_not_params(
 
     monkeypatch.setattr(test_dual_function, "run_probe", _fake_run_probe)
 
-    raw_session = SimpleNamespace(raw=SimpleNamespace(), has_mechanism=lambda _name: True)
+    raw_session = SimpleNamespace(has_mechanism=lambda _name: True)
     with pytest.raises(pytest.skip.Exception):
         test_dual_function.TestDigestEncryptUpdate().test_digest_encrypt_update_round_trip(
             _cfg(), raw_session
@@ -124,7 +124,7 @@ def test_dual_function_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(test_dual_function, "run_probe", _fake_run_probe)
 
-    raw_session = SimpleNamespace(raw=SimpleNamespace(), has_mechanism=lambda _name: True)
+    raw_session = SimpleNamespace(has_mechanism=lambda _name: True)
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
     with pytest.raises(pytest.skip.Exception):
         test_dual_function.TestDecryptDigestUpdate().test_decrypt_digest_update_round_trip(

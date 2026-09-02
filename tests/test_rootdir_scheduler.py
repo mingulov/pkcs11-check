@@ -58,11 +58,8 @@ def test_report_ownership_uses_collected_file_identity_without_basename_guessing
     )
 
     raw_dsa = "app/src/pkcs11_check/testcases/test_dsa_complete.py::TestDSA::test_case[SHA3-512]"
-    # Resolve the anchor the same way the implementation does: on Windows
-    # Path("/app") gains the current drive (D:/app/... in CI).
-    anchor = (Path("/app") / "src/pkcs11_check/testcases/test_dsa_complete.py").resolve()
     assert aliases.canonical_nodeid(raw_dsa) == (
-        f"{anchor.as_posix()}::TestDSA::test_case[SHA3-512]"
+        "/app/src/pkcs11_check/testcases/test_dsa_complete.py::TestDSA::test_case[SHA3-512]"
     )
     assert aliases.owner_for_nodeid(raw_dsa) == candidates[0]
     assert aliases.file_identity(candidates[0]) == aliases.file_identity(candidates[1])

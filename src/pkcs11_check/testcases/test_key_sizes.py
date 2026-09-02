@@ -52,7 +52,6 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._signature_policy import xfail_if_op_not_operational
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
@@ -109,16 +108,7 @@ class TestAESKeySizes:
         try:
             assert key != 0
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
-            key_type = attr_or_record(
-                attrs,
-                CKA_KEY_TYPE,
-                label="AES key-size coverage: CKA_KEY_TYPE readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if key_type is not MISSING_ATTRIBUTE:
-                assert key_type == CKK_AES
+            assert attrs[CKA_KEY_TYPE] == CKK_AES
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -157,17 +147,8 @@ class TestAESKeySizes:
             },
         )
         try:
-            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-            exported = attr_or_record(
-                attrs,
-                CKA_VALUE,
-                label="AES import/export key-size coverage: CKA_VALUE readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if exported is not MISSING_ATTRIBUTE:
-                assert exported == key_bytes
+            exported = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
+            assert exported == key_bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -181,17 +162,8 @@ class TestRSAKeySizes:
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair_or_xfail(rs, key_bits)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
-            modulus = attr_or_record(
-                attrs,
-                CKA_MODULUS,
-                label="RSA key-size coverage: CKA_MODULUS readback",
-                reason="not_operational",
-                kind="metadata",
-                inherit_mechanism=False,
-            )
-            if modulus is not MISSING_ATTRIBUTE:
-                assert len(modulus) == key_bits // 8
+            modulus = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])[CKA_MODULUS]
+            assert len(modulus) == key_bits // 8
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

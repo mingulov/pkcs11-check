@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
@@ -217,35 +217,8 @@ def _read_rsa_public_numbers_or_xfail(
         )
         raise
 
-    # This helper must return a concrete (n, e, k) triple -- there is no "missing"
-    # sentinel it can propagate to callers -- so an absent attribute terminates the
-    # test here via an explicit membership guard (recognized by the access-guard
-    # analyzer) rather than attr_or_record()'s continue-with-sentinel contract.
-    if CKA_MODULUS not in attrs:
-        xfail_as(
-            "not_operational",
-            kind="crypto",
-            label="RSA public-number readback",
-            operation="C_GetAttributeValue",
-            inherit_mechanism=False,
-            summary="unusable RSA public modulus/exponent: CKA_MODULUS attribute unavailable",
-            detail={"attribute": {"name": "CKA_MODULUS", "id": int(CKA_MODULUS)}},
-        )
-    if CKA_PUBLIC_EXPONENT not in attrs:
-        xfail_as(
-            "not_operational",
-            kind="crypto",
-            label="RSA public-number readback",
-            operation="C_GetAttributeValue",
-            inherit_mechanism=False,
-            summary=(
-                "unusable RSA public modulus/exponent: CKA_PUBLIC_EXPONENT attribute unavailable"
-            ),
-            detail={"attribute": {"name": "CKA_PUBLIC_EXPONENT", "id": int(CKA_PUBLIC_EXPONENT)}},
-        )
     n_bytes = attrs[CKA_MODULUS]
     e_bytes = attrs[CKA_PUBLIC_EXPONENT]
-
     if not isinstance(n_bytes, bytes) or not isinstance(e_bytes, bytes):
         classify(
             "not_operational",

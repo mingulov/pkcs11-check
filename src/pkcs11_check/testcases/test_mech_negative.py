@@ -77,7 +77,6 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     IMPORT_STORAGE_SHAPE_REJECTS,
@@ -286,17 +285,8 @@ def _gen_claimed_false_secret_key(
 
 def _claim_false_or_xfail(rs: RawSession, key: int, flag: int, label: str) -> None:
     attrs = read_attributes(rs.raw, rs.sh, key, [flag])
-    value = attr_or_record(
-        attrs,
-        flag,
-        inherit_mechanism=False,
-        label=label,
-        reason="honest_deviation",
-        kind="metadata",
-    )
-    if value is MISSING_ATTRIBUTE:
-        return
-    if value is not False:
+    claimed_false = attrs.get(flag) is False
+    if not claimed_false:
         classify_policy_enforcement(
             claimed=False,
             violated=False,
