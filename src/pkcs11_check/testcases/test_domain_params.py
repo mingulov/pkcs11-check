@@ -18,7 +18,6 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import (
@@ -27,6 +26,7 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_EC_PARAMS,
@@ -70,13 +70,13 @@ _DOMAIN_PARAM_RUNTIME_REJECT_RVS = {
 _DOMAIN_PARAM_ERROR_RVS = _DOMAIN_PARAM_UNSUPPORTED_RVS | _DOMAIN_PARAM_RUNTIME_REJECT_RVS
 
 
-def _ec_domain_param_create_rejected_as_unsupported(exc: AssertionError) -> bool:
+def _ec_domain_param_create_rejected_as_unsupported(exc: Exception) -> bool:
     """Return true for exact EC domain-parameter unsupported-template CKRs."""
     return is_known_error(exc, _DOMAIN_PARAM_UNSUPPORTED_RVS)
 
 
 def _xfail_if_ec_domain_param_create_runtime_reject(
-    exc: AssertionError,
+    exc: Exception,
     label: str,
 ) -> NoReturn:
     """Classify generic EC domain-parameter creation rejects as provider evidence."""
@@ -108,7 +108,7 @@ def _create_ec_domain_params(rs: Any, on_token: bool = False) -> int | None:
             },
         )
         return handle
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if _ec_domain_param_create_rejected_as_unsupported(exc):
             return None
         _xfail_if_ec_domain_param_create_runtime_reject(exc, "secp256r1")
@@ -189,7 +189,7 @@ class TestEcDomainParameters:
             assert local is False, (
                 f"Expected CKA_LOCAL=False for created domain params, got {local}"
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc, _DOMAIN_PARAM_ERROR_RVS, "Module does not expose CKA_LOCAL on domain params"
             )
@@ -206,8 +206,15 @@ class TestDomainParameterEnumeration:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_DOMAIN_PARAMETERS))
         try:
             params = find_objects(rs.raw, rs.sh, tmpl)
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
+        except CkrAssertionError as e:
+            if is_known_error(e, _DOMAIN_PARAM_UNSUPPORTED_RVS):
+                pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
+            xfail_if_known_ckr(
+                e,
+                _DOMAIN_PARAM_RUNTIME_REJECT_RVS,
+                "CKO_DOMAIN_PARAMETERS enumeration is not operational",
+            )
+            raise
         assert isinstance(params, list)
 
     def test_domain_params_have_key_type(self, p11_raw_session: Any) -> None:
@@ -216,8 +223,15 @@ class TestDomainParameterEnumeration:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_DOMAIN_PARAMETERS))
         try:
             params = find_objects(rs.raw, rs.sh, tmpl)
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
+        except CkrAssertionError as e:
+            if is_known_error(e, _DOMAIN_PARAM_UNSUPPORTED_RVS):
+                pytest.skip(f"Module does not support CKO_DOMAIN_PARAMETERS enumeration: {e}")
+            xfail_if_known_ckr(
+                e,
+                _DOMAIN_PARAM_RUNTIME_REJECT_RVS,
+                "CKO_DOMAIN_PARAMETERS enumeration is not operational",
+            )
+            raise
         if not params:
             pytest.skip("No CKO_DOMAIN_PARAMETERS objects present")
         for handle in params:
@@ -225,14 +239,13 @@ class TestDomainParameterEnumeration:
                 attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
                 key_type = attrs[CKA_KEY_TYPE]
                 assert isinstance(key_type, int), f"Expected int for KEY_TYPE, got {type(key_type)}"
-            except AssertionError as e:
-                classify(
-                    "not_operational",
-                    kind="metadata",
-                    label="CKO_DOMAIN_PARAMETERS:CKA_KEY_TYPE",
-                    operation="C_GetAttributeValue",
-                    summary=f"Cannot read CKA_KEY_TYPE from domain parameter object: {e}",
+            except CkrAssertionError as e:
+                xfail_if_known_ckr(
+                    e,
+                    _DOMAIN_PARAM_ERROR_RVS,
+                    "CKO_DOMAIN_PARAMETERS:CKA_KEY_TYPE read is not operational",
                 )
+                raise
 
 
 class TestMultipleCurveDomainParams:
@@ -265,7 +278,7 @@ class TestMultipleCurveDomainParams:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError as e:
+        except CkrAssertionError as e:
             if _ec_domain_param_create_rejected_as_unsupported(e):
                 pytest.skip(f"Module does not support domain parameter creation for {curve}: {e}")
             _xfail_if_ec_domain_param_create_runtime_reject(e, curve)

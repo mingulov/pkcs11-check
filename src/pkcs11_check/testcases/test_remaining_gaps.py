@@ -45,7 +45,12 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     sign_single,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
@@ -126,17 +131,9 @@ _HOTP_KEYGEN_ERROR_CKRS = (
     CKR_TEMPLATE_INCONSISTENT,
 )
 
-_TEMPLATE_ATTR_SETUP_REJECT_RVS = (
-    CKR_ARGUMENTS_BAD,
+_TEMPLATE_ATTR_SETUP_UNSUPPORTED_RVS = (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -173,6 +170,42 @@ _DERIVE_TEMPLATE_ENFORCEMENT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+_CMAC_GENERAL_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+
+
+def _parse_defined_probe_ckr(line: str, prefix: str, label: str) -> int:
+    """Parse a probe CKR and fail on malformed or undefined values."""
+    marker = f"{prefix}:"
+    if not line.startswith(marker):
+        raise AssertionError(f"Malformed {label} probe result: {line!r}")
+    raw_rv = line[len(marker) :].strip()
+    try:
+        rv = int(raw_rv, 16)
+    except ValueError as exc:
+        raise AssertionError(f"Malformed {label} CKR: {raw_rv!r}") from exc
+    _validate_defined_ckr(rv, label)
+    return rv
+
+
+def _validate_defined_ckr(rv: int, label: str) -> None:
+    """Fail on a raw CKR outside the standard and vendor-defined ranges."""
+    if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            actual=rv,
+            summary=f"{label} returned undefined CK_RV 0x{rv:08x}",
+        )
 
 
 def _run_gap_probe(
@@ -228,8 +261,12 @@ class TestTemplateConstraintAttributes:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_WRAP_TEMPLATE])
                 wt = vals[CKA_WRAP_TEMPLATE]
                 assert wt is not None or wt == b""
-            except (AssertionError, KeyError):
+            except KeyError:
                 pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -254,8 +291,12 @@ class TestTemplateConstraintAttributes:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_UNWRAP_TEMPLATE])
                 ut = vals[CKA_UNWRAP_TEMPLATE]
                 assert ut is not None or ut == b""
-            except (AssertionError, KeyError):
+            except KeyError:
                 pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -279,8 +320,12 @@ class TestTemplateConstraintAttributes:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_DERIVE_TEMPLATE])
                 dt = vals[CKA_DERIVE_TEMPLATE]
                 assert dt is not None or dt == b""
-            except (AssertionError, KeyError):
+            except KeyError:
                 pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
+                raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -324,11 +369,15 @@ class TestTemplateConstraintAttributes:
                 byref(wrapping_key),
             )
             if rv != CKR_OK:
-                if rv in _TEMPLATE_ATTR_SETUP_REJECT_RVS:
+                if rv in _TEMPLATE_ATTR_SETUP_UNSUPPORTED_RVS:
                     pytest.skip(
                         f"CKA_WRAP_TEMPLATE not supported at key generation: {ckr_name(rv)}"
                     )
-                expect_rv(rv, CKR_OK, context="CKA_WRAP_TEMPLATE wrapping key generation")
+                classify_negative_rv(
+                    rv,
+                    (),
+                    label="CKA_WRAP_TEMPLATE wrapping key generation",
+                )
 
             claimed = False
             try:
@@ -337,8 +386,13 @@ class TestTemplateConstraintAttributes:
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE
                 )
-            except (AssertionError, KeyError):
+            except KeyError:
                 claimed = False
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    claimed = False
+                else:
+                    raise
 
             allowed_target = gen_aes_key_or_xfail(
                 rs,
@@ -372,17 +426,10 @@ class TestTemplateConstraintAttributes:
                 byref(allowed_len),
             )
             if rv != CKR_OK:
-                classify(
-                    "not_operational",
-                    kind="crypto",
+                classify_negative_rv(
+                    rv,
+                    (),
                     label="CKM_AES_KEY_WRAP:C_WrapKey (matching template)",
-                    operation="C_WrapKey",
-                    mechanism="CKM_AES_KEY_WRAP",
-                    actual=rv,
-                    summary=(
-                        "CKM_AES_KEY_WRAP advertised but matching-template wrap is not "
-                        f"operational: {ckr_name(rv)}"
-                    ),
                 )
 
             denied_len = c_ulong(0)
@@ -453,11 +500,15 @@ class TestTemplateConstraintAttributes:
                 byref(unwrapping_key),
             )
             if rv != CKR_OK:
-                if rv in _TEMPLATE_ATTR_SETUP_REJECT_RVS:
+                if rv in _TEMPLATE_ATTR_SETUP_UNSUPPORTED_RVS:
                     pytest.skip(
                         f"CKA_UNWRAP_TEMPLATE not supported at key generation: {ckr_name(rv)}"
                     )
-                expect_rv(rv, CKR_OK, context="CKA_UNWRAP_TEMPLATE unwrapping key generation")
+                classify_negative_rv(
+                    rv,
+                    (),
+                    label="CKA_UNWRAP_TEMPLATE unwrapping key generation",
+                )
 
             claimed = False
             try:
@@ -466,8 +517,13 @@ class TestTemplateConstraintAttributes:
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE
                 )
-            except (AssertionError, KeyError):
+            except KeyError:
                 claimed = False
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    claimed = False
+                else:
+                    raise
 
             source_key = gen_aes_key_or_xfail(
                 rs,
@@ -489,17 +545,10 @@ class TestTemplateConstraintAttributes:
                 byref(wrapped_len),
             )
             if rv != CKR_OK:
-                classify(
-                    "not_operational",
-                    kind="crypto",
+                classify_negative_rv(
+                    rv,
+                    (),
                     label="CKM_AES_KEY_WRAP:C_WrapKey (source key)",
-                    operation="C_WrapKey",
-                    mechanism="CKM_AES_KEY_WRAP",
-                    actual=rv,
-                    summary=(
-                        "CKM_AES_KEY_WRAP advertised but source-key wrap is not "
-                        f"operational: {ckr_name(rv)}"
-                    ),
                 )
             wrapped_buf = (c_ubyte * wrapped_len.value)()
             rv = rs.raw.C_WrapKey(
@@ -511,17 +560,10 @@ class TestTemplateConstraintAttributes:
                 byref(wrapped_len),
             )
             if rv != CKR_OK:
-                classify(
-                    "not_operational",
-                    kind="crypto",
+                classify_negative_rv(
+                    rv,
+                    (),
                     label="CKM_AES_KEY_WRAP:C_WrapKey (source key retry)",
-                    operation="C_WrapKey",
-                    mechanism="CKM_AES_KEY_WRAP",
-                    actual=rv,
-                    summary=(
-                        "CKM_AES_KEY_WRAP advertised but source-key wrap retry is not "
-                        f"operational: {ckr_name(rv)}"
-                    ),
                 )
 
             matching_template = template(
@@ -544,17 +586,10 @@ class TestTemplateConstraintAttributes:
                 byref(violating_unwrapped),
             )
             if rv != CKR_OK:
-                classify(
-                    "not_operational",
-                    kind="crypto",
+                classify_negative_rv(
+                    rv,
+                    (),
                     label="CKM_AES_KEY_WRAP:C_UnwrapKey (matching template)",
-                    operation="C_UnwrapKey",
-                    mechanism="CKM_AES_KEY_WRAP",
-                    actual=rv,
-                    summary=(
-                        "CKM_AES_KEY_WRAP advertised but matching-template unwrap is not "
-                        f"operational: {ckr_name(rv)}"
-                    ),
                 )
             matching_unwrapped = violating_unwrapped.value
             violating_unwrapped = CK_OBJECT_HANDLE(0)
@@ -642,11 +677,15 @@ class TestTemplateConstraintAttributes:
                 byref(base_key),
             )
             if rv != CKR_OK:
-                if rv in _TEMPLATE_ATTR_SETUP_REJECT_RVS:
+                if rv in _TEMPLATE_ATTR_SETUP_UNSUPPORTED_RVS:
                     pytest.skip(
                         f"CKA_DERIVE_TEMPLATE not supported at base-key import: {ckr_name(rv)}"
                     )
-                expect_rv(rv, CKR_OK, context="CKA_DERIVE_TEMPLATE base-key import")
+                classify_negative_rv(
+                    rv,
+                    (),
+                    label="CKA_DERIVE_TEMPLATE base-key import",
+                )
 
             claimed = False
             try:
@@ -655,8 +694,13 @@ class TestTemplateConstraintAttributes:
                 claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
                     CK_ATTRIBUTE
                 )
-            except (AssertionError, KeyError):
+            except KeyError:
                 claimed = False
+            except CkrAssertionError as exc:
+                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
+                    claimed = False
+                else:
+                    raise
 
             derive_mech = mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, derive_data)
             matching_template = template(
@@ -676,17 +720,10 @@ class TestTemplateConstraintAttributes:
                 byref(violating_derived),
             )
             if rv != CKR_OK:
-                classify(
-                    "not_operational",
-                    kind="crypto",
+                classify_negative_rv(
+                    rv,
+                    (),
                     label="CKM_CONCATENATE_BASE_AND_DATA:C_DeriveKey (matching template)",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_CONCATENATE_BASE_AND_DATA",
-                    actual=rv,
-                    summary=(
-                        "CKM_CONCATENATE_BASE_AND_DATA advertised but matching-template "
-                        f"derive is not operational: {ckr_name(rv)}"
-                    ),
                 )
             matching_derived = violating_derived.value
             violating_derived = CK_OBJECT_HANDLE(0)
@@ -764,7 +801,7 @@ class TestOtpKeyAttributes:
         )
         try:
             expect_rv(rv, CKR_OK, context="CKM_HOTP_KEY_GEN C_GenerateKey")
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _HOTP_KEYGEN_ERROR_CKRS,
@@ -776,8 +813,11 @@ class TestOtpKeyAttributes:
                 try:
                     vals = read_attributes(rs.raw, rs.sh, key_h, [attr_int])
                     assert vals[attr_int] is not None
-                except AssertionError:
-                    pass  # audit-ok: optional OTP attribute may be absent
+                except KeyError:
+                    pass  # Optional OTP attribute is absent.
+                except CkrAssertionError as exc:
+                    if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
+                        raise
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -797,18 +837,19 @@ class TestWaitForSlotEvent:
         # flags=1 means CKF_DONT_BLOCK (non-blocking)
         rv = rs.raw.C_WaitForSlotEvent(1, byref(slot_out), None)
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
-            pytest.skip("C_WaitForSlotEvent not supported")
-        if rv == CKR_OK:
-            pass  # Got an event -- valid
-        elif rv == CKR_NO_EVENT:
-            pass  # Expected -- no slot events pending
-        else:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"C_WaitForSlotEvent returned unexpected CKR: 0x{rv:08x}",
-                ComplianceLevel.VENDOR,
+            xfail_as(
+                "not_operational",
+                label="C_WaitForSlotEvent",
+                operation="C_WaitForSlotEvent",
+                actual=rv,
+                summary="Module exposes C_WaitForSlotEvent but does not implement it",
             )
+        classify_negative_rv(
+            rv,
+            (CKR_NO_EVENT,),
+            label="C_WaitForSlotEvent non-blocking poll",
+            allow_ok=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -967,9 +1008,8 @@ class TestAsyncLifecycle:
         rs = p11_raw_session
         if "C_AsyncComplete" not in rs.raw.available_function_names():
             pytest.skip("C_AsyncComplete not available")
-        rv = rs.raw.C_AsyncComplete(rs.sh, None, None)
-        # No CKR assertion -- presence check only (function returned without crash)
-        assert rv is not None
+        rv = int(rs.raw.C_AsyncComplete(rs.sh, None, None))
+        _validate_defined_ckr(rv, "C_AsyncComplete")
 
     @pytest.mark.needs_function("C_AsyncJoin")
     def test_async_join_no_active_operation(self, p11_raw_session: Any) -> None:
@@ -977,9 +1017,8 @@ class TestAsyncLifecycle:
         rs = p11_raw_session
         if "C_AsyncJoin" not in rs.raw.available_function_names():
             pytest.skip("C_AsyncJoin not available")
-        rv = rs.raw.C_AsyncJoin(rs.sh, None, 0, None, 0)
-        # No CKR assertion -- presence check only (function returned without crash)
-        assert rv is not None
+        rv = int(rs.raw.C_AsyncJoin(rs.sh, None, 0, None, 0))
+        _validate_defined_ckr(rv, "C_AsyncJoin")
 
     @pytest.mark.needs_function("C_AsyncGetID")
     def test_async_get_id_no_active_operation(self, p11_raw_session: Any) -> None:
@@ -988,9 +1027,8 @@ class TestAsyncLifecycle:
         if "C_AsyncGetID" not in rs.raw.available_function_names():
             pytest.skip("C_AsyncGetID not available")
         async_id = c_ulong(0)
-        rv = rs.raw.C_AsyncGetID(rs.sh, None, byref(async_id))
-        # No CKR assertion -- presence check only (function returned without crash)
-        assert rv is not None
+        rv = int(rs.raw.C_AsyncGetID(rs.sh, None, byref(async_id)))
+        _validate_defined_ckr(rv, "C_AsyncGetID")
 
 
 # ---------------------------------------------------------------------------
@@ -1113,17 +1151,15 @@ class TestTier1Stragglers:
                     b"test data for cmac general",
                     mech_param=mech_ulong(CKM_AES_CMAC_GENERAL, mac_len),
                 )
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 # Advertised but the operation does not complete: a clean operational
-                # deviation, not a conformance break.
-                xfail_as(
-                    "not_operational",
-                    kind="crypto",
-                    label="CKM_AES_CMAC_GENERAL:C_Sign",
-                    operation="C_Sign",
-                    mechanism="CKM_AES_CMAC_GENERAL",
-                    summary=f"AES_CMAC_GENERAL sign failed: {e}",
+                # deviation, not a conformance break. Other CKRs remain hard findings.
+                xfail_if_known_ckr(
+                    e,
+                    _CMAC_GENERAL_RUNTIME_REJECT_RVS,
+                    "CKM_AES_CMAC_GENERAL advertised but sign is not operational",
                 )
+                raise
             # Honoring the requested tag length is mandatory: a wrong length is the
             # module ignoring CK_MAC_GENERAL_PARAMS (wrong output on a positive op -> fail).
             assert len(sig) == mac_len, (
@@ -1175,7 +1211,8 @@ class TestDualFunctionRemaining:
             )
         seu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("SEU:")), None)
         assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
-        # Any CKR response is valid - we're testing the function exists and doesn't crash
+        # Any defined CKR response is valid - we're testing the function exists and doesn't crash.
+        _parse_defined_probe_ckr(seu_line, "SEU", "C_SignEncryptUpdate")
 
     def test_decrypt_verify_update_callable(self, p11_config: Any) -> None:
         """C_DecryptVerifyUpdate (index 57) exists and returns a defined CKR code."""
@@ -1200,3 +1237,4 @@ class TestDualFunctionRemaining:
             )
         dvu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("DVU:")), None)
         assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
+        _parse_defined_probe_ckr(dvu_line, "DVU", "C_DecryptVerifyUpdate")

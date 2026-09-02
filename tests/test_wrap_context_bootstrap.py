@@ -41,12 +41,15 @@ def _make_rs(sh: int, has_mechanism_fn: Any = None) -> Any:
             "sh": sh,
             "slot_id": 0,
             "has_mechanism": has_mech,
+            "has_mechanism_flag": lambda self, name, flag: has_mech(self, name),
         },
     )()
 
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 def _real_rsa_numbers(bits: int = 2048) -> tuple[bytes, bytes]:
@@ -384,13 +387,46 @@ def test_auto_negotiate_sha1_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sha1_handle in destroy_calls
 
 
+def test_unwrap_trial_does_not_fallback_after_undefined_ckr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Strategy:
+        name = "test"
+        unwrap_mech = 1
+
+        def wrap(self, ctx: Any, target: bytes) -> bytes:
+            return target
+
+        def unwrapping_key_handle(self, ctx: Any) -> int:
+            return 7
+
+        def unwrap_mech_param(self, ctx: Any) -> None:
+            return None
+
+    error = CkrAssertionError("undefined unwrap return", 0x7FFFFFFF)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.unwrap_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(CkrAssertionError) as caught:
+        _prov._trial_round_trip(
+            _make_rs(sh=205),
+            Strategy(),
+            _prov.WrapContext(rsa_pub_der=None),
+            [],
+        )
+
+    assert caught.value is error
+
+
 # ---------------------------------------------------------------------------
-# OAEP hash auto-negotiation: both candidates fail -> returns None
+# OAEP hash auto-negotiation: all advertised candidates fail -> visible finding
 # ---------------------------------------------------------------------------
 
 
-def test_auto_negotiate_both_fail_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """auto mode: both sha256 and sha1 fail -> build_wrap_context returns None."""
+def test_auto_negotiate_both_fail_is_not_operational(monkeypatch: pytest.MonkeyPatch) -> None:
+    """auto mode: all advertised unwrap trials refusing must not become a skip."""
     pub_h = 70
     priv_h = 71
     n_bytes, e_bytes = _real_rsa_numbers(2048)
@@ -423,9 +459,8 @@ def test_auto_negotiate_both_fail_returns_none(monkeypatch: pytest.MonkeyPatch) 
 
     cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap", wrap_oaep_hash="auto")
     rs = _make_rs(sh=202)
-    ctx = build_wrap_context(rs, cfg)
-
-    assert ctx is None
+    with pytest.raises(pytest.xfail.Exception, match="Every advertised"):
+        build_wrap_context(rs, cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -580,12 +615,130 @@ def test_aes_kwp_kek_destroyed_on_readback_failure(monkeypatch: pytest.MonkeyPat
 
     cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap", wrap_oaep_hash="auto")
     rs = _make_rs(sh=401, has_mechanism_fn=has_mechanism)
-    ctx = build_wrap_context(rs, cfg)
+    with pytest.raises(pytest.xfail.Exception, match="CKA_VALUE readback"):
+        build_wrap_context(rs, cfg)
 
-    # AES-KWP must not be selected (KEK value unreadable)
-    assert ctx is None or ctx.strategy_name != "aes_kwp"
     # The orphaned KEK handle must have been destroyed
     assert kek_handle in destroy_calls
+
+
+def test_aes_kwp_bootstrap_unknown_keygen_ckr_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undefined C_GenerateKey CK_RV remains a provider finding."""
+
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_AES_KEY_WRAP_KWP"
+
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        raise CkrAssertionError("undefined keygen return", 0x7FFFFFFF)
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap")
+    rs = _make_rs(sh=402, has_mechanism_fn=has_mechanism)
+    with pytest.raises(CkrAssertionError, match="undefined keygen return"):
+        build_wrap_context(rs, cfg)
+
+
+def test_aes_kwp_bootstrap_unknown_readback_ckr_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undefined C_GetAttributeValue CK_RV remains a provider finding."""
+    kek_handle = 78
+    destroy_calls: list[int] = []
+
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_AES_KEY_WRAP_KWP"
+
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        return kek_handle
+
+    def fake_read_attributes(
+        raw: Any, session: int, handle: int, attr_types: Any
+    ) -> dict[int, Any]:
+        raise CkrAssertionError("undefined readback return", 0x7FFFFFFF)
+
+    def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
+        destroy_calls.append(handle)
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", fake_read_attributes)
+    monkeypatch.setattr("pkcs11_check.raw.recipes.destroy_quietly", fake_destroy_quietly)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap")
+    rs = _make_rs(sh=403, has_mechanism_fn=has_mechanism)
+    with pytest.raises(CkrAssertionError, match="undefined readback return"):
+        build_wrap_context(rs, cfg)
+    assert destroy_calls == [kek_handle]
+
+
+def test_aes_kwp_bootstrap_unexpected_keygen_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-CKR keygen failure is never converted to setup unavailability."""
+
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_AES_KEY_WRAP_KWP"
+
+    def fake_gen_aes_key(raw: Any, session: int, **kwargs: Any) -> int:
+        raise RuntimeError("binding failure")
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", fake_gen_aes_key)
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap")
+    rs = _make_rs(sh=404, has_mechanism_fn=has_mechanism)
+    with pytest.raises(RuntimeError, match="binding failure"):
+        build_wrap_context(rs, cfg)
+
+
+def test_aes_kwp_bootstrap_unexpected_readback_failure_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kek_handle = 79
+    destroyed: list[int] = []
+
+    def has_mechanism(self: Any, name: str) -> bool:
+        return name == "CKM_AES_KEY_WRAP_KWP"
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.gen_aes_key", lambda *_a, **_k: kek_handle)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.read_attributes",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("binding failure")),
+    )
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.destroy_quietly",
+        lambda _raw, _session, handle: destroyed.append(handle),
+    )
+    _reset_cache()
+
+    from pathlib import Path
+
+    from pkcs11_check.config import P11TestConfig
+    from pkcs11_check.testcases._provisioning import build_wrap_context
+
+    cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap")
+    with pytest.raises(RuntimeError, match="binding failure"):
+        build_wrap_context(_make_rs(sh=405, has_mechanism_fn=has_mechanism), cfg)
+    assert destroyed == [kek_handle]
 
 
 # ---------------------------------------------------------------------------
@@ -641,12 +794,14 @@ def test_rsa_oaep_fallthrough_when_rsa_aes_key_wrap_fails(
 
 
 # ---------------------------------------------------------------------------
-# Nothing works -> returns None
+# Every advertised trial refuses -> visible finding
 # ---------------------------------------------------------------------------
 
 
-def test_nothing_works_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    """All strategies fail: RSA unwrap always raises, AES KEK gen fails -> None."""
+def test_all_advertised_trials_refuse_is_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All advertised unwrap strategies refusing must not become missing setup."""
     pub_h = 60
     priv_h = 61
     n_bytes, e_bytes = _real_rsa_numbers(2048)
@@ -680,9 +835,8 @@ def test_nothing_works_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = P11TestConfig(module=Path("/ignored.so"), key_inject="unwrap", wrap_oaep_hash="auto")
     # has_mechanism returns True for everything
     rs = _make_rs(sh=600)
-    ctx = build_wrap_context(rs, cfg)
-
-    assert ctx is None
+    with pytest.raises(pytest.xfail.Exception, match="Every advertised"):
+        build_wrap_context(rs, cfg)
 
 
 # ---------------------------------------------------------------------------

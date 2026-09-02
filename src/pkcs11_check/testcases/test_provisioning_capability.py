@@ -18,15 +18,16 @@ from pkcs11_check.testcases._provisioning import profile_for
 pytestmark = pytest.mark.provisioning
 
 
-@pytest.mark.parametrize("obj_class", ["secret", "private"])
+@pytest.mark.parametrize("obj_class", ["secret", "private", "public", "cert", "data"])
 def test_create_object_available(p11_raw_session: Any, obj_class: str) -> None:
     """Record C_CreateObject availability for *obj_class* as a single finding.
 
     Probes whether the module accepts ``C_CreateObject`` for the given object
-    class (``secret`` or ``private``).  A verdict of ``create_available`` is a
-    clean pass.  ``create_absent`` or ``create_prohibited`` maps to a single
-    ``honest_deviation`` xfail, making the provisioning-skip reason visible
-    instead of leaving it implicit across many downstream skips.
+    class (``secret``, ``private``, ``public``, ``cert``, or ``data``).  A
+    verdict of ``create_available`` is a clean pass.  ``create_absent`` or
+    ``create_prohibited`` maps to a single ``honest_deviation`` xfail, making
+    the provisioning-skip reason visible instead of leaving it implicit across
+    many downstream skips.
     """
     rs = p11_raw_session
     verdict = profile_for(rs).create_verdict(obj_class)

@@ -478,10 +478,7 @@ def discover_auto_isolation_units(
             # installed package with no config file above it).
             units.extend(_absolute_nodeid(file_key, nid) for nid in nodeids)
         else:
-            if file_forces_file_isolation(marker_names):
-                units.append(str(file_path))
-            else:
-                units.append(file_unit)
+            units.append(file_unit)
 
     validate_subprocess_per_test_expansion(units, collected_items)
     return units

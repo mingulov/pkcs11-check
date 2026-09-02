@@ -637,10 +637,10 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     outcome = yield
     report = outcome.get_result()
     _convert_missing_function_to_skip(report, call)
-    _remember_module_session_call_outcome(item, report)
     _attach_rv_trace_to_report(item, report)
     _attach_compliance_notes_to_report(item, report)
-    _attach_classification_to_report(item, report)
+    _attach_classification_to_report(item, report, call=call)
+    _remember_module_session_call_outcome(item, report)
     _attach_claimed_op_to_report(item, report)
 
 
@@ -990,9 +990,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             {"$report_type": "ProvisioningReport", **provisioning_data}
         )
 
-    # Release per-process module resources: C_Finalize the live library on
-    # normal teardown. MUST be last -- after every test outcome AND the coverage
-    # report (which reads `raw`) are recorded -- so a slow/failing/crashing
-    # C_Finalize cannot change any test's verdict (segfault-survival model). The
-    # event is recorded only via the additive TeardownFinalize record.
-    _finalize_on_teardown(config, raw)
+    # Release per-process module resources after every ordinary test verdict and
+    # coverage read. A lifecycle finding is additive, but the process must still
+    # be non-green so isolated and non-isolated callers cannot accept it.
+    finalize_outcome = _finalize_on_teardown(config, raw)
+    if (
+        finalize_outcome not in {None, "ok"}
+        and getattr(session, "exitstatus", exitstatus) == pytest.ExitCode.OK
+    ):
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

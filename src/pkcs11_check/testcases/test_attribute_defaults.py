@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_ALWAYS_SENSITIVE,
     CKA_CLASS,
@@ -37,11 +38,13 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VERIFY,
     CKO_DATA,
+    CKR_ATTRIBUTE_TYPE_INVALID,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
+    is_known_error,
     skip_if_data_objects_unsupported,
 )
 
@@ -58,9 +61,8 @@ def _read_attr(raw: Any, sh: int, handle: int, attr: int) -> Any:
         if ATTR_VALUE_TYPES.get(attr) == "bool":
             return require_bool_attr(value, f"attribute 0x{attr:08X}")
         return value
-    except AssertionError as e:
-        err_msg = str(e)
-        if "CKR_ATTRIBUTE_TYPE_INVALID" in err_msg:
+    except CkrAssertionError as e:
+        if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
             pytest.skip(f"Module does not expose attribute 0x{attr:08X}: {e}")
         raise
 
@@ -96,9 +98,7 @@ class TestSecretKeyDefaults:
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
         local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
-        try:
-            assert local is True
-        except AssertionError:
+        if local is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -148,9 +148,7 @@ class TestSecretKeyDefaults:
         """CKA_PRIVATE defaults to True for secret keys."""
         rs, key = aes_key
         val = _read_attr(rs.raw, rs.sh, key, CKA_PRIVATE)
-        try:
-            assert val is True
-        except AssertionError:
+        if val is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -206,9 +204,7 @@ class TestKeyPairDefaults:
         rs, pub, _priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_LOCAL])
         local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
-        try:
-            assert local is True
-        except AssertionError:
+        if local is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -231,9 +227,7 @@ class TestKeyPairDefaults:
         rs, _pub, priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_LOCAL])
         local = require_bool_attr(attrs[CKA_LOCAL], "CKA_LOCAL")
-        try:
-            assert local is True
-        except AssertionError:
+        if local is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -266,9 +260,7 @@ class TestKeyPairDefaults:
         """Private key CKA_EXTRACTABLE defaults to False."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_EXTRACTABLE)
-        try:
-            assert val is False
-        except AssertionError:
+        if val is not False:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
@@ -288,9 +280,7 @@ class TestKeyPairDefaults:
         """Private key CKA_PRIVATE defaults to True."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_PRIVATE)
-        try:
-            assert val is True
-        except AssertionError:
+        if val is not True:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(

@@ -234,6 +234,9 @@ from pkcs11_check.core._unit_details import (
     _copy_detail as _copy_detail,
 )
 from pkcs11_check.core._unit_details import (
+    _effective_unit_status as _effective_unit_status,
+)
+from pkcs11_check.core._unit_details import (
     _ensure_timeout_recorded as _ensure_timeout_recorded,
 )
 from pkcs11_check.core._unit_details import (
@@ -249,16 +252,10 @@ from pkcs11_check.core._unit_details import (
     _merge_supplemental_special_details as _merge_supplemental_special_details,
 )
 from pkcs11_check.core._unit_details import (
-    _overall_unit_status as _overall_unit_status,
-)
-from pkcs11_check.core._unit_details import (
     _required_ckm_names_for_unit as _required_ckm_names_for_unit,
 )
 from pkcs11_check.core._unit_details import (
     _special_test_entry_from_result as _special_test_entry_from_result,
-)
-from pkcs11_check.core._unit_details import (
-    _status_with_detail_counts as _status_with_detail_counts,
 )
 from pkcs11_check.core._unit_details import (
     _synthetic_file_skip_detail as _synthetic_file_skip_detail,
@@ -299,6 +296,7 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.run_metrics import (
     RESULT_OUTCOME_KEYS,
     compute_child_subprocess_counts,
@@ -349,7 +347,7 @@ def _build_isolated_json_payload(
 
     if state.process_observations_complete:
         for observation in state_outer:
-            target = str(observation.get("target", "")).split("::", 1)[0]
+            target = normalize_nodeid(str(observation.get("target", "")).split("::", 1)[0])
             if target:
                 executions_by_unit.setdefault(target, []).append([observation])
         for detail in details.values():
@@ -408,7 +406,6 @@ def _build_isolated_json_payload(
             executions_by_unit.setdefault(target, []).extend(groups)
 
     for file_target, file_results, merged_detail in grouped:
-        overall_status = _overall_unit_status(file_results)
         special_entries = [
             entry
             for result in file_results
@@ -416,9 +413,14 @@ def _build_isolated_json_payload(
         ]
         detail = _merge_special_entries_into_detail(merged_detail, special_entries)
         counts = detail.get("counts")
-        overall_status = _status_with_detail_counts(overall_status, counts)
-        if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
-            detail["counts"][overall_status] = 1
+        overall_status = _effective_unit_status(file_results, counts)
+        if overall_status in {"failed", "crashed", "timeout"}:
+            matching_outcome = "failed" if overall_status == "failed" else overall_status
+            has_matching_evidence = detail["counts"].get(matching_outcome, 0) > 0
+            if overall_status == "failed":
+                has_matching_evidence |= detail["counts"].get("error", 0) > 0
+            if not has_matching_evidence:
+                detail["counts"][matching_outcome] = 1
         duration = sum(r.duration_s for r in file_results)
         stdout_parts = [r.stdout for r in file_results if r.stdout]
         stderr_parts = [r.stderr for r in file_results if r.stderr]
@@ -429,10 +431,14 @@ def _build_isolated_json_payload(
             "returncode": (
                 max(abs(r.returncode) for r in file_results)
                 if overall_status in {"failed", "crashed", "timeout"}
+                or any(not r.completion_verified for r in file_results)
                 else 0
             ),
             "duration_s": round(duration, 3),
         }
+        if any(not r.completion_verified for r in file_results):
+            unit["incomplete"] = True
+            unit["completion_verified"] = False
         if stdout_parts:
             unit["stdout"] = "\n".join(stdout_parts)
         if stderr_parts:
@@ -453,11 +459,32 @@ def _build_isolated_json_payload(
             unit["skip_reasons"] = sr
         if detail.get("file_skip"):
             unit["file_skip"] = True
-        executions = _canonical_executions(*executions_by_unit.get(file_target, []))
+        executions = _canonical_executions(
+            *executions_by_unit.get(normalize_nodeid(file_target), [])
+        )
         if executions:
             unit["executions"] = executions
 
         units_out.append(unit)
+
+    recovery_events = _recovery_events_from_state(state)
+    for event_index, event in enumerate(recovery_events, start=1):
+        event_id = event.get("event_id", event_index)
+        counts = {key: 0 for key in RESULT_OUTCOME_KEYS}
+        counts["crashed"] = 1
+        trigger = str(event.get("trigger_unit") or "provider")
+        units_out.append(
+            {
+                "target": f"{trigger}::daemon-recovery-{event_id}",
+                "status": "crashed",
+                "returncode": 1,
+                "duration_s": 0.0,
+                "counts": counts,
+                "recovery_event": event,
+            }
+        )
+        for key, value in counts.items():
+            summary[key] += value
 
     summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
     child_crash, child_timeout = compute_child_subprocess_counts(units_out)
@@ -475,7 +502,30 @@ def _build_isolated_json_payload(
         payload["coverage"] = coverage
     if provenance:
         payload["provenance"] = provenance
+    if state.attempt_history:
+        payload["attempt_history"] = state.attempt_history
+    if recovery_events:
+        payload["recovery_events"] = recovery_events
     return payload
+
+
+def _recovery_events_from_state(state: FileRunState) -> list[dict[str, Any]]:
+    """Return one event per confirmed daemon death, including legacy history-only state."""
+    events = [event for event in state.recovery_events if isinstance(event, Mapping)]
+    if events:
+        return [dict(event) for event in events]
+    recovered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for attempt in state.attempt_history:
+        event = attempt.get("recovery_event") if isinstance(attempt, Mapping) else None
+        if not isinstance(event, Mapping):
+            continue
+        key = json.dumps(event, sort_keys=True, separators=(",", ":"))
+        if key in seen:
+            continue
+        seen.add(key)
+        recovered.append(dict(event))
+    return recovered
 
 
 def _junit_case_identity(target: str) -> tuple[str, str]:
@@ -493,22 +543,43 @@ def write_isolated_junit_report(
     state: FileRunState,
     *,
     suite_name: str = "pkcs11-check-isolated",
+    per_unit_details: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Write an aggregated JUnit XML report for an isolated run."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    failures = sum(1 for result in state.results if result.status == "failed")
-    errors = sum(1 for result in state.results if result.status in {"crashed", "timeout"})
-    skipped = sum(
-        1 for result in state.results if result.status in {"empty", "escalated", "crash_limited"}
+    details = per_unit_details or {}
+    recovery_events = _recovery_events_from_state(state)
+
+    def effective_status(result: FileRunResult) -> str:
+        detail = details.get(result.target)
+        counts = detail.get("counts") if isinstance(detail, Mapping) else None
+        return _effective_unit_status([result], counts)
+
+    effective_results = [(result, effective_status(result)) for result in state.results]
+    failures = sum(
+        1
+        for result, status in effective_results
+        if status == "failed" and result.completion_verified
     )
-    duration_s = sum(result.duration_s for result in state.results)
+    errors = sum(
+        1
+        for result, status in effective_results
+        if status in {"crashed", "timeout", "escalated", "crash_limited"}
+        or not result.completion_verified
+    ) + len(recovery_events)
+    skipped = sum(
+        1
+        for result, status in effective_results
+        if status == "empty" and result.completion_verified
+    )
+    duration_s = sum(result.duration_s for result, _ in effective_results)
 
     suite = ET.Element(
         "testsuite",
         {
             "name": suite_name,
-            "tests": str(len(state.results)),
+            "tests": str(len(state.results) + len(recovery_events)),
             "failures": str(failures),
             "errors": str(errors),
             "skipped": str(skipped),
@@ -516,7 +587,17 @@ def write_isolated_junit_report(
         },
     )
 
-    for result in state.results:
+    for result, status in effective_results:
+        detail = details.get(result.target)
+        detail_longrepr = ""
+        if isinstance(detail, Mapping):
+            records = detail.get("tests")
+            if isinstance(records, list):
+                detail_longrepr = "\n\n".join(
+                    str(record["longrepr"])
+                    for record in records
+                    if isinstance(record, Mapping) and record.get("longrepr")
+                )
         class_name, case_name = _junit_case_identity(result.target)
         case = ET.SubElement(
             suite,
@@ -528,7 +609,17 @@ def write_isolated_junit_report(
             },
         )
 
-        if result.status == "failed":
+        if not result.completion_verified:
+            error = ET.SubElement(
+                case,
+                "error",
+                {"message": "report log completion could not be verified", "type": "incomplete"},
+            )
+            error.text = (
+                f"Unit {result.target} exited with code {result.returncode} without a "
+                "matching SessionFinish record."
+            )
+        elif status == "failed":
             failure = ET.SubElement(
                 case,
                 "failure",
@@ -537,8 +628,8 @@ def write_isolated_junit_report(
                     "type": "failure",
                 },
             )
-            failure.text = f"Unit {result.target} failed in isolated mode."
-        elif result.status == "crashed":
+            failure.text = detail_longrepr or f"Unit {result.target} failed in isolated mode."
+        elif status == "crashed":
             error = ET.SubElement(
                 case,
                 "error",
@@ -547,8 +638,8 @@ def write_isolated_junit_report(
                     "type": "crashed",
                 },
             )
-            error.text = f"Unit {result.target} crashed in isolated mode."
-        elif result.status == "timeout":
+            error.text = detail_longrepr or f"Unit {result.target} crashed in isolated mode."
+        elif status == "timeout":
             error = ET.SubElement(
                 case,
                 "error",
@@ -557,30 +648,55 @@ def write_isolated_junit_report(
                     "type": "timeout",
                 },
             )
-            error.text = f"Unit {result.target} timed out in isolated mode."
-        elif result.status == "empty":
+            error.text = detail_longrepr or f"Unit {result.target} timed out in isolated mode."
+        elif status == "empty":
             skipped_node = ET.SubElement(case, "skipped", {"message": "no tests collected"})
             skipped_node.text = f"Unit {result.target} collected no tests."
-        elif result.status == "escalated":
-            skipped_node = ET.SubElement(
+        elif status == "escalated":
+            error = ET.SubElement(
                 case,
-                "skipped",
-                {"message": "unit escalated to per-test isolation"},
+                "error",
+                {"message": "unit escalated to per-test isolation", "type": "escalated"},
             )
-            skipped_node.text = (
+            error.text = detail_longrepr or (
                 f"Unit {result.target} crashed at file granularity and was expanded to per-test "
                 "isolation."
             )
-        elif result.status == "crash_limited":
-            skipped_node = ET.SubElement(
+        elif status == "crash_limited":
+            error = ET.SubElement(
                 case,
-                "skipped",
-                {"message": "skipped after per-file crash limit was reached"},
+                "error",
+                {
+                    "message": "skipped after per-file crash limit was reached",
+                    "type": "crash_limited",
+                },
             )
-            skipped_node.text = (
+            error.text = detail_longrepr or (
                 f"Unit {result.target} was skipped because this file exceeded the configured "
                 "per-file crash limit in isolated mode."
             )
+
+    for event_index, event in enumerate(recovery_events, start=1):
+        event_id = event.get("event_id", event_index)
+        trigger = str(event.get("trigger_unit") or "provider")
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": "pkcs11_check.recovery",
+                "name": f"daemon-recovery-{event_id}",
+                "time": "0.000000",
+            },
+        )
+        error = ET.SubElement(
+            case,
+            "error",
+            {
+                "message": f"daemon became unreachable after {trigger}",
+                "type": "daemon-recovery",
+            },
+        )
+        error.text = str(event.get("label") or "provider became unreachable")
 
     tree = ET.ElementTree(suite)
     ET.indent(tree, space="  ")
@@ -601,4 +717,8 @@ def write_isolated_report(
             per_unit_details=per_unit_details,
         )
         return
-    write_isolated_junit_report(config.output_path, state)
+    write_isolated_junit_report(
+        config.output_path,
+        state,
+        per_unit_details=per_unit_details,
+    )

@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids
+from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM_INFO,
     CK_MECHANISM_TYPE,
@@ -135,12 +137,11 @@ class RawSlot:
             raise RuntimeError(f"C_GetMechanismList failed: 0x{rv:08x}")
         return [MechValue(mechs[i]) for i in range(count.value)]
 
-    def get_mechanism_info(self, mech: Any) -> MechInfo | None:
+    def get_mechanism_info(self, mech: Any) -> MechInfo:
         """Return mechanism info for a single mechanism."""
         info = CK_MECHANISM_INFO()
-        rv = self._raw.C_GetMechanismInfo(self._slot_id, mech, byref(info))
-        if rv != CKR_OK:
-            return None
+        rv = int(self._raw.C_GetMechanismInfo(self._slot_id, mech, byref(info)))
+        expect_rv(rv, CKR_OK, context=f"C_GetMechanismInfo({mech})")
         return MechInfo(
             min_key=info.ulMinKeySize,
             max_key=info.ulMaxKeySize,
@@ -188,7 +189,10 @@ class P11Module:
         """
         try:
             self._raw.C_Finalize(None)
-        except (AttributeError, OSError):
+        except OSError as exc:
+            if ctypes_access_violation_code(exc) is not None:
+                raise
+        except AttributeError:
             pass
         rv = int(self._raw.C_Initialize(None))
         if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):

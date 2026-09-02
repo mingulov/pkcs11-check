@@ -58,9 +58,15 @@ def _meta_item(nodeid: str = "tests/test_meta.py::test_y") -> pytest.Item:
     return item
 
 
-def _call_report(outcome: str, *, wasxfail: str | None = None, message: str = "") -> Any:
+def _call_report(
+    outcome: str,
+    *,
+    when: str = "call",
+    wasxfail: str | None = None,
+    message: str = "",
+) -> Any:
     report = SimpleNamespace(
-        when="call",
+        when=when,
         outcome=outcome,
         longrepr=message,
         user_properties=[],
@@ -68,6 +74,10 @@ def _call_report(outcome: str, *, wasxfail: str | None = None, message: str = ""
     if wasxfail is not None:
         report.wasxfail = wasxfail
     return report
+
+
+def _call_info(exc: BaseException) -> Any:
+    return SimpleNamespace(excinfo=SimpleNamespace(type=type(exc), value=exc))
 
 
 def _classification_prop(report: Any) -> list[dict[str, Any]] | None:
@@ -95,6 +105,87 @@ def test_raw_fail_in_testcase_yields_synthetic_unclassified() -> None:
     assert rec["detail"] == {"raw": True}
     assert rec["label"] == item.nodeid
     assert "module returned the wrong code" in rec["summary"]
+
+
+def test_direct_ctypes_access_violation_yields_synthetic_crash() -> None:
+    item = _testcase_item()
+    report = _call_report(
+        "failed", message="OSError: exception: access violation reading 0xFFFFFFFFFFFFFFFF"
+    )
+
+    _attach_classification_to_report(
+        item,
+        report,
+        call=_call_info(OSError("exception: access violation reading 0xFFFFFFFFFFFFFFFF")),
+    )
+
+    records = _classification_prop(report)
+    assert records is not None
+    assert records[0]["reason"] == "crash"
+    assert records[0]["detail"] == {
+        "windows_status": 0xC0000005,
+        "signal": "EXCEPTION_ACCESS_VIOLATION",
+    }
+
+
+@pytest.mark.parametrize("when", ["setup", "teardown"])
+def test_fixture_ctypes_access_violation_yields_synthetic_crash(when: str) -> None:
+    report = _call_report(
+        "failed",
+        when=when,
+        message="OSError: exception: access violation reading 0xFFFFFFFFFFFFFFFF",
+    )
+
+    _attach_classification_to_report(
+        _testcase_item(),
+        report,
+        call=_call_info(OSError("exception: access violation reading 0xFFFFFFFFFFFFFFFF")),
+    )
+
+    records = _classification_prop(report)
+    assert records is not None
+    assert [record["reason"] for record in records] == ["crash"]
+
+
+@pytest.mark.parametrize("when", ["setup", "teardown"])
+def test_ordinary_fixture_oserror_is_not_synthetically_classified(when: str) -> None:
+    report = _call_report("failed", when=when, message="OSError: provider I/O error")
+
+    _attach_classification_to_report(
+        _testcase_item(), report, call=_call_info(OSError("provider I/O error"))
+    )
+
+    assert _classification_prop(report) is None
+
+
+def test_ordinary_oserror_stays_synthetic_unclassified() -> None:
+    report = _call_report("failed", message="OSError: ordinary provider error")
+
+    _attach_classification_to_report(
+        _testcase_item(), report, call=_call_info(OSError("ordinary provider error"))
+    )
+
+    records = _classification_prop(report)
+    assert records is not None
+    assert records[0]["reason"] == "unclassified"
+
+
+def test_nested_wrapper_with_access_violation_text_stays_synthetic_unclassified() -> None:
+    from _pytest.outcomes import Failed
+
+    report = _call_report(
+        "failed", message="Failed: child subprocess failed: exception: access violation reading 0"
+    )
+
+    _attach_classification_to_report(
+        _testcase_item(),
+        report,
+        call=_call_info(Failed("child subprocess failed: exception: access violation reading 0")),
+    )
+
+    records = _classification_prop(report)
+    assert records is not None
+    assert records[0]["reason"] == "unclassified"
 
 
 def test_raw_xfail_in_testcase_yields_synthetic_unclassified() -> None:

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -24,6 +25,7 @@ from pkcs11_check.raw.recipes import (
     get_mechanism_list,
     get_slot_info,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_AES_KEY_GEN,
@@ -33,9 +35,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512,
     CKM_SHA_1,
     CKM_VENDOR_DEFINED,
+    CKR_ARGUMENTS_BAD,
     CKR_OK,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
+from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERRORS
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    HMAC_OP_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    gen_aes_key_or_xfail,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.surface_audit
 
@@ -143,8 +155,12 @@ class TestFunctionRobustness:
         try:
             data = generate_random(rs.raw, rs.sh, 0)
             assert len(data) == 0
-        except (AssertionError, ValueError):
-            pass  # audit-ok: C_GenerateRandom(0) → empty bytes or error, both spec-legal
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                (CKR_ARGUMENTS_BAD,),
+                label="C_GenerateRandom with zero length",
+            )
 
     def test_digest_all_hash_mechanisms(
         self,
@@ -155,11 +171,18 @@ class TestFunctionRobustness:
         test_data = b"surface audit test data"
         hash_mechs = [CKM_SHA_1, CKM_SHA256, CKM_SHA384, CKM_SHA512, CKM_SHA224]
         for mech in hash_mechs:
+            name = _mech_name(mech)
+            if not rs.has_mechanism(name):
+                continue
             try:
                 result = digest_single(rs.raw, rs.sh, mech, test_data)
                 assert len(result) > 0
-            except AssertionError:
-                pass  # audit-ok: capability probe; module may not support every hash mech
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    f"{name} advertised but digest is not operational",
+                )
 
     def test_generate_key_all_aes_sizes(
         self,
@@ -167,13 +190,19 @@ class TestFunctionRobustness:
     ) -> None:
         """Generate AES keys at all standard sizes."""
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("AES_KEY_GEN not supported")
         for size in [128, 192, 256]:
             try:
                 key = gen_aes_key(rs.raw, rs.sh, size)
                 assert key != 0
                 destroy_quietly(rs.raw, rs.sh, key)
-            except AssertionError:
-                pass  # audit-ok: capability probe; module may not support all AES key sizes
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    AES_KEYGEN_RUNTIME_REJECT_RVS,
+                    f"AES_KEY_GEN advertised but AES-{size} key generation is not operational",
+                )
 
     @pytest.mark.slow
     def test_generate_rsa_various_sizes(
@@ -182,14 +211,21 @@ class TestFunctionRobustness:
     ) -> None:
         """Generate RSA keys at various sizes."""
         rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported")
         for size in [1024, 2048, 3072, 4096]:
             try:
                 pub, priv = gen_rsa_keypair(rs.raw, rs.sh, size)
                 assert pub != 0
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
-            except AssertionError:
-                pass  # audit-ok: capability probe; module may not support all RSA key sizes
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    KEYPAIR_RUNTIME_REJECT_RVS,
+                    f"RSA_PKCS_KEY_PAIR_GEN advertised but RSA-{size} key generation "
+                    "is not operational",
+                )
 
     def test_find_with_domain_parameters_class(
         self,
@@ -208,8 +244,13 @@ class TestFunctionRobustness:
                 template_from_dict({CKA_CLASS: CKO_DOMAIN_PARAMETERS}),
             )
             assert isinstance(found, list)
-        except AssertionError:
-            pass  # audit-ok: capability probe; module may not support CKO_DOMAIN_PARAMETERS search
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                TEMPLATE_ERRORS,
+                label="CKO_DOMAIN_PARAMETERS search",
+                kind="metadata",
+            )
 
 
 class TestMechanismFlagsConsistency:
@@ -228,14 +269,21 @@ class TestMechanismFlagsConsistency:
 
         key = gen_aes_key_or_xfail(rs, 256)
         try:
-            ct = encrypt_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_AES_ECB,
-                b"0123456789abcdef",
-            )
-            assert len(ct) > 0
+            try:
+                ct = encrypt_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_ECB,
+                    b"0123456789abcdef",
+                )
+                assert len(ct) > 0
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "AES_ECB advertised but encryption is not operational",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -248,10 +296,7 @@ class TestMechanismFlagsConsistency:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES_KEY_GEN not supported")
 
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
-        except AssertionError:
-            pytest.skip("Cannot get AES_KEY_GEN mechanism info")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
 
         if info["min_key_size"] > 0:
             key = gen_aes_key_or_xfail(
@@ -280,36 +325,46 @@ class TestMechanismLimitProbing:
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("AES_KEY_GEN not supported")
 
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
-        except AssertionError:
-            pytest.skip("Cannot get AES_KEY_GEN info")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
 
-        oversize = (int(info["max_key_size"]) + 8) * 8
+        max_key_size = int(info["max_key_size"])
+        oversize = (max_key_size + 8) * 8
+        key = 0
         try:
             key = gen_aes_key(rs.raw, rs.sh, oversize)
+            if max_key_size > 0:
+                classify(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="AES_KEY_GEN advertised maximum",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_AES_KEY_GEN",
+                    actual=oversize,
+                    expected=max_key_size * 8,
+                    summary=(
+                        f"AES_KEY_GEN accepted {oversize}-bit key beyond advertised "
+                        f"maximum ({max_key_size * 8} bits)"
+                    ),
+                )
             note(
-                f"Module accepted AES key beyond max ({oversize} bits)",
+                f"Module accepted AES key beyond max ({oversize} bits) with no nonzero maximum",
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="PKCS#11 CK_MECHANISM_INFO.ulMaxKeySize",
             )
+        except CkrAssertionError as exc:
+            reject_or_classify(exc, KEY_SIZE_ERRORS, label="AES_KEY_GEN beyond advertised max")
+        finally:
             destroy_quietly(rs.raw, rs.sh, key)
-        except AssertionError:
-            pass  # audit-ok: rejection is the correct/expected outcome; acceptance is noted above
 
     def test_rsa_undersize_key(self, p11_raw_session: Any) -> None:
         """Try RSA key smaller than min."""
-        from pkcs11_check.compliance import ComplianceLevel, note
         from pkcs11_check.raw.types_std import CKM_RSA_PKCS_KEY_PAIR_GEN
 
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
-        except AssertionError:
-            pytest.skip("Cannot get RSA key info")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
 
         if int(info["min_key_size"]) == 0:
             pytest.skip("No minimum key length reported")
@@ -318,34 +373,71 @@ class TestMechanismLimitProbing:
         if undersize >= int(info["min_key_size"]):
             pytest.skip("Cannot test below minimum (already at 512)")
 
+        pub = priv = 0
         try:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, undersize)
-            note(
-                f"Module accepted RSA key below min ({undersize} bits)",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 CK_MECHANISM_INFO.ulMinKeySize",
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label="RSA_PKCS_KEY_PAIR_GEN advertised minimum",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=undersize,
+                expected=int(info["min_key_size"]),
+                summary=(
+                    f"RSA key-pair generation accepted {undersize}-bit key below advertised "
+                    f"minimum ({int(info['min_key_size'])} bits)"
+                ),
             )
+        except CkrAssertionError as exc:
+            reject_or_classify(exc, KEY_SIZE_ERRORS, label="RSA keygen below advertised minimum")
+        finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
-        except AssertionError:
-            pass  # audit-ok: rejection is the correct/expected outcome; acceptance is noted above
 
     def test_aes_non_standard_sizes(self, p11_raw_session: Any) -> None:
         """Try non-standard AES key sizes."""
         from pkcs11_check.compliance import ComplianceLevel, note
 
         rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("AES_KEY_GEN not supported")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
+        raw_min = int(info["min_key_size"])
+        raw_max = int(info["max_key_size"])
+        min_bits = raw_min * 8 if raw_max <= 32 else raw_min
+        max_bits = raw_max * 8 if raw_max <= 32 else raw_max
         for size in [64, 160, 384, 512, 768]:
+            key = 0
             try:
                 key = gen_aes_key(rs.raw, rs.sh, size)
+                if (raw_min > 0 and size < min_bits) or (raw_max > 0 and size > max_bits):
+                    classify(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=f"AES_KEY_GEN advertised range ({size} bits)",
+                        operation="C_GenerateKey",
+                        mechanism="CKM_AES_KEY_GEN",
+                        actual=size,
+                        expected=f"{min_bits}..{max_bits} bits",
+                        summary=(
+                            f"AES_KEY_GEN accepted non-standard {size}-bit key outside "
+                            f"advertised range {min_bits}..{max_bits} bits"
+                        ),
+                    )
                 note(
                     f"Module accepted non-standard AES-{size}",
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="FIPS 197",
                 )
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    KEY_SIZE_ERRORS,
+                    label=f"AES_KEY_GEN non-standard {size}-bit key",
+                )
+            finally:
                 destroy_quietly(rs.raw, rs.sh, key)
-            except AssertionError:
-                pass  # audit-ok: rejection is correct; acceptance is noted above
 
     def test_hmac_short_key(self, p11_raw_session: Any) -> None:
         """Try HMAC with a very short key (1 byte)."""
@@ -364,6 +456,7 @@ class TestMechanismLimitProbing:
         )
 
         rs = p11_raw_session
+        key = 0
         try:
             key = create_object(
                 rs.raw,
@@ -389,9 +482,14 @@ class TestMechanismLimitProbing:
                 ComplianceLevel.NOT_RECOMMENDED,
                 reference="RFC 2104",
             )
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                TEMPLATE_ERRORS + HMAC_OP_RUNTIME_REJECT_RVS,
+                label="SHA256_HMAC 1-byte key",
+            )
+        finally:
             destroy_quietly(rs.raw, rs.sh, key)
-        except AssertionError:
-            pass  # audit-ok: rejection is correct; acceptance is noted above
 
     def test_rsa_oversize_key(self, p11_raw_session: Any) -> None:
         """Try RSA key larger than max."""
@@ -401,22 +499,29 @@ class TestMechanismLimitProbing:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA keygen not supported")
 
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
-        except AssertionError:
-            pytest.skip("Cannot get RSA info")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
 
-        oversize = int(info["max_key_size"]) + 1024
+        max_key_size = int(info["max_key_size"])
+        oversize = max_key_size + 1024
+        pub = priv = 0
         try:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, oversize)
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"Module accepted RSA-{oversize} beyond max",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 CK_MECHANISM_INFO.ulMaxKeySize",
-            )
+            if max_key_size > 0:
+                classify(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="RSA_PKCS_KEY_PAIR_GEN advertised maximum",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    actual=oversize,
+                    expected=max_key_size,
+                    summary=(
+                        f"RSA key-pair generation accepted {oversize}-bit key beyond advertised "
+                        f"maximum ({max_key_size} bits)"
+                    ),
+                )
+        except CkrAssertionError as exc:
+            reject_or_classify(exc, KEY_SIZE_ERRORS, label="RSA keygen beyond advertised maximum")
+        finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
-        except AssertionError:
-            pass  # audit-ok: rejection is correct; acceptance is noted above

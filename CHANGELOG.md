@@ -1,5 +1,71 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Isolation preserves explicit targets.** In `--isolation auto`, an explicit `path::node`
+  remains an exact node unit even when its file has the module-level `subprocess` marker; a bare
+  file remains file-isolated.
+- **Incomplete report-log sessions are reported honestly.** Normal collected pytest exits 0, 1,
+  and 5 require a matching `SessionFinish`/`exitstatus`. Missing or invalid completion is an
+  additive `completion_verified: false` incomplete result, is preserved by continuation-only
+  resume, and is not automatically blamed or retried as a crash or timeout.
+- **Escalation and retry health remain visible.** Grouped JSON/JUnit retain a file-level crash or
+  timeout trigger even when expanded children pass; a preserved timeout retry is stored as
+  `timeout`/`124` and returns nonzero. Resume returns green only when all durable results are
+  verified `passed`/`empty`; crash-limited and escalation residue stays non-green.
+- **Windows crash evidence is retained.** Unhandled native NTSTATUS exits and direct ctypes
+  `OSError: exception: access violation` failures in setup, call, or teardown are classified as
+  crashes. Owned nested child access violations contribute to `child_crash`, including after
+  mixed-separator path joins; outer-process collection failures also classify from captured
+  stderr. Ordinary `OSError` and traceback text alone do not.
+- **Report and recovery evidence fail closed.** Malformed/non-object report-log records and
+  structurally invalid pytest session records make completion unverified. Daemon recovery replaces
+  only the current aggregate verdict: superseded results, classifications, output, and process
+  observations remain in `attempt_history`, while each confirmed daemon death is counted as its
+  own crash. A durable sidecar is replayed on resume if interruption occurs before state save.
+- **Successful corpus operations must prove their output.** Accepted Wycheproof HKDF and
+  X25519/X448 `valid` or `acceptable` vectors now compare readable derived bytes with the corpus;
+  an invalid derive succeeds as a hard finding before readback, and an unreadable successful
+  result remains visible as `not_operational`. Unexpected local errors propagate instead of
+  becoming acceptable-vector passes.
+- **Provider capability refusals are routed at their exact boundary.** Scoped handling now covers
+  role/login and object-storage refusal, private-key and multi-prime RSA-OAEP provisioning,
+  ECDH/XDH runtime refusal, EC import exhaustion, and RSA-PSS zero-salt support. These remain
+  visible skips or xfails where appropriate; an accepted invalid input or wrong cryptographic
+  result remains a hard finding.
+- **Negative-test oracles distinguish behavior from error-code variance.** Non-empty short GCM
+  IVs and caller-managed IV reuse are no longer provider failures, while empty-IV acceptance
+  remains hard. EdDSA KeyVer now evaluates the signature after invalid-key import, CBC-PAD does
+  not confuse multiple clean rejection codes with an oracle, and `C_SetAttributeValue`
+  distinguishes permitted `CKR_GENERAL_ERROR` inconsistency from hard partial updates. Crashes
+  and timeouts near `SIZE_MAX` remain hard pending sanitizer attribution.
+- **Provider-operation exceptions no longer become corpus passes.** AES-GCM/CCM key import is
+  classified separately from invalid-ciphertext rejection; GCM-SIV wrong ciphertext, tag, or
+  plaintext is a hard result mismatch. ACVP GMAC uses `C_Sign`, supplies AAD exactly once, and
+  selects the PKCS#11 2.40 or 3.x parameter shape from the negotiated interface. EdDSA, EC/ECDH,
+  PQC/KEM, CTS, Tookan, X.509 compatibility retries, and boundary probes catch only structured
+  PKCS#11 errors at expected rejection boundaries, so direct crashes, undefined CKRs, and local
+  assertion failures stay visible. Provider lookup errors after external provisioning propagate
+  instead of becoming an unavailable-path skip.
+- **Lifecycle and capability failures cannot finish green.** A non-OK, raised, timed-out, or
+  access-violating teardown `C_Finalize` now fails the pytest process and becomes one additive
+  lifecycle error/crash/timeout in grouped reports without rewriting completed test outcomes.
+  Explicit capability manifests with non-OK status and advertised mechanisms whose
+  `C_GetMechanismInfo` fails are likewise rejected instead of being treated as absent. Successful
+  crash-guard key-generation probes destroy both session objects before continuing.
+- **Positive-operation findings are no longer setup skips.** Advertised RNG refusals, required
+  X.509 readback/search refusals, silently rebound EC imports, refused provisioning unwrap trials,
+  ACVP RSA key-generation refusals, missing generated-key attributes, template-mismatched
+  `CKA_TOKEN`, and readable wrong keys returned by `C_UnwrapKey` remain visible as xfail/fail
+  findings. Provisioning calls a mechanism an unwrap capability only when it advertises
+  `CKF_UNWRAP`; fallback strategies may still succeed, and genuine unadvertised or exhaustively
+  probed capability absence remains a skip.
+- **Fresh empty runs clear old evidence before failing.** A non-resume run that collects zero units
+  still exits with the no-tests error, but first removes stale state-adjacent recovery/report
+  caches and report/coverage/provisioning/quality artifacts, then writes an empty durable result.
+
 ## [0.1.9] - 2026-08-28
 
 A diagnosis release. Every fix here is about the suite telling the truth about itself: a
@@ -66,8 +132,11 @@ false findings against conformant modules; one was reported from outside.
   never re-run, the quarantine was a label with no effect, the crash finding never reached
   `report.jsonl`, and `unit_hint_rvs` was a hardcoded empty set that made the configurable
   `hint_rvs` dead code. The green meta-suite was the trap: it covered the calculation, not the
-  wiring. Results recorded while a daemon was going down are now deleted and their units
-  re-queued - those were never the module's verdict, only the shape of talking to a corpse.
+  wiring. Results recorded while a daemon was going down are replaced for the aggregate verdict
+  and their units re-queued - those were never the module's current verdict, only the shape of
+  talking to a corpse. Their original result, classifications, output, and process evidence stay
+  archived as superseded attempt history, while each confirmed daemon death remains a separately
+  counted crash event.
   Still open, unchanged: a daemon that is reachable but degraded is not detected.
 - **A failed collection could not say why (GH #3).** A Windows user got "found no collectors"
   and nothing else: no exit code, no pytest args, nothing about whether the target existed, was

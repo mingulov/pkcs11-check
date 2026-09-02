@@ -25,6 +25,7 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
     CKA_HASH_OF_ISSUER_PUBLIC_KEY,
@@ -43,6 +44,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import assert_correct, is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     _build_cert_template,
+    classify_positive_ckr,
     import_cert_object,
     skip_unless_cert_storage,
 )
@@ -150,9 +152,13 @@ class TestCertificateImport:
                 operation="C_GetAttributeValue",
                 kind="metadata",
             )
-        except AssertionError as e:
-            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
-                pytest.skip("Module does not support CKA_CERTIFICATE_TYPE")
+        except CkrAssertionError as exc:
+            if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                classify_positive_ckr(
+                    exc,
+                    label="X509:CKA_CERTIFICATE_TYPE readback",
+                    summary="accepted certificate does not expose required CKA_CERTIFICATE_TYPE",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -179,14 +185,21 @@ class TestCertificateSearch:
         )
         try:
             tmpl = template(attr_bytes(CKA_LABEL, label.encode("utf-8")))
-            found = find_objects(rs.raw, rs.sh, tmpl)
-            assert len(found) >= 1
-        except AssertionError:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"Label {label} not found via search",
-                ComplianceLevel.VENDOR,
+            try:
+                found = find_objects(rs.raw, rs.sh, tmpl)
+            except CkrAssertionError as exc:
+                classify_positive_ckr(
+                    exc,
+                    label="X509:search newly-created certificate by CKA_LABEL",
+                    summary="certificate search was refused",
+                )
+                return
+            assert_correct(
+                actual=bool(found),
+                expected=True,
+                label="X509:search newly-created certificate by CKA_LABEL",
+                operation="C_FindObjects",
+                kind="metadata",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -224,9 +237,13 @@ class TestCertificateExtractFields:
                     operation="C_GetAttributeValue",
                     kind="metadata",
                 )
-        except AssertionError as e:
-            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
-                pytest.skip("Module does not support reading CKA_VALUE")
+        except CkrAssertionError as exc:
+            if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                classify_positive_ckr(
+                    exc,
+                    label="X509:CKA_VALUE readback",
+                    summary="accepted certificate does not expose required CKA_VALUE",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -254,9 +271,13 @@ class TestCertificateExtractFields:
             subject = attrs[CKA_SUBJECT]
             assert isinstance(subject, bytes)
             assert len(subject) > 0
-        except AssertionError as e:
-            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
-                pytest.skip("Module does not extract CKA_SUBJECT")
+        except CkrAssertionError as exc:
+            if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                classify_positive_ckr(
+                    exc,
+                    label="X509:CKA_SUBJECT readback",
+                    summary="accepted certificate does not expose required CKA_SUBJECT",
+                )
             raise
         finally:
             destroy_quietly(rs.raw, rs.sh, h)

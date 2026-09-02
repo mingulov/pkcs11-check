@@ -18,7 +18,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_DERIVE,
     CKA_EXTRACTABLE,
@@ -33,9 +33,14 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA384,
     CKM_SHA512,
     CKM_SHA_1,
+    CKR_KEY_SIZE_RANGE,
 )
 from pkcs11_check.testcases._operability import not_operational_reason
-from pkcs11_check.testcases.conftest import assert_correct, import_secret_key_negotiated
+from pkcs11_check.testcases.conftest import (
+    assert_correct,
+    import_secret_key_negotiated,
+    reject_or_classify,
+)
 
 pytestmark = [pytest.mark.wycheproof, pytest.mark.subprocess_per_test]
 REQUIRED_MECHANISMS = ["HKDF_DERIVE"]
@@ -55,6 +60,10 @@ _SHA_HASH_MECHS: dict[str, int] = {
     "SHA-384": CKM_SHA384,
     "SHA-512": CKM_SHA512,
 }
+
+# Wycheproof's only HKDF invalid vectors request an output larger than the
+# mechanism permits; C_DeriveKey specifies CKR_KEY_SIZE_RANGE for that case.
+_HKDF_NEGATIVE_REJECT_CKRS = (CKR_KEY_SIZE_RANGE,)
 
 
 def _load_hkdf_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -114,12 +123,12 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
             },
         )
     except AssertionError as exc:
-        if result == "invalid":
-            return
         if not isinstance(exc, CkrAssertionError):
             # Non-CKR AssertionError -- a harness/ctypes bug must never be
             # classified as "not operational".
             raise
+        if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            reject_or_classify(exc, (), label="HKDF_DERIVE:key-import")
         # HKDF_DERIVE was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted IKM import refusal is "advertised but not
         # operational" -> xfail per the classification model, never skip.
@@ -141,54 +150,79 @@ def test_hkdf(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None
         info=info if info else None,
     )
     okm = None
+    derived = None
     try:
-        derived = derive_key(
-            rs.raw,
-            rs.sh,
-            ikm_key,
-            CKM_HKDF_DERIVE,
-            attrs={
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE_LEN: okm_size,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_TOKEN: False,
-            },
-            mech_param=hkdf_param,
-        )
-        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-        okm = attrs[CKA_VALUE]
-        assert isinstance(okm, bytes)
-        destroy_quietly(rs.raw, rs.sh, derived)
-    except (AssertionError, TypeError, NotImplementedError) as exc:
-        if result == "valid":
+        try:
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                ikm_key,
+                CKM_HKDF_DERIVE,
+                attrs={
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: okm_size,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                mech_param=hkdf_param,
+            )
+        except CkrAssertionError as exc:
+            if result == "valid":
+                if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                    reject_or_classify(exc, (), label=f"HKDF:{vec_id}")
+                classify(
+                    "not_operational",
+                    label=f"HKDF:{vec_id}",
+                    summary=f"HKDF derive failed for valid vector {vec_id}: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            else:
+                reject_or_classify(
+                    exc,
+                    _HKDF_NEGATIVE_REJECT_CKRS,
+                    label=f"HKDF:{vec_id}",
+                )
+            return
+
+        if result == "invalid":
             classify(
-                "not_operational",
-                label=f"HKDF:{vec_id}",
-                summary=f"HKDF derive failed for valid vector {vec_id}: {exc}",
+                "accepted_invalid",
+                kind="crypto",
+                summary=f"Invalid HKDF vector {vec_id} derived successfully",
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-        # acceptable: reject is fine
-        return
+
+        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+        if CKA_VALUE not in attrs:
+            if result in ("valid", "acceptable"):
+                classify(
+                    "not_operational",
+                    label=f"HKDF:{vec_id}",
+                    summary=(
+                        f"HKDF derived key value unavailable for {result} vector {vec_id}; "
+                        "the result cannot be verified"
+                    ),
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            return
+        okm = attrs[CKA_VALUE]
+        assert isinstance(okm, bytes)
     finally:
+        if derived is not None:
+            destroy_quietly(rs.raw, rs.sh, derived)
         destroy_quietly(rs.raw, rs.sh, ikm_key)
 
-    if result == "valid" and okm is not None:
+    if result in ("valid", "acceptable") and okm is not None:
         assert_correct(
             actual=okm,
             expected=okm_expected,
             label=f"HKDF:C_DeriveKey KAT {vec_id}",
             operation="C_DeriveKey",
             mechanism="CKM_HKDF_DERIVE",
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
-        )
-    if result == "invalid" and okm is not None:
-        classify(
-            "accepted_invalid",
-            kind="crypto",
-            summary=f"Invalid HKDF vector {vec_id} derived successfully",
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )

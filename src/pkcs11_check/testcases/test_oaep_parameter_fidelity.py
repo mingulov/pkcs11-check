@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_oaep_source_contradiction
 from pkcs11_check.raw.recipes import decrypt_single, destroy_quietly, encrypt_single
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -54,6 +55,7 @@ from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     import_rsa_public_key_negotiated,
     is_known_error,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.crossverify
@@ -116,8 +118,13 @@ class TestOaepParameterFidelity:
         try:
             try:
                 k, priv_h, pub_h = _import_known_keypair(rs, p11_config)
-            except AssertionError as exc:
-                pytest.skip(f"RSA keypair import refused: {exc}")
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _OAEP_REFUSED,
+                    "RSA_PKCS_OAEP advertised but RSA keypair import is not operational",
+                )
+                raise
             mech_param = mech_oaep(
                 CKM_RSA_PKCS_OAEP, hash_mech=CKM_SHA256, mgf=CKG_MGF1_SHA1, source_data=_LABEL
             )
@@ -131,7 +138,7 @@ class TestOaepParameterFidelity:
                     mech_param=mech_param,
                     output_overhead=256,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, _OAEP_REFUSED):
                     xfail_as(
                         "not_operational",
@@ -184,8 +191,13 @@ class TestOaepParameterFidelity:
         try:
             try:
                 k, priv_h, pub_h = _import_known_keypair(rs, p11_config)
-            except AssertionError as exc:
-                pytest.skip(f"RSA keypair import refused: {exc}")
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _OAEP_REFUSED,
+                    "RSA_PKCS_OAEP advertised but RSA keypair import is not operational",
+                )
+                raise
             # Local-encrypt a known ciphertext with the requested (matched) params.
             ct = k.public_key().encrypt(
                 _PLAINTEXT,
@@ -206,7 +218,7 @@ class TestOaepParameterFidelity:
                     mech_param=mech_param,
                     output_size_hint=len(_PLAINTEXT) + 8,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, _OAEP_REFUSED):
                     xfail_as(
                         "not_operational",
@@ -269,8 +281,13 @@ class TestOaepParamMismatch:
         try:
             try:
                 k, priv_h, pub_h = _import_known_keypair(rs, p11_config)
-            except AssertionError as exc:
-                pytest.skip(f"RSA keypair import refused: {exc}")
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _OAEP_REFUSED,
+                    "RSA_PKCS_OAEP advertised but RSA keypair import is not operational",
+                )
+                raise
             # Spec-illegal: source=CKZ_DATA_SPECIFIED, pSourceData=NULL, ulSourceDataLen=4.
             # OASIS spec requires "if the parameter is empty, pSourceData must be NULL
             # and ulSourceDataLen must be zero" — nonzero len with NULL pointer contradicts this.
@@ -289,7 +306,7 @@ class TestOaepParamMismatch:
                     mech_param=mech_param,
                     output_overhead=256,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, _OAEP_REFUSED):
                     xfail_as(
                         "not_operational",

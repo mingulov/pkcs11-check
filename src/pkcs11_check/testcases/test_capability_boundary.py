@@ -213,10 +213,7 @@ class TestRSAKeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for RSA keygen -- cannot determine floor")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
         probe_size = rsa_probe_size_below_min(int(info["min_key_size"]))
         if probe_size is None:
             pytest.skip(
@@ -246,10 +243,7 @@ class TestRSAKeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for RSA keygen -- cannot determine ceiling")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
         probe_size = rsa_probe_size_above_max(int(info["max_key_size"]))
         if probe_size is None:
             pytest.skip(
@@ -311,10 +305,7 @@ class TestECKeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_EC_KEY_PAIR_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for EC keygen -- cannot determine floor")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_EC_KEY_PAIR_GEN)
         probe = ec_probe_curve_below_min(int(info["min_key_size"]))
         if probe is None:
             pytest.skip(
@@ -329,10 +320,7 @@ class TestECKeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("CKM_EC_KEY_PAIR_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_EC_KEY_PAIR_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for EC keygen -- cannot determine ceiling")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_EC_KEY_PAIR_GEN)
         probe = ec_probe_curve_above_max(int(info["max_key_size"]))
         if probe is None:
             pytest.skip(
@@ -351,10 +339,7 @@ class TestAESKeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for AES keygen -- cannot determine floor")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
         # CK_MECHANISM_INFO sizes for AES_KEY_GEN are in bytes in some modules; normalise
         # to bits.  Heuristic: if max_key_size <= 32, assume bytes (32 bytes = 256 bits).
         raw_min = int(info["min_key_size"])
@@ -388,10 +373,7 @@ class TestAESKeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for AES keygen -- cannot determine ceiling")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_AES_KEY_GEN)
         raw_max = int(info["max_key_size"])
         if raw_max <= 32:
             advertised_max_bits = raw_max * 8
@@ -467,10 +449,7 @@ class TestDES3KeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_DES3_KEY_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for DES3 keygen -- cannot determine floor")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_DES3_KEY_GEN)
         advertised_min = int(info["min_key_size"])
         # DES3 sizes are reported in bytes by most modules (8=64 bits, 24=192 bits).
         if advertised_min <= 32:
@@ -489,10 +468,7 @@ class TestDES3KeySizeBoundary:
         rs = p11_raw_session
         if not rs.has_mechanism("DES3_KEY_GEN"):
             pytest.skip("CKM_DES3_KEY_GEN not advertised")
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_DES3_KEY_GEN)
-        except CkrAssertionError:
-            pytest.skip("C_GetMechanismInfo failed for DES3 keygen -- cannot determine ceiling")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_DES3_KEY_GEN)
         advertised_max = int(info["max_key_size"])
         if advertised_max <= 32:
             advertised_max_bits = advertised_max * 8

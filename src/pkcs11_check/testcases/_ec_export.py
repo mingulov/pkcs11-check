@@ -9,7 +9,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.recipes import read_attributes
-from pkcs11_check.raw.types_std import CKA_EC_POINT
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CKA_EC_POINT,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+)
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 
 class MalformedSignature(ValueError):  # noqa: N818
@@ -48,12 +54,11 @@ def read_ec_public_key_or_xfail(
     """
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
-    except AssertionError as exc:
-        xfail_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: cannot read CKA_EC_POINT: {exc}",
+    except CkrAssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID),
+            f"{label}: cannot read CKA_EC_POINT",
         )
 
     ec_point = attrs[CKA_EC_POINT]
@@ -77,7 +82,7 @@ def read_ec_public_key_or_xfail(
 
     try:
         return ec.EllipticCurvePublicKey.from_encoded_point(curve, point_bytes)
-    except Exception as exc:
+    except ValueError as exc:
         xfail_as(
             "not_operational",
             kind="metadata",

@@ -18,7 +18,12 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     verify_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -33,6 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_VERIFY,
     CKA_WRAP,
+    CKF_DECRYPT,
     CKK_AES,
     CKK_AES_XTS,
     CKK_GENERIC_SECRET,
@@ -47,20 +53,21 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
     CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
 )
-from pkcs11_check.testcases._aes_operability import (
-    cmac_operability,
-    gmac_operability,
-    kw_unwrap_operability,
-    kwp_encrypt_operability,
-    xts_encrypt_operability,
-)
+from pkcs11_check.testcases._aes_operability import xts_encrypt_operability
 from pkcs11_check.testcases._negotiation import (
     TEMPLATE_SHAPE_REJECTS,
     negotiate_request,
@@ -75,6 +82,8 @@ from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability a
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_secret_key_negotiated,
+    reject_or_classify,
+    skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
@@ -97,15 +106,43 @@ _AES_RUNTIME_REJECT_CKRS = (
     CKR_MECHANISM_PARAM_INVALID,
 )
 
+# Negative-vector integrity failures use only the operation's PKCS#11 result
+# codes.  Provider/runtime failures stay visible as nonspec_reject xfails via
+# reject_or_classify; they must not be treated as valid rejection evidence.
+_AES_CMAC_NEGATIVE_REJECT_CKRS = (CKR_SIGNATURE_INVALID,)
+_AES_CMAC_INVALID_KEY_SETUP_CKRS = (
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_KEY_SIZE_RANGE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+_AES_GMAC_NEGATIVE_REJECT_CKRS = (CKR_SIGNATURE_INVALID,)
+# Authentication failures are reported by C_Decrypt as ENCRYPTED_DATA_INVALID;
+# malformed nonce/tag-size vectors are rejected while initializing the
+# mechanism with MECHANISM_PARAM_INVALID.
+_AES_CCM_NEGATIVE_REJECT_CKRS = (CKR_ENCRYPTED_DATA_INVALID, CKR_MECHANISM_PARAM_INVALID)
+_AES_KW_NEGATIVE_REJECT_CKRS = (CKR_WRAPPED_KEY_INVALID, CKR_WRAPPED_KEY_LEN_RANGE)
+_AES_KWP_NEGATIVE_REJECT_CKRS = (CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE)
+
 
 def _xfail_if_aes_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     """Classify advertised AES operation rejects as non-clean findings."""
-    xfail_if_known_ckr(
-        exc,
-        _AES_RUNTIME_REJECT_CKRS,
-        f"{label}: advertised AES operation is not operational",
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    if exc.rv in _AES_RUNTIME_REJECT_CKRS:
+        xfail_if_known_ckr(
+            exc,
+            _AES_RUNTIME_REJECT_CKRS,
+            f"{label}: advertised AES operation is not operational",
+        )
+    if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+        reject_or_classify(exc, (), label=label)
+    classify(
+        "not_operational",
+        label=label,
+        actual=exc.rv,
+        summary=f"{label}: advertised AES operation is not operational ({ckr_name(exc.rv)})",
     )
-    raise exc
+    raise exc  # pragma: no cover - classify() raises for this reason
 
 
 # Clean reject codes that, on a VALID AES-KW vector after negotiation is exhausted,
@@ -197,18 +234,37 @@ def test_aes_cmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        if result == "invalid":
-            return
-        raise
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        # The five InvalidKeySize vectors intentionally target an unimportable
+        # CMAC key.  They are the one negative-vector setup case where a
+        # subject-key refusal is the expected disposition, not an operational
+        # finding.  Every other result must exercise the advertised operation.
+        if result == "invalid" and "InvalidKeySize" in vec.get("flags", []):
+            if exc.rv in _AES_CMAC_INVALID_KEY_SETUP_CKRS:
+                return
+        if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            reject_or_classify(exc, (), label="AES_CMAC:key-import")
+        classify(
+            "not_operational",
+            label="AES_CMAC:key-import",
+            summary=not_operational_reason("AES_CMAC:key-import", ckr_name(exc.rv)),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     try:
         verified = verify_single(rs.raw, rs.sh, key, CKM_AES_CMAC, msg, tag_expected)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-CMAC {vec_id}")
-        # invalid vector: gate on operability (vacuous-reject fix).
-        xfail_vacuous_reject(cmac_operability(rs), label=f"AES-CMAC {vec_id} invalid reject")
+        expected_rejects = (
+            (CKR_KEY_SIZE_RANGE,)
+            if "InvalidKeySize" in vec.get("flags", [])
+            else _AES_CMAC_NEGATIVE_REJECT_CKRS
+        )
+        reject_or_classify(exc, expected_rejects, label=f"AES-CMAC:{vec_id}")
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
@@ -277,6 +333,8 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
     except AssertionError as exc:
         if not isinstance(exc, CkrAssertionError):
             raise
+        if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            reject_or_classify(exc, (), label="AES_KEY_WRAP:key-import")
         # Mechanism was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted import refusal is "advertised but not
         # operational" -> xfail per the classification model.
@@ -303,11 +361,12 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 CKA_SENSITIVE: False,
                 CKA_TOKEN: False,
             },
-            # Restate the recovered length only for VALID vectors. Invalid (forged)
-            # blobs pass None so they are never coerced through an explicit length.
-            len(msg_expected) if result == "valid" else None,
+            # Restate the recovered length for vectors whose recovered value is
+            # checked. Invalid (forged) blobs pass None so they are never
+            # coerced through an explicit length.
+            len(msg_expected) if result in ("valid", "acceptable") else None,
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
             # The adaptive unwrap already tried both the minimal template and one with an
             # explicit CKA_VALUE_LEN, so a remaining clean template/attribute reject is an
@@ -316,11 +375,15 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
             # 384-byte CounterOverflow vectors (TEMPLATE_INCONSISTENT) and others
             # reject CKA_VALUE_LEN itself (ATTRIBUTE_READ_ONLY).
             # Several modules successfully unwrap these vectors, so the inputs are valid.
-            xfail_if_known_ckr(
-                exc,
-                _AES_RUNTIME_REJECT_CKRS + _AES_KW_VALID_VECTOR_CLEAN_REJECTS,
-                f"AES-KW {vec_id}: unwrap into a generic secret not operational",
-            )
+            known_rejects = _AES_RUNTIME_REJECT_CKRS + _AES_KW_VALID_VECTOR_CLEAN_REJECTS
+            if exc.rv in known_rejects:
+                xfail_if_known_ckr(
+                    exc,
+                    known_rejects,
+                    f"AES-KW {vec_id}: unwrap into a generic secret not operational",
+                )
+            if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                reject_or_classify(exc, (), label=f"AES-KW:{vec_id}")
             classify(
                 "not_operational",
                 label="AES-KW",
@@ -328,9 +391,10 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-        # invalid vector: gate on operability (vacuous-reject fix).
-        xfail_vacuous_reject(kw_unwrap_operability(rs), label=f"AES-KW {vec_id} invalid reject")
+        reject_or_classify(exc, _AES_KW_NEGATIVE_REJECT_CKRS, label=f"AES-KW:{vec_id}")
         return
+    except AssertionError:
+        raise
     finally:
         destroy_quietly(rs.raw, rs.sh, wrap_key_h)
 
@@ -345,7 +409,7 @@ def test_aes_key_wrap(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
             vector_id=vec.get("_vector_id"),
         )
 
-    # valid: recovered key material must match the original
+    # Valid and acceptable vectors must recover exactly the supplied message.
     try:
         attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
     finally:
@@ -381,31 +445,40 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
 
     KWP allows wrapping data that is not a multiple of 8 bytes,
     unlike basic AES-KW which requires 8-byte aligned data.
+
+    These are the AES-KWP wrap vectors, exercised in the decrypt direction
+    because the corpus supplies the wrapped ciphertext.
+    The corpus contains wrapped ciphertext, so this runner decrypts the
+    supplied ``ct`` through C_Decrypt and compares the recovered message.
     """
     rs = p11_module_session
     if not rs.has_mechanism("AES_KEY_WRAP_KWP"):
         pytest.skip("AES_KEY_WRAP_KWP not supported")
+    # Production RawSession exposes has_mechanism_flag; keep lightweight test
+    # doubles that model only named-mechanism discovery usable as well.
+    if hasattr(rs, "has_mechanism_flag"):
+        skip_unless_mechanism_flag(rs, CKM_AES_KEY_WRAP_KWP, CKF_DECRYPT)
 
     key_bytes = bytes.fromhex(vec["key"])
     set_params({"aes_bits": str(len(key_bytes) * 8)})
-    msg = bytes.fromhex(vec["msg"])
-    ct_expected = bytes.fromhex(vec["ct"])
+    msg_expected = bytes.fromhex(vec["msg"])
+    ct = bytes.fromhex(vec["ct"])
     result = vec["result"]
-    # NOT C_WrapKey -- the raw call below is encrypt_single (KWP is exposed via
-    # C_Encrypt in PKCS#11); the existing "C_WrapKey" classify label on the
-    # assert_correct() call further down stays untouched (cosmetic KAT label).
-    set_mechanism("AES_KEY_WRAP_KWP", operation="C_Encrypt", expect_success=(result == "valid"))
+    set_mechanism(
+        "AES_KEY_WRAP_KWP",
+        operation="C_Decrypt",
+        expect_success=(result == "valid"),
+    )
 
-    # Import wrapping key
+    # Import the decryption key.  A refusal is an advertised-but-not-
+    # operational mechanism, independent of the vector result.
     try:
-        wrap_key_h = import_secret_key_negotiated(
+        decrypt_key = import_secret_key_negotiated(
             rs,
             CKK_AES,
             key_bytes,
             attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
                 CKA_TOKEN: False,
                 CKA_SENSITIVE: False,
             },
@@ -413,6 +486,8 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     except AssertionError as exc:
         if not isinstance(exc, CkrAssertionError):
             raise
+        if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            reject_or_classify(exc, (), label="AES_KEY_WRAP_KWP:key-import")
         # Mechanism was advertised (has_mechanism gate passed above); a
         # negotiation-exhausted import refusal is "advertised but not
         # operational" -> xfail per the classification model.
@@ -425,43 +500,41 @@ def test_aes_kwp(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             ),
         )
 
-    # Wycheproof KWP vectors are RFC 5649 raw data vectors.  PKCS#11 exposes
-    # that exact operation through CKM_AES_KEY_WRAP_KWP C_Encrypt.
-    wrapped = None
+    plaintext = None
     try:
-        wrapped = encrypt_single(
+        plaintext = decrypt_single(
             rs.raw,
             rs.sh,
-            wrap_key_h,
+            decrypt_key,
             CKM_AES_KEY_WRAP_KWP,
-            msg,
-            output_overhead=16,
+            ct,
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
             _xfail_if_aes_runtime_reject(exc, f"AES-KWP {vec_id}")
-        # invalid vector: gate on operability (vacuous-reject fix).
-        xfail_vacuous_reject(kwp_encrypt_operability(rs), label=f"AES-KWP {vec_id} invalid reject")
+        reject_or_classify(exc, _AES_KWP_NEGATIVE_REJECT_CKRS, label=f"AES-KWP:{vec_id}")
         return
+    except AssertionError:
+        raise
     finally:
-        destroy_quietly(rs.raw, rs.sh, wrap_key_h)
+        destroy_quietly(rs.raw, rs.sh, decrypt_key)
 
-    if result == "valid" and wrapped is not None:
-        assert_correct(
-            actual=wrapped,
-            expected=ct_expected,
-            label=f"AES-KWP:C_WrapKey KAT {vec_id}",
-            operation="C_WrapKey",
-            mechanism="CKM_AES_KEY_WRAP_KWP",
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
-        )
-    if result == "invalid" and wrapped is not None and wrapped == ct_expected:
+    if result == "invalid":
         classify(
             "accepted_invalid",
             kind="crypto",
             label="AES-KWP",
-            summary=f"AES-KWP wrap {vec_id} produced invalid ciphertext",
+            summary=f"AES-KWP decrypt {vec_id}: accepted invalid ciphertext",
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
+    if result in ("valid", "acceptable") and plaintext is not None:
+        assert_correct(
+            actual=plaintext,
+            expected=msg_expected,
+            label=f"AES-KWP:C_Decrypt KAT {vec_id}",
+            operation="C_Decrypt",
+            mechanism="CKM_AES_KEY_WRAP_KWP",
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )
@@ -508,10 +581,18 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        if result == "invalid":
-            return
-        raise
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            reject_or_classify(exc, (), label="AES_CCM:key-import")
+        classify(
+            "not_operational",
+            label="AES_CCM:key-import",
+            summary=not_operational_reason("AES_CCM:key-import", ckr_name(exc.rv)),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     # Decrypt ct||tag and verify
     plaintext = None
@@ -531,41 +612,29 @@ def test_aes_ccm(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             ct + tag,
             mech_param=ccm_param,
         )
-    except (AssertionError, TypeError, NotImplementedError) as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            if isinstance(exc, AssertionError):
-                # Effect-based (triage H2): a clean decrypt error on a valid CCM
-                # vector is classified against the canonical CCM-decrypt probe.
-                # Non-operational (some modules return GENERAL_ERROR for CCM) or an honest
-                # clean reject -> xfail; a working probe with WRONG canonical
-                # output (a real break) re-raises. The real CCM findings
-                # (accepted-invalid, wrong plaintext) are caught below, not here.
-                classify_kat_clean_error(
-                    exc,
-                    result=_ccm_operability(rs, "AES_CCM", "decrypt"),
-                    label=f"AES-CCM {vec_id}",
-                )
-            classify(
-                "not_operational",
-                label="AES-CCM",
-                summary=f"AES-CCM decrypt failed for valid vector {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
+            # A clean decrypt error on a valid vector remains an advertised
+            # operation deviation, classified against the canonical probe.
+            if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                reject_or_classify(exc, (), label=f"AES-CCM:{vec_id}")
+            classify_kat_clean_error(
+                exc,
+                result=_ccm_operability(rs, "AES_CCM", "decrypt"),
+                label=f"AES-CCM {vec_id}",
             )
-        # invalid vector rejected -- genuine only if CCM decrypt actually works.
-        # A clean op-reject (AssertionError) on a NOT_OPERATIONAL mechanism is
-        # vacuous (the module refuses everything); TypeError/NotImplementedError
-        # are not op-rejects and keep returning as before.
-        if isinstance(exc, AssertionError):
-            xfail_vacuous_reject(
-                _ccm_operability(rs, "AES_CCM", "decrypt"),
-                label=f"AES-CCM {vec_id} invalid reject",
-            )
+        reject_or_classify(exc, _AES_CCM_NEGATIVE_REJECT_CKRS, label=f"AES-CCM:{vec_id}")
+        xfail_vacuous_reject(
+            _ccm_operability(rs, "AES_CCM", "decrypt"),
+            label=f"AES-CCM {vec_id} invalid reject",
+        )
         return
+    except AssertionError:
+        raise
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 
-    if result == "valid" and plaintext is not None:
+    if result in ("valid", "acceptable") and plaintext is not None:
         assert_correct(
             actual=plaintext,
             expected=msg_expected,
@@ -625,10 +694,18 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
                 CKA_SENSITIVE: False,
             },
         )
-    except AssertionError:
-        if result == "invalid":
-            return
-        raise
+    except AssertionError as exc:
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        if not is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            reject_or_classify(exc, (), label="AES_GMAC:key-import")
+        classify(
+            "not_operational",
+            label="AES_GMAC:key-import",
+            summary=not_operational_reason("AES_GMAC:key-import", ckr_name(exc.rv)),
+            source=vec.get("_source"),
+            vector_id=vec.get("_vector_id"),
+        )
 
     try:
         verified = verify_single(
@@ -640,21 +717,13 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
             tag_expected,
             mech_param=mech_bytes(CKM_AES_GMAC, iv),
         )
-    except (AssertionError, TypeError) as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            if isinstance(exc, AssertionError):
-                _xfail_if_aes_runtime_reject(exc, f"AES-GMAC {vec_id}")
-            classify(
-                "not_operational",
-                label="AES-GMAC",
-                summary=f"AES-GMAC verify failed for valid vector {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
-        # invalid vector: gate on operability (vacuous-reject fix).
-        if isinstance(exc, AssertionError):
-            xfail_vacuous_reject(gmac_operability(rs), label=f"AES-GMAC {vec_id} invalid reject")
+            _xfail_if_aes_runtime_reject(exc, f"AES-GMAC {vec_id}")
+        reject_or_classify(exc, _AES_GMAC_NEGATIVE_REJECT_CKRS, label=f"AES-GMAC:{vec_id}")
         return
+    except AssertionError:
+        raise
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
 

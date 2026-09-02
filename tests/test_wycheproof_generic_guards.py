@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from pkcs11_check import classification
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -15,8 +17,12 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
     CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.wycheproof import test_wycheproof as wy
 
@@ -38,6 +44,70 @@ def _fail_if_called(*_args: Any, **_kwargs: Any) -> int:
 
 
 _STUB_CFG = P11TestConfig(module=Path("/stub.so"), key_inject="off")
+
+
+@pytest.fixture(autouse=True)
+def _clear_classifications() -> None:
+    classification.clear()
+
+
+def _negative_vector(case: str) -> dict[str, Any]:
+    common = {"tcId": 1, "result": "invalid", "_source": "synthetic", "_vector_id": "tc1"}
+    if case == "gcm":
+        return {
+            **common,
+            "key": "00" * 16,
+            "iv": "00" * 12,
+            "aad": "",
+            "msg": "",
+            "ct": "",
+            "tag": "00" * 16,
+            "flags": ["ModifiedTag"],
+            "_group": {},
+        }
+    if case == "hmac":
+        return {
+            **common,
+            "key": "00" * 32,
+            "msg": "",
+            "tag": "ff" * 32,
+            "flags": ["ModifiedTag"],
+            "_group": {"tagSize": 256},
+        }
+    return {
+        **common,
+        "key": "00" * 16,
+        "iv": "00" * 16,
+        "msg": "",
+        "ct": "00" * 16,
+        "flags": ["BadPadding"],
+        "_group": {},
+    }
+
+
+def _run_negative(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    operation: Callable[..., Any],
+    *,
+    sign_operation: Callable[..., Any] | None = None,
+) -> None:
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(wy, "generate_random", lambda *_a, **_k: b"")
+    if case == "hmac":
+        monkeypatch.setattr(wy, "sign_single", sign_operation or operation, raising=False)
+        monkeypatch.setattr(wy, "verify_single", operation)
+        wy.TestHMACSHA256Wycheproof().test_hmac_sha256(session, _STUB_CFG, _negative_vector(case))
+    elif case == "gcm":
+        monkeypatch.setattr(wy, "decrypt_single", operation)
+        wy.TestAESGCMWycheproof().test_aes_gcm(session, _STUB_CFG, _negative_vector(case))
+    else:
+        monkeypatch.setattr(wy, "decrypt_single", operation)
+        wy.TestAESCBCPKCS5Wycheproof().test_aes_cbc_pkcs5(
+            session, _STUB_CFG, _negative_vector(case)
+        )
 
 
 @pytest.mark.parametrize(
@@ -190,3 +260,213 @@ def test_generic_hmac_key_import_reject_is_xfail() -> None:
 
     with pytest.raises(pytest.xfail.Exception, match="HMAC-SHA256 key import"):
         wy._xfail_if_generic_runtime_reject(exc, "tc163-valid", "HMAC-SHA256 key import")
+
+
+@pytest.mark.parametrize("case", ["gcm", "hmac", "cbc"])
+@pytest.mark.parametrize(
+    "rv",
+    [int(CKR_DEVICE_ERROR), int(CKR_GENERAL_ERROR), int(CKR_VENDOR_DEFINED) + 1],
+)
+def test_generic_negative_other_clean_rejects_are_visible_xfails(
+    monkeypatch: pytest.MonkeyPatch, case: str, rv: int
+) -> None:
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError("negative vector rejected", rv)
+
+    with pytest.raises(pytest.xfail.Exception):
+        _run_negative(monkeypatch, case, reject)
+    assert classification.get_records()[-1].reason == "nonspec_reject"
+
+
+@pytest.mark.parametrize("case", ["gcm", "hmac", "cbc"])
+def test_generic_negative_undefined_ckr_is_hard_failure(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError("negative vector rejected", 0x7FFFFFFF)
+
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        _run_negative(monkeypatch, case, reject)
+    assert classification.get_records()[-1].reason == "self_contradiction"
+
+
+@pytest.mark.parametrize("case", ["gcm", "hmac", "cbc"])
+def test_generic_negative_non_ckr_assertion_propagates(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("local harness bug")
+
+    with pytest.raises(AssertionError, match="local harness bug"):
+        _run_negative(monkeypatch, case, reject)
+
+
+def _run_valid_gcm(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: Callable[..., Any],
+    *,
+    oversized_iv: bool = False,
+) -> None:
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+    vectors = wy._load_aes_gcm_vectors()
+    vec = next(
+        v
+        for v in vectors
+        if v["result"] == "valid" and (len(bytes.fromhex(v["iv"])) > 16) == oversized_iv
+    )
+    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(wy, "decrypt_single", operation)
+    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(wy, "generate_random", lambda *_a, **_k: b"")
+    wy.TestAESGCMWycheproof().test_aes_gcm(session, _STUB_CFG, vec)
+
+
+def test_gcm_valid_wrong_plaintext_is_a_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A successful decrypt with wrong plaintext must not be routed as a CKR."""
+
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
+        _run_valid_gcm(monkeypatch, lambda *_a, **_k: b"wrong plaintext")
+
+
+def test_gcm_valid_plain_decrypt_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A local decrypt error must remain a harness failure on a valid vector."""
+
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise TypeError("binding bug")
+
+    with pytest.raises(TypeError, match="binding bug"):
+        _run_valid_gcm(monkeypatch, reject)
+
+
+def test_gcm_oversized_iv_accepts_only_optional_reject_ckrs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Oversized valid-vector IV rejection is optional only for the exact CKR set."""
+
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError("optional IV rejected", int(CKR_MECHANISM_PARAM_INVALID))
+
+    _run_valid_gcm(monkeypatch, reject, oversized_iv=True)
+
+
+def test_gcm_oversized_iv_unexpected_ckr_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A generic reject for an oversized IV is not silently accepted."""
+
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError("unexpected reject", int(CKR_GENERAL_ERROR))
+
+    with pytest.raises(pytest.xfail.Exception, match="optional IV length"):
+        _run_valid_gcm(monkeypatch, reject, oversized_iv=True)
+
+
+def test_gcm_oversized_iv_undefined_ckr_is_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undefined CK_RV from the optional-IV path remains a hard failure."""
+
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError("undefined reject", 0x7FFFFFFF)
+
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        _run_valid_gcm(monkeypatch, reject, oversized_iv=True)
+
+
+@pytest.mark.parametrize("case", ["gcm", "hmac", "cbc"])
+def test_generic_negative_setup_reject_is_visible(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    monkeypatch.setattr(
+        wy,
+        "provision_secret_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("valid subject key import rejected", int(CKR_KEY_SIZE_RANGE))
+        ),
+    )
+    monkeypatch.setattr(
+        wy,
+        "decrypt_single",
+        lambda *_a, **_k: pytest.fail("operation reached after setup rejection"),
+    )
+    monkeypatch.setattr(
+        wy,
+        "sign_single",
+        lambda *_a, **_k: pytest.fail("operation reached after setup rejection"),
+        raising=False,
+    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(pytest.xfail.Exception, match="key import"):
+        if case == "gcm":
+            wy.TestAESGCMWycheproof().test_aes_gcm(session, _STUB_CFG, _negative_vector(case))
+        elif case == "hmac":
+            wy.TestHMACSHA256Wycheproof().test_hmac_sha256(
+                session, _STUB_CFG, _negative_vector(case)
+            )
+        else:
+            wy.TestAESCBCPKCS5Wycheproof().test_aes_cbc_pkcs5(
+                session, _STUB_CFG, _negative_vector(case)
+            )
+
+
+@pytest.mark.parametrize("case", ["gcm", "hmac", "cbc"])
+def test_generic_negative_success_is_hard_accepted_invalid(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    def operation(*_args: Any, **_kwargs: Any) -> bool | bytes:
+        return True if case == "hmac" else b""
+
+    with pytest.raises(pytest.fail.Exception, match="[Ii]nvalid"):
+        _run_negative(
+            monkeypatch,
+            case,
+            operation,
+            sign_operation=(lambda *_a, **_k: b"\x00" * 32) if case == "hmac" else None,
+        )
+    assert classification.get_records()[-1].reason == "accepted_invalid"
+
+
+@pytest.mark.parametrize(
+    ("case", "rv"),
+    [
+        ("gcm", int(CKR_ENCRYPTED_DATA_INVALID)),
+        ("hmac", int(CKR_SIGNATURE_INVALID)),
+        ("cbc", int(CKR_ENCRYPTED_DATA_INVALID)),
+    ],
+)
+def test_generic_negative_expected_reject_passes(
+    monkeypatch: pytest.MonkeyPatch, case: str, rv: int
+) -> None:
+    def reject(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError("negative vector rejected", rv)
+
+    _run_negative(monkeypatch, case, reject)
+    assert classification.get_records() == []
+
+
+def test_generic_gcm_valid_wrong_plaintext_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wrong valid-vector plaintext is a crypto finding, not a runtime reject."""
+    vec = next(v for v in wy._load_aes_gcm_vectors() if v["result"] == "valid")
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(wy, "decrypt_single", lambda *_a, **_k: b"\xff")
+    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(wy, "generate_random", lambda *_a, **_k: b"")
+
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
+        wy.TestAESGCMWycheproof().test_aes_gcm(session, _STUB_CFG, vec)
+
+
+def test_generic_gcm_plain_decrypt_assertion_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A local assertion in the decrypt binding must remain a harness failure."""
+    vec = next(v for v in wy._load_aes_gcm_vectors() if v["result"] == "valid")
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+    monkeypatch.setattr(wy, "provision_secret_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(
+        wy,
+        "decrypt_single",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("binding bug")),
+    )
+    monkeypatch.setattr(wy, "destroy_quietly", lambda *_a, **_k: None)
+
+    with pytest.raises(AssertionError, match="binding bug"):
+        wy.TestAESGCMWycheproof().test_aes_gcm(session, _STUB_CFG, vec)

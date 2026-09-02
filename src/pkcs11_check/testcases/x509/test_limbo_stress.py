@@ -21,6 +21,7 @@ from pkcs11_check.raw.recipes import (
     get_object_size,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
     CKA_CLASS,
@@ -49,6 +50,20 @@ _CERT_CAP = 1000  # Enough diversity for crash-probing; full set is ~30K.
 _all_cases = load_limbo_testcases()
 _all_certs = get_unique_limbo_certs(_all_cases)[:_CERT_CAP]
 _all_crls = get_unique_limbo_crls(_all_cases)
+
+
+def _accept_clean_crash_probe_rejection(exc: CkrAssertionError, operation: str) -> None:
+    """Allow defined clean rejections, but never hide an undefined provider return."""
+    if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+        return
+    classify(
+        "self_contradiction",
+        kind="metadata",
+        label=f"X.509 Limbo crash probe {operation}",
+        operation=operation,
+        actual=exc.rv,
+        summary=f"{operation} returned undefined CK_RV {exc.rv:#x}",
+    )
 
 
 @pytest.mark.parametrize(
@@ -80,7 +95,8 @@ def test_exhaustive_cert_import_no_crash(
                 CKA_VALUE: der_bytes,
             },
         )
-    except AssertionError:
+    except CkrAssertionError as exc:
+        _accept_clean_crash_probe_rejection(exc, "C_CreateObject")
         return  # audit-ok: malformed input; clean rejection ok (isolation catches crashes)
 
     try:
@@ -88,7 +104,8 @@ def test_exhaustive_cert_import_no_crash(
         # stored cert data, this will FAIL (not just silently pass).
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-        except AssertionError:
+        except CkrAssertionError as exc:
+            _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(CKA_VALUE)")
             attrs = {}  # CKR error reading VALUE is acceptable
         stored = attrs.get(CKA_VALUE, b"")
         if isinstance(stored, bytes) and stored and stored != der_bytes:
@@ -105,13 +122,15 @@ def test_exhaustive_cert_import_no_crash(
         # A module that lazily parses may crash here on malformed certs.
         try:
             read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT, CKA_ISSUER, CKA_SERIAL_NUMBER])
-        except AssertionError:
+        except CkrAssertionError as exc:
+            _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(computed attributes)")
             pass  # audit-ok: clean CKR error ok; a crash is caught by subprocess isolation
 
         # C_GetObjectSize may also trigger internal parsing.
         try:
             get_object_size(rs.raw, rs.sh, h)
-        except AssertionError:
+        except CkrAssertionError as exc:
+            _accept_clean_crash_probe_rejection(exc, "C_GetObjectSize")
             pass  # audit-ok: CKR error from C_GetObjectSize is acceptable; crash is the finding
     finally:
         destroy_quietly(rs.raw, rs.sh, h)
@@ -146,14 +165,16 @@ def test_exhaustive_crl_import_no_crash(
                 CKA_VALUE: der_bytes,
             },
         )
-    except AssertionError:
+    except CkrAssertionError as exc:
+        _accept_clean_crash_probe_rejection(exc, "C_CreateObject")
         return  # audit-ok: malformed input; rejection/unsupported ok (isolation catches crashes)
 
     try:
         # Verify CKA_VALUE round-trips correctly.
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-        except AssertionError:
+        except CkrAssertionError as exc:
+            _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(CKA_VALUE)")
             attrs = {}  # CKR error reading VALUE is acceptable
         stored = attrs.get(CKA_VALUE, b"")
         if isinstance(stored, bytes) and stored and stored != der_bytes:
@@ -168,7 +189,8 @@ def test_exhaustive_crl_import_no_crash(
 
         try:
             get_object_size(rs.raw, rs.sh, h)
-        except AssertionError:
+        except CkrAssertionError as exc:
+            _accept_clean_crash_probe_rejection(exc, "C_GetObjectSize")
             pass  # audit-ok: CKR error from C_GetObjectSize is acceptable; crash is the finding
     finally:
         destroy_quietly(rs.raw, rs.sh, h)

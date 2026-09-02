@@ -75,12 +75,17 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
+from pkcs11_check.core.crash_codes import (
+    CTYPES_ACCESS_VIOLATION,
+    ctypes_access_violation_from_stderr,
+)
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
-    map_report_outcome as _map_outcome,
+    map_report_record_outcome as _map_record_outcome,
 )
 
 
@@ -251,7 +256,7 @@ def _process_observation_key(observation: Mapping[str, Any]) -> str:
 
 def _execution_owner_file(execution: Mapping[str, Any]) -> str | None:
     """Return the owning file, rejecting malformed nested ownership."""
-    target = str(execution.get("target", "")).strip()
+    target = normalize_nodeid(str(execution.get("target", "")).strip())
     parent_value = execution.get("parent_nodeid")
     if parent_value is None:
         if execution.get("role") == "probe":
@@ -259,7 +264,7 @@ def _execution_owner_file(execution: Mapping[str, Any]) -> str | None:
         return target.split("::", 1)[0] or None
     if not isinstance(parent_value, str):
         return None
-    parent_nodeid = parent_value.strip()
+    parent_nodeid = normalize_nodeid(parent_value.strip())
     if not parent_nodeid:
         return None
     return parent_nodeid.split("::", 1)[0] or None
@@ -309,11 +314,24 @@ def _write_report_jsonl_from_record_sources(
     units: Sequence[str],
     inline_records_by_unit: Mapping[str, Sequence[Mapping[str, Any]]],
     output_path: Path,
+    attempt_history: Sequence[Mapping[str, Any]] = (),
+    recovery_events: Sequence[Mapping[str, Any]] = (),
 ) -> bool:
     """Write merged report.jsonl from per-unit cache shards without loading all records."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_suffix(".jsonl.tmp")
     wrote = False
+    durable_events = [event for event in recovery_events if isinstance(event, Mapping)]
+    if not durable_events:
+        seen_events: set[str] = set()
+        for attempt in attempt_history:
+            event = attempt.get("recovery_event") if isinstance(attempt, Mapping) else None
+            if not isinstance(event, Mapping):
+                continue
+            event_key = json.dumps(event, sort_keys=True, separators=(",", ":"))
+            if event_key not in seen_events:
+                seen_events.add(event_key)
+                durable_events.append(dict(event))
     try:
         with tmp_path.open("w", encoding="utf-8") as out_fh:
             saved_observations = [
@@ -372,11 +390,40 @@ def _write_report_jsonl_from_record_sources(
                     wrote = True
 
             # Ordinary records are always sourced from report-record shards.
+            for event in durable_events:
+                if not isinstance(event, Mapping):
+                    continue
+                out_fh.write(
+                    json.dumps(
+                        {
+                            "$report_type": "RecoveryEvent",
+                            "event_id": event.get("event_id", ""),
+                            "target": event.get("trigger_unit", ""),
+                            "event": dict(event),
+                        }
+                    )
+                    + "\n"
+                )
+                wrote = True
+            for attempt in attempt_history:
+                if not isinstance(attempt, Mapping):
+                    continue
+                out_fh.write(
+                    json.dumps(
+                        {
+                            "$report_type": "RecoveryAttempt",
+                            "target": attempt.get("target", ""),
+                            "attempt": dict(attempt),
+                        }
+                    )
+                    + "\n"
+                )
+                wrote = True
             for unit in _ordered_report_record_units(units, inline_records_by_unit):
                 for record in _iter_unit_report_record_source(
                     state_file, unit, inline_records_by_unit
                 ):
-                    if record.get("$report_type") == "ProcessReport":
+                    if record.get("$report_type") in {"ProcessReport", "RecoveryEvent"}:
                         continue
                     out_fh.write(json.dumps(record) + "\n")
                     wrote = True
@@ -589,6 +636,13 @@ def _iter_unit_report_record_chunks_from_jsonl(
         return None
 
     for record in _iter_report_log_records(jsonl_path):
+        # RecoveryAttempt is a global archival record, not part of the preceding unit's
+        # TestReport chunk. The final merge writes the authoritative state history once.
+        if record.get("$report_type") == "RecoveryAttempt":
+            chunk = pop_current_chunk()
+            if chunk is not None:
+                yield chunk
+            continue
         record_target = _unit_candidate_from_record(record, candidate_targets)
         if (
             current_chunk
@@ -718,7 +772,7 @@ def _compliance_notes_from_user_properties(
 def _build_detail_from_report_records(
     records: Iterable[Mapping[str, Any]],
     *,
-    call_record_hook: Callable[[Mapping[str, Any]], None] | None = None,
+    result_record_hook: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any] | None:
     """Build per-unit detail payload from parsed report-log records."""
     counts: dict[str, int] = {
@@ -738,7 +792,9 @@ def _build_detail_from_report_records(
     seen_call: set[str] = set()
     setup_events: list[Mapping[str, Any]] = []
     call_events: list[Mapping[str, Any]] = []
+    teardown_events: list[Mapping[str, Any]] = []
     collect_errors: list[Mapping[str, Any]] = []
+    finalize_events: list[Mapping[str, Any]] = []
     execution_records_seen: set[str] = set()
     execution_observations: list[dict[str, Any]] = []
 
@@ -760,6 +816,10 @@ def _build_detail_from_report_records(
                     execution_observations.append(dict(observation))
             continue
 
+        if report_type == "TeardownFinalize":
+            finalize_events.append(rec)
+            continue
+
         if report_type == "CollectReport":
             if outcome == "passed":
                 continue
@@ -778,17 +838,17 @@ def _build_detail_from_report_records(
                 if source_key not in execution_records_seen:
                     execution_records_seen.add(source_key)
                     execution_observations.extend(observations)
-            if call_record_hook is not None:
-                call_record_hook(rec)
         elif when == "setup" and outcome in ("skipped", "failed", "error"):
             setup_events.append(rec)
+        elif when == "teardown" and outcome in ("failed", "error"):
+            teardown_events.append(rec)
+
+    teardown_nodeids = {str(rec.get("nodeid", "")) for rec in teardown_events}
 
     for rec in call_events:
         nodeid = rec.get("nodeid", "")
         raw_outcome = rec.get("outcome", "passed")
         wasxfail = rec.get("wasxfail")
-        mapped = _map_outcome(raw_outcome, wasxfail)
-        counts[mapped] = counts.get(mapped, 0) + 1
         for note in _compliance_notes_from_user_properties(
             rec.get("user_properties"), nodeid=str(nodeid)
         ):
@@ -798,7 +858,16 @@ def _build_detail_from_report_records(
             seen_compliance_notes.add(key)
             compliance_notes.append(note)
 
+        overridden_by_teardown = str(nodeid) in teardown_nodeids
+        if result_record_hook is not None and not overridden_by_teardown:
+            result_record_hook(rec)
+        mapped = _map_record_outcome(rec)
+        if not overridden_by_teardown:
+            counts[mapped] = counts.get(mapped, 0) + 1
+
         if mapped == "skipped":
+            if overridden_by_teardown:
+                continue
             reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
             if reason.startswith("(") and "Skipped:" in reason:
                 parts = reason.split("Skipped:", 1)
@@ -841,6 +910,8 @@ def _build_detail_from_report_records(
             continue
         raw_outcome = rec.get("outcome", "")
         if raw_outcome == "skipped":
+            if result_record_hook is not None:
+                result_record_hook(rec)
             counts["skipped"] = counts.get("skipped", 0) + 1
             reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
             if "Skipped:" in reason:
@@ -849,7 +920,11 @@ def _build_detail_from_report_records(
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
             continue
 
-        counts["error"] = counts.get("error", 0) + 1
+        mapped = _map_record_outcome(rec)
+        effective_outcome = "crashed" if mapped == "crashed" else "error"
+        if result_record_hook is not None:
+            result_record_hook({**rec, "outcome": effective_outcome})
+        counts[effective_outcome] = counts.get(effective_outcome, 0) + 1
         flat = _flatten_longrepr(rec.get("longrepr"))
         dedup_key = flat or str(nodeid)
         if dedup_key in seen_error_reprs:
@@ -857,7 +932,24 @@ def _build_detail_from_report_records(
         seen_error_reprs.add(dedup_key)
         entry = {
             "nodeid": nodeid,
-            "outcome": "error",
+            "outcome": effective_outcome,
+            "duration": rec.get("duration", 0.0),
+        }
+        if flat:
+            entry["longrepr"] = flat
+        non_passing.append(entry)
+
+    for rec in teardown_events:
+        nodeid = rec.get("nodeid", "")
+        mapped = _map_record_outcome(rec)
+        effective_outcome = "crashed" if mapped == "crashed" else "error"
+        if result_record_hook is not None:
+            result_record_hook({**rec, "outcome": effective_outcome})
+        counts[effective_outcome] = counts.get(effective_outcome, 0) + 1
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        entry = {
+            "nodeid": nodeid,
+            "outcome": effective_outcome,
             "duration": rec.get("duration", 0.0),
         }
         if flat:
@@ -875,6 +967,54 @@ def _build_detail_from_report_records(
         if flat:
             entry["longrepr"] = flat
         non_passing.append(entry)
+
+    if finalize_events:
+
+        def finalize_outcome(rec: Mapping[str, Any]) -> str | None:
+            error = rec.get("error")
+            if rec.get("windows_status") == CTYPES_ACCESS_VIOLATION or (
+                ctypes_access_violation_from_stderr(str(error)) is not None
+            ):
+                return "crashed"
+            outcome = str(rec.get("outcome", "")).casefold()
+            if outcome == "ok":
+                return None
+            if outcome in {"crashed", "timeout"}:
+                return outcome
+            return "error"
+
+        priority = {None: 0, "error": 1, "crashed": 2, "timeout": 3}
+        finalize = max(finalize_events, key=lambda rec: priority[finalize_outcome(rec)])
+        finalize_effective_outcome = finalize_outcome(finalize)
+        if finalize_effective_outcome is not None:
+            error = str(finalize.get("error") or "").strip()
+            if not error:
+                rv = finalize.get("rv")
+                rv_name = finalize.get("rv_name") or "unknown CK_RV"
+                if rv is None:
+                    rv_text = "unknown"
+                else:
+                    try:
+                        rv_text = f"0x{int(rv):08x}"
+                    except (TypeError, ValueError):
+                        rv_text = str(rv)
+                error = f"C_Finalize returned {rv_name} ({rv_text})"
+            entry = {
+                "nodeid": "C_Finalize::teardown",
+                "outcome": finalize_effective_outcome,
+                "duration": 0.0,
+                "longrepr": error,
+            }
+            counts[finalize_effective_outcome] = counts.get(finalize_effective_outcome, 0) + 1
+            non_passing.append(entry)
+            if result_record_hook is not None:
+                result_record_hook(
+                    {
+                        "$report_type": "TestReport",
+                        "when": "teardown",
+                        **entry,
+                    }
+                )
 
     executions = execution_observations
     if not any(counts.values()) and not compliance_notes and not executions:

@@ -6,6 +6,7 @@ import pytest
 
 from pkcs11_check.core.crash_codes import (
     crash_detail_name,
+    ctypes_access_violation_code,
     is_crash_returncode,
 )
 
@@ -45,3 +46,19 @@ def test_crash_detail_name() -> None:
     assert crash_detail_name(0xC0DEAD01) == "0xC0DEAD01"
     assert crash_detail_name(3) == "exit3"
     assert crash_detail_name(None) == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (OSError("exception: access violation reading 0xFFFFFFFFFFFFFFFF"), 0xC0000005),
+        (OSError("EXCEPTION: ACCESS VIOLATION writing 0"), 0xC0000005),
+        (OSError("provider returned an error"), None),
+        (RuntimeError("exception: access violation reading 0"), None),
+        (None, None),
+    ],
+)
+def test_ctypes_access_violation_parser_is_narrow(
+    exc: BaseException | None, expected: int | None
+) -> None:
+    assert ctypes_access_violation_code(exc) == expected

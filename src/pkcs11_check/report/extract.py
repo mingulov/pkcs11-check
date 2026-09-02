@@ -3,8 +3,8 @@
 A finding is one serialized :class:`pkcs11_check.classification.Classification`
 dict. They come from two places:
 
-* ``report.jsonl`` (pytest-reportlog): every call-phase ``TestReport`` carries a
-  ``pkcs11_classification`` list in ``user_properties``.
+* ``report.jsonl`` (pytest-reportlog): a setup/call/teardown ``TestReport`` can carry a
+  phase-scoped ``pkcs11_classification`` list in ``user_properties``.
 * the ``crashes`` list: crash findings produced runner-side via
   :func:`pkcs11_check.core.file_runner.crash_classification` (the process was
   dead, so they could not be emitted in-test).
@@ -25,6 +25,10 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.classification import normalize_param
+from pkcs11_check.core.crash_codes import (
+    CTYPES_ACCESS_VIOLATION,
+    ctypes_access_violation_from_stderr,
+)
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_records,
 )
@@ -41,10 +45,10 @@ GroupKey = tuple[str, str, str | None, str | None, str | None, tuple[str, ...], 
 
 
 def _classifications_from_report(report: dict[str, Any]) -> list[dict[str, Any]]:
-    """Pull the ``pkcs11_classification`` finding list off a call-phase TestReport."""
+    """Pull phase-scoped classifications off a setup/call/teardown TestReport."""
     if report.get("$report_type", "TestReport") != "TestReport":
         return []
-    if report.get("when") != "call":
+    if report.get("when") not in {"setup", "call", "teardown"}:
         return []
     value = _user_property(report, "pkcs11_classification")
     if not isinstance(value, list):
@@ -52,10 +56,48 @@ def _classifications_from_report(report: dict[str, Any]) -> list[dict[str, Any]]
     return [rec for rec in value if isinstance(rec, dict)]
 
 
+def _classification_from_teardown_finalize(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Represent a non-green C_Finalize record as a grouped lifecycle finding."""
+    if report.get("$report_type") != "TeardownFinalize":
+        return None
+    outcome = str(report.get("outcome", "")).casefold()
+    if outcome == "ok":
+        return None
+    crashed = outcome == "crashed" or (
+        report.get("windows_status") == CTYPES_ACCESS_VIOLATION
+        or ctypes_access_violation_from_stderr(str(report.get("error"))) is not None
+    )
+    rv_name = report.get("rv_name")
+    summary = str(report.get("error") or "").strip()
+    if not summary:
+        summary = (
+            f"C_Finalize returned {rv_name}"
+            if rv_name
+            else f"C_Finalize ended with {outcome or 'an invalid outcome'}"
+        )
+    return {
+        "schema": 1,
+        "reason": "crash" if crashed else "self_contradiction",
+        "outcome": "fail",
+        "severity": "HIGH",
+        "kind": "lifecycle",
+        "label": "C_Finalize",
+        "summary": summary,
+        "operation": "C_Finalize",
+        "mechanism": None,
+        "expected_ckr": ["CKR_OK"],
+        "actual_ckr": rv_name,
+        "spec_ref": "PKCS#11 C_Finalize",
+        "source": None,
+        "vector_id": None,
+        "detail": dict(report),
+    }
+
+
 def _test_file_for(rec: dict[str, Any], nodeid: str | None) -> str:
     """Determine the grouping ``test_file`` for a finding.
 
-    Call-phase findings split it off the nodeid; crash findings (no nodeid) use
+    TestReport findings split it off the nodeid; crash findings (no nodeid) use
     their ``label``, which the runner sets to the crashing target/file.
     """
     if nodeid:
@@ -161,6 +203,9 @@ def extract_groups(
         nodeid = report.get("nodeid")
         for rec in _classifications_from_report(report):
             ingest(rec, nodeid)
+        finalize = _classification_from_teardown_finalize(report)
+        if finalize is not None:
+            ingest(finalize, "C_Finalize::teardown")
 
     for crash in crashes:
         ingest(crash, None)

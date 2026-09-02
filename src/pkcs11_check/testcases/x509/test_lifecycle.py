@@ -20,20 +20,24 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
     set_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_ID,
     CKA_LABEL,
     CKA_MODIFIABLE,
     CKA_TOKEN,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import assert_correct
-from pkcs11_check.testcases.x509.conftest import import_cert_object
+from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify
+from pkcs11_check.testcases.x509.conftest import classify_positive_ckr, import_cert_object
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
@@ -68,6 +72,7 @@ class TestCertificateLifecycle:
         """Import with CKA_TOKEN=True (if supported) and verify."""
         rs = p11_raw_session
         label = f"token-cert-{uuid.uuid4().hex[:8]}"
+        h = 0
         try:
             h = import_cert_object(
                 rs.raw,
@@ -76,13 +81,22 @@ class TestCertificateLifecycle:
                 interface_version=p11_interface_version,
                 extra_attrs={CKA_LABEL: label, CKA_TOKEN: True},
             )
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
-                assert attrs[CKA_TOKEN] is True
-            finally:
-                destroy_quietly(rs.raw, rs.sh, h)
-        except AssertionError:
-            pytest.skip("Module does not support session-level token object creation for certs")
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
+            assert_correct(
+                actual=attrs[CKA_TOKEN],
+                expected=True,
+                label="X509:CKA_TOKEN=True persistence readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+        except CkrAssertionError as exc:
+            classify_positive_ckr(
+                exc,
+                label="X509:CKA_TOKEN=True persistence",
+                summary="certificate token-object creation/readback was refused",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)
 
     def test_cert_modifiability(
         self,
@@ -107,11 +121,16 @@ class TestCertificateLifecycle:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError:
-            pytest.skip("Module rejected CKA_MODIFIABLE=False on creation")
+        except CkrAssertionError as exc:
+            classify_positive_ckr(
+                exc,
+                label="X509:CKA_MODIFIABLE=False creation",
+                summary="certificate creation with CKA_MODIFIABLE=False was refused",
+            )
             return
 
         try:
+            refusal: CkrAssertionError | None = None
             try:
                 set_attributes(
                     rs.raw,
@@ -119,16 +138,19 @@ class TestCertificateLifecycle:
                     h,
                     {CKA_LABEL: label_new},
                 )
-                # If it succeeded, verify it actually CHANGED
-                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
-                if attrs[CKA_LABEL] == label_new:
-                    classify(
-                        "self_contradiction",
-                        kind="policy",
-                        summary="Successfully modified label on non-modifiable cert",
-                    )
-            except AssertionError:
-                pass  # audit-ok: policy probe; rejecting non-modifiable cert label edit is correct
+            except CkrAssertionError as exc:
+                refusal = exc
+            reject_or_classify(
+                refusal,
+                (
+                    CKR_ACTION_PROHIBITED,
+                    CKR_ATTRIBUTE_READ_ONLY,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_TEMPLATE_INCONSISTENT,
+                ),
+                label="X509:modify CKA_LABEL on CKA_MODIFIABLE=False certificate",
+                kind="policy",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -141,6 +163,7 @@ class TestCertificateLifecycle:
         """Verify we can set and read CKA_ID on a certificate."""
         rs = p11_raw_session
         cid = b"cert-voter-id-123"
+        h = 0
         try:
             h = import_cert_object(
                 rs.raw,
@@ -149,16 +172,19 @@ class TestCertificateLifecycle:
                 interface_version=p11_interface_version,
                 extra_attrs={CKA_ID: cid, CKA_TOKEN: False},
             )
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ID])
-                assert_correct(
-                    actual=attrs[CKA_ID],
-                    expected=cid,
-                    label="X509:CKA_ID readback after set on certificate",
-                    operation="C_GetAttributeValue",
-                    kind="metadata",
-                )
-            finally:
-                destroy_quietly(rs.raw, rs.sh, h)
-        except AssertionError:
-            pytest.skip("Module does not support CKA_ID for certificates")
+            attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ID])
+            assert_correct(
+                actual=attrs[CKA_ID],
+                expected=cid,
+                label="X509:CKA_ID readback after set on certificate",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+        except CkrAssertionError as exc:
+            classify_positive_ckr(
+                exc,
+                label="X509:CKA_ID assignment/readback",
+                summary="certificate CKA_ID assignment/readback was refused",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, h)

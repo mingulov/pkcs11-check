@@ -36,6 +36,9 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _canonical_executions as _canonical_executions,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
@@ -61,6 +64,9 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _ordered_report_record_units as _ordered_report_record_units,
+)
+from pkcs11_check.core._report_records import (
+    _reconcile_process_observations as _reconcile_process_observations,
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_dir as _report_record_cache_dir,
@@ -251,6 +257,7 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.crash_codes import is_crash_returncode
 from pkcs11_check.core.test_selection import extract_required_mechanisms
 
 
@@ -284,6 +291,7 @@ def _group_results_by_file(
         merged_tests: list[dict[str, Any]] = []
         merged_compliance_notes: list[dict[str, Any]] = []
         merged_skip_reasons: dict[str, int] = {}
+        merged_executions: list[dict[str, Any]] = []
         file_skip = False
         for r in file_results:
             detail = _copy_detail(details.get(r.target, {}))
@@ -293,6 +301,12 @@ def _group_results_by_file(
             merged_compliance_notes.extend(detail.get("compliance_notes", []))
             for reason, count in detail.get("skip_reasons", {}).items():
                 merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
+            raw_executions = detail.get("executions")
+            if isinstance(raw_executions, list):
+                merged_executions = _reconcile_process_observations(
+                    merged_executions,
+                    [item for item in raw_executions if isinstance(item, Mapping)],
+                )
             if detail.get("file_skip"):
                 file_skip = True
         merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
@@ -302,6 +316,8 @@ def _group_results_by_file(
             merged_detail["skip_reasons"] = merged_skip_reasons
         if file_skip:
             merged_detail["file_skip"] = True
+        if merged_executions:
+            merged_detail["executions"] = _canonical_executions(merged_executions)
         out.append((file_target, file_results, merged_detail))
     return out
 
@@ -311,6 +327,7 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     tests: list[dict[str, Any]] = []
     compliance_notes: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
+    executions: list[dict[str, Any]] = []
 
     if isinstance(detail, Mapping):
         raw_counts = detail.get("counts")
@@ -334,12 +351,19 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
                 for reason, count in raw_skip_reasons.items()
                 if isinstance(count, int)
             }
+        raw_executions = detail.get("executions")
+        if isinstance(raw_executions, list):
+            executions = [dict(item) for item in raw_executions if isinstance(item, Mapping)]
+        else:
+            executions = []
 
     copied: dict[str, Any] = {"counts": counts, "tests": tests}
     if compliance_notes:
         copied["compliance_notes"] = compliance_notes
     if skip_reasons:
         copied["skip_reasons"] = skip_reasons
+    if executions:
+        copied["executions"] = executions
     if isinstance(detail, Mapping) and detail.get("file_skip"):
         copied["file_skip"] = True
     return copied
@@ -403,16 +427,21 @@ def _synthetic_file_skip_detail(
 
 
 def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
-    if result.status not in {"crashed", "timeout", "crash_limited"} or "::" not in result.target:
+    status = result.status
+    if result.status == "escalated":
+        status = _effective_unit_status([result])
+    if status not in {"crashed", "timeout", "crash_limited"} or (
+        "::" not in result.target and result.status != "escalated"
+    ):
         return None
 
     entry: dict[str, Any] = {
         "nodeid": result.target,
-        "outcome": result.status,
+        "outcome": status,
         "duration": result.duration_s,
     }
     flat = result.stderr.strip() or result.stdout.strip()
-    if not flat and result.status == "crash_limited":
+    if not flat and status == "crash_limited":
         flat = "abandoned: per-file crash limit reached"
     if flat:
         entry["longrepr"] = flat
@@ -444,7 +473,7 @@ def _merge_special_entries_into_detail(
             continue
         merged["tests"].append(dict(entry))
         existing.add(key)
-        if outcome in {"crashed", "timeout", "crash_limited"}:
+        if outcome in {"crashed", "timeout", "crash_limited", "failed"}:
             merged["counts"][outcome] += 1
 
     return merged
@@ -458,14 +487,64 @@ def _overall_unit_status(file_results: list[FileRunResult]) -> str:
     return file_results[0].status
 
 
+def _effective_unit_status(
+    file_results: Sequence[FileRunResult], counts: Mapping[str, int] | None = None
+) -> str:
+    """Return the report status, retaining an escalated crash/timeout trigger.
+
+    ``escalated`` is a resume-control marker kept in durable state.  A grouped
+    report may also contain passing per-test children, so the trigger's exit
+    code must still win at the reporting boundary.
+    """
+    results = list(file_results)
+    status = _overall_unit_status(results)
+    outer_deaths: set[str] = set()
+    for result in file_results:
+        if "::" not in result.target and result.status in {"crashed", "timeout"}:
+            outer_deaths.add(result.status)
+            continue
+        # The runner records escalation only for the file-level crash/timeout
+        # trigger.  Per-test results are never escalation triggers; preserving
+        # such a synthetic marker keeps report writing compatible with callers
+        # that use an arbitrary placeholder return code.
+        if result.status != "escalated" or "::" in result.target:
+            continue
+        if result.returncode == _TIMEOUT_RETURN_CODE:
+            outer_deaths.add("timeout")
+        elif is_crash_returncode(result.returncode):
+            outer_deaths.add("crashed")
+        else:
+            status = "escalated"
+    if outer_deaths:
+        return next(candidate for candidate in UNIT_STATUS_PRIORITY if candidate in outer_deaths)
+    return _status_with_detail_counts(status, counts)
+
+
 def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) -> str:
     if not counts:
         return status
-    if counts.get("timeout", 0) > 0:
-        return "timeout"
-    if counts.get("crashed", 0) > 0:
-        return "crashed"
-    return status
+    candidates = {status}
+    candidates.update(
+        outcome for outcome in ("timeout", "crashed", "failed") if counts.get(outcome, 0) > 0
+    )
+    if counts.get("error", 0) > 0:
+        candidates.add("failed")
+    return next(
+        (candidate for candidate in UNIT_STATUS_PRIORITY if candidate in candidates),
+        status,
+    )
+
+
+def _final_state_exit_code(state: FileRunState, existing_exit_code: int) -> int:
+    """Keep infrastructure codes and reject any non-green durable result state."""
+    if existing_exit_code >= 2:
+        return existing_exit_code
+    if any(
+        not result.completion_verified or result.status not in {"passed", "empty"}
+        for result in state.results
+    ):
+        return max(existing_exit_code, 1)
+    return existing_exit_code
 
 
 def _merge_supplemental_special_details(
@@ -480,6 +559,16 @@ def _merge_supplemental_special_details(
         if detail.get("file_skip") is True:
             merged[unit] = _copy_detail(detail)
             continue
+        source_executions = detail.get("executions")
+        if isinstance(source_executions, list):
+            target = merged.setdefault(unit, _copy_detail(None))
+            prior_executions = target.get("executions", [])
+            target["executions"] = _canonical_executions(
+                _reconcile_process_observations(
+                    prior_executions if isinstance(prior_executions, list) else [],
+                    [item for item in source_executions if isinstance(item, Mapping)],
+                )
+            )
         raw_tests = detail.get("tests")
         if not isinstance(raw_tests, list):
             continue
@@ -487,7 +576,7 @@ def _merge_supplemental_special_details(
             record
             for record in raw_tests
             if isinstance(record, Mapping)
-            and str(record.get("outcome", "")).strip() in _SPECIAL_DETAIL_OUTCOMES
+            and str(record.get("outcome", "")).strip() in _SPECIAL_DETAIL_OUTCOMES.union({"failed"})
         ]
         if not special_entries:
             continue
@@ -547,7 +636,7 @@ def _augment_mechanism_coverage_from_unit_outcomes(
             continue
         if merged_detail.get("file_skip") is True:
             bucket_names["skipped_by_capability_names"].update(required_names)
-        status = _overall_unit_status(file_results)
+        status = _effective_unit_status(file_results, merged_detail.get("counts"))
         if status == "crashed":
             bucket_names["crashed_names"].update(required_names)
         elif status == "timeout":

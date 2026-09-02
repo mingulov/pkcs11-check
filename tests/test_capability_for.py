@@ -80,14 +80,16 @@ def test_no_size_semantics_when_min_max_zero(monkeypatch: pytest.MonkeyPatch) ->
     assert result is Capability.IN_RANGE
 
 
-def test_info_error_is_in_range_never_gates_out(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_info_error_is_not_converted_to_in_range(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _rs({"CKM_RSA_PKCS", "RSA_PKCS"})
 
     def _boom(*_a: Any, **_k: Any) -> dict[str, int]:
         raise CkrAssertionError("Unexpected CK_RV CKR_FUNCTION_FAILED", int(CKR_FUNCTION_FAILED))
 
     monkeypatch.setattr(_capability, "get_mechanism_info", _boom)
-    assert capability_for(rs, CKM_RSA_PKCS, key_size=2048) is Capability.IN_RANGE
+    with pytest.raises(CkrAssertionError) as caught:
+        capability_for(rs, CKM_RSA_PKCS, key_size=2048)
+    assert caught.value.rv == int(CKR_FUNCTION_FAILED)
 
 
 def test_both_params_omitted_is_in_range(monkeypatch: pytest.MonkeyPatch) -> None:

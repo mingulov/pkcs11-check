@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_TYPE_INVALID,
 )
 
 
@@ -33,6 +34,8 @@ def _make_rs(sh: int, *, has_mech: bool) -> object:
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +98,30 @@ def test_private_create_prohibited(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _make_rs(sh=103, has_mech=True)
     prof = _prov.profile_for(rs)
     assert prof.create_verdict("private") == "create_prohibited"
+
+
+def test_private_user_type_invalid_is_cached_after_one_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKU_USER role prohibition is a cached create verdict, not a shape retry."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.testcases.conftest import reset_import_negotiation_cache
+
+    calls: list[dict[int, object]] = []
+
+    def fake_create_object(raw: object, sh: int, attrs: dict[int, object]) -> int:
+        calls.append(attrs)
+        raise CkrAssertionError("user role cannot create", int(CKR_USER_TYPE_INVALID))
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.create_object", fake_create_object)
+    _reset_cache()
+    reset_import_negotiation_cache()
+
+    rs = _make_rs(sh=106, has_mech=True)
+    prof = _prov.profile_for(rs)
+    assert prof.create_verdict("private") == "create_prohibited"
+    assert prof.create_verdict("private") == "create_prohibited"
+    assert len(calls) == 1, "role refusal must not retry storage-shape variants"
 
 
 # ---------------------------------------------------------------------------

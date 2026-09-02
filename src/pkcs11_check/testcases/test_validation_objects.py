@@ -12,9 +12,10 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import find_objects, read_attributes, set_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_VALIDATION_AUTHORITY_TYPE,
@@ -22,6 +23,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VALIDATION_MODULE_ID,
     CKA_VALIDATION_TYPE,
     CKO_VALIDATION,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKV_AUTHORITY_TYPE_COMMON_CRITERIA,
     CKV_AUTHORITY_TYPE_NIST_CMVP,
     CKV_AUTHORITY_TYPE_UNSPECIFIED,
@@ -31,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKV_TYPE_SOFTWARE,
     CKV_TYPE_UNSPECIFIED,
 )
+from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = [pytest.mark.object]
 
@@ -52,13 +56,13 @@ _KNOWN_AUTHORITY_TYPES = {
 
 
 def _find_validation_objects(raw: Any, sh: int) -> list[int]:
-    """Find CKO_VALIDATION objects, xfailing on error."""
+    """Find CKO_VALIDATION objects, surfacing typed enumeration failures."""
     try:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_VALIDATION))
         return find_objects(raw, sh, tmpl)
-    except AssertionError as e:
-        pytest.skip(f"Module does not support CKO_VALIDATION enumeration: {e}")
-    return []
+    except CkrAssertionError as exc:
+        reject_or_classify(exc, (), label="CKO_VALIDATION enumeration", kind="metadata")
+        raise
 
 
 class TestValidationObjects:
@@ -81,14 +85,14 @@ class TestValidationObjects:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_TYPE])
                 vtype = attrs[CKA_VALIDATION_TYPE]
-            except AssertionError as e:
-                xfail_as(
-                    "not_operational",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_VALIDATION:CKA_VALIDATION_TYPE read",
                     kind="metadata",
-                    label="CKO_VALIDATION:CKA_VALIDATION_TYPE",
-                    operation="C_GetAttributeValue",
-                    summary=f"Cannot read CKA_VALIDATION_TYPE from validation object: {e}",
                 )
+                raise
             if vtype < vendor_base:
                 assert vtype in _KNOWN_VALIDATION_TYPES, (
                     f"Unknown non-vendor validation type 0x{vtype:08X}"
@@ -103,16 +107,16 @@ class TestValidationObjects:
         for h in validations:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_LEVEL])
-                level = attrs[CKA_VALIDATION_LEVEL]
-                assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
-            except AssertionError as e:
-                classify(
-                    "not_operational",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_VALIDATION:CKA_VALIDATION_LEVEL read",
                     kind="metadata",
-                    label="CKO_VALIDATION:CKA_VALIDATION_LEVEL",
-                    operation="C_GetAttributeValue",
-                    summary=f"Cannot read CKA_VALIDATION_LEVEL from validation object: {e}",
                 )
+                raise
+            level = attrs[CKA_VALIDATION_LEVEL]
+            assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
 
     def test_validation_authority_type_is_known(self, p11_raw_session: Any) -> None:
         """CKA_VALIDATION_AUTHORITY_TYPE is a known authority or vendor."""
@@ -124,10 +128,17 @@ class TestValidationObjects:
         for h in validations:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_AUTHORITY_TYPE])
-                auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
-            except AssertionError:
-                # Not all modules expose this optional attribute
-                continue  # audit-ok: optional-attribute probe; the attribute is optional
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_VALIDATION:CKA_VALIDATION_AUTHORITY_TYPE read",
+                    kind="metadata",
+                )
+                raise
+            if CKA_VALIDATION_AUTHORITY_TYPE not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
             if auth < vendor_base:
                 assert auth in _KNOWN_AUTHORITY_TYPES, f"Unknown authority type 0x{auth:08X}"
 
@@ -140,13 +151,20 @@ class TestValidationObjects:
         for h in validations:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_MODULE_ID])
-                mod_id = attrs[CKA_VALIDATION_MODULE_ID]
-                assert isinstance(mod_id, (str, bytes)), (
-                    f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_VALIDATION:CKA_VALIDATION_MODULE_ID read",
+                    kind="metadata",
                 )
-            except AssertionError:
-                # Optional attribute - some modules may not expose it
-                continue  # audit-ok: optional-attribute probe; the attribute is optional
+                raise
+            if CKA_VALIDATION_MODULE_ID not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            mod_id = attrs[CKA_VALIDATION_MODULE_ID]
+            assert isinstance(mod_id, (str, bytes)), (
+                f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
+            )
 
     def test_validation_objects_are_read_only(self, p11_raw_session: Any) -> None:
         """CKO_VALIDATION objects reject C_SetAttributeValue."""
@@ -169,5 +187,10 @@ class TestValidationObjects:
                 operation="C_SetAttributeValue",
                 summary="Module accepted C_SetAttributeValue on CKO_VALIDATION",
             )
-        except AssertionError:
-            pass  # audit-ok: policy probe; rejecting read-only CKO_VALIDATION write is correct
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                (CKR_ATTRIBUTE_READ_ONLY, CKR_ACTION_PROHIBITED),
+                label="write read-only CKO_VALIDATION",
+                kind="policy",
+            )

@@ -1,9 +1,9 @@
-"""PKCS#11 v3.0 mechanism object tests.
+"""PKCS#11 mechanism object tests.
 
 CKO_MECHANISM objects provide information beyond CK_MECHANISM_INFO, including
 supported parameter sets.  These are read-only token objects defined in
-PKCS#11 v3.0 and later.  Tests auto-skip on v2.40 modules and skip gracefully
-when no mechanism objects are present.
+PKCS#11 v2.40 and later. Tests skip gracefully when no mechanism objects are
+present.
 """
 
 from __future__ import annotations
@@ -19,73 +19,77 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     set_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_MECHANISM_TYPE,
     CKM_AES_KEY_GEN,
     CKO_MECHANISM,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
 )
+from pkcs11_check.testcases.conftest import reject_or_classify
 
-pytestmark = [pytest.mark.object]
+pytestmark = pytest.mark.object
+
+
+def _mechanism_objects(rs: Any) -> list[int]:
+    try:
+        return find_objects(
+            rs.raw,
+            rs.sh,
+            template_from_dict({CKA_CLASS: CKO_MECHANISM}),
+        )
+    except CkrAssertionError as exc:
+        reject_or_classify(exc, (), label="CKO_MECHANISM enumeration", kind="metadata")
+        raise
+
+
+def _mechanism_type(rs: Any, handle: int) -> int:
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_MECHANISM_TYPE])
+    except CkrAssertionError as exc:
+        reject_or_classify(
+            exc,
+            (),
+            label="CKO_MECHANISM CKA_MECHANISM_TYPE read",
+            kind="metadata",
+        )
+        raise
+    value = attrs[CKA_MECHANISM_TYPE]
+    assert isinstance(value, int), f"Expected int MECHANISM_TYPE, got {type(value)}"
+    return value
 
 
 class TestMechanismObjects:
-    """Tests for CKO_MECHANISM object enumeration (PKCS#11 v3.0+)."""
+    """Tests for CKO_MECHANISM object enumeration (PKCS#11 v2.40+)."""
 
     def test_mechanism_object_enumeration(self, p11_raw_session: Any) -> None:
         """Enumerate CKO_MECHANISM objects without error."""
-        rs = p11_raw_session
-        try:
-            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
-            mechs = find_objects(rs.raw, rs.sh, tmpl)
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
+        mechs = _mechanism_objects(p11_raw_session)
         assert isinstance(mechs, list)
 
     def test_mechanism_objects_have_mechanism_type(self, p11_raw_session: Any) -> None:
         """Each CKO_MECHANISM object has a readable CKA_MECHANISM_TYPE."""
         rs = p11_raw_session
-        try:
-            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
-            mechs = find_objects(rs.raw, rs.sh, tmpl)
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
+        mechs = _mechanism_objects(rs)
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         for obj_h in mechs:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, obj_h, [CKA_MECHANISM_TYPE])
-                mtype = attrs[CKA_MECHANISM_TYPE]
-                assert isinstance(mtype, int), f"Expected int MECHANISM_TYPE, got {type(mtype)}"
-            except AssertionError as e:
-                classify(
-                    "not_operational",
-                    kind="metadata",
-                    label="CKO_MECHANISM:CKA_MECHANISM_TYPE",
-                    operation="C_GetAttributeValue",
-                    summary=f"Cannot read CKA_MECHANISM_TYPE from mechanism object: {e}",
-                )
+            _mechanism_type(rs, obj_h)
 
     def test_mechanism_type_is_known(self, p11_raw_session: Any) -> None:
         """CKA_MECHANISM_TYPE values correspond to known mechanisms or vendor range."""
         from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 
         rs = p11_raw_session
-        try:
-            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
-            mechs = find_objects(rs.raw, rs.sh, tmpl)
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
+        mechs = _mechanism_objects(rs)
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         known = set(MECHANISM_NAMES.keys())
         vendor_base = 0x80000000
         for obj_h in mechs:
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, obj_h, [CKA_MECHANISM_TYPE])
-                mtype = attrs[CKA_MECHANISM_TYPE]
-            except AssertionError:
-                continue  # audit-ok: enumeration probe; unreadable object skipped
+            mtype = _mechanism_type(rs, obj_h)
             if isinstance(mtype, int) and mtype < vendor_base and mtype not in known:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -98,24 +102,23 @@ class TestMechanismObjects:
     def test_mechanism_objects_are_read_only(self, p11_raw_session: Any) -> None:
         """CKO_MECHANISM objects reject C_SetAttributeValue."""
         rs = p11_raw_session
-        try:
-            tmpl = template_from_dict({CKA_CLASS: CKO_MECHANISM})
-            mechs = find_objects(rs.raw, rs.sh, tmpl)
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_MECHANISM enumeration: {e}")
+        mechs = _mechanism_objects(rs)
         if not mechs:
             pytest.skip("No CKO_MECHANISM objects present")
         obj_h = mechs[0]
         # Attempt to modify CKA_MECHANISM_TYPE - should be rejected
         try:
             set_attributes(rs.raw, rs.sh, obj_h, {CKA_MECHANISM_TYPE: CKM_AES_KEY_GEN})
-            # If we get here, module silently accepted the write
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                "Module allows C_SetAttributeValue on CKO_MECHANISM - "
-                "spec says these should be read-only",
-                ComplianceLevel.VENDOR,
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label="CKO_MECHANISM read-only policy",
+                summary="Module accepted C_SetAttributeValue on read-only CKO_MECHANISM",
             )
-        except AssertionError:
-            pass  # audit-ok: policy probe; rejecting the read-only CKO_MECHANISM write is correct
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                (CKR_ATTRIBUTE_READ_ONLY, CKR_ACTION_PROHIBITED),
+                label="write read-only CKO_MECHANISM",
+                kind="metadata",
+            )

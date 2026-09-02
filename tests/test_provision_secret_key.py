@@ -8,7 +8,7 @@ wrap mechs.  Covers:
   (d) create_absent   + key_inject=unwrap -> unwrap path, integrity readback runs
   (e) force-unwrap                        -> never calls import_secret_key
   (f) force-unwrap + wrap_ctx=None        -> pytest.skip("no wrapping path")
-  (g) unwrap path + value mismatch        -> pytest.skip("...mismatch...")
+  (g) unwrap path + value mismatch        -> wrong_result failure
   (h) no usable strategy                  -> pytest.skip("no wrapping path: no usable...")
 
 Follows the pattern of tests/test_import_ec_private_key_negotiated.py.
@@ -52,12 +52,15 @@ def _make_rs(sh: int, *, has_mech: bool = True) -> Any:
             "sh": sh,
             "slot_id": 0,
             "has_mechanism": lambda self, n: has_mech,
+            "has_mechanism_flag": lambda self, n, flag: has_mech,
         },
     )()
 
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 def _make_cfg(key_inject: str, wrap_rsa_bits: int = 2048, wrap_oaep_hash: str = "sha1") -> Any:
@@ -391,12 +394,12 @@ def test_force_unwrap_no_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# (g) unwrap path + value mismatch -> skip("...mismatch...")
+# (g) unwrap path + value mismatch -> wrong_result failure
 # ---------------------------------------------------------------------------
 
 
-def test_value_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Non-sensitive key value mismatch on readback must skip (corrupted setup)."""
+def test_value_mismatch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A readable wrong value after CKR_OK C_UnwrapKey is a provider finding."""
     from pkcs11_check.raw.rv import CkrAssertionError
     from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 
@@ -451,7 +454,7 @@ def test_value_mismatch_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=206, has_mech=True)
     cfg = _make_cfg("unwrap")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
+    with pytest.raises(pytest.fail.Exception) as exc_info:
         provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     assert "mismatch" in str(exc_info.value)
@@ -904,8 +907,8 @@ def test_readback_none_value_returns_handle(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
-def test_readback_wrong_value_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """(o) Readback returns a WRONG non-None value -> pytest.skip (confirmed corruption)."""
+def test_readback_wrong_value_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(o) A readable wrong value is a hard finding, not missing setup."""
     _make_force_unwrap_fixtures(monkeypatch, sh=320, unwrap_handle=321, read_value=b"\xff" * 32)
     _reset_cache()
 
@@ -918,15 +921,15 @@ def test_readback_wrong_value_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_provisioning_events()
     rs = _make_rs(sh=320, has_mech=True)
     cfg = _make_cfg("force-unwrap")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
+    with pytest.raises(pytest.fail.Exception) as exc_info:
         provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-o")
 
     assert "mismatch" in str(exc_info.value), (
-        "skip message must mention 'mismatch' for confirmed corruption"
+        "failure message must mention 'mismatch' for confirmed corruption"
     )
     events = get_provisioning_events()
-    assert any(e.method == "skipped_no_path" for e in events), (
-        "skipped_no_path must be recorded on confirmed corruption"
+    assert not any(e.method == "skipped_no_path" for e in events), (
+        "confirmed corruption must not be recorded as a missing provisioning path"
     )
 
 

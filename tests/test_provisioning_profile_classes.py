@@ -34,6 +34,8 @@ def _make_rs(sh: int, *, has_mech: bool) -> object:
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,10 @@ import signal
 import sys
 from contextvars import ContextVar
 
-from pkcs11_check.core.crash_codes import is_windows_crash_code
+from pkcs11_check.core.crash_codes import (
+    ctypes_access_violation_from_stderr,
+    is_windows_crash_code,
+)
 
 _OBSERVATIONS: ContextVar[list[dict[str, object]] | None] = ContextVar(
     "pkcs11_process_observations", default=None
@@ -19,6 +22,7 @@ def termination_from_returncode(
     platform: str | None = None,
     timed_out: bool = False,
     external_kill: bool = False,
+    stderr: str | None = None,
 ) -> dict[str, object]:
     """Normalize a subprocess return code without discarding its raw value."""
     termination: dict[str, object] = {
@@ -36,6 +40,13 @@ def termination_from_returncode(
     elif (platform or sys.platform) == "win32" and is_windows_crash_code(returncode):
         termination["kind"] = "exception"
         termination["windows_status"] = returncode & 0xFFFFFFFF
+    elif (
+        (platform or sys.platform) == "win32"
+        and returncode == 1
+        and (windows_status := ctypes_access_violation_from_stderr(stderr)) is not None
+    ):
+        termination["kind"] = "exception"
+        termination["windows_status"] = windows_status
     elif returncode < 0:
         try:
             signal_name = signal.Signals(-returncode).name
@@ -61,6 +72,7 @@ def build_process_observation(
     parent_nodeid: str | None = None,
     peak_rss_bytes: int | None = None,
     limit_bytes: int | None = None,
+    stderr: str | None = None,
 ) -> dict[str, object]:
     """Build the additive process-execution evidence object."""
     return {
@@ -73,6 +85,7 @@ def build_process_observation(
             platform=platform,
             timed_out=timed_out,
             external_kill=external_kill,
+            stderr=stderr,
         ),
         "memory": {
             "peak_rss_bytes": peak_rss_bytes,

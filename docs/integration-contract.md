@@ -10,8 +10,8 @@ series; anything not listed is internal and may change without notice.
 
 | Code | Meaning |
 |---|---|
-| `0` | Ran successfully; no failing/crashing/timed-out tests (xfail/skip are not failures). |
-| `1` | Completed but had test failures, crashes, or timeouts (findings present), or a `doctor` check failed. |
+| `0` | Ran successfully; every durable isolated result is verified `passed`/`empty` (xfail/skip are not failures). |
+| `1` | Completed but had test failures, crashes, timeouts, escalation/crash-limit residue, or incomplete results, or a `doctor` check failed. |
 | `2` | Usage / configuration error (bad flag, unsupported isolation mode, preflight config error). |
 | `3` | Module not found or not loadable. |
 
@@ -28,20 +28,50 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
 {
   "tool": "pkcs11-check",
   "kind": "test-run",
-  "summary": {                 // integer counts
+  "summary": {                 // integer counts plus the run-health boolean
     "passed": 0, "failed": 0, "skipped": 0, "xfailed": 0,
-    "xpassed": 0, "error": 0, "crashed": 0, "timeout": 0, "total": 0
+    "xpassed": 0, "error": 0, "crashed": 0, "timeout": 0, "total": 0,
+    "incomplete": false
   },
   "units": [                   // one per isolated unit (file or test)
     {"target": "src/.../test_x.py", "status": "passed",
      "returncode": 0, "duration_s": 0.0}
   ],
+  "attempt_history": [ ... ],  // optional superseded daemon-recovery attempts
+  "recovery_events": [ ... ],  // optional confirmed daemon deaths
   "coverage": { ... },         // optional, == coverage.json
   "shards": { ... }            // present only for merged (pooled) runs
 }
 ```
-- `status` ∈ `passed | failed | crashed | timeout | empty`. `returncode < 0`
+- `status` ∈ `passed | failed | crashed | timeout | empty | escalated | crash_limited`.
+  `escalated` means a file-level crash was expanded to per-test isolation;
+  `crash_limited` means remaining tests were abandoned after the configured crash budget.
+  The durable `escalated` trigger remains a resume-control marker, but its crash/timeout
+  return code is reflected as `crashed`/`timeout` (with a corresponding count) in grouped JSON
+  and JUnit output, even when its per-test children passed.
+  `returncode < 0`
   means the unit's subprocess died on a signal (a crash finding).
+- For an isolated attempt with a report log, normal collected pytest exits `0`, `1`, and `5`
+  are accepted only when the stream has one valid `SessionStart`/`SessionFinish` pair and the
+  finish's integer `exitstatus` exactly matches the subprocess return code. If the finish is
+  missing, malformed, duplicated, or mismatched, the unit keeps its collected detail but carries
+  `"completion_verified": false` and `"incomplete": true`; the aggregate carries
+  `"summary": {"incomplete": true}`. These fields are additive, and an omitted
+  `completion_verified` in an older state is read as verified for compatibility.
+- `--resume` is continuation-only: every planned target already present in saved results is
+  skipped, regardless of status or `completion_verified`; only missing targets run. This means
+  failed, crashed, timed-out, unverified, escalated, and crash-limited results are preserved, not
+  retried or revalidated. A fresh run without `--resume` is the reset/revalidation boundary and
+  clears the state-specific report-record shards, known `report.jsonl`, configured output,
+  `quality.json` beside the output, and `coverage.json`/`provisioning.json` beside `report.jsonl`
+  before execution. Existing higher infrastructure codes are preserved.
+- A resumed run returns `0` only when every durable result is verified and has status `passed` or
+  `empty`; any preserved non-green or incomplete residue returns `1`.
+- Daemon recovery can replace a dying provider's result only as the current aggregate verdict.
+  The superseded attempt (including report records, output, and process observations) remains in
+  `attempt_history`; every confirmed daemon death remains in `recovery_events` and contributes a
+  separate synthetic crashed unit. Pending `RecoveryAttempt` sidecar records are validated and
+  replayed on resume, so interruption before the next state save cannot erase them.
 - The summary classification model (`pass`/`xfail`/`fail`/`skip`) is documented
   in `docs/classification-model-design.md`: a crash or a wrong-accept is `fail`;
   an honest single deviation is `xfail`.
@@ -71,7 +101,18 @@ Mechanism findings include a primary `status` plus additive
 ### `report.jsonl`
 The raw pytest-reportlog stream (one JSON record per line: TestReport,
 CoverageReport, SelectionReport, …). Large; stream it line-by-line. Per-test
-CK_RV traces ride in `user_properties` when `--rv-trace` is on.
+CK_RV traces ride in `user_properties` when `--rv-trace` is on. A fresh non-resume run clears the
+known path before execution; resumed runs preserve saved per-unit shards and merge them.
+Daemon-recovery evidence uses `RecoveryAttempt` and `RecoveryEvent` records. Consumers that do not
+understand custom record types may ignore them, but must not reinterpret them as `TestReport`.
+
+### JUnit output
+
+With `--output junit`, an unverified isolated unit is emitted as a testcase `<error>` with
+`type="incomplete"` and message `report log completion could not be verified`; it increments
+the suite's `errors` count rather than `failures` or `skipped`. This is distinct from the
+`crashed` and `timeout` error types. Each confirmed daemon-recovery event is also emitted as its
+own crashed error testcase.
 
 ### Sharded runs
 `pkcs11-check shard-units` plans N balanced file batches; run each batch

@@ -15,7 +15,7 @@ from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, import_secret_key
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
@@ -34,11 +34,18 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_WRAP,
     CKM_SHA256,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_HANDLE_INVALID,
+    CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_HANDLE_INVALID,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
@@ -87,6 +94,12 @@ class TestWrapKeyErrors:
             check[0].pValue = ctypes.cast(ctypes.pointer(val), ctypes.c_void_p)
             check[0].ulValueLen = ctypes.sizeof(val)
             rv = rs.raw.C_GetAttributeValue(rs.sh, target, check, 1)
+            if rv != CKR_OK:
+                classify_negative_rv(
+                    rv,
+                    (CKR_ATTRIBUTE_TYPE_INVALID,),
+                    label="C_GetAttributeValue:CKA_EXTRACTABLE enforcement precondition",
+                )
             # policy claim-check: did the module honour CKA_EXTRACTABLE=False?
             claimed = rv == CKR_OK and val.value == 0
 
@@ -193,7 +206,9 @@ class TestWrapKeyErrors:
         rv = rs.raw.C_DestroyObject(rs.sh, wrap_key)
         if rv != CKR_OK:
             destroy_quietly(rs.raw, rs.sh, target)
-            pytest.skip(f"Could not destroy wrap key for stale-handle test (CKR=0x{rv:08x})")
+            raise AssertionError(
+                f"Could not destroy wrap key for stale-handle test (CKR=0x{rv:08x})"
+            )
         try:
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)
@@ -262,8 +277,16 @@ class TestWrapKeyErrors:
                 value=b"\x00" * 32,
                 attrs={CKA_WRAP: True, CKA_EXTRACTABLE: True},
             )
-        except AssertionError as exc:
-            pytest.skip(f"Module rejected generic-secret key import for wrap test: {exc}")
+        except CkrAssertionError as exc:
+            if exc.rv in (
+                CKR_ATTRIBUTE_TYPE_INVALID,
+                CKR_ATTRIBUTE_VALUE_INVALID,
+                CKR_KEY_TYPE_INCONSISTENT,
+                CKR_TEMPLATE_INCOMPLETE,
+                CKR_TEMPLATE_INCONSISTENT,
+            ):
+                pytest.skip(f"Module rejected generic-secret key import for wrap test: {exc}")
+            raise
 
         target = gen_aes_key(
             rs.raw,
@@ -340,11 +363,19 @@ class TestWrapKeyErrors:
                 value=b"\x00" * 8,  # 64-bit, below AES-128 minimum
                 attrs={CKA_WRAP: True, CKA_EXTRACTABLE: True},
             )
-        except AssertionError:
-            pytest.skip(
-                "Module rejected import of undersized AES wrap key "
-                "(itself a valid size-range enforcement)"
-            )
+        except CkrAssertionError as exc:
+            if exc.rv in (
+                CKR_ATTRIBUTE_TYPE_INVALID,
+                CKR_ATTRIBUTE_VALUE_INVALID,
+                CKR_KEY_SIZE_RANGE,
+                CKR_TEMPLATE_INCOMPLETE,
+                CKR_TEMPLATE_INCONSISTENT,
+            ):
+                pytest.skip(
+                    "Module rejected import of undersized AES wrap key "
+                    "(itself a valid size-range enforcement)"
+                )
+            raise
 
         target = gen_aes_key(
             rs.raw,
@@ -445,7 +476,11 @@ class TestUnwrapKeyErrors:
                     actual=rv,
                     summary="Should have rejected garbage wrapped key data",
                 )
-            # CKR_WRAPPED_KEY_INVALID or CKR_WRAPPED_KEY_LEN_RANGE
+            classify_negative_rv(
+                rv,
+                (CKR_WRAPPED_KEY_INVALID, CKR_WRAPPED_KEY_LEN_RANGE),
+                label="C_UnwrapKey:garbage-wrapped-data",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, unwrap_key)
 

@@ -18,7 +18,7 @@ from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
-    map_report_outcome as _map_report_outcome,
+    map_report_record_outcome as _map_report_record_outcome,
 )
 
 
@@ -218,10 +218,7 @@ def _collect_report_evidence(
 
         if when == "call":
             seen_call.add(nodeid)
-            outcomes[nodeid] = _map_report_outcome(
-                str(record.get("outcome", "passed")),
-                record.get("wasxfail"),
-            )
+            outcomes[nodeid] = _map_report_record_outcome(record)
         elif when == "setup" and str(record.get("outcome", "")) in {"skipped", "failed", "error"}:
             setup_only.append(record)
 

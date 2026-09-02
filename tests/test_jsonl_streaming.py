@@ -13,6 +13,7 @@ import pytest
 
 from pkcs11_check.core import _report_records as report_records_mod
 from pkcs11_check.core import file_runner as file_runner_mod
+from pkcs11_check.core._crash_classify import _analyze_report_jsonl
 from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources,
     _seed_missing_report_record_caches_from_jsonl,
@@ -129,6 +130,145 @@ def test_load_report_log_records_returns_all_dicts(tmp_path: Path) -> None:
 
 def test_load_report_log_records_missing_file_is_empty(tmp_path: Path) -> None:
     assert _load_report_log_records(tmp_path / "nope.jsonl") == []
+
+
+@pytest.mark.parametrize(
+    ("finish", "expected"),
+    [
+        ({"$report_type": "SessionFinish", "exitstatus": 1}, 1),
+        ({"$report_type": "SessionFinish", "exitstatus": 5}, 5),
+        ({"$report_type": "SessionFinish", "exitstatus": 0}, 0),
+        ({"$report_type": "SessionFinish", "exitstatus": True}, None),
+        ({"$report_type": "SessionFinish", "exitstatus": "1"}, None),
+    ],
+)
+def test_analyze_report_jsonl_exposes_only_one_valid_session_exitstatus(
+    tmp_path: Path, finish: dict[str, object], expected: int | None
+) -> None:
+    path = tmp_path / "report.jsonl"
+    _write_jsonl(path, [{"$report_type": "SessionStart"}, finish])
+
+    _detail, _culprit, _completed, exitstatus = _analyze_report_jsonl(path)
+
+    assert exitstatus == expected
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "SessionStart"},
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+        [
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+        ],
+    ],
+)
+def test_analyze_report_jsonl_rejects_invalid_session_pairing(
+    tmp_path: Path, records: list[dict[str, object]]
+) -> None:
+    path = tmp_path / "report.jsonl"
+    _write_jsonl(path, records)
+
+    _detail, _culprit, _completed, exitstatus = _analyze_report_jsonl(path)
+
+    assert exitstatus is None
+
+
+def test_postprocess_jsonl_requires_every_concatenated_session_to_finish(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "report.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_a",
+                "when": "call",
+                "outcome": "passed",
+            },
+            {"$report_type": "SessionStart"},
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+
+    payload = postprocess_jsonl_to_unified(path, tmp_path / "results.json")
+
+    assert payload["summary"]["incomplete"] is True
+    assert payload["units"][0]["incomplete"] is True
+
+
+def test_postprocess_jsonl_accepts_concatenated_complete_sessions(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_a",
+                "when": "call",
+                "outcome": "passed",
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            {"$report_type": "SessionFinish", "exitstatus": 1},
+        ],
+    )
+
+    payload = postprocess_jsonl_to_unified(path, tmp_path / "results.json")
+
+    assert payload["summary"]["incomplete"] is False
+    assert "incomplete" not in payload["units"][0]
+
+
+@pytest.mark.parametrize(
+    "bad_line",
+    [
+        '{"truncated":',
+        "[1, 2, 3]",
+        json.dumps({}),
+        json.dumps({"$report_type": "TestReport"}),
+    ],
+)
+def test_postprocess_jsonl_marks_malformed_middle_record_incomplete(
+    tmp_path: Path, bad_line: str
+) -> None:
+    path = tmp_path / "report.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps({"$report_type": "SessionStart"}),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "a.py::test_a",
+                        "when": "call",
+                        "outcome": "passed",
+                    }
+                ),
+                bad_line,
+                json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = postprocess_jsonl_to_unified(path, tmp_path / "results.json")
+
+    assert payload["summary"]["incomplete"] is True
+    assert payload["units"][0]["incomplete"] is True
 
 
 def test_extract_unit_report_records_streams_without_load_all(
@@ -901,6 +1041,124 @@ def test_report_timeout_status_selects_timeout_observation(tmp_path: Path) -> No
     crashes = crashes_from_results(path)
 
     assert crashes[0]["detail"] == {"observation": timeout}
+
+
+def test_report_does_not_duplicate_recorded_direct_seh_crash(tmp_path: Path) -> None:
+    path = tmp_path / "results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "testcases/test_ffi.py",
+                        "status": "crashed",
+                        "returncode": 1,
+                        "tests": [
+                            {
+                                "nodeid": "testcases/test_ffi.py::test_null_pointer",
+                                "outcome": "crashed",
+                                "longrepr": "OSError: exception: access violation reading 0",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert crashes_from_results(path) == []
+
+
+def test_report_keeps_non_seh_test_crash_as_runner_finding(tmp_path: Path) -> None:
+    path = tmp_path / "results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "testcases/test_ffi.py",
+                        "status": "crashed",
+                        "returncode": 1,
+                        "tests": [
+                            {
+                                "nodeid": "testcases/test_ffi.py::test_null_pointer",
+                                "outcome": "crashed",
+                                "longrepr": "OSError: provider error",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    crashes = crashes_from_results(path)
+
+    assert len(crashes) == 1
+    assert crashes[0]["reason"] == "crash"
+
+
+def test_report_keeps_outer_crash_for_mixed_legacy_unit(tmp_path: Path) -> None:
+    path = tmp_path / "results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "testcases/test_ffi.py",
+                        "status": "crashed",
+                        "returncode": 11,
+                        "tests": [
+                            {
+                                "nodeid": "testcases/test_ffi.py::test_null_pointer",
+                                "outcome": "crashed",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    crashes = crashes_from_results(path)
+
+    assert len(crashes) == 1
+    assert crashes[0]["detail"]["signal"] == "SIGSEGV"
+
+
+def test_jsonl_direct_seh_record_sets_crashed_unit_status(tmp_path: Path) -> None:
+    record = {
+        "$report_type": "TestReport",
+        "when": "call",
+        "nodeid": "testcases/test_ffi.py::test_null_pointer",
+        "outcome": "failed",
+        "user_properties": [
+            [
+                "pkcs11_classification",
+                [
+                    {
+                        "reason": "crash",
+                        "outcome": "fail",
+                        "detail": {
+                            "windows_status": 0xC0000005,
+                            "signal": "EXCEPTION_ACCESS_VIOLATION",
+                        },
+                    }
+                ],
+            ]
+        ],
+    }
+    path = tmp_path / "report.jsonl"
+    _write_jsonl(path, [record, {"$report_type": "SessionFinish", "exitstatus": 1}])
+
+    payload = postprocess_jsonl_to_unified(path, tmp_path / "results.json")
+
+    assert payload["summary"]["crashed"] == 1
+    assert payload["summary"]["failed"] == 0
+    assert payload["units"][0]["status"] == "crashed"
 
 
 def test_saved_process_observations_emit_once_and_feed_unified_executions(tmp_path: Path) -> None:

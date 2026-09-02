@@ -203,6 +203,12 @@ def test_exc_expected_passes() -> None:
     )
 
 
+def test_exc_plain_assertion_propagates_even_with_known_ckr_name() -> None:
+    exc = AssertionError("harness bug mentions CKR_KEY_FUNCTION_NOT_PERMITTED")
+    with pytest.raises(AssertionError, match="harness bug"):
+        reject_or_classify(exc, (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
+
+
 def test_exc_other_xfails() -> None:
     with pytest.raises(pytest.xfail.Exception):
         reject_or_classify(_exc(CKR_FUNCTION_FAILED), (CKR_KEY_FUNCTION_NOT_PERMITTED,), label="x")
@@ -275,24 +281,29 @@ def test_is_known_error_prefers_exact_rv_when_present() -> None:
     assert is_known_error(exc2, set(_KNOWN)) is True
 
 
-def test_is_known_error_substring_fallback_ignores_expected_portion() -> None:
-    """Without .rv, the fallback must only consider the ACTUAL-rv portion.
-
-    The expected-names tail ("; expected one of: ...") must not be matched, so a
-    plain AssertionError whose actual code differs is NOT treated as known.
-    """
+def test_is_known_error_rejects_plain_assertion_with_expected_ckr_name() -> None:
+    """A plain assertion is never trusted as a provider return value."""
     exc = AssertionError(
         "Unexpected CK_RV CKR_FUNCTION_FAILED; expected one of: CKR_KEY_FUNCTION_NOT_PERMITTED"
     )
     assert is_known_error(exc, set(_KNOWN)) is False
 
 
-def test_is_known_error_substring_fallback_matches_actual() -> None:
-    """Without .rv, a genuine match on the ACTUAL-rv portion is still honored."""
+def test_is_known_error_rejects_plain_assertion_with_actual_ckr_name() -> None:
+    """Message text cannot turn a harness assertion into a provider result."""
     exc = AssertionError(
         "Unexpected CK_RV CKR_KEY_FUNCTION_NOT_PERMITTED; expected one of: CKR_FUNCTION_FAILED"
     )
-    assert is_known_error(exc, set(_KNOWN)) is True
+    assert is_known_error(exc, set(_KNOWN)) is False
+
+
+def test_xfail_if_known_ckr_reraises_plain_assertion_with_known_name() -> None:
+    exc = AssertionError("harness internal: CKR_KEY_FUNCTION_NOT_PERMITTED")
+    with pytest.raises(AssertionError, match="harness internal"):
+        try:
+            raise exc
+        except AssertionError as caught:
+            xfail_if_known_ckr(caught, set(_KNOWN), "ckr probe")
 
 
 def test_xfail_if_known_ckr_reraises_on_prefix_collision() -> None:

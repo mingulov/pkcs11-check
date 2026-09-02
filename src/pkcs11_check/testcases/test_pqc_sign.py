@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import attr_ulong
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
@@ -20,6 +20,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_KEY_TYPE,
@@ -49,6 +50,7 @@ from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
     assert_correct,
+    is_known_error,
     xfail_if_known_ckr,
 )
 
@@ -192,7 +194,9 @@ class TestMLDSAKeyGeneration:
         _skip_if_no(rs, "ML_DSA")
         try:
             pub, priv = _generate_ml_dsa_keypair(rs, param_set=param_set)
-        except (AssertionError, OSError):
+        except CkrAssertionError as exc:
+            if not is_known_error(exc, _PQC_KEYGEN_REJECT_RVS):
+                raise
             pytest.skip(f"Module does not support CKA_PARAMETER_SET={param_set:#x}")
             raise  # unreachable
         try:
@@ -213,7 +217,7 @@ class TestMLDSASignVerify:
         try:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(exc, _PQC_SIGN_REJECT_RVS, "CKM_ML_DSA sign not operational")
                 raise
             assert isinstance(sig, bytes) and len(sig) > 0
@@ -231,14 +235,14 @@ class TestMLDSASignVerify:
         try:
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(exc, _PQC_SIGN_REJECT_RVS, "CKM_ML_DSA sign not operational")
                 raise
             tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
             try:
                 result = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, tampered, sig)
                 assert not result, "Tampered message should fail verification"
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 # A tampered signature must be rejected; a clean non-spec reject
                 # code (e.g. CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID) is
                 # a noted deviation -> xfail, while a wrong-output assertion (the
@@ -260,7 +264,7 @@ class TestMLDSASignVerify:
             try:
                 sig1 = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
                 sig2 = sign_single(rs.raw, rs.sh, priv, CKM_ML_DSA, _PLAINTEXT)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(exc, _PQC_SIGN_REJECT_RVS, "CKM_ML_DSA sign not operational")
                 raise
             # ML-DSA is randomized - two signatures should differ (with overwhelming probability)
@@ -386,18 +390,13 @@ class TestSLHDSAKeyGeneration:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
-        except (AssertionError, OSError) as exc:
-            xfail_as(
-                "not_operational",
-                kind="crypto",
-                label="CKM_SLH_DSA:C_GenerateKeyPair",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_SLH_DSA",
-                summary=(
-                    "Advertised CKM_SLH_DSA key generation is not operational on "
-                    f"this module: {exc}"
-                ),
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _PQC_KEYGEN_REJECT_RVS,
+                "Advertised CKM_SLH_DSA key generation is not operational",
             )
+            raise
         try:
             assert pub != 0
             assert priv != 0
@@ -411,18 +410,13 @@ class TestSLHDSAKeyGeneration:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
-        except (AssertionError, OSError) as exc:
-            xfail_as(
-                "not_operational",
-                kind="crypto",
-                label="CKM_SLH_DSA:C_GenerateKeyPair",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_SLH_DSA",
-                summary=(
-                    "Advertised CKM_SLH_DSA key generation is not operational on "
-                    f"this module: {exc}"
-                ),
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _PQC_KEYGEN_REJECT_RVS,
+                "Advertised CKM_SLH_DSA key generation is not operational",
             )
+            raise
         try:
             pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
             priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
@@ -455,7 +449,9 @@ class TestSLHDSAKeyGeneration:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs, param_set=param_set)
-        except (AssertionError, OSError):
+        except CkrAssertionError as exc:
+            if not is_known_error(exc, _PQC_KEYGEN_REJECT_RVS):
+                raise
             pytest.skip(f"Module does not support CKA_PARAMETER_SET={param_set:#x}")
             raise  # unreachable
         try:
@@ -474,19 +470,22 @@ class TestSLHDSASignVerify:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
-        except (AssertionError, OSError) as exc:
-            xfail_as(
-                "not_operational",
-                kind="crypto",
-                label="CKM_SLH_DSA:C_Sign",
-                operation="C_Sign",
-                mechanism="CKM_SLH_DSA",
-                summary=(
-                    "Advertised CKM_SLH_DSA sign operation is not operational on "
-                    f"this module: {exc}"
-                ),
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _PQC_KEYGEN_REJECT_RVS,
+                "Advertised CKM_SLH_DSA key generation is not operational",
             )
+            raise
+        try:
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _PQC_SIGN_REJECT_RVS,
+                "Advertised CKM_SLH_DSA sign operation is not operational",
+            )
+            raise
         try:
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(rs.raw, rs.sh, pub, CKM_SLH_DSA, _PLAINTEXT, sig)
@@ -501,25 +500,28 @@ class TestSLHDSASignVerify:
         _skip_if_no(rs, "SLH_DSA")
         try:
             pub, priv = _generate_slh_dsa_keypair(rs)
-            sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
-        except (AssertionError, OSError) as exc:
-            xfail_as(
-                "not_operational",
-                kind="crypto",
-                label="CKM_SLH_DSA:C_Sign",
-                operation="C_Sign",
-                mechanism="CKM_SLH_DSA",
-                summary=(
-                    "Advertised CKM_SLH_DSA sign operation is not operational on "
-                    f"this module: {exc}"
-                ),
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _PQC_KEYGEN_REJECT_RVS,
+                "Advertised CKM_SLH_DSA key generation is not operational",
             )
+            raise
+        try:
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SLH_DSA, _PLAINTEXT)
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _PQC_SIGN_REJECT_RVS,
+                "Advertised CKM_SLH_DSA sign operation is not operational",
+            )
+            raise
         try:
             tampered = _PLAINTEXT[:-1] + bytes([_PLAINTEXT[-1] ^ 0xFF])
             try:
                 result = verify_single(rs.raw, rs.sh, pub, CKM_SLH_DSA, tampered, sig)
                 assert not result, "Tampered message should fail SLH-DSA verification"
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 # A tampered signature must be rejected; a clean non-spec reject
                 # code (e.g. CKR_DEVICE_ERROR instead of CKR_SIGNATURE_INVALID) is
                 # a noted deviation -> xfail, while a wrong-output assertion (the

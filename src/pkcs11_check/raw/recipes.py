@@ -13,6 +13,8 @@ from ctypes import byref
 from enum import Flag, auto
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
+
 from .api import RawPKCS11
 from .attr_metadata import ATTR_VALUE_TYPES
 from .bootstrap import get_slot_ids, login_user, open_session
@@ -145,16 +147,19 @@ def _cancel_operation(raw: RawPKCS11, session: int, flags: int) -> None:
     the call. A module that does not expose ``C_SessionCancel`` (pre-v3.0, or a
     v3.x module whose function pointer is NULL) raises ``AttributeError`` from
     the binding; a malformed invocation raises ``OSError`` / ``ctypes.ArgumentError``.
-    All are swallowed because this is best-effort teardown -- it must never mask
-    the original error on the terminal-failure path, nor turn a failed cancel on
-    the recovery path into a hard error (the caller re-checks the actual
-    operation state and escalates to a session reopen if it is still active). The
-    cancel's own return value is likewise ignored: the effect is verified by the
-    caller, never the cancel's claim.
+    Clean teardown errors are swallowed because this is best-effort recovery -- it
+    must never mask the original error on the terminal-failure path, nor turn a
+    failed cancel on the recovery path into a hard error. A ctypes-translated
+    Windows access violation is different: it is a provider crash finding and
+    propagates. The cancel's own return value is likewise ignored: the effect is
+    verified by the caller, never the cancel's claim.
     """
     try:
         raw.C_SessionCancel(session, flags)
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         # C_SessionCancel absent (pre-v3.0 / NULL pointer) or the call failed.
         # Nothing portable to do here; the caller's retry + reopen fallback (or
         # the per-test/subprocess session teardown) still bounds the leak.
@@ -827,10 +832,13 @@ def create_object(
 
 
 def destroy_quietly(raw: RawPKCS11, session: int, handle: int) -> None:
-    """Destroy an object, silently ignoring any errors."""
+    """Destroy an object, ignoring clean teardown errors but surfacing provider faults."""
     try:
         raw.C_DestroyObject(session, handle)
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         pass
 
 

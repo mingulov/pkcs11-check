@@ -18,6 +18,7 @@ from pkcs11_check.raw.recipes import (
     import_dsa_public_key,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKM_DSA_SHA224,
@@ -36,7 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import reject_or_classify, xfail_if_known_ckr
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
@@ -230,8 +231,14 @@ def test_dsa(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
             value=value,
             attrs={CKA_VERIFY: True},
         )
-    except AssertionError:
-        pytest.skip("Cannot import DSA public key")
+    except CkrAssertionError as exc:
+        reject_or_classify(
+            exc,
+            (),
+            label=f"DSA:key-import:{vec_id} (valid group public key)",
+            kind="crypto",
+        )
+        return
 
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)

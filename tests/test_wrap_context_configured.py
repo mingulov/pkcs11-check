@@ -59,6 +59,7 @@ def _make_rs(sh: int, has_mechanism_fn: Any = None) -> Any:
             "sh": sh,
             "slot_id": 0,
             "has_mechanism": has_mech,
+            "has_mechanism_flag": lambda self, n, flag: has_mech(self, n),
         },
     )()
 

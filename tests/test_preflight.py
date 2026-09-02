@@ -62,6 +62,43 @@ def test_probe_capabilities_returns_error_manifest(tmp_path: Path) -> None:
     assert manifest.error == "RuntimeError: boom"
 
 
+def test_advertised_mechanism_info_failure_makes_preflight_non_green(tmp_path: Path) -> None:
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    mock_mech = MagicMock()
+    mock_mech.name = "CKM_AES_ECB"
+    mock_slot = MagicMock()
+    mock_slot.get_mechanisms.return_value = [mock_mech]
+    mock_slot.get_mechanism_info.side_effect = RuntimeError(
+        "C_GetMechanismInfo(CKM_AES_ECB): CKR_FUNCTION_FAILED"
+    )
+    mock_module = MagicMock(interface_version="3.2")
+    mock_module.get_slots.return_value = [mock_slot]
+
+    with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
+        manifest = probe_capabilities(module_path, interface="auto", slot=0)
+
+    assert manifest.status == "error"
+    assert manifest.error is not None
+    assert "CKM_AES_ECB" in manifest.error
+    assert "CKR_FUNCTION_FAILED" in manifest.error
+
+
+def test_preflight_classifies_translated_access_violation_as_crash(tmp_path: Path) -> None:
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+
+    with patch(
+        "pkcs11_check.core.preflight.load_module",
+        side_effect=OSError("exception: access violation reading 0x0"),
+    ):
+        manifest = probe_capabilities(module_path, interface="auto", slot=0)
+
+    assert manifest.status == "crashed"
+    assert manifest.error is not None
+    assert "EXCEPTION_ACCESS_VIOLATION" in manifest.error
+
+
 def test_manifest_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "manifest.json"
     manifest = CapabilityManifest(

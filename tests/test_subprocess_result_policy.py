@@ -103,6 +103,35 @@ def test_subprocess_result_policy_reports_positive_child_failure() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("rc", "stderr"),
+    [
+        (5, "AttributeError: C_Test not available in this module"),
+        (
+            1,
+            "AttributeError: C_Test not available in this module\nRuntimeError: later failure",
+        ),
+        (1, "log: not available in this module"),
+    ],
+)
+def test_capability_phrase_does_not_hide_child_failure(rc: int, stderr: str) -> None:
+    try:
+        with pytest.raises(pytest.fail.Exception, match="subprocess failed"):
+            assert_subprocess_completed(rc, "", stderr, context="generated child script")
+    except pytest.skip.Exception as exc:
+        pytest.fail(f"incidental capability phrase hid child failure: {exc}")
+
+
+def test_exact_dispatcher_capability_failure_skips() -> None:
+    stderr = (
+        "Traceback (most recent call last):\n"
+        '  File "child.py", line 1, in <module>\n'
+        "AttributeError: C_Test not available in this module\n"
+    )
+    with pytest.raises(pytest.skip.Exception, match="not implemented"):
+        assert_subprocess_completed(1, "", stderr, context="generated child script")
+
+
 def test_subprocess_result_policy_preserves_rv_trace_marker_after_long_output() -> None:
     marker = 'P11_RV_TRACE_JSON:[{"fn":"C_Test","rv":0,"rv_name":"CKR_OK"}]'
     stdout = "noise" * 200 + "\n" + marker

@@ -48,8 +48,34 @@ def test_mixed_outcomes_are_the_inherent_mode_channel() -> None:
     assert cbc_pad_verdict(outcomes) == "inherent_channel"
 
 
+def test_multiple_reject_codes_are_characterization_not_an_oracle() -> None:
+    outcomes = [_REJECT] * 200 + ["CKR_DATA_INVALID"] * 120
+    verdict = cbc_pad_verdict(outcomes)
+    assert verdict == "reject_code_variance"
+    assert verdict not in CBC_PAD_FINDING_VERDICTS
+
+
 def test_accepting_every_corruption_is_unchecked_malleability() -> None:
     assert cbc_pad_verdict([_LEAK] * _PROBES) == "unchecked_malleability"
+
+
+def test_all_ok_outcomes_with_any_changed_plaintext_remain_a_finding() -> None:
+    outcomes = ["CKR_OK_MATCH"] + [_LEAK] * (_PROBES - 1)
+    assert cbc_pad_verdict(outcomes) == "accepted_corruption_match"
+
+
+def test_matching_plaintext_is_a_finding_even_when_every_corruption_matches() -> None:
+    assert cbc_pad_verdict(["CKR_OK_MATCH"] * _PROBES) == "accepted_corruption_match"
+
+
+def test_matching_plaintext_is_a_finding_when_mixed_with_rejections() -> None:
+    outcomes = [_REJECT] * (_PROBES - 1) + ["CKR_OK_MATCH"]
+    assert cbc_pad_verdict(outcomes) == "accepted_corruption_match"
+
+
+def test_matching_plaintext_takes_precedence_over_other_successes() -> None:
+    outcomes = [_REJECT] + ["CKR_OK_MATCH"] + [_LEAK] * (_PROBES - 2)
+    assert cbc_pad_verdict(outcomes) == "accepted_corruption_match"
 
 
 def test_verdict_never_flips_on_a_conforming_module_because_of_luck() -> None:
@@ -78,4 +104,4 @@ def test_single_unexpected_ckr_is_not_silently_treated_as_mitigation() -> None:
     Uniform CKR_OK_MATCH would mean corruption did not change the plaintext at all,
     which cannot happen for AES-CBC and would indicate the probe never landed.
     """
-    assert cbc_pad_verdict(["CKR_OK_MATCH"] * _PROBES) != "uniform_reject"
+    assert cbc_pad_verdict(["CKR_OK_MATCH"] * _PROBES) == "accepted_corruption_match"

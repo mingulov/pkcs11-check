@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh
@@ -25,6 +24,7 @@ from pkcs11_check.raw.recipes import (
     gen_ec_keypair,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
@@ -40,7 +40,14 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
 )
-from pkcs11_check.testcases.conftest import assert_correct
+from pkcs11_check.testcases.conftest import (
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    EC_CURVE_UNSUPPORTED_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.crossverify
 
@@ -64,6 +71,26 @@ def _ec_point_from_handle(rs: Any, handle: int) -> bytes:
     return decode_ec_point(attrs[CKA_EC_POINT])
 
 
+def _gen_p256_or_skip(rs: Any) -> tuple[int, int]:
+    """Skip an explicitly unsupported P-256 curve; expose other keygen failures."""
+    try:
+        return gen_ec_keypair(
+            rs.raw,
+            rs.sh,
+            encode_named_curve_parameters("secp256r1"),
+            private_attrs=_PRIV_DERIVE,
+        )
+    except CkrAssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            pytest.skip("P-256 not supported")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "EC key generation advertised but P-256 keygen is not operational",
+        )
+        raise
+
+
 class TestECDHKnownAnswer:
     """Verify ECDH produces correct shared secret using known keys."""
 
@@ -82,17 +109,7 @@ class TestECDHKnownAnswer:
         crypto_point = b"\x04" + x_bytes + y_bytes
 
         # Generate P-256 keypair in PKCS#11
-        curve_oid = encode_named_curve_parameters("secp256r1")
-        try:
-            p11_pub, p11_priv = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid,
-                private_attrs=_PRIV_DERIVE,
-            )
-        except (AssertionError, OSError):
-            pytest.skip("P-256 not supported")
-            raise  # unreachable
+        p11_pub, p11_priv = _gen_p256_or_skip(rs)
 
         derived_h = 0
         try:
@@ -113,15 +130,13 @@ class TestECDHKnownAnswer:
                     attrs=_DERIVE_ATTRS,
                     mech_param=ecdh_param,
                 )
-            except AssertionError as exc:
-                classify(
-                    "not_operational",
-                    kind="crypto",
-                    label="CKM_ECDH1_DERIVE:C_DeriveKey",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_ECDH1_DERIVE",
-                    summary=f"ECDH derivation failed -- mechanism advertised but rejected: {exc}",
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "CKM_ECDH1_DERIVE advertised but C_DeriveKey is not operational",
                 )
+                raise
 
             p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
 
@@ -153,23 +168,8 @@ class TestECDHKnownAnswer:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        curve_oid = encode_named_curve_parameters("secp256r1")
-        try:
-            pub_a, priv_a = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid,
-                private_attrs=_PRIV_DERIVE,
-            )
-            pub_b, priv_b = gen_ec_keypair(
-                rs.raw,
-                rs.sh,
-                curve_oid,
-                private_attrs=_PRIV_DERIVE,
-            )
-        except (AssertionError, OSError):
-            pytest.skip("P-256 not supported")
-            raise  # unreachable
+        pub_a, priv_a = _gen_p256_or_skip(rs)
+        pub_b, priv_b = _gen_p256_or_skip(rs)
 
         key_ab = 0
         key_ba = 0
@@ -204,15 +204,13 @@ class TestECDHKnownAnswer:
                     attrs=_DERIVE_ATTRS,
                     mech_param=ecdh_ba,
                 )
-            except AssertionError as exc:
-                classify(
-                    "not_operational",
-                    kind="crypto",
-                    label="CKM_ECDH1_DERIVE:C_DeriveKey",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_ECDH1_DERIVE",
-                    summary=f"ECDH derivation failed -- mechanism advertised but rejected: {exc}",
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    CIPHER_OP_RUNTIME_REJECT_RVS,
+                    "CKM_ECDH1_DERIVE advertised but C_DeriveKey is not operational",
                 )
+                raise
 
             secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
             secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]

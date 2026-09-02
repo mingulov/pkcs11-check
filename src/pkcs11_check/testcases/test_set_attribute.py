@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -18,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     set_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_ID,
@@ -31,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_GENERAL_ERROR,
     CKR_OK,
 )
 from pkcs11_check.testcases.conftest import (
@@ -38,6 +41,7 @@ from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
+    reject_or_classify,
     xfail_if_known_ckr,
 )
 
@@ -93,8 +97,9 @@ def _classify_readonly_write(
     """
     try:
         set_attributes(rs.raw, rs.sh, handle, {attr: new_value})
-    except AssertionError:
-        return  # audit-ok: policy probe; rejecting the read-only attribute write is correct
+    except CkrAssertionError as exc:
+        reject_or_classify(exc, _SET_ATTR_REJECT_RVS, label=label, kind="lifecycle")
+        return
     after = _read_back_or_fail(rs, handle, [attr], label=label)
     if after.get(attr) == new_value:
         fail_as(
@@ -223,6 +228,19 @@ class TestSetAttributeAtomicity:
                 attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
             )
             rv = rs.raw.C_SetAttributeValue(rs.sh, key, mixed.ptr, mixed.count)
+            if rv == CKR_GENERAL_ERROR:
+                try:
+                    attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LABEL, CKA_CLASS])
+                    state = f"label={attrs.get(CKA_LABEL)!r}, class={attrs.get(CKA_CLASS)!r}"
+                except AssertionError as exc:
+                    state = f"readback unavailable ({exc})"
+                note(
+                    "C_SetAttributeValue returned CKR_GENERAL_ERROR for a mixed template; "
+                    f"post-call state is explicitly unspecified ({state})",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 base specification: CKR_GENERAL_ERROR execution semantics",
+                )
+                return
             attrs = _read_back_or_fail(
                 rs,
                 key,

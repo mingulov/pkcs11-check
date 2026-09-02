@@ -11,9 +11,9 @@ The fix adds a ``C_Finalize`` step to ``pytest_sessionfinish`` -- the unique
 seam that fires once per process, after every test outcome is recorded, on both
 pass and fail paths, in both isolation modes. It runs AFTER the coverage
 emission and is fully guarded (non-OK rv / exception / hang) so a misbehaving
-``C_Finalize`` can never change the run's pass/fail verdict and is never hidden:
-the outcome is recorded via an additive ``TeardownFinalize`` report-log record,
-never via ``classify()`` / ``pytest.fail`` / ``pytest.xfail``.
+``C_Finalize`` never rewrites an already-recorded test verdict. A teardown
+failure does make the process non-green and is recorded via an additive
+``TeardownFinalize`` report-log record, never via an invented test result.
 
 These are hermetic, in-process meta-tests driving ``pytest_sessionfinish`` with
 a counting spy raw (modeled on ``test_reinit_recovery.py``'s ``_ReinitRaw`` and
@@ -122,9 +122,11 @@ def _teardown_records(report_log: _FakeReportLogPlugin) -> list[dict[str, object
     return [r for r in report_log.records if r.get("$report_type") == "TeardownFinalize"]
 
 
-def _run(config: SimpleNamespace) -> None:
+def _run(config: SimpleNamespace) -> SimpleNamespace:
     # SimpleNamespace is intentional: hermetic fake; cast to satisfy Pyright.
-    plugin_mod.pytest_sessionfinish(cast(pytest.Session, SimpleNamespace(config=config)), 0)
+    session = SimpleNamespace(config=config, exitstatus=pytest.ExitCode.OK)
+    plugin_mod.pytest_sessionfinish(cast(pytest.Session, session), 0)
+    return session
 
 
 # --------------------------------------------------------------------------
@@ -137,7 +139,7 @@ def test_finalize_called_once_on_clean_teardown() -> None:
     report_log = _FakeReportLogPlugin()
     config = _make_config(raw, report_log)
 
-    _run(config)
+    session = _run(config)
 
     assert raw.calls == ["C_Finalize"]  # exactly one finalize
     assert raw.finalized is True  # resource-release breadcrumb flipped
@@ -151,6 +153,7 @@ def test_finalize_called_once_on_clean_teardown() -> None:
     assert records[0]["outcome"] == "ok"
     assert records[0]["rv"] == int(CKR_OK)
     assert records[0]["rv_name"] == "CKR_OK"
+    assert session.exitstatus == pytest.ExitCode.OK
 
 
 # --------------------------------------------------------------------------
@@ -163,13 +166,14 @@ def test_non_ok_rv_recorded_not_raised() -> None:
     report_log = _FakeReportLogPlugin()
     config = _make_config(raw, report_log)
 
-    _run(config)  # must not raise
+    session = _run(config)  # must not raise
 
     records = _teardown_records(report_log)
     assert len(records) == 1
     assert records[0]["outcome"] == "error"
     assert records[0]["rv"] == int(CKR_GENERAL_ERROR)
     assert records[0]["rv_name"] == "CKR_GENERAL_ERROR"
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
     # No test-verdict channel was used (no classification/fail record).
     assert all(
         r.get("$report_type") not in ("Classification", "TestReport") for r in report_log.records
@@ -186,13 +190,29 @@ def test_exception_swallowed_and_recorded() -> None:
     report_log = _FakeReportLogPlugin()
     config = _make_config(raw, report_log)
 
-    _run(config)  # must not raise
+    session = _run(config)  # must not raise
 
     records = _teardown_records(report_log)
     assert len(records) == 1
     assert records[0]["outcome"] == "error"
     # Exact error preserved in the record (framework rule: exact errors).
     assert "boom in C_Finalize" in str(records[0]["error"])
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
+
+
+def test_ctypes_access_violation_is_recorded_as_crash() -> None:
+    raw = _SpyRaw(raises=OSError("exception: access violation reading 0x0"))
+    report_log = _FakeReportLogPlugin()
+    config = _make_config(raw, report_log)
+
+    session = _run(config)
+
+    records = _teardown_records(report_log)
+    assert len(records) == 1
+    assert records[0]["outcome"] == "crashed"
+    assert records[0]["windows_status"] == 0xC0000005
+    assert records[0]["signal"] == "EXCEPTION_ACCESS_VIOLATION"
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
 
 
 # --------------------------------------------------------------------------
@@ -210,7 +230,7 @@ def test_hang_is_bounded_and_recorded_timeout(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(plugin_mod, "_TEARDOWN_FINALIZE_TIMEOUT_S", 1)
 
     try:
-        _run(config)  # must not hang past the budget, must not raise
+        session = _run(config)  # must not hang past the budget, must not raise
     finally:
         block.set()  # safety net: never leave a stuck thread
 
@@ -218,6 +238,7 @@ def test_hang_is_bounded_and_recorded_timeout(monkeypatch: pytest.MonkeyPatch) -
     assert len(records) == 1
     assert records[0]["outcome"] == "timeout"
     assert raw.finalized is False  # finalize was abandoned, not completed
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
 
 
 # --------------------------------------------------------------------------

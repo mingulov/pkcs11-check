@@ -1,7 +1,7 @@
 """Security probes for weak or invalid mechanism parameters.
 
-Tests that modules correctly reject insecure parameter choices:
-- GCM with weak tag sizes, weak/empty IVs, IV reuse, NULL AAD pointer
+Tests invalid parameters and records allowed-but-risky choices:
+- GCM with weak tag sizes, empty/short IVs, IV reuse, NULL AAD pointer
 - PSS with zero or excessive salt length
 - XTS with identical key halves
 - RSA with weak public exponents
@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import hashes
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
@@ -77,6 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DATA_LEN_RANGE,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
@@ -85,7 +87,9 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._local_verify import rsa_pss_local
 from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
@@ -399,10 +403,10 @@ _WEAK_GCM_IVS = [
 
 
 class TestGcmIvWeakness:
-    """Probe whether the module accepts weak/short GCM IVs.
+    """Probe whether the module accepts empty/short GCM IVs.
 
-    NIST SP 800-38D strongly recommends 96-bit (12-byte) IVs.
-    Shorter or empty IVs are insecure.
+    NIST SP 800-38D permits nonempty IVs but recommends 96 bits. An empty IV is
+    outside its input requirements; shorter nonempty IVs are note-only posture.
     """
 
     @pytest.mark.parametrize("iv", _WEAK_GCM_IVS)
@@ -414,8 +418,6 @@ class TestGcmIvWeakness:
         try:
             pt = b"B" * 32
             mech = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
-            # crypto-correctness: an empty/short GCM IV undermines the
-            # uniqueness guarantee; accepting it is a break (fail).
             reject_exc: AssertionError | None = None
             try:
                 encrypt_single(
@@ -429,11 +431,20 @@ class TestGcmIvWeakness:
                 )
             except AssertionError as exc:
                 reject_exc = exc
-            reject_or_classify(
-                reject_exc,
-                _WEAK_PARAM_REJECT_RVS,
-                label=f"AES-GCM with {len(iv)}-byte IV (below NIST 96-bit recommendation)",
-            )
+            label = f"AES-GCM with {len(iv)}-byte IV"
+            if not iv:
+                reject_or_classify(reject_exc, _WEAK_PARAM_REJECT_RVS, label=label)
+            elif reject_exc is not None:
+                if not isinstance(reject_exc, CkrAssertionError):
+                    raise reject_exc
+                reject_or_classify(reject_exc, (), label=label, kind="crypto")
+            else:
+                note(
+                    f"Module accepted AES-GCM with a {len(iv)}-byte IV; nonempty IVs are "
+                    "permitted, while 96 bits is the recommended interoperable length",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="NIST SP 800-38D §§5.2.1.1, 8.2",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -444,10 +455,12 @@ class TestGcmIvWeakness:
 
 
 class TestGcmIvReuse:
-    """Probe whether the module prevents IV reuse with the same key.
+    """Record module posture when the caller reuses an IV with the same key.
 
     Reusing an IV with the same key in GCM completely breaks confidentiality
-    and authenticity. NIST SP 800-38D requires IV uniqueness per key.
+    and authenticity. NIST SP 800-38D places that uniqueness requirement on the
+    authenticated-encryption system; PKCS#11 accepts a caller-supplied IV and
+    does not require modules to retain per-key IV history.
     """
 
     def test_gcm_iv_reuse_same_key(self, p11_raw_session: Any) -> None:
@@ -469,9 +482,7 @@ class TestGcmIvReuse:
                 mech_param=mech1,
                 output_overhead=16,
             )
-            # Second encrypt with SAME key + SAME IV. crypto-correctness:
-            # IV reuse with the same GCM key breaks confidentiality and
-            # authenticity; accepting the second encrypt is a break (fail).
+            # Second encrypt with SAME key + SAME IV.
             mech2 = mech_gcm(CKM_AES_GCM, iv, tag_bits=128)
             reject_exc: AssertionError | None = None
             try:
@@ -487,11 +498,19 @@ class TestGcmIvReuse:
                 _ = ct1, ct2  # suppress unused warnings
             except AssertionError as exc:
                 reject_exc = exc
-            reject_or_classify(
-                reject_exc,
-                _WEAK_PARAM_REJECT_RVS,
-                label="AES-GCM IV reuse with the same key (NIST SP 800-38D requires unique IVs)",
-            )
+            if reject_exc is not None:
+                reject_or_classify(
+                    reject_exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    label="AES-GCM caller-supplied IV reuse with the same key",
+                )
+            else:
+                note(
+                    "The caller reused an AES-GCM IV with the same key; PKCS#11 does not "
+                    "require the module to track caller-supplied IV history",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="NIST SP 800-38D §8.3; PKCS#11 CK_GCM_PARAMS",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -541,6 +560,12 @@ class TestGcmAadNullWithLength:
 _PSS_SALT_LENGTHS = [
     pytest.param(0, id="sLen-0-deterministic"),
 ]
+
+_PSS_ZERO_SALT_RUNTIME_REJECT_RVS = (
+    *_WEAK_PARAM_REJECT_RVS,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
 
 
 class TestPssSaltLength:
@@ -602,30 +627,59 @@ class TestPssSaltLength:
                 # reject -- a recorded capability/policy deviation, not a finding.
                 xfail_if_known_ckr(
                     exc,
-                    _WEAK_PARAM_REJECT_RVS,
+                    _PSS_ZERO_SALT_RUNTIME_REJECT_RVS,
                     f"RSA-PSS sLen={salt_len} (deterministic, RFC 8017 §9.1) declined by module",
                 )
                 raise
+            label = f"RSA-PSS sLen={salt_len} deterministic signature"
+            local_public_key = read_rsa_public_key_or_xfail(rs, pub, label=label)
+            if not rsa_pss_local(
+                local_public_key,
+                data,
+                signature,
+                hashes.SHA256(),
+                hashes.SHA256(),
+                salt_len,
+            ):
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label=label,
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                    summary=(
+                        f"RSA-PSS sLen={salt_len}: module accepted the deterministic-PSS "
+                        "sign operation but its signature fails exact-salt local cross-verify"
+                    ),
+                )
             pss_verify = mech_pss(
                 CKM_SHA256_RSA_PKCS_PSS,
                 hash_mech=CKM_SHA256,
                 mgf=CKG_MGF1_SHA256,
                 salt_len=salt_len,
             )
-            verified = verify_single(
-                rs.raw,
-                rs.sh,
-                pub,
-                CKM_SHA256_RSA_PKCS_PSS,
-                data,
-                signature,
-                mech_param=pss_verify,
-            )
+            try:
+                verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKM_SHA256_RSA_PKCS_PSS,
+                    data,
+                    signature,
+                    mech_param=pss_verify,
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _PSS_ZERO_SALT_RUNTIME_REJECT_RVS,
+                    f"RSA-PSS sLen={salt_len} verify is not operational",
+                )
+                raise
             if not verified:
                 classify(
                     "wrong_result",
                     kind="crypto",
-                    label=f"RSA-PSS sLen={salt_len} deterministic signature",
+                    label=label,
                     operation="C_Sign",
                     mechanism="CKM_SHA256_RSA_PKCS_PSS",
                     summary=f"RSA-PSS sLen={salt_len}: module accepted the deterministic-PSS sign "
@@ -669,7 +723,7 @@ class TestPssSaltLength:
             )
             data = b"PSS excessive salt test"
             try:
-                sig = sign_single(
+                sign_single(
                     rs.raw,
                     rs.sh,
                     priv,
@@ -677,14 +731,24 @@ class TestPssSaltLength:
                     data,
                     mech_param=pss,
                 )
-                note(
-                    f"RSA-PSS accepts sLen=255 exceeding maximum of 222 "
-                    f"(produced {len(sig)}-byte signature)",
-                    ComplianceLevel.VENDOR,
-                    reference="RFC 8017 Section 9.1: sLen must not exceed emLen - hLen - 2",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (CKR_MECHANISM_PARAM_INVALID,),
+                    label="RSA-PSS sLen=255 exceeds the 2048/SHA-256 maximum of 222",
+                    kind="crypto",
                 )
-            except (AssertionError, OSError):
-                pass  # audit-ok: hardening probe; rejecting the over-large salt is correct
+                return
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label="RSA-PSS sLen=255 exceeds the 2048/SHA-256 maximum of 222",
+                operation="C_Sign",
+                mechanism="CKM_SHA256_RSA_PKCS_PSS",
+                actual="CKR_OK",
+                expected=CKR_MECHANISM_PARAM_INVALID,
+                summary="RSA-PSS accepted invalid sLen=255, exceeding the maximum of 222",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1147,15 +1211,21 @@ class TestRsaOaepSha1Mgf:
                     pt,
                     mech_param=oaep,
                 )
-                _ = ct
-                note(
-                    "RSA-OAEP accepts SHA-1 as MGF hash function",
-                    ComplianceLevel.VENDOR,
-                    reference="SHA-1 deprecated per NIST SP 800-131A Rev.2; "
-                    "prefer SHA-256 or stronger for new applications",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    label="RSA-OAEP with SHA-1 MGF",
+                    kind="crypto",
                 )
-            except (AssertionError, OSError):
-                pass  # audit-ok: hardening probe; rejecting the SHA-1 MGF is correct
+                return
+            _ = ct
+            note(
+                "RSA-OAEP accepts SHA-1 as MGF hash function",
+                ComplianceLevel.VENDOR,
+                reference="SHA-1 deprecated per NIST SP 800-131A Rev.2; "
+                "prefer SHA-256 or stronger for new applications",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1206,15 +1276,21 @@ class TestRsaPssMd5Hash:
                     data,
                     mech_param=pss,
                 )
-                _ = sig
-                note(
-                    "RSA-PSS accepts MD5 as hash algorithm",
-                    ComplianceLevel.VENDOR,
-                    reference="MD5 collision attacks are practical since 2004; "
-                    "NIST SP 800-131A Rev.2 disallows MD5 for digital signatures",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    label="RSA-PSS with MD5 hash",
+                    kind="crypto",
                 )
-            except (AssertionError, OSError):
-                pass  # audit-ok: hardening probe; rejecting MD5 is correct
+                return
+            _ = sig
+            note(
+                "RSA-PSS accepts MD5 as hash algorithm",
+                ComplianceLevel.VENDOR,
+                reference="MD5 collision attacks are practical since 2004; "
+                "NIST SP 800-131A Rev.2 disallows MD5 for digital signatures",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1246,15 +1322,21 @@ class TestCbcIvAllZeros:
                     pt,
                     mech_param=mech_bytes(CKM_AES_CBC, zero_iv),
                 )
-                _ = ct
-                note(
-                    "AES-CBC accepts all-zero IV -- weak IV generation indicator",
-                    ComplianceLevel.VENDOR,
-                    reference="CWE-329: not using a random IV for CBC makes "
-                    "the first block equivalent to ECB",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _WEAK_PARAM_REJECT_RVS,
+                    label="AES-CBC with an all-zero IV",
+                    kind="crypto",
                 )
-            except (AssertionError, OSError):
-                pass  # audit-ok: hardening probe; rejecting the all-zero IV is acceptable
+                return
+            _ = ct
+            note(
+                "AES-CBC accepts all-zero IV -- weak IV generation indicator",
+                ComplianceLevel.VENDOR,
+                reference="CWE-329: not using a random IV for CBC makes "
+                "the first block equivalent to ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

@@ -16,10 +16,17 @@ from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 from cryptography.hazmat.primitives.serialization import Encoding as _Encoding
 from cryptography.hazmat.primitives.serialization import PublicFormat as _PublicFormat
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw import sw_wrap
+from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_rsa_aes_key_wrap
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
     CKA_CLASS,
@@ -40,6 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_WRAP,
     CKC_X_509,
+    CKF_UNWRAP,
     CKG,
     CKG_MGF1_SHA1,
     CKG_MGF1_SHA256,
@@ -48,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKK_RSA,
     CKM,
+    CKM_AES_KEY_GEN,
     CKM_AES_KEY_WRAP_KWP,
     CKM_RSA_AES_KEY_WRAP,
     CKM_RSA_PKCS_OAEP,
@@ -66,6 +75,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_UNEXTRACTABLE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_TYPE_INVALID,
 )
 
 
@@ -242,6 +252,10 @@ _CREATE_PROHIBITED_RVS: frozenset[int] = frozenset(
         # hard-failing. Some modules instead accept the dropped variant (so they never reach
         # here); this only catches modules that forbid the minimal shape outright.
         CKR_ATTRIBUTE_READ_ONLY,
+        # A representative create probe runs as an already-authenticated CKU_USER.
+        # CKR_USER_TYPE_INVALID means that role cannot create this object class; it is
+        # not a storage-shape rejection and must not be added to import negotiation.
+        CKR_USER_TYPE_INVALID,
     }
 )
 
@@ -269,11 +283,11 @@ class ProvisioningProfile:
     _verdicts: dict[str, str] = field(default_factory=dict)
 
     def supports_unwrap_mech(self, mech: int) -> bool:
-        """True iff the RS advertises the named mechanism for ``mech``."""
+        """True iff the RS advertises ``mech`` with the unwrap operation flag."""
         from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 
         name = MECHANISM_NAMES.get(int(mech))
-        return bool(name) and self.rs.has_mechanism(name)
+        return bool(name) and self.rs.has_mechanism_flag(name, int(CKF_UNWRAP))
 
     def create_verdict(self, obj_class: str) -> str:
         """Return a cached verdict ∈ {create_available, create_absent, create_prohibited}."""
@@ -641,11 +655,16 @@ def _bootstrap_rsa_unwrap_key(rs: Any, start_bits: int) -> tuple[int, int, int] 
     return None
 
 
-def _trial_round_trip(rs: Any, strategy: WrapStrategy, ctx: WrapContext) -> bool:
+def _trial_round_trip(
+    rs: Any,
+    strategy: WrapStrategy,
+    ctx: WrapContext,
+    refusals: list[tuple[str, int, str, int]] | None = None,
+) -> bool:
     """Trial round-trip: wrap a 16-byte probe, confirm C_UnwrapKey accepts it.
 
-    The unwrapped probe handle is destroyed; a clean CKR failure means "this
-    strategy/hash combo does not work here", never a finding.
+    The unwrapped probe handle is destroyed. Optional ``refusals`` lets the
+    bootstrap caller defer a finding until all advertised fallbacks are tried.
     """
     from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
 
@@ -663,7 +682,11 @@ def _trial_round_trip(rs: Any, strategy: WrapStrategy, ctx: WrapContext) -> bool
             attrs=_PROBE_ATTRS,
             mech_param=strategy.unwrap_mech_param(ctx),
         )
-    except CkrAssertionError:
+    except CkrAssertionError as exc:
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            raise
+        if refusals is not None:
+            refusals.append((strategy.name, int(strategy.unwrap_mech), ctx.oaep_hash, exc.rv))
         return False
     destroy_quietly(rs.raw, rs.sh, handle)
     return True
@@ -922,6 +945,8 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     # Track bootstrap attempts to avoid retrying a failing bootstrap
     rsa_bootstrapped = False
     aes_bootstrapped = False
+    trial_refusals: list[tuple[str, int, str, int]] = []
+    bootstrap_refusals: list[tuple[str, str | None, int, str]] = []
 
     from pkcs11_check.raw.recipes import destroy_quietly
 
@@ -967,18 +992,42 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                         CKA_UNWRAP: True,
                     },
                 )
-                try:
-                    kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
-                    kek_val = kek_attrs.get(CKA_VALUE)
-                except CkrAssertionError:
-                    kek_val = None
-                if kek_val is not None:
-                    aes_kek_handle = kek_handle
-                    sym_kek = kek_val
-                else:
-                    destroy_quietly(rs.raw, rs.sh, kek_handle)  # readable-KEK path unavailable
-            except CkrAssertionError:
-                pass  # AES keygen not available → skip AES-KWP
+            except CkrAssertionError as exc:
+                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                    raise
+                bootstrap_refusals.append(
+                    (
+                        "C_GenerateKey",
+                        ckm_name(CKM_AES_KEY_GEN),
+                        exc.rv,
+                        "AES-KWP bootstrap AES key generation",
+                    )
+                )
+                continue
+            try:
+                kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
+                kek_val = kek_attrs.get(CKA_VALUE)
+            except CkrAssertionError as exc:
+                destroy_quietly(rs.raw, rs.sh, kek_handle)
+                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                    raise
+                bootstrap_refusals.append(
+                    (
+                        "C_GetAttributeValue",
+                        None,
+                        exc.rv,
+                        "AES-KWP bootstrap CKA_VALUE readback",
+                    )
+                )
+                continue
+            except Exception:
+                destroy_quietly(rs.raw, rs.sh, kek_handle)
+                raise
+            if kek_val is not None:
+                aes_kek_handle = kek_handle
+                sym_kek = kek_val
+            else:
+                destroy_quietly(rs.raw, rs.sh, kek_handle)  # readable-KEK path unavailable
 
         # Build a probe context with all material gathered so far
         probe_ctx = WrapContext(
@@ -1017,9 +1066,68 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                 oaep_hash=cand if cand is not None else "sha1",
                 strategy_name=strategy.name,
             )
-            if _trial_round_trip(rs, strategy, trial_ctx):
+            if _trial_round_trip(rs, strategy, trial_ctx, trial_refusals):
                 return trial_ctx
 
+    if trial_refusals or bootstrap_refusals:
+        refusal_label = "provisioning unwrap trial"
+        operation: str
+        mechanism: str | None
+        actual: int
+        if trial_refusals:
+            finding = trial_refusals[-1]
+            operation = "C_UnwrapKey"
+            mechanism = ckm_name(finding[1])
+            actual = finding[3]
+        else:
+            operation, mechanism, actual, refusal_label = bootstrap_refusals[-1]
+        attempts = ", ".join(
+            f"{name}/{oaep_hash}:{ckr_name(rv)}" for name, _mech, oaep_hash, rv in trial_refusals
+        )
+        if bootstrap_refusals:
+            bootstrap_attempts = ", ".join(
+                f"{label}:{ckr_name(rv)}"
+                for _operation, _mechanism, rv, label in bootstrap_refusals
+            )
+            attempts = (
+                f"{attempts}; bootstrap: {bootstrap_attempts}" if attempts else bootstrap_attempts
+            )
+        summary = (
+            f"Every advertised provisioning unwrap trial was refused ({attempts})"
+            if trial_refusals
+            else f"AES-KWP bootstrap was refused ({attempts})"
+        )
+        classify(
+            "not_operational",
+            kind="metadata",
+            label=refusal_label,
+            operation=operation,
+            mechanism=mechanism,
+            actual=actual,
+            summary=summary,
+            detail={
+                "refusals": [
+                    {
+                        "strategy": name,
+                        "mechanism": ckm_name(mech),
+                        "oaep_hash": oaep_hash,
+                        "ckr": ckr_name(rv),
+                    }
+                    for name, mech, oaep_hash, rv in trial_refusals
+                ]
+                + [
+                    {
+                        "strategy": "aes_kwp_bootstrap",
+                        "operation": bootstrap_operation,
+                        "mechanism": bootstrap_mechanism,
+                        "ckr": ckr_name(bootstrap_rv),
+                    }
+                    for bootstrap_operation, bootstrap_mechanism, bootstrap_rv, _label in (
+                        bootstrap_refusals
+                    )
+                ],
+            },
+        )
     return None
 
 
@@ -1056,8 +1164,8 @@ def provision_secret_key(
        - Look up the resolved strategy by ``ctx.strategy_name``; not found → ``pytest.skip``.
        - Encrypt the value into a blob, call ``unwrap_key`` with the blob.
        - Value-integrity: when the key is non-sensitive, read back ``CKA_VALUE``
-         and assert it equals ``value``; mismatch → ``pytest.skip`` (corrupted
-         setup, not a target-operation finding).
+         and require it to equal ``value``; a readable mismatch is a provider
+         ``wrong_result`` finding.
        - Return the unwrapped key handle.
 
     Args:
@@ -1077,7 +1185,12 @@ def provision_secret_key(
         pytest.skip.Exception: When the module has no injection path or the
             wrap-context / strategy is unavailable.
     """
-    from pkcs11_check.raw.recipes import import_secret_key, read_attributes, unwrap_key
+    from pkcs11_check.raw.recipes import (
+        destroy_quietly,
+        import_secret_key,
+        read_attributes,
+        unwrap_key,
+    )
 
     mode: str = getattr(cfg, "key_inject", "off")
 
@@ -1173,10 +1286,17 @@ def provision_secret_key(
         read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
         actual = read_back.get(CKA_VALUE)
         if actual is not None and actual != value:
-            record_provisioning_event("secret", "skipped_no_path")
-            pytest.skip(
-                f"{label}: provisioned key value mismatch "
-                f"(expected {value.hex()!r}, got {actual!r})"
+            destroy_quietly(rs.raw, rs.sh, handle)
+            classify(
+                "wrong_result",
+                kind="crypto",
+                label=f"{label}: provisioned key value",
+                operation="C_UnwrapKey",
+                mechanism=ckm_name(int(strategy.unwrap_mech)),
+                summary=(
+                    f"{label}: provisioned key value mismatch "
+                    f"(expected {value.hex()!r}, got {actual!r})"
+                ),
             )
         if actual is None:
             from pkcs11_check.compliance import ComplianceLevel, note
@@ -1208,6 +1328,7 @@ def provision_rsa_private_key(
     dmp1: bytes,
     dmq1: bytes,
     iqmp: bytes,
+    pkcs8: bytes | None = None,
     attrs: dict[Any, Any],
     label: str,
 ) -> int:
@@ -1215,16 +1336,22 @@ def provision_rsa_private_key(
 
     Resolution order (per design §3.2):
 
-    1. If ``cfg.key_inject != "force-unwrap"``, probe create availability.
+    1. For ordinary two-prime keys, if ``cfg.key_inject != "force-unwrap"``, probe create
+       availability.
        When the module supports C_CreateObject for private keys, call
        ``import_rsa_private_key_negotiated`` directly and return the handle.
+
+       A supplied ``pkcs8`` value is used only when ``n != p*q``. That is the
+       multi-prime case, where the CRT arguments are incomplete and direct
+       reconstruction is unsafe.
 
     2. If create is unavailable/prohibited OR ``cfg.key_inject == "force-unwrap"``:
        - ``key_inject == "off"`` → ``pytest.skip`` (no injection path).
        - Build a ``WrapContext`` (bootstrap + multi-strategy negotiation);
          ``None`` → ``pytest.skip``.
        - Look up the resolved strategy by ``ctx.strategy_name``; not found → ``pytest.skip``.
-       - Encode the CRT components as PKCS#8 DER, check against strategy size cap.
+       - Use exact supplied PKCS#8 for multi-prime keys, otherwise encode the CRT
+         components as PKCS#8 DER; check against strategy size cap.
        - Call ``unwrap_key`` with the encrypted PKCS#8 blob.
        - Record a compliance note (no value-integrity readback — private keys are sensitive).
        - Return the unwrapped key handle.
@@ -1240,6 +1367,8 @@ def provision_rsa_private_key(
         dmp1:   d mod (p-1) (big-endian bytes).
         dmq1:   d mod (q-1) (big-endian bytes).
         iqmp:   q^{-1} mod p (big-endian bytes).
+        pkcs8:  Exact trusted PKCS#8 DER for a multi-prime key. Ignored for
+                ordinary two-prime keys.
         attrs:  Usage-flag attributes for the resulting object (e.g.
                 ``CKA_SIGN``, ``CKA_DECRYPT``, ``CKA_TOKEN``).  Must NOT
                 include CRT component attributes; those come from the kwargs.
@@ -1252,15 +1381,18 @@ def provision_rsa_private_key(
         pytest.skip.Exception: When the module has no injection path or the
             wrap-context / strategy is unavailable.
     """
-    from pkcs11_check.raw.key_encoding import rsa_pkcs8_from_crt
     from pkcs11_check.raw.recipes import unwrap_key
 
     mode: str = getattr(cfg, "key_inject", "off")
+    multiprime_pkcs8 = pkcs8 is not None and int.from_bytes(n, "big") != (
+        int.from_bytes(p, "big") * int.from_bytes(q, "big")
+    )
 
     # ------------------------------------------------------------------
-    # Fast path: create_available (unless caller forces the unwrap path)
+    # Fast path: create_available for ordinary two-prime keys (unless caller forces
+    # the unwrap path). Multi-prime keys must retain all primes from exact PKCS#8.
     # ------------------------------------------------------------------
-    if mode != "force-unwrap":
+    if mode != "force-unwrap" and not multiprime_pkcs8:
         verdict = profile_for(rs).create_verdict("private")
         if verdict == "create_available":
             from pkcs11_check.testcases.conftest import import_rsa_private_key_negotiated
@@ -1273,14 +1405,23 @@ def provision_rsa_private_key(
     # ------------------------------------------------------------------
     # Unwrap path (or forced)
     # ------------------------------------------------------------------
-    # Compute PKCS#8 DER once here so it is available for all external-tier fallbacks below.
-    pkcs8 = rsa_pkcs8_from_crt(n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp)
+    # Preserve exact multi-prime corpus material. Ordinary two-prime callers keep the
+    # existing local CRT encoder and its validation behavior.
+    if multiprime_pkcs8:
+        assert pkcs8 is not None
+        pkcs8_material = pkcs8
+    else:
+        from pkcs11_check.raw.key_encoding import rsa_pkcs8_from_crt
+
+        pkcs8_material = rsa_pkcs8_from_crt(
+            n=n, e=e, d=d, p=p, q=q, dmp1=dmp1, dmq1=dmq1, iqmp=iqmp
+        )
 
     if mode == "off":
         return _external_or_skip(
             rs,
             cfg,
-            material=pkcs8,
+            material=pkcs8_material,
             label=label,
             key_type=CKK_RSA,
             obj_class="private",
@@ -1292,7 +1433,7 @@ def provision_rsa_private_key(
         return _external_or_skip(
             rs,
             cfg,
-            material=pkcs8,
+            material=pkcs8_material,
             label=label,
             key_type=CKK_RSA,
             obj_class="private",
@@ -1304,7 +1445,7 @@ def provision_rsa_private_key(
         return _external_or_skip(
             rs,
             cfg,
-            material=pkcs8,
+            material=pkcs8_material,
             label=label,
             key_type=CKK_RSA,
             obj_class="private",
@@ -1312,11 +1453,11 @@ def provision_rsa_private_key(
         )
 
     cap = strategy.max_target_size(ctx)
-    if cap is not None and len(pkcs8) > cap:
+    if cap is not None and len(pkcs8_material) > cap:
         return _external_or_skip(
             rs,
             cfg,
-            material=pkcs8,
+            material=pkcs8_material,
             label=label,
             key_type=CKK_RSA,
             obj_class="private",
@@ -1328,14 +1469,14 @@ def provision_rsa_private_key(
         return _external_or_skip(
             rs,
             cfg,
-            material=pkcs8,
+            material=pkcs8_material,
             label=label,
             key_type=CKK_RSA,
             obj_class="private",
             skip_msg=f"{label}: no wrapping path: resolved strategy has no unwrap handle",
         )
 
-    blob = strategy.wrap(ctx, pkcs8)
+    blob = strategy.wrap(ctx, pkcs8_material)
     unwrap_template: dict[Any, Any] = {CKA_CLASS: CKO_PRIVATE_KEY, CKA_KEY_TYPE: CKK_RSA}
     unwrap_template.update(attrs)
 
@@ -1556,8 +1697,8 @@ def external_provision(
     0600 temp file; substitutes {keyfile}/{label}/{key_type}/{key_class} into the
     command; runs it with a timeout; resolves the loaded object by CKA_LABEL via
     C_FindObjects. On success records a provisioning event + compliance.note and
-    returns the handle. Any failure (timeout / non-zero exit / not found / exception)
-    returns None — the caller decides whether to skip. NEVER raises.
+    returns the handle. Command-side failure (timeout / non-zero exit) or no matching
+    object returns None; provider lookup and harness errors propagate.
     """
     import contextlib
     import os
@@ -1630,15 +1771,12 @@ def external_provision(
             return None
 
         # Resolve the loaded object by CKA_LABEL.
-        try:
-            from pkcs11_check.raw.pack import template_from_dict
-            from pkcs11_check.raw.recipes import find_objects
+        from pkcs11_check.raw.pack import template_from_dict
+        from pkcs11_check.raw.recipes import find_objects
 
-            lbl_bytes: bytes = label.encode() if isinstance(label, str) else label
-            tmpl = template_from_dict({CKA_LABEL: lbl_bytes})
-            handles = find_objects(rs.raw, rs.sh, tmpl)
-        except Exception:  # noqa: BLE001
-            return None
+        lbl_bytes: bytes = label.encode() if isinstance(label, str) else label
+        tmpl = template_from_dict({CKA_LABEL: lbl_bytes})
+        handles = find_objects(rs.raw, rs.sh, tmpl)
 
         if not handles:
             return None

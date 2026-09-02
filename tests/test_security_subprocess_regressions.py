@@ -10,6 +10,7 @@ import pytest
 from pkcs11_check.testcases._probes import error_path_kwp as error_path_kwp_probe
 from pkcs11_check.testcases._probes import ffi_length as ffi_length_probe
 from pkcs11_check.testcases._probes.runner import ProbeResult
+from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases.security import (
     test_api_boundary,
     test_arithmetic_overflow,
@@ -322,6 +323,31 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
     assert probe_name == "ffi_length"
     assert params.get("probe") == "encrypt_isize"
     # The setup-reject logic must live in the probe child, keyed on AES_KEYGEN_RUNTIME_REJECT_RVS.
+
+
+@pytest.mark.parametrize(
+    ("rc", "stderr", "expected"),
+    [
+        (-11, "", "module crashed with signal 11"),
+        (0xC0000005, "", "module crashed with Windows exception"),
+        (124, SUBPROCESS_TIMEOUT_MARKER, "module hung"),
+    ],
+)
+def test_unbackable_length_setup_marker_never_hides_crash_or_timeout(
+    rc: int, stderr: str, expected: str
+) -> None:
+    try:
+        with pytest.raises(pytest.fail.Exception, match=expected):
+            test_ffi_length_boundary._classify_unhonorable_length_outcome(
+                rc,
+                "SETUP_XFAIL:AES setup failed before teardown\n",
+                stderr,
+                reject_rvs=(),
+                label_op="C_Encrypt(dataLen=2^63)",
+                test_id="near-size-max",
+            )
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"setup marker hid crash/timeout: {exc}")
 
 
 def test_ffi_length_keypair_child_scripts_mark_setup_reject(
@@ -1179,11 +1205,10 @@ def test_no_dead_setup_xfail_classify_blocks() -> None:
 def test_isize_boundary_lengths_includes_truncation_ids() -> None:
     """_ISIZE_BOUNDARY_LENGTHS must carry the un-honorable isize-boundary param ids.
 
-    Only un-honorable lengths (values that cannot be the size of any real buffer) are
-    sound for small-buffer reject probes: no addressable buffer that large can exist, so
-    rejection is the only valid module response.  Honorable ~4 GB truncation-revealing
-    values (trunc_low0, trunc_low8) were removed because a conformant 64-bit module
-    would try to honor them, over-reading the small buffer and causing caller-induced UB.
+    The normal lane keeps only unbackable near-SIZE_MAX values. A crash or hang stays a
+    finding, but definitive read-vs-write attribution requires the gated ASAN rerun because
+    the normal honeypot cannot map the claimed 2^63 bytes. Honorable ~4 GB values remain
+    out of this small-buffer lane for the same mapping-fidelity reason.
     """
     ids = [p.id for p in test_ffi_length_boundary._ISIZE_BOUNDARY_LENGTHS]
     assert "isize_max" in ids, "un-honorable isize_max param must be present"

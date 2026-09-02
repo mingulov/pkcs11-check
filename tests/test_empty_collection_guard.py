@@ -14,6 +14,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from pkcs11_check.core._report_records import _report_record_cache_dir
 from pkcs11_check.core.file_runner import (
     _NO_TESTS_COLLECTED_EXIT,
     IsolatedReportConfig,
@@ -65,3 +66,52 @@ def test_empty_units_writes_zero_total_report(tmp_path: Path) -> None:
     payload = json.loads(results_path.read_text(encoding="utf-8"))
     assert payload["summary"]["total"] == 0
     assert payload["units"] == []
+
+
+def test_fresh_empty_units_clear_stale_run_artifacts(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps({"units": ["old.py"], "fingerprint": "old", "results": []}),
+        encoding="utf-8",
+    )
+    state_file.with_name("state.json.recovery.jsonl").write_text("stale\n", encoding="utf-8")
+    cache_dir = _report_record_cache_dir(state_file)
+    cache_dir.mkdir()
+    (cache_dir / "old.jsonl").write_text('{"stale": true}\n', encoding="utf-8")
+
+    results_path = tmp_path / "results.json"
+    jsonl_path = tmp_path / "report.jsonl"
+    report_config = IsolatedReportConfig("json", results_path, jsonl_path)
+    for path in (
+        results_path,
+        jsonl_path,
+        tmp_path / "coverage.json",
+        tmp_path / "provisioning.json",
+        tmp_path / "quality.json",
+    ):
+        path.write_text("stale\n", encoding="utf-8")
+
+    exit_code = run_isolated_pytest_units(
+        [],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=report_config,
+        resume=False,
+        stop_on_failure=False,
+        console=_console(),
+        granularity="file",
+    )
+
+    assert exit_code == _NO_TESTS_COLLECTED_EXIT
+    assert json.loads(state_file.read_text(encoding="utf-8"))["units"] == []
+    assert not state_file.with_name("state.json.recovery.jsonl").exists()
+    assert not cache_dir.exists()
+    assert not jsonl_path.exists()
+    assert not (tmp_path / "coverage.json").exists()
+    assert not (tmp_path / "provisioning.json").exists()
+    assert json.loads(results_path.read_text(encoding="utf-8"))["summary"]["total"] == 0
+    assert (
+        json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))["summary"]["total"] == 0
+    )

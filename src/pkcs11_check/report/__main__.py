@@ -46,6 +46,16 @@ _DISCLAIMER = (
 )
 
 
+def _is_direct_ctypes_crash_test(test: object) -> bool:
+    """Recognize only a direct caught ctypes access violation in a test detail."""
+    if not isinstance(test, dict) or test.get("outcome") != "crashed":
+        return False
+    from pkcs11_check.core.crash_codes import ctypes_access_violation_from_stderr
+
+    longrepr = test.get("longrepr")
+    return isinstance(longrepr, str) and ctypes_access_violation_from_stderr(longrepr) is not None
+
+
 def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     """Build Classification-shaped crash findings from a ``results.json`` file.
 
@@ -75,6 +85,15 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
             rc_raw = unit.get("returncode")
             rc = -abs(int(rc_raw)) if isinstance(rc_raw, int) and rc_raw else None
             observation = _outer_execution(unit.get("executions"), status=status)
+            tests = unit.get("tests")
+            if (
+                type(rc_raw) is int
+                and rc_raw == 1
+                and observation is None
+                and isinstance(tests, list)
+                and any(_is_direct_ctypes_crash_test(test) for test in tests)
+            ):
+                continue
             if observation is not None:
                 termination = observation.get("termination")
                 raw_code = termination.get("raw_code") if isinstance(termination, dict) else None

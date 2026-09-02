@@ -23,6 +23,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EC_PARAMS,
     CKA_EC_POINT,
@@ -37,7 +38,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    EC_CURVE_UNSUPPORTED_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.keymgmt
 
@@ -58,9 +64,15 @@ def _make_ec_keypair(rs: Any, curve_name: str) -> tuple[int, int]:
     curve_oid = encode_named_curve_parameters(curve_name)
     try:
         return gen_ec_keypair(rs.raw, rs.sh, curve_oid)
-    except (AssertionError, OSError):
-        pytest.skip(f"Curve {curve_name} not supported")
-        raise  # unreachable, satisfies mypy
+    except CkrAssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            pytest.skip(f"Curve {curve_name} not supported")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            f"EC key generation advertised but {curve_name} keygen is not operational",
+        )
+        raise
 
 
 class TestECPublicKeyImport:
@@ -98,7 +110,7 @@ class TestECPublicKeyImport:
                     ec_point=ec_point_der,
                     attrs={CKA_VERIFY: True},
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     _EC_PUBLIC_IMPORT_REJECT_RVS,

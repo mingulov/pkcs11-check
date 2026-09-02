@@ -157,10 +157,13 @@ from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
 from pkcs11_check.core.report_log import (
+    SessionCompletionTracker as _SessionCompletionTracker,
+)
+from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
-    map_report_outcome as _map_outcome,
+    map_report_record_outcome as _map_record_outcome,
 )
 from pkcs11_check.core.run_metrics import (
     RESULT_OUTCOME_KEYS,
@@ -364,7 +367,7 @@ def postprocess_jsonl_to_unified(
     If ``provenance`` is provided, it is included in the output payload.
     """
     file_counts: dict[str, dict[str, int]] = {}
-    session_finished = False
+    completion = _SessionCompletionTracker()
 
     def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
         nodeid = str(rec.get("nodeid", ""))
@@ -373,24 +376,19 @@ def postprocess_jsonl_to_unified(
             return
         if file_part not in file_counts:
             file_counts[file_part] = _empty_counts()
-        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
+        outcome = _map_record_outcome(rec)
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
     def _records_with_completion() -> Iterator[dict[str, Any]]:
-        nonlocal session_finished
-        for record in _iter_report_log_records(jsonl_path):
-            if (
-                record.get("$report_type") == "SessionFinish"
-                and type(record.get("exitstatus")) is int
-            ):
-                session_finished = True
+        for record in _iter_report_log_records(jsonl_path, on_invalid=completion.invalidate):
+            completion.observe(record)
             yield record
 
     # Parse the JSONL once: build the aggregate detail and the per-file counts
     # from the same streaming record pass.
     detail = _build_detail_from_report_records(
         _records_with_completion(),
-        call_record_hook=_accumulate_file_count,
+        result_record_hook=_accumulate_file_count,
     )
     # An empty / vacuous JSONL (no records at all) returns None from the builder;
     # treat it as a zero-count run so we still produce a results.json payload.
@@ -440,9 +438,14 @@ def postprocess_jsonl_to_unified(
         has_failure = any(
             counts.get(key, 0) > 0 for key in ("failed", "error", "crashed", "timeout")
         )
+        status = (
+            "timeout"
+            if counts.get("timeout", 0)
+            else ("crashed" if counts.get("crashed", 0) else "failed")
+        )
         unit: dict[str, Any] = {
             "target": target,
-            "status": "failed" if has_failure else "passed",
+            "status": status if has_failure else "passed",
             "returncode": 1 if has_failure else 0,
             "duration_s": 0.0,
             "counts": counts,
@@ -462,8 +465,11 @@ def postprocess_jsonl_to_unified(
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = not session_finished
+    summary["incomplete"] = not completion.complete
     summary["incomplete"] = run_is_incomplete(summary, units)
+    if not completion.complete:
+        for unit in units:
+            unit["incomplete"] = True
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",

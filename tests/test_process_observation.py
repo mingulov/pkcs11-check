@@ -34,6 +34,35 @@ def test_windows_exception_keeps_signed_and_unsigned_codes() -> None:
     assert termination["windows_status"] == 0xC0000005
 
 
+def test_windows_ctypes_access_violation_in_child_stderr_is_an_exception() -> None:
+    termination = termination_from_returncode(
+        1,
+        platform="win32",
+        stderr="Traceback (most recent call last):\nOSError: exception: access violation reading 0",
+    )
+
+    assert termination["kind"] == "exception"
+    assert termination["raw_code"] == 1
+    assert termination["windows_status"] == 0xC0000005
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "OSError: generic provider error",
+        "a note mentions access violation but is not a traceback line",
+        "Traceback: OSError: exception: access violation reading 0",
+    ],
+)
+def test_windows_stderr_parser_does_not_promote_generic_exit(
+    stderr: str,
+) -> None:
+    termination = termination_from_returncode(1, platform="win32", stderr=stderr)
+
+    assert termination["kind"] == "exit"
+    assert termination["windows_status"] is None
+
+
 @pytest.mark.parametrize(
     ("returncode", "expected"),
     [

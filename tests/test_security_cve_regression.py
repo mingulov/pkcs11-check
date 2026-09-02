@@ -9,9 +9,11 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_NOT_WRAPPABLE,
+    CKR_MECHANISM_INVALID,
 )
 from pkcs11_check.testcases.security import test_cve_regression
 
@@ -76,7 +78,10 @@ def test_aes_ecb_boundary_lengths_aborts_after_rejected_invalid_length(
             raise AssertionError("Unexpected CK_RV CKR_OPERATION_ACTIVE")
         if len(data) % 16 != 0 or len(data) == 0:
             raw.active = True
-            raise AssertionError("Unexpected CK_RV CKR_DATA_LEN_RANGE")
+            raise CkrAssertionError(
+                "Unexpected CK_RV CKR_DATA_LEN_RANGE",
+                int(CKR_DATA_LEN_RANGE),
+            )
         return data
 
     monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_args, **_kwargs: 1)
@@ -99,7 +104,10 @@ def test_aes_ecb_boundary_lengths_fails_when_nonaligned_input_is_accepted(
             return data
         if len(data) == 1:
             return b"accepted"
-        raise AssertionError("Unexpected CK_RV CKR_DATA_LEN_RANGE")
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_DATA_LEN_RANGE",
+            int(CKR_DATA_LEN_RANGE),
+        )
 
     monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_cve_regression, "encrypt_single", _encrypt_single)
@@ -107,6 +115,47 @@ def test_aes_ecb_boundary_lengths_fails_when_nonaligned_input_is_accepted(
     monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_args: None)
 
     with pytest.raises(pytest.fail.Exception, match="accepted non-block-aligned"):
+        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(_session(raw))
+
+
+def test_aes_ecb_boundary_lengths_does_not_mask_non_ckr_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _EncryptStateRaw()
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(
+        test_cve_regression,
+        "encrypt_single",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("harness oracle failed")),
+    )
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(AssertionError, match="harness oracle failed"):
+        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(_session(raw))
+
+
+def test_aes_ecb_boundary_lengths_surfaces_unexpected_clean_ckr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _EncryptStateRaw()
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_a, **_k: 1)
+
+    def _encrypt_single(_raw: Any, _sh: int, _key: int, _mech: int, data: bytes) -> bytes:
+        if len(data) % 16 == 0 and data:
+            return data
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_INVALID",
+            int(CKR_MECHANISM_INVALID),
+        )
+
+    monkeypatch.setattr(
+        test_cve_regression,
+        "encrypt_single",
+        _encrypt_single,
+    )
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES-ECB non-block-aligned"):
         test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(_session(raw))
 
 

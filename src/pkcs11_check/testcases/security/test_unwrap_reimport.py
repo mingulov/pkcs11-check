@@ -52,6 +52,7 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     wrap_key,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
@@ -81,6 +82,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
     is_known_error,
@@ -304,33 +306,33 @@ class TestUnwrapTemplateBinding:
                 f"Tookan/Cryptosense binding test skipped (capability absent)"
             )
         if rv != CKR_OK:
-            pytest.skip(
-                f"Module refused wrapping-key creation with unexpected rv={rv!r}; "
-                f"CKA_UNWRAP_TEMPLATE binding test skipped"
+            classify_negative_rv(
+                rv,
+                _UNWRAP_TEMPLATE_KEYGEN_UNSUPPORTED_RVS,
+                label="C_GenerateKey with CKA_UNWRAP_TEMPLATE",
+                kind="policy",
             )
 
         wrap_h = wrap_h_handle.value
-        # The module accepted the keygen — the binding is *claimed*.
-        claimed = True
 
-        # Verify the module reflects the attribute (belt-and-suspenders claim check).
+        # CKR_OK is the claim. Missing readback means the module silently discarded it.
         try:
             reflected = read_attributes(rs.raw, rs.sh, wrap_h, [CKA_UNWRAP_TEMPLATE])
-            # If the attribute is absent or returns zero-length the module silently
-            # discarded it; treat that as not-claimed.
             ut_bytes = reflected.get(CKA_UNWRAP_TEMPLATE)
-            if not ut_bytes:
-                claimed = False
-        except AssertionError:  # audit-ok: template read-back unsupported; creation-accept is claim
-            # Read back of a template attribute may fail on some modules; treat
-            # accept-at-creation as the claim indicator.
-            pass
-
-        if not claimed:
+        except CkrAssertionError as exc:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
-            pytest.skip(
-                "Module accepted CKA_UNWRAP_TEMPLATE at keygen but did not reflect it; "
-                "treating as capability absent — binding test skipped"
+            xfail_if_known_ckr(
+                exc,
+                _WRAP_UNWRAP_OP_REJECT_RVS,
+                "Module accepted CKA_UNWRAP_TEMPLATE but could not read back the attribute",
+            )
+            raise
+        if not ut_bytes:
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+            classify_policy_enforcement(
+                claimed=True,
+                violated=True,
+                label="Module accepted but discarded CKA_UNWRAP_TEMPLATE",
             )
 
         # --- Wrap a target key -----------------------------------------------

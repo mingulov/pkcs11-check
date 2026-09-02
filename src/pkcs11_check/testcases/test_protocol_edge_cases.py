@@ -16,7 +16,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     generate_random,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_ENCAPSULATE,
@@ -31,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
+from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = pytest.mark.security
 
@@ -45,8 +46,16 @@ class TestResourceExhaustion:
         try:
             for _ in range(200):
                 keys.append(gen_aes_key(rs.raw, rs.sh, 128))
-        except AssertionError:
-            pass  # audit-ok: resource-exhaustion probe; a graceful clean rejection is acceptable
+        except CkrAssertionError as exc:
+            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                pass  # audit-ok: resource-exhaustion probe; typed clean limit is acceptable
+            else:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="C_GenerateKey resource-exhaustion refusal",
+                    kind="metadata",
+                )
         finally:
             for k in keys:
                 destroy_quietly(rs.raw, rs.sh, k)
@@ -69,8 +78,16 @@ class TestResourceExhaustion:
                         },
                     )
                 )
-        except AssertionError:
-            pass  # audit-ok: resource-exhaustion probe; a graceful clean limit is acceptable
+        except CkrAssertionError as exc:
+            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                pass  # audit-ok: resource-exhaustion probe; typed clean limit is acceptable
+            else:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="C_CreateObject resource-exhaustion refusal",
+                    kind="metadata",
+                )
         for o in objs:
             destroy_quietly(rs.raw, rs.sh, o)
 
@@ -156,16 +173,23 @@ class TestV240V32AttributeMix:
         # CKA_TOKEN=False is spec-legal on a keygen template (creates session key).
         # Crash-guard only: both acceptance and rejection are valid outcomes.
         try:
-            gen_rsa_keypair(
+            public, private = gen_rsa_keypair(
                 rs.raw,
                 rs.sh,
                 2048,
                 public_attrs={CKA_TOKEN: False},
             )
-        except CkrAssertionError:
-            pass  # audit-ok: spec-legal rejection (token-only policy) — crash is the finding
-        except (TypeError, AttributeError):
-            pass  # audit-ok: harness binding error on v3.2 attr type — not a module reject
+        except CkrAssertionError as exc:
+            if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKA_TOKEN=False RSA key-generation crash guard",
+                    kind="metadata",
+                )
+        else:
+            destroy_quietly(rs.raw, rs.sh, public)
+            destroy_quietly(rs.raw, rs.sh, private)
 
     def test_encapsulate_attr_on_non_pqc(
         self,
@@ -185,8 +209,6 @@ class TestV240V32AttributeMix:
             )
         except CkrAssertionError as _exc:
             exc = _exc
-        except (TypeError, AttributeError):
-            pass  # audit-ok: harness binding error on v3.2 attr type — not a module reject
         reject_or_classify(
             exc,
             (

@@ -15,6 +15,8 @@ import pytest
 from _pytest.outcomes import XFailed
 
 from pkcs11_check import compliance_profiles as cp
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
 from pkcs11_check.testcases import test_profiles as tp
 
 
@@ -54,13 +56,29 @@ def test_pubcert_find_failure_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cp, "PROFILE_TEST_EXCLUDED", set(), raising=False)
 
     def _raise_find(*_a: Any, **_k: Any) -> list[int]:
-        raise AssertionError("CKR_FUNCTION_FAILED")
+        raise CkrAssertionError("CKR_FUNCTION_FAILED", CKR_FUNCTION_FAILED)
 
     monkeypatch.setattr(tp, "find_objects", _raise_find)
     rs = SimpleNamespace(raw=object(), sh=1)
     with pytest.raises(XFailed):
         tp.TestProfileBehavioralConformance().test_advertised_profiles_have_required_object_classes(
             rs
+        )
+
+
+def test_pubcert_plain_assertion_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tp, "_read_profile_ids", lambda _rs: {0x00000004})
+    monkeypatch.setattr(cp, "lookup_profile", lambda _pid: _profile())
+    monkeypatch.setattr(cp, "PROFILE_TEST_EXCLUDED", set(), raising=False)
+    monkeypatch.setattr(
+        tp,
+        "find_objects",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("harness bug")),
+    )
+
+    with pytest.raises(AssertionError, match="harness bug"):
+        tp.TestProfileBehavioralConformance().test_advertised_profiles_have_required_object_classes(
+            SimpleNamespace(raw=object(), sh=1)
         )
 
 

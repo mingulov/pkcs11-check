@@ -31,6 +31,8 @@ _VECTOR_DEPENDENT_MODULES: dict[str, tuple[Path, ...]] = {
     "test_wycheproof_ecdh_guards.py": (WYCHEPROOF_DIR,),
     "test_wycheproof_ed25519_loader.py": (WYCHEPROOF_DIR,),
     "test_wycheproof_generic_guards.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_aes_mac_guards.py": (WYCHEPROOF_DIR,),
+    "test_wycheproof_chacha_guards.py": (WYCHEPROOF_DIR,),
     "test_wycheproof_rsa_loader.py": (WYCHEPROOF_DIR,),
     "test_wycheproof_rsa_oaep_import_classification.py": (WYCHEPROOF_DIR,),
     "test_wycheproof_rsa_siggen_runtime_classification.py": (WYCHEPROOF_DIR,),

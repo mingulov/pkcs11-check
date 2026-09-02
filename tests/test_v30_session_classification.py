@@ -39,12 +39,26 @@ def test_login_user_unexpected_clean_ckr_xfails(monkeypatch: pytest.MonkeyPatch)
         )
 
 
+def test_login_user_undefined_ckr_is_hard_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
+    monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: 0x12345678)
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        tv.TestCLoginUser().test_c_login_user_empty_username_user_type(
+            _session_with_login_user(), _Cfg()
+        )
+
+
 def test_login_user_already_logged_in_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
     monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: int(CKR_USER_ALREADY_LOGGED_IN))
     tv.TestCLoginUser().test_c_login_user_empty_username_user_type(
         _session_with_login_user(), _Cfg()
     )
+
+
+def test_session_cancel_undefined_ckr_is_hard_failure() -> None:
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        tv._handle_cancel_rv(0x12345678, "C_SessionCancel")
 
 
 def test_double_login_unexpected_clean_ckr_xfails(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -352,7 +352,7 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
         pytest.skip(f"Curve {curve} not supported (cached)")
 
     if defect := _CURVE_BINDING_DEFECTS.get(curve):
-        pytest.skip(f"Curve {curve} not honored by module (cached): {defect}")
+        pytest.skip(f"Curve {curve} not honored by module (already reported): {defect}")
 
     # Decode the signature BEFORE importing the key: this path returns/fails
     # without reaching the destroying try/finally, so an already-imported key
@@ -400,10 +400,23 @@ def test_ecdsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
         raise
 
     if curve not in _CURVE_BINDING_DEFECTS:
-        _CURVE_BINDING_DEFECTS[curve] = ec_public_key_binding_defect(rs, pub_key, ec_params)
+        defect = ec_public_key_binding_defect(rs, pub_key, ec_params)
+        _CURVE_BINDING_DEFECTS[curve] = defect
+        if defect:
+            destroy_quietly(rs.raw, rs.sh, pub_key)
+            classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"EC import coherence {curve}",
+                operation="C_CreateObject",
+                summary=(
+                    f"{curve}: C_CreateObject returned CKR_OK but the object is not "
+                    f"honored (lifecycle self-contradiction): {defect}"
+                ),
+            )
     if defect := _CURVE_BINDING_DEFECTS[curve]:
         destroy_quietly(rs.raw, rs.sh, pub_key)
-        pytest.skip(f"Curve {curve} not honored by module: {defect}")
+        pytest.skip(f"Curve {curve} not honored by module (already reported): {defect}")
 
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, CKM_ECDSA, digest, raw_sig)

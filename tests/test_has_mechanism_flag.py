@@ -56,9 +56,10 @@ def test_unknown_name_returns_false(monkeypatch):
     assert rs.has_mechanism_flag("NOT_A_REAL_MECH", int(CKF_VERIFY)) is False
 
 
-def test_getmechinfo_error_returns_false(monkeypatch):
+def test_getmechinfo_error_is_not_converted_to_flag_absent(monkeypatch):
     rs, _ = _session(monkeypatch, flags=int(CKF_VERIFY), raises=True)
-    assert rs.has_mechanism_flag("RSA_PKCS", int(CKF_VERIFY)) is False
+    with pytest.raises(CkrAssertionError):
+        rs.has_mechanism_flag("RSA_PKCS", int(CKF_VERIFY))
 
 
 def test_result_is_cached(monkeypatch):

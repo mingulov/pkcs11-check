@@ -28,6 +28,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.testcases._provisioning import (
     ProvisioningEvent,
     clear_provisioning_events,
@@ -109,6 +110,57 @@ def test_happy_path_returns_handle_and_records_event(
     assert ProvisioningEvent("secret", "ran_via_external") in events, (
         f"expected ran_via_external event in {events}"
     )
+
+
+def test_find_objects_access_violation_is_not_an_unavailable_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_proc = MagicMock(returncode=0)
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: fake_proc)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.find_objects",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("exception: access violation reading 0x0")),
+    )
+
+    with pytest.raises(OSError, match="access violation"):
+        external_provision(
+            _make_rs(),
+            _make_cfg(),
+            material=_MATERIAL,
+            label="mykey",
+            key_type=3,
+            obj_class="secret",
+        )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        CkrAssertionError("undefined provider return", 0x12345678),
+        AssertionError("binding bug"),
+    ],
+)
+def test_find_objects_error_is_not_an_unavailable_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+) -> None:
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: MagicMock(returncode=0))
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.find_objects",
+        lambda *_a, **_k: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(type(error)) as caught:
+        external_provision(
+            _make_rs(),
+            _make_cfg(),
+            material=_MATERIAL,
+            label="mykey",
+            key_type=3,
+            obj_class="secret",
+        )
+
+    assert caught.value is error
 
 
 def test_happy_path_temp_file_deleted_after_call(

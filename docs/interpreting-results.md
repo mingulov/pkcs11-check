@@ -18,7 +18,9 @@ The dominant `not_operational` pattern is an advertised **mechanism** (e.g. `CKM
 
 When a module crashes repeatedly in one file, the runner abandons that file's remaining tests after `--max-crashes-per-file` (default 10) and records them as `crash_limited` (a skipped-class outcome counted in `total`). `summary.incomplete` is then true and the report shows an INCOMPLETE COVERAGE banner. These tests' true outcome is unknown - re-run to probe them.
 
-**Resume caveat:** a resumed run does not re-attempt `crash_limited` units (they are in `_RESUME_COMPLETE_STATUSES`); a fresh run is required to re-probe them.
+**Resume caveat:** resume is continuation-only: it skips every target already attempted in the
+saved state, including `crash_limited`, crashed, timed-out, failed, and incomplete targets. Start
+a fresh run without `--resume` to clear the prior generation and re-probe any of them.
 
 ## `hollow_coverage` - green that did not actually run the operation
 

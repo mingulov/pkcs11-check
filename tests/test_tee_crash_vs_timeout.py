@@ -14,9 +14,14 @@ import os
 import signal
 import sys
 import time
+from typing import Any
 
+import pytest
+
+from pkcs11_check.core import file_runner as file_runner_mod
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.core.file_runner import _run_subprocess_tee
+from pkcs11_check.core.process_observation import build_process_observation
 
 # Direct child spawns a grandchild that inherits stdout/stderr (close_fds keeps
 # 0/1/2) and sleeps, holding the pipe open; then the child kills itself abruptly so its
@@ -106,6 +111,29 @@ def test_tee_captures_both_streams_and_returncode() -> None:
     assert rc == 3, rc
     assert "OUT-marker" in out, out
     assert "ERR-marker" in err, err
+
+
+def test_tee_passes_caught_windows_access_violation_to_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def windows_observation(*args: Any, **kwargs: Any) -> dict[str, object]:
+        return build_process_observation(*args, platform="win32", **kwargs)
+
+    monkeypatch.setattr(file_runner_mod, "build_process_observation", windows_observation)
+    script = (
+        "import sys\n"
+        "sys.stderr.write('Traceback (most recent call last):\\n'"
+        " + 'OSError: exception: access violation reading 0x0\\n')\n"
+        "sys.exit(1)\n"
+    )
+
+    rc, _out, _err, observation = _run_subprocess_tee(
+        [sys.executable, "-c", script], env=dict(os.environ), timeout=10
+    )
+
+    assert rc == 1
+    assert observation["termination"]["kind"] == "exception"  # type: ignore[index]
+    assert observation["termination"]["windows_status"] == 0xC0000005  # type: ignore[index]
 
 
 def test_tee_captures_output_larger_than_pipe_buffer() -> None:

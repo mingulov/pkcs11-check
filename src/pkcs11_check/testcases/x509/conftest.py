@@ -3,22 +3,20 @@
 from __future__ import annotations
 
 import base64
-import datetime
 import functools
 from typing import Any
 
 import pytest
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import serialization
 
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.recipes import (
     create_object,
-    destroy_quietly,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_CATEGORY,
     CKA_CERTIFICATE_TYPE,
@@ -37,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKC_X_509,
     CKO_CERTIFICATE,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -44,6 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_HANDLE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_TYPE_INVALID,
 )
 from pkcs11_check.testcases.data import X509_LIMBO_DIR, load_json_cached
 
@@ -64,6 +64,7 @@ _CERT_STORAGE_REFUSAL_CKRS: tuple[int, ...] = (
     int(CKR_ATTRIBUTE_TYPE_INVALID),
     int(CKR_FUNCTION_NOT_SUPPORTED),
     int(CKR_ARGUMENTS_BAD),
+    int(CKR_USER_TYPE_INVALID),
 )
 
 # Non-clean-refusal codes a KMS-style module returns when it stores no certificate
@@ -76,6 +77,31 @@ _CERT_STORAGE_NOT_OPERATIONAL_CKRS: tuple[int, ...] = (int(CKR_GENERAL_ERROR),)
 # slot_id -> can store a cert object. Process-global per slot (cert-storage capability is
 # stable for a slot across a run), mirroring the _IMPORT_SHAPE_WINNERS cache convention.
 _CERT_STORAGE_SUPPORTED: dict[int, bool] = {}
+
+# C_GetAttributeValue may report these cleanly when a derived attribute is not
+# available.  Any other CK_RV is an unexpected provider/harness failure.
+_ATTRIBUTE_UNAVAILABLE_RVS: frozenset[int] = frozenset(
+    {int(CKR_ATTRIBUTE_SENSITIVE), int(CKR_ATTRIBUTE_TYPE_INVALID)}
+)
+
+
+def classify_positive_ckr(exc: CkrAssertionError, *, label: str, summary: str) -> None:
+    """Expose a positive-operation refusal without trusting undefined CK_RVs."""
+    if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            actual=exc.rv,
+            summary=f"{summary}: undefined CK_RV {exc.rv:#x}",
+        )
+    xfail_as(
+        "not_operational",
+        kind="metadata",
+        label=label,
+        actual=exc.rv,
+        summary=f"{summary}: clean refusal with CK_RV {exc.rv:#x}",
+    )
 
 
 @functools.cache
@@ -299,7 +325,16 @@ def verify_attribute_parity(
             _to_hex(expected_subject),
             True,
         )
-    except (AssertionError, KeyError):
+    except CkrAssertionError as exc:
+        if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
+            raise
+        results["SUBJECT"] = (
+            None,
+            None,
+            _to_hex(cert.subject.public_bytes(serialization.Encoding.DER)),
+            True,
+        )
+    except KeyError:
         results["SUBJECT"] = (
             None,
             None,
@@ -318,7 +353,16 @@ def verify_attribute_parity(
             _to_hex(expected_issuer),
             True,
         )
-    except (AssertionError, KeyError):
+    except CkrAssertionError as exc:
+        if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
+            raise
+        results["ISSUER"] = (
+            None,
+            None,
+            _to_hex(cert.issuer.public_bytes(serialization.Encoding.DER)),
+            True,
+        )
+    except KeyError:
         results["ISSUER"] = (
             None,
             None,
@@ -344,7 +388,11 @@ def verify_attribute_parity(
             _to_hex(expected_serial_der),
             True,
         )
-    except (AssertionError, KeyError):
+    except CkrAssertionError as exc:
+        if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
+            raise
+        results["SERIAL_NUMBER"] = (None, None, None, True)
+    except KeyError:
         results["SERIAL_NUMBER"] = (None, None, None, True)
 
     # CKA_START_DATE (Optional)
@@ -361,7 +409,11 @@ def verify_attribute_parity(
                 str(expected_start),
                 False,
             )
-    except (AssertionError, KeyError):
+    except CkrAssertionError as exc:
+        if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
+            raise
+        results["START_DATE"] = (None, None, None, False)
+    except KeyError:
         results["START_DATE"] = (None, None, None, False)
 
     # CKA_END_DATE (Optional)
@@ -378,7 +430,11 @@ def verify_attribute_parity(
                 str(expected_end),
                 False,
             )
-    except (AssertionError, KeyError):
+    except CkrAssertionError as exc:
+        if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
+            raise
+        results["END_DATE"] = (None, None, None, False)
+    except KeyError:
         results["END_DATE"] = (None, None, None, False)
 
     # CKA_PUBLIC_KEY_INFO (v3.0+)
@@ -395,7 +451,11 @@ def verify_attribute_parity(
             _to_hex(expected_pk_info),
             False,
         )
-    except (AssertionError, KeyError):
+    except CkrAssertionError as exc:
+        if exc.rv not in _ATTRIBUTE_UNAVAILABLE_RVS:
+            raise
+        results["PUBLIC_KEY_INFO"] = (None, None, None, False)
+    except KeyError:
         results["PUBLIC_KEY_INFO"] = (None, None, None, False)
 
     return results
@@ -461,8 +521,8 @@ def import_cert_object(
 
     try:
         return create_object(raw, sh, tmpl)
-    except AssertionError as e:
-        if "CKR_ATTRIBUTE_VALUE_INVALID" not in str(e):
+    except CkrAssertionError as e:
+        if e.rv != int(CKR_ATTRIBUTE_VALUE_INVALID):
             raise
         if interface_version < "3.0":
             raise
@@ -499,8 +559,8 @@ def import_cert_raw(
 
     try:
         return create_object(raw, sh, minimal), False
-    except AssertionError as e:
-        if "CKR_TEMPLATE_INCOMPLETE" not in str(e):
+    except CkrAssertionError as e:
+        if e.rv != int(CKR_TEMPLATE_INCOMPLETE):
             raise
 
     # Module requires explicit SUBJECT/ISSUER/SERIAL_NUMBER
@@ -576,41 +636,10 @@ def limbo_available() -> None:
 
 
 @pytest.fixture
-def cert_support(
-    p11_raw_session: Any,
-    p11_interface_version: str,
-) -> bool:
-    """Probe if the PKCS#11 module supports CKO_CERTIFICATE objects."""
-    rs = p11_raw_session
-    key = rsa.generate_private_key(65537, 2048)
-    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "probe")])
-    probe_cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.UTC))
-        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
-        .sign(key, hashes.SHA256())
-    )
-    probe_der = probe_cert.public_bytes(serialization.Encoding.DER)
-
-    try:
-        h = import_cert_object(
-            rs.raw,
-            rs.sh,
-            probe_der,
-            interface_version=p11_interface_version,
-            extra_attrs={
-                CKA_LABEL: "probe",
-                CKA_TOKEN: False,
-            },
-        )
-        destroy_quietly(rs.raw, rs.sh, h)
-        return True
-    except AssertionError:
-        return False
+def cert_support(p11_raw_session: Any) -> bool:
+    """Require the shared exhaustive CKO_CERTIFICATE storage probe."""
+    skip_unless_cert_storage(p11_raw_session)
+    return True
 
 
 @pytest.fixture(scope="session")

@@ -19,8 +19,8 @@ from pkcs11_check.raw.types_std import (
 )
 
 
-def _make_rs(sh: int, *, has_mech: bool) -> object:
-    """Synthetic RS object: no real module; has_mechanism always returns has_mech."""
+def _make_rs(sh: int, *, has_mech: bool, has_unwrap: bool | None = None) -> object:
+    """Synthetic RS object: no real module; mechanism and unwrap flags are configurable."""
     return type(
         "RS",
         (),
@@ -29,12 +29,17 @@ def _make_rs(sh: int, *, has_mech: bool) -> object:
             "sh": sh,
             "slot_id": 0,
             "has_mechanism": lambda self, n: has_mech,
+            "has_mechanism_flag": lambda self, n, flag: (
+                has_mech and (has_unwrap if has_unwrap is not None else True)
+            ),
         },
     )()
 
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +190,17 @@ def test_supports_unwrap_mech_false() -> None:
     rs = _make_rs(sh=7, has_mech=False)
     prof = _prov.profile_for(rs)
     assert prof.supports_unwrap_mech(int(CKM_AES_KEY_WRAP_KWP)) is False
+
+
+def test_supports_unwrap_mech_rejects_wrap_only_advertisement() -> None:
+    """A listed mechanism without CKF_UNWRAP is not an unwrap provisioning path."""
+    from pkcs11_check.raw.types_std import CKM_RSA_AES_KEY_WRAP
+
+    _reset_cache()
+
+    rs = _make_rs(sh=12, has_mech=True, has_unwrap=False)
+    prof = _prov.profile_for(rs)
+    assert prof.supports_unwrap_mech(int(CKM_RSA_AES_KEY_WRAP)) is False
 
 
 # ---------------------------------------------------------------------------

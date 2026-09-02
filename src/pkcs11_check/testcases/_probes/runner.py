@@ -133,7 +133,9 @@ def run_probe(
         else:
             ingest_subprocess_coverage(cov_path)  # I6
 
-        observation = build_process_observation(probe, "probe", 0, rc, timed_out=timed_out)
+        observation = build_process_observation(
+            probe, "probe", 0, rc, timed_out=timed_out, stderr=err
+        )
         record_process_observation(observation)
         return ProbeResult(returncode=rc, stdout=out, stderr=err, observation=observation)
     finally:

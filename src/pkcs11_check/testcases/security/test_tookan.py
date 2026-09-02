@@ -26,7 +26,7 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     wrap_key,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -46,8 +46,11 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_WRAP,
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -66,11 +69,30 @@ from pkcs11_check.testcases.conftest import (
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
     is_known_error,
+    reject_or_classify,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
+
+_CONFLICTING_USAGE_POLICY_REJECT_RVS = {
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+}
+
+_COPY_ESCALATION_REJECT_RVS = {
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+}
+
+_WRAP_DECRYPT_BLOCKED_RVS = {
+    CKR_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+}
 
 _TYPE_CONFUSION_WRAP_INAPPLICABLE_RVS = {
     CKR_ACTION_PROHIBITED,
@@ -157,8 +179,14 @@ class TestConflictingUsageAttrs:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, key)
-        except AssertionError:
-            return  # audit-ok: policy probe; strict module rejecting conflicting attrs is correct
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                _CONFLICTING_USAGE_POLICY_REJECT_RVS,
+                label="AES key generation with conflicting WRAP+DECRYPT usage",
+                kind="policy",
+            )
+            return
 
         from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -182,8 +210,14 @@ class TestConflictingUsageAttrs:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, key)
-        except AssertionError:
-            return  # audit-ok: policy probe; a strict module rejecting this is correct
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                _CONFLICTING_USAGE_POLICY_REJECT_RVS,
+                label="AES key generation with conflicting ENCRYPT+UNWRAP usage",
+                kind="policy",
+            )
+            return
 
         from pkcs11_check.compliance import ComplianceLevel, note
 
@@ -212,9 +246,8 @@ class TestSensitivePreservation:
                     key,
                     {CKA_LABEL: "copy-sensitive"},
                 )
-            except AssertionError as exc:
-                exc_msg = str(exc)
-                if "CKR_FUNCTION_NOT_SUPPORTED" in exc_msg:
+            except CkrAssertionError as exc:
+                if exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
                     return  # Copy not supported - ok
                 raise
             try:
@@ -253,8 +286,14 @@ class TestSensitivePreservation:
                     key,
                     {CKA_EXTRACTABLE: True},
                 )
-            except AssertionError:
-                return  # audit-ok: policy probe; rejecting the escalation attempt is correct
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _COPY_ESCALATION_REJECT_RVS,
+                    label="C_CopyObject CKA_EXTRACTABLE False-to-True escalation",
+                    kind="policy",
+                )
+                return
 
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_EXTRACTABLE])
@@ -336,8 +375,14 @@ class TestWrapExtraction:
             # Attacker decrypts the wrapped blob with the dual-purpose key.
             try:
                 recovered = decrypt_single(rs.raw, rs.sh, wrap_key_h, CKM_AES_ECB, wrapped)
-            except AssertionError:
-                recovered = b""  # Module declined to decrypt the wrapped blob.
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _WRAP_DECRYPT_BLOCKED_RVS,
+                    label="Tookan wrap-extraction decrypt rejected",
+                    kind="policy",
+                )
+                return
 
             # AES-KEY-WRAP adds an 8-byte integrity prefix, so a 16-byte key
             # wraps to 24 bytes; recovering >= the key length of plaintext means

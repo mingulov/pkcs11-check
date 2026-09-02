@@ -10,8 +10,11 @@ from _pytest.outcomes import Failed, XFailed
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
     CKA_VALUE,
+    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_KEY_UNEXTRACTABLE,
 )
@@ -21,6 +24,44 @@ from pkcs11_check.testcases.security import test_tookan
 def _session(*mechanisms: str) -> SimpleNamespace:
     supported = set(mechanisms) or {"AES_KEY_WRAP", "AES_KEY_GEN"}
     return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name in supported)
+
+
+def _run_sensitive_copy(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> None:
+    monkeypatch.setattr(test_tookan, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(
+        test_tookan,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_SENSITIVE: True},
+    )
+    monkeypatch.setattr(
+        test_tookan,
+        "copy_object",
+        lambda *_a, **_k: (_ for _ in ()).throw(exc),
+    )
+    monkeypatch.setattr(test_tookan, "destroy_quietly", lambda *_a: None)
+    test_tookan.TestSensitivePreservation().test_sensitive_preserved_on_copy(_session())
+
+
+def test_sensitive_copy_allows_exact_function_absence(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_sensitive_copy(
+        monkeypatch,
+        CkrAssertionError("copy unavailable", int(CKR_FUNCTION_NOT_SUPPORTED)),
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        AssertionError("harness bug mentioning CKR_FUNCTION_NOT_SUPPORTED"),
+        CkrAssertionError("misleading CKR_FUNCTION_NOT_SUPPORTED text", 0x12345678),
+    ],
+)
+def test_sensitive_copy_does_not_match_ckr_text(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> None:
+    with pytest.raises(type(exc)) as caught:
+        _run_sensitive_copy(monkeypatch, exc)
+    assert caught.value is exc
 
 
 def _run_key_type_confusion_until_wrap(
@@ -88,6 +129,7 @@ def _run_wrap_extraction(
     monkeypatch: pytest.MonkeyPatch,
     *,
     wrap_exc: CkrAssertionError | None = None,
+    decrypt_exc: BaseException | None = None,
     recovered: bytes = b"",
     claimed_protected: bool = True,
 ) -> None:
@@ -105,7 +147,13 @@ def _run_wrap_extraction(
         "read_attributes",
         lambda *_a, **_k: {CKA_EXTRACTABLE: not claimed_protected},
     )
-    monkeypatch.setattr(test_tookan, "decrypt_single", lambda *_a, **_k: recovered)
+
+    def _decrypt(*_a: object, **_k: object) -> bytes:
+        if decrypt_exc is not None:
+            raise decrypt_exc
+        return recovered
+
+    monkeypatch.setattr(test_tookan, "decrypt_single", _decrypt)
 
     test_tookan.TestWrapExtraction().test_wrap_decrypt_extraction_attempt(_session())
 
@@ -158,3 +206,56 @@ def test_wrap_extraction_leak_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_wrap_extraction_no_leak_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     # Wrap succeeded but the decrypt leg recovers nothing usable -> no extraction.
     _run_wrap_extraction(monkeypatch, recovered=b"", claimed_protected=True)
+
+
+def test_wrap_extraction_exact_decrypt_length_reject_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _run_wrap_extraction(
+        monkeypatch,
+        decrypt_exc=CkrAssertionError(
+            "Unexpected CK_RV CKR_DATA_LEN_RANGE",
+            int(CKR_DATA_LEN_RANGE),
+        ),
+    )
+
+
+def test_wrap_extraction_other_decrypt_reject_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(XFailed, match="decrypt rejected"):
+        _run_wrap_extraction(
+            monkeypatch,
+            decrypt_exc=CkrAssertionError(
+                "Unexpected CK_RV CKR_DEVICE_ERROR",
+                int(CKR_DEVICE_ERROR),
+            ),
+        )
+
+
+def test_wrap_extraction_does_not_mask_decrypt_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(AssertionError, match="harness oracle failed"):
+        _run_wrap_extraction(
+            monkeypatch,
+            decrypt_exc=AssertionError("harness oracle failed"),
+        )
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["test_wrap_and_decrypt_on_same_key", "test_encrypt_and_unwrap_on_same_key"],
+)
+def test_conflicting_usage_creation_does_not_mask_non_ckr_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+) -> None:
+    monkeypatch.setattr(
+        test_tookan,
+        "gen_aes_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("harness setup failed")),
+    )
+
+    with pytest.raises(AssertionError, match="harness setup failed"):
+        getattr(test_tookan.TestConflictingUsageAttrs(), method_name)(_session())

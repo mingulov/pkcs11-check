@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -102,7 +103,9 @@ class _ProbeTeardown:
 
     Extracted from ``probe_main`` so the run-at-most-once contract is directly testable. It is
     both registered via ``atexit`` and exposed as ``ctx.cleanup`` (a probe may trigger it
-    explicitly), so double invocation must be a no-op after the first run.
+    explicitly). ``probe_main`` also invokes it from normal control flow so an access violation
+    cannot be hidden by Python's atexit exception handling. Double invocation is a no-op after
+    the first run.
     """
 
     def __init__(self, raw: RawPKCS11) -> None:
@@ -121,7 +124,10 @@ class _ProbeTeardown:
         if self.initialized:
             try:
                 self.raw.C_Finalize(None)
-            except (AttributeError, OSError, ctypes.ArgumentError):
+            except OSError as exc:
+                if ctypes_access_violation_code(exc) is not None:
+                    raise
+            except (AttributeError, ctypes.ArgumentError):
                 pass
 
 
@@ -157,44 +163,49 @@ def probe_main(
     teardown = _ProbeTeardown(raw)
     atexit.register(teardown)
 
-    slot_id = params.slot_id
-    ctx = ProbeContext(
-        raw=raw, sh=None, slot_id=slot_id, cleanup=teardown, module_path=params.module_path
-    )
+    try:
+        slot_id = params.slot_id
+        ctx = ProbeContext(
+            raw=raw, sh=None, slot_id=slot_id, cleanup=teardown, module_path=params.module_path
+        )
 
-    if level == Level.LOAD:
+        if level == Level.LOAD:
+            run_fn(ctx, params.extra)
+            return
+
+        # --- C_Initialize (all levels above LOAD) ---
+        rv = raw.C_Initialize(None)
+        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
+        teardown.initialized = True
+
+        if level == Level.INIT:
+            run_fn(ctx, params.extra)
+            return
+
+        # --- Slot discovery (SESSION and LOGIN) ---
+        # params.slot_id is a slot INDEX (config.slot semantics), not a raw slot ID: resolve it
+        # through the present-token slot list exactly as fixtures.py does. Passing the raw index to
+        # C_OpenSession crashes with CKR_SLOT_ID_INVALID on dynamic-slot modules (index != id).
+        slots = get_slot_ids(raw)
+        if not slots:
+            print("SETUP_XFAIL:no slot with a present token")
+            return
+        slot_id = resolve_slot_id(slots, slot_id)
+        ctx.slot_id = slot_id
+
+        # --- Open session ---
+        sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        teardown.sh = sh
+        ctx.sh = sh
+
+        # --- Login (I3: only when PIN env var is set; never call login with None PIN) ---
+        if level == Level.LOGIN:
+            pin = os.environ.get("_P11CHECK_PIN")
+            if pin is not None:
+                login_user(raw, sh, CKU_USER, pin.encode())
+
         run_fn(ctx, params.extra)
-        return
-
-    # --- C_Initialize (all levels above LOAD) ---
-    rv = raw.C_Initialize(None)
-    assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
-    teardown.initialized = True
-
-    if level == Level.INIT:
-        run_fn(ctx, params.extra)
-        return
-
-    # --- Slot discovery (SESSION and LOGIN) ---
-    # params.slot_id is a slot INDEX (config.slot semantics), not a raw slot ID: resolve it
-    # through the present-token slot list exactly as fixtures.py does. Passing the raw index to
-    # C_OpenSession crashes with CKR_SLOT_ID_INVALID on dynamic-slot modules (index != id).
-    slots = get_slot_ids(raw)
-    if not slots:
-        print("SETUP_XFAIL:no slot with a present token")
-        return
-    slot_id = resolve_slot_id(slots, slot_id)
-    ctx.slot_id = slot_id
-
-    # --- Open session ---
-    sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
-    teardown.sh = sh
-    ctx.sh = sh
-
-    # --- Login (I3: only when PIN env var is set; never call login with None PIN) ---
-    if level == Level.LOGIN:
-        pin = os.environ.get("_P11CHECK_PIN")
-        if pin is not None:
-            login_user(raw, sh, CKU_USER, pin.encode())
-
-    run_fn(ctx, params.extra)
+    finally:
+        # Do teardown in ordinary control flow: exceptions raised by atexit handlers do not
+        # affect the child exit code, which would otherwise hide a Windows provider fault.
+        teardown()

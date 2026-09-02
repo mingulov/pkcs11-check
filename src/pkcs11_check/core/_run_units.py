@@ -60,6 +60,7 @@ class FileRunResult:
     duration_s: float
     stdout: str = ""
     stderr: str = ""
+    completion_verified: bool = True
 
 
 @dataclass
@@ -72,6 +73,11 @@ class FileRunState:
     report_records_by_unit: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     process_observations: list[dict[str, Any]] = field(default_factory=list)
     process_observations_complete: bool = True
+    # Attempts superseded by daemon recovery remain visible here even though their ordinary
+    # results are removed before retry.  Keep this as JSON-shaped data for legacy state files and
+    # forward-compatible additions to the recovery evidence contract.
+    attempt_history: list[dict[str, Any]] = field(default_factory=list)
+    recovery_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -113,6 +119,7 @@ def _state_summary(state: FileRunState) -> dict[str, int]:
     summary: dict[str, int] = {}
     for result in state.results:
         summary[result.status] = summary.get(result.status, 0) + 1
+    summary["incomplete"] = sum(not result.completion_verified for result in state.results)
     summary["total"] = len(state.results)
     return summary
 

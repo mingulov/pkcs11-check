@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_from_stderr
+
 # The full set of test-outcome counters carried in a results.json ``summary`` and
 # summed into ``summary["total"]``. ``crash_limited`` (a skipped-class outcome for
 # tests abandoned after the per-file crash budget is exhausted) is last so the
@@ -58,11 +60,12 @@ def compute_child_subprocess_counts(units: Iterable[Mapping[str, Any]]) -> tuple
             if isinstance(tests, list)
             else []
         )
-        failed_nodeids = {
-            str(record.get("nodeid"))
+        failed_records = {
+            str(record.get("nodeid")): record
             for record in test_records
             if record.get("outcome") == "failed" and record.get("nodeid")
         }
+        failed_nodeids = set(failed_records)
         structured = unit.get("executions")
         structured_nested = (
             [
@@ -84,6 +87,18 @@ def compute_child_subprocess_counts(units: Iterable[Mapping[str, Any]]) -> tuple
                 termination = record.get("termination")
                 kind = termination.get("kind") if isinstance(termination, Mapping) else None
                 if kind in {"signal", "exception", "external-kill"}:
+                    child_crash += 1
+                elif (
+                    isinstance(termination, Mapping)
+                    and kind == "exit"
+                    and termination.get("raw_code") == 1
+                    and (
+                        parent_record := failed_records.get(str(record.get("parent_nodeid") or ""))
+                    )
+                    is not None
+                    and ctypes_access_violation_from_stderr(str(parent_record.get("longrepr", "")))
+                    is not None
+                ):
                     child_crash += 1
                 elif kind == "timeout":
                     child_timeout += 1
@@ -114,5 +129,10 @@ def run_is_incomplete(summary: Mapping[str, Any], units: Iterable[Mapping[str, A
         bool(summary.get("incomplete", False))
         or int(summary.get("crash_limited", 0) or 0) > 0
         or int(summary.get("timeout", 0) or 0) > 0
-        or any(unit.get("status") == "timeout" for unit in units)
+        or any(
+            unit.get("status") == "timeout"
+            or unit.get("incomplete") is True
+            or unit.get("completion_verified") is False
+            for unit in units
+        )
     )

@@ -38,9 +38,11 @@ from pkcs11_check.testcases._operability import (
     xfail_vacuous_reject,
 )
 from pkcs11_check.testcases.conftest import (
+    KEYPAIR_RUNTIME_REJECT_RVS,
     assert_correct,
     import_secret_key_negotiated,
     is_known_error,
+    xfail_if_known_ckr,
 )
 
 # GCM-SIV is not a standard PKCS#11 mechanism; use vendor extension if available
@@ -163,6 +165,19 @@ def _import_aes_key(
     return import_secret_key_negotiated(rs, int(CKK_AES), key_bytes, attrs=attrs)
 
 
+def _import_aes_key_for_decrypt(rs: Any, key_bytes: bytes, mech_name: str) -> int:
+    """Import a decrypt key, keeping setup CKRs out of data-result routing."""
+    try:
+        return _import_aes_key(rs, key_bytes, encrypt=False, decrypt=True)
+    except CkrAssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            f"{mech_name} advertised but decrypt key import is not operational",
+        )
+    raise
+
+
 def run_gcm_encrypt_test(
     p11_module_session: Any,
     vec_id: str,
@@ -279,24 +294,14 @@ def run_gcm_decrypt_test(
     aad = vec.get("aad") or None
     test_passed = vec["test_passed"]
 
-    try:
-        gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
-    except (AssertionError, ValueError, TypeError):
-        xfail_as(
-            "not_operational",
-            kind="crypto",
-            label="AES_GCM:decrypt",
-            summary=f"Binding rejects GCM params iv={len(iv)}B tag={tag_bytes}B",
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
-        )
+    gcm_param = mech_gcm(CKM_AES_GCM, iv, aad=aad, tag_bits=vec["tag_len_bits"])
 
     ct_with_tag = vec["ct"] + vec["tag"]
 
     key = 0
     try:
+        key = _import_aes_key_for_decrypt(rs, vec["key"], "AES_GCM")
         try:
-            key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -305,7 +310,7 @@ def run_gcm_decrypt_test(
                 ct_with_tag,
                 mech_param=gcm_param,
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if is_known_error(exc, _GCM_DATA_REJECTS):
                 if not test_passed:
                     xfail_vacuous_reject(
@@ -496,28 +501,18 @@ def run_ccm_decrypt_test(
     aad = vec.get("aad") or None
     test_passed = vec["test_passed"]
 
-    try:
-        ccm_param = mech_ccm(
-            CKM_AES_CCM,
-            nonce,
-            data_len=len(vec["ct"]) - vec["tag_len"],
-            aad=aad,
-            mac_len=vec["tag_len"],
-        )
-    except (AssertionError, ValueError, TypeError) as exc:
-        xfail_as(
-            "not_operational",
-            kind="crypto",
-            label="AES_CCM:decrypt",
-            summary=f"Binding rejects CCM params: {exc}",
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
-        )
+    ccm_param = mech_ccm(
+        CKM_AES_CCM,
+        nonce,
+        data_len=len(vec["ct"]) - vec["tag_len"],
+        aad=aad,
+        mac_len=vec["tag_len"],
+    )
 
     key = 0
     try:
+        key = _import_aes_key_for_decrypt(rs, vec["key"], "AES_CCM")
         try:
-            key = _import_aes_key(rs, vec["key"], encrypt=False, decrypt=True)
             pt = decrypt_single(
                 rs.raw,
                 rs.sh,
@@ -526,7 +521,7 @@ def run_ccm_decrypt_test(
                 vec["ct"],
                 mech_param=ccm_param,
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if is_known_error(exc, _CCM_DATA_REJECTS):
                 if not test_passed:
                     xfail_vacuous_reject(

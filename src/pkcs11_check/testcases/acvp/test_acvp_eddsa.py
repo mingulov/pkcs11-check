@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as, set_mechanism, set_params, xfail_as
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bytes
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -273,31 +274,38 @@ class TestEdDsaKeyVer:
                     attrs={CKA_VERIFY: True},
                 )
             except AssertionError as e:
-                if vec["expected_pass"]:
+                if is_known_error(e, _KEYVER_IMPORT_REJECT_RVS):
+                    if not vec["expected_pass"]:
+                        return
                     xfail_if_known_ckr(
                         e,
                         _KEYVER_IMPORT_REJECT_RVS,
                         f"{vec_id}: valid EdDSA key import rejected by advertised EDDSA path",
                     )
-                return
+                raise
+
+            if not vec["expected_pass"]:
+                note(
+                    f"{vec_id}: module imported an ACVP-invalid EdDSA public key; PKCS#11 "
+                    "does not expose ACVP KeyVer, so import acceptance alone is inconclusive",
+                    ComplianceLevel.EXTENDED,
+                    reference="NIST ACVP EDDSA-KeyVer; PKCS#11 C_CreateObject/C_Verify",
+                )
 
             try:
-                dummy_msg = b"x" * 32
                 sig_len = 64 if "25519" in vec["curve"] else 114
-                dummy_sig = b"\x00" * sig_len
-                verify_eddsa_signature_with_supported_params(
+                verified = verify_eddsa_signature_with_supported_params(
                     rs.raw,
                     rs.sh,
                     public_key_handle=pub_key,
                     ec_params=vec["ec_params"],
-                    message=dummy_msg,
-                    signature=dummy_sig,
+                    message=b"x" * 32,
+                    signature=b"\x00" * sig_len,
                 )
-                key_usable = True
             except AssertionError as exc:
                 if is_known_error(exc, SIGNATURE_REJECT_RVS):
-                    key_usable = True
-                elif is_known_error(exc, NON_CLEAN_SIGNATURE_REJECT_RVS):
+                    return
+                if is_known_error(exc, NON_CLEAN_SIGNATURE_REJECT_RVS):
                     xfail_as(
                         "nonspec_reject",
                         label=f"{vec_id}:EDDSA:verify",
@@ -305,26 +313,25 @@ class TestEdDsaKeyVer:
                         source=vec.get("_source"),
                         vector_id=vec.get("_vector_id"),
                     )
-                elif is_known_error(exc, _UNUSABLE_KEY_RVS):
-                    key_usable = False
-                else:
-                    key_usable = True
+                if is_known_error(exc, _UNUSABLE_KEY_RVS):
+                    if not vec["expected_pass"]:
+                        return
+                    xfail_as(
+                        "not_operational",
+                        kind="crypto",
+                        label=f"{vec_id}:EDDSA:verify",
+                        summary=f"{vec_id}: imported valid EdDSA key is unusable for C_Verify",
+                        source=vec.get("_source"),
+                        vector_id=vec.get("_vector_id"),
+                    )
+                raise
 
-            if not vec["expected_pass"] and key_usable:
+            if verified:
                 fail_as(
                     "accepted_invalid",
                     kind="crypto",
-                    label=f"{vec_id}:EDDSA:keyver",
-                    summary=f"{vec_id}: Module ACCEPTED an INVALID EdDSA key",
-                    source=vec.get("_source"),
-                    vector_id=vec.get("_vector_id"),
-                )
-            if vec["expected_pass"] and not key_usable:
-                fail_as(
-                    "wrong_result",
-                    kind="crypto",
-                    label=f"{vec_id}:EDDSA:keyver",
-                    summary=f"{vec_id}: Module rejected a VALID EdDSA key",
+                    label=f"{vec_id}:EDDSA:verify",
+                    summary=f"{vec_id}: module accepted an invalid EdDSA signature",
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )

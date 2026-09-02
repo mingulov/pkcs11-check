@@ -39,10 +39,8 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import (
-    skip_unless_create_object_supported,
-    xfail_if_known_ckr,
-)
+from pkcs11_check.testcases._provisioning import skip_unless_can_create
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -72,7 +70,7 @@ def test_ec_private_key_import_accepts_standard_policy_attrs(p11_module_session:
     fail:  any other CKR, or a crash (surfaced by the isolated runner).
     """
     rs = p11_module_session
-    skip_unless_create_object_supported(rs)
+    skip_unless_can_create(rs, "private")
 
     try:
         handle = import_ec_private_key(

@@ -5,8 +5,9 @@ the malleable (r, n-s) twin. Neither behaviour is a defect: FIPS 186-5 does not
 mandate low-s normalisation, and ECDSA malleability is a known property of the
 scheme (SEC1 §4.1.3).
 
-This probe NEVER fails or xfails a module. All findings are recorded via
-compliance.note() for post-test triage.
+The posture observations are recorded via compliance.note(). Clean provider
+refusals of an advertised operation are recorded as xfail; harness failures and
+unexpected return values remain visible as hard failures.
 
 References:
     FIPS 186-5 §6.4  — ECDSA signature generation
@@ -20,11 +21,28 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import destroy_quietly, sign_single, verify_single
-from pkcs11_check.raw.types_std import CKA_SIGN, CKA_TOKEN, CKA_VERIFY, CKM_ECDSA
-from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
+    CKM_ECDSA,
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail, xfail_if_known_ckr
 
 pytestmark = pytest.mark.security
 
@@ -33,6 +51,19 @@ _P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 # Fixed 32-byte test message digest (SHA-256 of a deterministic string).
 _DATA = hashlib.sha256(b"pkcs11-check:ecdsa-low-s-posture-probe").digest()
+
+_ECDSA_SIGN_RUNTIME_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+)
 
 
 class TestEcdsaLowSPosture:
@@ -71,11 +102,27 @@ class TestEcdsaLowSPosture:
                     _DATA,
                     output_size_hint=64,
                 )
-            except AssertionError as exc:
-                pytest.skip(f"CKM_ECDSA sign not operational: {exc}")
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _ECDSA_SIGN_RUNTIME_REJECT_RVS,
+                    "CKM_ECDSA advertised but sign is not operational",
+                )
 
             if len(sig) != 64:
-                pytest.skip(f"unexpected ECDSA P-256 signature length {len(sig)} (expected 64)")
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_ECDSA signature length",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                    expected=64,
+                    actual=len(sig),
+                    summary=(
+                        "CKM_ECDSA returned an unexpected P-256 signature length: "
+                        f"got {len(sig)}, expected 64"
+                    ),
+                )
 
             # --- Parse raw r || s (each 32 bytes, big-endian) ---
             r = int.from_bytes(sig[:32], "big")
@@ -114,18 +161,16 @@ class TestEcdsaLowSPosture:
                     _DATA,
                     sig2,
                 )
-            except AssertionError as exc:
-                # verify_single raises on unexpected CKR (not SIGNATURE_INVALID /
-                # SIGNATURE_LEN_RANGE).  Treat as unable to probe — skip the
-                # malleability note rather than fail.
-                note(
-                    f"Malleable-twin C_Verify raised an unexpected error: {exc}; "
-                    "malleability posture could not be determined",
-                    ComplianceLevel.EXTENDED,
-                    reference="SEC1 §4.1.3",
-                    test_id=test_id,
+            except CkrAssertionError as exc:
+                # verify_single handles the two expected invalid-signature CKRs and
+                # returns False. Any other explicitly known clean refusal is an
+                # advertised-but-not-operational provider deviation; all other
+                # exceptions remain visible to the harness.
+                xfail_if_known_ckr(
+                    exc,
+                    _ECDSA_SIGN_RUNTIME_REJECT_RVS,
+                    "CKM_ECDSA advertised but malleable-twin verification is not operational",
                 )
-                return
 
             if twin_accepted:
                 note(

@@ -193,6 +193,7 @@ from pkcs11_check._plugin_state import (
 from pkcs11_check._plugin_state import (
     _is_testcase_item as _is_testcase_item,
 )
+from pkcs11_check.core.crash_codes import crash_detail_name, ctypes_access_violation_code
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
@@ -223,15 +224,14 @@ class _TeardownFinalizeTimeoutError(Exception):
     """Raised by the SIGALRM watchdog when a teardown C_Finalize overruns."""
 
 
-def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
+def _finalize_on_teardown(config: pytest.Config, raw: Any) -> str | None:
     """Call ``C_Finalize`` once on normal per-process teardown.
 
     Runs at ``pytest_sessionfinish`` -- AFTER every test outcome and the
-    coverage report are already recorded -- so it CANNOT change any test's
-    verdict (segfault-survival model). A non-OK rv, an exception, or a hang is
-    *recorded* via an additive ``TeardownFinalize`` report-log record, never via
-    ``classify()`` / ``pytest.fail`` / ``pytest.xfail`` (no false-accusation of
-    a compliant provider) and never silently swallowed (no hidden finding).
+    coverage report are already recorded -- so it never rewrites a test
+    verdict. A non-OK rv, an exception, or a hang is recorded via an additive
+    ``TeardownFinalize`` report-log record and returned to the session hook so
+    the process can be made non-green without inventing a test result.
 
     Mirrors the best-effort shape of ``P11Module.reinitialize()``
     (``core/loader.py``). A Python-level hang (spin-wait in a ctypes callback
@@ -245,7 +245,7 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
 
     # Idempotency: at most one normal-teardown finalize per process.
     if config.stash.get(_TEARDOWN_FINALIZED, False):
-        return
+        return None
     config.stash[_TEARDOWN_FINALIZED] = True
 
     module = config.stash.get(_P11_MODULE, None)
@@ -255,6 +255,7 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
     rv: int | None = None
     rv_name: str | None = None
     error: str | None = None
+    windows_status: int | None = None
 
     # SIGALRM watchdog: POSIX-only, and signal.signal/setitimer only work on the
     # main thread. Off the main thread or on a SIGALRM-less platform, the call
@@ -289,7 +290,8 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
         # ctypes.ArgumentError / a module-specific ctypes fault -- is recorded
         # here with its exact text, never propagated (it would abort report
         # writing) and never turned into a test verdict.
-        outcome = "error"
+        windows_status = ctypes_access_violation_code(exc)
+        outcome = "crashed" if windows_status is not None else "error"
         error = f"{type(exc).__name__}: {exc}"
     finally:
         if use_watchdog and old_timer is not None:
@@ -308,10 +310,14 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> None:
     }
     if error is not None:
         record["error"] = error
+    if windows_status is not None:
+        record["windows_status"] = windows_status
+        record["signal"] = crash_detail_name(windows_status)
 
     report_log_plugin = getattr(config, "_report_log_plugin", None)
     if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
         report_log_plugin._write_json_data(record)
+    return outcome
 
 
 def _build_provisioning_report(counts: Counter[tuple[str, str]]) -> dict[str, Any]:

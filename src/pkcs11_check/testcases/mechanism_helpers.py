@@ -37,7 +37,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
     pack_attrs,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_EC_PARAMS,
@@ -198,30 +198,18 @@ def _pbkdf2_keygen_mechanism() -> Any:
     )
 
 
-def _xfail_if_keypair_runtime_reject(exc: AssertionError, mech_name: str) -> None:
+def _xfail_if_keypair_runtime_reject(exc: CkrAssertionError, mech_name: str) -> None:
     from pkcs11_check.classification import classify
 
-    rv = getattr(exc, "rv", None)
-    if rv is not None:
-        if rv in _KEYPAIR_RUNTIME_REJECT_RVS:
-            classify(
-                "not_operational",
-                label=f"{mech_name}:keypair",
-                operation="C_GenerateKeyPair",
-                actual=rv,
-                summary=f"{mech_name} keypair rejected at runtime: {ckr_name(rv)}",
-            )
+    if exc.rv not in _KEYPAIR_RUNTIME_REJECT_RVS:
         return
-    msg = str(exc)
-    for candidate in _KEYPAIR_RUNTIME_REJECT_RVS:
-        if ckr_name(candidate) in msg:
-            classify(
-                "not_operational",
-                label=f"{mech_name}:keypair",
-                operation="C_GenerateKeyPair",
-                actual=candidate,
-                summary=f"{mech_name} keypair rejected at runtime: {ckr_name(candidate)}",
-            )
+    classify(
+        "not_operational",
+        label=f"{mech_name}:keypair",
+        operation="C_GenerateKeyPair",
+        actual=exc.rv,
+        summary=f"{mech_name} keypair rejected at runtime: {ckr_name(exc.rv)}",
+    )
 
 
 def _generate_keypair_or_xfail(
@@ -233,7 +221,7 @@ def _generate_keypair_or_xfail(
     _skip_if_keygen_mechanism_absent(rs, keygen_mech, entry.mech_name)
     try:
         return callback()
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         _xfail_if_keypair_runtime_reject(exc, entry.mech_name)
         raise
 

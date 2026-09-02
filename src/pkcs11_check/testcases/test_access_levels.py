@@ -36,7 +36,7 @@ from pkcs11_check.raw.recipes import (
     set_attributes,
     sign_single,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CK_UTF8CHAR,
@@ -64,13 +64,17 @@ from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_NOT_WRAPPABLE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
     CKR_PIN_INVALID,
     CKR_PIN_LEN_RANGE,
@@ -133,6 +137,16 @@ _WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
 
+_TRUSTED_CREATE_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
 _ALWAYS_AUTH_TEMPLATE_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
@@ -158,6 +172,19 @@ _INIT_PIN_RUNTIME_REJECT_RVS = (
     CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_USER_NOT_LOGGED_IN,
+)
+
+_ALWAYS_AUTH_SIGN_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
 )
 
 
@@ -186,7 +213,7 @@ def _gen_access_aes_key(rs: Any, sh: int, *, attrs: dict[Any, Any] | None = None
     require_operational_aes_keygen(rs)
     try:
         return gen_aes_key(rs.raw, sh, 128, attrs=attrs)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -200,7 +227,7 @@ def _create_access_data_object(rs: Any, sh: int, attrs: dict[Any, Any]) -> int:
     skip_unless_create_object_supported(rs)
     try:
         return create_object(rs.raw, sh, attrs)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             _TEMPLATE_ERROR_RVS,
@@ -213,7 +240,7 @@ def _open_access_session_or_skip(rs: Any, flags: int) -> int:
     """Open an extra session for access-level scenarios."""
     try:
         return raw_open_session(rs.raw, rs.slot_id, flags)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if is_known_error(exc, (CKR_SESSION_COUNT,)):
             pytest.skip(
                 "Cannot open additional session required by access-level test: "
@@ -222,7 +249,7 @@ def _open_access_session_or_skip(rs: Any, flags: int) -> int:
         raise
 
 
-def _skip_or_xfail_always_auth_keygen_reject(exc: AssertionError) -> None:
+def _skip_or_xfail_always_auth_keygen_reject(exc: CkrAssertionError) -> None:
     if is_known_error(exc, _ALWAYS_AUTH_TEMPLATE_REJECT_RVS):
         pytest.skip(f"Module does not support CKA_ALWAYS_AUTHENTICATE=True: {exc}")
     xfail_if_known_ckr(
@@ -571,7 +598,7 @@ class TestSOSessionCapabilities:
                 entered = True
                 try:
                     init_pin(rs.raw, s1, new_pin)
-                except AssertionError as exc:
+                except CkrAssertionError as exc:
                     if is_known_error(exc, _INIT_PIN_POLICY_REJECT_RVS):
                         pytest.skip(f"C_InitPIN not usable with configured token policy: {exc}")
                     xfail_if_known_ckr(
@@ -587,10 +614,6 @@ class TestSOSessionCapabilities:
                 try:
                     login_user(rs.raw, restore_sh, CKU_USER, new_pin)
                     set_pin(rs.raw, restore_sh, new_pin, pin_bytes)
-                except AssertionError:
-                    # Best-effort restore; if it fails, token may need re-init
-                    # audit-ok: best-effort PIN restore in teardown, not a module finding
-                    pass
                 finally:
                     _logout_safe(rs.raw, restore_sh)
                     close_session_quietly(rs.raw, restore_sh)
@@ -699,7 +722,7 @@ class TestTrustedAttribute:
                         CKA_TRUSTED: True,
                     },
                 )
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -707,15 +730,36 @@ class TestTrustedAttribute:
                     ComplianceLevel.VENDOR,
                     reference="PKCS#11 spec: CKA_TRUSTED set by SO",
                 )
-                pytest.skip(f"CKA_TRUSTED not supported: {e}")
-                return
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"CKA_TRUSTED not supported: {e}")
+                raise
 
             try:
-                attrs = read_attributes(rs.raw, s1, key_h, [CKA_TRUSTED])
-                val = attrs.get(CKA_TRUSTED)
-                assert val is True, f"Expected CKA_TRUSTED=True, got {val}"
-            except AssertionError as e:
-                pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
+                try:
+                    attrs = read_attributes(rs.raw, s1, key_h, [CKA_TRUSTED])
+                    val = attrs.get(CKA_TRUSTED)
+                except CkrAssertionError as e:
+                    if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                        pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
+                    xfail_if_known_ckr(
+                        e,
+                        (CKR_ATTRIBUTE_SENSITIVE,),
+                        "SO-created CKA_TRUSTED attribute cannot be read back",
+                    )
+                    raise
+                if val is not True:
+                    fail_as(
+                        "wrong_result",
+                        kind="policy",
+                        label="SO:create-CKA_TRUSTED",
+                        operation="C_GenerateKey",
+                        expected=True,
+                        actual=val,
+                        summary=(
+                            "SO C_GenerateKey returned CKR_OK but did not preserve "
+                            f"CKA_TRUSTED=True (read back {val!r})"
+                        ),
+                    )
             finally:
                 destroy_quietly(rs.raw, s1, key_h)
 
@@ -727,19 +771,26 @@ class TestTrustedAttribute:
         boundary used by CKA_WRAP_WITH_TRUSTED to gate sensitive wraps.
         """
         rs = p11_raw_session
+        require_operational_aes_keygen(rs)
         try:
-            key_h = _gen_access_aes_key(
-                rs,
+            key_h = gen_aes_key(
+                rs.raw,
                 rs.sh,
+                128,
                 attrs={
                     CKA_TOKEN: False,
                     CKA_WRAP: True,
                     CKA_TRUSTED: True,
                 },
             )
-        except AssertionError:
-            # Expected: module rejects CKA_TRUSTED from USER
-            return  # audit-ok: policy probe; rejecting CKA_TRUSTED write from USER is correct
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                _TRUSTED_CREATE_REJECT_RVS,
+                label="C_GenerateKey CKA_TRUSTED=True from a USER session",
+                kind="policy",
+            )
+            return
 
         # If we get here, module allowed creating a CKA_TRUSTED key from a
         # USER session — a security boundary violation. Closes Phase 4.5
@@ -756,9 +807,14 @@ class TestTrustedAttribute:
             # gen success — some modules silently drop the attribute.
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     return  # Module doesn't expose CKA_TRUSTED
+                xfail_if_known_ckr(
+                    e,
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "USER-created CKA_TRUSTED attribute cannot be read back",
+                )
                 raise
             if attrs.get(CKA_TRUSTED) is True:
                 fail_as(
@@ -796,9 +852,14 @@ class TestTrustedAttribute:
             # Pre-check: the key must exist and be readable.
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_TRUSTED])
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_TRUSTED: {e}")
+                xfail_if_known_ckr(
+                    e,
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "USER-created CKA_TRUSTED attribute cannot be read back",
+                )
                 raise
             if attrs.get(CKA_TRUSTED) is True:
                 pytest.skip("Key created TRUSTED=True by default — unrelated path")
@@ -806,11 +867,14 @@ class TestTrustedAttribute:
             # Attempt the escalation.
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_TRUSTED: True})
-            except AssertionError as e:
-                # Module rejected the SetAttribute — correct behaviour.
-                if is_known_error(e, _TRUSTED_SETATTR_REJECT_RVS):
-                    return
-                raise
+            except CkrAssertionError as e:
+                reject_or_classify(
+                    e,
+                    _TRUSTED_SETATTR_REJECT_RVS,
+                    label="C_SetAttributeValue CKA_TRUSTED=True from a USER session",
+                    kind="policy",
+                )
+                return
 
             # SetAttribute returned CKR_OK — confirm whether the change
             # actually took effect (some modules silently no-op).
@@ -835,6 +899,16 @@ class TestTrustedAttribute:
                         "boundary breached, opens CKA_WRAP_WITH_TRUSTED bypass"
                     ),
                 )
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="USER:setattr-CKA_TRUSTED-noop",
+                operation="C_SetAttributeValue",
+                summary=(
+                    "C_SetAttributeValue returned CKR_OK for CKA_TRUSTED=True "
+                    "but the provider left the attribute unchanged"
+                ),
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -850,26 +924,52 @@ class TestTrustedAttribute:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError as exc:
-            pytest.skip(f"CKA_WRAP_WITH_TRUSTED not supported: {exc}")
-            return
+        except CkrAssertionError as exc:
+            if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                pytest.skip(f"CKA_WRAP_WITH_TRUSTED not supported: {exc}")
+            xfail_if_known_ckr(
+                exc,
+                AES_KEYGEN_RUNTIME_REJECT_RVS,
+                "CKA_WRAP_WITH_TRUSTED setup key generation is not operational",
+            )
+            raise
 
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {exc}")
+                xfail_if_known_ckr(
+                    exc,
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "CKA_WRAP_WITH_TRUSTED attribute cannot be read back",
+                )
                 raise
             if attrs.get(CKA_WRAP_WITH_TRUSTED) is not True:
-                pytest.skip("Module did not honour CKA_WRAP_WITH_TRUSTED=True")
+                fail_as(
+                    "wrong_result",
+                    kind="policy",
+                    label="CKA_WRAP_WITH_TRUSTED setup",
+                    operation="C_GenerateKey",
+                    expected=True,
+                    actual=attrs.get(CKA_WRAP_WITH_TRUSTED),
+                    summary=(
+                        "C_GenerateKey returned CKR_OK but did not preserve "
+                        "CKA_WRAP_WITH_TRUSTED=True"
+                    ),
+                )
 
             try:
                 set_attributes(rs.raw, rs.sh, target_h, {CKA_WRAP_WITH_TRUSTED: False})
-            except AssertionError as exc:
-                if is_known_error(exc, _WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS):
-                    return
-                raise
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _WRAP_WITH_TRUSTED_SETATTR_REJECT_RVS,
+                    label="C_SetAttributeValue CKA_WRAP_WITH_TRUSTED=True->False",
+                    kind="policy",
+                )
+                return
 
             after = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
             if after.get(CKA_WRAP_WITH_TRUSTED) is False:
@@ -910,22 +1010,43 @@ class TestTrustedAttribute:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError as e:
-            pytest.skip(f"CKA_WRAP_WITH_TRUSTED not supported: {e}")
-            return
+        except CkrAssertionError as e:
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                pytest.skip(f"CKA_WRAP_WITH_TRUSTED not supported: {e}")
+            xfail_if_known_ckr(
+                e,
+                AES_KEYGEN_RUNTIME_REJECT_RVS,
+                "CKA_WRAP_WITH_TRUSTED setup key generation is not operational",
+            )
+            raise
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, target_h, [CKA_WRAP_WITH_TRUSTED])
             val = attrs.get(CKA_WRAP_WITH_TRUSTED)
-        except AssertionError as e:
+        except CkrAssertionError as e:
             destroy_quietly(rs.raw, rs.sh, target_h)
-            pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {e}")
-            return
+            if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                pytest.skip(f"Module does not expose CKA_WRAP_WITH_TRUSTED: {e}")
+            xfail_if_known_ckr(
+                e,
+                (CKR_ATTRIBUTE_SENSITIVE,),
+                "CKA_WRAP_WITH_TRUSTED attribute cannot be read back",
+            )
+            raise
 
         if val is not True:
             destroy_quietly(rs.raw, rs.sh, target_h)
-            pytest.skip("Module did not honour CKA_WRAP_WITH_TRUSTED=True")
-            return
+            fail_as(
+                "wrong_result",
+                kind="policy",
+                label="CKA_WRAP_WITH_TRUSTED setup",
+                operation="C_GenerateKey",
+                expected=True,
+                actual=val,
+                summary=(
+                    "C_GenerateKey returned CKR_OK but did not preserve CKA_WRAP_WITH_TRUSTED=True"
+                ),
+            )
 
         # Create a normal (non-TRUSTED) wrapping key
         wrapper_h = _gen_access_aes_key(
@@ -997,19 +1118,35 @@ class TestAlwaysAuthenticate:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError as e:
+        except CkrAssertionError as e:
             _skip_or_xfail_always_auth_keygen_reject(e)
 
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_ALWAYS_AUTHENTICATE])
                 val = attrs.get(CKA_ALWAYS_AUTHENTICATE)
-            except AssertionError as e:
-                pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
-                return
+            except CkrAssertionError as e:
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
+                xfail_if_known_ckr(
+                    e,
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "CKA_ALWAYS_AUTHENTICATE attribute cannot be read back",
+                )
+                raise
             if val is not True:
-                pytest.skip("Module did not honour CKA_ALWAYS_AUTHENTICATE=True")
-                return
+                fail_as(
+                    "wrong_result",
+                    kind="policy",
+                    label="CKA_ALWAYS_AUTHENTICATE setup",
+                    operation="C_GenerateKeyPair",
+                    expected=True,
+                    actual=val,
+                    summary=(
+                        "C_GenerateKeyPair returned CKR_OK but did not preserve "
+                        "CKA_ALWAYS_AUTHENTICATE=True"
+                    ),
+                )
 
             # Attempt to sign - should require context-specific login
             data = b"test data for always-auth"
@@ -1024,9 +1161,16 @@ class TestAlwaysAuthenticate:
                     ComplianceLevel.VENDOR,
                     reference="PKCS#11 spec: CKA_ALWAYS_AUTHENTICATE re-auth",
                 )
-            except AssertionError:
-                # Expected: module enforces re-auth
-                # audit-ok: re-auth enforcement is the expected path; lenient case note()'d above
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    _ALWAYS_AUTH_SIGN_REJECT_RVS,
+                    label=(
+                        "C_Sign on a CKA_ALWAYS_AUTHENTICATE key before "
+                        "context-specific re-authentication"
+                    ),
+                    kind="policy",
+                )
                 pass
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_h)
@@ -1057,33 +1201,58 @@ class TestAlwaysAuthenticate:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError as e:
+        except CkrAssertionError as e:
             _skip_or_xfail_always_auth_keygen_reject(e)
 
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_ALWAYS_AUTHENTICATE])
                 val = attrs.get(CKA_ALWAYS_AUTHENTICATE)
-            except AssertionError as e:
-                pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
-                return
+            except CkrAssertionError as e:
+                if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    pytest.skip(f"Module does not expose CKA_ALWAYS_AUTHENTICATE: {e}")
+                xfail_if_known_ckr(
+                    e,
+                    (CKR_ATTRIBUTE_SENSITIVE,),
+                    "CKA_ALWAYS_AUTHENTICATE attribute cannot be read back",
+                )
+                raise
             if val is not True:
-                pytest.skip("Module did not honour CKA_ALWAYS_AUTHENTICATE=True")
-                return
+                fail_as(
+                    "wrong_result",
+                    kind="policy",
+                    label="CKA_ALWAYS_AUTHENTICATE setup",
+                    operation="C_GenerateKeyPair",
+                    expected=True,
+                    actual=val,
+                    summary=(
+                        "C_GenerateKeyPair returned CKR_OK but did not preserve "
+                        "CKA_ALWAYS_AUTHENTICATE=True"
+                    ),
+                )
 
             # Do context-specific login, then sign
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
             rv = rs.raw.C_Login(rs.sh, CKU_CONTEXT_SPECIFIC, pin_buf, len(pin_bytes))
             if rv not in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN):
-                pytest.skip(f"Context-specific login not supported: {ckr_name(rv)}")
+                classify_negative_rv(
+                    rv,
+                    (CKR_USER_ALREADY_LOGGED_IN,),
+                    label="Context-specific C_Login for CKA_ALWAYS_AUTHENTICATE",
+                    allow_ok=True,
+                )
                 return
 
             data = b"context auth test data"
             try:
                 sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
                 assert len(sig) > 0
-            except AssertionError as e:
-                pytest.skip(f"Sign after context-specific login failed: {e}")
+            except CkrAssertionError as e:
+                xfail_if_known_ckr(
+                    e,
+                    _ALWAYS_AUTH_SIGN_REJECT_RVS,
+                    "C_Sign after context-specific login is not operational",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_h)
             destroy_quietly(rs.raw, rs.sh, pub_h)
@@ -1440,7 +1609,7 @@ class TestPublicSessionRestrictions:
                         CKA_LABEL: label,
                     },
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
                     (CKR_USER_NOT_LOGGED_IN,),
@@ -1497,16 +1666,19 @@ class TestPublicSessionRestrictions:
                         CKA_PRIVATE: False,
                     },
                 )
-            except AssertionError:
-                # Some modules require login for any creation
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    "Module requires login to create any objects (even CKA_PRIVATE=False)",
-                    ComplianceLevel.VENDOR,
-                    reference="PKCS#11 spec: public objects in public session",
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    (
+                        CKR_SESSION_READ_ONLY,
+                        CKR_TEMPLATE_INCOMPLETE,
+                        CKR_TEMPLATE_INCONSISTENT,
+                        CKR_USER_NOT_LOGGED_IN,
+                        CKR_USER_TYPE_INVALID,
+                    ),
+                    "Public C_CreateObject for a non-private data object is not operational",
                 )
-                return
+                raise
 
             # Cleanup
             tmpl = template_from_dict(
@@ -1558,7 +1730,7 @@ class TestPublicSessionRestrictions:
                         CKA_PRIVATE: True,
                     },
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
                     (CKR_USER_NOT_LOGGED_IN,),

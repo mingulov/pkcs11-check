@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.report_log import map_report_outcome
+from pkcs11_check.core.report_log import map_report_record_outcome
 
 # Test-level (node-id) verdict -> broad comparison class. Distinct from
 # compare_results.status_class, which maps unit-level statuses. "xfail" is kept its own
@@ -129,9 +129,9 @@ def load_provider_outcomes(records: Iterable[Mapping[str, Any]]) -> dict[str, st
             continue
         when = rec.get("when")
         if when == "call":
-            outcomes[nodeid] = map_report_outcome(raw_outcome, rec.get("wasxfail"))
+            outcomes[nodeid] = map_report_record_outcome(rec)
         elif when == "setup" and raw_outcome in {"failed", "skipped"}:
-            outcomes.setdefault(nodeid, map_report_outcome(raw_outcome, rec.get("wasxfail")))
+            outcomes.setdefault(nodeid, map_report_record_outcome(rec))
     return outcomes
 
 

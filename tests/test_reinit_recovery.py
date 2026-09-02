@@ -106,6 +106,19 @@ def test_module_reinitialize_finalizes_then_initializes() -> None:
     assert module.reinit_count == 1
 
 
+def test_module_reinitialize_surfaces_finalize_access_violation() -> None:
+    class _Raw(_ReinitRaw):
+        def C_Finalize(self, _arg: Any) -> int:  # noqa: N802
+            raise OSError("exception: access violation reading 0x0")
+
+    module = P11Module(path=Path("x.so"), _raw=_Raw())  # type: ignore[arg-type]
+
+    with pytest.raises(OSError, match="access violation"):
+        module.reinitialize()
+
+    assert module.reinit_count == 0
+
+
 # --------------------------------------------------------------------------
 # clean path -- no reinit, no latency
 # --------------------------------------------------------------------------

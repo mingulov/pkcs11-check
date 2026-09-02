@@ -237,6 +237,7 @@ def test_jsonl_with_session_finish_is_complete(tmp_path: Path) -> None:
     _write_jsonl(
         report_log,
         [
+            {"$report_type": "SessionStart"},
             _call("test_complete.py::test_pass", "passed"),
             {"$report_type": "SessionFinish", "exitstatus": 0},
         ],

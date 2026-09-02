@@ -293,7 +293,10 @@ def test_command(
         rich_help_panel="Advanced",
     ),
     resume: bool = typer.Option(
-        False, "--resume", help="Resume an isolated run", rich_help_panel="Isolation"
+        False,
+        "--resume",
+        help="Continue a saved isolated run; skip targets already attempted",
+        rich_help_panel="Isolation",
     ),
     stop_on_failure: bool = typer.Option(
         False,

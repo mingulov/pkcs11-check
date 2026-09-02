@@ -47,8 +47,12 @@ Mode summary:
 - `--isolation none`: fastest path, but it falls back to in-process `pytest.main(...)` and is not
   crash-safe
 
+An explicit `path::node` target remains that exact node unit in `auto`, even if collection finds
+the module-level `subprocess` marker. A bare file target remains file-isolated; a
+`subprocess_per_test` file is still expanded to one unit per collected node.
+
 `test` mode is slower, but it gives much better crash attribution and lets the
-runner skip only the one crashing test on resume instead of rerunning a whole file.
+runner preserve each attempted test independently on resume.
 `auto` is the best default recovery mode when you want safety without paying full
 per-test cost across the entire target set.
 If a file crashes or times out during an `auto` run, the runner now escalates that
@@ -56,9 +60,9 @@ same file to per-test isolation immediately for the rest of the current run.
 Once an escalated file reaches the configured per-file crash budget, the runner
 marks the remaining test units from that file as `crash_limited` and moves on.
 
-## Resume From The Broken Place
+## Resume The Saved Plan
 
-Use `--resume` to continue from the first unit that did not finish cleanly:
+Use `--resume` to run only planned targets that have never been attempted in the saved state:
 
 ```bash
 uv run pkcs11-check test \
@@ -67,10 +71,36 @@ uv run pkcs11-check test \
   --resume
 ```
 
-The runner treats `passed`, `empty`, and `crash_limited` units as complete. Files
-that failed, crashed, or timed out are rerun on resume.
-In `--isolation auto`, resume keeps the saved unit plan from the state file. Fresh
-non-resume runs are the point where newly learned policy promotions take effect.
+Resume is continuation, not revalidation: it keeps the saved unit plan and skips every planned
+target that already appears in saved results, regardless of status or `completion_verified`.
+Only targets missing from saved results run. Failed, crashed, timed-out, unverified,
+`escalated`, and `crash_limited` targets are not retried by `--resume`; use a fresh run without
+`--resume` when those targets must be revalidated. An escalated parent remains in the saved
+results while any missing expanded child still runs.
+Fresh non-resume runs reset the state and remove the state-specific report-record shards, known
+`report.jsonl`, configured output, `quality.json` beside the output, and `coverage.json`/
+`provisioning.json` beside `report.jsonl` before starting, so prior-generation evidence cannot
+appear current.
+
+When an isolated attempt writes a report log, normal collected pytest exits `0`, `1`, and `5`
+must have one valid `SessionStart`/`SessionFinish` pair whose integer `exitstatus` matches the
+subprocess return code. Missing, malformed, duplicated, or mismatched session completion is
+recorded additively as incomplete and makes the run non-green, while retaining the detail that
+was collected. Its attempted target is preserved on `--resume`; it is not automatically blamed or
+retried as a crash/timeout, escalated, or added to adaptive crash policy for that reason alone.
+Older state files remain
+compatible: an omitted `completion_verified` field is treated as verified.
+
+An `escalated` result is retained in state so resume does not discard the file-level crash or
+timeout trigger. Grouped JSON and JUnit derive that trigger's effective `crashed`/`timeout`
+status from its return code even if all expanded child units pass. Such a run remains non-green.
+
+When daemon recovery re-runs units that completed while the provider was dying, the retry replaces
+their current aggregate verdict but does not erase the superseded attempt. The original result,
+report records, output, and process observations remain in `attempt_history`; each confirmed daemon
+death remains in `recovery_events` and counts as a separate crash in JSON/JUnit. The append-only
+`<state-file>.recovery.jsonl` sidecar closes the window before the next state save and is
+validated/replayed on resume. A malformed nonblank sidecar fails closed.
 
 The state file records a fingerprint of the run configuration, so `--resume` refuses to reuse
 results when the fingerprint changes. By default the fingerprint covers pkcs11-check's own
@@ -96,7 +126,8 @@ uv run pkcs11-check test \
   --stop-on-failure
 ```
 
-Then rerun with `--resume` after fixing or investigating the problem.
+Start a fresh run without `--resume` after fixing a problem when the affected targets need
+revalidation.
 
 ## State File
 
@@ -115,7 +146,8 @@ uv run pkcs11-check test \
   --state-file /tmp/pkcs11-check-bouncyhsm.json
 ```
 
-Starting a fresh run without `--resume` overwrites the old state file immediately.
+Starting a fresh run without `--resume` clears prior isolated state/report artifacts and overwrites
+the old state file immediately.
 
 ## Adaptive Policy File
 
@@ -177,6 +209,13 @@ For isolated runs:
 - `--output junit` writes an aggregated `pkcs11-check-results.xml`
 - `--output rich` keeps console-only output
 
+In JSON, an unverified unit carries `"completion_verified": false` and `"incomplete": true`,
+and the aggregate carries `summary.incomplete: true`; the latter is also true for timeout or
+crash-limited runs. In JUnit, the same unit is an `<error type="incomplete">` with message
+`report log completion could not be verified` and counts as an error, not a failure or skip.
+Recovered runs may also include top-level `attempt_history` and `recovery_events`; those are
+evidence, not alternate current unit verdicts.
+
 You can inspect saved state or adaptive policy files directly:
 
 ```bash
@@ -213,7 +252,7 @@ Use `auto` when:
 Use `test` when:
 
 - you need precise crash attribution
-- you want resume to skip only one bad test
+- you want resume to preserve attempted tests and run only missing nodes
 - a single file contains both crashing and useful tests
 
 Use `none` when:

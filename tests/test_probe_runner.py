@@ -112,6 +112,33 @@ def test_run_probe_records_windows_access_violation_process_observation(
     assert drain_process_observations() == [result.observation]
 
 
+def test_run_probe_records_ctypes_windows_access_violation_from_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drain_process_observations()
+    monkeypatch.setattr(process_observation.sys, "platform", "win32")
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [],
+            1,
+            "",
+            "Traceback (most recent call last):\nOSError: exception: access violation reading 0",
+        ),
+    )
+
+    result = run_probe("_echo", {"module_path": "/x.so"})
+
+    assert result.observation is not None
+    assert result.observation["termination"] == {
+        "kind": "exception",
+        "raw_code": 1,
+        "signal_name": None,
+        "windows_status": 0xC0000005,
+    }
+    assert drain_process_observations() == [result.observation]
+
+
 # ---------------------------------------------------------------------------
 # PIN-in-params rejection (Invariant I3)
 # ---------------------------------------------------------------------------

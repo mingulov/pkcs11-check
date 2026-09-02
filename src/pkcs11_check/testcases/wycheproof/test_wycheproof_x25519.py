@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DEVICE_ERROR,
@@ -53,6 +54,7 @@ from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     is_known_error,
+    reject_or_classify,
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.wycheproof._key_decoders import (
@@ -84,6 +86,7 @@ _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS = (
 )
 
 _XDH_RUNTIME_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
@@ -96,6 +99,11 @@ _XDH_RUNTIME_REJECT_CKRS = (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+# C_DeriveKey receives the peer XDH bytes in CK_ECDH1_DERIVE_PARAMS.public_data;
+# malformed peer data is therefore a mechanism-parameter error. Keep this
+# spec-grounded set narrow so unrelated provider CKRs remain visible xfails.
+_XDH_NEGATIVE_REJECT_CKRS = (CKR_MECHANISM_PARAM_INVALID,)
 
 _XDH_DECODE_ERRORS = (
     BinasciiError,
@@ -237,13 +245,19 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
         private_bytes = decode_xdh_private_bytes(vec["private"], encoding_name)
     except _XDH_DECODE_ERRORS as exc:
         if result == "invalid":
-            return  # Can't import a private key on our side; invalid vector passes
+            pytest.skip(
+                f"Cannot represent invalid {encoding_name} XDH private key for PKCS#11: "
+                f"{type(exc).__name__}"
+            )
         pytest.skip(f"Cannot decode {encoding_name} XDH private key: {type(exc).__name__}")
     try:
         public_bytes = decode_xdh_public_bytes(vec["public"], encoding_name)
     except _XDH_DECODE_ERRORS as exc:
         if result == "invalid":
-            return
+            pytest.skip(
+                f"Cannot represent invalid {encoding_name} XDH public key for PKCS#11: "
+                f"{type(exc).__name__}"
+            )
         pytest.skip(f"Cannot decode {encoding_name} XDH public key: {type(exc).__name__}")
     shared_expected = bytes.fromhex(vec["shared"])
 
@@ -264,11 +278,7 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
     except AssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             _UNSUPPORTED_CURVE_OIDS.add(oid)
-            if result == "invalid":
-                return
             pytest.skip(f"Cannot import Montgomery private key: {exc}")
-        if result == "invalid" and is_known_error(exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
-            return
         if isinstance(exc, CkrAssertionError) and is_known_error(
             exc, _MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS
         ):
@@ -277,8 +287,8 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
             # private-key import of a VALID vector is the only gap. That is
             # "advertised but not operational" -> xfail per the classification
             # model, not skip. The CKR_CURVE_NOT_SUPPORTED/DOMAIN branch above
-            # keeps the genuine-absence skip; the result=="invalid" return above
-            # keeps the vacuous pass.
+            # keeps the genuine-absence skip; every result class uses this same
+            # capability disposition.
             classify(
                 "not_operational",
                 summary=not_operational_reason("ECDH:Montgomery-private-import", ckr_name(exc.rv)),
@@ -287,61 +297,74 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
 
     # Derive shared secret
     ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=public_bytes)
-    shared = None
+    derived = None
     try:
-        derived = derive_key(
-            rs.raw,
-            rs.sh,
-            priv_key,
-            CKM_ECDH1_DERIVE,
-            attrs={
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                CKA_VALUE_LEN: key_size,
-                CKA_SENSITIVE: False,
-                CKA_EXTRACTABLE: True,
-                CKA_TOKEN: False,
-            },
-            mech_param=ecdh_param,
-        )
-        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-        shared = attrs[CKA_VALUE]
-        assert isinstance(shared, bytes)
-        destroy_quietly(rs.raw, rs.sh, derived)
-    except (AssertionError, TypeError) as exc:
-        if result == "valid":
-            if isinstance(exc, AssertionError):
+        try:
+            derived = derive_key(
+                rs.raw,
+                rs.sh,
+                priv_key,
+                CKM_ECDH1_DERIVE,
+                attrs={
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                    CKA_VALUE_LEN: key_size,
+                    CKA_SENSITIVE: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_TOKEN: False,
+                },
+                mech_param=ecdh_param,
+            )
+        except AssertionError as exc:
+            if result == "valid":
                 _xfail_if_xdh_runtime_reject(exc, vec_id)
+            if isinstance(exc, CkrAssertionError):
+                reject_or_classify(
+                    exc,
+                    _XDH_NEGATIVE_REJECT_CKRS,
+                    label=f"XDH:{vec_id}",
+                )
+                return
+            raise
+
+        if result == "invalid":
             classify(
-                "not_operational",
+                "accepted_invalid",
+                kind="crypto",
                 label=vec_id,
-                summary=f"X25519/X448 derive failed for valid vector {vec_id}: {exc}",
+                summary=(
+                    f"X25519/X448 derived a secret for an invalid vector {vec_id} "
+                    "(invalid-point accepted)"
+                ),
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-        # acceptable: reject is fine
-        return
+
+        attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+        if CKA_VALUE not in attrs:
+            classify(
+                "not_operational",
+                label=vec_id,
+                summary=(
+                    f"X25519/X448 derived key value unavailable for {vec_id}; "
+                    "the result cannot be verified"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        shared = attrs[CKA_VALUE]
+        assert isinstance(shared, bytes)
     finally:
+        if derived is not None:
+            destroy_quietly(rs.raw, rs.sh, derived)
         destroy_quietly(rs.raw, rs.sh, priv_key)
 
-    if result == "valid" and shared is not None:
+    if result in ("valid", "acceptable"):
         assert_correct(
             actual=shared,
             expected=shared_expected,
             label=f"X25519/X448:C_DeriveKey KAT {vec_id}",
             operation="C_DeriveKey",
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
-        )
-    if result == "invalid" and shared is not None:
-        classify(
-            "accepted_invalid",
-            kind="crypto",
-            label=vec_id,
-            summary=(
-                f"X25519/X448 derived a secret for an invalid vector {vec_id} "
-                "(invalid-point accepted)"
-            ),
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )

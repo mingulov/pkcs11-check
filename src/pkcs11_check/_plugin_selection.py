@@ -129,28 +129,26 @@ def _ensure_manifest(config: pytest.Config) -> CapabilityManifest | None:
             manifest = load_manifest(Path(manifest_option))
         except Exception as exc:
             pytest.exit(f"Unable to load p11 manifest: {exc}", returncode=2)
-        config.stash[_MANIFEST_KEY] = manifest
-        return manifest
-
-    manifest_fd, manifest_raw_path = tempfile.mkstemp(
-        prefix="pkcs11-check-manifest-", suffix=".json"
-    )
-    os.close(manifest_fd)
-    manifest_path = Path(manifest_raw_path)
-    interface_option = config.getoption("p11_interface", default=None)
-    interface = "auto" if interface_option is None else str(interface_option)
-    slot_option = config.getoption("p11_slot", default=None)
-    slot = 0 if slot_option is None else int(slot_option)
-    try:
-        manifest = run_preflight_subprocess(
-            Path(module_path),
-            interface=interface,
-            slot=slot,
-            timeout=30,
-            output_path=manifest_path,
+    else:
+        manifest_fd, manifest_raw_path = tempfile.mkstemp(
+            prefix="pkcs11-check-manifest-", suffix=".json"
         )
-    finally:
-        manifest_path.unlink(missing_ok=True)
+        os.close(manifest_fd)
+        manifest_path = Path(manifest_raw_path)
+        interface_option = config.getoption("p11_interface", default=None)
+        interface = "auto" if interface_option is None else str(interface_option)
+        slot_option = config.getoption("p11_slot", default=None)
+        slot = 0 if slot_option is None else int(slot_option)
+        try:
+            manifest = run_preflight_subprocess(
+                Path(module_path),
+                interface=interface,
+                slot=slot,
+                timeout=30,
+                output_path=manifest_path,
+            )
+        finally:
+            manifest_path.unlink(missing_ok=True)
 
     if manifest.status != "ok":
         pytest.exit(_manifest_failure_message(manifest), returncode=2)

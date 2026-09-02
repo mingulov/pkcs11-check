@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.bootstrap import (
     login_user,
 )
@@ -35,7 +36,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.recipes import (
     wrap_key as wrap_key_recipe,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -68,6 +69,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
@@ -97,6 +99,7 @@ from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
     assert_correct,
+    classify_negative_rv,
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
@@ -178,7 +181,7 @@ def _gen_cve_aes_key_or_xfail(
     skip_unless_mechanism(rs, "AES_KEY_GEN")
     try:
         return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -192,7 +195,7 @@ def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
     skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
     try:
         return gen_rsa_keypair(rs.raw, rs.sh, bits)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
@@ -202,12 +205,15 @@ def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
 
 
 def _abort_encrypt_operation(raw: Any, session: int) -> None:
-    """Best-effort cleanup after an expected encrypt error leaves state active."""
+    """Abort an expected encrypt error; clean teardown errors are best-effort."""
     try:
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
         raw.C_EncryptFinal(session, out_buf, byref(out_len))
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         pass
 
 
@@ -235,7 +241,7 @@ class TestCKATrusted:
             )
             assert obj != 0
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             reject_or_classify(
                 exc,
                 _TEMPLATE_REJECT_RVS,
@@ -275,22 +281,13 @@ class TestCKADeriveOnEC:
             assert priv != 0
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
-        except AssertionError as e:
-            err_str = str(e)
-            if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
-                # Some modules reject CKA_DERIVE on EC keys;
-                # a clean non-spec rejection -> noted deviation, not a finding.
-                classify(
-                    "not_operational",
-                    kind="crypto",
-                    label="EC keygen with CKA_DERIVE",
-                    operation="C_GenerateKeyPair",
-                    mechanism="CKM_EC_KEY_PAIR_GEN",
-                    expected=CKR_ATTRIBUTE_VALUE_INVALID,
-                    summary="Module rejects CKA_DERIVE on EC (clean non-spec rejection)",
-                )
-            else:
-                raise
+        except CkrAssertionError as e:
+            xfail_if_known_ckr(
+                e,
+                (CKR_ATTRIBUTE_VALUE_INVALID,),
+                "EC keygen with CKA_DERIVE is not operational",
+            )
+            raise
 
 
 class TestTookanUnwrapAttrs:
@@ -406,7 +403,7 @@ class TestTookanUnwrapAttrs:
                     target,
                     CKM_AES_KEY_WRAP,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, _SENSITIVE_WRAP_INAPPLICABLE_RVS):
                     pytest.skip(f"Module cannot wrap SENSITIVE=True key: {exc}")
                 xfail_if_known_ckr(
@@ -430,18 +427,15 @@ class TestTookanUnwrapAttrs:
                         CKA_EXTRACTABLE: True,
                     },
                 )
-            except AssertionError as exc:
-                # Module rejected the attacker template — correct behaviour.
-                msg = str(exc)
-                if any(
-                    code in msg
-                    for code in (
-                        "CKR_TEMPLATE_INCONSISTENT",
-                        "CKR_ATTRIBUTE_VALUE_INVALID",
-                        "CKR_ATTRIBUTE_READ_ONLY",
-                        "CKR_ACTION_PROHIBITED",
-                    )
-                ):
+            except CkrAssertionError as exc:
+                # Module rejected the attacker template — correct behaviour only
+                # for the exact policy CKRs; all other provider returns stay visible.
+                if exc.rv in {
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_ATTRIBUTE_READ_ONLY,
+                    CKR_ACTION_PROHIBITED,
+                }:
                     return
                 raise
 
@@ -512,7 +506,12 @@ class TestSessionObjectsAfterLogout:
         rv = rs.raw.C_Logout(rs.sh)
         if rv != CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key)
-            pytest.skip(f"Logout failed: {ckr_name(rv)} (another session holds login)")
+            classify_negative_rv(
+                rv,
+                (),
+                label="C_Logout after session-object probe",
+            )
+            return
 
         # Re-login and check
         login_user(rs.raw, rs.sh, 1, pin_bytes)
@@ -602,9 +601,13 @@ class TestECDSATimingBasic:
         curve_oid = encode_named_curve_parameters("secp256r1")
         try:
             pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
-        except AssertionError:
-            pytest.skip("P-256 not supported")
-            return
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                "ECDSA P-256 key generation is not operational",
+            )
+            raise
 
         try:
             # Sign 100 messages and measure times
@@ -689,9 +692,14 @@ class TestBoundaryLengthCrypto:
                     # Non-aligned - should fail with proper CKR
                     try:
                         encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
-                    except AssertionError:
+                    except CkrAssertionError as exc:
                         _abort_encrypt_operation(rs.raw, rs.sh)
-                        pass  # Correct rejection via expect_rv
+                        reject_or_classify(
+                            exc,
+                            _DATA_ERROR_RVS,
+                            label="AES-ECB non-block-aligned plaintext",
+                            kind="crypto",
+                        )
                     else:
                         if size > 0:
                             classify(
@@ -722,7 +730,7 @@ class TestBoundaryLengthCrypto:
             # Empty data - some modules reject
             try:
                 encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"")
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     (*CIPHER_OP_RUNTIME_REJECT_RVS, CKR_DATA_INVALID),
@@ -732,7 +740,7 @@ class TestBoundaryLengthCrypto:
             # Max data for RSA-2048 PKCS#1 v1.5: 245 bytes (256 - 11)
             try:
                 ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"\x42" * 245)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     CIPHER_OP_RUNTIME_REJECT_RVS,
@@ -754,7 +762,7 @@ class TestBoundaryLengthCrypto:
             # crypto-correctness break (accepted_invalid), not a silent pass.
             try:
                 encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"\x42" * 246)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
                     (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_ENCRYPTED_DATA_LEN_RANGE),
@@ -790,7 +798,7 @@ class TestInvalidECCurve:
         # unknown curve OID and a bogus point is a cryptographic correctness break
         # (CVE-2021-3798 pattern). Acceptance -> fail; expected curve/param reject ->
         # pass; another clean reject code -> xfail. No claim-check (crypto).
-        reject_exc: AssertionError | None = None
+        reject_exc: CkrAssertionError | None = None
         try:
             obj = create_object(
                 rs.raw,
@@ -805,7 +813,7 @@ class TestInvalidECCurve:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             reject_exc = exc
 
         reject_or_classify(
@@ -863,7 +871,7 @@ class TestWrapUnsupportedMechanismRegression:
                     des3_key,
                     CKM_AES_KEY_WRAP,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     (CKR_KEY_SIZE_RANGE, CKR_WRAPPED_KEY_LEN_RANGE, CKR_KEY_HANDLE_INVALID),

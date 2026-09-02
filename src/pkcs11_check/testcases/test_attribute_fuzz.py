@@ -22,6 +22,7 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     gen_rsa_keypair,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_KEY_TYPE,
@@ -39,6 +40,7 @@ from pkcs11_check.testcases._error_tuples import KEY_SIZE_ERRORS, TEMPLATE_ERROR
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     is_known_error,
+    reject_or_classify,
     skip_unless_create_object_supported,
 )
 
@@ -154,15 +156,29 @@ class TestMalformedAttributes:
     @pytest.mark.allocation_amplifying
     @pytest.mark.slow
     def test_negative_key_length(self, p11_raw_session: Any) -> None:
-        """Extremely large key length - must reject or handle gracefully."""
+        """An impossible AES key length must be rejected."""
         rs = p11_raw_session
         try:
             key = gen_aes_key(rs.raw, rs.sh, 0xFFFFFFFF * 8)
-            # Some modules silently truncate large key sizes - key exists but may not be usable
-            assert key != 0
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                KEY_SIZE_ERRORS,
+                label="C_GenerateKey impossible AES key length",
+                kind="metadata",
+            )
+            return
+        except (OverflowError, ValueError) as exc:
+            pytest.skip(f"Host ABI cannot represent the oversized key-length probe: {exc}")
+        if key:
             destroy_quietly(rs.raw, rs.sh, key)
-        except (AssertionError, OverflowError, ValueError):
-            pass  # audit-ok: negative test; rejecting the oversized key length is correct
+        classify(
+            "accepted_invalid",
+            kind="metadata",
+            label="C_GenerateKey impossible AES key length",
+            operation="C_GenerateKey",
+            summary="Module accepted an impossible 0xFFFFFFFF-byte AES key length",
+        )
 
     def test_missing_class_attribute(self, p11_raw_session: Any) -> None:
         """Creating object without CKA_CLASS must fail."""
@@ -213,24 +229,6 @@ class TestMalformedAttributes:
                 pass  # Correct to reject inconsistent template
             else:
                 raise
-
-    def test_boolean_as_wrong_type(self, p11_raw_session: Any) -> None:
-        """CKA_TOKEN with non-boolean value - must reject or handle gracefully."""
-        rs = p11_raw_session
-        try:
-            h = create_object(
-                rs.raw,
-                rs.sh,
-                {
-                    CKA_CLASS: CKO_DATA,
-                    CKA_LABEL: "bool-test",
-                    CKA_VALUE: b"test",
-                    CKA_TOKEN: 42,  # Not a bool
-                },
-            )
-            destroy_quietly(rs.raw, rs.sh, h)
-        except (AssertionError, TypeError, ValueError):
-            pass  # audit-ok: negative test; rejecting the wrong-typed attribute is correct
 
 
 class TestLargeAttributes:

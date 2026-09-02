@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -302,7 +303,13 @@ from pkcs11_check.core._unit_details import (
     _copy_detail as _copy_detail,
 )
 from pkcs11_check.core._unit_details import (
+    _effective_unit_status as _effective_unit_status,
+)
+from pkcs11_check.core._unit_details import (
     _ensure_timeout_recorded as _ensure_timeout_recorded,
+)
+from pkcs11_check.core._unit_details import (
+    _final_state_exit_code as _final_state_exit_code,
 )
 from pkcs11_check.core._unit_details import (
     _group_results_by_file as _group_results_by_file,
@@ -317,16 +324,10 @@ from pkcs11_check.core._unit_details import (
     _merge_supplemental_special_details as _merge_supplemental_special_details,
 )
 from pkcs11_check.core._unit_details import (
-    _overall_unit_status as _overall_unit_status,
-)
-from pkcs11_check.core._unit_details import (
     _required_ckm_names_for_unit as _required_ckm_names_for_unit,
 )
 from pkcs11_check.core._unit_details import (
     _special_test_entry_from_result as _special_test_entry_from_result,
-)
-from pkcs11_check.core._unit_details import (
-    _status_with_detail_counts as _status_with_detail_counts,
 )
 from pkcs11_check.core._unit_details import (
     _synthetic_file_skip_detail as _synthetic_file_skip_detail,
@@ -389,6 +390,18 @@ _NO_TESTS_COLLECTED_EXIT = 2
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
+
+
+def _completion_verified_for_attempt(
+    jsonl_path: Path | None,
+    status: str,
+    returncode: int,
+    session_exitstatus: int | None,
+) -> bool:
+    """Verify normal pytest completion when an attempt emitted a report stream."""
+    if status in {"crashed", "timeout"} or jsonl_path is None:
+        return True
+    return session_exitstatus == returncode
 
 
 def _unit_timeout_seconds(
@@ -549,17 +562,20 @@ def _run_subprocess_tee(
 
     proc.wait()
     returncode = proc.returncode
+    stdout = stdout_buf.getvalue().decode("utf-8", errors="replace")
+    stderr = stderr_buf.getvalue().decode("utf-8", errors="replace")
     observation = build_process_observation(
         target="",
         role="unit",
         attempt=0,
         returncode=returncode,
         timed_out=timed_out,
+        stderr=stderr,
     )
     return (
         _TIMEOUT_RETURN_CODE if timed_out else (returncode if returncode is not None else 1),
-        stdout_buf.getvalue().decode("utf-8", errors="replace"),
-        stderr_buf.getvalue().decode("utf-8", errors="replace"),
+        stdout,
+        stderr,
         observation,
     )
 
@@ -691,6 +707,108 @@ class _RecoveryAction:
     abort: bool = False
     requeue: list[str] = field(default_factory=list)
     records: list[dict[str, Any]] = field(default_factory=list)
+    requeue_events: list[tuple[dict[str, Any], list[str]]] = field(default_factory=list)
+
+
+def _recovery_attempts_path(state_file: Path) -> Path:
+    """Return the append-only sidecar used while superseded attempts are re-queued."""
+    return state_file.with_name(f"{state_file.name}.recovery.jsonl")
+
+
+def _reset_fresh_run_artifacts(
+    state_file: Path,
+    report_config: IsolatedReportConfig | None,
+) -> None:
+    """Remove durable artifacts that must not survive a fresh run."""
+    _recovery_attempts_path(state_file).unlink(missing_ok=True)
+    report_cache_dir = _report_record_cache_dir(state_file)
+    if report_cache_dir.is_symlink() or report_cache_dir.exists():
+        shutil.rmtree(report_cache_dir)
+    if report_config is None:
+        return
+    sidecar_paths = {report_config.output_path.parent / "quality.json"}
+    if report_config.jsonl_path is not None:
+        report_config.jsonl_path.unlink(missing_ok=True)
+        sidecar_paths.update(
+            {
+                report_config.jsonl_path.parent / "coverage.json",
+                report_config.jsonl_path.parent / "provisioning.json",
+            }
+        )
+    report_config.output_path.unlink(missing_ok=True)
+    for sidecar_path in sidecar_paths:
+        sidecar_path.unlink(missing_ok=True)
+
+
+def _state_attempt_history(state: Any) -> list[dict[str, Any]]:
+    history = getattr(state, "attempt_history", None)
+    if not isinstance(history, list):
+        history = []
+        setattr(state, "attempt_history", history)
+    return history
+
+
+def _state_recovery_events(state: Any) -> list[dict[str, Any]]:
+    events = getattr(state, "recovery_events", None)
+    if not isinstance(events, list):
+        events = []
+        setattr(state, "recovery_events", events)
+    return events
+
+
+def _process_observations_for_target(state: Any, target: str) -> list[dict[str, Any]]:
+    observations = getattr(state, "process_observations", [])
+    if not isinstance(observations, list):
+        return []
+    selected: list[dict[str, Any]] = []
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        if _process_observation_matches_target(observation, target):
+            selected.append(dict(observation))
+    return selected
+
+
+def _process_observation_matches_target(observation: Mapping[str, Any], target: str) -> bool:
+    file_target = target.split("::", 1)[0]
+    observed_target = str(observation.get("target", ""))
+    parent_nodeid = str(observation.get("parent_nodeid", "") or "")
+    if "::" in target:
+        return observed_target == target or parent_nodeid == target
+    return observed_target == target or parent_nodeid.startswith(f"{file_target}::")
+
+
+def _records_for_target(state: Any, state_file: Path | None, target: str) -> list[dict[str, Any]]:
+    records_by_unit = getattr(state, "report_records_by_unit", {})
+    records = records_by_unit.get(target, []) if isinstance(records_by_unit, Mapping) else []
+    if records:
+        return [dict(record) for record in records if isinstance(record, Mapping)]
+    if state_file is None:
+        return []
+    return _load_report_log_records(_report_record_cache_path(state_file, target))
+
+
+def _append_recovery_attempt_wrappers(
+    state_file: Path | None, attempts: Sequence[Mapping[str, Any]]
+) -> None:
+    if state_file is None or not attempts:
+        return
+    path = _recovery_attempts_path(state_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for attempt in attempts:
+            fh.write(
+                json.dumps(
+                    {
+                        "$report_type": "RecoveryAttempt",
+                        "target": attempt.get("target", ""),
+                        "attempt": dict(attempt),
+                    }
+                )
+                + "\n"
+            )
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def _scan_hint_rvs(result: FileRunResult, hint_rvs: frozenset[str]) -> frozenset[str]:
@@ -737,7 +855,9 @@ def _apply_recovery_between_units(
             return action
         if assessment.outcome is RecoveryOutcome.RECOVERED_RETRY:
             console.print("[green]Daemon recovered[/green] - re-running the units it took down.")
-            action.requeue.extend(assessment.requeue_units)
+            requeue_units = list(assessment.requeue_units)
+            action.requeue.extend(requeue_units)
+            action.requeue_events.append((assessment.records[0], requeue_units))
         elif assessment.outcome is RecoveryOutcome.QUARANTINE:
             console.print(
                 f"[yellow]Quarantining[/yellow] {result.target} - repeatedly crashed the daemon."
@@ -752,10 +872,18 @@ def _record_recovery_findings(state: Any, records: Sequence[dict[str, Any]]) -> 
     they survive the re-queue that deletes the dying daemon's false failures -- the crash
     itself is a finding and must never be dropped along with the noise it caused.
     """
+    events = _state_recovery_events(state)
     for record in records:
+        event = dict(record)
+        event["event_id"] = len(events) + 1
+        events.append(event)
+        record["event_id"] = event["event_id"]
         trigger = str(record.get("trigger_unit") or "")
         entry = {
             "schema": 1,
+            "$report_type": "RecoveryEvent",
+            "event_id": event["event_id"],
+            "target": trigger,
             "reason": record.get("reason", "crash"),
             "outcome": "fail",
             "severity": "HIGH",
@@ -769,7 +897,11 @@ def _record_recovery_findings(state: Any, records: Sequence[dict[str, Any]]) -> 
             "spec_ref": "",
             "source": None,
             "vector_id": None,
-            "detail": {"mode": "daemon_death", "streak": record.get("streak", [])},
+            "detail": {
+                "mode": "daemon_death",
+                "streak": record.get("streak", []),
+                "recovery_event": event,
+            },
         }
         state.report_records_by_unit.setdefault(f"{trigger}::daemon-recovery", []).append(entry)
 
@@ -781,6 +913,8 @@ def _requeue_units_after_recovery(
     index: int,
     pending_units: list[str],
     state: Any,
+    state_file: Path | None = None,
+    recovery_event: Mapping[str, Any] | None = None,
 ) -> int | None:
     """Drop the failures a dying daemon produced and rewind so those units run again.
 
@@ -798,6 +932,43 @@ def _requeue_units_after_recovery(
     if not positions:
         return None
     targets = {units[i] for i in positions}
+    attempts: list[dict[str, Any]] = []
+    history = _state_attempt_history(state)
+    for result in state.results:
+        if result.target not in targets:
+            continue
+        attempt_number = (
+            sum(1 for previous in history if previous.get("target") == result.target) + 1
+        )
+        attempt: dict[str, Any] = {
+            "target": result.target,
+            "status": result.status,
+            "returncode": result.returncode,
+            "completion_verified": result.completion_verified,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "records": _records_for_target(state, state_file, result.target),
+            "reason": "daemon-recovery-requeue",
+            "attempt": attempt_number,
+            "recovery_event": dict(recovery_event) if recovery_event is not None else None,
+            "process_observations": _process_observations_for_target(state, result.target),
+        }
+        history.append(attempt)
+        attempts.append(attempt)
+    _append_recovery_attempt_wrappers(state_file, attempts)
+    observations = getattr(state, "process_observations", [])
+    if isinstance(observations, list) and hasattr(state, "process_observations"):
+        state.process_observations[:] = [
+            observation
+            for observation in observations
+            if not isinstance(observation, Mapping)
+            or not any(
+                _process_observation_matches_target(observation, target) for target in targets
+            )
+        ]
+    if state_file is not None:
+        for target in targets:
+            _delete_unit_report_record_cache(state_file, target)
     state.results[:] = [result for result in state.results if result.target not in targets]
     for unit in targets:
         state.report_records_by_unit.pop(unit, None)
@@ -831,6 +1002,20 @@ def run_isolated_pytest_units(
     cascade, and resumes or aborts honestly. The wiring is inert unless mode != "off", so a
     default run is byte-identical. See core/recovery.py.
     """
+    env = os.environ.copy()
+    deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
+    fingerprint = (
+        build_state_fingerprint(
+            units,
+            pytest_args,
+            env,
+            baseline_fingerprint=baseline_fingerprint,
+        )
+        if units
+        else ""
+    )
+    if not resume:
+        _reset_fresh_run_artifacts(state_file, report_config)
     if not units:
         # No tests were collected — the module / marker / match / path selection
         # matched nothing. A run that executed zero tests must NOT report success
@@ -841,8 +1026,10 @@ def run_isolated_pytest_units(
             "match / path selection matched nothing. Refusing to report success "
             "for a run that executed zero tests."
         )
+        empty_state = FileRunState(units=[], fingerprint=fingerprint, results=[])
+        if not resume:
+            save_run_state(state_file, empty_state)
         if report_config is not None:
-            empty_state = FileRunState(units=[], fingerprint="", results=[])
             if report_config.output_format == "json":
                 payload = write_isolated_json_report(
                     report_config.output_path, empty_state, provenance=provenance
@@ -853,14 +1040,6 @@ def run_isolated_pytest_units(
             else:
                 write_isolated_report(report_config, empty_state)
         return _NO_TESTS_COLLECTED_EXIT
-    env = os.environ.copy()
-    deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
-    fingerprint = build_state_fingerprint(
-        units,
-        pytest_args,
-        env,
-        baseline_fingerprint=baseline_fingerprint,
-    )
     previous_state = load_run_state(state_file) if resume else None
     if previous_state is not None and previous_state.fingerprint != fingerprint:
         msg = (
@@ -910,13 +1089,23 @@ def run_isolated_pytest_units(
     executed_units: set[str] = set()
     available_mechanisms = _load_available_mechanisms(pytest_args)
     recovery_controller = _build_recovery_controller(recovery_config, pytest_args)
+    recovery_enabled = isinstance(recovery_controller, RecoveryController)
     # Number of results already fed to the recovery controller. Seed from any results already in
     # state (a --resume run) so the look-back only ever covers deaths in THIS session, not stale
     # historical failures (which are already recorded).
     recovery_assessed = len(state.results)
 
     if not pending_units:
-        console.print("[green]Nothing to do[/green] - all isolated units already completed.")
+        resume_exit_code = _final_state_exit_code(
+            state, 1 if _state_recovery_events(state) or _state_attempt_history(state) else 0
+        )
+        if resume_exit_code:
+            console.print(
+                "[red]Nothing to do[/red] - durable isolated state is not green; "
+                "review the recorded failures before accepting this run."
+            )
+        else:
+            console.print("[green]Nothing to do[/green] - all isolated units already completed.")
         if report_config is not None:
             coverage_data: dict[str, Any] | None = None
             quality_records: list[dict[str, Any]] = []
@@ -946,6 +1135,8 @@ def run_isolated_pytest_units(
                     units=state.units,
                     inline_records_by_unit=inline_report_records_by_unit,
                     output_path=report_config.jsonl_path,
+                    attempt_history=state.attempt_history,
+                    recovery_events=state.recovery_events,
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
@@ -993,23 +1184,22 @@ def run_isolated_pytest_units(
                     state,
                     per_unit_details=merged_details,
                 )
-        return 0
+        return resume_exit_code
 
-    exit_code = 0
+    exit_code = 1 if _state_recovery_events(state) or _state_attempt_history(state) else 0
     index = 0
     try:
-        while index < len(units):
-            unit = units[index]
-            if unit not in pending_units:
-                index += 1
-                continue
-
+        while index < len(units) or (recovery_enabled and recovery_assessed < len(state.results)):
             # -- Crashing-daemon recovery (between-unit look-back) --
             # Feed every result completed since the last check to the controller, in order, BEFORE
             # running the next unit. A confirmed daemon death triggers wait/restart + re-probe here,
             # so the upcoming unit runs against a recovered daemon (or the run aborts honestly).
             # Inert unless recovery is enabled, so default runs are byte-identical.
-            if recovery_controller is not None and recovery_assessed < len(state.results):
+            if (
+                recovery_enabled
+                and recovery_controller is not None
+                and recovery_assessed < len(state.results)
+            ):
                 recovery_action = _apply_recovery_between_units(
                     recovery_controller,
                     state.results[recovery_assessed:],
@@ -1017,17 +1207,37 @@ def run_isolated_pytest_units(
                 )
                 recovery_assessed = len(state.results)
                 _record_recovery_findings(state, recovery_action.records)
+                if recovery_action.records and not recovery_action.requeue:
+                    save_run_state(state_file, state)
+                if recovery_action.records:
+                    exit_code = 1
                 if recovery_action.abort:
                     exit_code = 1
                     break
                 if recovery_action.requeue:
-                    rewind_to = _requeue_units_after_recovery(
-                        recovery_action.requeue,
-                        units=units,
-                        index=index,
-                        pending_units=pending_units,
-                        state=state,
-                    )
+                    rewind_to: int | None = None
+                    requeue_events = recovery_action.requeue_events or [
+                        (
+                            recovery_action.records[-1] if recovery_action.records else {},
+                            recovery_action.requeue,
+                        )
+                    ]
+                    for recovery_event, recovery_units in requeue_events:
+                        candidate = _requeue_units_after_recovery(
+                            recovery_units,
+                            units=units,
+                            index=index,
+                            pending_units=pending_units,
+                            state=state,
+                            state_file=state_file,
+                            recovery_event=recovery_event,
+                        )
+                        for recovery_unit in recovery_units:
+                            per_unit_details.pop(recovery_unit, None)
+                        if candidate is not None:
+                            rewind_to = (
+                                candidate if rewind_to is None else min(rewind_to, candidate)
+                            )
                     if rewind_to is not None:
                         # The dropped results were never the module's verdict; re-run them
                         # against the recovered daemon so the report says what it really does.
@@ -1036,25 +1246,16 @@ def run_isolated_pytest_units(
                         index = rewind_to
                         continue
 
-            unit_granularity = _effective_granularity(unit, granularity)
-            if resume and unit_granularity == "file" and "::" not in unit:
-                file_key = _unit_file_key(unit)
-                previous_result_count = len(state.results)
-                state.results[:] = [
-                    result
-                    for result in state.results
-                    if not (
-                        result.target == unit
-                        or (
-                            result.status == "crash_limited"
-                            and _unit_file_key(result.target) == file_key
-                        )
-                    )
-                ]
-                recovery_assessed -= previous_result_count - len(state.results)
+            if index >= len(units):
+                break
+            unit = units[index]
+            if unit not in pending_units:
+                index += 1
+                continue
 
+            unit_granularity = _effective_granularity(unit, granularity)
             executed_units.add(unit)
-            if report_config is not None and report_config.jsonl_path is not None:
+            if report_config is not None:
                 _delete_unit_report_record_cache(state_file, unit)
                 state.report_records_by_unit.pop(unit, None)
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
@@ -1095,9 +1296,7 @@ def run_isolated_pytest_units(
             initial_deselect_path: Path | None = None
             run_env = _subprocess_plugin_env(env, unit)
             _maybe_set_crash_journal(run_env, unit)
-            collect_report_log = unit_granularity == "file" or (
-                report_config is not None and report_config.jsonl_path is not None
-            )
+            collect_report_log = unit_granularity == "file" or report_config is not None
             if unit_disabled_nodeids:
                 initial_deselect_path = write_deselect_file(unit_disabled_nodeids)
                 run_env["PKCS11_CHECK_DESELECT_FILE"] = str(initial_deselect_path)
@@ -1134,7 +1333,7 @@ def run_isolated_pytest_units(
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start
                     if unit_jsonl_path is not None:
-                        if report_config is not None and report_config.jsonl_path is not None:
+                        if report_config is not None:
                             _write_unit_report_record_cache_from_jsonl_paths(
                                 state_file,
                                 unit,
@@ -1164,14 +1363,18 @@ def run_isolated_pytest_units(
                         to_retry_temps: list[Path] = []
                         escalate = False
                         retry_count = 0
+                        confirmed_crash_returncode: int | None = None
 
                         try:
                             while retry_count < _MAX_TIMEOUT_RETRIES:
                                 # Stream JSONL once for completed + culprit + detail.
                                 if to_iter_jsonl is not None:
-                                    iter_detail, culprit, completed = _analyze_report_jsonl(
-                                        to_iter_jsonl
-                                    )
+                                    (
+                                        iter_detail,
+                                        culprit,
+                                        completed,
+                                        _session_exitstatus,
+                                    ) = _analyze_report_jsonl(to_iter_jsonl)
                                 else:
                                     culprit, completed = None, []
                                     iter_detail = None
@@ -1228,17 +1431,19 @@ def run_isolated_pytest_units(
                                         confirm_out = confirm_err = ""
                                     confirm_status = _status_from_returncode(confirm_rc)
                                     culprit_outcome = (
-                                        "timeout"
-                                        if confirm_status == "timeout"
+                                        confirm_status
+                                        if confirm_status in {"crashed", "timeout", "failed"}
                                         else "passed-in-isolation"
                                     )
                                     to_culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
                                     }
-                                    if confirm_status == "timeout":
+                                    if culprit_outcome in {"crashed", "timeout", "failed"}:
                                         to_culprit_entry["longrepr"] = (
-                                            confirm_err.strip() or confirm_out.strip()
+                                            confirm_err.strip()
+                                            or confirm_out.strip()
+                                            or f"confirmation exited with code {confirm_rc}"
                                         )
                                     if confirm_out.strip():
                                         to_culprit_entry["stdout"] = confirm_out
@@ -1250,10 +1455,12 @@ def run_isolated_pytest_units(
                                             "tests": [],
                                         }
                                     to_accum_detail["tests"].append(to_culprit_entry)
-                                    if culprit_outcome == "timeout":
-                                        to_accum_detail["counts"]["timeout"] = (
-                                            to_accum_detail["counts"].get("timeout", 0) + 1
+                                    if culprit_outcome in {"crashed", "timeout", "failed"}:
+                                        to_accum_detail["counts"][culprit_outcome] = (
+                                            to_accum_detail["counts"].get(culprit_outcome, 0) + 1
                                         )
+                                    if culprit_outcome == "crashed":
+                                        confirmed_crash_returncode = confirm_rc
                                     to_deselect.add(culprit)
 
                                 # -- check exit conditions --
@@ -1315,7 +1522,18 @@ def run_isolated_pytest_units(
 
                                 if retry_status != "timeout":
                                     # Retry completed (pass or fail) - merge
-                                    final_detail = _read_jsonl_results(retry_jsonl_path)
+                                    (
+                                        final_detail,
+                                        _retry_culprit,
+                                        _retry_completed,
+                                        retry_exitstatus,
+                                    ) = _analyze_report_jsonl(retry_jsonl_path)
+                                    retry_completion_verified = _completion_verified_for_attempt(
+                                        retry_jsonl_path,
+                                        retry_status,
+                                        retry_rc,
+                                        retry_exitstatus,
+                                    )
                                     if final_detail is not None:
                                         if to_accum_detail is None:
                                             to_accum_detail = final_detail
@@ -1338,36 +1556,76 @@ def run_isolated_pytest_units(
                                         to_accum_detail, unit
                                     )
 
-                                    keep = retry_status != "passed" or (
-                                        to_accum_detail is not None
-                                        and any(
-                                            to_accum_detail["counts"].get(k, 0) > 0
-                                            for k in (
-                                                "failed",
-                                                "xfailed",
-                                                "xpassed",
-                                                "error",
+                                    final_result = FileRunResult(
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        duration_s=retry_dur,
+                                    )
+                                    final_status = _effective_unit_status(
+                                        [final_result],
+                                        to_accum_detail.get("counts")
+                                        if to_accum_detail is not None
+                                        else None,
+                                    )
+                                    final_returncode = retry_rc
+                                    if final_status == "timeout":
+                                        final_returncode = _TIMEOUT_RETURN_CODE
+                                    elif final_status == "crashed":
+                                        final_returncode = (
+                                            confirmed_crash_returncode
+                                            if confirmed_crash_returncode is not None
+                                            else retry_rc
+                                        )
+
+                                    keep = (
+                                        final_status != "passed"
+                                        or not retry_completion_verified
+                                        or (
+                                            to_accum_detail is not None
+                                            and any(
+                                                to_accum_detail["counts"].get(k, 0) > 0
+                                                for k in (
+                                                    "failed",
+                                                    "xfailed",
+                                                    "xpassed",
+                                                    "error",
+                                                )
                                             )
                                         )
                                     )
                                     result = FileRunResult(
                                         target=unit,
-                                        status=retry_status,
-                                        returncode=retry_rc,
+                                        status=final_status,
+                                        returncode=final_returncode,
                                         duration_s=(duration_s + total_retry_dur),
                                         stdout=(retry_out if keep else ""),
                                         stderr=(retry_err if keep else ""),
+                                        completion_verified=retry_completion_verified,
                                     )
                                     _record_result(state, result)
                                     save_run_state(state_file, state)
                                     if to_accum_detail is not None:
                                         per_unit_details[unit] = to_accum_detail
-                                    console.print(
-                                        f"[green]RETRY OK[/green] {unit} "
-                                        f"({total_retry_dur:.1f}s, "
-                                        f"{len(to_deselect)} deselected)"
-                                    )
-                                    if retry_status == "failed":
+                                    if not retry_completion_verified:
+                                        console.print(
+                                            f"[red]INCOMPLETE[/red] {unit}: retry report log "
+                                            "has no valid SessionFinish matching the exit code"
+                                        )
+                                        exit_code = 1
+                                    elif final_status not in {"passed", "empty"}:
+                                        console.print(
+                                            f"[red]RETRY {final_status.upper()}[/red] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(to_deselect)} deselected)"
+                                        )
+                                    else:
+                                        console.print(
+                                            f"[green]RETRY OK[/green] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(to_deselect)} deselected)"
+                                        )
+                                    if final_status in {"failed", "crashed", "timeout"}:
                                         exit_code = 1
                                     index += 1
                                     break  # exit retry loop
@@ -1389,7 +1647,7 @@ def run_isolated_pytest_units(
                             all_iter_jsonls = (
                                 [unit_jsonl_path] if unit_jsonl_path else []
                             ) + to_retry_temps
-                            if report_config is not None and report_config.jsonl_path is not None:
+                            if report_config is not None:
                                 _write_unit_report_record_cache_from_jsonl_paths(
                                     state_file,
                                     unit,
@@ -1471,15 +1729,34 @@ def run_isolated_pytest_units(
                 # needs to re-read it for culprit identification).
                 crash_jsonl_path: Path | None = unit_jsonl_path
                 detail: dict[str, Any] | None = None
+                completion_verified = True
                 if unit_jsonl_path is not None:
-                    if report_config is not None and report_config.jsonl_path is not None:
-                        detail, _culprit, _completed = _analyze_report_jsonl(
-                            unit_jsonl_path,
-                            state_file=state_file,
-                            unit=unit,
+                    if report_config is not None:
+                        _write_unit_report_record_cache_from_jsonl_paths(
+                            state_file,
+                            unit,
+                            [unit_jsonl_path],
                         )
+                    if report_config is not None and report_config.jsonl_path is not None:
+                        (
+                            detail,
+                            _culprit,
+                            _completed,
+                            _session_exitstatus,
+                        ) = _analyze_report_jsonl(unit_jsonl_path, state_file=state_file, unit=unit)
                     else:
-                        detail, _culprit, _completed = _analyze_report_jsonl(unit_jsonl_path)
+                        (
+                            detail,
+                            _culprit,
+                            _completed,
+                            _session_exitstatus,
+                        ) = _analyze_report_jsonl(unit_jsonl_path)
+                    completion_verified = _completion_verified_for_attempt(
+                        unit_jsonl_path,
+                        status,
+                        returncode,
+                        _session_exitstatus,
+                    )
                     if status not in ("crashed", "timeout"):
                         unit_jsonl_path.unlink(missing_ok=True)
                         crash_jsonl_path = None
@@ -1492,7 +1769,9 @@ def run_isolated_pytest_units(
                     detail["counts"].get(k, 0) > 0
                     for k in ("failed", "xfailed", "xpassed", "error")
                 )
-                keep_output = status not in ("passed",) or has_notable_tests
+                keep_output = (
+                    status not in ("passed",) or has_notable_tests or not completion_verified
+                )
                 result = FileRunResult(
                     target=unit,
                     status=status,
@@ -1500,11 +1779,27 @@ def run_isolated_pytest_units(
                     duration_s=duration_s,
                     stdout=captured_stdout if keep_output else "",
                     stderr=captured_stderr if keep_output else "",
+                    completion_verified=completion_verified,
                 )
                 _record_result(state, result)
                 save_run_state(state_file, state)
                 if detail is not None:
                     per_unit_details[unit] = detail
+
+                if not completion_verified:
+                    console.print(
+                        f"[red]INCOMPLETE[/red] {unit}: report log has no valid "
+                        "SessionFinish matching the subprocess exit code"
+                    )
+                    exit_code = 1
+                    if stop_on_failure:
+                        console.print(
+                            f"[yellow]Stopped[/yellow] at {unit}. Resume with "
+                            f"[bold]--resume --state-file {state_file}[/bold]."
+                        )
+                        return exit_code
+                    index += 1
+                    continue
 
                 if status in {"passed", "empty"}:
                     console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
@@ -1542,9 +1837,12 @@ def run_isolated_pytest_units(
                             while True:
                                 # Stream JSONL once for completed + culprit + detail.
                                 if iter_jsonl_path is not None:
-                                    iter_detail, culprit, completed = _analyze_report_jsonl(
-                                        iter_jsonl_path
-                                    )
+                                    (
+                                        iter_detail,
+                                        culprit,
+                                        completed,
+                                        _session_exitstatus,
+                                    ) = _analyze_report_jsonl(iter_jsonl_path)
                                 else:
                                     culprit, completed = None, []
                                     iter_detail = None
@@ -1791,7 +2089,18 @@ def run_isolated_pytest_units(
 
                                 if retry_status not in ("crashed", "timeout"):
                                     # Retry succeeded - merge final results
-                                    final_detail = _read_jsonl_results(retry_jsonl_path)
+                                    (
+                                        final_detail,
+                                        _retry_culprit,
+                                        _retry_completed,
+                                        retry_exitstatus,
+                                    ) = _analyze_report_jsonl(retry_jsonl_path)
+                                    retry_completion_verified = _completion_verified_for_attempt(
+                                        retry_jsonl_path,
+                                        retry_status,
+                                        retry_rc,
+                                        retry_exitstatus,
+                                    )
                                     if final_detail is not None:
                                         if accumulated_detail is None:
                                             accumulated_detail = final_detail
@@ -1804,27 +2113,39 @@ def run_isolated_pytest_units(
                                                 final_detail["tests"]
                                             )
 
-                                    final_status = retry_status
+                                    final_result = FileRunResult(
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        duration_s=retry_dur,
+                                    )
+                                    final_status = _effective_unit_status(
+                                        [final_result],
+                                        accumulated_detail.get("counts")
+                                        if accumulated_detail is not None
+                                        else None,
+                                    )
                                     final_returncode = retry_rc
-                                    if retry_status == "passed" and accumulated_detail is not None:
-                                        if accumulated_detail["counts"].get("crashed", 0) > 0:
-                                            final_status = "crashed"
-                                            final_returncode = returncode
-                                        elif accumulated_detail["counts"].get("timeout", 0) > 0:
-                                            final_status = "timeout"
-                                            final_returncode = _TIMEOUT_RETURN_CODE
+                                    if final_status == "timeout":
+                                        final_returncode = _TIMEOUT_RETURN_CODE
+                                    elif final_status == "crashed":
+                                        final_returncode = returncode
 
-                                    keep = final_status != "passed" or (
-                                        accumulated_detail is not None
-                                        and any(
-                                            accumulated_detail["counts"].get(k, 0) > 0
-                                            for k in (
-                                                "failed",
-                                                "xfailed",
-                                                "xpassed",
-                                                "error",
-                                                "crashed",
-                                                "timeout",
+                                    keep = (
+                                        final_status != "passed"
+                                        or not retry_completion_verified
+                                        or (
+                                            accumulated_detail is not None
+                                            and any(
+                                                accumulated_detail["counts"].get(k, 0) > 0
+                                                for k in (
+                                                    "failed",
+                                                    "xfailed",
+                                                    "xpassed",
+                                                    "error",
+                                                    "crashed",
+                                                    "timeout",
+                                                )
                                             )
                                         )
                                     )
@@ -1835,16 +2156,30 @@ def run_isolated_pytest_units(
                                         duration_s=(duration_s + total_retry_dur),
                                         stdout=(retry_out if keep else ""),
                                         stderr=(retry_err if keep else ""),
+                                        completion_verified=retry_completion_verified,
                                     )
                                     _record_result(state, result)
                                     save_run_state(state_file, state)
                                     if accumulated_detail is not None:
                                         per_unit_details[unit] = accumulated_detail
-                                    console.print(
-                                        f"[green]RETRY OK[/green] {unit} "
-                                        f"({total_retry_dur:.1f}s, "
-                                        f"{len(deselect_set)} deselected)"
-                                    )
+                                    if not retry_completion_verified:
+                                        console.print(
+                                            f"[red]INCOMPLETE[/red] {unit}: retry report log "
+                                            "has no valid SessionFinish matching the exit code"
+                                        )
+                                        exit_code = 1
+                                    elif final_status in {"passed", "empty"}:
+                                        console.print(
+                                            f"[green]RETRY OK[/green] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(deselect_set)} deselected)"
+                                        )
+                                    else:
+                                        console.print(
+                                            f"[red]RETRY {final_status.upper()}[/red] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(deselect_set)} deselected)"
+                                        )
                                     if final_status in {"failed", "crashed", "timeout"}:
                                         exit_code = 1
                                     index += 1
@@ -1861,7 +2196,7 @@ def run_isolated_pytest_units(
                             all_iter_jsonls = (
                                 [crash_jsonl_path] if crash_jsonl_path else []
                             ) + retry_temp_files
-                            if report_config is not None and report_config.jsonl_path is not None:
+                            if report_config is not None:
                                 _write_unit_report_record_cache_from_jsonl_paths(
                                     state_file,
                                     unit,
@@ -1967,6 +2302,8 @@ def run_isolated_pytest_units(
                     units=state.units,
                     inline_records_by_unit=inline_report_records_by_unit,
                     output_path=report_config.jsonl_path,
+                    attempt_history=state.attempt_history,
+                    recovery_events=state.recovery_events,
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     merged_details = _build_per_unit_details_from_record_sources(
@@ -2002,6 +2339,16 @@ def run_isolated_pytest_units(
                         _emit_external_provision_banner(
                             provisioning_data["totals"]["ran_via_external"]
                         )
+            else:
+                merged_details = _build_per_unit_details_from_record_sources(
+                    state_file,
+                    units=state.units,
+                    inline_records_by_unit=state.report_records_by_unit,
+                )
+                merged_details = _merge_supplemental_special_details(
+                    merged_details,
+                    per_unit_details,
+                )
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,
@@ -2021,10 +2368,10 @@ def run_isolated_pytest_units(
                 write_isolated_report(
                     report_config,
                     state,
-                    per_unit_details=per_unit_details,
+                    per_unit_details=merged_details,
                 )
 
-    return exit_code
+    return _final_state_exit_code(state, exit_code)
 
 
 def state_results_by_status(path: Path) -> dict[str, int]:

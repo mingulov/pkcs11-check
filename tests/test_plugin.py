@@ -177,6 +177,33 @@ def test_ensure_manifest_defaults_unset_interface_and_slot(
     assert manifest.slot_index == 0
 
 
+def test_explicit_non_green_manifest_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = CapabilityManifest(
+        status="error",
+        module_path="module.so",
+        requested_interface="auto",
+        interface_version=None,
+        slot_index=0,
+        slot_count=None,
+        mechanisms=[],
+        error="C_GetMechanismInfo failed",
+    )
+    monkeypatch.setattr(selection_mod, "load_manifest", lambda _path: manifest)
+    options = {"p11_module": "module.so", "p11_manifest": "manifest.json"}
+    stash = pytest.Stash()
+    stash[plugin_mod._MANIFEST_KEY] = None
+    config = SimpleNamespace(
+        stash=stash,
+        getoption=lambda name, default=None: options.get(name, default),
+    )
+
+    with pytest.raises(pytest.exit.Exception) as caught:
+        plugin_mod._ensure_manifest(config)
+
+    assert caught.value.returncode == 2
+    assert "preflight error" in str(caught.value)
+
+
 class _FakeItem:
     def __init__(self, path: Path, markers: dict[str, object]) -> None:
         self.path = path

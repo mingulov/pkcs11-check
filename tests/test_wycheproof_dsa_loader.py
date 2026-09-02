@@ -4,7 +4,30 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_DEVICE_ERROR
 from pkcs11_check.testcases.wycheproof import test_wycheproof_dsa as dsa
+
+
+class _Session:
+    raw = object()
+    sh = 1
+
+    @staticmethod
+    def has_mechanism(_name: str) -> bool:
+        return True
+
+
+def _invalid_signature_vector() -> tuple[str, dict[str, Any]]:
+    return next(
+        (vec_id, vec)
+        for vec_id, vec in dsa._ALL_DSA_VECTORS
+        if vec["result"] == "invalid"
+        and "_pkcs11_duplicate_of" not in vec
+        and "_pkcs11_sig_error" not in vec
+    )
 
 
 def test_der_dsa_vectors_have_pkcs11_p1363_signature() -> None:
@@ -83,3 +106,48 @@ def test_dsa_import_uses_unsigned_pkcs11_bigint_encoding(monkeypatch: Any) -> No
     assert not captured["subprime"].startswith(b"\x00")
     assert len(captured["subprime"]) == 28
     assert len(captured["sig"]) == 56
+
+
+def test_invalid_signature_valid_key_import_reject_is_visible_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vec_id, vec = _invalid_signature_vector()
+    monkeypatch.setattr(
+        dsa,
+        "import_dsa_public_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("valid DSA key import rejected", int(CKR_DEVICE_ERROR))
+        ),
+    )
+    monkeypatch.setattr(
+        dsa,
+        "verify_single",
+        lambda *_a, **_k: pytest.fail("signature verdict must not run without the valid key"),
+    )
+
+    try:
+        dsa.test_dsa(_Session(), vec_id, vec)
+    except BaseException as exc:
+        assert isinstance(exc, pytest.xfail.Exception)
+        assert "DSA:key-import" in str(exc)
+    else:
+        pytest.fail("valid-key import rejection was hidden")
+
+
+def test_dsa_key_import_non_ckr_assertion_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vec_id, vec = _invalid_signature_vector()
+    monkeypatch.setattr(
+        dsa,
+        "import_dsa_public_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("harness bug")),
+    )
+
+    try:
+        dsa.test_dsa(_Session(), vec_id, vec)
+    except BaseException as exc:
+        assert type(exc) is AssertionError
+        assert "harness bug" in str(exc)
+    else:
+        pytest.fail("non-CKR assertion was hidden")
