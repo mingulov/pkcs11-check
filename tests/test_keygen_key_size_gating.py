@@ -78,8 +78,7 @@ def test_mechanism_not_advertised_not_supported(monkeypatch: pytest.MonkeyPatch)
         require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", 2048, label="rsa-absent")
 
 
-def test_info_error_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
-    # C_GetMechanismInfo erroring -> False (never raises).
+def test_info_error_is_not_converted_to_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.raw.rv import CkrAssertionError
     from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
 
@@ -88,8 +87,9 @@ def test_info_error_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("pkcs11_check.raw.recipes.get_mechanism_info", _raise)
     rs = _rs(advertised=True)
-    assert keygen_key_size_supported(rs, "RSA_PKCS_KEY_PAIR_GEN", 2048) is False
-    with pytest.raises(pytest.skip.Exception):
+    with pytest.raises(CkrAssertionError):
+        keygen_key_size_supported(rs, "RSA_PKCS_KEY_PAIR_GEN", 2048)
+    with pytest.raises(CkrAssertionError):
         require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", 2048, label="rsa-info-err")
 
 

@@ -1,12 +1,4 @@
-"""Runtime classification meta-tests for weak/invalid mechanism-parameter probes.
-
-Each probe in security/test_parameter_validation.py is reclassified from a
-compliance.note() (silent-pass on acceptance) to the crypto-correctness
-self-contradiction rule: accepting the insecure/invalid parameter in a way that
-breaks the cryptographic guarantee -> fail; an expected reject -> pass; another
-clean reject code (or a lenient-but-safe acceptance) -> xfail. These offline
-meta-tests drive each probe with fake recipes and assert all branches.
-"""
+"""Runtime classification meta-tests for weak/invalid mechanism-parameter probes."""
 
 from __future__ import annotations
 
@@ -144,20 +136,41 @@ def test_gcm_tag_valid_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- GCM weak IV ----------------------------------------------------------
 
 
-def _run_gcm_iv(monkeypatch: pytest.MonkeyPatch, *, accepted: bool, rv: int = 0) -> None:
+def _run_gcm_iv(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    iv: bytes = b"\x00" * 4,
+    accepted: bool,
+    rv: int = 0,
+) -> list[str]:
+    notes: list[str] = []
     monkeypatch.setattr(pv, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(pv, "encrypt_single", (lambda *_a, **_k: b"x") if accepted else _raise(rv))
-    pv.TestGcmIvWeakness().test_gcm_weak_iv(_session(), b"\x00" * 4)
+    monkeypatch.setattr(pv, "note", lambda description, *_a, **_k: notes.append(description))
+    pv.TestGcmIvWeakness().test_gcm_weak_iv(_session(), iv)
+    return notes
 
 
-def test_gcm_iv_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gcm_empty_iv_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(Failed):
-        _run_gcm_iv(monkeypatch, accepted=True)
+        _run_gcm_iv(monkeypatch, iv=b"", accepted=True)
 
 
-def test_gcm_iv_expected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    _run_gcm_iv(monkeypatch, accepted=False, rv=_EXPECTED)
+def test_gcm_nonempty_short_iv_accept_is_noted_but_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notes = _run_gcm_iv(monkeypatch, accepted=True)
+    assert notes and "4-byte IV" in notes[0]
+
+
+def test_gcm_nonempty_short_iv_expected_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_gcm_iv(monkeypatch, accepted=False, rv=_EXPECTED)
+
+
+def test_gcm_empty_iv_expected_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_gcm_iv(monkeypatch, iv=b"", accepted=False, rv=_EXPECTED)
 
 
 def test_gcm_iv_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,9 +181,13 @@ def test_gcm_iv_other_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- GCM IV reuse ---------------------------------------------------------
 
 
-def _run_gcm_reuse(monkeypatch: pytest.MonkeyPatch, *, second_accepted: bool, rv: int = 0) -> None:
+def _run_gcm_reuse(
+    monkeypatch: pytest.MonkeyPatch, *, second_accepted: bool, rv: int = 0
+) -> list[str]:
+    notes: list[str] = []
     monkeypatch.setattr(pv, "gen_aes_key", lambda *_a, **_k: 1)
     monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(pv, "note", lambda description, *_a, **_k: notes.append(description))
     calls = {"n": 0}
 
     def _enc(*_a: object, **_k: object) -> bytes:
@@ -183,11 +200,12 @@ def _run_gcm_reuse(monkeypatch: pytest.MonkeyPatch, *, second_accepted: bool, rv
 
     monkeypatch.setattr(pv, "encrypt_single", _enc)
     pv.TestGcmIvReuse().test_gcm_iv_reuse_same_key(_session())
+    return notes
 
 
-def test_gcm_reuse_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(Failed):
-        _run_gcm_reuse(monkeypatch, second_accepted=True)
+def test_gcm_reuse_accept_is_noted_but_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    notes = _run_gcm_reuse(monkeypatch, second_accepted=True)
+    assert notes and "caller reused" in notes[0]
 
 
 def test_gcm_reuse_expected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,6 +227,8 @@ def _run_pss(
     monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(pv, "sign_single", (lambda *_a, **_k: b"sig") if accepted else _raise(rv))
     monkeypatch.setattr(pv, "verify_single", lambda *_a, **_k: verifies)
+    monkeypatch.setattr(pv, "read_rsa_public_key_or_xfail", lambda *_a, **_k: object())
+    monkeypatch.setattr(pv, "rsa_pss_local", lambda *_a, **_k: verifies)
     pv.TestPssSaltLength().test_pss_zero_salt_length(_session(), 0)
 
 
@@ -233,6 +253,121 @@ def test_pss_sln0_clean_decline_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_pss_sln0_nonclean_decline_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(CkrAssertionError):
         _run_pss(monkeypatch, accepted=False, rv=_OTHER)
+
+
+# --- PSS excessive salt --------------------------------------------------
+
+
+def _run_pss_excessive(monkeypatch: pytest.MonkeyPatch, exception: BaseException | None) -> None:
+    monkeypatch.setattr(pv, "gen_rsa_keypair", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _sign(*_a: object, **_k: object) -> bytes:
+        if exception is not None:
+            raise exception
+        return b"sig"
+
+    monkeypatch.setattr(pv, "sign_single", _sign)
+    pv.TestPssSaltLength().test_pss_excessive_salt_length(_session())
+
+
+def test_pss_excessive_salt_acceptance_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(Failed, match="accepted invalid"):
+        _run_pss_excessive(monkeypatch, None)
+
+
+def test_pss_excessive_salt_expected_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_pss_excessive(
+        monkeypatch,
+        CkrAssertionError("invalid salt", int(CKR_MECHANISM_PARAM_INVALID)),
+    )
+
+
+def test_pss_excessive_salt_other_clean_reject_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_pss_excessive(monkeypatch, CkrAssertionError("clean reject", _OTHER))
+
+
+@pytest.mark.parametrize(
+    "exception",
+    [AssertionError("harness assertion"), OSError("exception: access violation")],
+)
+def test_pss_excessive_salt_non_ckr_fault_propagates(
+    monkeypatch: pytest.MonkeyPatch, exception: BaseException
+) -> None:
+    with pytest.raises(type(exception), match=str(exception)):
+        _run_pss_excessive(monkeypatch, exception)
+
+
+# --- informational hardening probes -------------------------------------
+
+
+def _run_hardening_probe(
+    monkeypatch: pytest.MonkeyPatch, probe: str, exception: BaseException
+) -> None:
+    monkeypatch.setattr(pv, "gen_rsa_keypair", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(pv, "gen_aes_key_or_xfail", lambda *_a, **_k: 1)
+    monkeypatch.setattr(pv, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _operation(*_a: object, **_k: object) -> bytes:
+        raise exception
+
+    if probe == "oaep-sha1":
+        monkeypatch.setattr(pv, "encrypt_single", _operation)
+        pv.TestRsaOaepSha1Mgf().test_rsa_oaep_sha1_mgf(_session())
+    elif probe == "pss-md5":
+        monkeypatch.setattr(pv, "sign_single", _operation)
+        pv.TestRsaPssMd5Hash().test_rsa_pss_md5_hash(_session())
+    else:
+        monkeypatch.setattr(pv, "encrypt_single", _operation)
+        pv.TestCbcIvAllZeros().test_cbc_iv_all_zeros(_session())
+
+
+@pytest.mark.parametrize("probe", ["oaep-sha1", "pss-md5", "cbc-zero-iv"])
+def test_hardening_probe_expected_reject_passes(
+    monkeypatch: pytest.MonkeyPatch, probe: str
+) -> None:
+    _run_hardening_probe(
+        monkeypatch,
+        probe,
+        CkrAssertionError("invalid parameter", int(CKR_MECHANISM_PARAM_INVALID)),
+    )
+
+
+@pytest.mark.parametrize("probe", ["oaep-sha1", "pss-md5", "cbc-zero-iv"])
+def test_hardening_probe_other_clean_reject_xfails(
+    monkeypatch: pytest.MonkeyPatch, probe: str
+) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_hardening_probe(
+            monkeypatch,
+            probe,
+            CkrAssertionError("clean rejection", _OTHER),
+        )
+
+
+@pytest.mark.parametrize("probe", ["oaep-sha1", "pss-md5", "cbc-zero-iv"])
+def test_hardening_probe_undefined_ckr_fails(monkeypatch: pytest.MonkeyPatch, probe: str) -> None:
+    with pytest.raises(Failed, match="undefined CK_RV"):
+        _run_hardening_probe(
+            monkeypatch,
+            probe,
+            CkrAssertionError("undefined result", 0x7FFFFFFF),
+        )
+
+
+@pytest.mark.parametrize("probe", ["oaep-sha1", "pss-md5", "cbc-zero-iv"])
+@pytest.mark.parametrize(
+    "exception",
+    [AssertionError("harness assertion"), OSError("exception: access violation")],
+)
+def test_hardening_probe_non_ckr_fault_propagates(
+    monkeypatch: pytest.MonkeyPatch, probe: str, exception: BaseException
+) -> None:
+    with pytest.raises(type(exception), match=str(exception)):
+        _run_hardening_probe(monkeypatch, probe, exception)
 
 
 # --- XTS identical halves -------------------------------------------------

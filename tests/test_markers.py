@@ -3,12 +3,52 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 from pkcs11_check.markers import MARKER_DEFINITIONS
 
 _BUILTIN_MARKERS = {"parametrize", "skip", "skipif", "usefixtures", "xfail", "filterwarnings"}
 _MARKER_PATTERN = re.compile(r"pytest\.mark\.([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def test_allocation_amplifying_marker_selects_exact_probes() -> None:
+    expected = [
+        "src/pkcs11_check/testcases/security/test_random_length_truncation.py"
+        "::TestGenerateRandomLengthTruncation::test_generate_random_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestEncryptOutputLengthTruncation::test_encrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestDecryptOutputLengthTruncation::test_decrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_field_size_boundary.py"
+        "::TestHkdfParamLengthTruncation::test_hkdf_salt_len_truncation",
+        "src/pkcs11_check/testcases/test_attribute_fuzz.py"
+        "::TestMalformedAttributes::test_negative_key_length",
+    ]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-o",
+            "addopts=",
+            "--co",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-m",
+            "allocation_amplifying",
+            "src/pkcs11_check/testcases",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+        encoding="utf-8",
+    )
+    assert proc.returncode in {0, 5}, proc.stderr
+    selected = [line for line in proc.stdout.splitlines() if "::" in line]
+    assert sorted(selected) == sorted(expected)
 
 
 class TestMarkerDefinitions:

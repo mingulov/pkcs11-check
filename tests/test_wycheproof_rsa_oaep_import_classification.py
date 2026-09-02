@@ -52,7 +52,7 @@ def test_rsa_oaep_private_import_unknown_assertion_propagates(
     vec_id, vec = _first_oaep_vector()
 
     def _import_bug(*_args: Any, **_kwargs: Any) -> int:
-        raise AssertionError("ctypes packing bug")
+        raise AssertionError("ctypes packing bug after CKR_ATTRIBUTE_VALUE_INVALID")
 
     monkeypatch.setattr(test_wycheproof_rsa_oaep, "provision_rsa_private_key", _import_bug)
 

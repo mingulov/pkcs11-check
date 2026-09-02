@@ -5,6 +5,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID, CKR_OPERATION_ACTIVE
 from pkcs11_check.testcases.security import test_padding_oracle
 
 
@@ -33,9 +37,11 @@ def test_rsa_padding_oracle_aborts_after_expected_decrypt_reject(
         **_kwargs: Any,
     ) -> bytes:
         if raw.active:
-            raise AssertionError("Unexpected CK_RV CKR_OPERATION_ACTIVE")
+            raise CkrAssertionError("Unexpected CK_RV CKR_OPERATION_ACTIVE", CKR_OPERATION_ACTIVE)
         raw.active = True
-        raise AssertionError("Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID")
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_ENCRYPTED_DATA_INVALID", CKR_ENCRYPTED_DATA_INVALID
+        )
 
     monkeypatch.setattr(
         test_padding_oracle,
@@ -51,3 +57,15 @@ def test_rsa_padding_oracle_aborts_after_expected_decrypt_reject(
     )
 
     assert raw.abort_count == 10
+
+
+def test_decrypt_helper_propagates_plain_assertion(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        test_padding_oracle,
+        "decrypt_single",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("harness bug mentions CKR_ENCRYPTED_DATA_INVALID")
+        ),
+    )
+    with pytest.raises(AssertionError, match="harness bug"):
+        test_padding_oracle._decrypt_result_or_error(object(), 1, 2, 3, b"ciphertext")

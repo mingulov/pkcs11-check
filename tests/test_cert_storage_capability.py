@@ -7,7 +7,11 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_KEY_HANDLE_INVALID
+from pkcs11_check.raw.types_std import (
+    CKR_GENERAL_ERROR,
+    CKR_KEY_HANDLE_INVALID,
+    CKR_USER_TYPE_INVALID,
+)
 from pkcs11_check.testcases.x509 import conftest as x509conftest
 
 
@@ -41,6 +45,16 @@ def test_unsupported_only_after_trying_all(monkeypatch):
     assert attempts[0] >= 2  # exhaustive before concluding (no false-skip)
 
 
+def test_user_type_invalid_is_an_exhaustive_clean_refusal(monkeypatch):
+    rs, attempts = _fake_module(monkeypatch, accept_on=None, raise_rv=int(CKR_USER_TYPE_INVALID))
+    assert x509conftest.cert_storage_supported(rs) is False
+    assert (
+        attempts[0]
+        == len(x509conftest.cert_storage_templates(x509conftest._canonical_self_signed_cert_der()))
+        + 1
+    )
+
+
 def test_non_refusal_ckr_propagates(monkeypatch):
     # CKR_GENERAL_ERROR is NOT a clean cert-storage refusal -> propagates from the probe
     # (not swallowed as a silent skip). The skip gate then records it (next test).
@@ -68,6 +82,22 @@ def test_skip_helper_skips_when_unsupported(monkeypatch):
     rs, _ = _fake_module(monkeypatch, accept_on=None, raise_rv=int(CKR_KEY_HANDLE_INVALID))
     with pytest.raises(pytest.skip.Exception):
         x509conftest.skip_unless_cert_storage(rs)
+
+
+def test_cert_support_fixture_reuses_strict_storage_gate(monkeypatch):
+    """The legacy boolean fixture must not swallow a gate or harness failure."""
+    error = AssertionError("strict cert-storage gate failed")
+    rs = object()
+    monkeypatch.setattr(
+        x509conftest,
+        "skip_unless_cert_storage",
+        lambda _rs: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(AssertionError) as caught:
+        x509conftest.cert_support.__wrapped__(rs)
+
+    assert caught.value is error
 
 
 def test_probe_minimal_fallback_detects_support(monkeypatch):

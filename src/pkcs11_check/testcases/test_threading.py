@@ -139,10 +139,7 @@ def worker(_n):
     sh = open_session(raw, slot, FLAGS)
     try:
         if PIN is not None:
-            try:
-                login_user(raw, sh, CKU_USER, PIN)
-            except Exception:
-                pass
+            login_user(raw, sh, CKU_USER, PIN)
         for _ in range(ITERS):
             _op(sh)
     finally:

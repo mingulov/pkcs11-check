@@ -22,6 +22,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_KEY_TYPE,
@@ -32,6 +33,9 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
 )
 from pkcs11_check.testcases.conftest import (
+    EC_CURVE_UNSUPPORTED_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    is_known_error,
     route_in_range_not_operational,
     skip_unless_capability,
     xfail_if_known_ckr,
@@ -65,9 +69,15 @@ def _try_gen_ec(rs: Any, curve_name: str) -> tuple[int, int]:
     curve_oid = encode_named_curve_parameters(curve_name)
     try:
         return gen_ec_keypair(rs.raw, rs.sh, curve_oid)
-    except (AssertionError, OSError):
-        pytest.skip(f"Curve {curve_name} not supported by module")
-        raise  # unreachable, satisfies mypy
+    except CkrAssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            pytest.skip(f"Curve {curve_name} not supported by module")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            f"EC key generation advertised but {curve_name} keygen is not operational",
+        )
+        raise
 
 
 class TestECKeygen:
@@ -137,7 +147,7 @@ class TestECDSACrossVerify:
 
             try:
                 sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 # The gate above proved CKM_ECDSA C_Sign is advertised IN_RANGE; a clean
                 # capability-ish refusal here is an advertised-then-refused contradiction.
                 # Tag it as the IN_RANGE not_operational xfail (recorded for investigation,
@@ -150,7 +160,7 @@ class TestECDSACrossVerify:
                         key_size=None,
                         operation="C_Sign",
                     )
-                except AssertionError:
+                except CkrAssertionError:
                     # audit-ok: route re-raised a non-in-range code; handled just below
                     pass
                 xfail_if_known_ckr(exc, _ECDSA_SIGN_REJECT_RVS, "ECDSA sign not operational")

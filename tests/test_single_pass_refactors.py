@@ -153,7 +153,7 @@ def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
     monkeypatch.setattr(report_records_mod, "_load_report_log_records", _load_all_forbidden)
 
     analyze = getattr(file_runner_mod, "_analyze_report_jsonl")
-    detail, culprit, completed = analyze(
+    detail, culprit, completed, session_exitstatus = analyze(
         jsonl,
         state_file=tmp_path / "state.json",
         unit="f.py",
@@ -161,6 +161,7 @@ def test_analyze_report_jsonl_streams_detail_culprit_and_cache(
 
     assert culprit == "f.py::test_c"
     assert completed == ["f.py::test_a"]
+    assert session_exitstatus is None
     assert detail is not None
     assert detail["counts"]["passed"] == 1
     assert detail["counts"]["failed"] == 1

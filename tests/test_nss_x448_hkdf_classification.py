@@ -16,7 +16,7 @@ def _session(raw: object | None = None) -> SimpleNamespace:
     return SimpleNamespace(raw=raw or object(), sh=1, has_mechanism=lambda _name: True)
 
 
-def test_x448_domain_params_invalid_is_unsupported_curve_skip(
+def test_x448_domain_params_invalid_is_visible_runtime_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _reject_x448(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
@@ -27,7 +27,7 @@ def test_x448_domain_params_invalid_is_unsupported_curve_skip(
 
     monkeypatch.setattr(test_ecdh_extended, "_gen_montgomery", _reject_x448)
 
-    with pytest.raises(pytest.skip.Exception, match="X448 keygen not supported"):
+    with pytest.raises(pytest.xfail.Exception, match="X448 keygen is not operational"):
         test_ecdh_extended.TestECMontgomeryKeyPairGen().test_x448_keygen(_session())
 
 

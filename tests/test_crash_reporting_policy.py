@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from pkcs11_check.core._report_records import _build_detail_from_report_records
 from pkcs11_check.testcases.ckr.test_ckr_null_params import _check_null_result
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,3 +76,79 @@ def test_provider_crashes_are_not_skipped() -> None:
 def test_null_param_subprocess_signal_is_failure() -> None:
     with pytest.raises(pytest.fail.Exception, match="C_GetInfo.*signal 11"):
         _check_null_result("C_GetInfo", -11, "", "segfault")
+
+
+def test_setup_crash_survives_retry_pass() -> None:
+    nodeid = "test_demo.py::test_case"
+    records = [
+        {"$report_type": "IsolatedUnitReport", "target": "test_demo.py", "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "setup",
+            "outcome": "failed",
+            "longrepr": "access violation in setup",
+            "user_properties": [
+                [
+                    "pkcs11_classification",
+                    [{"reason": "crash", "detail": {"windows_status": 0xC0000005}}],
+                ]
+            ],
+        },
+        {"$report_type": "IsolatedUnitReport", "target": nodeid, "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "passed",
+        },
+    ]
+    original = [dict(record) for record in records]
+
+    detail = _build_detail_from_report_records(records)
+
+    assert detail is not None
+    assert detail["counts"]["crashed"] == 1
+    assert detail["counts"]["passed"] == 0
+    assert sum(detail["counts"].values()) == 1
+    assert detail["tests"][0]["outcome"] == "crashed"
+    assert detail["tests"][0]["when"] == "setup"
+    assert records == original
+
+
+def test_call_crash_and_teardown_failure_remain_inspectable_without_double_counting() -> None:
+    nodeid = "test_demo.py::test_case"
+    records = [
+        {"$report_type": "IsolatedUnitReport", "target": "test_demo.py", "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "access violation in call",
+            "user_properties": [
+                [
+                    "pkcs11_classification",
+                    [{"reason": "crash", "detail": {"windows_status": 0xC0000005}}],
+                ]
+            ],
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "teardown",
+            "outcome": "failed",
+            "longrepr": "cleanup also failed",
+        },
+    ]
+
+    detail = _build_detail_from_report_records(records)
+
+    assert detail is not None
+    assert detail["counts"]["crashed"] == 1
+    assert detail["counts"]["error"] == 0
+    assert sum(detail["counts"].values()) == 1
+    assert [(test["outcome"], test.get("when"), test["longrepr"]) for test in detail["tests"]] == [
+        ("crashed", None, "access violation in call"),
+        ("error", "teardown", "cleanup also failed"),
+    ]

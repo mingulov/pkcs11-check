@@ -16,7 +16,7 @@ weaker guarantee; `n/a` = not applicable.
 | ctypes ABI (CK_ULONG size, struct packing)   | CI         | CI                 | CI             | POSIX    |
 | Module load (`.so` / `.dll` / `.dylib`)      | CI (.so)   | CI (.dll)          | CI (.dylib)    | POSIX (.so) |
 | Subprocess tee / crash survival              | CI         | CI                 | CI             | POSIX    |
-| Crash detection (POSIX signal / NTSTATUS)    | CI         | CI                 | CI             | POSIX    |
+| Crash detection (POSIX signal / NTSTATUS / ctypes SEH) | CI  | CI                 | CI             | POSIX    |
 | mmap demand-zero security probes             | CI         | n/a (skips clean)  | POSIX          | POSIX    |
 | SIGALRM teardown watchdog                    | CI         | n/a (subprocess deadline backstops) | POSIX | POSIX |
 | External key provisioning (opt-in)           | CI         | supported          | POSIX          | POSIX    |
@@ -28,13 +28,21 @@ weaker guarantee; `n/a` = not applicable.
 
 ## Notes
 
+- Linux support is not x86-only: ABI width comes from `ctypes` and integer attributes use native
+  byte order. The external provider matrix now includes full emulated s390x (big-endian LP64),
+  armhf, and i386 lanes. That evidence is diagnostic rather than a support certification: s390x
+  is not a framework CI lane, and the latest full s390x provider runs were incomplete.
 - The GitHub Actions `macos-latest` runner is arm64 (Apple Silicon). arm64 macOS is still
   LP64, so `CK_ULONG` is 8 bytes and the ctypes ABI path is the same as Linux; the lane
   additionally exercises the `.dylib` load path with a real Homebrew SoftHSM2 module.
 - Windows uses the LLP64 model, so `CK_ULONG` (a C `unsigned long`) is 4 bytes; the raw
-  layer handles this and packs pkcs11 structs with `_pack_ = 1`. A crashing child on
-  Windows exits with a positive NTSTATUS code (e.g. `0xC0000005` access violation) rather
-  than a negative POSIX signal; the framework classifies both as crashes.
+  layer handles this and packs pkcs11 structs with `_pack_ = 1`. An unhandled native crash on
+  Windows exits with a positive NTSTATUS code (e.g. `0xC0000005` access violation) rather than
+  a negative POSIX signal, and the framework classifies it as a crash. A direct ctypes access
+  violation can instead arrive as `OSError: exception: access violation` with a normal pytest
+  exit; the framework now classifies that structured direct failure in setup, call, or teardown as
+  a crash too. If it belongs to an owned nested probe, it contributes to `child_crash`. An ordinary
+  `OSError` or traceback text alone is not crash evidence.
 - The mmap demand-zero security probes need POSIX `MAP_ANONYMOUS`; on Windows they skip
   cleanly (recorded as a setup xfail), never crash.
 - Private-cache privacy on Windows relies on the per-user `%LOCALAPPDATA%` profile

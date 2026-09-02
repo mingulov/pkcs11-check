@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.bootstrap import (
     login_user,
 )
@@ -35,7 +36,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.recipes import (
     wrap_key as wrap_key_recipe,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -68,6 +69,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
@@ -97,6 +99,7 @@ from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
     assert_correct,
+    classify_negative_rv,
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
@@ -166,6 +169,13 @@ _SENSITIVE_WRAP_RUNTIME_REJECT_RVS = {
     CKR_MECHANISM_PARAM_INVALID,
 }
 
+_SENSITIVE_UNWRAP_POLICY_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ACTION_PROHIBITED,
+)
+
 
 def _gen_cve_aes_key_or_xfail(
     rs: Any,
@@ -178,7 +188,7 @@ def _gen_cve_aes_key_or_xfail(
     skip_unless_mechanism(rs, "AES_KEY_GEN")
     try:
         return gen_aes_key(rs.raw, rs.sh, bits, attrs=attrs)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -192,7 +202,7 @@ def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
     skip_unless_mechanism(rs, "RSA_PKCS_KEY_PAIR_GEN")
     try:
         return gen_rsa_keypair(rs.raw, rs.sh, bits)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             KEYPAIR_RUNTIME_REJECT_RVS,
@@ -202,12 +212,15 @@ def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
 
 
 def _abort_encrypt_operation(raw: Any, session: int) -> None:
-    """Best-effort cleanup after an expected encrypt error leaves state active."""
+    """Abort an expected encrypt error; clean teardown errors are best-effort."""
     try:
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
         raw.C_EncryptFinal(session, out_buf, byref(out_len))
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         pass
 
 
@@ -235,7 +248,7 @@ class TestCKATrusted:
             )
             assert obj != 0
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             reject_or_classify(
                 exc,
                 _TEMPLATE_REJECT_RVS,
@@ -275,29 +288,21 @@ class TestCKADeriveOnEC:
             assert priv != 0
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
-        except AssertionError as e:
-            err_str = str(e)
-            if "CKR_ATTRIBUTE_VALUE_INVALID" in err_str:
-                # Some modules reject CKA_DERIVE on EC keys;
-                # a clean non-spec rejection -> noted deviation, not a finding.
-                classify(
-                    "not_operational",
-                    kind="crypto",
-                    label="EC keygen with CKA_DERIVE",
-                    operation="C_GenerateKeyPair",
-                    mechanism="CKM_EC_KEY_PAIR_GEN",
-                    expected=CKR_ATTRIBUTE_VALUE_INVALID,
-                    summary="Module rejects CKA_DERIVE on EC (clean non-spec rejection)",
-                )
-            else:
-                raise
+        except CkrAssertionError as e:
+            xfail_if_known_ckr(
+                e,
+                (CKR_ATTRIBUTE_VALUE_INVALID,),
+                "EC keygen with CKA_DERIVE is not operational",
+            )
+            raise
 
 
 class TestTookanUnwrapAttrs:
-    """Tookan wrap/unwrap attribute preservation (task 7.23).
+    """Tookan/Cryptosense wrap/unwrap key-separation posture (task 7.23).
 
-    Unwrapped keys must preserve security attributes.
-    Reference: Tookan paper - CKA_SENSITIVE ignored on unwrap.
+    The unbound C_UnwrapKey flow is a posture observation because the caller
+    controls the output template. The explicit CKA_UNWRAP_TEMPLATE binding
+    oracle lives in ``security/test_unwrap_reimport.py``.
     """
 
     def test_unwrapped_key_preserves_extractable(
@@ -352,10 +357,34 @@ class TestTookanUnwrapAttrs:
                     unwrapped,
                     [CKA_EXTRACTABLE, CKA_SENSITIVE],
                 )
-                assert attrs[CKA_EXTRACTABLE] is False, (
-                    "Tookan: unwrapped key is EXTRACTABLE despite template saying False"
-                )
-                assert attrs[CKA_SENSITIVE] is True, "Tookan: unwrapped key lost SENSITIVE flag"
+                extractable_after = attrs.get(CKA_EXTRACTABLE)
+                sensitive_after = attrs.get(CKA_SENSITIVE)
+                if extractable_after is True or sensitive_after is False:
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        label="Tookan unwrapped key contradicts requested protection",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "SECURITY: C_UnwrapKey returned a result contradicting its "
+                            "requested protection template: "
+                            f"CKA_EXTRACTABLE={extractable_after!r}, "
+                            f"CKA_SENSITIVE={sensitive_after!r}"
+                        ),
+                    )
+                if type(extractable_after) is not bool or type(sensitive_after) is not bool:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Tookan unwrapped key protection readback",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "Tookan C_UnwrapKey result protection readback is missing or "
+                            "malformed: "
+                            f"CKA_EXTRACTABLE={extractable_after!r}, "
+                            f"CKA_SENSITIVE={sensitive_after!r}"
+                        ),
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -366,17 +395,15 @@ class TestTookanUnwrapAttrs:
         self,
         p11_raw_session: Any,
     ) -> None:
-        """Tookan sec.3.3: unwrap with attacker-supplied CKA_SENSITIVE=False
-        on a key that was originally SENSITIVE=True must not produce a
-        non-sensitive copy.
+        """Probe unbound re-import of a sensitive/extractable source key.
 
-        The attack: an attacker who can wrap a sensitive key and then unwrap
-        it provides a template requesting CKA_SENSITIVE=False, hoping the
-        module will silently accept the attribute downgrade and let them
-        read the key value. Either the unwrap must be rejected, or the
-        resulting key must keep CKA_SENSITIVE=True.
-
-        Closes Phase 4.5 GAP-T3 (HIGH).
+        The source protection and resulting value readability are recorded as
+        a Tookan/Cryptosense posture observation. Caller control of the
+        unbound C_UnwrapKey output template is specification-permitted because
+        this wrapping key has no CKA_UNWRAP_TEMPLATE binding. A provider that
+        advertises the unwrap path but cleanly refuses this template is not
+        spec-correctly operational, so the exact policy refusals are visible
+        xfails; unexpected errors remain hard failures.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -398,6 +425,12 @@ class TestTookanUnwrapAttrs:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: True},
         )
         try:
+            source_attrs = read_attributes(
+                rs.raw,
+                rs.sh,
+                target,
+                [CKA_SENSITIVE, CKA_EXTRACTABLE],
+            )
             try:
                 wrapped = wrap_key_recipe(
                     rs.raw,
@@ -406,7 +439,7 @@ class TestTookanUnwrapAttrs:
                     target,
                     CKM_AES_KEY_WRAP,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, _SENSITIVE_WRAP_INAPPLICABLE_RVS):
                     pytest.skip(f"Module cannot wrap SENSITIVE=True key: {exc}")
                 xfail_if_known_ckr(
@@ -430,45 +463,102 @@ class TestTookanUnwrapAttrs:
                         CKA_EXTRACTABLE: True,
                     },
                 )
-            except AssertionError as exc:
-                # Module rejected the attacker template — correct behaviour.
-                msg = str(exc)
-                if any(
-                    code in msg
-                    for code in (
-                        "CKR_TEMPLATE_INCONSISTENT",
-                        "CKR_ATTRIBUTE_VALUE_INVALID",
-                        "CKR_ATTRIBUTE_READ_ONLY",
-                        "CKR_ACTION_PROHIBITED",
+            except CkrAssertionError as exc:
+                if exc.rv in _SENSITIVE_UNWRAP_POLICY_REJECT_RVS:
+                    classify(
+                        "not_operational",
+                        label="Tookan unbound unwrap rejected attacker output template",
+                        operation="C_UnwrapKey",
+                        expected=_SENSITIVE_UNWRAP_POLICY_REJECT_RVS,
+                        actual=exc.rv,
+                        summary=(
+                            "Tookan unbound C_UnwrapKey cleanly rejected the advertised "
+                            "output-template path with "
+                            f"{exc.rv!r}; this is not operational"
+                        ),
                     )
-                ):
-                    return
                 raise
 
             try:
-                attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_SENSITIVE])
-                if attrs.get(CKA_SENSITIVE) is False:
-                    from pkcs11_check.compliance import ComplianceLevel, note
-
-                    note(
-                        "Module honoured CKA_SENSITIVE=False on unwrap of a "
-                        "SENSITIVE=True key — Tookan sec.3.3 attack succeeded.",
-                        ComplianceLevel.CRITICAL,
-                        reference="Tookan paper §3.3 / PKCS#11 v3.2",
-                    )
+                attrs = read_attributes(
+                    rs.raw,
+                    rs.sh,
+                    unwrapped,
+                    [CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_VALUE],
+                )
+                sensitive_after = attrs.get(CKA_SENSITIVE)
+                extractable_after = attrs.get(CKA_EXTRACTABLE)
+                value = attrs.get(CKA_VALUE)
+                policy_readback_valid = (
+                    type(sensitive_after) is bool and type(extractable_after) is bool
+                )
+                value_readable = type(value) is bytes and bool(value)
+                protected = sensitive_after is True or extractable_after is False
+                if value_readable and protected:
                     classify(
                         "self_contradiction",
                         kind="policy",
-                        label="Tookan unwrap sensitive downgrade",
-                        operation="C_UnwrapKey",
-                        mechanism="CKM_AES_KEY_WRAP",
-                        spec_ref="Tookan paper §3.3 / PKCS#11 v3.2",
-                        summary="SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
-                        "produced a non-sensitive copy of a SENSITIVE=True key. "
-                        "Sensitive-key boundary breached on unwrap.",
+                        label="Tookan unbound unwrap result exposes protected key material",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "SECURITY: unbound C_UnwrapKey result contains nonempty "
+                            "CKA_VALUE while the same result key reports protective "
+                            f"attributes (CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r})"
+                        ),
                     )
-                # SENSITIVE preserved: correct behaviour (template ignored
-                # for security-downgrade).
+                if not policy_readback_valid:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Tookan unbound unwrap result-key protection readback",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "Tookan unbound unwrap result-key protection readback is "
+                            "missing or malformed: "
+                            f"CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r}"
+                        ),
+                    )
+
+                if sensitive_after is not False or extractable_after is not True:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Tookan unbound unwrap result did not honor output template",
+                        operation="C_UnwrapKey",
+                        summary=(
+                            "Tookan unbound C_UnwrapKey result did not honor the requested "
+                            "output template (CKA_SENSITIVE=False, CKA_EXTRACTABLE=True): "
+                            f"CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r}"
+                        ),
+                    )
+
+                if sensitive_after is False and extractable_after is True:
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        "Tookan/Cryptosense unbound wrap/unwrap posture: source key "
+                        "reported "
+                        f"CKA_SENSITIVE={source_attrs.get(CKA_SENSITIVE)!r}, "
+                        f"CKA_EXTRACTABLE={source_attrs.get(CKA_EXTRACTABLE)!r}; the "
+                        "caller requested CKA_SENSITIVE=False and CKA_EXTRACTABLE=True, "
+                        f"yielding CKA_SENSITIVE={sensitive_after!r}, "
+                        f"CKA_EXTRACTABLE={extractable_after!r}, and CKA_VALUE readable="
+                        f"{value_readable!r}. This is a posture observation, not a "
+                        "provider contradiction: the caller requested a sensitivity "
+                        "downgrade on an unbound C_UnwrapKey output. Only "
+                        "CKA_UNWRAP_TEMPLATE on the wrapping key binds output "
+                        "attributes; CKA_WRAP_WITH_TRUSTED on the wrapped key and "
+                        "CKA_TRUSTED on the wrapping key govern trusted wrapping, but "
+                        "do not bind output sensitivity.",
+                        ComplianceLevel.NOT_RECOMMENDED,
+                        reference=(
+                            "PKCS#11 C_UnwrapKey caller-controlled output template; "
+                            "Tookan/Cryptosense key-separation attack class"
+                        ),
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -512,7 +602,12 @@ class TestSessionObjectsAfterLogout:
         rv = rs.raw.C_Logout(rs.sh)
         if rv != CKR_OK:
             destroy_quietly(rs.raw, rs.sh, key)
-            pytest.skip(f"Logout failed: {ckr_name(rv)} (another session holds login)")
+            classify_negative_rv(
+                rv,
+                (),
+                label="C_Logout after session-object probe",
+            )
+            return
 
         # Re-login and check
         login_user(rs.raw, rs.sh, 1, pin_bytes)
@@ -602,9 +697,13 @@ class TestECDSATimingBasic:
         curve_oid = encode_named_curve_parameters("secp256r1")
         try:
             pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
-        except AssertionError:
-            pytest.skip("P-256 not supported")
-            return
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                "ECDSA P-256 key generation is not operational",
+            )
+            raise
 
         try:
             # Sign 100 messages and measure times
@@ -689,9 +788,14 @@ class TestBoundaryLengthCrypto:
                     # Non-aligned - should fail with proper CKR
                     try:
                         encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
-                    except AssertionError:
+                    except CkrAssertionError as exc:
                         _abort_encrypt_operation(rs.raw, rs.sh)
-                        pass  # Correct rejection via expect_rv
+                        reject_or_classify(
+                            exc,
+                            _DATA_ERROR_RVS,
+                            label="AES-ECB non-block-aligned plaintext",
+                            kind="crypto",
+                        )
                     else:
                         if size > 0:
                             classify(
@@ -722,7 +826,7 @@ class TestBoundaryLengthCrypto:
             # Empty data - some modules reject
             try:
                 encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"")
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     (*CIPHER_OP_RUNTIME_REJECT_RVS, CKR_DATA_INVALID),
@@ -732,7 +836,7 @@ class TestBoundaryLengthCrypto:
             # Max data for RSA-2048 PKCS#1 v1.5: 245 bytes (256 - 11)
             try:
                 ct = encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"\x42" * 245)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     CIPHER_OP_RUNTIME_REJECT_RVS,
@@ -754,7 +858,7 @@ class TestBoundaryLengthCrypto:
             # crypto-correctness break (accepted_invalid), not a silent pass.
             try:
                 encrypt_single(rs.raw, rs.sh, pub, CKM_RSA_PKCS, b"\x42" * 246)
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
                     (CKR_DATA_LEN_RANGE, CKR_ARGUMENTS_BAD, CKR_ENCRYPTED_DATA_LEN_RANGE),
@@ -790,7 +894,7 @@ class TestInvalidECCurve:
         # unknown curve OID and a bogus point is a cryptographic correctness break
         # (CVE-2021-3798 pattern). Acceptance -> fail; expected curve/param reject ->
         # pass; another clean reject code -> xfail. No claim-check (crypto).
-        reject_exc: AssertionError | None = None
+        reject_exc: CkrAssertionError | None = None
         try:
             obj = create_object(
                 rs.raw,
@@ -805,7 +909,7 @@ class TestInvalidECCurve:
                 },
             )
             destroy_quietly(rs.raw, rs.sh, obj)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             reject_exc = exc
 
         reject_or_classify(
@@ -863,7 +967,7 @@ class TestWrapUnsupportedMechanismRegression:
                     des3_key,
                     CKM_AES_KEY_WRAP,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     (CKR_KEY_SIZE_RANGE, CKR_WRAPPED_KEY_LEN_RANGE, CKR_KEY_HANDLE_INVALID),

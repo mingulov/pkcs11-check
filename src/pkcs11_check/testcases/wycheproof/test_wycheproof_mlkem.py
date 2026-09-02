@@ -14,11 +14,16 @@ from pkcs11_check.raw.recipes import (
     decapsulate_key,
     destroy_quietly,
     import_pqc_private_key,
+    read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECAPSULATE,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_VALUE,
     CKA_VALUE_LEN,
     CKK_AES,
     CKK_ML_KEM,
@@ -31,6 +36,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -41,7 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
 pytestmark = [
@@ -74,7 +81,10 @@ _IMPORT_REJECT_RVS = (
 # Clean operational-deviation codes for a decapsulation that does not complete on an advertised
 # module (e.g. ML-KEM decaps not operational). Unexpected codes / wrong output still fail.
 _DECAPS_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -83,6 +93,18 @@ _DECAPS_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+_INVALID_CIPHERTEXT_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+)
+
+_INVALID_KEY_FLAGS = frozenset(
+    {
+        "IncorrectDecapsulationKeyLength",
+        "InvalidDecapsulationKey",
+    }
 )
 
 _PARAM_SETS: dict[int, int] = {
@@ -146,7 +168,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
     group = vec["_group"]
     private_key_bytes = bytes.fromhex(group.get("privateKey", vec.get("dk", "")))
     ciphertext = bytes.fromhex(vec.get("ct", vec.get("c", "")))
-    expected_ss = bytes.fromhex(vec.get("ss", ""))
+    expected_ss = bytes.fromhex(vec.get("K", vec.get("ss", "")))
     result = vec["result"]
     set_params({"mlkem": str(vec.get("_parameter_set", ""))})
 
@@ -164,18 +186,27 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
             parameter_set=param_set,
             attrs={CKA_DECAPSULATE: True},
         )
-    except AssertionError as exc:
-        if result == "invalid":
-            return  # Invalid key correctly rejected
+    except CkrAssertionError as exc:
+        if result == "invalid" and _INVALID_KEY_FLAGS.intersection(vec.get("flags", [])):
+            reject_or_classify(
+                exc,
+                _IMPORT_REJECT_RVS,
+                label=f"{vec_id}: invalid decapsulation-key import reject",
+                kind="crypto",
+            )
+            return
         # Valid vector: the module rejected importing the raw decapsulation key (dk only;
         # these vectors carry no CKA_SEED). PKCS#11 v3.2 (ML-KEM private key) permits a token
         # to require both CKA_SEED and CKA_VALUE, so a clean rejection is an operational
         # deviation (xfail), not a conformance failure. Unexpected codes still fail.
-        xfail_if_known_ckr(
+        reject_or_classify(
             exc,
-            _IMPORT_REJECT_RVS,
-            "module rejects raw ML-KEM private-key import with dk only (no CKA_SEED); "
-            "PKCS#11 v3.2 permits requiring CKA_SEED",
+            (),
+            label=(
+                "module rejects raw ML-KEM private-key import with dk only (no CKA_SEED); "
+                "PKCS#11 v3.2 permits requiring CKA_SEED"
+            ),
+            kind="lifecycle",
         )
         raise
 
@@ -192,6 +223,8 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
                 # Required by strict-but-conformant modules per PKCS#11 v3.2;
                 # lenient modules infer it. The ML-KEM shared secret is always 32 bytes.
                 CKA_VALUE_LEN: _ML_KEM_SHARED_SECRET_BYTES,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
             },
         )
         try:
@@ -203,29 +236,57 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-            if result == "valid" and expected_ss:
-                # We can't directly compare since the key value is wrapped.
-                pass  # Key was produced - that's the expected behavior.
+            if result == "valid":
+                if not expected_ss:
+                    raise ValueError(f"{vec_id}: valid vector has no expected shared secret K")
+                try:
+                    attrs = read_attributes(rs.raw, rs.sh, shared_key, [CKA_VALUE])
+                except CkrAssertionError as read_exc:
+                    reject_or_classify(
+                        read_exc,
+                        (),
+                        label=f"{vec_id}: derived ML-KEM shared-key readback",
+                        kind="lifecycle",
+                    )
+                    attrs = {}
+                if CKA_VALUE not in attrs:
+                    classify(
+                        "honest_deviation",
+                        kind="lifecycle",
+                        label=f"{vec_id}: derived ML-KEM shared-key readback",
+                        summary=(
+                            "ML-KEM decapsulation succeeded but the requested "
+                            "extractable CKA_VALUE was not readable"
+                        ),
+                    )
+                assert_correct(
+                    actual=bytes(attrs[CKA_VALUE]),
+                    expected=expected_ss,
+                    label=f"ML_KEM:C_DecapsulateKey KAT {vec_id}",
+                    operation="C_DecapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, shared_key)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
             # A clean operational-deviation code (module advertises ML-KEM but decaps does
             # not complete for an imported key) is xfail; an unexpected code or wrong output
             # still fails, surfacing real bugs.
-            xfail_if_known_ckr(
+            reject_or_classify(
                 exc,
                 _DECAPS_REJECT_RVS,
-                "ML-KEM decapsulation not operational for an imported decapsulation key",
+                label="ML-KEM decapsulation not operational for an imported decapsulation key",
+                kind="lifecycle",
             )
-            classify(
-                "not_operational",
-                label=f"ML_KEM:decaps:{vec_id}",
-                summary=f"Valid ML-KEM decaps failed: {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
+        else:
+            reject_or_classify(
+                exc,
+                _INVALID_CIPHERTEXT_REJECT_RVS,
+                label=f"ML_KEM:decaps:{vec_id} invalid vector reject",
+                kind="crypto",
             )
-        # acceptable/invalid: reject is fine
-        return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv)

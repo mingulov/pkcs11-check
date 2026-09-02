@@ -15,6 +15,10 @@ class MarkerDef:
 
 MARKER_DEFINITIONS: list[MarkerDef] = [
     MarkerDef("access", "Attribute enforcement, session type, and access-control tests"),
+    MarkerDef(
+        "allocation_amplifying",
+        "deliberately extreme input that can amplify provider allocation",
+    ),
     MarkerDef("acvp", "NIST ACVP known-answer test vector"),
     MarkerDef("benchmark", "Performance benchmark test"),
     MarkerDef("boundary", "Boundary-condition test"),

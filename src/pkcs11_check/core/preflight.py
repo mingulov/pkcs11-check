@@ -10,8 +10,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+from pkcs11_check.core.crash_codes import (
+    crash_detail_name,
+    ctypes_access_violation_code,
+    is_crash_returncode,
+)
 from pkcs11_check.core.loader import load_module
+from pkcs11_check.core.process_observation import build_process_observation
 
 
 @dataclass(frozen=True)
@@ -27,7 +32,9 @@ class CapabilityManifest:
     mechanisms: list[str]
     functions: list[str] = field(default_factory=list)
     error: str | None = None
+    reason: str | None = None
     mechanism_info: dict[str, dict[str, Any]] = field(default_factory=dict)
+    process_observation: dict[str, Any] | None = None
 
 
 def _mechanism_name(value: object) -> str:
@@ -43,8 +50,13 @@ def _mechanism_name(value: object) -> str:
 
 def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityManifest:
     """Probe module capabilities inside a short-lived helper process."""
+    load_failure = False
     try:
-        p11 = load_module(module, interface=interface)
+        try:
+            p11 = load_module(module, interface=interface)
+        except Exception:
+            load_failure = True
+            raise
         slots = p11.get_slots(token_present=True)
         if slot >= len(slots):
             msg = f"slot {slot} not found (token-present slots: {len(slots)})"
@@ -53,19 +65,12 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
         mechanisms = sorted(_mechanism_name(mech) for mech in raw_mechs)
         mech_info: dict[str, dict[str, Any]] = {}
         for mech in raw_mechs:
-            try:
-                info = slots[slot].get_mechanism_info(mech)
-                if info is not None:
-                    mech_info[_mechanism_name(mech)] = {
-                        "flags": int(info.flags),
-                        "min_key_size": int(info.min_key_length),
-                        "max_key_size": int(info.max_key_length),
-                    }
-            except Exception as exc:
-                print(
-                    f"WARNING: get_mechanism_info({_mechanism_name(mech)}) failed: {exc}",
-                    file=sys.stderr,
-                )
+            info = slots[slot].get_mechanism_info(mech)
+            mech_info[_mechanism_name(mech)] = {
+                "flags": int(info.flags),
+                "min_key_size": int(info.min_key_length),
+                "max_key_size": int(info.max_key_length),
+            }
         return CapabilityManifest(
             status="ok",
             module_path=str(module),
@@ -78,15 +83,21 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
             mechanism_info=mech_info,
         )
     except Exception as exc:
+        windows_status = ctypes_access_violation_code(exc)
         return CapabilityManifest(
-            status="error",
+            status="crashed" if windows_status is not None else "error",
             module_path=str(module),
             requested_interface=interface,
             interface_version=None,
             slot_index=slot,
             slot_count=None,
             mechanisms=[],
-            error=f"{type(exc).__name__}: {exc}",
+            error=(
+                f"provider call crashed ({crash_detail_name(windows_status)}): {exc}"
+                if windows_status is not None
+                else f"{type(exc).__name__}: {exc}"
+            ),
+            reason="module_unloadable" if load_failure else None,
         )
 
 
@@ -124,24 +135,42 @@ def run_preflight_subprocess(
         "--output",
         str(output_path),
     ]
+    process = subprocess.Popen(cmd)
     try:
-        completed = subprocess.run(cmd, check=False, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return CapabilityManifest(
-            status="timeout",
-            module_path=str(module),
-            requested_interface=interface,
-            interface_version=None,
-            slot_index=slot,
-            slot_count=None,
-            mechanisms=[],
-            error=f"preflight timed out after {timeout}s",
-        )
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            returncode = process.wait()
+            return CapabilityManifest(
+                status="timeout",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                error=f"preflight timed out after {timeout}s",
+                process_observation=build_process_observation(
+                    str(module), "preflight", 0, returncode, timed_out=True
+                ),
+            )
+    except BaseException:
+        try:
+            process.kill()
+        except BaseException:
+            pass
+        else:
+            try:
+                process.wait()
+            except BaseException:
+                pass
+        raise
 
-    if completed.returncode == 0 and output_path.exists():
+    if returncode == 0 and output_path.exists():
         return load_manifest(output_path)
 
-    if is_crash_returncode(completed.returncode):
+    if is_crash_returncode(returncode):
         return CapabilityManifest(
             status="crashed",
             module_path=str(module),
@@ -150,7 +179,8 @@ def run_preflight_subprocess(
             slot_index=slot,
             slot_count=None,
             mechanisms=[],
-            error=f"preflight crashed ({crash_detail_name(completed.returncode)})",
+            error=f"preflight crashed ({crash_detail_name(returncode)})",
+            process_observation=build_process_observation(str(module), "preflight", 0, returncode),
         )
 
     return CapabilityManifest(
@@ -161,7 +191,7 @@ def run_preflight_subprocess(
         slot_index=slot,
         slot_count=None,
         mechanisms=[],
-        error=f"preflight exited with code {completed.returncode}",
+        error=f"preflight exited with code {returncode}",
     )
 
 

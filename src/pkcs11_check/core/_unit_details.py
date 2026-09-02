@@ -6,6 +6,7 @@ Moved verbatim from file_runner.py (god-module split, 2026-07-17).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core._jsonl_extract import (
@@ -24,6 +25,15 @@ from pkcs11_check.core._report_records import (
     _COMPLIANCE_NOTE_FIELDS as _COMPLIANCE_NOTE_FIELDS,
 )
 from pkcs11_check.core._report_records import (
+    _DIAGNOSTIC_COUNTS as _DIAGNOSTIC_COUNTS,
+)
+from pkcs11_check.core._report_records import (
+    _LOGICAL_SKIP_REASONS as _LOGICAL_SKIP_REASONS,
+)
+from pkcs11_check.core._report_records import (
+    _LOGICAL_TEST_OUTCOMES as _LOGICAL_TEST_OUTCOMES,
+)
+from pkcs11_check.core._report_records import (
     _QUALITY_AUDIT_RECORD_FIELDS as _QUALITY_AUDIT_RECORD_FIELDS,
 )
 from pkcs11_check.core._report_records import (
@@ -34,6 +44,9 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
+)
+from pkcs11_check.core._report_records import (
+    _canonical_executions as _canonical_executions,
 )
 from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
@@ -63,6 +76,12 @@ from pkcs11_check.core._report_records import (
     _ordered_report_record_units as _ordered_report_record_units,
 )
 from pkcs11_check.core._report_records import (
+    _outcome_is_higher as _outcome_is_higher,
+)
+from pkcs11_check.core._report_records import (
+    _reconcile_process_observations as _reconcile_process_observations,
+)
+from pkcs11_check.core._report_records import (
     _report_record_cache_dir as _report_record_cache_dir,
 )
 from pkcs11_check.core._report_records import (
@@ -70,6 +89,9 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_path as _report_record_cache_path,
+)
+from pkcs11_check.core._report_records import (
+    _ReportOwnerAliases as _ReportOwnerAliases,
 )
 from pkcs11_check.core._report_records import (
     _seed_missing_report_record_caches_from_jsonl as _seed_missing_report_record_caches_from_jsonl,
@@ -251,12 +273,16 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.crash_codes import is_crash_returncode
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.test_selection import extract_required_mechanisms
 
 
 def _group_results_by_file(
     results: list[FileRunResult],
     details: dict[str, dict[str, Any]],
+    *,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> list[tuple[str, list[FileRunResult], dict[str, Any]]]:
     """Group results into file-level aggregates for the unified report.
 
@@ -265,43 +291,128 @@ def _group_results_by_file(
     prefix and merges counts/tests from *details*.
     """
     has_test_level = any("::" in r.target for r in results)
-    if not has_test_level:
+    if not has_test_level and owner_aliases is None:
         return [(r.target, [r], details.get(r.target, {})) for r in results]
 
     groups: dict[str, list[FileRunResult]] = {}
     order: list[str] = []
     for result in results:
-        file_key = result.target.split("::", 1)[0]
+        file_key = (
+            owner_aliases.file_identity(result.target) if owner_aliases is not None else None
+        ) or result.target.split("::", 1)[0]
         if file_key not in groups:
             groups[file_key] = []
             order.append(file_key)
         groups[file_key].append(result)
 
     out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
-    for file_target in order:
-        file_results = groups[file_target]
+    for file_key in order:
+        file_results = groups[file_key]
+        file_target = (
+            owner_aliases.report_target(file_key) if owner_aliases is not None else None
+        ) or file_results[0].target.split("::", 1)[0]
         merged_counts: dict[str, int] = _empty_counts()
         merged_tests: list[dict[str, Any]] = []
         merged_compliance_notes: list[dict[str, Any]] = []
         merged_skip_reasons: dict[str, int] = {}
+        merged_executions: list[dict[str, Any]] = []
+        merged_logical_outcomes: dict[str, str] = {}
+        merged_logical_skip_reasons: dict[str, str] = {}
+        additive_counts = _empty_counts()
+        has_logical_metadata = False
+        merged_incomplete = False
+        merged_harness_error = False
+        merged_incomplete_files: set[str] = set()
         file_skip = False
         for r in file_results:
             detail = _copy_detail(details.get(r.target, {}))
-            for key in merged_counts:
-                merged_counts[key] += detail.get("counts", {}).get(key, 0)
+            raw_logical_outcomes = detail.get(_LOGICAL_TEST_OUTCOMES)
+            raw_diagnostic_counts = detail.get(_DIAGNOSTIC_COUNTS)
+            represented_counts = _empty_counts()
+            if isinstance(raw_logical_outcomes, Mapping):
+                has_logical_metadata = True
+                raw_skip_reasons = detail.get(_LOGICAL_SKIP_REASONS)
+                for raw_nodeid, raw_outcome in raw_logical_outcomes.items():
+                    if not isinstance(raw_nodeid, str) or not isinstance(raw_outcome, str):
+                        continue
+                    if raw_outcome in represented_counts:
+                        represented_counts[raw_outcome] += 1
+                    logical_nodeid = (
+                        owner_aliases.canonical_nodeid(raw_nodeid)
+                        if owner_aliases is not None
+                        else None
+                    ) or normalize_nodeid(_absolute_nodeid(file_key, raw_nodeid))
+                    if _outcome_is_higher(raw_outcome, merged_logical_outcomes.get(logical_nodeid)):
+                        merged_logical_outcomes[logical_nodeid] = raw_outcome
+                        if (
+                            raw_outcome == "skipped"
+                            and isinstance(raw_skip_reasons, Mapping)
+                            and isinstance(raw_skip_reasons.get(raw_nodeid), str)
+                        ):
+                            merged_logical_skip_reasons[logical_nodeid] = raw_skip_reasons[
+                                raw_nodeid
+                            ]
+                        else:
+                            merged_logical_skip_reasons.pop(logical_nodeid, None)
+                if isinstance(raw_diagnostic_counts, Mapping):
+                    for key in additive_counts:
+                        value = raw_diagnostic_counts.get(key, 0)
+                        if isinstance(value, int):
+                            additive_counts[key] += value
+                            represented_counts[key] += value
+            else:
+                for reason, count in detail.get("skip_reasons", {}).items():
+                    merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
+
+            for key in additive_counts:
+                value = detail.get("counts", {}).get(key, 0)
+                if isinstance(value, int):
+                    additive_counts[key] += max(value - represented_counts[key], 0)
             merged_tests.extend(detail.get("tests", []))
             merged_compliance_notes.extend(detail.get("compliance_notes", []))
-            for reason, count in detail.get("skip_reasons", {}).items():
-                merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + count
+            raw_executions = detail.get("executions")
+            if isinstance(raw_executions, list):
+                merged_executions = _reconcile_process_observations(
+                    merged_executions,
+                    [item for item in raw_executions if isinstance(item, Mapping)],
+                )
             if detail.get("file_skip"):
                 file_skip = True
+            if detail.get("incomplete") is True:
+                merged_incomplete = True
+            if detail.get("harness_error") is True:
+                merged_harness_error = True
+            incomplete_files = detail.get("incomplete_files")
+            if isinstance(incomplete_files, list):
+                merged_incomplete_files.update(
+                    file_part for file_part in incomplete_files if isinstance(file_part, str)
+                )
+        merged_counts.update(additive_counts)
+        for outcome in merged_logical_outcomes.values():
+            if outcome in merged_counts:
+                merged_counts[outcome] += 1
+        for nodeid, reason in merged_logical_skip_reasons.items():
+            if merged_logical_outcomes.get(nodeid) == "skipped":
+                merged_skip_reasons[reason] = merged_skip_reasons.get(reason, 0) + 1
         merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
+        if has_logical_metadata:
+            merged_detail[_LOGICAL_TEST_OUTCOMES] = merged_logical_outcomes
+            merged_detail[_DIAGNOSTIC_COUNTS] = additive_counts
+            merged_detail[_LOGICAL_SKIP_REASONS] = merged_logical_skip_reasons
         if merged_compliance_notes:
             merged_detail["compliance_notes"] = merged_compliance_notes
         if merged_skip_reasons:
             merged_detail["skip_reasons"] = merged_skip_reasons
         if file_skip:
             merged_detail["file_skip"] = True
+        if merged_incomplete:
+            merged_detail["incomplete"] = True
+        if merged_harness_error:
+            merged_detail["harness_error"] = True
+        if merged_incomplete_files:
+            merged_detail["incomplete_files"] = sorted(merged_incomplete_files)
+        if merged_executions:
+            merged_detail["executions"] = _canonical_executions(merged_executions)
         out.append((file_target, file_results, merged_detail))
     return out
 
@@ -311,6 +422,10 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
     tests: list[dict[str, Any]] = []
     compliance_notes: list[dict[str, Any]] = []
     skip_reasons: dict[str, int] = {}
+    executions: list[dict[str, Any]] = []
+    logical_outcomes: dict[str, str] | None = None
+    diagnostic_counts: dict[str, int] | None = None
+    logical_skip_reasons: dict[str, str] | None = None
 
     if isinstance(detail, Mapping):
         raw_counts = detail.get("counts")
@@ -334,15 +449,168 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
                 for reason, count in raw_skip_reasons.items()
                 if isinstance(count, int)
             }
+        raw_executions = detail.get("executions")
+        if isinstance(raw_executions, list):
+            executions = [dict(item) for item in raw_executions if isinstance(item, Mapping)]
+        else:
+            executions = []
+        raw_logical_outcomes = detail.get(_LOGICAL_TEST_OUTCOMES)
+        if isinstance(raw_logical_outcomes, Mapping):
+            logical_outcomes = {
+                str(nodeid): str(outcome)
+                for nodeid, outcome in raw_logical_outcomes.items()
+                if isinstance(nodeid, str) and isinstance(outcome, str)
+            }
+        raw_diagnostic_counts = detail.get(_DIAGNOSTIC_COUNTS)
+        if isinstance(raw_diagnostic_counts, Mapping):
+            diagnostic_counts = _empty_counts()
+            for key in diagnostic_counts:
+                value = raw_diagnostic_counts.get(key, 0)
+                if isinstance(value, int):
+                    diagnostic_counts[key] = value
+        raw_logical_skip_reasons = detail.get(_LOGICAL_SKIP_REASONS)
+        if isinstance(raw_logical_skip_reasons, Mapping):
+            logical_skip_reasons = {
+                str(nodeid): str(reason)
+                for nodeid, reason in raw_logical_skip_reasons.items()
+                if isinstance(nodeid, str) and isinstance(reason, str)
+            }
 
     copied: dict[str, Any] = {"counts": counts, "tests": tests}
     if compliance_notes:
         copied["compliance_notes"] = compliance_notes
     if skip_reasons:
         copied["skip_reasons"] = skip_reasons
+    if executions:
+        copied["executions"] = executions
+    if logical_outcomes is not None:
+        copied[_LOGICAL_TEST_OUTCOMES] = logical_outcomes
+    if diagnostic_counts is not None:
+        copied[_DIAGNOSTIC_COUNTS] = diagnostic_counts
+    if logical_skip_reasons is not None:
+        copied[_LOGICAL_SKIP_REASONS] = logical_skip_reasons
     if isinstance(detail, Mapping) and detail.get("file_skip"):
         copied["file_skip"] = True
+    if isinstance(detail, Mapping) and detail.get("incomplete") is True:
+        copied["incomplete"] = True
+    if isinstance(detail, Mapping) and detail.get("harness_error") is True:
+        copied["harness_error"] = True
+    if isinstance(detail, Mapping) and isinstance(detail.get("incomplete_files"), list):
+        copied["incomplete_files"] = [
+            str(file_part) for file_part in detail["incomplete_files"] if isinstance(file_part, str)
+        ]
     return copied
+
+
+def _merge_attempt_details(
+    prior: Mapping[str, Any] | None,
+    current: Mapping[str, Any],
+    *,
+    unit: str,
+) -> dict[str, Any]:
+    """Merge retry details while keeping one conservative logical outcome."""
+    if prior is None:
+        return _copy_detail(current)
+
+    merged = _copy_detail(prior)
+    source = _copy_detail(current)
+    logical_outcomes: dict[str, str] = {}
+    logical_skip_reasons: dict[str, str] = {}
+    diagnostic_counts = _empty_counts()
+    has_logical_metadata = any(
+        isinstance(detail.get(_LOGICAL_TEST_OUTCOMES), Mapping) for detail in (merged, source)
+    )
+
+    if has_logical_metadata:
+        file_key = normalize_nodeid(unit.split("::", 1)[0])
+        for detail in (merged, source):
+            represented_counts = _empty_counts()
+            raw_outcomes = detail.get(_LOGICAL_TEST_OUTCOMES)
+            raw_skip_reasons = detail.get(_LOGICAL_SKIP_REASONS)
+            if isinstance(raw_outcomes, Mapping):
+                for raw_nodeid, outcome in raw_outcomes.items():
+                    if not isinstance(raw_nodeid, str) or not isinstance(outcome, str):
+                        continue
+                    if outcome in represented_counts:
+                        represented_counts[outcome] += 1
+                    nodeid = normalize_nodeid(_absolute_nodeid(file_key, raw_nodeid))
+                    if _outcome_is_higher(outcome, logical_outcomes.get(nodeid)):
+                        logical_outcomes[nodeid] = outcome
+                        if (
+                            outcome == "skipped"
+                            and isinstance(raw_skip_reasons, Mapping)
+                            and isinstance(raw_skip_reasons.get(raw_nodeid), str)
+                        ):
+                            logical_skip_reasons[nodeid] = raw_skip_reasons[raw_nodeid]
+                        else:
+                            logical_skip_reasons.pop(nodeid, None)
+            raw_diagnostic_counts = detail.get(_DIAGNOSTIC_COUNTS)
+            if isinstance(raw_diagnostic_counts, Mapping):
+                for outcome in diagnostic_counts:
+                    value = raw_diagnostic_counts.get(outcome, 0)
+                    if isinstance(value, int):
+                        diagnostic_counts[outcome] += value
+                        represented_counts[outcome] += value
+            raw_counts = detail.get("counts")
+            if isinstance(raw_counts, Mapping):
+                for outcome in diagnostic_counts:
+                    value = raw_counts.get(outcome, 0)
+                    if isinstance(value, int):
+                        diagnostic_counts[outcome] += max(value - represented_counts[outcome], 0)
+
+        counts = dict(diagnostic_counts)
+        for outcome in logical_outcomes.values():
+            if outcome in counts:
+                counts[outcome] += 1
+        merged["counts"] = counts
+        merged[_LOGICAL_TEST_OUTCOMES] = logical_outcomes
+        merged[_DIAGNOSTIC_COUNTS] = diagnostic_counts
+        merged[_LOGICAL_SKIP_REASONS] = logical_skip_reasons
+        skip_reasons: dict[str, int] = {}
+        for nodeid, reason in logical_skip_reasons.items():
+            if logical_outcomes.get(nodeid) == "skipped":
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+        if skip_reasons:
+            merged["skip_reasons"] = skip_reasons
+        else:
+            merged.pop("skip_reasons", None)
+    else:
+        for outcome, value in source["counts"].items():
+            merged["counts"][outcome] += value
+        for reason, count in source.get("skip_reasons", {}).items():
+            merged.setdefault("skip_reasons", {})[reason] = (
+                merged.get("skip_reasons", {}).get(reason, 0) + count
+            )
+
+    merged["tests"].extend(source["tests"])
+    if source.get("compliance_notes"):
+        merged.setdefault("compliance_notes", []).extend(source["compliance_notes"])
+    source_executions = source.get("executions")
+    if isinstance(source_executions, list):
+        prior_executions = merged.get("executions")
+        merged["executions"] = _reconcile_process_observations(
+            prior_executions if isinstance(prior_executions, list) else [],
+            source_executions,
+        )
+    for flag in ("file_skip", "incomplete", "harness_error"):
+        if source.get(flag) is True:
+            merged[flag] = True
+    incomplete_files = {
+        file_part
+        for detail in (merged, source)
+        for file_part in detail.get("incomplete_files", [])
+        if isinstance(file_part, str)
+    }
+    if incomplete_files:
+        merged["incomplete_files"] = sorted(incomplete_files)
+    return merged
+
+
+def _increment_diagnostic_count(detail: dict[str, Any], outcome: str) -> None:
+    detail.setdefault("counts", _empty_counts())[outcome] += 1
+    if isinstance(detail.get(_LOGICAL_TEST_OUTCOMES), Mapping):
+        diagnostic_counts = detail.setdefault(_DIAGNOSTIC_COUNTS, _empty_counts())
+        diagnostic_counts[outcome] = diagnostic_counts.get(outcome, 0) + 1
 
 
 def _ensure_timeout_recorded(detail: dict[str, Any] | None, unit: str) -> dict[str, Any]:
@@ -373,7 +641,7 @@ def _ensure_timeout_recorded(detail: dict[str, Any] | None, unit: str) -> dict[s
                 ),
             }
         )
-        counts["timeout"] = 1
+        _increment_diagnostic_count(result, "timeout")
     return result
 
 
@@ -403,16 +671,21 @@ def _synthetic_file_skip_detail(
 
 
 def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | None:
-    if result.status not in {"crashed", "timeout", "crash_limited"} or "::" not in result.target:
+    status = result.status
+    if result.status == "escalated":
+        status = _effective_unit_status([result])
+    if status not in {"crashed", "timeout", "crash_limited"} or (
+        "::" not in result.target and result.status != "escalated"
+    ):
         return None
 
     entry: dict[str, Any] = {
         "nodeid": result.target,
-        "outcome": result.status,
+        "outcome": status,
         "duration": result.duration_s,
     }
     flat = result.stderr.strip() or result.stdout.strip()
-    if not flat and result.status == "crash_limited":
+    if not flat and status == "crash_limited":
         flat = "abandoned: per-file crash limit reached"
     if flat:
         entry["longrepr"] = flat
@@ -429,7 +702,11 @@ def _merge_special_entries_into_detail(
 ) -> dict[str, Any]:
     merged = _copy_detail(detail)
     existing = {
-        (str(record.get("nodeid", "")), str(record.get("outcome", "")))
+        (
+            str(record.get("nodeid", "")),
+            str(record.get("outcome", "")),
+            str(record.get("evidence_type", "")),
+        )
         for record in merged["tests"]
         if isinstance(record, Mapping)
     }
@@ -439,13 +716,26 @@ def _merge_special_entries_into_detail(
         outcome = str(entry.get("outcome", "")).strip()
         if not nodeid or not outcome:
             continue
-        key = (nodeid, outcome)
+        key = (nodeid, outcome, str(entry.get("evidence_type", "")))
         if key in existing:
+            for record in merged["tests"]:
+                if not isinstance(record, dict):
+                    continue
+                if (
+                    str(record.get("nodeid", "")),
+                    str(record.get("outcome", "")),
+                    str(record.get("evidence_type", "")),
+                ) != key:
+                    continue
+                for field, value in entry.items():
+                    if field not in record:
+                        record[field] = value
+                break
             continue
         merged["tests"].append(dict(entry))
         existing.add(key)
-        if outcome in {"crashed", "timeout", "crash_limited"}:
-            merged["counts"][outcome] += 1
+        if outcome in {"crashed", "timeout", "crash_limited", "failed", "error"}:
+            _increment_diagnostic_count(merged, outcome)
 
     return merged
 
@@ -458,14 +748,122 @@ def _overall_unit_status(file_results: list[FileRunResult]) -> str:
     return file_results[0].status
 
 
+def _effective_unit_status(
+    file_results: Sequence[FileRunResult], counts: Mapping[str, int] | None = None
+) -> str:
+    """Return the report status, retaining an escalated crash/timeout trigger.
+
+    ``escalated`` is a resume-control marker kept in durable state.  A grouped
+    report may also contain passing per-test children, so the trigger's exit
+    code must still win at the reporting boundary.
+    """
+    results = list(file_results)
+    status = _overall_unit_status(results)
+    outer_deaths: set[str] = set()
+    for result in file_results:
+        if "::" not in result.target and result.status in {"crashed", "timeout"}:
+            outer_deaths.add(result.status)
+            continue
+        # The runner records escalation only for the file-level crash/timeout
+        # trigger.  Per-test results are never escalation triggers; preserving
+        # such a synthetic marker keeps report writing compatible with callers
+        # that use an arbitrary placeholder return code.
+        if result.status != "escalated" or "::" in result.target:
+            continue
+        if result.returncode == _TIMEOUT_RETURN_CODE:
+            outer_deaths.add("timeout")
+        elif is_crash_returncode(result.returncode):
+            outer_deaths.add("crashed")
+        else:
+            status = "escalated"
+    if outer_deaths:
+        return next(candidate for candidate in UNIT_STATUS_PRIORITY if candidate in outer_deaths)
+    return _status_with_detail_counts(status, counts)
+
+
 def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) -> str:
     if not counts:
         return status
-    if counts.get("timeout", 0) > 0:
-        return "timeout"
-    if counts.get("crashed", 0) > 0:
-        return "crashed"
-    return status
+    if (
+        status in {"escalated", "crash_limited"}
+        and counts.get("error", 0) > 0
+        and not any(counts.get(outcome, 0) > 0 for outcome in ("timeout", "crashed", "failed"))
+    ):
+        return status
+    candidates = {status}
+    candidates.update(
+        outcome for outcome in ("timeout", "crashed", "failed") if counts.get(outcome, 0) > 0
+    )
+    if counts.get("error", 0) > 0:
+        candidates.add("failed")
+    return next(
+        (candidate for candidate in UNIT_STATUS_PRIORITY if candidate in candidates),
+        status,
+    )
+
+
+def _final_state_exit_code(
+    state: FileRunState,
+    existing_exit_code: int,
+    per_unit_details: Mapping[str, Mapping[str, Any]] | None = None,
+) -> int:
+    """Keep infrastructure codes and reject any non-green durable result state."""
+    results = getattr(state, "results", [])
+
+    def has_provider_finding(result: FileRunResult) -> bool:
+        if result.status in {"crashed", "timeout", "escalated", "crash_limited"}:
+            return True
+        detail = per_unit_details.get(result.target) if per_unit_details is not None else None
+        counts = detail.get("counts") if isinstance(detail, Mapping) else None
+        if isinstance(counts, Mapping) and any(
+            int(counts.get(outcome, 0) or 0) > 0 for outcome in ("failed", "crashed", "timeout")
+        ):
+            return True
+        return result.status == "failed" and result.returncode not in {2, 3, 4}
+
+    if any(has_provider_finding(result) for result in results):
+        return 1
+    if existing_exit_code >= 2:
+        return existing_exit_code
+    if any(result.returncode in {2, 3, 4} for result in results):
+        return 2
+    if results and all(result.status == "empty" for result in results):
+        detail_has_tests = False
+        for detail in (per_unit_details or {}).values():
+            counts = detail.get("counts") if isinstance(detail, Mapping) else None
+            if isinstance(counts, Mapping) and any(
+                int(counts.get(outcome, 0) or 0) > 0
+                for outcome in ("passed", "failed", "skipped", "xfailed", "xpassed")
+            ):
+                detail_has_tests = True
+                break
+        if not detail_has_tests:
+            return 2
+    if any(
+        not result.completion_verified or result.status not in {"passed", "empty"}
+        for result in results
+    ):
+        return max(existing_exit_code, 1)
+    return existing_exit_code
+
+
+def _resume_exit_code(state_file: Path, existing_exit_code: int) -> int:
+    """Apply durable resume findings, including cached and inline report details."""
+    state = load_run_state(state_file)
+    if state is None:
+        return existing_exit_code
+    units = list(dict.fromkeys([*state.units, *(result.target for result in state.results)]))
+    inline_records = {
+        unit: records
+        for unit, records in state.report_records_by_unit.items()
+        if isinstance(unit, str)
+    }
+    details = _build_per_unit_details_from_record_sources(
+        state_file,
+        units=units,
+        inline_records_by_unit=inline_records,
+    )
+    return _final_state_exit_code(state, existing_exit_code, details)
 
 
 def _merge_supplemental_special_details(
@@ -480,18 +878,67 @@ def _merge_supplemental_special_details(
         if detail.get("file_skip") is True:
             merged[unit] = _copy_detail(detail)
             continue
+        source_executions = detail.get("executions")
+        if isinstance(source_executions, list):
+            target = merged.setdefault(unit, _copy_detail(None))
+            prior_executions = target.get("executions", [])
+            target["executions"] = _canonical_executions(
+                _reconcile_process_observations(
+                    prior_executions if isinstance(prior_executions, list) else [],
+                    [item for item in source_executions if isinstance(item, Mapping)],
+                )
+            )
+        if detail.get("harness_error") is True:
+            target = merged.setdefault(unit, _copy_detail(None))
+            target["incomplete"] = True
+            target["harness_error"] = True
         raw_tests = detail.get("tests")
         if not isinstance(raw_tests, list):
             continue
+        special_outcomes = _SPECIAL_DETAIL_OUTCOMES.union({"failed"})
+        if detail.get("harness_error") is True:
+            special_outcomes.add("error")
         special_entries = [
             record
             for record in raw_tests
             if isinstance(record, Mapping)
-            and str(record.get("outcome", "")).strip() in _SPECIAL_DETAIL_OUTCOMES
+            and str(record.get("outcome", "")).strip() in special_outcomes
         ]
         if not special_entries:
             continue
         merged[unit] = _merge_special_entries_into_detail(merged.get(unit), special_entries)
+        source_counts = detail.get("counts")
+        if isinstance(source_counts, Mapping):
+            target = merged[unit]
+            source_logical_counts = _empty_counts()
+            source_logical_outcomes = detail.get(_LOGICAL_TEST_OUTCOMES)
+            if isinstance(source_logical_outcomes, Mapping):
+                for outcome in source_logical_outcomes.values():
+                    if isinstance(outcome, str) and outcome in source_logical_counts:
+                        source_logical_counts[outcome] += 1
+            source_diagnostic_counts = detail.get(_DIAGNOSTIC_COUNTS)
+            target_diagnostic_counts = target.get(_DIAGNOSTIC_COUNTS)
+            for outcome in {"failed", "error", "crashed", "timeout", "crash_limited"}:
+                try:
+                    source_count = int(source_counts.get(outcome, 0))
+                except (TypeError, ValueError):
+                    continue
+                explicit_diagnostic_count = (
+                    int(source_diagnostic_counts.get(outcome, 0))
+                    if isinstance(source_diagnostic_counts, Mapping)
+                    else 0
+                )
+                supplemental_count = explicit_diagnostic_count + max(
+                    source_count - source_logical_counts[outcome] - explicit_diagnostic_count,
+                    0,
+                )
+                if isinstance(target_diagnostic_counts, dict):
+                    current_count = target_diagnostic_counts.get(outcome, 0)
+                    if supplemental_count > current_count:
+                        target["counts"][outcome] += supplemental_count - current_count
+                        target_diagnostic_counts[outcome] = supplemental_count
+                else:
+                    target["counts"][outcome] = max(target["counts"].get(outcome, 0), source_count)
 
     return merged
 
@@ -518,6 +965,7 @@ def _augment_mechanism_coverage_from_unit_outcomes(
     state: FileRunState,
     *,
     per_unit_details: Mapping[str, dict[str, Any]] | None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, Any] | None:
     """Annotate coverage states for explicit per-file mechanism outcomes."""
     if coverage is None:
@@ -541,13 +989,14 @@ def _augment_mechanism_coverage_from_unit_outcomes(
     for unit, file_results, merged_detail in _group_results_by_file(
         state.results,
         dict(per_unit_details or {}),
+        owner_aliases=owner_aliases,
     ):
         required_names = _required_ckm_names_for_unit(unit)
         if not required_names:
             continue
         if merged_detail.get("file_skip") is True:
             bucket_names["skipped_by_capability_names"].update(required_names)
-        status = _overall_unit_status(file_results)
+        status = _effective_unit_status(file_results, merged_detail.get("counts"))
         if status == "crashed":
             bucket_names["crashed_names"].update(required_names)
         elif status == "timeout":

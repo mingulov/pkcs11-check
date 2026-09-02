@@ -31,6 +31,8 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKK_RSA,
     CKO_PRIVATE_KEY,
+    CKR_FUNCTION_FAILED,
+    CKR_USER_TYPE_INVALID,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,6 +106,8 @@ def _make_rs(sh: int, *, has_mech: bool = True) -> Any:
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 def _make_cfg(key_inject: str, wrap_rsa_bits: int = 2048, wrap_oaep_hash: str = "sha1") -> Any:
@@ -330,15 +334,179 @@ def test_force_unwrap_uses_pkcs8_payload_and_template(
     assert template.get(CKA_DECRYPT) is True, "CKA_DECRYPT from attrs must be in template"
 
 
+def test_multiprime_pkcs8_bypasses_create_and_uses_trusted_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A multi-prime key must route exact corpus PKCS#8 through unwrap."""
+    trusted_pkcs8 = b"trusted-multiprime-pkcs8"
+    wrapped: list[bytes] = []
+
+    fake_ctx = _prov.WrapContext(
+        rsa_pub_der=b"pub",
+        rsa_unwrap_handle=555,
+        aes_kek_handle=None,
+        sym_kek=None,
+        aes_bits=256,
+        oaep_hash="sha1",
+        strategy_name="RSA_AES_KEY_WRAP",
+    )
+
+    class FakeStrategy:
+        name = "RSA_AES_KEY_WRAP"
+        unwrap_mech = 0x00000250
+
+        def usable(self, profile: Any) -> bool:
+            return True
+
+        def max_target_size(self, ctx: _prov.WrapContext) -> int | None:
+            return None
+
+        def wrap(self, ctx: _prov.WrapContext, target: bytes) -> bytes:
+            wrapped.append(target)
+            return b"wrapped"
+
+        def unwrap_mech_param(self, ctx: _prov.WrapContext) -> None:
+            return None
+
+        def unwrapping_key_handle(self, ctx: _prov.WrapContext) -> int | None:
+            return 555
+
+    monkeypatch.setattr(_prov, "profile_for", lambda rs: pytest.fail("create must be bypassed"))
+    monkeypatch.setattr(_prov, "build_wrap_context", lambda rs, cfg: fake_ctx)
+    monkeypatch.setattr(_prov, "DEFAULT_STRATEGIES", [FakeStrategy()])
+    monkeypatch.setattr(
+        "pkcs11_check.raw.key_encoding.rsa_pkcs8_from_crt",
+        lambda **kwargs: pytest.fail("CRT encoder must be bypassed"),
+    )
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", lambda *args, **kwargs: 202)
+
+    # Deliberately make n differ from p*q: the CRT fields are incomplete for a
+    # multi-prime key, while the supplied PKCS#8 contains the complete key.
+    multiprime_n = (int.from_bytes(RSA_N, "big") + 1).to_bytes(len(RSA_N), "big")
+    h = _prov.provision_rsa_private_key(
+        _make_rs(sh=306),
+        _make_cfg("unwrap"),
+        n=multiprime_n,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        pkcs8=trusted_pkcs8,
+        attrs=_RSA_ATTRS,
+        label="multiprime",
+    )
+
+    assert h == 202
+    assert wrapped == [trusted_pkcs8]
+
+
+def test_multiprime_pkcs8_no_path_skips_and_records_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing configured multiprime injection path is a visible setup skip."""
+    monkeypatch.setattr(_prov, "profile_for", lambda rs: pytest.fail("create must be bypassed"))
+    monkeypatch.setattr(_prov, "build_wrap_context", lambda rs, cfg: None)
+    monkeypatch.setattr(_prov, "external_provision", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.key_encoding.rsa_pkcs8_from_crt",
+        lambda **kwargs: pytest.fail("CRT encoder must be bypassed"),
+    )
+    _prov.clear_provisioning_events()
+
+    multiprime_n = (int.from_bytes(RSA_N, "big") + 1).to_bytes(len(RSA_N), "big")
+    with pytest.raises(pytest.skip.Exception, match="no wrapping path"):
+        _prov.provision_rsa_private_key(
+            _make_rs(sh=307),
+            _make_cfg("unwrap"),
+            n=multiprime_n,
+            e=RSA_E,
+            d=RSA_D,
+            p=RSA_P,
+            q=RSA_Q,
+            dmp1=RSA_DMP1,
+            dmq1=RSA_DMQ1,
+            iqmp=RSA_IQMP,
+            pkcs8=b"trusted-multiprime-pkcs8",
+            attrs=_RSA_ATTRS,
+            label="multiprime",
+        )
+
+    assert _prov.get_provisioning_events()[-1].method == "skipped_no_path"
+
+
+def test_two_prime_ignores_optional_pkcs8_and_keeps_crt_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An optional PKCS#8 value does not change ordinary two-prime routing."""
+    wrapped: list[bytes] = []
+    fake_ctx = _prov.WrapContext(
+        rsa_pub_der=b"pub",
+        rsa_unwrap_handle=555,
+        aes_kek_handle=None,
+        sym_kek=None,
+        aes_bits=256,
+        oaep_hash="sha1",
+        strategy_name="RSA_AES_KEY_WRAP",
+    )
+
+    class FakeStrategy:
+        name = "RSA_AES_KEY_WRAP"
+        unwrap_mech = 0x00000250
+
+        def usable(self, profile: Any) -> bool:
+            return True
+
+        def max_target_size(self, ctx: _prov.WrapContext) -> int | None:
+            return None
+
+        def wrap(self, ctx: _prov.WrapContext, target: bytes) -> bytes:
+            wrapped.append(target)
+            return b"wrapped"
+
+        def unwrap_mech_param(self, ctx: _prov.WrapContext) -> None:
+            return None
+
+        def unwrapping_key_handle(self, ctx: _prov.WrapContext) -> int | None:
+            return 555
+
+    monkeypatch.setattr(_prov, "build_wrap_context", lambda rs, cfg: fake_ctx)
+    monkeypatch.setattr(_prov, "DEFAULT_STRATEGIES", [FakeStrategy()])
+    monkeypatch.setattr("pkcs11_check.raw.recipes.unwrap_key", lambda *args, **kwargs: 203)
+
+    h = _prov.provision_rsa_private_key(
+        _make_rs(sh=308),
+        _make_cfg("force-unwrap"),
+        n=RSA_N,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        pkcs8=b"must-not-be-used",
+        attrs=_RSA_ATTRS,
+        label="two-prime",
+    )
+
+    assert h == 203
+    assert wrapped == [_EXPECTED_PKCS8]
+
+
 # ---------------------------------------------------------------------------
 # (e) create_available + negotiated-import RAISES -> exception propagates, no unwrap
 # ---------------------------------------------------------------------------
 
 
-def test_create_available_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("failure_rv", [CKR_FUNCTION_FAILED, CKR_USER_TYPE_INVALID])
+def test_create_available_failure_propagates(
+    monkeypatch: pytest.MonkeyPatch, failure_rv: int
+) -> None:
     """create_available + import_rsa_private_key_negotiated raises -> propagates, no unwrap."""
     from pkcs11_check.raw.rv import CkrAssertionError
-    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
 
     build_ctx_called: list[Any] = []
 
@@ -356,7 +524,7 @@ def test_create_available_failure_propagates(monkeypatch: pytest.MonkeyPatch) ->
         attrs: Any = None,
         purpose: str = "",
     ) -> int:
-        raise CkrAssertionError("function failed", CKR_FUNCTION_FAILED)
+        raise CkrAssertionError("create import failed", failure_rv)
 
     def fake_build_ctx(rs: Any, cfg: Any) -> None:
         build_ctx_called.append(True)

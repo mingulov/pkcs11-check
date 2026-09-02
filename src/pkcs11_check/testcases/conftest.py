@@ -18,7 +18,13 @@ if TYPE_CHECKING:
 
 from pkcs11_check import classification as _classification
 from pkcs11_check.raw.api import ckm_name
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_EC_PARAMS,
@@ -179,8 +185,10 @@ HMAC_OP_RUNTIME_REJECT_RVS = (
 # is to assert CKO_DATA semantics should skip instead (genuine capability
 # absence) via skip_if_data_objects_unsupported.
 CKO_DATA_NOT_SUPPORTED_RVS: tuple[int, ...] = (
+    CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 
 
@@ -208,20 +216,51 @@ def skip_unless_create_object_supported(rs: Any) -> None:
 
 
 def skip_unless_generate_random_supported(rs: Any) -> None:
-    """Skip unless the module implements ``C_GenerateRandom``.
+    """Skip an absent RNG; expose contradictions from an advertised RNG."""
+    from ctypes import byref
 
-    Several modules' RNG is non-operational: ``C_GenerateRandom`` returns
-    ``CKR_FUNCTION_FAILED`` or ``CKR_FUNCTION_NOT_SUPPORTED``.
-    Probe once at the top of an RNG-dependent test so a non-operational RNG
-    surfaces as a clean skip rather than cascading into statistical/protocol
-    tests that assume randomness is available.
-    """
-    from pkcs11_check.raw.types_std import CK_BYTE
+    from pkcs11_check.raw.types_std import (
+        CK_BYTE,
+        CK_TOKEN_INFO,
+        CKF_RNG,
+        CKR_RANDOM_NO_RNG,
+    )
+
+    info = CK_TOKEN_INFO()
+    expect_rv(rs.raw.C_GetTokenInfo(rs.slot_id, byref(info)), CKR_OK)
 
     probe = (CK_BYTE * 16)()
     rv = rs.raw.C_GenerateRandom(rs.sh, probe, 16)
-    if rv in (int(CKR_FUNCTION_FAILED), int(CKR_FUNCTION_NOT_SUPPORTED)):
-        pytest.skip(f"Module RNG not operational: {ckr_name(rv)}")
+    if rv == int(CKR_OK):
+        if not (info.flags & CKF_RNG):
+            _classification.classify(
+                "self_contradiction",
+                kind="metadata",
+                label="CKF_RNG",
+                operation="C_GenerateRandom",
+                actual=rv,
+                summary="C_GenerateRandom succeeded but CKF_RNG is not set",
+            )
+        return
+
+    if info.flags & CKF_RNG:
+        reason = (
+            "not_operational"
+            if is_standard_ckr(rv) or is_vendor_defined_ckr(rv)
+            else "self_contradiction"
+        )
+        _classification.classify(
+            reason,
+            kind="metadata",
+            label="CKF_RNG",
+            operation="C_GenerateRandom",
+            actual=rv,
+            summary=f"CKF_RNG is set but C_GenerateRandom returned {ckr_name(rv)}",
+        )
+
+    if rv in (int(CKR_RANDOM_NO_RNG), int(CKR_FUNCTION_NOT_SUPPORTED)):
+        pytest.skip(f"Module does not advertise an RNG: {ckr_name(rv)}")
+    expect_rv(rv, CKR_OK)
 
 
 def skip_if_data_objects_unsupported(rs: Any) -> None:
@@ -314,9 +353,9 @@ def keygen_key_size_supported(rs: Any, keygen_mech: str | int, bits: int) -> boo
     *bits* is the key-size unit the mechanism's min/max range is expressed in:
     RSA modulus bits for ``*_RSA_*KEY_PAIR_GEN``; EC curve field bits (==
     ``cryptography`` ``curve.key_size``, e.g. P-521 -> 521, NOT coord_len*8) for
-    ``EC_KEY_PAIR_GEN`` / ``ECDSA_KEY_PAIR_GEN``. Never raises: returns ``False``
-    when the mechanism is not advertised, its name is unknown, or the info query
-    errors -- so it can safely gate test setup.
+    ``EC_KEY_PAIR_GEN`` / ``ECDSA_KEY_PAIR_GEN``. Returns ``False`` only when the
+    mechanism is not advertised, its name is unknown, or the size is out of
+    range. An advertised mechanism-info failure remains visible.
     """
     if not rs.has_mechanism(keygen_mech):
         return False
@@ -334,10 +373,7 @@ def keygen_key_size_supported(rs: Any, keygen_mech: str | int, bits: int) -> boo
     else:
         mech_int = int(keygen_mech)
 
-    try:
-        info = get_mechanism_info(rs.raw, rs.slot_id, mech_int)
-    except CkrAssertionError:
-        return False
+    info = get_mechanism_info(rs.raw, rs.slot_id, mech_int)
     return info["min_key_size"] <= bits <= info["max_key_size"]
 
 
@@ -846,55 +882,26 @@ def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
         pytest.skip("Token is write-protected -- cannot create token objects")
 
 
-def _actual_rv_portion(msg: str) -> str:
-    """Return only the ACTUAL-rv portion of an ``expect_rv`` message.
-
-    ``expect_rv`` raises ``CkrAssertionError`` with a message shaped like
-    ``"Unexpected CK_RV <ACTUAL>; expected one of: <EXPECTED...>"``.  The tail
-    after ``"; expected one of:"`` lists the EXPECTED CKR names — substring
-    matching against it would wrongly classify a genuine failure as "known"
-    (the prefix/substring hazard documented on ``CkrAssertionError``).  This
-    drops that tail so only the actual-return portion is matched.
-    """
-    head, sep, _tail = msg.partition("; expected one of:")
-    return head if sep else msg
-
-
 def is_known_error(
     exc: BaseException,
     error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
 ) -> bool:
     """Return True if ``exc`` corresponds to one of ``error_rvs``.
 
-    Prefers exact integer equality via ``CkrAssertionError.rv`` (set by
-    ``expect_rv``).  When ``.rv`` is absent, falls back to substring matching
-    against ONLY the actual-return portion of the message (the text before
-    ``"; expected one of:"``), so an EXPECTED CKR name listed in the message
-    cannot be mistaken for the actual return — which would otherwise mis-route
-    a real failure to skip/xfail.
+    Only typed PKCS#11 return-value failures are eligible. Plain assertions
+    mentioning a CKR name are harness/test failures and must remain visible.
     """
-    rv = getattr(exc, "rv", None)
-    if rv is not None:
-        return rv in error_rvs
-    msg = _actual_rv_portion(str(exc))
-    return any(ckr_name(r) in msg for r in error_rvs)
+    return isinstance(exc, CkrAssertionError) and exc.rv in error_rvs
 
 
 def _matched_ckr_name(exc: BaseException, known_ckrs: Any) -> str | None:
     """Return the CKR name that matched ``exc``, or None if no match.
 
-    Mirrors :func:`is_known_error`: exact ``.rv`` when present, otherwise a
-    substring match constrained to the actual-return portion of the message so
-    an EXPECTED name in the message cannot produce a false match.
+    Only :class:`CkrAssertionError` carries trusted return-value identity.
     """
-    rv = getattr(exc, "rv", None)
-    if rv is not None:
-        return ckr_name(rv) if rv in known_ckrs else None
-    msg = _actual_rv_portion(str(exc))
-    for ckr in known_ckrs:
-        if ckr_name(ckr) in msg:
-            return ckr_name(ckr)
-    return None
+    if not isinstance(exc, CkrAssertionError) or exc.rv not in known_ckrs:
+        return None
+    return ckr_name(exc.rv)
 
 
 def xfail_if_known_ckr(
@@ -904,8 +911,7 @@ def xfail_if_known_ckr(
 ) -> None:
     """xfail if ``exc`` corresponds to a known CKR, otherwise re-raise.
 
-    Prefers exact ``CkrAssertionError.rv`` matching (via ``is_known_error``);
-    falls back to substring matching for assertions raised by other call paths.
+    Matches only the exact ``CkrAssertionError.rv`` value.
 
     Use this instead of ``except (AssertionError, Exception): pytest.xfail(...)``
     so that only specific CKR failures become expected failures, while
@@ -1053,18 +1059,11 @@ def reject_or_classify(
             summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
         )
         return
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     if is_known_error(exc, expected_rvs):
         return
-    rv = getattr(exc, "rv", None)
-    if rv is not None:
-        _classify_unexpected_clean_rv(rv, expected_rvs, label=label, kind=kind)
-        return
-    C.classify(
-        "nonspec_reject",
-        kind=kind,
-        label=label,
-        summary=f"{label}: rejected with {type(exc).__name__}, expected {list(expected_rvs)}",
-    )
+    _classify_unexpected_clean_rv(exc.rv, expected_rvs, label=label, kind=kind)
 
 
 def classify_policy_enforcement(*, claimed: bool, violated: bool, label: str) -> None:

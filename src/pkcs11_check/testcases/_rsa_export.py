@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_COEFFICIENT,
     CKA_EXPONENT_1,
@@ -18,7 +19,10 @@ from pkcs11_check.raw.types_std import (
     CKA_PRIME_2,
     CKA_PRIVATE_EXPONENT,
     CKA_PUBLIC_EXPONENT,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
 )
+from pkcs11_check.testcases.conftest import xfail_if_known_ckr
 
 _RSA_PUBLIC_ATTRS = (CKA_MODULUS, CKA_PUBLIC_EXPONENT)
 _RSA_PRIVATE_ATTRS = (
@@ -107,12 +111,11 @@ def read_rsa_public_key_or_xfail(
     """Read public RSA attributes and build a cryptography public key."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, pub_handle, _RSA_PUBLIC_ATTRS)
-    except AssertionError as exc:
-        xfail_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: cannot read RSA public attributes: {exc}",
+    except CkrAssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID),
+            f"{label}: cannot read RSA public attributes",
         )
     return rsa_public_key_from_attrs_or_xfail(attrs, label=label)
 
@@ -126,12 +129,11 @@ def read_rsa_private_key_or_xfail(
     """Read private RSA attributes and build a cryptography private key."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, priv_handle, _RSA_PRIVATE_ATTRS)
-    except AssertionError as exc:
-        xfail_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: cannot read RSA private attributes: {exc}",
+    except CkrAssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID),
+            f"{label}: cannot read RSA private attributes",
         )
 
     n = _rsa_int_attr(attrs, CKA_MODULUS, label, private=True, min_value=3)

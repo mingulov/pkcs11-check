@@ -18,7 +18,11 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+from pkcs11_check.core.crash_codes import (
+    crash_detail_name,
+    ctypes_access_violation_code,
+    is_crash_returncode,
+)
 
 
 @dataclass(frozen=True)
@@ -70,7 +74,9 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
         try:
             raw.C_Logout(sess.value)
             raw.C_CloseSession(sess.value)
-        except (AttributeError, OSError, ctypes.ArgumentError):
+        except (AttributeError, OSError, ctypes.ArgumentError) as exc:
+            if ctypes_access_violation_code(exc) is not None:
+                raise
             pass  # cleanup of the probe session is best-effort
         if rv == int(CKR_OK):
             return LoginProbe("ok")
@@ -84,7 +90,9 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
     finally:
         try:
             raw.C_Finalize(None)
-        except (AttributeError, OSError, ctypes.ArgumentError):
+        except (AttributeError, OSError, ctypes.ArgumentError) as exc:
+            if ctypes_access_violation_code(exc) is not None:
+                raise
             pass  # finalize is best-effort during a probe
 
 

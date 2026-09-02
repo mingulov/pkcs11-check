@@ -19,8 +19,13 @@ import pytest
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_rsa_decrypt as rsa_dec,
@@ -40,7 +45,7 @@ _KEY_SIZE_RANGE = CkrAssertionError("Unexpected CK_RV CKR_KEY_SIZE_RANGE", int(C
 _TEMPLATE_INCONS = CkrAssertionError(
     "Unexpected CK_RV CKR_TEMPLATE_INCONSISTENT", int(CKR_TEMPLATE_INCONSISTENT)
 )
-_NON_CKR = AssertionError("ctypes mismatch: unexpected buffer length")
+_NON_CKR_WITH_CKR_TEXT = AssertionError("ctypes mismatch after CKR_ENCRYPTED_DATA_INVALID")
 
 
 def _handle(*_args: Any, **_kwargs: Any) -> int:
@@ -166,7 +171,7 @@ def test_a12_import_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyPatch) -
     """
     rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_NON_CKR))
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_NON_CKR_WITH_CKR_TEXT))
 
     try:
         with pytest.raises(AssertionError, match="ctypes mismatch"):
@@ -205,7 +210,7 @@ def test_a12_real_function_propagates_non_ckr(monkeypatch: pytest.MonkeyPatch) -
     """A12 negative pin: a non-CKR AssertionError from the negotiated importer propagates."""
     rsa_dec._UNSUPPORTED_RSA_KEY_SIZES.clear()
     vec_id, vec = _first_valid_pkcs1()
-    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_NON_CKR))
+    monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _raiser(_NON_CKR_WITH_CKR_TEXT))
 
     try:
         with pytest.raises(AssertionError, match="ctypes mismatch"):
@@ -285,8 +290,6 @@ def test_rsa_pkcs1_invalid_clean_rejection_is_secure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A constant-time clean rejection of invalid padding is also acceptable."""
-    from pkcs11_check.raw.types_std import CKR_ENCRYPTED_DATA_INVALID
-
     vec_id, vec = _first_invalid_pkcs1()
     monkeypatch.setattr(rsa_dec, "provision_rsa_private_key", _handle)
 
@@ -299,6 +302,166 @@ def test_rsa_pkcs1_invalid_clean_rejection_is_secure(
     monkeypatch.setattr(rsa_dec, "destroy_quietly", lambda *_a: None)
 
     rsa_dec.test_rsa_pkcs1_decrypt(_RsaPkcsSession(), None, vec_id, vec)  # no exception
+
+
+def _first_invalid_oaep() -> tuple[str, dict[str, Any]]:
+    hit = next(
+        ((vid, v) for vid, v in rsa_oaep._ALL_OAEP_VECTORS if v["result"] == "invalid"), None
+    )
+    if hit is None:
+        pytest.skip(
+            "Wycheproof RSA-OAEP vectors not available (run `pkcs11-check fetch-data wycheproof`)"
+        )
+    return hit
+
+
+def _run_negative_reject(
+    module: Any,
+    session: Any,
+    vec_id: str,
+    vec: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+) -> None:
+    monkeypatch.setattr(module, "provision_rsa_private_key", _handle)
+    monkeypatch.setattr(module, "decrypt_single", _raiser(exc))
+    monkeypatch.setattr(module, "destroy_quietly", lambda *_a: None)
+    if module is rsa_dec:
+        module.test_rsa_pkcs1_decrypt(session, None, vec_id, vec)
+    else:
+        module.test_rsa_oaep(session, None, vec_id, vec)
+
+
+@pytest.mark.parametrize(
+    ("module", "session", "vector"),
+    [
+        (rsa_dec, _RsaPkcsSession(), _first_invalid_pkcs1),
+        (rsa_oaep, _RsaOaepSession(), _first_invalid_oaep),
+    ],
+    ids=["pkcs1", "oaep"],
+)
+@pytest.mark.parametrize("rv", [CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE])
+def test_rsa_negative_expected_rejects_are_accepted(
+    module: Any,
+    session: Any,
+    vector: Any,
+    rv: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Padding-invalid vectors accept both PKCS#11 encrypted-data rejects."""
+    vec_id, vec = vector()
+    _run_negative_reject(
+        module,
+        session,
+        vec_id,
+        vec,
+        monkeypatch,
+        CkrAssertionError(f"Unexpected CK_RV {int(rv):#x}", int(rv)),
+    )
+
+
+@pytest.mark.parametrize(
+    ("module", "session", "vector"),
+    [
+        (rsa_dec, _RsaPkcsSession(), _first_invalid_pkcs1),
+        (rsa_oaep, _RsaOaepSession(), _first_invalid_oaep),
+    ],
+    ids=["pkcs1", "oaep"],
+)
+@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_GENERAL_ERROR, CKR_VENDOR_DEFINED + 1])
+def test_rsa_negative_unexpected_clean_rejects_are_visible_xfails(
+    module: Any,
+    session: Any,
+    vector: Any,
+    rv: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean but non-spec reject is visible as nonspec_reject, not a pass."""
+    vec_id, vec = vector()
+    with pytest.raises(pytest.xfail.Exception, match="expected"):
+        _run_negative_reject(
+            module,
+            session,
+            vec_id,
+            vec,
+            monkeypatch,
+            CkrAssertionError(f"Unexpected CK_RV {int(rv):#x}", int(rv)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("module", "session", "vector"),
+    [
+        (rsa_dec, _RsaPkcsSession(), _first_invalid_pkcs1),
+        (rsa_oaep, _RsaOaepSession(), _first_invalid_oaep),
+    ],
+    ids=["pkcs1", "oaep"],
+)
+def test_rsa_negative_undefined_ckr_is_hard_failure(
+    module: Any,
+    session: Any,
+    vector: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A return value outside the CK_RV enum is a provider contract failure."""
+    vec_id, vec = vector()
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        _run_negative_reject(
+            module,
+            session,
+            vec_id,
+            vec,
+            monkeypatch,
+            CkrAssertionError("Unexpected CK_RV 0x7fffffff", 0x7FFFFFFF),
+        )
+
+
+@pytest.mark.parametrize(
+    ("module", "session", "vector"),
+    [
+        (rsa_dec, _RsaPkcsSession(), _first_invalid_pkcs1),
+        (rsa_oaep, _RsaOaepSession(), _first_invalid_oaep),
+    ],
+    ids=["pkcs1", "oaep"],
+)
+def test_rsa_negative_non_ckr_is_hard_failure(
+    module: Any,
+    session: Any,
+    vector: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Python/FFI assertion cannot be downgraded by negative-vector routing."""
+    vec_id, vec = vector()
+    with pytest.raises(AssertionError, match="ctypes mismatch"):
+        _run_negative_reject(
+            module,
+            session,
+            vec_id,
+            vec,
+            monkeypatch,
+            _NON_CKR_WITH_CKR_TEXT,
+        )
+
+
+def test_rsa_oaep_acceptable_wrong_plaintext_is_wrong_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OAEP vector marked acceptable still has an exact expected plaintext."""
+    vec_id, vec = next(
+        ((vid, v) for vid, v in rsa_oaep._ALL_OAEP_VECTORS if v["result"] == "acceptable"),
+        (None, None),
+    )
+    if vec_id is None or vec is None:
+        pytest.skip("Wycheproof RSA-OAEP acceptable vectors not available")
+    expected = bytes.fromhex(vec["msg"])
+    wrong = b"\x00" * len(expected)
+    assert wrong != expected
+    monkeypatch.setattr(rsa_oaep, "provision_rsa_private_key", _handle)
+    monkeypatch.setattr(rsa_oaep, "decrypt_single", lambda *_a, **_k: wrong)
+    monkeypatch.setattr(rsa_oaep, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.fail.Exception, match="output does not match"):
+        rsa_oaep.test_rsa_oaep(_RsaOaepSession(), None, vec_id, vec)
 
 
 def test_rsa_oaep_invalid_ciphertext_decrypt_success_is_reported(

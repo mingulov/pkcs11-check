@@ -20,9 +20,9 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import find_objects, read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_HAS_RESET,
@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKH_VENDOR_DEFINED,
     CKO_HW_FEATURE,
 )
+from pkcs11_check.testcases.conftest import reject_or_classify
 
 _KNOWN_HW_FEATURE_TYPES = {
     CKH_MONOTONIC_COUNTER,
@@ -45,20 +46,46 @@ _KNOWN_HW_FEATURE_TYPES = {
 pytestmark = pytest.mark.object
 
 
+def _hw_features(rs: Any) -> list[int]:
+    try:
+        return find_objects(
+            rs.raw,
+            rs.sh,
+            template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
+        )
+    except CkrAssertionError as exc:
+        reject_or_classify(exc, (), label="CKO_HW_FEATURE enumeration", kind="metadata")
+        raise
+
+
+def _hw_type(rs: Any, handle: int) -> int:
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_HW_FEATURE_TYPE])
+    except CkrAssertionError as exc:
+        reject_or_classify(
+            exc,
+            (),
+            label="CKO_HW_FEATURE CKA_HW_FEATURE_TYPE read",
+            kind="metadata",
+        )
+        raise
+    raw_value = attrs[CKA_HW_FEATURE_TYPE]
+    assert isinstance(raw_value, (int, bytes)), (
+        f"Expected int or bytes CKA_HW_FEATURE_TYPE, got {type(raw_value)}"
+    )
+    return (
+        int.from_bytes(raw_value, byteorder=sys.byteorder)
+        if isinstance(raw_value, bytes)
+        else raw_value
+    )
+
+
 class TestHwFeatureEnumeration:
     """Enumerate CKO_HW_FEATURE objects and validate attributes."""
 
     def _get_hw_features(self, rs: Any) -> list[int]:
         """Enumerate hardware feature objects, xfail if unsupported."""
-        try:
-            return find_objects(
-                rs.raw,
-                rs.sh,
-                template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
-            )
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
-            return []
+        return _hw_features(rs)
 
     def test_hw_feature_enumeration(self, p11_raw_session: Any) -> None:
         """Enumerate CKO_HW_FEATURE objects without error."""
@@ -72,23 +99,7 @@ class TestHwFeatureEnumeration:
         if not features:
             pytest.skip("No CKO_HW_FEATURE objects present")
         for feat in features:
-            try:
-                attrs = read_attributes(
-                    rs.raw,
-                    rs.sh,
-                    feat,
-                    [CKA_HW_FEATURE_TYPE],
-                )
-                hw_type = attrs[CKA_HW_FEATURE_TYPE]
-                assert isinstance(hw_type, (int, bytes))
-            except AssertionError as e:
-                classify(
-                    "not_operational",
-                    kind="metadata",
-                    label="CKO_HW_FEATURE:CKA_HW_FEATURE_TYPE",
-                    operation="C_GetAttributeValue",
-                    summary=f"Cannot read CKA_HW_FEATURE_TYPE: {e}",
-                )
+            _hw_type(rs, feat)
 
     def test_known_hw_feature_types(self, p11_raw_session: Any) -> None:
         """HW feature types are known standard values or vendor-defined."""
@@ -97,21 +108,7 @@ class TestHwFeatureEnumeration:
         if not features:
             pytest.skip("No CKO_HW_FEATURE objects present")
         for feat in features:
-            try:
-                attrs = read_attributes(
-                    rs.raw,
-                    rs.sh,
-                    feat,
-                    [CKA_HW_FEATURE_TYPE],
-                )
-                raw_val = attrs[CKA_HW_FEATURE_TYPE]
-                hw_type = (
-                    int.from_bytes(raw_val, byteorder=sys.byteorder)
-                    if isinstance(raw_val, bytes)
-                    else int(raw_val)
-                )
-            except (AssertionError, KeyError):
-                continue  # audit-ok: enumeration probe; unreadable object skipped
+            hw_type = _hw_type(rs, feat)
             if hw_type < CKH_VENDOR_DEFINED:
                 assert hw_type in _KNOWN_HW_FEATURE_TYPES, (
                     f"Unknown non-vendor HW feature type 0x{hw_type:08X}"
@@ -123,34 +120,11 @@ class TestHwFeatureClock:
 
     def _get_clock_features(self, rs: Any) -> list[int]:
         """Find CKH_CLOCK hardware feature objects."""
-        try:
-            features = find_objects(
-                rs.raw,
-                rs.sh,
-                template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
-            )
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
-            return []
+        features = _hw_features(rs)
         clocks = []
         for feat in features:
-            try:
-                attrs = read_attributes(
-                    rs.raw,
-                    rs.sh,
-                    feat,
-                    [CKA_HW_FEATURE_TYPE],
-                )
-                raw_val = attrs[CKA_HW_FEATURE_TYPE]
-                hw_type = (
-                    int.from_bytes(raw_val, byteorder=sys.byteorder)
-                    if isinstance(raw_val, bytes)
-                    else int(raw_val)
-                )
-                if hw_type == CKH_CLOCK:
-                    clocks.append(feat)
-            except (AssertionError, KeyError):
-                continue  # audit-ok: enumeration probe; unreadable object skipped
+            if _hw_type(rs, feat) == CKH_CLOCK:
+                clocks.append(feat)
         return clocks
 
     def test_clock_value_format(self, p11_raw_session: Any) -> None:
@@ -177,34 +151,11 @@ class TestHwFeatureCounter:
 
     def _get_counter_features(self, rs: Any) -> list[int]:
         """Find CKH_MONOTONIC_COUNTER hardware feature objects."""
-        try:
-            features = find_objects(
-                rs.raw,
-                rs.sh,
-                template_from_dict({CKA_CLASS: CKO_HW_FEATURE}),
-            )
-        except AssertionError as e:
-            pytest.skip(f"Module does not support CKO_HW_FEATURE enumeration: {e}")
-            return []
+        features = _hw_features(rs)
         counters = []
         for feat in features:
-            try:
-                attrs = read_attributes(
-                    rs.raw,
-                    rs.sh,
-                    feat,
-                    [CKA_HW_FEATURE_TYPE],
-                )
-                raw_val = attrs[CKA_HW_FEATURE_TYPE]
-                hw_type = (
-                    int.from_bytes(raw_val, byteorder=sys.byteorder)
-                    if isinstance(raw_val, bytes)
-                    else int(raw_val)
-                )
-                if hw_type == CKH_MONOTONIC_COUNTER:
-                    counters.append(feat)
-            except (AssertionError, KeyError):
-                continue  # audit-ok: enumeration probe; unreadable object skipped
+            if _hw_type(rs, feat) == CKH_MONOTONIC_COUNTER:
+                counters.append(feat)
         return counters
 
     def test_counter_has_value(self, p11_raw_session: Any) -> None:
@@ -232,11 +183,10 @@ class TestHwFeatureCounter:
                 )
                 assert CKA_RESET_ON_INIT in attrs
                 assert CKA_HAS_RESET in attrs
-            except AssertionError as e:
-                classify(
-                    "not_operational",
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKH_MONOTONIC_COUNTER reset-attribute read",
                     kind="metadata",
-                    label="CKH_MONOTONIC_COUNTER:reset attributes",
-                    operation="C_GetAttributeValue",
-                    summary=f"Cannot read reset attrs from counter: {e}",
                 )

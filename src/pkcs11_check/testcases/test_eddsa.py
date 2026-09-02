@@ -6,6 +6,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EC_PARAMS,
     CKA_EC_POINT,
@@ -38,7 +40,13 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
-from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    EC_CURVE_UNSUPPORTED_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    assert_correct,
+    is_known_error,
+    xfail_if_known_ckr,
+)
 
 _EDDSA_RUNTIME_REJECT_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -56,7 +64,7 @@ def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
     """Sign data with CKM_EDDSA, xfail on explicit advertised-path rejects."""
     try:
         return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(exc, _EDDSA_RUNTIME_REJECT_RVS, "advertised EdDSA sign rejected")
     raise
 
@@ -65,7 +73,7 @@ def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
     """Verify EdDSA signature, xfail on explicit advertised-path rejects."""
     try:
         return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(exc, _EDDSA_RUNTIME_REJECT_RVS, "advertised EdDSA verify rejected")
     raise
 
@@ -95,6 +103,23 @@ def _gen_ed25519(rs: Any) -> tuple[int, int]:
     )
 
 
+def _gen_edwards_or_skip(
+    rs: Any, curve_name: str, generator: Callable[[Any], tuple[int, int]]
+) -> tuple[int, int]:
+    """Skip an explicitly unsupported curve; expose other keygen failures."""
+    try:
+        return generator(rs)
+    except CkrAssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            pytest.skip(f"{curve_name} curve not supported")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            f"{curve_name} key generation advertised but not operational",
+        )
+        raise
+
+
 @pytest.fixture()
 def ed25519_keypair(p11_raw_session: Any) -> tuple[int, int]:
     """Generate Ed25519 keypair, skip if unsupported."""
@@ -102,12 +127,7 @@ def ed25519_keypair(p11_raw_session: Any) -> tuple[int, int]:
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported")
 
-    try:
-        pub, priv = _gen_ed25519(rs)
-        return pub, priv
-    except (AssertionError, OSError):
-        pytest.skip("Ed25519 keygen not available")
-        raise  # unreachable, satisfies mypy
+    return _gen_edwards_or_skip(rs, "Ed25519", _gen_ed25519)
 
 
 class TestEdDSAKeyGeneration:
@@ -228,12 +248,8 @@ class TestEdDSASignVerify:
         rs = p11_raw_session
         if not rs.has_mechanism("EDDSA"):
             pytest.skip("EDDSA not supported")
-        try:
-            _, priv1 = _gen_ed25519(rs)
-            _, priv2 = _gen_ed25519(rs)
-        except (AssertionError, OSError):
-            pytest.skip("Ed25519 keygen not available")
-            raise  # unreachable
+        _, priv1 = _gen_edwards_or_skip(rs, "Ed25519", _gen_ed25519)
+        _, priv2 = _gen_edwards_or_skip(rs, "Ed25519", _gen_ed25519)
 
         data = b"key independence test"
         sig1 = _sign_eddsa(rs, priv1, data)
@@ -310,11 +326,7 @@ def ed448_keypair(p11_raw_session: Any) -> tuple[int, int]:
     rs = p11_raw_session
     if not rs.has_mechanism("EDDSA"):
         pytest.skip("EDDSA mechanism not supported")
-    try:
-        return _gen_ed448(rs)
-    except (AssertionError, OSError):
-        pytest.skip("Ed448 keygen not available")
-        raise  # unreachable, satisfies mypy
+    return _gen_edwards_or_skip(rs, "Ed448", _gen_ed448)
 
 
 class TestEd448:

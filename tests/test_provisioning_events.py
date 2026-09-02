@@ -103,12 +103,15 @@ def _make_rs(sh: int, *, has_mech: bool = True) -> Any:
             "sh": sh,
             "slot_id": 0,
             "has_mechanism": lambda self, n: has_mech,
+            "has_mechanism_flag": lambda self, n, flag: has_mech,
         },
     )()
 
 
 def _reset_cache() -> None:
     _prov._PROFILE_CACHE.clear()
+    _prov._WRAP_CONTEXT_CACHE.clear()
+    _prov._WRAP_CONTEXT_COMPUTED.clear()
 
 
 def _make_cfg(key_inject: str, wrap_rsa_bits: int = 2048, wrap_oaep_hash: str = "sha1") -> Any:

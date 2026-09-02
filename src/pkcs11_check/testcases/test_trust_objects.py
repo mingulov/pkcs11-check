@@ -13,6 +13,7 @@ import pytest
 
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import find_objects, read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_ISSUER,
@@ -22,27 +23,15 @@ from pkcs11_check.raw.types_std import (
     CKA_TRUST_EMAIL_PROTECTION,
     CKA_TRUST_SERVER_AUTH,
     CKO_TRUST,
-    CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
     CKT_NOT_TRUSTED,
     CKT_TRUST_ANCHOR,
     CKT_TRUST_MUST_VERIFY_TRUST,
     CKT_TRUST_UNKNOWN,
     CKT_TRUSTED,
 )
-from pkcs11_check.testcases.conftest import xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = [pytest.mark.object]
-
-# CKR codes acceptable when reading vendor-extension trust attributes fails
-_TRUST_ATTR_ERROR_CKRS = (
-    CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-)
 
 # Known CK_TRUST values
 _KNOWN_TRUST_VALUES = {
@@ -55,13 +44,13 @@ _KNOWN_TRUST_VALUES = {
 
 
 def _find_trust_objects(raw: Any, sh: int) -> list[int]:
-    """Find CKO_TRUST objects, returning empty on error."""
+    """Find CKO_TRUST objects, surfacing typed enumeration failures."""
     try:
         tmpl = template(attr_ulong(CKA_CLASS, CKO_TRUST))
         return find_objects(raw, sh, tmpl)
-    except AssertionError as e:
-        pytest.skip(f"Module does not support CKO_TRUST enumeration: {e}")
-    return []  # unreachable, but keeps type checker happy
+    except CkrAssertionError as exc:
+        reject_or_classify(exc, (), label="CKO_TRUST enumeration", kind="metadata")
+        raise
 
 
 class TestTrustObjects:
@@ -84,10 +73,14 @@ class TestTrustObjects:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
                 issuer = attrs[CKA_ISSUER]
                 assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc, _TRUST_ATTR_ERROR_CKRS, "Cannot read CKA_ISSUER from trust object"
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_TRUST CKA_ISSUER read",
+                    kind="metadata",
                 )
+                raise
 
     def test_trust_objects_have_serial_number(self, p11_raw_session: Any) -> None:
         """Each CKO_TRUST object has a readable CKA_SERIAL_NUMBER."""
@@ -102,10 +95,14 @@ class TestTrustObjects:
                 assert isinstance(serial, bytes), (
                     f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
                 )
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc, _TRUST_ATTR_ERROR_CKRS, "Cannot read CKA_SERIAL_NUMBER from trust object"
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_TRUST CKA_SERIAL_NUMBER read",
+                    kind="metadata",
                 )
+                raise
 
     def test_trust_server_auth_is_known_value(self, p11_raw_session: Any) -> None:
         """CKA_TRUST_SERVER_AUTH is a known CK_TRUST value if present."""
@@ -116,11 +113,18 @@ class TestTrustObjects:
         for h in trusts:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TRUST_SERVER_AUTH])
-                val = attrs[CKA_TRUST_SERVER_AUTH]
-                assert val in _KNOWN_TRUST_VALUES, f"Unknown TRUST_SERVER_AUTH value 0x{val:08X}"
-            except AssertionError:
-                # Not all trust objects have SERVER_AUTH
-                continue  # audit-ok: optional-attribute probe; attribute may be absent
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_TRUST CKA_TRUST_SERVER_AUTH read",
+                    kind="metadata",
+                )
+                raise
+            if CKA_TRUST_SERVER_AUTH not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            val = attrs[CKA_TRUST_SERVER_AUTH]
+            assert val in _KNOWN_TRUST_VALUES, f"Unknown TRUST_SERVER_AUTH value 0x{val:08X}"
 
     def test_trust_usage_attributes_readable(self, p11_raw_session: Any) -> None:
         """Trust usage attributes are readable where present."""
@@ -139,13 +143,20 @@ class TestTrustObjects:
         for attr_id in trust_attr_ids:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [attr_id])
-                val = attrs[attr_id]
-                read_count += 1
-                assert val in _KNOWN_TRUST_VALUES, (
-                    f"Unknown trust value 0x{val:08X} for attr 0x{attr_id:08X}"
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label=f"CKO_TRUST usage attribute 0x{attr_id:08X} read",
+                    kind="metadata",
                 )
-            except AssertionError:
-                # Attribute may not be present on this object
-                continue  # audit-ok: optional-attribute probe; attribute may be absent
+                raise
+            if attr_id not in attrs:
+                continue  # audit-ok: optional attribute is absent
+            val = attrs[attr_id]
+            assert val in _KNOWN_TRUST_VALUES, (
+                f"Unknown trust value 0x{val:08X} for attr 0x{attr_id:08X}"
+            )
+            read_count += 1
         if read_count == 0:
             pytest.skip("No trust usage attributes readable on first trust object")

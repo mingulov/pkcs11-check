@@ -6,7 +6,7 @@ Each file produces a parametrized test class.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -34,7 +34,10 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
-from pkcs11_check.testcases.conftest import import_rsa_public_key_negotiated, is_known_error
+from pkcs11_check.testcases.conftest import (
+    import_rsa_public_key_negotiated,
+    is_known_error,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 
 pytestmark = pytest.mark.wycheproof
@@ -93,6 +96,30 @@ def _mark_pkcs11_duplicate_vectors(vectors: list[tuple[str, dict[str, Any]]]) ->
         for vec_id, test in entries:
             if vec_id != duplicate_of:
                 test["_pkcs11_duplicate_of"] = duplicate_of
+
+
+def _classify_valid_verify_reject(
+    exc: AssertionError,
+    *,
+    label: str,
+    summary: str,
+    source: str | None = None,
+    vector_id: str | None = None,
+) -> NoReturn:
+    """Route a valid-vector verify reject without catching harness failures."""
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    # Signature rejects are an advertised-but-not-operational valid-vector
+    # deviation. Other defined CKRs remain visible through the strict helper.
+    if not signature_rejected_or_xfail(exc, label):
+        classify(
+            "not_operational",
+            label=label,
+            summary=summary,
+            source=source,
+            vector_id=vector_id,
+        )
+    raise exc
 
 
 # Mechanism display names for availability checking
@@ -226,19 +253,18 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
             e=exponent,
             attrs={CKA_VERIFY: True},
         )
-    except AssertionError as exc:
-        if not isinstance(exc, CkrAssertionError):
-            raise
+    except CkrAssertionError as exc:
         # Only cache permanent key-size rejections, not transient errors.
         if is_known_error(exc, _RSA_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
-        classify(
-            "not_operational",
-            summary=not_operational_reason(
-                f"{mech_display}:key-import",
-                f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
-            ),
-        )
+            classify(
+                "not_operational",
+                summary=not_operational_reason(
+                    f"{mech_display}:key-import",
+                    f"RSA {key_bits}-bit: {ckr_name(exc.rv)}",
+                ),
+            )
+        raise
 
     try:
         verified = verify_single(rs.raw, rs.sh, pub_key, mechanism, msg, sig)
@@ -262,10 +288,10 @@ def test_rsa_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, Any
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            classify(
-                "not_operational",
+            _classify_valid_verify_reject(
+                exc,
                 label=vec_id,
                 summary=f"Valid RSA sig {vec_id} rejected: {exc}",
                 source=vec.get("_source"),

@@ -20,6 +20,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_DEVICE_ERROR,
 )
 from pkcs11_check.testcases.security import test_tookan as tt
 
@@ -73,6 +74,34 @@ def test_copy_rejected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tt, "copy_object", _copy_reject)
     monkeypatch.setattr(tt, "read_attributes", lambda *_a, **_k: {CKA_EXTRACTABLE: False})
     tt.TestSensitivePreservation().test_extractable_cannot_escalate_on_copy(_session())
+
+
+def test_copy_unexpected_clean_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(tt, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(tt, "read_attributes", lambda *_a, **_k: {CKA_EXTRACTABLE: False})
+    monkeypatch.setattr(
+        tt,
+        "copy_object",
+        lambda *_a, **_k: (_ for _ in ()).throw(CkrAssertionError("rv", int(CKR_DEVICE_ERROR))),
+    )
+
+    with pytest.raises(XFailed, match="C_CopyObject CKA_EXTRACTABLE"):
+        tt.TestSensitivePreservation().test_extractable_cannot_escalate_on_copy(_session())
+
+
+def test_copy_does_not_mask_non_ckr_assertion(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(tt, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(tt, "read_attributes", lambda *_a, **_k: {CKA_EXTRACTABLE: False})
+    monkeypatch.setattr(
+        tt,
+        "copy_object",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("harness copy failed")),
+    )
+
+    with pytest.raises(AssertionError, match="harness copy failed"):
+        tt.TestSensitivePreservation().test_extractable_cannot_escalate_on_copy(_session())
 
 
 # --- :268 wrap-decrypt extraction -----------------------------------------

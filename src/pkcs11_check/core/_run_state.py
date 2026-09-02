@@ -191,13 +191,131 @@ _POLICY_IGNORED_ENV_KEYS = {
 }
 
 
+def _recovery_attempts_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.recovery.jsonl")
+
+
+def _load_recovery_attempt_sidecar(path: Path) -> list[dict[str, Any]]:
+    """Load and validate pending recovery archives before applying any of them."""
+    sidecar = _recovery_attempts_path(path)
+    if not sidecar.exists():
+        return []
+    attempts: list[dict[str, Any]] = []
+    try:
+        lines = sidecar.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"cannot read recovery sidecar {sidecar}: {exc}") from exc
+    for line_number, raw_line in enumerate(lines, start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            wrapper = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"malformed recovery sidecar {sidecar} at line {line_number}") from exc
+        if not isinstance(wrapper, dict) or wrapper.get("$report_type") != "RecoveryAttempt":
+            raise ValueError(
+                f"invalid recovery sidecar {sidecar} at line {line_number}: "
+                "expected RecoveryAttempt wrapper"
+            )
+        attempt = wrapper.get("attempt")
+        if not isinstance(attempt, dict):
+            raise ValueError(
+                f"invalid recovery sidecar {sidecar} at line {line_number}: "
+                "attempt must be an object"
+            )
+        target = attempt.get("target")
+        if not isinstance(target, str) or not target:
+            raise ValueError(
+                f"invalid recovery sidecar {sidecar} at line {line_number}: "
+                "attempt target is required"
+            )
+        if wrapper.get("target", target) != target:
+            raise ValueError(
+                f"invalid recovery sidecar {sidecar} at line {line_number}: "
+                "wrapper and attempt targets differ"
+            )
+        if attempt.get("reason") != "daemon-recovery-requeue":
+            raise ValueError(
+                f"invalid recovery sidecar {sidecar} at line {line_number}: "
+                "unexpected attempt reason"
+            )
+        if (
+            not isinstance(attempt.get("status"), str)
+            or type(attempt.get("returncode")) is not int
+            or type(attempt.get("completion_verified")) is not bool
+            or type(attempt.get("attempt")) is not int
+            or attempt["attempt"] < 1
+            or not isinstance(attempt.get("records"), list)
+        ):
+            raise ValueError(
+                f"invalid recovery sidecar {sidecar} at line {line_number}: "
+                "incomplete attempt fields"
+            )
+        attempts.append(dict(attempt))
+    return attempts
+
+
+def _recovery_attempt_key(attempt: Mapping[str, Any]) -> str:
+    return json.dumps(attempt, sort_keys=True, separators=(",", ":"))
+
+
+def _reconcile_recovery_attempts(
+    path: Path,
+    state: FileRunState,
+    sidecar_attempts: list[dict[str, Any]],
+) -> None:
+    if not sidecar_attempts:
+        return
+    known = {_recovery_attempt_key(attempt) for attempt in state.attempt_history}
+    targets: set[str] = set()
+    for attempt in sidecar_attempts:
+        key = _recovery_attempt_key(attempt)
+        if key not in known:
+            state.attempt_history.append(attempt)
+            known.add(key)
+        target = attempt["target"]
+        targets.add(target)
+
+        event = attempt.get("recovery_event")
+        if not isinstance(event, Mapping):
+            continue
+        event_key = _recovery_attempt_key(event)
+        if any(_recovery_attempt_key(existing) == event_key for existing in state.recovery_events):
+            continue
+        state.recovery_events.append(dict(event))
+
+    state.results[:] = [result for result in state.results if result.target not in targets]
+    state.process_observations[:] = [
+        observation
+        for observation in state.process_observations
+        if not isinstance(observation, Mapping)
+        or not any(
+            str(observation.get("target", "")) == target
+            or str(observation.get("parent_nodeid", "") or "").startswith(f"{target}::")
+            for target in targets
+        )
+    ]
+    for target in targets:
+        state.report_records_by_unit.pop(target, None)
+        _delete_unit_report_record_cache(path, target)
+
+
 def load_run_state(path: Path) -> FileRunState | None:
     """Load a resumable runner state from disk."""
     if not path.exists():
         return None
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    results = [FileRunResult(**item) for item in raw.get("results", [])]
+    results = [
+        FileRunResult(
+            **(
+                {**item, "completion_verified": False}
+                if item.get("returncode") in {2, 3, 4}
+                else item
+            )
+        )
+        for item in raw.get("results", [])
+    ]
     report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     raw_records = raw.get("report_records_by_unit", {})
     if isinstance(raw_records, dict):
@@ -207,12 +325,43 @@ def load_run_state(path: Path) -> FileRunState | None:
             parsed_records = [record for record in records if isinstance(record, dict)]
             if parsed_records:
                 report_records_by_unit[unit] = parsed_records
-    return FileRunState(
+    raw_observations = raw.get("process_observations", [])
+    observations_well_formed = isinstance(raw_observations, list) and all(
+        isinstance(observation, dict) for observation in raw_observations
+    )
+    process_observations = (
+        [dict(observation) for observation in raw_observations if isinstance(observation, dict)]
+        if isinstance(raw_observations, list)
+        else []
+    )
+    raw_attempt_history = raw.get("attempt_history", [])
+    attempt_history = (
+        [dict(attempt) for attempt in raw_attempt_history if isinstance(attempt, Mapping)]
+        if isinstance(raw_attempt_history, list)
+        else []
+    )
+    raw_recovery_events = raw.get("recovery_events", [])
+    recovery_events = (
+        [dict(event) for event in raw_recovery_events if isinstance(event, Mapping)]
+        if isinstance(raw_recovery_events, list)
+        else []
+    )
+    state = FileRunState(
         units=list(raw.get("units", [])),
         fingerprint=str(raw.get("fingerprint", "")),
         results=results,
         report_records_by_unit=report_records_by_unit,
+        process_observations=process_observations,
+        process_observations_complete=(
+            "process_observations" in raw
+            and raw.get("process_observations_complete") is True
+            and observations_well_formed
+        ),
+        attempt_history=attempt_history,
+        recovery_events=recovery_events,
     )
+    _reconcile_recovery_attempts(path, state, _load_recovery_attempt_sidecar(path))
+    return state
 
 
 def save_run_state(path: Path, state: FileRunState) -> None:
@@ -236,6 +385,10 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         "fingerprint": state.fingerprint,
         "units": state.units,
         "results": [asdict(result) for result in state.results],
+        "process_observations": state.process_observations,
+        "process_observations_complete": state.process_observations_complete,
+        "attempt_history": state.attempt_history,
+        "recovery_events": state.recovery_events,
     }
     if os.environ.get("PKCS11_CHECK_STATE_INLINE_RECORDS") == "1":
         # Opt-in legacy/debug behavior: embed the per-unit report records inline.
@@ -245,6 +398,7 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         # it is OFF by default and never needed for resume.
         payload["report_records_by_unit"] = state.report_records_by_unit
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _recovery_attempts_path(path).unlink(missing_ok=True)
 
 
 def _manifest_digest(pytest_args: list[str]) -> str | None:
@@ -491,7 +645,5 @@ def units_remaining_for_resume(units: list[str], state: FileRunState | None) -> 
     if state is None:
         return list(units)
 
-    completed_ok = {
-        result.target for result in state.results if result.status in _RESUME_COMPLETE_STATUSES
-    }
-    return [unit for unit in units if unit not in completed_ok]
+    attempted = {result.target for result in state.results}
+    return [unit for unit in units if unit not in attempted]

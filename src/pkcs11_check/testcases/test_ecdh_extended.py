@@ -32,6 +32,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -67,7 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
 pytestmark = pytest.mark.keymgmt
 
@@ -322,7 +323,7 @@ class TestECDH1CofactorDerive:
                     CKM_ECDH1_COFACTOR_DERIVE,
                     attrs=_AES_DERIVE_ATTRS,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc,
                     _OPERATIONAL_ERROR_CKRS,
@@ -395,15 +396,13 @@ class TestECMQVDerive:
                     point_b,
                     CKM_ECMQV_DERIVE,
                 )
-            except AssertionError:
-                classify(
-                    "not_operational",
-                    kind="crypto",
-                    label="CKM_ECMQV_DERIVE:C_DeriveKey",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_ECMQV_DERIVE",
-                    summary="ECMQV derive not operational: wrong param structure expected",
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _OPERATIONAL_ERROR_CKRS,
+                    "CKM_ECMQV_DERIVE advertised but wrong parameter structure is not operational",
                 )
+                raise
             else:
                 # Unlikely to succeed, but if it does, verify and clean up
                 val = _read_value(rs, shared)
@@ -434,7 +433,7 @@ class TestXEdDSA:
 
         try:
             pub, priv = _gen_montgomery(rs, _X25519_OID, sign=True, derive=False)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _OPERATIONAL_ERROR_CKRS,
@@ -455,7 +454,7 @@ class TestXEdDSA:
                     data,
                     mech_param=xeddsa_param,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 xfail_if_known_ckr(
                     exc, _OPERATIONAL_ERROR_CKRS, "XEdDSA sign advertised but not operational"
                 )
@@ -473,7 +472,7 @@ class TestXEdDSA:
                     sig,
                     mech_param=xeddsa_v,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 # A clean reject of the verify op is advertised-but-not-operational
                 # -> xfail; a non-CKR error propagates.
                 xfail_if_known_ckr(
@@ -501,7 +500,7 @@ class TestXEdDSA:
 
         try:
             pub, priv = _gen_montgomery(rs, _X25519_OID, sign=True, derive=False)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _OPERATIONAL_ERROR_CKRS,
@@ -521,16 +520,13 @@ class TestXEdDSA:
                     data,
                     mech_param=xeddsa_param,
                 )
-            except AssertionError:
-                classify(
-                    "not_operational",
-                    kind="crypto",
-                    label="CKM_XEDDSA:C_Sign",
-                    operation="C_Sign",
-                    mechanism="CKM_XEDDSA",
-                    summary="XEdDSA sign not operational",
+            except CkrAssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _OPERATIONAL_ERROR_CKRS,
+                    "CKM_XEDDSA advertised but sign is not operational",
                 )
-                raise  # unreachable
+                raise
             else:
                 # Corrupt the signature
                 bad_sig_arr = bytearray(sig)
@@ -567,7 +563,7 @@ class TestECMontgomeryKeyPairGen:
 
         try:
             pub, priv = _gen_montgomery(rs, _X25519_OID)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _OPERATIONAL_ERROR_CKRS,
@@ -600,9 +596,12 @@ class TestECMontgomeryKeyPairGen:
 
         try:
             pub, priv = _gen_montgomery(rs, _X448_OID)
-        except AssertionError as exc:
-            if is_known_error(exc, _OPERATIONAL_ERROR_CKRS):
-                pytest.skip(f"X448 keygen not supported: {exc}")
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _OPERATIONAL_ERROR_CKRS,
+                "CKM_EC_MONTGOMERY_KEY_PAIR_GEN advertised but X448 keygen is not operational",
+            )
             raise
 
         try:
@@ -631,7 +630,7 @@ class TestECMontgomeryKeyPairGen:
         try:
             pub_a, priv_a = _gen_montgomery(rs, _X25519_OID)
             pub_b, priv_b = _gen_montgomery(rs, _X25519_OID)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _OPERATIONAL_ERROR_CKRS,
@@ -669,7 +668,7 @@ class TestECMontgomeryKeyPairGen:
         try:
             pub_a, priv_a = _gen_montgomery(rs, _X25519_OID)
             pub_b, priv_b = _gen_montgomery(rs, _X25519_OID)
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             xfail_if_known_ckr(
                 exc,
                 _OPERATIONAL_ERROR_CKRS,

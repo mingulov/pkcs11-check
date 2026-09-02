@@ -115,10 +115,7 @@ class TestKeygenKeySizeConformance:
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("RSA_PKCS_KEY_PAIR_GEN not supported by module")
 
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
-        except CkrAssertionError as e:
-            pytest.skip(f"C_GetMechanismInfo(RSA_PKCS_KEY_PAIR_GEN) failed: {e}")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
 
         adv_max: int = info["max_key_size"]
 
@@ -157,10 +154,7 @@ class TestKeygenKeySizeConformance:
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC_KEY_PAIR_GEN not supported by module")
 
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_EC_KEY_PAIR_GEN)
-        except CkrAssertionError as e:
-            pytest.skip(f"C_GetMechanismInfo(EC_KEY_PAIR_GEN) failed: {e}")
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_EC_KEY_PAIR_GEN)
 
         adv_max: int = info["max_key_size"]
 

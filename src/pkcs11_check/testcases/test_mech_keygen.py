@@ -22,7 +22,7 @@ import pytest
 from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_LOCAL,
     CKR_ATTRIBUTE_SENSITIVE,
@@ -30,7 +30,6 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -48,15 +47,25 @@ _LOCAL_READ_UNSUPPORTED_RVS = (
 _LOCAL_READ_NONCLEAN_RVS = (CKR_ATTRIBUTE_VALUE_INVALID,)
 
 
-def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any | None:
-    """Read CKA_LOCAL; return None when the provider does not expose it."""
+def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
+    """Read CKA_LOCAL and classify clean provider refusals."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_LOCAL])
+        value = attrs.get(CKA_LOCAL)
+        if value is None:
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=f"{label}:CKA_LOCAL",
+                operation="C_GetAttributeValue",
+                summary=f"{label} CKA_LOCAL: provider did not return the requested attribute",
+            )
+        return value
     except AssertionError as exc:
-        if is_known_error(exc, _LOCAL_READ_UNSUPPORTED_RVS):
-            return None
-        if is_known_error(exc, _LOCAL_READ_NONCLEAN_RVS):
-            rv = int(getattr(exc, "rv", CKR_ATTRIBUTE_VALUE_INVALID))
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        rv = int(exc.rv)
+        if rv in _LOCAL_READ_NONCLEAN_RVS:
             xfail_as(
                 "not_operational",
                 kind="metadata",
@@ -65,10 +74,25 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any | None:
                 actual=rv,
                 summary=f"{label} CKA_LOCAL read rejected with non-clean CKR: {ckr_name(rv)}",
             )
-        raise AssertionError(
-            f"Unexpected error reading CKA_LOCAL on handle {handle}: {exc}"
-        ) from exc
-    return attrs.get(CKA_LOCAL)
+        if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=f"{label}:CKA_LOCAL",
+                operation="C_GetAttributeValue",
+                actual=rv,
+                summary=f"{label} CKA_LOCAL read rejected with clean CKR: {ckr_name(rv)}",
+            )
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{label}:CKA_LOCAL",
+            operation="C_GetAttributeValue",
+            expected=_LOCAL_READ_UNSUPPORTED_RVS + _LOCAL_READ_NONCLEAN_RVS,
+            actual=rv,
+            summary=f"{label} CKA_LOCAL read returned undefined CK_RV: {ckr_name(rv)}",
+        )
+        raise AssertionError("unreachable: undefined CK_RV classification must fail")
 
 
 def _xfail_generated_local_false(mech_name: str, label: str) -> None:
@@ -133,13 +157,12 @@ class TestMechKeygen:
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     local = _read_local_flag(rs, handle, f"{entry.mech_name} {label} key")
-                    if local is not None:
-                        if local is False:
-                            _xfail_generated_local_false(entry.mech_name, f"{label} key")
-                        assert local is True, (
-                            f"{entry.mech_name}: CKA_LOCAL should be True on generated "
-                            f"{label} key (got {local!r})"
-                        )
+                    if local is False:
+                        _xfail_generated_local_false(entry.mech_name, f"{label} key")
+                    assert local is True, (
+                        f"{entry.mech_name}: CKA_LOCAL should be True on generated "
+                        f"{label} key (got {local!r})"
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
@@ -147,12 +170,10 @@ class TestMechKeygen:
             key = gen_symmetric_key(rs, entry, config)
             try:
                 local = _read_local_flag(rs, key, f"{entry.mech_name} key")
-                if local is not None:
-                    if local is False:
-                        _xfail_generated_local_false(entry.mech_name, "key")
-                    assert local is True, (
-                        f"{entry.mech_name}: CKA_LOCAL should be True on generated key "
-                        f"(got {local!r})"
-                    )
+                if local is False:
+                    _xfail_generated_local_false(entry.mech_name, "key")
+                assert local is True, (
+                    f"{entry.mech_name}: CKA_LOCAL should be True on generated key (got {local!r})"
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)

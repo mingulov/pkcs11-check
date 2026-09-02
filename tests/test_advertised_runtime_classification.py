@@ -42,6 +42,7 @@ from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_rsa_decrypt,
     test_wycheproof_rsa_oaep,
     test_wycheproof_rsa_pss,
+    test_wycheproof_x25519,
 )
 
 _LEGACY_CIPHER_FILES = (
@@ -82,6 +83,11 @@ _RUNTIME_SKIP_PATTERNS = {
         "Key not valid for HMAC mechanism",
     ),
     Path("src/pkcs11_check/testcases/acvp/test_acvp_rsa.py"): ("PSS params not supported",),
+    Path("src/pkcs11_check/testcases/acvp/test_acvp_rsa_keygen.py"): (
+        "key generation not supported",
+        "key attribute query failed",
+        "not supported by this module",
+    ),
 }
 
 
@@ -246,6 +252,18 @@ def test_acvp_ecdh_uses_structured_ckr_checks() -> None:
     assert offenders == []
 
 
+def test_ecdh_arguments_bad_stays_in_runtime_reject_tuples() -> None:
+    """CKR_ARGUMENTS_BAD must not widen ECDH/XDH import or capability rejects."""
+    assert CKR_ARGUMENTS_BAD in test_acvp_ecdh._ECDH_RUNTIME_REJECT_RVS
+    assert CKR_ARGUMENTS_BAD not in test_acvp_ecdh._EC_CAPABILITY_REJECT_RVS
+    assert CKR_ARGUMENTS_BAD in test_wycheproof_ecdh._ECDH_RUNTIME_REJECT_CKRS
+    assert CKR_ARGUMENTS_BAD not in test_wycheproof_ecdh._EC_PRIVATE_IMPORT_UNSUPPORTED_CKRS
+    assert CKR_ARGUMENTS_BAD in test_wycheproof_x25519._XDH_RUNTIME_REJECT_CKRS
+    assert (
+        CKR_ARGUMENTS_BAD not in test_wycheproof_x25519._MONTGOMERY_PRIVATE_IMPORT_UNSUPPORTED_CKRS
+    )
+
+
 def test_acvp_ecdh_mechanism_param_reject_is_xfail() -> None:
     """Advertised ECDH derive returning CKR_MECHANISM_PARAM_INVALID is a finding."""
     exc = CkrAssertionError(
@@ -257,7 +275,7 @@ def test_acvp_ecdh_mechanism_param_reject_is_xfail() -> None:
         test_acvp_ecdh._xfail_if_ecdh_runtime_reject(exc, "Curve P-256")
 
 
-@pytest.mark.parametrize("rv", [CKR_DEVICE_ERROR, CKR_GENERAL_ERROR])
+@pytest.mark.parametrize("rv", [CKR_ARGUMENTS_BAD, CKR_DEVICE_ERROR, CKR_GENERAL_ERROR])
 def test_acvp_ecdh_generic_runtime_rejects_are_xfail(rv: int) -> None:
     """Advertised ECDH derive returning generic runtime errors is a finding."""
     exc = CkrAssertionError("Unexpected CK_RV", int(rv))
@@ -662,6 +680,7 @@ def test_wycheproof_hmac_valid_runtime_rejects_are_xfail(rv: int) -> None:
 @pytest.mark.parametrize(
     "rv",
     [
+        CKR_ARGUMENTS_BAD,
         CKR_FUNCTION_FAILED,
         CKR_GENERAL_ERROR,
         CKR_MECHANISM_PARAM_INVALID,
@@ -711,15 +730,15 @@ def test_wycheproof_dsa_valid_runtime_rejects_are_xfail(rv: int) -> None:
 def test_wycheproof_hmac_invalid_tags_are_reported() -> None:
     """Invalid HMAC vectors must fail if the module accepts the supplied tag.
 
-    test_wycheproof.py (SHA-256 HMAC) still uses the produce-direction compare;
-    test_wycheproof_hmac.py was re-framed (Phase 2 Task 2i) to verify-and-reject
+    Both generic SHA-256 HMAC and the broader HMAC suite must verify-and-reject
     the supplied tag, so an accepted invalid tag is a finding.
     """
-    produce_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py").read_text(
+    generic_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof.py").read_text(
         encoding="utf-8"
     )
-    assert "Invalid HMAC tag" in produce_source
-    assert "truncated == tag_expected" in produce_source
+    assert "Invalid HMAC tag" in generic_source
+    assert "verified by module" in generic_source
+    assert "verify_single" in generic_source
 
     verify_source = Path("src/pkcs11_check/testcases/wycheproof/test_wycheproof_hmac.py").read_text(
         encoding="utf-8"

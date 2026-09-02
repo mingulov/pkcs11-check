@@ -27,6 +27,7 @@ from pkcs11_check.raw.recipes import (
     get_mechanism_info,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_CMS_SIG_PARAMS,
     CK_VOID_PTR,
@@ -56,7 +57,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.sign
 
@@ -172,8 +177,13 @@ class TestCMSSig:
 
         try:
             get_mechanism_info(rs.raw, rs.slot_id, CKM_CMS_SIG)
-        except AssertionError:
-            pass  # audit-ok: capability probe; CKM_CMS_SIG mechanism-info may be unavailable
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                (),
+                label="advertised CKM_CMS_SIG mechanism info",
+                kind="metadata",
+            )
 
     def test_cms_sig_rejects_missing_params(self, p11_raw_session: Any) -> None:
         """CKM_CMS_SIG sign attempt with RSA key and no params must fail cleanly.

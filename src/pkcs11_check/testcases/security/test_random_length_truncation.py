@@ -91,6 +91,7 @@ class TestGenerateRandomLengthTruncation:
     past offset 8 as zero.  This is a cryptographic-contract violation.
     """
 
+    @pytest.mark.allocation_amplifying
     def test_generate_random_oversized_length_rejects_or_honors(
         self,
         p11_config: Any,

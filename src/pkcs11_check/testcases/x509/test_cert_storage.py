@@ -27,7 +27,10 @@ from pkcs11_check.testcases.x509.conftest import (
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
 
-_NONSPEC_FOR_CREATE = {"CKR_KEY_HANDLE_INVALID"}  # meaningless for a no-input-handle C_CreateObject
+_NONSPEC_FOR_CREATE = {
+    "CKR_KEY_HANDLE_INVALID",
+    "CKR_USER_TYPE_INVALID",
+}  # meaningless for a no-input-handle C_CreateObject
 _CASES = cert_storage_templates(_canonical_self_signed_cert_der())
 
 

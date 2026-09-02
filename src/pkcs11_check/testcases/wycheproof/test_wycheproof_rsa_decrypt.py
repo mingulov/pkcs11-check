@@ -24,6 +24,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -39,6 +41,7 @@ from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     is_known_error,
+    reject_or_classify,
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
@@ -70,6 +73,11 @@ _RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS = (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+)
+
+_RSA_PKCS1_NEGATIVE_REJECT_CKRS = (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
 
 _DECRYPT_FILES = [
@@ -112,6 +120,8 @@ def _skip_or_xfail_rsa_pkcs1_private_import_reject(exc: AssertionError, key_bits
     RSA has no curve-absence analogue (unlike EC); every clean import-reject CKR
     after the mech gate is treated as "advertised but not operational".
     """
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
         _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         classify(
@@ -133,6 +143,8 @@ def _skip_or_xfail_rsa_pkcs1_private_import_reject(exc: AssertionError, key_bits
 
 def _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     """Classify advertised RSA PKCS#1 decrypt runtime rejects as findings."""
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     xfail_if_known_ckr(
         exc,
         _RSA_PKCS1_DECRYPT_RUNTIME_REJECT_CKRS,
@@ -213,7 +225,16 @@ def test_rsa_pkcs1_decrypt(
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_rsa_pkcs1_decrypt_runtime_reject(exc, vec_id)
-        # acceptable/invalid: reject is fine (padding oracle resistance)
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        # Invalid-padding rejection is correct only with one of the two
+        # encrypted-data CKRs; other CKRs remain visible deviations.
+        reject_or_classify(
+            exc,
+            _RSA_PKCS1_NEGATIVE_REJECT_CKRS,
+            label=f"RSA-PKCS1:{vec_id}",
+            kind="crypto",
+        )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv_key)

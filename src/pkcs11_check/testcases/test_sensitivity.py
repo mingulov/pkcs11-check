@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_UNAVAILABLE_INFORMATION,
@@ -31,7 +32,9 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
@@ -39,9 +42,16 @@ from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     is_known_error,
     require_operational_aes_keygen,
+    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.security
+
+_SENSITIVE_IMPORT_REJECT_RVS = (
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
+)
 
 
 class TestSensitiveKeyValue:
@@ -90,13 +100,11 @@ class TestSensitiveKeyValue:
                 secret,
                 attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False},
             )
-        except AssertionError as exc:
-            classify(
-                "not_operational",
-                kind="policy",
-                label="import sensitive AES key for raw CKA_VALUE probe",
-                operation="C_CreateObject",
-                summary=f"Cannot import sensitive AES key for raw CKA_VALUE probe: {exc}",
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _SENSITIVE_IMPORT_REJECT_RVS,
+                "import sensitive AES key for raw CKA_VALUE probe is not operational",
             )
             raise
 
@@ -114,18 +122,12 @@ class TestSensitiveKeyValue:
             rv = rs.raw.C_GetAttributeValue(rs.sh, key, attr, 1)
             observed = bytes(value_buf)
             leaked = observed == secret or observed.startswith(secret[:16])
-            if rv not in (CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID):
-                classify(
-                    "nonspec_reject",
-                    kind="policy",
+            if rv != CKR_OK:
+                classify_negative_rv(
+                    rv,
+                    (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID),
                     label="C_GetAttributeValue(CKA_VALUE on sensitive key)",
-                    operation="C_GetAttributeValue",
-                    actual=rv,
-                    expected=[CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID],
-                    summary=(
-                        "C_GetAttributeValue(CKA_VALUE on sensitive key) rejected with "
-                        f"non-standard CKR {rv:#x}"
-                    ),
+                    kind="policy",
                 )
             classify_policy_enforcement(
                 claimed=claimed,
@@ -154,13 +156,11 @@ class TestSensitiveKeyValue:
                 secret,
                 attrs={CKA_SENSITIVE: True, CKA_EXTRACTABLE: False, CKA_LABEL: label},
             )
-        except AssertionError as exc:
-            classify(
-                "not_operational",
-                kind="policy",
-                label="import sensitive AES key for mixed-attribute probe",
-                operation="C_CreateObject",
-                summary=f"Cannot import sensitive AES key for mixed-attribute probe: {exc}",
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _SENSITIVE_IMPORT_REJECT_RVS,
+                "import sensitive AES key for mixed-attribute probe is not operational",
             )
             raise
 
@@ -266,7 +266,7 @@ class TestExtractableEnforcement:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_EXTRACTABLE])
                 extractable = attrs[CKA_EXTRACTABLE]
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip("Module does not support CKA_EXTRACTABLE attribute")
                 raise

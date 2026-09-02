@@ -29,6 +29,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     set_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_COPYABLE,
@@ -67,6 +68,8 @@ _COPY_REJECT_RVS = (
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
 
@@ -80,13 +83,20 @@ def _gen_access_control_aes_key(rs: Any, *, attrs: dict[int, Any] | None = None)
     _require_aes_keygen(rs)
     try:
         return gen_aes_key(rs.raw, rs.sh, 128, attrs=attrs)
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         xfail_if_known_ckr(
             exc,
             AES_KEYGEN_RUNTIME_REJECT_RVS,
             "AES_KEY_GEN advertised but access-control setup key generation is not operational",
         )
     raise
+
+
+def _handle_copy_reject(exc: CkrAssertionError, message: str) -> None:
+    """Skip only an absent copy function; record other clean copy refusals."""
+    if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
+        pytest.skip(message)
+    xfail_if_known_ckr(exc, _COPY_REJECT_RVS, message)
 
 
 class TestPrivateAttribute:
@@ -98,9 +108,7 @@ class TestPrivateAttribute:
         key_h = _gen_access_control_aes_key(rs)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_PRIVATE])
-            try:
-                assert attrs[CKA_PRIVATE] is True
-            except AssertionError:
+            if attrs[CKA_PRIVATE] is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -214,7 +222,7 @@ class TestModifiableAttribute:
                 128,
                 attrs={CKA_MODIFIABLE: False, CKA_LABEL: "mod-false-src"},
             )
-        except AssertionError as e:
+        except CkrAssertionError as e:
             if is_known_error(
                 e,
                 {
@@ -229,7 +237,7 @@ class TestModifiableAttribute:
         try:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
                 raise
@@ -268,7 +276,7 @@ class TestModifiableAttribute:
 
             try:
                 set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-false-after"})
-            except AssertionError as e:
+            except CkrAssertionError as e:
                 if is_known_error(
                     e,
                     {
@@ -332,8 +340,8 @@ class TestCopyableAttribute:
                 pytest.skip("Key not copyable by default")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copy-dst"})
-            except AssertionError:
-                pytest.skip("C_CopyObject not supported")
+            except CkrAssertionError as exc:
+                _handle_copy_reject(exc, "C_CopyObject not supported")
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_LABEL])
@@ -363,8 +371,11 @@ class TestCopyObject:
                 pytest.skip("Key not copyable by default")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copied-label"})
-            except AssertionError:
-                pytest.skip("C_CopyObject not supported or module rejected copy template")
+            except CkrAssertionError as exc:
+                _handle_copy_reject(
+                    exc,
+                    "C_CopyObject not supported or module rejected copy template",
+                )
                 return
             try:
                 copy_attrs = read_attributes(
@@ -423,8 +434,11 @@ class TestCopyObject:
             assert attrs[CKA_EXTRACTABLE] is True
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: False})
-            except AssertionError as exc:
-                pytest.skip(f"Module rejected EXTRACTABLE restriction on copy: {exc}")
+            except CkrAssertionError as exc:
+                _handle_copy_reject(
+                    exc,
+                    f"Module rejected EXTRACTABLE restriction on copy: {exc}",
+                )
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_EXTRACTABLE])
@@ -445,8 +459,12 @@ class TestCopyObject:
                 128,
                 attrs={CKA_COPYABLE: False, CKA_LABEL: "non-copyable"},
             )
-        except AssertionError:
-            pytest.skip("Module does not support setting CKA_COPYABLE=False at key gen")
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                AES_KEYGEN_RUNTIME_REJECT_RVS,
+                "Module does not support setting CKA_COPYABLE=False at key gen",
+            )
             return
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
@@ -456,7 +474,7 @@ class TestCopyObject:
                 pytest.skip("Module did not honour CKA_COPYABLE=False in template")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(
                     exc,
                     {
@@ -509,8 +527,11 @@ class TestCopyObject:
             assert attrs[CKA_TOKEN] is False
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "session-copy"})
-            except AssertionError:
-                pytest.skip("C_CopyObject not supported or module rejected copy template")
+            except CkrAssertionError as exc:
+                _handle_copy_reject(
+                    exc,
+                    "C_CopyObject not supported or module rejected copy template",
+                )
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_TOKEN])
@@ -538,8 +559,11 @@ class TestCopyObject:
             try:
                 try:
                     copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "token-copy"})
-                except AssertionError:
-                    pytest.skip("C_CopyObject not supported or module rejected copy template")
+                except CkrAssertionError as exc:
+                    _handle_copy_reject(
+                        exc,
+                        "C_CopyObject not supported or module rejected copy template",
+                    )
                     return
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_TOKEN])
                 assert copy_attrs[CKA_TOKEN] is True

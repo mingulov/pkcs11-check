@@ -30,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._signature_policy import OP_NOT_OPERATIONAL_RVS
 from pkcs11_check.testcases.conftest import is_known_error, reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
@@ -209,16 +210,30 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            classify(
-                "not_operational",
+            if is_known_error(exc, OP_NOT_OPERATIONAL_RVS):
+                classify(
+                    "not_operational",
+                    label=f"ML_DSA:sign:{vec_id}",
+                    actual=exc.rv,
+                    summary=f"Valid ML-DSA sign failed {vec_id}: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+            reject_or_classify(
+                exc,
+                (),
                 label=f"ML_DSA:sign:{vec_id}",
-                summary=f"Valid ML-DSA sign failed {vec_id}: {exc}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
+                kind="lifecycle",
             )
-        # acceptable: module rejected invalid vector
-        return
+        # A malformed private key that made it through import must still be
+        # rejected by signing; only exact CKR evidence is routed here.
+        reject_or_classify(
+            exc,
+            _MLDSA_PRIVATE_IMPORT_REJECT_CKRS,
+            label=f"{vec_id}: InvalidPrivateKey sign reject",
+            kind="crypto",
+        )
     finally:
         destroy_quietly(rs.raw, rs.sh, priv)

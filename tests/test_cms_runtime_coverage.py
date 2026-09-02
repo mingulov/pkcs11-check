@@ -9,10 +9,12 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_CMS_SIG_PARAMS,
     CKM_CMS_SIG,
     CKM_SHA256_RSA_PKCS,
+    CKR_GENERAL_ERROR,
 )
 from pkcs11_check.testcases import test_cms
 
@@ -22,6 +24,7 @@ def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
     return SimpleNamespace(
         raw=object(),
         sh=1,
+        slot_id=0,
         has_mechanism=lambda name: name in names,
     )
 
@@ -93,3 +96,29 @@ def test_cms_runtime_calls_sign_with_params(monkeypatch: pytest.MonkeyPatch) -> 
     assert sign_calls[0]["mechanism"] == int(CKM_CMS_SIG)
     assert isinstance(sign_calls[0]["mech_param"].params, CK_CMS_SIG_PARAMS)
     assert destroyed == [201, 101]
+
+
+def test_advertised_cms_mechanism_info_refusal_is_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_cms,
+        "get_mechanism_info",
+        lambda *_a: (_ for _ in ()).throw(
+            CkrAssertionError("CKR_GENERAL_ERROR", CKR_GENERAL_ERROR)
+        ),
+    )
+    with pytest.raises(pytest.xfail.Exception):
+        test_cms.TestCMSSig().test_mechanism_info(_session_with_mechanisms("CMS_SIG"))
+
+
+def test_advertised_cms_mechanism_info_plain_assertion_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_cms,
+        "get_mechanism_info",
+        lambda *_a: (_ for _ in ()).throw(AssertionError("harness bug")),
+    )
+    with pytest.raises(AssertionError, match="harness bug"):
+        test_cms.TestCMSSig().test_mechanism_info(_session_with_mechanisms("CMS_SIG"))

@@ -126,7 +126,14 @@ from pkcs11_check._plugin_state import (
 from pkcs11_check._plugin_state import (
     _is_testcase_item as _is_testcase_item,
 )
+from pkcs11_check.core.crash_codes import (
+    crash_detail_name as _crash_detail_name,
+)
+from pkcs11_check.core.crash_codes import (
+    ctypes_access_violation_code as _ctypes_access_violation_code,
+)
 from pkcs11_check.core.nodeids import item_nodeid
+from pkcs11_check.core.process_observation import drain_process_observations
 from pkcs11_check.core.subprocess_trace import (
     drain_subprocess_rv_trace,
     extract_subprocess_rv_trace,
@@ -297,8 +304,28 @@ def _report_needs_rv_trace(report: Any) -> bool:
     )
 
 
+def _attach_process_observations_to_report(item: pytest.Item, report: Any) -> None:
+    """Attach nested probe observations to the executing call report."""
+    if getattr(report, "when", None) != "call":
+        return
+    user_properties = getattr(report, "user_properties", None)
+    if not isinstance(user_properties, list):
+        return
+    observations = drain_process_observations()
+    if not observations:
+        return
+    nodeid = getattr(report, "nodeid", None)
+    enriched = []
+    for observation in observations:
+        copied = dict(observation)
+        copied["parent_nodeid"] = nodeid
+        enriched.append(copied)
+    user_properties.append(("pkcs11_process_observations", enriched))
+
+
 def _attach_rv_trace_to_report(item: pytest.Item, report: Any) -> None:
     """Attach CK_RV trace directly to failed/xfail reports before report-log writes them."""
+    _attach_process_observations_to_report(item, report)
     if not _is_testcase_item(item) or not _report_needs_rv_trace(report):
         return
     user_properties = getattr(report, "user_properties", None)
@@ -356,14 +383,36 @@ def _report_is_fail_or_xfail(report: Any) -> bool:
     )
 
 
-def _synthetic_unclassified_record(item: pytest.Item, report: Any) -> Any:
-    """Build the synthetic ``unclassified`` record for a raw fail/xfail testcase.
+def _synthetic_unclassified_record(
+    item: pytest.Item,
+    report: Any,
+    call: pytest.CallInfo[Any] | None = None,
+) -> Any:
+    """Build the synthetic runtime record for a raw fail/xfail testcase.
 
     A testcase that ends as fail/xfail without emitting a :func:`classify` record
-    is part of the un-migrated backlog; injecting one synthetic record keeps the
-    report 100% covered so the live ``unclassified`` count IS the migration backlog.
+    is normally part of the un-migrated backlog; direct ctypes access violations
+    are instead emitted as crash findings.
     """
     from pkcs11_check.classification import Classification
+
+    excinfo = getattr(call, "excinfo", None)
+    exc_type = getattr(excinfo, "type", None)
+    exc = getattr(excinfo, "value", None)
+    if isinstance(exc_type, type) and issubclass(exc_type, OSError):
+        windows_status = _ctypes_access_violation_code(exc)
+        if windows_status is not None:
+            return Classification(
+                reason="crash",
+                outcome="fail",
+                severity="HIGH",
+                label=item_nodeid(item),
+                summary=_report_text(report) or "ctypes access violation",
+                detail={
+                    "windows_status": windows_status,
+                    "signal": _crash_detail_name(windows_status),
+                },
+            )
 
     return Classification(
         reason="unclassified",
@@ -375,20 +424,51 @@ def _synthetic_unclassified_record(item: pytest.Item, report: Any) -> Any:
     )
 
 
-def _attach_classification_to_report(item: pytest.Item, report: Any) -> None:
+def _attach_classification_to_report(
+    item: pytest.Item,
+    report: Any,
+    call: pytest.CallInfo[Any] | None = None,
+) -> None:
     """Attach structured classifications before report-log serializes them.
 
     Real emitted records always take precedence. When a testcase item ends as a
-    raw fail/xfail with no emitted record, a single synthetic ``unclassified``
-    record is injected so every testcase outcome stays covered (Phase 5.1 gate).
+    raw fail/xfail with no emitted record, one synthetic runtime record is injected
+    so every testcase outcome stays covered (direct ctypes SEH is a crash; other
+    raw failures remain the ``unclassified`` migration backlog).
     """
-    if getattr(report, "when", None) != "call":
+    when = getattr(report, "when", None)
+    if when not in {"setup", "call", "teardown"}:
         return
     from pkcs11_check.classification import get_records, serialize
 
-    collected = get_records()
-    if not collected and _is_testcase_item(item) and _report_is_fail_or_xfail(report):
-        collected = [_synthetic_unclassified_record(item, report)]
+    if when == "call":
+        collected = list(get_records())
+    else:
+        collected = []
+    if _is_testcase_item(item) and _report_is_fail_or_xfail(report):
+        direct = _synthetic_unclassified_record(item, report, call=call)
+        if direct.reason == "crash":
+            if not any(
+                record.reason == "crash" and record.detail == direct.detail for record in collected
+            ):
+                collected.append(direct)
+        elif when == "call" and not collected and _report_is_fail_or_xfail(report):
+            collected.append(direct)
+    if getattr(report, "outcome", None) != "failed":
+        harness_failure = next(
+            (
+                record
+                for record in collected
+                if record.reason == "harness_error" and record.outcome == "fail"
+            ),
+            None,
+        )
+        if harness_failure is not None:
+            report.outcome = "failed"
+            report.longrepr = (
+                "pkcs11-check harness failure: "
+                f"{harness_failure.summary or harness_failure.label or 'unspecified error'}"
+            )
     records = serialize(collected)
     if not records:
         return

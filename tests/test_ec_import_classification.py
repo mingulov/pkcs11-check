@@ -14,7 +14,7 @@ import pytest
 
 from pkcs11_check import classification as C
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD
+from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_DEVICE_MEMORY
 from pkcs11_check.testcases.wycheproof import test_wycheproof as tw
 from pkcs11_check.testcases.wycheproof import test_wycheproof_ecdsa as twe
 
@@ -27,6 +27,20 @@ def test_ec_public_import_arguments_bad_routes_not_operational() -> None:
     recs = C.serialize(C.get_records())
     assert recs, "expected a classification record, got a raw re-raise (-> unclassified)"
     assert recs[-1]["reason"] == "not_operational", recs[-1]
+
+
+def test_ec_public_import_device_memory_routes_not_operational() -> None:
+    C.clear()
+    exc = CkrAssertionError("C_CreateObject EC public key -> CKR_DEVICE_MEMORY", CKR_DEVICE_MEMORY)
+    with pytest.raises(BaseException):  # noqa: B017,PT011 - classify raises the xfail outcome
+        tw._classify_ec_public_import_reject(exc, "secp256r1")
+    recs = C.serialize(C.get_records())
+    assert recs, "expected a classification record, got a raw re-raise (-> unclassified)"
+    assert recs[-1]["reason"] == "not_operational", recs[-1]
+
+
+def test_ec_public_import_allowlist_includes_device_memory() -> None:
+    assert CKR_DEVICE_MEMORY in tw._EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS
 
 
 def test_ecdsa_import_allowlist_includes_arguments_bad() -> None:

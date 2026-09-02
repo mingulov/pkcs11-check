@@ -6,6 +6,7 @@ Moved verbatim from file_runner.py (god-module split, 2026-07-17).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET  # nosec B405
@@ -38,10 +39,16 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _canonical_executions as _canonical_executions,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
     _delete_unit_report_record_cache as _delete_unit_report_record_cache,
+)
+from pkcs11_check.core._report_records import (
+    _execution_owner_file as _execution_owner_file,
 )
 from pkcs11_check.core._report_records import (
     _extract_unit_report_records_from_jsonl as _extract_unit_report_records_from_jsonl,
@@ -65,6 +72,9 @@ from pkcs11_check.core._report_records import (
     _ordered_report_record_units as _ordered_report_record_units,
 )
 from pkcs11_check.core._report_records import (
+    _reconcile_process_observations as _reconcile_process_observations,
+)
+from pkcs11_check.core._report_records import (
     _report_record_cache_dir as _report_record_cache_dir,
 )
 from pkcs11_check.core._report_records import (
@@ -72,6 +82,9 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_path as _report_record_cache_path,
+)
+from pkcs11_check.core._report_records import (
+    _ReportOwnerAliases as _ReportOwnerAliases,
 )
 from pkcs11_check.core._report_records import (
     _seed_missing_report_record_caches_from_jsonl as _seed_missing_report_record_caches_from_jsonl,
@@ -224,6 +237,9 @@ from pkcs11_check.core._unit_details import (
     _copy_detail as _copy_detail,
 )
 from pkcs11_check.core._unit_details import (
+    _effective_unit_status as _effective_unit_status,
+)
+from pkcs11_check.core._unit_details import (
     _ensure_timeout_recorded as _ensure_timeout_recorded,
 )
 from pkcs11_check.core._unit_details import (
@@ -239,16 +255,10 @@ from pkcs11_check.core._unit_details import (
     _merge_supplemental_special_details as _merge_supplemental_special_details,
 )
 from pkcs11_check.core._unit_details import (
-    _overall_unit_status as _overall_unit_status,
-)
-from pkcs11_check.core._unit_details import (
     _required_ckm_names_for_unit as _required_ckm_names_for_unit,
 )
 from pkcs11_check.core._unit_details import (
     _special_test_entry_from_result as _special_test_entry_from_result,
-)
-from pkcs11_check.core._unit_details import (
-    _status_with_detail_counts as _status_with_detail_counts,
 )
 from pkcs11_check.core._unit_details import (
     _synthetic_file_skip_detail as _synthetic_file_skip_detail,
@@ -289,6 +299,7 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.run_metrics import (
     RESULT_OUTCOME_KEYS,
     compute_child_subprocess_counts,
@@ -303,6 +314,7 @@ def write_isolated_json_report(
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
     payload = _build_isolated_json_payload(
@@ -310,6 +322,7 @@ def write_isolated_json_report(
         per_unit_details=per_unit_details,
         coverage=coverage,
         provenance=provenance,
+        owner_aliases=owner_aliases,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -322,16 +335,95 @@ def _build_isolated_json_payload(
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
     summary: dict[str, int] = {key: 0 for key in RESULT_OUTCOME_KEYS}
 
-    grouped = _group_results_by_file(state.results, details)
+    grouped = _group_results_by_file(
+        state.results,
+        details,
+        owner_aliases=owner_aliases,
+    )
     units_out: list[dict[str, Any]] = []
 
+    executions_by_unit: dict[str, list[list[Mapping[str, Any]]]] = {}
+    state_outer = [
+        observation
+        for observation in state.process_observations
+        if isinstance(observation, Mapping) and observation.get("parent_nodeid") is None
+    ]
+
+    def execution_owner(execution: Mapping[str, Any]) -> str | None:
+        owner = _execution_owner_file(execution)
+        if owner is None or owner_aliases is None:
+            return owner
+        parent = execution.get("parent_nodeid")
+        raw_target = parent if isinstance(parent, str) else execution.get("target", "")
+        return owner_aliases.file_identity(str(raw_target)) or owner
+
+    if state.process_observations_complete:
+        for observation in state_outer:
+            target = execution_owner(observation)
+            if target:
+                executions_by_unit.setdefault(target, []).append([observation])
+        for detail in details.values():
+            if not isinstance(detail, Mapping):
+                continue
+            executions = detail.get("executions")
+            if not isinstance(executions, list):
+                continue
+            nested_executions = [
+                execution
+                for execution in executions
+                if isinstance(execution, Mapping)
+                and execution.get("parent_nodeid") is not None
+                and execution_owner(execution) is not None
+            ]
+            for execution in nested_executions:
+                owner = execution_owner(execution)
+                if owner is not None:
+                    executions_by_unit.setdefault(owner, []).append([execution])
+    else:
+        # Legacy direct helpers have no canonical global sequence. Keep recovered
+        # detail observations in source order and append only unmatched state entries.
+        cached_outer: list[Mapping[str, Any]] = []
+        nested_by_unit: dict[str, list[list[Mapping[str, Any]]]] = {}
+        for detail in details.values():
+            if not isinstance(detail, Mapping):
+                continue
+            executions = detail.get("executions")
+            if not isinstance(executions, list):
+                continue
+            outer = [
+                execution
+                for execution in executions
+                if isinstance(execution, Mapping) and execution.get("parent_nodeid") is None
+            ]
+            nested = [
+                execution
+                for execution in executions
+                if isinstance(execution, Mapping)
+                and execution.get("parent_nodeid") is not None
+                and execution_owner(execution) is not None
+            ]
+            if outer:
+                cached_outer.extend(outer)
+            if nested:
+                for execution in nested:
+                    owner = execution_owner(execution)
+                    if owner is not None:
+                        nested_by_unit.setdefault(owner, []).append([execution])
+
+        for observation in _reconcile_process_observations(cached_outer, state_outer):
+            owner = execution_owner(observation)
+            if owner is not None:
+                executions_by_unit.setdefault(owner, []).append([observation])
+        for target, groups in nested_by_unit.items():
+            executions_by_unit.setdefault(target, []).extend(groups)
+
     for file_target, file_results, merged_detail in grouped:
-        overall_status = _overall_unit_status(file_results)
         special_entries = [
             entry
             for result in file_results
@@ -339,9 +431,16 @@ def _build_isolated_json_payload(
         ]
         detail = _merge_special_entries_into_detail(merged_detail, special_entries)
         counts = detail.get("counts")
-        overall_status = _status_with_detail_counts(overall_status, counts)
-        if overall_status in {"crashed", "timeout"} and not any(detail["counts"].values()):
-            detail["counts"][overall_status] = 1
+        overall_status = _effective_unit_status(file_results, counts)
+        if overall_status in {"failed", "crashed", "timeout"} and all(
+            result.completion_verified for result in file_results
+        ):
+            matching_outcome = "failed" if overall_status == "failed" else overall_status
+            has_matching_evidence = detail["counts"].get(matching_outcome, 0) > 0
+            if overall_status == "failed":
+                has_matching_evidence |= detail["counts"].get("error", 0) > 0
+            if not has_matching_evidence:
+                detail["counts"][matching_outcome] = 1
         duration = sum(r.duration_s for r in file_results)
         stdout_parts = [r.stdout for r in file_results if r.stdout]
         stderr_parts = [r.stderr for r in file_results if r.stderr]
@@ -352,10 +451,16 @@ def _build_isolated_json_payload(
             "returncode": (
                 max(abs(r.returncode) for r in file_results)
                 if overall_status in {"failed", "crashed", "timeout"}
+                or any(not r.completion_verified for r in file_results)
                 else 0
             ),
             "duration_s": round(duration, 3),
         }
+        if any(not r.completion_verified for r in file_results):
+            unit["incomplete"] = True
+            unit["completion_verified"] = False
+        if detail.get("incomplete") is True:
+            unit["incomplete"] = True
         if stdout_parts:
             unit["stdout"] = "\n".join(stdout_parts)
         if stderr_parts:
@@ -376,8 +481,35 @@ def _build_isolated_json_payload(
             unit["skip_reasons"] = sr
         if detail.get("file_skip"):
             unit["file_skip"] = True
+        execution_key = (
+            owner_aliases.file_identity(file_target)
+            if owner_aliases is not None
+            else normalize_nodeid(file_target)
+        ) or normalize_nodeid(file_target)
+        executions = _canonical_executions(*executions_by_unit.get(execution_key, []))
+        if executions:
+            unit["executions"] = executions
 
         units_out.append(unit)
+
+    recovery_events = _recovery_events_from_state(state)
+    for event_index, event in enumerate(recovery_events, start=1):
+        event_id = event.get("event_id", event_index)
+        counts = {key: 0 for key in RESULT_OUTCOME_KEYS}
+        counts["crashed"] = 1
+        trigger = str(event.get("trigger_unit") or "provider")
+        units_out.append(
+            {
+                "target": f"{trigger}::daemon-recovery-{event_id}",
+                "status": "crashed",
+                "returncode": 1,
+                "duration_s": 0.0,
+                "counts": counts,
+                "recovery_event": event,
+            }
+        )
+        for key, value in counts.items():
+            summary[key] += value
 
     summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
     child_crash, child_timeout = compute_child_subprocess_counts(units_out)
@@ -395,7 +527,30 @@ def _build_isolated_json_payload(
         payload["coverage"] = coverage
     if provenance:
         payload["provenance"] = provenance
+    if state.attempt_history:
+        payload["attempt_history"] = state.attempt_history
+    if recovery_events:
+        payload["recovery_events"] = recovery_events
     return payload
+
+
+def _recovery_events_from_state(state: FileRunState) -> list[dict[str, Any]]:
+    """Return one event per confirmed daemon death, including legacy history-only state."""
+    events = [event for event in state.recovery_events if isinstance(event, Mapping)]
+    if events:
+        return [dict(event) for event in events]
+    recovered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for attempt in state.attempt_history:
+        event = attempt.get("recovery_event") if isinstance(attempt, Mapping) else None
+        if not isinstance(event, Mapping):
+            continue
+        key = json.dumps(event, sort_keys=True, separators=(",", ":"))
+        if key in seen:
+            continue
+        seen.add(key)
+        recovered.append(dict(event))
+    return recovered
 
 
 def _junit_case_identity(target: str) -> tuple[str, str]:
@@ -413,22 +568,292 @@ def write_isolated_junit_report(
     state: FileRunState,
     *,
     suite_name: str = "pkcs11-check-isolated",
+    per_unit_details: dict[str, dict[str, Any]] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> None:
     """Write an aggregated JUnit XML report for an isolated run."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    failures = sum(1 for result in state.results if result.status == "failed")
-    errors = sum(1 for result in state.results if result.status in {"crashed", "timeout"})
-    skipped = sum(
-        1 for result in state.results if result.status in {"empty", "escalated", "crash_limited"}
+    details = per_unit_details or {}
+    recovery_events = _recovery_events_from_state(state)
+
+    def effective_status(result: FileRunResult) -> str:
+        detail = details.get(result.target)
+        counts = detail.get("counts") if isinstance(detail, Mapping) else None
+        return _effective_unit_status([result], counts)
+
+    def report_target(target: str) -> str:
+        if owner_aliases is None:
+            return target
+        file_identity = owner_aliases.file_identity(target)
+        if file_identity is None:
+            return target
+        file_target = owner_aliases.report_target(file_identity)
+        if file_target is None:
+            return target
+        _, separator, suffix = target.partition("::")
+        return f"{file_target}{separator}{suffix}"
+
+    def detail_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
+        detail = details.get(result.target)
+        if not isinstance(detail, Mapping):
+            return []
+        raw_tests = detail.get("tests")
+        return (
+            [record for record in raw_tests if isinstance(record, Mapping)]
+            if isinstance(raw_tests, list)
+            else []
+        )
+
+    def _evidence_type(record: Mapping[str, Any]) -> str:
+        value = record.get("evidence_type")
+        return value if value in {"provider", "collection", "harness"} else ""
+
+    def collection_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
+        tests = detail_entries(result)
+        typed = [record for record in tests if _evidence_type(record) == "collection"]
+        if typed:
+            return typed
+        detail = details.get(result.target)
+        if not isinstance(detail, Mapping) or detail.get("incomplete") is not True:
+            return []
+        if detail.get("harness_error") is True:
+            return []
+        # Legacy detail had no per-entry discriminator; incomplete_files was its
+        # only reliable collection origin marker.
+        raw_files = detail.get("incomplete_files")
+        files = (
+            {str(file_part) for file_part in raw_files if isinstance(file_part, str)}
+            if isinstance(raw_files, list)
+            else set()
+        )
+        if not files:
+            return [record for record in tests if record.get("outcome") == "error"]
+        entries: list[Mapping[str, Any]] = []
+        for record in tests:
+            if record.get("outcome") != "error":
+                continue
+            nodeid = str(record.get("nodeid", ""))
+            file_part = nodeid.split("::", 1)[0]
+            if file_part in files:
+                entries.append(record)
+        return entries
+
+    def harness_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
+        tests = detail_entries(result)
+        typed = [record for record in tests if _evidence_type(record) == "harness"]
+        if typed:
+            return typed
+        detail = details.get(result.target)
+        if not isinstance(detail, Mapping) or detail.get("harness_error") is not True:
+            return []
+        collection = {id(record) for record in collection_entries(result)}
+        return [
+            record
+            for record in tests
+            if record.get("outcome") == "error" and id(record) not in collection
+        ]
+
+    def public_detail_output(result: FileRunResult, detail: Mapping[str, Any] | None) -> str:
+        """Serialize public finding evidence without exposing reducer metadata."""
+        if not isinstance(detail, Mapping):
+            return ""
+        raw_tests = detail.get("tests")
+        if not isinstance(raw_tests, list):
+            return ""
+        excluded = {id(record) for record in collection_entries(result)}
+        excluded.update(id(record) for record in harness_entries(result))
+        findings: list[dict[str, str]] = []
+        for record in raw_tests:
+            if not isinstance(record, Mapping):
+                continue
+            if id(record) in excluded:
+                continue
+            outcome = str(record.get("outcome") or "")
+            if outcome not in {
+                "failed",
+                "skipped",
+                "xfailed",
+                "xpassed",
+                "error",
+                "crashed",
+                "timeout",
+                "crash_limited",
+            }:
+                continue
+            finding = {
+                "nodeid": str(record.get("nodeid") or ""),
+                "outcome": outcome,
+            }
+            xfail_reason = record.get("wasxfail")
+            detail_reason = record.get("longrepr")
+            if xfail_reason:
+                finding["reason"] = str(xfail_reason)
+            if detail_reason and detail_reason != xfail_reason:
+                finding["detail"] = str(detail_reason)
+            findings.append(finding)
+        counts = detail.get("counts")
+        public_counts = (
+            {
+                key: int(value)
+                for key, value in counts.items()
+                if key in RESULT_OUTCOME_KEYS and isinstance(value, int) and value
+            }
+            if isinstance(counts, Mapping)
+            else {}
+        )
+        if not findings and not any(public_counts.get(key, 0) for key in ("xfailed", "xpassed")):
+            return ""
+        lines = [f"counts: {json.dumps(public_counts, sort_keys=True)}"]
+        lines.extend(f"finding: {json.dumps(finding, sort_keys=True)}" for finding in findings)
+        return "\n".join(lines)
+
+    def genuine_skip_only(detail: Mapping[str, Any] | None, status: str) -> bool:
+        if status != "passed" or not isinstance(detail, Mapping):
+            return False
+        counts = detail.get("counts")
+        if not isinstance(counts, Mapping) or int(counts.get("skipped", 0) or 0) <= 0:
+            return False
+        if int(counts.get("passed", 0) or 0) > 0:
+            return False
+        return not any(
+            int(counts.get(outcome, 0) or 0) > 0
+            for outcome in (
+                "failed",
+                "xfailed",
+                "xpassed",
+                "error",
+                "crashed",
+                "timeout",
+                "crash_limited",
+            )
+        )
+
+    def skip_reason_text(detail: Mapping[str, Any] | None) -> str:
+        if not isinstance(detail, Mapping):
+            return "tests were skipped"
+        reasons = detail.get("skip_reasons")
+        if not isinstance(reasons, Mapping):
+            return "tests were skipped"
+        return (
+            "; ".join(
+                f"{reason} ({count})" for reason, count in reasons.items() if isinstance(count, int)
+            )
+            or "tests were skipped"
+        )
+
+    def has_collection_error(result: FileRunResult) -> bool:
+        return bool(collection_entries(result))
+
+    def has_generic_harness_error(result: FileRunResult) -> bool:
+        detail = details.get(result.target)
+        return bool(harness_entries(result)) or (
+            isinstance(detail, Mapping) and detail.get("harness_error") is True
+        )
+
+    def provider_evidence(
+        result: FileRunResult, status: str, detail: Mapping[str, Any] | None
+    ) -> bool:
+        if status in {"crashed", "timeout", "escalated", "crash_limited"}:
+            return True
+        if status != "failed":
+            return False
+        counts = detail.get("counts") if isinstance(detail, Mapping) else None
+        if isinstance(counts, Mapping) and any(
+            int(counts.get(outcome, 0) or 0) > 0 for outcome in ("failed", "crashed", "timeout")
+        ):
+            return True
+        return (
+            result.completion_verified
+            and not has_collection_error(result)
+            and not has_generic_harness_error(result)
+        )
+
+    def has_generic_harness_evidence(result: FileRunResult) -> bool:
+        return has_generic_harness_error(result) or (
+            not result.completion_verified
+            and not has_collection_error(result)
+            and not has_generic_harness_error(result)
+        )
+
+    effective_results: list[
+        tuple[
+            FileRunResult,
+            str,
+            Mapping[str, Any] | None,
+            bool,
+            bool,
+            bool,
+        ]
+    ] = []
+    for result in state.results:
+        status = effective_status(result)
+        detail = details.get(result.target)
+        has_provider = provider_evidence(result, status, detail)
+        has_collection = has_collection_error(result)
+        has_harness = has_generic_harness_evidence(result)
+        effective_results.append(
+            (result, status, detail, has_provider, has_collection, has_harness)
+        )
+    failures = sum(
+        1
+        for (
+            _result,
+            status,
+            _detail,
+            has_provider,
+            _has_collection,
+            _has_harness,
+        ) in effective_results
+        if status == "failed" and has_provider
     )
-    duration_s = sum(result.duration_s for result in state.results)
+    errors = len(recovery_events) + sum(
+        int(status in {"crashed", "timeout", "escalated", "crash_limited"})
+        + int(has_collection)
+        + int(has_harness)
+        for (
+            _result,
+            status,
+            _detail,
+            _has_provider,
+            has_collection,
+            has_harness,
+        ) in effective_results
+    )
+    skipped = sum(
+        1
+        for (
+            result,
+            status,
+            _detail,
+            _has_provider,
+            _has_collection,
+            _has_harness,
+        ) in effective_results
+        if (
+            result.completion_verified and (status == "empty" or genuine_skip_only(_detail, status))
+        )
+    )
+    duration_s = sum(result.duration_s for result, *_rest in effective_results)
+    extra_cases = sum(
+        int(has_collection) + int(has_harness)
+        if has_provider
+        else max(int(has_collection) + int(has_harness) - 1, 0)
+        for (
+            _result,
+            _status,
+            _detail,
+            has_provider,
+            has_collection,
+            has_harness,
+        ) in effective_results
+    )
 
     suite = ET.Element(
         "testsuite",
         {
             "name": suite_name,
-            "tests": str(len(state.results)),
+            "tests": str(len(state.results) + len(recovery_events) + extra_cases),
             "failures": str(failures),
             "errors": str(errors),
             "skipped": str(skipped),
@@ -436,8 +861,43 @@ def write_isolated_junit_report(
         },
     )
 
-    for result in state.results:
-        class_name, case_name = _junit_case_identity(result.target)
+    for (
+        result,
+        status,
+        unit_detail,
+        has_provider,
+        has_collection,
+        has_harness,
+    ) in effective_results:
+        detail_longrepr = ""
+        harness_longrepr = ""
+        if isinstance(unit_detail, Mapping):
+            records = unit_detail.get("tests")
+            if isinstance(records, list):
+                collection_ids = {id(record) for record in collection_entries(result)}
+                harness_ids = {id(record) for record in harness_entries(result)}
+                detail_longrepr = "\n\n".join(
+                    str(record["longrepr"])
+                    for record in records
+                    if isinstance(record, Mapping)
+                    and record.get("longrepr")
+                    and id(record) not in collection_ids
+                    and id(record) not in harness_ids
+                )
+                harness_longrepr = "\n\n".join(
+                    str(record["longrepr"])
+                    for record in records
+                    if isinstance(record, Mapping)
+                    and record.get("longrepr")
+                    and id(record) in harness_ids
+                )
+        collection_detail = "\n\n".join(
+            str(record["longrepr"])
+            for record in collection_entries(result)
+            if record.get("longrepr")
+        )
+        captured_diagnostic = result.stderr.strip() or result.stdout.strip()
+        class_name, case_name = _junit_case_identity(report_target(result.target))
         case = ET.SubElement(
             suite,
             "testcase",
@@ -448,7 +908,30 @@ def write_isolated_junit_report(
             },
         )
 
-        if result.status == "failed":
+        if has_harness and not has_provider and not has_collection:
+            error = ET.SubElement(
+                case,
+                "error",
+                {"message": "report log completion could not be verified", "type": "incomplete"},
+            )
+            error.text = (
+                harness_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} exited with code {result.returncode} without a "
+                "matching SessionFinish record."
+            )
+        elif has_collection and not has_provider:
+            error = ET.SubElement(
+                case,
+                "error",
+                {"message": "pytest collection failed", "type": "collection"},
+            )
+            error.text = (
+                collection_detail
+                or captured_diagnostic
+                or f"Unit {result.target} failed during pytest collection."
+            )
+        elif status == "failed":
             failure = ET.SubElement(
                 case,
                 "failure",
@@ -457,8 +940,12 @@ def write_isolated_junit_report(
                     "type": "failure",
                 },
             )
-            failure.text = f"Unit {result.target} failed in isolated mode."
-        elif result.status == "crashed":
+            failure.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} failed in isolated mode."
+            )
+        elif status == "crashed":
             error = ET.SubElement(
                 case,
                 "error",
@@ -467,8 +954,12 @@ def write_isolated_junit_report(
                     "type": "crashed",
                 },
             )
-            error.text = f"Unit {result.target} crashed in isolated mode."
-        elif result.status == "timeout":
+            error.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} crashed in isolated mode."
+            )
+        elif status == "timeout":
             error = ET.SubElement(
                 case,
                 "error",
@@ -477,30 +968,116 @@ def write_isolated_junit_report(
                     "type": "timeout",
                 },
             )
-            error.text = f"Unit {result.target} timed out in isolated mode."
-        elif result.status == "empty":
+            error.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} timed out in isolated mode."
+            )
+        elif status == "empty":
             skipped_node = ET.SubElement(case, "skipped", {"message": "no tests collected"})
             skipped_node.text = f"Unit {result.target} collected no tests."
-        elif result.status == "escalated":
+        elif genuine_skip_only(unit_detail, status):
             skipped_node = ET.SubElement(
                 case,
                 "skipped",
-                {"message": "unit escalated to per-test isolation"},
+                {"message": "tests were skipped", "type": "skip"},
             )
-            skipped_node.text = (
+            skipped_node.text = skip_reason_text(unit_detail)
+        elif status == "escalated":
+            error = ET.SubElement(
+                case,
+                "error",
+                {"message": "unit escalated to per-test isolation", "type": "escalated"},
+            )
+            error.text = detail_longrepr or (
                 f"Unit {result.target} crashed at file granularity and was expanded to per-test "
                 "isolation."
             )
-        elif result.status == "crash_limited":
-            skipped_node = ET.SubElement(
+        elif status == "crash_limited":
+            error = ET.SubElement(
                 case,
-                "skipped",
-                {"message": "skipped after per-file crash limit was reached"},
+                "error",
+                {
+                    "message": "skipped after per-file crash limit was reached",
+                    "type": "crash_limited",
+                },
             )
-            skipped_node.text = (
+            error.text = detail_longrepr or (
                 f"Unit {result.target} was skipped because this file exceeded the configured "
                 "per-file crash limit in isolated mode."
             )
+
+        serialized_detail = public_detail_output(result, unit_detail)
+        if serialized_detail:
+            output = ET.SubElement(case, "system-out")
+            output.text = serialized_detail
+
+        if has_collection and has_provider:
+            collection_case = ET.SubElement(
+                suite,
+                "testcase",
+                {
+                    "classname": class_name,
+                    "name": f"{case_name}::collection-error",
+                    "time": "0.000000",
+                },
+            )
+            error = ET.SubElement(
+                collection_case,
+                "error",
+                {"message": "pytest collection failed", "type": "collection"},
+            )
+            error.text = (
+                collection_detail
+                or captured_diagnostic
+                or f"Unit {result.target} failed during pytest collection."
+            )
+
+        if has_harness and (has_provider or has_collection):
+            harness_case = ET.SubElement(
+                suite,
+                "testcase",
+                {
+                    "classname": class_name,
+                    "name": f"{case_name}::harness-error",
+                    "time": "0.000000",
+                },
+            )
+            error = ET.SubElement(
+                harness_case,
+                "error",
+                {
+                    "message": "report log completion could not be verified",
+                    "type": "incomplete",
+                },
+            )
+            error.text = (
+                harness_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} has additional harness error evidence."
+            )
+
+    for event_index, event in enumerate(recovery_events, start=1):
+        event_id = event.get("event_id", event_index)
+        trigger = str(event.get("trigger_unit") or "provider")
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": "pkcs11_check.recovery",
+                "name": f"daemon-recovery-{event_id}",
+                "time": "0.000000",
+            },
+        )
+        error = ET.SubElement(
+            case,
+            "error",
+            {
+                "message": f"daemon became unreachable after {trigger}",
+                "type": "daemon-recovery",
+            },
+        )
+        error.text = str(event.get("label") or "provider became unreachable")
 
     tree = ET.ElementTree(suite)
     ET.indent(tree, space="  ")
@@ -512,6 +1089,7 @@ def write_isolated_report(
     state: FileRunState,
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> None:
     """Write the requested aggregated report format for an isolated run."""
     if config.output_format == "json":
@@ -519,6 +1097,12 @@ def write_isolated_report(
             config.output_path,
             state,
             per_unit_details=per_unit_details,
+            owner_aliases=owner_aliases,
         )
         return
-    write_isolated_junit_report(config.output_path, state)
+    write_isolated_junit_report(
+        config.output_path,
+        state,
+        per_unit_details=per_unit_details,
+        owner_aliases=owner_aliases,
+    )

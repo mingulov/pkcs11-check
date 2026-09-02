@@ -12,6 +12,8 @@ Cases:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from _pytest.outcomes import XFailed
 
@@ -19,9 +21,11 @@ from pkcs11_check.classification import clear, get_records
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
 )
+from pkcs11_check.testcases.acvp import test_keygen_key_size_conformance as key_size
 from pkcs11_check.testcases.acvp.test_keygen_key_size_conformance import (
     classify_over_max_keygen,
 )
@@ -70,3 +74,40 @@ def test_mechanism_invalid_gives_nonspec_reject() -> None:
     records = get_records()
     assert records, "expected a classification record"
     assert records[-1].reason == "nonspec_reject"
+
+
+def test_advertised_keygen_info_failure_is_not_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = _ckr(int(CKR_GENERAL_ERROR))
+    monkeypatch.setattr(
+        key_size,
+        "get_mechanism_info",
+        lambda *_a, **_k: (_ for _ in ()).throw(error),
+    )
+    rs = SimpleNamespace(has_mechanism=lambda _name: True, raw=object(), slot_id=0)
+
+    with pytest.raises(CkrAssertionError) as caught:
+        key_size.TestKeygenKeySizeConformance().test_rsa_keygen_enforces_advertised_max(rs)
+
+    assert caught.value is error
+
+
+def test_acvp_rsa_by_size_info_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pkcs11_check.testcases.acvp import test_acvp_rsa_keygen
+
+    error = _ckr(int(CKR_GENERAL_ERROR))
+    monkeypatch.setattr(
+        test_acvp_rsa_keygen,
+        "get_mechanism_info",
+        lambda *_a, **_k: (_ for _ in ()).throw(error),
+    )
+    rs = SimpleNamespace(
+        has_mechanism=lambda _name: True,
+        raw=object(),
+        sh=1,
+        slot_id=0,
+    )
+
+    with pytest.raises(CkrAssertionError) as caught:
+        test_acvp_rsa_keygen.TestRsaKeyGenBySize().test_rsa_keygen_by_size(rs, 2048)
+
+    assert caught.value is error

@@ -431,10 +431,10 @@ class RawSession:
         """True if C_GetMechanismInfo reports *flag* set for *mechanism*.
 
         *mechanism* is a CKM int or a name (with or without the ``CKM_`` prefix).
-        Returns ``False`` (never raises) when the mechanism is not advertised, the
-        name is unknown, or ``C_GetMechanismInfo`` errors -- a module that lists a
-        mechanism but rejects the info query is treated as "flag absent", so this
-        can never crash test setup. Result is memoized in ``_MECH_INFO_CACHE``.
+        Returns ``False`` when the mechanism is not advertised, the name is
+        unknown, or the requested flag is unset. An advertised mechanism whose
+        info query fails remains a provider finding. Result is memoized in
+        ``_MECH_INFO_CACHE``.
         """
         if isinstance(mechanism, str):
             if not self.has_mechanism(mechanism):
@@ -452,12 +452,8 @@ class RawSession:
         key = (self.slot_id, mech_int)
         if key not in _MECH_INFO_CACHE:
             from pkcs11_check.raw.recipes import get_mechanism_info
-            from pkcs11_check.raw.rv import CkrAssertionError
 
-            try:
-                _MECH_INFO_CACHE[key] = get_mechanism_info(self.raw, self.slot_id, mech_int)
-            except CkrAssertionError:
-                return False
+            _MECH_INFO_CACHE[key] = get_mechanism_info(self.raw, self.slot_id, mech_int)
 
         return bool(_MECH_INFO_CACHE[key]["flags"] & flag)
 
@@ -597,14 +593,17 @@ class _ModuleSessionHolder:
             return False
         import ctypes
 
+        from pkcs11_check.core.crash_codes import ctypes_access_violation_code
         from pkcs11_check.raw.types_std import CK_SESSION_INFO, CKR_OK
 
         info = CK_SESSION_INFO()
         start = time.monotonic()
         try:
             rv = self.raw.C_GetSessionInfo(self._sh, ctypes.byref(info))
-        except (AttributeError, OSError, ctypes.ArgumentError):
+        except (AttributeError, OSError, ctypes.ArgumentError) as exc:
             self._record_health_check(time.monotonic() - start)
+            if ctypes_access_violation_code(exc) is not None:
+                raise
             return False
         self._record_health_check(time.monotonic() - start)
         if rv != CKR_OK:

@@ -13,7 +13,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bytes,
     attr_ulong,
@@ -29,6 +29,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     to_ubyte_buf,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -55,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_768,
     CKP_ML_KEM_1024,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_DEVICE_ERROR,
@@ -71,6 +73,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    KEYPAIR_RUNTIME_REJECT_RVS,
     assert_correct,
     classify_negative_rv,
     classify_policy_enforcement,
@@ -113,6 +116,7 @@ _KEM_OPERATION_REJECT_RVS = (
 )
 
 _KEM_WRONG_KEY_CLEAN_REJECT_RVS = (CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE)
+_ML_KEM_PUBLIC_VALUE_UNAVAILABLE_RVS = (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
 
 def _skip_if_no_ml_kem(rs: Any) -> None:
@@ -181,7 +185,7 @@ def _encap_attrs(
     return attrs
 
 
-def _xfail_kem_operation_reject(exc: AssertionError, operation: str) -> NoReturn:
+def _xfail_kem_operation_reject(exc: CkrAssertionError, operation: str) -> NoReturn:
     xfail_if_known_ckr(exc, _KEM_OPERATION_REJECT_RVS, f"ML-KEM {operation} not operational")
     raise exc
 
@@ -196,7 +200,7 @@ def _encapsulate_ml_kem_or_xfail(
         return encapsulate_key(rs.raw, rs.sh, public_key, CKM_ML_KEM, attrs=attrs)
     except (NotImplementedError, AttributeError):
         pytest.skip("encapsulate_key not available")
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
 
 
@@ -211,7 +215,7 @@ def _decapsulate_ml_kem_or_xfail(
         return decapsulate_key(rs.raw, rs.sh, private_key, CKM_ML_KEM, ciphertext, attrs=attrs)
     except (NotImplementedError, AttributeError):
         pytest.skip("decapsulate_key not available")
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         _xfail_kem_operation_reject(exc, operation)
 
 
@@ -325,7 +329,9 @@ class TestMLKEMKeyGeneration:
                 val_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_VALUE])[CKA_VALUE]
                 val_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
                 assert val_a != val_b
-            except (AssertionError, OSError):
+            except CkrAssertionError as exc:
+                if not is_known_error(exc, _ML_KEM_PUBLIC_VALUE_UNAVAILABLE_RVS):
+                    raise
                 pytest.skip("Module does not expose ML-KEM public key value")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_a)
@@ -492,7 +498,7 @@ class TestMLKEMEncapsulateDecapsulate:
                 assert encap_val != wrong_val, (
                     "Decapsulation with wrong key produced same secret as correct decapsulation"
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 # An explicit rejection is also acceptable for this behavioral check.
                 if is_known_error(exc, _KEM_WRONG_KEY_CLEAN_REJECT_RVS):
                     return
@@ -694,18 +700,13 @@ class TestMLKEMKeyDerivation:
         param_set = _PARAM_MAP[param_set_name]
         try:
             pub, priv = _generate_ml_kem_keypair(rs, param_set=param_set)
-        except (AssertionError, OSError):
-            xfail_as(
-                "not_operational",
-                kind="crypto",
-                label=f"ML-KEM keypair (CKA_PARAMETER_SET={param_set_name})",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
-                summary=(
-                    f"Module does not support CKA_PARAMETER_SET={param_set_name} - "
-                    "may use a fixed parameter set"
-                ),
+        except CkrAssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                KEYPAIR_RUNTIME_REJECT_RVS,
+                f"ML-KEM keypair (CKA_PARAMETER_SET={param_set_name}) not operational",
             )
+            raise
         shared = 0
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(

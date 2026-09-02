@@ -8,17 +8,19 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from pkcs11_check.core._run_units import _absolute_nodeid
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
-    map_report_outcome as _map_report_outcome,
+    map_report_record_outcome as _map_report_record_outcome,
 )
 
 
@@ -152,16 +154,22 @@ def build_disabled_selection_plan(
     planned_units: list[str] = []
     deselect_by_file: dict[str, set[str]] = {}
 
-    items_by_file: dict[str, list[str]] = {}
+    items_by_file: dict[str, list[tuple[str, str]]] = {}
+    raw_nodeids_by_unit: dict[str, set[str]] = {}
     if collected_items is not None:
         for item in collected_items:
-            items_by_file.setdefault(str(Path(item.file_path).resolve()), []).append(
-                normalize_nodeid(item.nodeid)
-            )
+            file_key = str(Path(item.file_path).resolve())
+            raw_nodeid = normalize_nodeid(item.nodeid)
+            canonical_nodeid = normalize_nodeid(_absolute_nodeid(file_key, item.nodeid))
+            items_by_file.setdefault(file_key, []).append((raw_nodeid, canonical_nodeid))
+            raw_nodeids_by_unit.setdefault(canonical_nodeid, set()).add(raw_nodeid)
 
     for unit in units:
         if "::" in unit:
-            if normalize_nodeid(unit) in disabled_nodeids:
+            canonical_nodeid = normalize_nodeid(unit)
+            if canonical_nodeid in disabled_nodeids or disabled_nodeids.intersection(
+                raw_nodeids_by_unit.get(canonical_nodeid, set())
+            ):
                 continue
             planned_units.append(unit)
             continue
@@ -172,7 +180,11 @@ def build_disabled_selection_plan(
             planned_units.append(unit)
             continue
 
-        disabled_for_unit = {nodeid for nodeid in unit_nodeids if nodeid in disabled_nodeids}
+        disabled_for_unit = {
+            raw_nodeid
+            for raw_nodeid, canonical_nodeid in unit_nodeids
+            if raw_nodeid in disabled_nodeids or canonical_nodeid in disabled_nodeids
+        }
         if len(disabled_for_unit) == len(unit_nodeids):
             continue
         if disabled_for_unit:
@@ -218,10 +230,7 @@ def _collect_report_evidence(
 
         if when == "call":
             seen_call.add(nodeid)
-            outcomes[nodeid] = _map_report_outcome(
-                str(record.get("outcome", "passed")),
-                record.get("wasxfail"),
-            )
+            outcomes[nodeid] = _map_report_record_outcome(record)
         elif when == "setup" and str(record.get("outcome", "")) in {"skipped", "failed", "error"}:
             setup_only.append(record)
 
@@ -450,6 +459,15 @@ def write_deselect_file(nodeids: Iterable[str]) -> Path:
     unique_sorted = sorted({nodeid for nodeid in nodeids if nodeid})
     fd, raw_path = tempfile.mkstemp(prefix="pkcs11-check-deselect-", suffix=".txt")
     path = Path(raw_path)
-    os.close(fd)
-    path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted), encoding="utf-8")
+    try:
+        os.close(fd)
+        fd = -1
+        path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted), encoding="utf-8")
+    except BaseException:
+        if fd >= 0:
+            with suppress(OSError):
+                os.close(fd)
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
+        raise
     return path

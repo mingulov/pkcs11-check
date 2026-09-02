@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pkcs11_check.core.loader import P11Module, load_module
+from pkcs11_check.core.loader import P11Module, RawSlot, load_module
 from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
 
 
 def _mock_raw(version: str = "2.40") -> MagicMock:
@@ -126,3 +128,13 @@ class TestP11Module:
         from pkcs11_check.raw.api import RawPKCS11 as ApiRawPKCS11
 
         assert RawPKCS11 is ApiRawPKCS11
+
+
+def test_raw_slot_mechanism_info_failure_preserves_exact_ckr() -> None:
+    raw = _mock_raw()
+    raw.C_GetMechanismInfo.return_value = int(CKR_FUNCTION_FAILED)
+
+    with pytest.raises(CkrAssertionError) as caught:
+        RawSlot(0, raw).get_mechanism_info(1)
+
+    assert caught.value.rv == int(CKR_FUNCTION_FAILED)

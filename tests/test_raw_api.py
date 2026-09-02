@@ -5,6 +5,8 @@ from collections import Counter, defaultdict
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 
 def test_generated_standard_c_methods() -> None:
     from pkcs11_check.raw import metadata_std
@@ -154,6 +156,29 @@ def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None
     raw._load_from_ptr.assert_called_once_with(function_list_ptr)
     raw._load_v30_from_ptr.assert_not_called()
     raw._load_v32_from_ptr.assert_not_called()
+
+
+def test_from_lib_surfaces_get_interface_access_violation() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    class FakeGetInterface:
+        restype: object = None
+        argtypes: object = None
+
+        def __call__(self, *_args: object) -> int:
+            raise OSError("exception: access violation reading 0x0")
+
+    fake_lib = SimpleNamespace(C_GetInterface=FakeGetInterface())
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(OSError, match="access violation"),
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so")
 
 
 def test_from_lib_generic_30_interface_loads_v30_but_not_v32_tails() -> None:

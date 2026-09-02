@@ -19,6 +19,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     get_mechanism_info,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -35,7 +36,12 @@ from pkcs11_check.testcases._operability import (
     classify_kat_clean_error,
 )
 from pkcs11_check.testcases.acvp.aes.base import _import_aes_key, _load_vectors
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    assert_correct,
+    is_known_error,
+)
 
 # ---------------------------------------------------------------------------
 # Vector loading
@@ -125,7 +131,9 @@ def _detect_cts_variant(rs: Any) -> str | None:
             256,
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True, CKA_TOKEN: False},
         )
-    except (AssertionError, OSError):
+    except CkrAssertionError as exc:
+        if not is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
+            raise
         return None
 
     try:
@@ -142,7 +150,9 @@ def _detect_cts_variant(rs: Any) -> str | None:
                 pt1,
                 mech_param=mech_bytes(CKM_AES_CTS, iv),
             )
-        except AssertionError:
+        except CkrAssertionError as exc:
+            if not is_known_error(exc, CIPHER_OP_RUNTIME_REJECT_RVS):
+                raise
             # CTS encrypt fails for non-aligned (e.g. CKR_DEVICE_ERROR).
             # Fallback: try block-aligned only.
             pt2 = bytes(range(32))
@@ -168,7 +178,9 @@ def _detect_cts_variant(rs: Any) -> str | None:
                 if ct2[:16] == cbc2[16:] and ct2[16:] == cbc2[:16]:
                     return "2"
                 return "1"
-            except AssertionError:
+            except CkrAssertionError as exc:
+                if not is_known_error(exc, CIPHER_OP_RUNTIME_REJECT_RVS):
+                    raise
                 return None  # CTS completely broken
 
         if len(ct1) != 33:
@@ -225,7 +237,9 @@ def _detect_cts_variant(rs: Any) -> str | None:
             return "2"  # CS2: always swaps, even when aligned
         return "1"  # Default to CS1 if inconclusive
 
-    except (AssertionError, OSError):
+    except CkrAssertionError as exc:
+        if not is_known_error(exc, CIPHER_OP_RUNTIME_REJECT_RVS):
+            raise
         return None
     finally:
         if key:
@@ -280,7 +294,7 @@ def _cts_operability(rs: Any) -> OperabilityResult:
     return OperabilityResult(Operability.OPERATIONAL, f"CTS variant CS{detected} detected")
 
 
-def _handle_cts_error(rs: Any, exc: AssertionError, vec_id: str, direction: str) -> NoReturn:
+def _handle_cts_error(rs: Any, exc: CkrAssertionError, vec_id: str, direction: str) -> NoReturn:
     """Handle CTS encrypt/decrypt errors with appropriate reporting."""
     if is_known_error(exc, {CKR_DEVICE_ERROR}):
         note(
@@ -319,7 +333,7 @@ def run_cbc_cs_encrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str,
                 vec["pt"],
                 mech_param=mech,
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             _handle_cts_error(rs, exc, vec_id, "encrypt")
 
         assert_correct(
@@ -355,7 +369,7 @@ def run_cbc_cs_decrypt_test(p11_module_session: Any, vec_id: str, vec: dict[str,
                 vec["ct"],
                 mech_param=mech,
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             _handle_cts_error(rs, exc, vec_id, "decrypt")
 
         assert_correct(

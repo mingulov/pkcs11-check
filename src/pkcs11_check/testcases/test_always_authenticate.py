@@ -22,14 +22,14 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CK_UTF8CHAR,
@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
     CKU_CONTEXT_SPECIFIC,
 )
 
@@ -92,9 +93,8 @@ def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             public_attrs={CKA_VERIFY: True},
             private_attrs={CKA_SIGN: True, CKA_ALWAYS_AUTHENTICATE: True},
         )
-    except AssertionError as exc:
-        rv = getattr(exc, "rv", None)
-        if rv in _KEYGEN_ATTR_SKIP_RVS:
+    except CkrAssertionError as exc:
+        if exc.rv in _KEYGEN_ATTR_SKIP_RVS:
             return None
         raise
 
@@ -102,7 +102,9 @@ def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
     # silently drop it; we want enforcement tests, not fake-pass tests.
     try:
         attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
-    except AssertionError:
+    except CkrAssertionError as exc:
+        if exc.rv not in _KEYGEN_ATTR_SKIP_RVS:
+            raise
         destroy_quietly(rs.raw, rs.sh, pub)
         destroy_quietly(rs.raw, rs.sh, priv)
         return None
@@ -201,7 +203,13 @@ class TestAlwaysAuthenticateEnforcement:
             # Context-specific re-auth
             rv_ctx = _context_specific_login(rs.raw, rs.sh, pin)
             if rv_ctx == int(CKR_FUNCTION_NOT_SUPPORTED):
-                pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
+                xfail_as(
+                    "not_operational",
+                    label="CKU_CONTEXT_SPECIFIC login",
+                    operation="C_Login",
+                    actual=rv_ctx,
+                    summary="Module does not implement CKU_CONTEXT_SPECIFIC login",
+                )
             assert rv_ctx == CKR_OK, f"CKU_CONTEXT_SPECIFIC login failed: {ckr_name(rv_ctx)}"
 
             # Sign should now succeed
@@ -257,7 +265,13 @@ class TestAlwaysAuthenticateEnforcement:
             assert rv_init == CKR_OK
             rv_ctx = _context_specific_login(rs.raw, rs.sh, pin)
             if rv_ctx == int(CKR_FUNCTION_NOT_SUPPORTED):
-                pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
+                xfail_as(
+                    "not_operational",
+                    label="CKU_CONTEXT_SPECIFIC login",
+                    operation="C_Login",
+                    actual=rv_ctx,
+                    summary="Module does not implement CKU_CONTEXT_SPECIFIC login",
+                )
             assert rv_ctx == CKR_OK
 
             msg = b"first-sign"
@@ -307,7 +321,13 @@ class TestAlwaysAuthenticateEnforcement:
 
         rv = _context_specific_login(rs.raw, rs.sh, pin)
         if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
-            pytest.skip("Module does not implement CKU_CONTEXT_SPECIFIC login")
+            xfail_as(
+                "not_operational",
+                label="CKU_CONTEXT_SPECIFIC login",
+                operation="C_Login",
+                actual=rv,
+                summary="Module does not implement CKU_CONTEXT_SPECIFIC login",
+            )
         if rv == CKR_OK:
             classify(
                 "self_contradiction",
@@ -317,6 +337,20 @@ class TestAlwaysAuthenticateEnforcement:
                 summary=(
                     "Module accepted CKU_CONTEXT_SPECIFIC login outside any active "
                     "operation — spec requires CKR_OPERATION_NOT_INITIALIZED."
+                ),
+            )
+        if rv == int(CKR_USER_TYPE_INVALID):
+            classify(
+                "not_operational",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC login outside active operation",
+                operation="C_Login",
+                expected=[CKR_OPERATION_NOT_INITIALIZED, CKR_USER_NOT_LOGGED_IN],
+                actual=rv,
+                summary=(
+                    "Module rejected CKU_CONTEXT_SPECIFIC login outside any active "
+                    "operation with CKR_USER_TYPE_INVALID; this is a visible "
+                    "non-spec rejection."
                 ),
             )
         # CKR_OPERATION_NOT_INITIALIZED is spec-mandated; some modules

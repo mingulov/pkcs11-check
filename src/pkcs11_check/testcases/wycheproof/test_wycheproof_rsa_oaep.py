@@ -37,6 +37,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -57,6 +59,7 @@ from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     is_known_error,
+    reject_or_classify,
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
@@ -87,6 +90,11 @@ _RSA_OAEP_RUNTIME_REJECT_CKRS = (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+)
+
+_RSA_OAEP_NEGATIVE_REJECT_CKRS = (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
 
 # Map Wycheproof sha names to PKCS#11 hash mechanisms and MGFs for OAEP params
@@ -207,6 +215,8 @@ def _load_oaep_vectors() -> list[tuple[str, dict[str, Any]]]:
                 test["_file"] = filename
                 test["_sha"] = sha
                 test["_mgfSha"] = mgf_sha
+                test["_pkcs8_hex"] = group.get("privateKeyPkcs8", "")
+                test["_other_prime_infos"] = group.get("privateKey", {}).get("otherPrimeInfos", [])
                 vec_id = f"{filename}:tc{test['tcId']}-{test['result']}"
                 vectors.append((vec_id, test))
     _mark_pkcs11_duplicate_vectors(vectors)
@@ -313,6 +323,8 @@ def _oaep_combo_probe(
 
 def _xfail_if_rsa_oaep_runtime_reject(exc: AssertionError, label: str) -> NoReturn:
     """Classify advertised RSA-OAEP parameter/runtime rejects as findings."""
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     xfail_if_known_ckr(
         exc,
         _RSA_OAEP_RUNTIME_REJECT_CKRS,
@@ -334,6 +346,8 @@ def _skip_or_xfail_rsa_oaep_private_import_reject(
     The runtime-reject branch already
     xfails; non-CKR AssertionErrors propagate as harness/coding-bug findings.
     """
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
     if is_known_error(exc, _RSA_PRIVATE_IMPORT_UNSUPPORTED_CKRS):
         _UNSUPPORTED_RSA_KEY_SIZES.add(key_bits)
         classify(
@@ -404,6 +418,17 @@ def test_rsa_oaep(
     key_bits = len(modulus) * 8
     set_params({"rsa_bits": str(key_bits), "hash": str(sha)})
 
+    # The PKCS#11-visible CRT fields only contain p and q. Preserve the corpus's
+    # exact PKCS#8 for true multi-prime keys instead of reconstructing a two-prime key.
+    other_prime_infos = vec.get("_other_prime_infos", pk.get("otherPrimeInfos", []))
+    is_multiprime = bool(other_prime_infos) or int.from_bytes(modulus, "big") != (
+        int.from_bytes(prime1, "big") * int.from_bytes(prime2, "big")
+    )
+    pkcs8_hex = vec.get("_pkcs8_hex", group.get("privateKeyPkcs8", ""))
+    pkcs8_kwargs: dict[str, Any] = {}
+    if is_multiprime and pkcs8_hex:
+        pkcs8_kwargs["pkcs8"] = bytes.fromhex(pkcs8_hex)
+
     if key_bits in _UNSUPPORTED_RSA_KEY_SIZES:
         # Cached broad import-reject: same advertised-but-not-operational signal
         # the first failure recorded (import-skip audit A11) -> xfail, not skip.
@@ -427,6 +452,7 @@ def test_rsa_oaep(
             dmp1=exp1,
             dmq1=exp2,
             iqmp=coefficient,
+            **pkcs8_kwargs,
             attrs={CKA_DECRYPT: True},
             label="wycheproof RSA-OAEP decrypt KAT",
         )
@@ -470,12 +496,19 @@ def test_rsa_oaep(
                     vector_id=vec.get("_vector_id"),
                 )
             _xfail_if_rsa_oaep_runtime_reject(exc, vec_id)
-        # acceptable: reject is fine
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        reject_or_classify(
+            exc,
+            _RSA_OAEP_NEGATIVE_REJECT_CKRS,
+            label=f"RSA-OAEP:{vec_id}",
+            kind="crypto",
+        )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, priv_key)
 
-    if result == "valid" and plaintext is not None:
+    if result in ("valid", "acceptable") and plaintext is not None:
         assert_correct(
             actual=plaintext,
             expected=msg_expected,

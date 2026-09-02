@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.compliance import ComplianceNote, get_notes
-from pkcs11_check.core.report_log import iter_report_log_records
+from pkcs11_check.core.report_log import (
+    iter_report_log_records,
+    map_report_record_outcome,
+)
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS as _OUTCOME_KEYS
 
 # _OUTCOME_KEYS is the single canonical outcome vocabulary (core.run_metrics); importing it
@@ -751,10 +754,7 @@ def _counts_from_report_jsonl(jsonl_path: Path) -> dict[str, dict[str, int]] | N
         trace = _rv_trace_from_user_properties(record.get("user_properties"))
         if not trace:
             continue
-        outcome = _outcome_from_pytest_report(
-            str(record.get("outcome", "")),
-            record.get("wasxfail"),
-        )
+        outcome = map_report_record_outcome(record)
         for entry in trace:
             fn = entry.get("fn")
             if not isinstance(fn, str) or not fn.startswith("C_"):

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_KEY_SIZE_RANGE
+from pkcs11_check.testcases import test_capability_boundary as boundary
 from pkcs11_check.testcases.test_capability_boundary import (
     BoundaryCase,
     classify_boundary_outcome,
@@ -78,3 +81,20 @@ def test_performed_unadvertised_benign_is_xfail() -> None:
 )
 def test_rsa_probe_size_below_min(advertised_min: int, expected: int | None) -> None:
     assert rsa_probe_size_below_min(advertised_min) == expected
+
+
+def test_advertised_boundary_info_failure_is_not_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = CkrAssertionError("info failed", int(CKR_GENERAL_ERROR))
+    monkeypatch.setattr(
+        boundary,
+        "get_mechanism_info",
+        lambda *_a, **_k: (_ for _ in ()).throw(error),
+    )
+    rs = SimpleNamespace(has_mechanism=lambda _name: True, raw=object(), slot_id=0)
+
+    with pytest.raises(CkrAssertionError) as caught:
+        boundary.TestRSAKeySizeBoundary().test_rsa_below_min_is_refused(rs)
+
+    assert caught.value is error

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -62,6 +62,28 @@ _OID_LABELS = {
 }
 
 
+def _classify_valid_verify_reject(
+    exc: AssertionError,
+    *,
+    label: str,
+    summary: str,
+    source: str | None = None,
+    vector_id: str | None = None,
+) -> NoReturn:
+    """Route a valid-vector verify reject without catching harness failures."""
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    if not signature_rejected_or_xfail(exc, label):
+        classify(
+            "not_operational",
+            label=label,
+            summary=summary,
+            source=source,
+            vector_id=vector_id,
+        )
+    raise exc
+
+
 def _load_ed25519_vectors() -> list[tuple[str, dict[str, Any]]]:
     path = WYCHEPROOF_DIR / "ed25519_test.json"
     if not path.exists():
@@ -107,14 +129,12 @@ def _select_eddsa_public_key_encoding_for_wycheproof(
             message=message,
             signature=signature,
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             # Genuine capability absence: this Edwards curve is not supported. Skip stays.
             _UNSUPPORTED_CURVE_OIDS.add(oid)
             pytest.skip(f"Cannot import EdDSA public key: {exc}")
-        if isinstance(exc, CkrAssertionError) and is_known_error(
-            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS
-        ):
+        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             # EDDSA is advertised (has_mechanism gate passed in the caller) and the
             # multi-encoding negotiated import is exhausted -> "advertised but not
             # operational" -> xfail per the classification model (not skip).
@@ -174,14 +194,12 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
             public_key=pk_bytes,
             attrs={CKA_VERIFY: True},
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             # Genuine capability absence: Ed25519 not supported. Skip stays.
             _UNSUPPORTED_CURVE_OIDS.add(ed25519_oid)
             pytest.skip(f"Cannot import Ed25519 public key: {exc}")
-        if isinstance(exc, CkrAssertionError) and is_known_error(
-            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS
-        ):
+        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             # EDDSA is advertised (has_mechanism gate passed above) and the
             # negotiated import is exhausted -> "advertised but not operational"
             # -> xfail per the classification model (not skip).
@@ -219,10 +237,10 @@ def test_ed25519_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str,
                 label="EDDSA-Ed25519",
                 summary=f"Valid Ed25519 sig {vec_id} rejected by module",
             )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            classify(
-                "not_operational",
+            _classify_valid_verify_reject(
+                exc,
                 label="EDDSA-Ed25519",
                 summary=f"Valid Ed25519 sig {vec_id} rejected: {exc}",
             )
@@ -296,14 +314,12 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
             public_key=pk_bytes,
             attrs={CKA_VERIFY: True},
         )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if is_known_error(exc, _CURVE_UNSUPPORTED_CKRS):
             # Genuine capability absence: Ed448 not supported. Skip stays.
             _UNSUPPORTED_CURVE_OIDS.add(ed448_oid)
             pytest.skip(f"Cannot import Ed448 public key: {exc}")
-        if isinstance(exc, CkrAssertionError) and is_known_error(
-            exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS
-        ):
+        if is_known_error(exc, _EDWARDS_PUBLIC_IMPORT_UNSUPPORTED_CKRS):
             # EDDSA is advertised (has_mechanism gate passed above) and the
             # negotiated import is exhausted -> "advertised but not operational"
             # -> xfail per the classification model (not skip).
@@ -341,10 +357,10 @@ def test_ed448_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, A
                 label="EDDSA-Ed448",
                 summary=f"Valid Ed448 sig {vec_id} rejected by module",
             )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            classify(
-                "not_operational",
+            _classify_valid_verify_reject(
+                exc,
                 label="EDDSA-Ed448",
                 summary=f"Valid Ed448 sig {vec_id} rejected: {exc}",
             )

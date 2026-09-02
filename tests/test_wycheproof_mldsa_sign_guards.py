@@ -112,3 +112,19 @@ def test_other_invalid_acceptance_still_fails(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(pytest.fail.Exception, match="accepted by module"):
         mldsa_sign.test_mldsa_sign(vec_id, vec, _Session())
+
+
+def test_plain_sign_assertion_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A local signing/binding assertion must not become an invalid-vector pass."""
+    vec_id = "mldsa_44_sign_noseed_test.json:tc1-valid"
+    vec = _vec(vec_id)
+    monkeypatch.setattr(mldsa_sign, "import_pqc_private_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(
+        mldsa_sign,
+        "sign_single",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("binding bug")),
+    )
+    monkeypatch.setattr(mldsa_sign, "destroy_quietly", lambda *_a, **_k: None)
+
+    with pytest.raises(AssertionError, match="binding bug"):
+        mldsa_sign.test_mldsa_sign(vec_id, vec, _Session())
