@@ -6,8 +6,9 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CERTIFICATE_TYPE,
     CKA_ISSUER,
@@ -18,10 +19,20 @@ from pkcs11_check.raw.types_std import (
     CKA_TRUSTED,
     CKA_VALUE,
     CKC_X_509,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases._so_login import so_session
-from pkcs11_check.testcases.conftest import assert_correct
+from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify
 from pkcs11_check.testcases.x509.conftest import (
+    classify_positive_ckr,
     import_cert_object,
     load_limbo_testcases,
     pem_to_der,
@@ -29,6 +40,28 @@ from pkcs11_check.testcases.x509.conftest import (
 )
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
+
+
+# A USER cannot establish the trust bit.  These are the clean, expected
+# policy/template refusals for C_CreateObject; other defined CK_RVs are still
+# visible as honest deviations by reject_or_classify(), while undefined values
+# and non-CKR exceptions remain hard failures.
+_TRUSTED_CREATE_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_NOT_LOGGED_IN,
+)
+
+_OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS = (
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
 
 
 def _get_selected_testcases() -> list[dict[str, Any]]:
@@ -86,16 +119,15 @@ class TestCertificateAttributes:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError:
+        except CkrAssertionError as exc:
             if tc["expected_result"] == "SUCCESS":
                 # Phase 5 P1a: a clean reject of a Limbo-valid cert is provider-
                 # incompleteness -> xfail, not a hard fail.
-                classify(
-                    "not_operational",
-                    kind="metadata",
+                classify_positive_ckr(
+                    exc,
+                    label=f"X509:import valid Limbo certificate {tc['id']}",
                     summary=f"module cleanly rejected a cert Limbo considers valid: {tc['id']}",
                 )
-            pytest.skip(f"Module rejected certificate {tc['id']} as expected")
             return
 
         try:
@@ -114,8 +146,12 @@ class TestCertificateAttributes:
             # CKA_CERTIFICATE_TYPE MUST be X_509 for a CKO_CERTIFICATE object
             try:
                 ct = read_attributes(rs.raw, rs.sh, h, [CKA_CERTIFICATE_TYPE])
-            except AssertionError:
-                pass  # audit-ok: CKR error reading CKA_CERTIFICATE_TYPE is acceptable
+            except CkrAssertionError as exc:
+                classify_positive_ckr(
+                    exc,
+                    label="X509:CKA_CERTIFICATE_TYPE readback",
+                    summary="certificate type readback refused",
+                )
             else:
                 assert_correct(
                     actual=ct.get(CKA_CERTIFICATE_TYPE),
@@ -143,8 +179,13 @@ class TestCertificateAttributes:
                             f"Module returned empty attr 0x{attr_id:X} for {tc['id']}",
                             ComplianceLevel.NOT_RECOMMENDED,
                         )
-                except AssertionError:
-                    pass  # audit-ok: CKR error reading optional derived attr is acceptable
+                except CkrAssertionError as exc:
+                    reject_or_classify(
+                        exc,
+                        _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS,
+                        label=f"X509:optional derived attribute 0x{attr_id:X} readback",
+                        kind="metadata",
+                    )
 
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -181,23 +222,28 @@ class TestCertificateAttributes:
                 },
             )
             try:
-                attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TRUSTED])
-                if attrs[CKA_TRUSTED]:
-                    from pkcs11_check.compliance import (
-                        ComplianceLevel,
-                        note,
-                    )
-
-                    note(
-                        "Non-SO session successfully set CKA_TRUSTED=True",
-                        ComplianceLevel.NOT_RECOMMENDED,
-                    )
-            except AssertionError:
-                pass  # audit-ok: CKR error reading CKA_TRUSTED is acceptable
+                # CKR_OK from C_CreateObject already violated the SO-only policy;
+                # do not let an arbitrary readback result turn that acceptance into
+                # a note/pass (or hide it behind a readback error).
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label="USER:create-CKA_TRUSTED-certificate",
+                    operation="C_CreateObject",
+                    summary=(
+                        "SECURITY: USER session created a certificate with "
+                        "CKA_TRUSTED=True -- trust boundary breached"
+                    ),
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, h)
-        except AssertionError:
-            pass  # audit-ok: rejection is expected for security-conscious modules
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                _TRUSTED_CREATE_REJECT_RVS,
+                label="C_CreateObject CKA_TRUSTED=True certificate from a USER session",
+                kind="policy",
+            )
 
 
 @pytest.mark.destructive
@@ -239,20 +285,20 @@ class TestTrustedCertificateImportSO:
                         CKA_TRUSTED: True,
                     },
                 )
-            except AssertionError as exc:
-                xfail_as(
-                    "honest_deviation",
+            except CkrAssertionError as exc:
+                classify_positive_ckr(
+                    exc,
                     label="C_CreateObject CKA_TRUSTED=True certificate on a genuine SO session",
-                    summary=f"SO-session CKA_TRUSTED=True certificate import refused: {exc}",
+                    summary="SO-session CKA_TRUSTED=True certificate import refused",
                 )
             try:
                 try:
                     attrs = read_attributes(rs.raw, so_sh, h, [CKA_TRUSTED])
-                except AssertionError as exc:
-                    xfail_as(
-                        "honest_deviation",
+                except CkrAssertionError as exc:
+                    classify_positive_ckr(
+                        exc,
                         label="CKA_TRUSTED readback after SO-session trusted import",
-                        summary=f"CKA_TRUSTED readback after SO import rejected: {exc}",
+                        summary="CKA_TRUSTED readback after SO import rejected",
                     )
                 val = attrs.get(CKA_TRUSTED)
                 if val is not True:

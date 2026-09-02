@@ -23,8 +23,9 @@ wolfpkcs11 / kryoptic all derive ECDH operationally (hundreds-to-thousands of
 test_ecdh / test_xdh *passes*) yet refuse the canonical *valid*-vector private
 import with a broad CKR -- the import is the only gap, so the leak is real.
 
-Only the broad branch flips; the curve-unsupported branch and the
-``result=="invalid"`` vacuous-return path are preserved.
+Only the broad branch flips; the curve-unsupported branch remains a genuine
+capability-absence skip. All result classes now share the broad import
+refusal's visible not-operational disposition.
 """
 
 from __future__ import annotations
@@ -120,15 +121,15 @@ def test_d2a_xdh_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch) 
         mod.test_xdh(_session(), None, "x25519_test.json:tc1-valid", _xdh_vec("valid"))
 
 
-def test_d2a_xdh_invalid_vector_broad_reject_returns(monkeypatch: pytest.MonkeyPatch) -> None:
-    """D2a: an invalid vector that cannot be imported passes vacuously (returns)."""
+def test_d2a_xdh_invalid_vector_broad_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D2a: an invalid vector cannot bypass a broad private-import refusal."""
     import pkcs11_check.testcases.wycheproof.test_wycheproof_x25519 as mod
 
     _patch_xdh_decoders(monkeypatch, mod)
     monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_ATTR_INVALID))
 
-    # No xfail / skip raised: invalid vector + un-importable key returns cleanly.
-    mod.test_xdh(_session(), None, "x25519_test.json:tc1-invalid", _xdh_vec("invalid"))
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+        mod.test_xdh(_session(), None, "x25519_test.json:tc1-invalid", _xdh_vec("invalid"))
 
 
 def test_d2a_xdh_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,14 +194,15 @@ def test_d2b_ecdh_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch)
         mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
 
 
-def test_d2b_ecdh_invalid_vector_broad_reject_returns(monkeypatch: pytest.MonkeyPatch) -> None:
-    """D2b: an invalid vector that cannot be imported passes vacuously (returns)."""
+def test_d2b_ecdh_invalid_vector_broad_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D2b: an invalid vector cannot bypass a broad private-import refusal."""
     import pkcs11_check.testcases.wycheproof.test_wycheproof_ecdh as mod
 
     _patch_ecdh_decoders(monkeypatch, mod)
     monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_FUNCTION_FAILED))
 
-    mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-invalid", _ecdh_vec("invalid"))
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+        mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-invalid", _ecdh_vec("invalid"))
 
 
 def test_d2b_ecdh_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

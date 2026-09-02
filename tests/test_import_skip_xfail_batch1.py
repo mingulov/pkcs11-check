@@ -138,7 +138,10 @@ def test_a4_rsa_import_xfails_on_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
     try:
-        with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+        with pytest.raises(
+            pytest.xfail.Exception,
+            match="SHA256_RSA_PKCS:key-import: got CKR_ATTRIBUTE_VALUE_INVALID",
+        ):
             _call_test_rsa_sig_2048_sha256(mod, rs, vec)
     except pytest.skip.Exception as exc:
         pytest.fail(f"skipped instead of xfailing: {exc}")

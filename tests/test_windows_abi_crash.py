@@ -8,9 +8,14 @@ classify those as crashes and name them, or real findings would be mislabeled
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from pkcs11_check.core import _crash_classify, file_runner
+from pkcs11_check.core.process_observation import build_process_observation
+from pkcs11_check.report.__main__ import crashes_from_results
 
 
 def test_is_windows_crash_code_recognises_ntstatus_errors() -> None:
@@ -45,3 +50,27 @@ def test_crash_classification_names_windows_exception() -> None:
 def test_crash_classification_names_posix_signal() -> None:
     c = file_runner.crash_classification(returncode=-11, target="t")
     assert c["detail"]["signal"] == "SIGSEGV"  # type: ignore[index]
+
+
+def test_report_crash_prefers_structured_windows_execution(tmp_path: Path) -> None:
+    observation = build_process_observation("t", "unit", 0, -1073741819, platform="win32")
+    path = tmp_path / "results.json"
+    path.write_text(
+        json.dumps(
+            {
+                "units": [
+                    {
+                        "target": "t",
+                        "status": "crashed",
+                        "returncode": 1073741824,
+                        "executions": [observation],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    crashes = crashes_from_results(path)
+
+    assert crashes[0]["detail"] == {"observation": observation}

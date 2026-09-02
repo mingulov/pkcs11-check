@@ -16,6 +16,7 @@ import pytest
 from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_gcm
 from pkcs11_check.raw.recipes import destroy_quietly, encrypt_single, import_secret_key
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -68,8 +69,17 @@ class TestGcmParameterFidelity:
                     _AES_KEY,
                     attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
                 )
-            except AssertionError as exc:
-                pytest.skip(f"AES key import refused: {exc}")
+            except CkrAssertionError as exc:
+                if is_known_error(exc, _GCM_REFUSED):
+                    xfail_as(
+                        "not_operational",
+                        kind="lifecycle",
+                        label=label,
+                        operation="C_CreateObject",
+                        mechanism="CKM_AES_GCM",
+                        summary=not_operational_reason(label, f"AES key import refused: {exc}"),
+                    )
+                raise
             mech_param = mech_gcm(CKM_AES_GCM, _NONCE, aad=_AAD, tag_bits=96)
             try:
                 out = encrypt_single(
@@ -86,7 +96,7 @@ class TestGcmParameterFidelity:
                     # protocol response (CKR_BUFFER_TOO_SMALL) as a failure.
                     retry_on_buffer_too_small=True,
                 )
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 if is_known_error(exc, _GCM_REFUSED):
                     xfail_as(
                         "not_operational",

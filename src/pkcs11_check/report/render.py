@@ -10,10 +10,11 @@ Layout (health-first, noise-reduced):
   want-lists capped), with the finding's routing/soft-token tags surfaced
 * a capability-gap table (advertised-but-not-operational + not-supported counts)
 * a collapsed ``## deviations (xfail)`` section: one line per reason with routing
-* ``## appendix`` one-liners (sanctioned refusals, unclassified backlog)
+* ``## appendix`` one-liners (sanctioned refusals, migration backlog)
 
-Even with thousands of findings the report stays near one screen because xfails and
-unclassified are folded to one line per reason and heavy detail lives in the .jsonl.
+Even with thousands of findings the report stays near one screen because xfails and the
+migration-backlog count are folded to one line per reason while unclassified detail stays
+in the severity section; heavy detail still lives in the .jsonl.
 """
 
 from __future__ import annotations
@@ -204,14 +205,15 @@ def _render_fail_buckets(members: list[dict[str, Any]]) -> list[str]:
 
 
 def _is_scored_fail(g: dict[str, Any]) -> bool:
-    """A fail that counts toward the header total (excludes crash + unclassified).
+    """A provider-attributed fail that counts toward the header total.
 
     Harness errors are excluded too: they are pkcs11-check's own defects and must never
-    be scored against the module under test. They get their own section below.
+    be scored against the module under test. Crashes get their own section below, while
+    unclassified remains provider evidence and renders in its severity section.
     """
     return (
         g.get("outcome") == "fail"
-        and g.get("reason") not in ("unclassified", "crash")
+        and g.get("reason") != "crash"
         and g.get("reason") not in HARNESS_REASONS
     )
 
@@ -300,7 +302,7 @@ def _xfail_section(groups: list[dict[str, Any]]) -> list[str]:
 
 
 def _appendix(groups: list[dict[str, Any]]) -> list[str]:
-    """``## appendix``: sanctioned-refusal compliance + unclassified backlog."""
+    """``## appendix``: sanctioned-refusal compliance + migration backlog."""
     lines: list[str] = []
     sanctioned = sum(
         int(g.get("count", 0)) for g in groups if g.get("reason") == "sanctioned_refusal"
@@ -312,7 +314,7 @@ def _appendix(groups: list[dict[str, Any]]) -> list[str]:
         )
     if unclassified:
         lines.append(
-            f"- unclassified backlog: {unclassified} un-migrated fail/xfail (framework debt)"
+            f"- migration backlog: {unclassified} unclassified fail/xfail (framework debt)"
         )
     lines.append("- full detail (raw stdout/stderr, full traces, full hex): see <provider>.jsonl")
     return ["## appendix", "", *lines]

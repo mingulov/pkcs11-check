@@ -21,6 +21,7 @@ from pkcs11_check.testcases._probes._emit import (
     cleanup_guard,
     emit_harness_error,
 )
+from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 
 
@@ -48,6 +49,7 @@ def test_marked_child_failure_is_not_blamed_on_the_provider() -> None:
     reasons = [r.reason for r in get_records()]
     assert reasons == ["harness_error"], reasons
     assert "crash" not in reasons
+    clear()
 
 
 def test_cleanup_failure_after_a_measurement_keeps_the_verdict() -> None:
@@ -62,6 +64,7 @@ def test_cleanup_failure_after_a_measurement_keeps_the_verdict() -> None:
     records = get_records()
     assert [r.reason for r in records] == ["harness_error"]
     assert records[0].outcome == "fail"
+    clear()
 
 
 def test_unmarked_positive_exit_is_still_a_provider_crash() -> None:
@@ -86,6 +89,30 @@ def test_signal_crash_is_never_reattributed() -> None:
             -11,
             "",
             f"{HARNESS_ERROR_MARKER}irrelevant",
+            context="C_Sign boundary probe",
+        )
+
+    assert [r.reason for r in get_records()] == ["crash"]
+
+
+def test_windows_crash_is_never_reattributed() -> None:
+    with pytest.raises(pytest.fail.Exception, match="module crashed"):
+        assert_subprocess_completed(
+            0xC0000005,
+            f"{HARNESS_ERROR_MARKER}earlier cleanup defect",
+            "OSError: access violation",
+            context="C_Sign boundary probe",
+        )
+
+    assert [r.reason for r in get_records()] == ["crash"]
+
+
+def test_timeout_is_never_reattributed() -> None:
+    with pytest.raises(pytest.fail.Exception, match="module hung"):
+        assert_subprocess_completed(
+            124,
+            f"{HARNESS_ERROR_MARKER}earlier cleanup defect",
+            SUBPROCESS_TIMEOUT_MARKER,
             context="C_Sign boundary probe",
         )
 

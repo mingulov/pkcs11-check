@@ -1,8 +1,8 @@
 """Padding oracle detection - Bleichenbacher/Vaudenay style.
 
-Tests whether the module leaks information about padding validity through
-different error codes or timing differences. A secure module should return
-the same error code regardless of padding correctness.
+Tests whether the module exposes a demonstrated padding-validity distinction
+through error codes or timing. Different errors for two merely malformed
+inputs are reported as posture evidence, not treated as an oracle by themselves.
 
 Based on Bardou et al. "Efficient Padding Oracle Attacks on Cryptographic
 Hardware" (CRYPTO 2012) and Manger (CRYPTO 2001).
@@ -11,7 +11,6 @@ Hardware" (CRYPTO 2012) and Manger (CRYPTO 2001).
 from __future__ import annotations
 
 import ctypes
-import re
 import secrets
 import time
 from collections.abc import Iterable
@@ -20,6 +19,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -28,7 +28,7 @@ from pkcs11_check.raw.recipes import (
     generate_random,
     read_attributes,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_DECRYPT,
@@ -49,6 +49,7 @@ from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     gen_aes_key_or_xfail,
     gen_rsa_keypair_or_xfail,
+    reject_or_classify,
     require_operational_aes_keygen,
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
@@ -56,23 +57,17 @@ from pkcs11_check.testcases.conftest import (
 
 pytestmark = pytest.mark.security
 
-# Regex to extract CKR error name from AssertionError messages
-_CKR_RE = re.compile(r"CKR_\w+")
-
-
-def _extract_ckr(exc: AssertionError) -> str:
-    """Extract CKR error name from an AssertionError message."""
-    m = _CKR_RE.search(str(exc))
-    return m.group(0) if m else type(exc).__name__
-
 
 def _abort_decrypt_operation(raw: Any, session: int) -> None:
-    """Best-effort cleanup after an expected decrypt error leaves state active."""
+    """Abort an expected decrypt error; clean teardown errors are best-effort."""
     try:
         out_buf = (ctypes.c_ubyte * 4096)()
         out_len = CK_ULONG(4096)
         raw.C_DecryptFinal(session, out_buf, ctypes.byref(out_len))
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         pass
 
 
@@ -168,11 +163,35 @@ def _decrypt_result_or_error(
             ciphertext,
             mech_param=mech_param,
         )
-    except AssertionError as exc:
-        error = _extract_ckr(exc)
+    except CkrAssertionError as exc:
         _abort_decrypt_operation(raw, session)
-        return None, error
+        return None, ckr_name(exc.rv)
     return result, None
+
+
+def _record_invalid_decrypt_outcome(
+    errors: set[str],
+    result: bytes | None,
+    error: str | None,
+    *,
+    label: str,
+    mechanism: str,
+    must_reject: bool = True,
+) -> None:
+    if error is None and must_reject:
+        classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=label,
+            operation="C_Decrypt",
+            mechanism=mechanism,
+            actual="CKR_OK",
+            summary=(
+                f"{label}: module decrypted a deliberately invalid encoding "
+                f"({len(result or b'')} bytes)"
+            ),
+        )
+    errors.add(error or "CKR_OK")
 
 
 def _read_rsa_public_numbers_or_xfail(
@@ -189,8 +208,14 @@ def _read_rsa_public_numbers_or_xfail(
     """
     try:
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-    except AssertionError as exc:
-        pytest.skip(f"Module does not expose CKA_MODULUS / CKA_PUBLIC_EXPONENT: {exc}")
+    except CkrAssertionError as exc:
+        reject_or_classify(
+            exc,
+            (),
+            label="RSA public-number readback after advertised key generation",
+            kind="crypto",
+        )
+        raise
 
     n_bytes = attrs[CKA_MODULUS]
     e_bytes = attrs[CKA_PUBLIC_EXPONENT]
@@ -366,9 +391,16 @@ class TestRSAPaddingOracle:
                     m1 = int.from_bytes(m1_bytes, "big")
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
-                _, error = _decrypt_result_or_error(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes)
-                if error is not None:
-                    cat1_errors.add(error)
+                result, error = _decrypt_result_or_error(
+                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes
+                )
+                _record_invalid_decrypt_outcome(
+                    cat1_errors,
+                    result,
+                    error,
+                    label="RSA PKCS#1 v1.5 invalid cat-1 encoding",
+                    mechanism="CKM_RSA_PKCS",
+                )
 
                 # Cat-2: m has random non-{00,02} prefix → invalid padding
                 # format. Force the top byte != 0 to ensure cat-2.
@@ -379,9 +411,16 @@ class TestRSAPaddingOracle:
                 m2 = int.from_bytes(m2_bytes, "big") % n
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
-                _, error = _decrypt_result_or_error(rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes)
-                if error is not None:
-                    cat2_errors.add(error)
+                result, error = _decrypt_result_or_error(
+                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes
+                )
+                _record_invalid_decrypt_outcome(
+                    cat2_errors,
+                    result,
+                    error,
+                    label="RSA PKCS#1 v1.5 invalid cat-2 encoding",
+                    mechanism="CKM_RSA_PKCS",
+                )
 
             if cat1_errors != cat2_errors:
                 from pkcs11_check.compliance import ComplianceLevel, note
@@ -462,7 +501,7 @@ class TestRSAPaddingOracle:
                 m1 = secrets.randbelow(boundary - 1) + 1
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
-                _, error = _decrypt_result_or_error(
+                result, error = _decrypt_result_or_error(
                     rs.raw,
                     rs.sh,
                     priv,
@@ -470,14 +509,20 @@ class TestRSAPaddingOracle:
                     c1_bytes,
                     mech_param=oaep,
                 )
-                if error is not None:
-                    cat1_errors.add(error)
+                _record_invalid_decrypt_outcome(
+                    cat1_errors,
+                    result,
+                    error,
+                    label="RSA-OAEP invalid cat-1 encoding",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                    must_reject=False,
+                )
 
                 # Cat-2: random m in [B, n). Top byte is non-zero.
                 m2 = boundary + secrets.randbelow(n - boundary)
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
-                _, error = _decrypt_result_or_error(
+                result, error = _decrypt_result_or_error(
                     rs.raw,
                     rs.sh,
                     priv,
@@ -485,8 +530,13 @@ class TestRSAPaddingOracle:
                     c2_bytes,
                     mech_param=oaep,
                 )
-                if error is not None:
-                    cat2_errors.add(error)
+                _record_invalid_decrypt_outcome(
+                    cat2_errors,
+                    result,
+                    error,
+                    label="RSA-OAEP invalid cat-2 encoding",
+                    mechanism="CKM_RSA_PKCS_OAEP",
+                )
 
             # Manger leak: the two categories produce DIFFERENT error sets.
             if cat1_errors != cat2_errors:
@@ -526,7 +576,7 @@ class TestRSAPaddingOracle:
 
 #: Verdicts of the CBC-PAD corruption sweep that are module DEFECTS. The inherent
 #: Vaudenay channel is deliberately absent: see :func:`cbc_pad_verdict`.
-CBC_PAD_FINDING_VERDICTS = frozenset({"unchecked_malleability"})
+CBC_PAD_FINDING_VERDICTS = frozenset({"accepted_corruption_match", "unchecked_malleability"})
 
 
 def cbc_pad_verdict(outcomes: Iterable[str]) -> str:
@@ -545,9 +595,17 @@ def cbc_pad_verdict(outcomes: Iterable[str]) -> str:
         and the leak is a property of the mode, mitigated at the application layer
         (AES-GCM, RFC 7366 encrypt-then-MAC) rather than by the module. The caller still
         records a CRITICAL compliance note so the channel is reported.
+    ``reject_code_variance``
+        Every corruption was rejected, but with more than one CKR. This is useful
+        characterization; without a controlled valid-vs-invalid padding split it
+        does not establish an exploitable oracle and is not a finding.
     ``unchecked_malleability``
         Every corruption returned CKR_OK with altered plaintext: no padding validation at
         all, which is strictly worse than the channel and a genuine defect.
+    ``accepted_corruption_match``
+        At least one corrupted ciphertext returned CKR_OK with the original plaintext.
+        This is a self-contradictory provider result and a genuine defect, regardless of
+        any other outcomes in the sweep.
 
     Why this is a pure function and why the channel is not a fail: the previous inline
     rule was ``len(set(outcomes)) > 1 -> CRITICAL fail``, which made the verdict depend on
@@ -565,13 +623,18 @@ def cbc_pad_verdict(outcomes: Iterable[str]) -> str:
     distinct = set(outcomes)
     if not distinct:
         return "uniform_reject"
-    if len(distinct) > 1:
+    ok_outcomes = {outcome for outcome in distinct if outcome.startswith("CKR_OK")}
+    reject_outcomes = distinct - ok_outcomes
+    if "CKR_OK_MATCH" in ok_outcomes:
+        return "accepted_corruption_match"
+    if ok_outcomes and reject_outcomes:
         return "inherent_channel"
-    single = next(iter(distinct))
-    if single == "CKR_OK_DIFFERENT":
-        return "unchecked_malleability"
-    if single.startswith("CKR_OK"):
+    if ok_outcomes:
+        if "CKR_OK_DIFFERENT" in ok_outcomes:
+            return "unchecked_malleability"
         return "unexpected_uniform_ok"
+    if len(reject_outcomes) > 1:
+        return "reject_code_variance"
     return "uniform_reject"
 
 
@@ -579,12 +642,10 @@ class TestAESPaddingOracle:
     """Check if AES-CBC padding errors leak information."""
 
     def test_cbc_pad_error_uniformity(self, p11_raw_session: Any) -> None:
-        """AES-CBC-PAD: corrupted ciphertext at different positions must
-        return the same error code.
+        """Characterize errors for AES-CBC-PAD corruptions at two positions.
 
-        Corrupting the last byte affects padding; corrupting a middle byte
-        affects plaintext content. If these return different errors, there's
-        a padding oracle.
+        Both samples are malformed and do not form a controlled padding-validity
+        oracle. Distinct reject codes are therefore report-only evidence.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
@@ -632,19 +693,14 @@ class TestAESPaddingOracle:
             )
 
             if error_last_byte and error_middle_byte and error_last_byte != error_middle_byte:
-                classify(
-                    "oracle",
-                    kind="crypto",
-                    label="AES-CBC-PAD padding oracle",
-                    operation="C_Decrypt",
-                    mechanism="CKM_AES_CBC_PAD",
-                    summary="SECURITY: AES-CBC padding oracle - last byte error "
-                    f"({error_last_byte}) differs from middle byte ({error_middle_byte})",
-                    detail={
-                        "channel": "error_code",
-                        "last_byte": error_last_byte,
-                        "middle_byte": error_middle_byte,
-                    },
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "AES-CBC-PAD reject-code variance across two malformed "
+                    f"ciphertexts: {error_last_byte} versus {error_middle_byte}; "
+                    "this alone does not establish a padding-validity oracle",
+                    ComplianceLevel.EXTENDED,
+                    reference="Vaudenay, Security Flaws Induced by CBC Padding (2002)",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -657,8 +713,8 @@ class TestAESPaddingOracle:
         differences between "valid PKCS#7 padding, wrong content" and
         "invalid PKCS#7 padding". When an attacker bit-flips the last
         block of a CBC-PAD ciphertext, the resulting plaintext is
-        randomly distributed — about 6/256 of corruptions produce
-        accidentally-valid padding (0x01, 0x0202, 0x030303 … 16×0x10).
+        randomly distributed — about 1/256 of corruptions produce
+        accidentally-valid padding (the dominant case is a final 0x01 byte).
         A module that distinguishes the accidentally-valid path
         (CKR_OK) from the invalid-padding path
         (CKR_ENCRYPTED_DATA_INVALID) leaks the oracle bit on each
@@ -671,9 +727,10 @@ class TestAESPaddingOracle:
         layer (use AES-GCM or RFC 7366 encrypt-then-MAC), not the
         module layer. This test surfaces the channel by sweeping
         20 trials × 16 positions = 320 corruption probes; with
-        ~6/256 ≈ 2.3% chance per probe of producing CKR_OK, the
+        ~1/256 chance per probe of producing CKR_OK, the
         chance that all 320 land on CKR_ENCRYPTED_DATA_INVALID is
-        about 0.05%. Effectively-deterministic detection.
+        about 29%. The verdict must therefore remain independent of whether
+        a round happens to hit that event.
 
         Closes Phase 4.5 GAP-P3 (MED).
         """
@@ -746,6 +803,30 @@ class TestAESPaddingOracle:
             tally = Counter(all_errors.values())
             verdict = cbc_pad_verdict(all_errors.values())
 
+            if verdict == "accepted_corruption_match":
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "AES-CBC-PAD returned CKR_OK with the original plaintext for at "
+                    f"least one corrupted ciphertext over {trials * 16} probes: "
+                    f"{dict(tally)}. This is a provider defect, not the inherent "
+                    "Vaudenay channel.",
+                    ComplianceLevel.CRITICAL,
+                    reference="PKCS#11 v3.2: padding validation expected on padded mechanisms",
+                )
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="AES-CBC-PAD accepted corrupted ciphertext",
+                    operation="C_Decrypt",
+                    mechanism="CKM_AES_CBC_PAD",
+                    summary="SECURITY: AES-CBC-PAD returned CKR_OK with the original "
+                    "plaintext for a corrupted ciphertext (CKR_OK_MATCH). This "
+                    "self-contradictory result indicates broken corruption/padding "
+                    "handling.",
+                    detail={"outcome": "CKR_OK_MATCH", "probes": trials * 16},
+                )
+
             if verdict == "inherent_channel":
                 # Reported, NOT a finding -- see cbc_pad_verdict for why. Every conforming
                 # CBC-PAD module lands here whenever a probe happens to produce valid
@@ -767,6 +848,17 @@ class TestAESPaddingOracle:
                     reference="Vaudenay 'Security Flaws Induced by CBC "
                     "Padding' (EUROCRYPT 2002); POODLE (CVE-2014-3566); "
                     "RFC 7366 (encrypt-then-MAC mitigation)",
+                )
+
+            if verdict == "reject_code_variance":
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    f"AES-CBC-PAD returned multiple reject codes across malformed "
+                    f"ciphertexts: {dict(tally)}. This is characterization only; "
+                    "the sweep did not establish a valid-vs-invalid padding oracle.",
+                    ComplianceLevel.EXTENDED,
+                    reference="Vaudenay, Security Flaws Induced by CBC Padding (2002)",
                 )
 
             if verdict == "unchecked_malleability":

@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_TYPE_INVALID,
 )
 from pkcs11_check.testcases._provisioning import provision_rsa_private_key
 from pkcs11_check.testcases.conftest import (
@@ -56,6 +57,7 @@ _RSA_IMPORT_DEVIATION_CKRS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_USER_TYPE_INVALID,
 )
 
 pytestmark = pytest.mark.keymgmt

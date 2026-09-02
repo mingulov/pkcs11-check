@@ -8,8 +8,10 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKA_LABEL, CKA_TOKEN
 from pkcs11_check.testcases.x509.conftest import (
+    classify_positive_ckr,
     import_cert_object,
     pem_to_der,
     verify_attribute_parity,
@@ -76,14 +78,15 @@ def test_limbo_attribute_parity(
                     )
 
             destroy_quietly(rs.raw, rs.sh, h)
-        except AssertionError as e:
+        except CkrAssertionError as e:
             # A clean reject of a cert that should import is provider-incompleteness,
             # not a wrong value -> collect as a noted deviation (xfail), not fail.
             if tc["expected_result"] == "SUCCESS":
-                missing_mandatory.append(f"TC {tc['id']} - cleanly rejected a valid cert: {e}")
-            continue
-        except Exception as e:
-            mismatches.append(f"TC {tc['id']} - Unexpected exception: {e}")
+                classify_positive_ckr(
+                    e,
+                    label=f"X509:import valid Limbo certificate {tc['id']}",
+                    summary=f"module cleanly rejected a cert Limbo considers valid: {tc['id']}",
+                )
             continue
 
     if mismatches:

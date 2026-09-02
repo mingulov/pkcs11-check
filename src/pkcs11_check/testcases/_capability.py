@@ -17,7 +17,6 @@ from typing import Any
 
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.recipes import get_mechanism_info
-from pkcs11_check.raw.rv import CkrAssertionError
 
 
 class Capability(Enum):
@@ -32,7 +31,7 @@ class Capability(Enum):
 # Module-level cache of C_GetMechanismInfo reads. Keyed (id(raw), slot_id,
 # mechanism) -- broader than fixtures' (slot_id, mech) info cache on purpose,
 # so two RawPKCS11 objects in one process never alias each other's info.
-_INFO_CACHE: dict[tuple[int, int, int], dict[str, int] | None] = {}
+_INFO_CACHE: dict[tuple[int, int, int], dict[str, int]] = {}
 
 
 def reset_capability_cache() -> None:
@@ -40,14 +39,10 @@ def reset_capability_cache() -> None:
     _INFO_CACHE.clear()
 
 
-def _cached_info(rs: Any, mechanism: int) -> dict[str, int] | None:
+def _cached_info(rs: Any, mechanism: int) -> dict[str, int]:
     key = (id(rs.raw), int(rs.slot_id), int(mechanism))
     if key not in _INFO_CACHE:
-        try:
-            _INFO_CACHE[key] = get_mechanism_info(rs.raw, rs.slot_id, mechanism)
-        except CkrAssertionError:
-            # Advertised but C_GetMechanismInfo errored: we cannot prove a range.
-            _INFO_CACHE[key] = None
+        _INFO_CACHE[key] = get_mechanism_info(rs.raw, rs.slot_id, mechanism)
     return _INFO_CACHE[key]
 
 
@@ -71,8 +66,6 @@ def capability_for(
     if not rs.has_mechanism(ckm_name(int(mechanism))):
         return Capability.NOT_ADVERTISED
     info = _cached_info(rs, int(mechanism))
-    if info is None:
-        return Capability.IN_RANGE  # never gate out on missing info
     if operation is not None and (int(info["flags"]) & int(operation)) == 0:
         return Capability.FLAG_UNSET
     if key_size is not None:

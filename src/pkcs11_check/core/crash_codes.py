@@ -9,6 +9,9 @@ lets any detector classify a recorded returncode correctly.
 
 from __future__ import annotations
 
+CTYPES_ACCESS_VIOLATION = 0xC0000005
+_CTYPES_ACCESS_VIOLATION_TRACEBACK_PREFIX = "oserror: exception: access violation"
+
 CRASH_SIGNALS: dict[int, str] = {
     -11: "SIGSEGV",
     -6: "SIGABRT",
@@ -21,7 +24,7 @@ CRASH_SIGNALS: dict[int, str] = {
 # Windows NTSTATUS exception codes (the process exit code when a child dies on an
 # unhandled exception); the Windows-ABI counterpart of CRASH_SIGNALS.
 WINDOWS_EXCEPTION_NAMES: dict[int, str] = {
-    0xC0000005: "EXCEPTION_ACCESS_VIOLATION",
+    CTYPES_ACCESS_VIOLATION: "EXCEPTION_ACCESS_VIOLATION",
     0xC00000FD: "EXCEPTION_STACK_OVERFLOW",
     0xC000001D: "EXCEPTION_ILLEGAL_INSTRUCTION",
     0xC0000094: "EXCEPTION_INT_DIVIDE_BY_ZERO",
@@ -29,6 +32,25 @@ WINDOWS_EXCEPTION_NAMES: dict[int, str] = {
     0xC0000374: "STATUS_HEAP_CORRUPTION",
     0xC0000025: "EXCEPTION_NONCONTINUABLE_EXCEPTION",
 }
+
+
+def ctypes_access_violation_code(exc: BaseException | None) -> int | None:
+    """Return the Windows access-violation code for ctypes' translated OSError."""
+    if not isinstance(exc, OSError):
+        return None
+    if str(exc).casefold().startswith("exception: access violation"):
+        return CTYPES_ACCESS_VIOLATION
+    return None
+
+
+def ctypes_access_violation_from_stderr(stderr: str | None) -> int | None:
+    """Return the Windows access-violation code from a ctypes traceback line."""
+    if not isinstance(stderr, str):
+        return None
+    for line in stderr.splitlines():
+        if line.strip().casefold().startswith(_CTYPES_ACCESS_VIOLATION_TRACEBACK_PREFIX):
+            return CTYPES_ACCESS_VIOLATION
+    return None
 
 
 def is_windows_crash_code(returncode: int) -> bool:

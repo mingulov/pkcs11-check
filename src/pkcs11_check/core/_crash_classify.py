@@ -312,6 +312,9 @@ from pkcs11_check.core.crash_codes import (
     is_windows_crash_code as _is_windows_crash_code,
 )
 from pkcs11_check.core.report_log import (
+    SessionCompletionTracker as _SessionCompletionTracker,
+)
+from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 
@@ -335,11 +338,14 @@ def crash_classification(
     returncode: int | None,
     target: str,
     timed_out: bool = False,
+    observation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build a Classification-shaped dict for a crashed/hung test unit (process is dead, so
     this is produced runner/report-side, not via classify())."""
-    if timed_out:
-        detail: dict[str, object] = {"mode": "timeout"}
+    if observation is not None:
+        detail: dict[str, object] = {"observation": dict(observation)}
+    elif timed_out:
+        detail = {"mode": "timeout"}
     else:
         detail = {"signal": _crash_detail_name(returncode), "returncode": returncode}
     return {
@@ -452,20 +458,22 @@ def _analyze_report_jsonl(
     *,
     state_file: Path | None = None,
     unit: str | None = None,
-) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+) -> tuple[dict[str, Any] | None, str | None, list[str], int | None]:
     """Stream a report JSONL once to build detail, crash progress, and optional cache."""
     if (state_file is None) != (unit is None):
         raise ValueError("state_file and unit must be provided together")
 
     phases: dict[str, set[str]] = {}
+    completion = _SessionCompletionTracker()
     cache_path = _report_record_cache_path(state_file, unit) if state_file and unit else None
     tmp_path = cache_path.with_suffix(".jsonl.tmp") if cache_path is not None else None
     wrote_cache = False
 
     def iter_records(cache_fh: Any | None = None) -> Iterable[dict[str, Any]]:
         nonlocal wrote_cache
-        for record in _iter_report_log_records(jsonl_path):
+        for record in _iter_report_log_records(jsonl_path, on_invalid=completion.invalidate):
             _record_crash_phase(phases, record)
+            completion.observe(record)
             if cache_fh is not None:
                 cache_fh.write(json.dumps(record) + "\n")
                 wrote_cache = True
@@ -474,7 +482,7 @@ def _analyze_report_jsonl(
     if cache_path is None or tmp_path is None:
         detail = _build_detail_from_report_records(iter_records())
         culprit, completed = _crash_culprit_from_phases(phases)
-        return detail, culprit, completed
+        return detail, culprit, completed, completion.single_exitstatus
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -486,6 +494,6 @@ def _analyze_report_jsonl(
             tmp_path.unlink(missing_ok=True)
             cache_path.unlink(missing_ok=True)
         culprit, completed = _crash_culprit_from_phases(phases)
-        return detail, culprit, completed
+        return detail, culprit, completed, completion.single_exitstatus
     finally:
         tmp_path.unlink(missing_ok=True)

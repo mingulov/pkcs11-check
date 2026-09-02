@@ -70,3 +70,21 @@ def test_mismatch_dominates_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(Failed) as ei:
         _run(monkeypatch, parity)
     assert not isinstance(ei.value, XFailed)
+
+
+def test_ctypes_access_violation_preserves_crash_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_common(monkeypatch, {})
+    monkeypatch.setattr(
+        tap,
+        "verify_attribute_parity",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("exception: access violation reading 0x0")),
+    )
+
+    with pytest.raises(OSError, match="access violation"):
+        tap.test_limbo_attribute_parity(
+            _RawSession(),
+            True,
+            [{"id": "tc1", "peer_certificate": "pem", "expected_result": "SUCCESS"}],
+            lambda cases, limit=100: cases,
+            "v3.0",
+        )

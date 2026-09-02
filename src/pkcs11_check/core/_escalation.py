@@ -331,6 +331,8 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.collection import collect_pytest_item_metadata
+from pkcs11_check.core.nodeids import normalize_nodeid
 
 
 def _effective_granularity(unit: str, granularity: RunnerGranularity) -> IsolationGranularity:
@@ -523,13 +525,13 @@ def _escalate_current_file(
     exclude_nodeids: set[str] | None = None,
     baseline_fingerprint: str | None = None,
 ) -> list[str]:
+    collection_env = dict(env)
+    collection_env["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
     try:
-        nodeids = discover_pytest_units(
+        collected_items = collect_pytest_item_metadata(
             [unit],
-            Path(unit).parent,
-            granularity="test",
-            pytest_args=pytest_args,
-            env=env,
+            pytest_args,
+            env=collection_env,
         )
     except ValueError as exc:
         console.print(
@@ -537,13 +539,17 @@ def _escalate_current_file(
         )
         return []
 
-    filtered_nodeids = (
-        [nodeid for nodeid in nodeids if nodeid not in disabled_nodeids]
-        if disabled_nodeids
-        else nodeids
-    )
-    if exclude_nodeids:
-        filtered_nodeids = [n for n in filtered_nodeids if n not in exclude_nodeids]
+    disabled_nodeids = {normalize_nodeid(nodeid) for nodeid in (disabled_nodeids or set())}
+    exclude_nodeids = {normalize_nodeid(nodeid) for nodeid in (exclude_nodeids or set())}
+    filtered_nodeids = []
+    for item in collected_items:
+        raw_nodeid = item.nodeid
+        normalized_nodeid = normalize_nodeid(raw_nodeid)
+        if normalized_nodeid in disabled_nodeids or normalized_nodeid in exclude_nodeids:
+            continue
+        filtered_nodeids.append(
+            _absolute_nodeid(normalize_policy_file_key(item.file_path), raw_nodeid)
+        )
 
     additions = _insert_escalated_units(
         state,

@@ -15,11 +15,140 @@ up front, so the next report arrives diagnosable.
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from pkcs11_check.core.report_log import SessionCompletionTracker
+
 _MAX_STREAM = 4000
+
+
+def collection_failure_sidecar_path(state_file: Path) -> Path:
+    """Return the durable collection-attempt source beside a runner state file."""
+    return state_file.with_name(f"{state_file.name}.collection.jsonl")
+
+
+def ensure_failed_collection_report(
+    path: Path,
+    *,
+    target: str | None,
+    status: str,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> bool:
+    """Append one collection record when pytest failed before reportlog emitted evidence."""
+    if status != "failed" or returncode == 0:
+        return False
+
+    diagnostic = (
+        "\n".join([*_stream_excerpt("stderr", stderr), *_stream_excerpt("stdout", stdout)])
+        if stderr.strip() or stdout.strip()
+        else f"pytest unit {target or '<collection>'} failed with exit code {returncode}"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record_target = target or "<collection>"
+    record_line = (
+        json.dumps(
+            {
+                "$report_type": "CollectReport",
+                "nodeid": record_target,
+                "when": "collect",
+                "outcome": "failed",
+                "longrepr": diagnostic,
+                "source": "runner-fallback",
+            }
+        )
+        + "\n"
+    )
+    completion = SessionCompletionTracker()
+    existing_collection = False
+    existing_test = False
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            inserted = False
+            try:
+                source = path.open(encoding="utf-8")
+            except OSError:
+                source = None
+            if source is not None:
+                with source:
+                    for raw_line in source:
+                        parsed: object | None = None
+                        if raw_line.strip():
+                            try:
+                                parsed = json.loads(raw_line)
+                            except json.JSONDecodeError:
+                                completion.invalidate()
+                            else:
+                                if isinstance(parsed, dict):
+                                    completion.observe(parsed)
+                                    report_type = parsed.get("$report_type")
+                                    if (
+                                        report_type == "CollectReport"
+                                        and parsed.get("outcome") == "failed"
+                                        and (
+                                            target != "<collection>"
+                                            or not parsed.get("nodeid")
+                                            or parsed.get("nodeid") == target
+                                        )
+                                        and (
+                                            parsed.get("source") != "runner-fallback"
+                                            or parsed.get("longrepr") == diagnostic
+                                        )
+                                    ):
+                                        existing_collection = True
+                                    elif report_type == "TestReport" and target != "<collection>":
+                                        # Per-unit logs belong to one fresh pytest invocation.
+                                        # pytest's rootdir can make its nodeid path unrelated to
+                                        # the command-line spelling, but any TestReport proves
+                                        # that this invocation reached test execution.
+                                        existing_test = True
+                                else:
+                                    completion.invalidate()
+                        if not inserted:
+                            if (
+                                isinstance(parsed, dict)
+                                and parsed.get("$report_type") == "SessionFinish"
+                                and parsed.get("exitstatus") == returncode
+                            ):
+                                temporary.write(record_line)
+                                inserted = True
+                        temporary.write(raw_line)
+            if existing_collection or existing_test:
+                return False
+            if (
+                target != "<collection>"
+                and returncode in {1, 2, 3, 4}
+                and not (
+                    returncode in {0, 1, 5}
+                    and completion.complete
+                    and completion.starts == 1
+                    and completion.finishes == 1
+                    and completion.single_exitstatus == returncode
+                )
+            ):
+                return False
+            if not inserted:
+                temporary.write(record_line)
+        assert temporary_path is not None
+        temporary_path.replace(path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return True
 
 
 def _describe_target(raw_target: str) -> str:

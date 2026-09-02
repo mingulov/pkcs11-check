@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -287,14 +288,97 @@ class TestSensitiveExtraction:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
     def test_private_key_not_extractable(self, p11_raw_session: Any) -> None:
-        """RSA private key material must not be readable."""
+        """Record RSA private-exponent readability against the key's own claims."""
         rs = p11_raw_session
         pub_h, priv_h = _gen_api_security_rsa_keypair(rs)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
-            assert CKA_PRIVATE_EXPONENT not in attrs, (
-                "SECURITY: CKA_PRIVATE_EXPONENT readable -- private key material exposed"
+            policy_attrs = read_attributes(
+                rs.raw,
+                rs.sh,
+                priv_h,
+                [CKA_SENSITIVE, CKA_EXTRACTABLE],
             )
+            sensitive_value = policy_attrs.get(CKA_SENSITIVE)
+            extractable_value = policy_attrs.get(CKA_EXTRACTABLE)
+            sensitive_claimed = sensitive_value is True
+            non_extractable_claimed = extractable_value is False
+            policy_readback_valid = (
+                type(sensitive_value) is bool and type(extractable_value) is bool
+            )
+            exponent_attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
+            exponent_value = exponent_attrs.get(CKA_PRIVATE_EXPONENT)
+            exponent_returned = CKA_PRIVATE_EXPONENT in exponent_attrs
+            exponent_readback_valid = type(exponent_value) is bytes and bool(exponent_value)
+
+            if exponent_readback_valid and (sensitive_claimed or non_extractable_claimed):
+                classify(
+                    "self_contradiction",
+                    kind="policy",
+                    label="RSA private exponent readable despite protective attributes",
+                    operation="C_GetAttributeValue",
+                    summary=(
+                        "SECURITY: RSA private exponent is readable while the same key "
+                        f"reports CKA_SENSITIVE={sensitive_value!r} and "
+                        f"CKA_EXTRACTABLE={extractable_value!r}"
+                    ),
+                )
+
+            if not policy_readback_valid:
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="RSA private-key protection attributes unreadable or malformed",
+                    operation="C_GetAttributeValue",
+                    summary=(
+                        "RSA private-key protection readback is incomplete or malformed: "
+                        f"CKA_SENSITIVE={sensitive_value!r}, "
+                        f"CKA_EXTRACTABLE={extractable_value!r}; private exponent returned="
+                        f"{exponent_returned!r}"
+                    ),
+                )
+
+            if exponent_returned and not exponent_readback_valid:
+                classify(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="RSA private exponent readback empty or malformed",
+                    operation="C_GetAttributeValue",
+                    summary=(
+                        "RSA private exponent readback is empty or malformed: "
+                        f"{exponent_value!r}; CKA_SENSITIVE={sensitive_value!r}, "
+                        f"CKA_EXTRACTABLE={extractable_value!r}"
+                    ),
+                )
+
+            if exponent_readback_valid and not (sensitive_claimed or non_extractable_claimed):
+                note(
+                    "RSA private exponent is readable; the same key reports no protective "
+                    f"claim (CKA_SENSITIVE={sensitive_value!r}, "
+                    f"CKA_EXTRACTABLE={extractable_value!r}), so this is "
+                    "a token-posture observation rather than a provider contradiction.",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 CKA_SENSITIVE/CKA_EXTRACTABLE attribute semantics",
+                )
+            elif not exponent_returned and (sensitive_claimed or non_extractable_claimed):
+                note(
+                    "RSA private-exponent exposure was not observed through "
+                    "C_GetAttributeValue; same-key "
+                    f"CKA_SENSITIVE={sensitive_value!r}, "
+                    f"CKA_EXTRACTABLE={extractable_value!r} protective attributes "
+                    "remain consistent with an unavailable private exponent.",
+                    ComplianceLevel.STANDARD,
+                    reference="PKCS#11 CKA_SENSITIVE/CKA_EXTRACTABLE attribute semantics",
+                )
+            elif not exponent_returned:
+                note(
+                    "RSA private-exponent exposure was not observed through "
+                    "C_GetAttributeValue; same-key "
+                    f"CKA_SENSITIVE={sensitive_value!r}, "
+                    f"CKA_EXTRACTABLE={extractable_value!r} attributes remain a "
+                    "token-posture observation, not proof of protection.",
+                    ComplianceLevel.NOT_RECOMMENDED,
+                    reference="PKCS#11 CKA_SENSITIVE/CKA_EXTRACTABLE attribute semantics",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_h)
             destroy_quietly(rs.raw, rs.sh, priv_h)

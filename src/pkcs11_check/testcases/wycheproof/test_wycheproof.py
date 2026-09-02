@@ -20,7 +20,6 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     generate_random,
-    sign_single,
     verify_single,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
@@ -42,18 +41,17 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_CURVE_NOT_SUPPORTED,
-    CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
     CKR_DOMAIN_PARAMS_INVALID,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -65,7 +63,7 @@ from pkcs11_check.testcases.conftest import (
     import_ec_public_key_negotiated,
     import_rsa_public_key_negotiated,
     is_known_error,
-    xfail_if_known_ckr,
+    reject_or_classify,
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
@@ -73,23 +71,15 @@ from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as 
 
 pytestmark = pytest.mark.wycheproof
 
-_GENERIC_WYCHEPROOF_RUNTIME_REJECT_CKRS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DATA_LEN_RANGE,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_HANDLE_INVALID,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_MECHANISM_INVALID,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_TEMPLATE_INCOMPLETE,
-    CKR_TEMPLATE_INCONSISTENT,
+_AUTHENTICATED_DECRYPT_REJECT_CKRS = (
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
+_GCM_OPTIONAL_IV_REJECT_CKRS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_MECHANISM_PARAM_INVALID,
+)
+_HMAC_REJECT_CKRS = (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE)
 
 
 # EC public-key import reject classification (import-skip audit A13). The reject
@@ -109,6 +99,7 @@ _EC_PUBLIC_IMPORT_UNSUPPORTED_CKRS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DEVICE_ERROR,
+    CKR_DEVICE_MEMORY,
     CKR_FUNCTION_FAILED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
@@ -163,11 +154,50 @@ def _xfail_if_generic_runtime_reject(
     operation: str,
 ) -> NoReturn:
     """Classify advertised generic Wycheproof operation rejects as findings."""
-    xfail_if_known_ckr(
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    reject_or_classify(
         exc,
-        _GENERIC_WYCHEPROOF_RUNTIME_REJECT_CKRS,
-        f"{label}: advertised {operation} is not operational",
+        (),
+        label=f"{label}: advertised {operation} is not operational",
+        kind="lifecycle",
     )
+    raise exc
+
+
+def _classify_negative_reject(
+    exc: AssertionError,
+    expected_rvs: tuple[Any, ...],
+    *,
+    label: str,
+) -> None:
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    reject_or_classify(exc, expected_rvs, label=label, kind="crypto")
+
+
+def _classify_valid_verify_reject(
+    exc: AssertionError,
+    *,
+    label: str,
+    summary: str,
+    source: str | None = None,
+    vector_id: str | None = None,
+) -> NoReturn:
+    """Route a valid-vector verify reject without catching harness failures."""
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    # Generic runtime CKRs go through the strict signature policy.  The only
+    # normal return is CKR_SIGNATURE_INVALID/LEN_RANGE, which means the
+    # advertised verify operation is not usable for a valid vector.
+    if not signature_rejected_or_xfail(exc, label):
+        classify(
+            "not_operational",
+            label=label,
+            summary=summary,
+            source=source,
+            vector_id=vector_id,
+        )
     raise exc
 
 
@@ -210,10 +240,12 @@ class TestAESGCMWycheproof:
                 },
                 label="wycheproof-aes-gcm",
             )
-        except AssertionError:
-            if result == "invalid":
-                return  # invalid key rejected - correct
-            raise
+        except CkrAssertionError as exc:
+            _xfail_if_generic_runtime_reject(
+                exc,
+                f"AES-GCM tc{vec['tcId']}",
+                "AES-GCM key import",
+            )
 
         # Wycheproof GCM vectors are best tested via decrypt (authenticated)
         # This verifies: given (key, iv, aad, ct, tag) -> module accepts valid, rejects invalid
@@ -230,22 +262,12 @@ class TestAESGCMWycheproof:
                 reference="NIST SP 800-38D Sec.8.2 recommends 96-bit IVs",
             )
 
-        try:
-            gcm_param = mech_gcm(
-                CKM_AES_GCM,
-                iv,
-                aad=aad if aad else None,
-                tag_bits=tag_bits,
-            )
-        except (AssertionError, ValueError, TypeError):
-            # Binding rejects non-standard IV/tag sizes
-            if result == "valid":
-                classify(
-                    "not_operational",
-                    label="AES-GCM:binding",
-                    summary=f"Binding rejects GCM iv={len(iv)}B tag={len(tag_expected)}B",
-                )
-            return  # invalid vectors correctly rejected
+        gcm_param = mech_gcm(
+            CKM_AES_GCM,
+            iv,
+            aad=aad if aad else None,
+            tag_bits=tag_bits,
+        )
 
         try:
             pt = decrypt_single(
@@ -256,32 +278,15 @@ class TestAESGCMWycheproof:
                 ciphertext_with_tag,
                 mech_param=gcm_param,
             )
-            # Decryption succeeded
-            if result == "valid" or result == "acceptable":
-                assert_correct(
-                    actual=pt,
-                    expected=msg,
-                    label=f"AES-GCM:C_Decrypt KAT tc{vec['tcId']}",
-                    operation="C_Decrypt",
-                    mechanism="CKM_AES_GCM",
-                    source=vec.get("_source"),
-                    vector_id=vec.get("_vector_id"),
-                )
-            elif result == "invalid":
-                classify(
-                    "accepted_invalid",
-                    kind="crypto",
-                    label="AES-GCM",
-                    summary=f"Invalid AES-GCM vector tc{vec['tcId']} decrypted successfully",
-                    source=vec.get("_source"),
-                    vector_id=vec.get("_vector_id"),
-                )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if result == "valid":
                 iv_len = len(iv)
                 if iv_len > 16:
-                    # NIST SP 800-38D: support for non-96-bit IVs is optional.
-                    # All tested providers reject oversized IVs -- acceptable.
+                    _classify_negative_reject(
+                        exc,
+                        _GCM_OPTIONAL_IV_REJECT_CKRS,
+                        label=f"AES-GCM tc{vec['tcId']}: optional IV length",
+                    )
                     from pkcs11_check.compliance import ComplianceLevel, note
 
                     note(
@@ -289,15 +294,50 @@ class TestAESGCMWycheproof:
                         ComplianceLevel.NOT_RECOMMENDED,
                         reference="NIST SP 800-38D Sec.8.2: non-96-bit IV support is optional",
                     )
+                    return
                 else:
                     _xfail_if_generic_runtime_reject(
                         exc,
                         f"AES-GCM tc{vec['tcId']}",
                         "AES-GCM decrypt",
                     )
-            # invalid/acceptable failing is expected - good!
+            else:
+                expected_rvs = (
+                    (CKR_MECHANISM_PARAM_INVALID,)
+                    if "ZeroLengthIv" in vec.get("flags", [])
+                    else _AUTHENTICATED_DECRYPT_REJECT_CKRS
+                )
+                _classify_negative_reject(
+                    exc,
+                    expected_rvs,
+                    label=f"AES-GCM tc{vec['tcId']}",
+                )
+                return
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+        # Decryption succeeded; keep the correctness assertion outside the
+        # CK_RV routing above so a wrong plaintext is never mistaken for a
+        # provider refusal.
+        if result == "valid" or result == "acceptable":
+            assert_correct(
+                actual=pt,
+                expected=msg,
+                label=f"AES-GCM:C_Decrypt KAT tc{vec['tcId']}",
+                operation="C_Decrypt",
+                mechanism="CKM_AES_GCM",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
+        elif result == "invalid":
+            classify(
+                "accepted_invalid",
+                kind="crypto",
+                label="AES-GCM",
+                summary=f"Invalid AES-GCM vector tc{vec['tcId']} decrypted successfully",
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
 
         # Verify session is still usable after any failure
         generate_random(rs.raw, rs.sh, 64)
@@ -326,7 +366,7 @@ class TestHMACSHA256Wycheproof:
         tag_expected = bytes.fromhex(vec["tag"])
         result = vec["result"]
         tag_size = vec["_group"].get("tagSize", 256) // 8
-        set_mechanism("CKM_SHA256_HMAC", operation="C_Sign", expect_success=(result == "valid"))
+        set_mechanism("CKM_SHA256_HMAC", operation="C_Verify", expect_success=(result == "valid"))
 
         # Track non-recommended key sizes
         if len(key_bytes) < 32 and result == "valid":
@@ -360,12 +400,10 @@ class TestHMACSHA256Wycheproof:
                     label="wycheproof-hmac-sha256",
                 )
                 break
-            except AssertionError as exc:
+            except CkrAssertionError as exc:
                 last_import_exc = exc
                 continue
         if key is None:
-            if result == "invalid":
-                return  # Invalid key correctly rejected
             if last_import_exc is not None:
                 _xfail_if_generic_runtime_reject(
                     last_import_exc,
@@ -381,34 +419,43 @@ class TestHMACSHA256Wycheproof:
             )
 
         try:
-            mac = sign_single(rs.raw, rs.sh, key, CKM_SHA256_HMAC, msg)
-            # Truncate to expected tag size
-            truncated = mac[:tag_size]
-            if result == "valid":
-                assert_correct(
-                    actual=truncated,
-                    expected=tag_expected,
-                    label=f"HMAC-SHA256:C_Sign KAT tc{vec['tcId']}",
-                    operation="C_Sign",
-                    mechanism="CKM_SHA256_HMAC",
+            verified = verify_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_SHA256_HMAC,
+                msg,
+                tag_expected[:tag_size],
+            )
+            if result == "valid" and not verified:
+                classify(
+                    "honest_deviation",
+                    label="HMAC-SHA256",
+                    summary=f"Valid HMAC tag tc{vec['tcId']} rejected by module",
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-            elif result == "invalid" and truncated == tag_expected:
+            elif result == "invalid" and verified:
                 classify(
                     "accepted_invalid",
                     kind="crypto",
                     label="HMAC-SHA256",
-                    summary=f"Invalid HMAC tag tc{vec['tcId']} accepted by module",
+                    summary=f"Invalid HMAC tag tc{vec['tcId']} verified by module",
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if result == "valid":
                 _xfail_if_generic_runtime_reject(
                     exc,
                     f"HMAC-SHA256 tc{vec['tcId']}",
-                    "HMAC-SHA256 sign",
+                    "HMAC-SHA256 verify",
+                )
+            else:
+                _classify_negative_reject(
+                    exc,
+                    _HMAC_REJECT_CKRS,
+                    label=f"HMAC-SHA256 tc{vec['tcId']}",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -463,23 +510,17 @@ class TestECDSAP256Wycheproof:
                 attrs={CKA_VERIFY: True},
                 purpose="wycheproof ECDSA P-256 public key import",
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             _classify_ec_public_import_reject(exc, "secp256r1")
 
         # Convert DER signature to raw r||s (32+32 bytes for P-256)
         try:
             r_int, s_int = decode_dss_signature(sig_der)
             raw_sig = r_int.to_bytes(32, "big") + s_int.to_bytes(32, "big")
-        except (ValueError, OverflowError):
+        except (ValueError, OverflowError) as exc:
             if result == "invalid":
-                return  # Malformed DER is correctly rejected
-            classify(
-                "not_operational",
-                label="ECDSA:DER-decode",
-                summary=f"Cannot decode valid DER sig for tc{vec['tcId']}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
+                pytest.skip(f"Malformed ECDSA DER signature is not PKCS#11-representable: {exc}")
+            raise
 
         digest = hashlib.sha256(msg).digest()
 
@@ -505,10 +546,10 @@ class TestECDSAP256Wycheproof:
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if result == "valid":
-                classify(
-                    "not_operational",
+                _classify_valid_verify_reject(
+                    exc,
                     label="ECDSA",
                     summary=f"Valid ECDSA sig tc{vec['tcId']} rejected by module",
                     source=vec.get("_source"),
@@ -560,10 +601,12 @@ class TestAESCBCPKCS5Wycheproof:
                 },
                 label="wycheproof-aes-cbc",
             )
-        except AssertionError:
-            if result == "invalid":
-                return
-            raise
+        except CkrAssertionError as exc:
+            _xfail_if_generic_runtime_reject(
+                exc,
+                f"AES-CBC-PAD tc{vec['tcId']}",
+                "AES-CBC-PAD key import",
+            )
 
         # Test decryption (verify padding handling)
         try:
@@ -594,12 +637,18 @@ class TestAESCBCPKCS5Wycheproof:
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if result == "valid":
                 _xfail_if_generic_runtime_reject(
                     exc,
                     f"AES-CBC-PAD tc{vec['tcId']}",
                     "AES-CBC-PAD decrypt",
+                )
+            else:
+                _classify_negative_reject(
+                    exc,
+                    _AUTHENTICATED_DECRYPT_REJECT_CKRS,
+                    label=f"AES-CBC-PAD tc{vec['tcId']}",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -655,23 +704,17 @@ class TestECDSAP384Wycheproof:
                 attrs={CKA_VERIFY: True},
                 purpose="wycheproof ECDSA P-384 public key import",
             )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             _classify_ec_public_import_reject(exc, "secp384r1")
 
         # Convert DER sig to raw r||s (48+48 bytes for P-384)
         try:
             r_int, s_int = decode_dss_signature(sig_der)
             raw_sig = r_int.to_bytes(48, "big") + s_int.to_bytes(48, "big")
-        except (ValueError, OverflowError):
+        except (ValueError, OverflowError) as exc:
             if result == "invalid":
-                return
-            classify(
-                "not_operational",
-                label="ECDSA:DER-decode",
-                summary=f"Cannot decode valid DER sig for tc{vec['tcId']}",
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
+                pytest.skip(f"Malformed ECDSA DER signature is not PKCS#11-representable: {exc}")
+            raise
 
         digest = hashlib.sha384(msg).digest()
 
@@ -697,10 +740,10 @@ class TestECDSAP384Wycheproof:
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if result == "valid":
-                classify(
-                    "not_operational",
+                _classify_valid_verify_reject(
+                    exc,
                     label="ECDSA-P384",
                     summary=f"Valid ECDSA P-384 sig tc{vec['tcId']} rejected",
                     source=vec.get("_source"),
@@ -750,19 +793,14 @@ class TestRSASigWycheproof:
                 e=exponent,
                 attrs={CKA_VERIFY: True},
             )
-        except AssertionError as exc:
-            if not isinstance(exc, CkrAssertionError):
-                raise
-            # Mechanism was advertised (has_mechanism gate passed above); a
-            # negotiation-exhausted import refusal is "advertised but not
-            # operational" -> xfail per the classification model.
-            classify(
-                "not_operational",
+        except CkrAssertionError as exc:
+            # Mechanism was advertised (has_mechanism gate passed above); keep
+            # every clean CKR visible and make undefined CKRs hard failures.
+            reject_or_classify(
+                exc,
+                (),
                 label="SHA256_RSA_PKCS:key-import",
-                summary=not_operational_reason(
-                    "SHA256_RSA_PKCS:key-import",
-                    ckr_name(exc.rv),
-                ),
+                kind="lifecycle",
             )
 
         try:
@@ -787,7 +825,7 @@ class TestRSASigWycheproof:
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
                 )
-        except AssertionError as exc:
+        except CkrAssertionError as exc:
             if result == "valid":
                 _xfail_if_generic_runtime_reject(
                     exc,

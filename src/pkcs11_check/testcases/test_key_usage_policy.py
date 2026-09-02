@@ -28,6 +28,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     to_ubyte_buf,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECAPSULATE,
@@ -50,14 +51,29 @@ from pkcs11_check.raw.types_std import (
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKO_SECRET_KEY,
     CKP_ML_KEM_768,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
+    xfail_if_known_ckr,
 )
 
 # Key-usage-policy guards classify 3-way via classify_negative_rv: running the
@@ -334,6 +350,29 @@ class TestCapabilityReadback:
 # ---------------------------------------------------------------------------
 _ML_KEM_SHARED_SECRET_BYTES = 32
 
+_ML_KEM_SETUP_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_HOST_MEMORY,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_KEY_TYPE_INCONSISTENT,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_PARAMETER_SET_NOT_SUPPORTED,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+
+
+def _xfail_ml_kem_setup_reject(exc: CkrAssertionError, label: str) -> None:
+    """Expose a clean advertised ML-KEM setup refusal as a visible xfail."""
+    xfail_if_known_ckr(exc, _ML_KEM_SETUP_REJECT_RVS, label)
+
 
 def _gen_ml_kem_keypair(
     rs: Any,
@@ -419,8 +458,11 @@ class TestKEMKeyUsagePolicy:
 
         try:
             pub, priv = _gen_ml_kem_keypair(rs, encapsulate=False)
-        except (AssertionError, OSError):
-            pytest.skip("Module refused ML-KEM keypair with CKA_ENCAPSULATE=False")
+        except CkrAssertionError as exc:
+            _xfail_ml_kem_setup_reject(
+                exc,
+                "ML-KEM keypair generation with CKA_ENCAPSULATE=False is not operational",
+            )
 
         from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CK_ULONG
 
@@ -524,16 +566,22 @@ class TestKEMKeyUsagePolicy:
         # Generate a normal keypair to produce a valid ciphertext for decapsulation.
         try:
             norm_pub, norm_priv = _gen_ml_kem_keypair(rs, encapsulate=True, decapsulate=True)
-        except (AssertionError, OSError):
-            pytest.skip("Module refused ML-KEM keypair generation (setup)")
+        except CkrAssertionError as exc:
+            _xfail_ml_kem_setup_reject(
+                exc,
+                "ML-KEM keypair generation for decapsulation setup is not operational",
+            )
 
         # Generate the restricted private key to probe.
         try:
             restr_pub, restr_priv = _gen_ml_kem_keypair(rs, encapsulate=True, decapsulate=False)
-        except (AssertionError, OSError):
+        except CkrAssertionError as exc:
             destroy_quietly(rs.raw, rs.sh, norm_pub)
             destroy_quietly(rs.raw, rs.sh, norm_priv)
-            pytest.skip("Module refused ML-KEM keypair with CKA_DECAPSULATE=False")
+            _xfail_ml_kem_setup_reject(
+                exc,
+                "ML-KEM keypair generation with CKA_DECAPSULATE=False is not operational",
+            )
 
         from pkcs11_check.raw.recipes import encapsulate_key
 
@@ -547,8 +595,11 @@ class TestKEMKeyUsagePolicy:
                 )
             except (NotImplementedError, AttributeError):
                 pytest.skip("encapsulate_key not available")
-            except AssertionError:
-                pytest.skip("ML-KEM encapsulate not operational (setup)")
+            except CkrAssertionError as exc:
+                _xfail_ml_kem_setup_reject(
+                    exc,
+                    "ML-KEM encapsulation setup is not operational",
+                )
 
             # Attempt to decapsulate using the restricted private key.
             from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE

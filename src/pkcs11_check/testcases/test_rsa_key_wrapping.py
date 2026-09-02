@@ -25,6 +25,7 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.recipes import (
     wrap_key as wrap_key_recipe,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -672,10 +673,20 @@ class TestSensitiveExtractableWrap:
         try:
             try:
                 wrap_key_recipe(rs.raw, rs.sh, wrapping_key, target, CKM_AES_KEY_WRAP)
-            except AssertionError:
+            except CkrAssertionError as exc:
+                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                    reject_or_classify(
+                        exc,
+                        (),
+                        label=(
+                            "C_WrapKey refusal for CKA_SENSITIVE=True, "
+                            "CKA_EXTRACTABLE=True via CKM_AES_KEY_WRAP"
+                        ),
+                        kind="policy",
+                    )
                 # Module refused to wrap a sensitive-but-extractable key.
                 # This is overly restrictive but not a security violation --
-                # note only, never fail.
+                # note only for a typed standard/vendor clean refusal.
                 note(
                     "C_WrapKey refused to wrap a CKA_SENSITIVE=True, CKA_EXTRACTABLE=True key "
                     "via CKM_AES_KEY_WRAP -- overly restrictive but not a spec violation; "

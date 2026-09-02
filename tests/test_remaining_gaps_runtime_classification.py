@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from pkcs11_check.compliance import clear_notes, get_notes
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases import test_remaining_gaps
 
 
@@ -70,3 +71,20 @@ def test_legacy_parallel_function_not_supported_is_documented_note(
         assert any("CKR_FUNCTION_NOT_SUPPORTED" in note.description for note in get_notes())
     finally:
         clear_notes()
+
+
+def test_dual_function_probe_rejects_undefined_ckr() -> None:
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        test_remaining_gaps._parse_defined_probe_ckr(
+            "SEU:0x12345678",
+            "SEU",
+            "C_SignEncryptUpdate",
+        )
+
+
+def test_dual_function_probe_accepts_defined_ckr() -> None:
+    assert test_remaining_gaps._parse_defined_probe_ckr(
+        f"SEU:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}",
+        "SEU",
+        "C_SignEncryptUpdate",
+    ) == int(CKR_FUNCTION_NOT_SUPPORTED)

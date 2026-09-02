@@ -36,7 +36,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
@@ -79,6 +79,23 @@ _RSA_KEYGEN_CAPABILITY_CKRS = (
     CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
 )
+
+
+def _require_rsa_keygen_attribute(
+    attrs: dict[int, Any], attr_id: int, vec_id: str, name: str
+) -> Any:
+    """Require a generated RSA public-key attribute instead of ignoring absence."""
+    value = attrs.get(attr_id)
+    if value is None:
+        fail_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"{vec_id}:{name}",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            summary=f"{vec_id}: generated RSA public key omitted required {name}",
+        )
+    return value
 
 
 class TestRsaKeyGen:
@@ -124,7 +141,14 @@ class TestRsaKeyGen:
 
         except AssertionError as exc:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
-                pytest.skip(f"RSA {modulo}-bit key generation not supported: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_KEY_PAIR_GEN:keygen",
+                    summary=f"Advertised RSA {modulo}-bit keygen/sign flow rejected: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED}):
                 classify(
                     "not_operational",
@@ -169,32 +193,111 @@ class TestRsaKeyGen:
                 rs.raw, rs.sh, pub_key, [CKA_MODULUS_BITS, CKA_MODULUS, CKA_PUBLIC_EXPONENT]
             )
 
-            # Verify modulus bits
-            actual_bits = attrs.get(CKA_MODULUS_BITS)
-            if isinstance(actual_bits, int):
-                assert actual_bits == modulo, (
-                    f"{vec_id}: Modulus size mismatch: expected {modulo}, got {actual_bits}"
+            actual_bits = _require_rsa_keygen_attribute(
+                attrs, CKA_MODULUS_BITS, vec_id, "CKA_MODULUS_BITS"
+            )
+            if isinstance(actual_bits, bool) or not isinstance(actual_bits, int):
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_MODULUS_BITS",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="int",
+                    actual=type(actual_bits).__name__,
+                    summary=f"{vec_id}: CKA_MODULUS_BITS has malformed readback",
+                )
+            if actual_bits != modulo:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_MODULUS_BITS",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=modulo,
+                    actual=actual_bits,
+                    summary=(
+                        f"{vec_id}: Modulus size mismatch: expected {modulo}, got {actual_bits}"
+                    ),
                 )
 
-            # Verify public exponent
-            exp_val = attrs.get(CKA_PUBLIC_EXPONENT)
-            if isinstance(exp_val, bytes):
+            modulus = _require_rsa_keygen_attribute(attrs, CKA_MODULUS, vec_id, "CKA_MODULUS")
+            if not isinstance(modulus, bytes) or not modulus:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_MODULUS",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="non-empty bytes",
+                    actual=type(modulus).__name__,
+                    summary=f"{vec_id}: CKA_MODULUS has malformed readback",
+                )
+
+            exp_val = _require_rsa_keygen_attribute(
+                attrs, CKA_PUBLIC_EXPONENT, vec_id, "CKA_PUBLIC_EXPONENT"
+            )
+            if isinstance(exp_val, bytes) and exp_val:
                 actual_exp = int.from_bytes(exp_val, "big")
-            elif isinstance(exp_val, int):
+            elif isinstance(exp_val, int) and not isinstance(exp_val, bool):
                 actual_exp = exp_val
             else:
-                actual_exp = None
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="non-empty bytes or int",
+                    actual=type(exp_val).__name__,
+                    summary=f"{vec_id}: CKA_PUBLIC_EXPONENT has malformed readback",
+                )
 
-            if actual_exp is not None:
-                # Public exponent should be odd and > 2 (FIPS 186-4/5 requirement)
-                assert actual_exp % 2 == 1, f"{vec_id}: Public exponent must be odd"
-                assert actual_exp > 2, f"{vec_id}: Public exponent must be > 2"
-                # Common values: 3, 65537 (F4), or other reasonable values
-                assert actual_exp < (1 << 256), f"{vec_id}: Public exponent unreasonably large"
+            # Public exponent should be odd and > 2 (FIPS 186-4/5 requirement).
+            if actual_exp % 2 != 1:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="odd integer",
+                    actual=actual_exp,
+                    summary=f"{vec_id}: Public exponent must be odd",
+                )
+            if actual_exp <= 2:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="> 2",
+                    actual=actual_exp,
+                    summary=f"{vec_id}: Public exponent must be > 2",
+                )
+            if actual_exp >= (1 << 256):
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=f"{vec_id}:CKA_PUBLIC_EXPONENT",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected="< 2**256",
+                    actual=actual_exp,
+                    summary=f"{vec_id}: Public exponent unreasonably large",
+                )
 
         except AssertionError as exc:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
-                pytest.skip(f"RSA {modulo}-bit key attribute query failed: {exc}")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_KEY_PAIR_GEN:key-attributes",
+                    summary=f"Advertised RSA {modulo}-bit keygen/attribute flow rejected: {exc}",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED}):
                 classify(
                     "not_operational",
@@ -223,18 +326,13 @@ class TestRsaKeyGenBySize:
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported by module")
 
-        # Check if mechanism supports this key size
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
-            min_key_size = info.get("min_key_size", 0)
-            max_key_size = info.get("max_key_size", 0)
-            if bits < min_key_size or bits > max_key_size:
-                pytest.skip(
-                    f"RSA {bits}-bit not supported (mechanism limits: "
-                    f"{min_key_size}-{max_key_size})"
-                )
-        except AssertionError:
-            pass  # audit-ok: capability probe; the real keygen finding surfaces below
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS_KEY_PAIR_GEN)
+        min_key_size = info.get("min_key_size", 0)
+        max_key_size = info.get("max_key_size", 0)
+        if bits < min_key_size or bits > max_key_size:
+            pytest.skip(
+                f"RSA {bits}-bit not supported (mechanism limits: {min_key_size}-{max_key_size})"
+            )
 
         pub_key = priv_key = 0
         try:
@@ -255,7 +353,12 @@ class TestRsaKeyGenBySize:
 
         except AssertionError as exc:
             if is_known_error(exc, _RSA_KEYGEN_CAPABILITY_CKRS):
-                pytest.skip(f"RSA {bits}-bit not supported by this module")
+                classify(
+                    "not_operational",
+                    kind="crypto",
+                    label="CKM_RSA_PKCS_KEY_PAIR_GEN:keygen",
+                    summary=f"Advertised RSA {bits}-bit keygen/sign flow rejected: {exc}",
+                )
             if is_known_error(exc, {CKR_MECHANISM_INVALID, CKR_FUNCTION_NOT_SUPPORTED}):
                 classify(
                     "not_operational",

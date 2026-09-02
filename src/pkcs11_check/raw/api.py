@@ -10,6 +10,8 @@ from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
+
 from . import metadata_std
 from ._platform import windows_dll_directory as _windows_dll_directory
 from .types_std import *  # noqa: F401,F403,F405
@@ -499,7 +501,10 @@ class RawPKCS11:
                 self._load_versioned_function_list(function_list_ptr)
                 self._load_optional_exported_functions()
                 return
-        except (AttributeError, OSError):
+        except OSError as exc:
+            if ctypes_access_violation_code(exc) is not None:
+                raise
+        except AttributeError:
             pass  # Module does not export C_GetInterface or library load failed
 
         get_function_list = self._lib.C_GetFunctionList

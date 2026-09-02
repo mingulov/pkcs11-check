@@ -451,6 +451,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings", extra = ["toml"] },
     { name = "pytest" },
+    { name = "pytest-benchmark" },
     { name = "pytest-reportlog" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
@@ -466,11 +467,6 @@ dev = [
     { name = "ruff" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pytest-benchmark" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "asn1crypto", specifier = ">=1.5" },
@@ -481,6 +477,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-settings", extras = ["toml"], specifier = ">=2.0" },
     { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-benchmark", specifier = ">=5.2.3" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-reportlog", specifier = ">=1.0.0" },
     { name = "pytest-timeout", specifier = ">=2.3" },
@@ -491,9 +488,6 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15" },
 ]
 provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest-benchmark", specifier = ">=5.2.3" }]
 
 [[package]]
 name = "pluggy"

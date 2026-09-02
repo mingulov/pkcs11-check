@@ -44,6 +44,7 @@ import os
 from ctypes import POINTER, byref, c_ubyte, c_ulong, c_void_p, pointer
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids
 from pkcs11_check.raw.types_std import (
@@ -87,14 +88,20 @@ def _negotiate_v30(ctx: RawCtypesContext) -> RawPKCS11:
 
 
 def _teardown(raw: RawPKCS11, session_handle: int) -> None:
-    """Best-effort C_CloseSession + C_Finalize (mirrors the legacy raw-subprocess cleanup)."""
+    """Best-effort clean C_CloseSession + C_Finalize; provider faults propagate."""
     try:
         raw.C_CloseSession(session_handle)
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         pass
     try:
         raw.C_Finalize(None)
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+    except (AttributeError, ctypes.ArgumentError):
         pass
 
 

@@ -63,6 +63,30 @@ def test_eddsa_keyver_valid_key_import_reject_is_xfail(
         )
 
 
+def test_eddsa_keyver_unexpected_import_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vec = {
+        "ec_params": b"params",
+        "ec_point": b"point",
+        "curve": "ED-test",
+        "expected_pass": False,
+    }
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "import_eddsa_public_key_with_supported_encoding",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("local bug")),
+    )
+
+    with pytest.raises(AssertionError, match="local bug"):
+        test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver(
+            _session(),
+            SimpleNamespace(),
+            "EDDSA-KeyVer-invalid",
+            vec,
+        )
+
+
 def test_eddsa_keyver_probe_curve_reject_is_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     def _reject_probe_curve(*_args: Any, **_kwargs: Any) -> str:
         raise CkrAssertionError(
@@ -145,7 +169,44 @@ def test_eddsa_siggen_sign_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPat
         )
 
 
-def test_eddsa_keyver_invalid_key_acceptance_stays_failure(
+def test_eddsa_keyver_invalid_key_import_is_report_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vec = {
+        "ec_params": b"params",
+        "ec_point": b"point",
+        "curve": "ED-test",
+        "expected_pass": False,
+    }
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "import_eddsa_public_key_with_supported_encoding",
+        lambda *_args, **_kwargs: 1,
+    )
+    notes: list[str] = []
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "verify_eddsa_signature_with_supported_params",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        test_acvp_eddsa,
+        "note",
+        lambda description, *_args, **_kwargs: notes.append(description),
+    )
+    monkeypatch.setattr(test_acvp_eddsa, "destroy_quietly", lambda *_args: None)
+
+    test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver(
+        _session(),
+        SimpleNamespace(),
+        "EDDSA-KeyVer-invalid",
+        vec,
+    )
+
+    assert notes and "does not expose ACVP KeyVer" in notes[0]
+
+
+def test_eddsa_keyver_dummy_signature_acceptance_stays_hard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vec = {
@@ -162,11 +223,12 @@ def test_eddsa_keyver_invalid_key_acceptance_stays_failure(
     monkeypatch.setattr(
         test_acvp_eddsa,
         "verify_eddsa_signature_with_supported_params",
-        lambda *_args, **_kwargs: False,
+        lambda *_args, **_kwargs: True,
     )
+    monkeypatch.setattr(test_acvp_eddsa, "note", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(test_acvp_eddsa, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.fail.Exception, match="ACCEPTED an INVALID EdDSA key"):
+    with pytest.raises(pytest.fail.Exception, match="invalid EdDSA signature"):
         test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver(
             _session(),
             SimpleNamespace(),

@@ -74,3 +74,29 @@ def test_secret_key_access_control_uses_operational_aes128_setup_key(
     test_access_control.TestPrivateAttribute().test_private_key_default_is_private(rs)
 
     assert calls == [128]
+
+
+def test_copy_access_control_does_not_swallow_harness_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Python assertion in C_CopyObject setup must remain a real failure."""
+    monkeypatch.setattr(
+        test_access_control,
+        "_gen_access_control_aes_key",
+        lambda _rs, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        test_access_control,
+        "read_attributes",
+        lambda *_args, **_kwargs: {test_access_control.CKA_COPYABLE: True},
+    )
+    monkeypatch.setattr(
+        test_access_control,
+        "copy_object",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("harness bug")),
+    )
+    monkeypatch.setattr(test_access_control, "destroy_quietly", lambda *_args, **_kwargs: None)
+    rs = SimpleNamespace(raw=object(), sh=1)
+
+    with pytest.raises(AssertionError, match="harness bug"):
+        test_access_control.TestCopyableAttribute().test_copyable_key_can_be_copied(rs)

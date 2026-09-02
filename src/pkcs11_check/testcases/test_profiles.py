@@ -12,9 +12,10 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import find_objects, read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_PROFILE_ID,
@@ -22,22 +23,8 @@ from pkcs11_check.raw.types_std import (
     CKP_BASELINE_PROVIDER,
     CKP_EXTENDED_PROVIDER,
     CKP_VENDOR_DEFINED,
-    CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_FUNCTION_FAILED,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
-
-# CKR codes acceptable when profile attribute reads fail
-_PROFILE_ATTR_ERROR_CKRS = (
-    CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_FUNCTION_FAILED,
-    CKR_GENERAL_ERROR,
-    CKR_MECHANISM_INVALID,
-)
+from pkcs11_check.testcases.conftest import reject_or_classify
 
 # Known standard profile IDs
 _KNOWN_PROFILE_IDS = {
@@ -47,6 +34,14 @@ _KNOWN_PROFILE_IDS = {
     0x00000003,  # CKP_AUTHENTICATION_TOKEN
     0x00000004,  # CKP_PUBLIC_CERTIFICATES_TOKEN
 }
+
+pytestmark = [pytest.mark.object, pytest.mark.v30]
+
+
+@pytest.fixture(autouse=True)
+def _requires_v30(p11_interface_version: str) -> None:
+    if p11_interface_version == "2.40":
+        pytest.skip("CKO_PROFILE requires PKCS#11 v3.0+")
 
 
 class TestProfileObjects:
@@ -60,12 +55,8 @@ class TestProfileObjects:
                 rs.sh,
                 template_from_dict({CKA_CLASS: CKO_PROFILE}),
             )
-        except AssertionError as exc:
-            # Phase 6 C: match the specific not-supported CKRs by rv, not by a
-            # loose "CKR_" substring. A genuinely-absent profile-object capability
-            # is a legitimate skip; any other error propagates.
-            if is_known_error(exc, _PROFILE_ATTR_ERROR_CKRS):
-                pytest.skip(f"Profile enumeration not supported: {exc}")
+        except CkrAssertionError as exc:
+            reject_or_classify(exc, (), label="CKO_PROFILE enumeration", kind="metadata")
             raise
 
     def test_profile_object_enumeration(self, p11_raw_session: Any) -> None:
@@ -92,8 +83,13 @@ class TestProfileObjects:
                 )
                 pid = attrs[CKA_PROFILE_ID]
                 assert pid is not None
-            except AssertionError as exc:
-                xfail_if_known_ckr(exc, _PROFILE_ATTR_ERROR_CKRS, "Cannot read CKA_PROFILE_ID")
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_PROFILE CKA_PROFILE_ID read",
+                    kind="metadata",
+                )
 
     def test_known_profile_ids(self, p11_raw_session: Any) -> None:
         """Profile IDs are known PKCS#11 values or vendor-defined."""
@@ -103,19 +99,21 @@ class TestProfileObjects:
             pytest.skip("No CKO_PROFILE objects present")
         for prof in profiles:
             try:
-                attrs = read_attributes(
-                    rs.raw,
-                    rs.sh,
-                    prof,
-                    [CKA_PROFILE_ID],
+                attrs = read_attributes(rs.raw, rs.sh, prof, [CKA_PROFILE_ID])
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_PROFILE CKA_PROFILE_ID read",
+                    kind="metadata",
                 )
-                raw_val = attrs[CKA_PROFILE_ID]
-                if isinstance(raw_val, bytes):
-                    pid = int.from_bytes(raw_val, byteorder=sys.byteorder)
-                else:
-                    pid = int(raw_val)
-            except (AssertionError, KeyError):
-                continue  # audit-ok: enumeration probe; unreadable object skipped
+                raise
+            raw_val = attrs[CKA_PROFILE_ID]
+            pid = (
+                int.from_bytes(raw_val, byteorder=sys.byteorder)
+                if isinstance(raw_val, bytes)
+                else int(raw_val)
+            )
             if pid < CKP_VENDOR_DEFINED:
                 assert pid in _KNOWN_PROFILE_IDS, f"Unknown non-vendor profile ID 0x{pid:08X}"
 
@@ -131,19 +129,21 @@ class TestProfileObjects:
         pids: set[int] = set()
         for prof in profiles:
             try:
-                attrs = read_attributes(
-                    rs.raw,
-                    rs.sh,
-                    prof,
-                    [CKA_PROFILE_ID],
+                attrs = read_attributes(rs.raw, rs.sh, prof, [CKA_PROFILE_ID])
+            except CkrAssertionError as exc:
+                reject_or_classify(
+                    exc,
+                    (),
+                    label="CKO_PROFILE CKA_PROFILE_ID read",
+                    kind="metadata",
                 )
-                raw_val = attrs[CKA_PROFILE_ID]
-                if isinstance(raw_val, bytes):
-                    pids.add(int.from_bytes(raw_val, byteorder=sys.byteorder))
-                else:
-                    pids.add(int(raw_val))
-            except (AssertionError, KeyError):
-                pass  # audit-ok: CKA_PROFILE_ID unreadable → honest_deviation classified below
+                raise
+            raw_val = attrs[CKA_PROFILE_ID]
+            pids.add(
+                int.from_bytes(raw_val, byteorder=sys.byteorder)
+                if isinstance(raw_val, bytes)
+                else int(raw_val)
+            )
         standard = {CKP_BASELINE_PROVIDER, CKP_EXTENDED_PROVIDER}
         if not pids & standard:
             classify(
@@ -160,30 +160,33 @@ class TestProfileObjects:
 def _read_profile_ids(rs: Any) -> set[int]:
     """Enumerate CKO_PROFILE objects and return the set of their CKA_PROFILE_IDs.
 
-    Returns an empty set on any enumeration / read failure — callers
-    should pytest.skip if the set is empty.
+    Returns an empty set only when no profile objects exist. Read and
+    enumeration failures remain visible findings.
     """
     try:
         handles = find_objects(rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PROFILE}))
-    except AssertionError:
-        return set()  # audit-ok: enumeration probe; empty-set = capability signal (caller skips)
+    except CkrAssertionError as exc:
+        reject_or_classify(exc, (), label="CKO_PROFILE enumeration", kind="metadata")
+        raise
 
     pids: set[int] = set()
     for h in handles:
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_PROFILE_ID])
-        except AssertionError:
-            continue  # audit-ok: enumeration probe; object missing CKA_PROFILE_ID
-        if CKA_PROFILE_ID not in attrs:
-            continue
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                (),
+                label="CKO_PROFILE CKA_PROFILE_ID read",
+                kind="metadata",
+            )
+            raise
+        assert CKA_PROFILE_ID in attrs, "CKO_PROFILE object is missing CKA_PROFILE_ID"
         raw_val = attrs[CKA_PROFILE_ID]
         if isinstance(raw_val, bytes):
             pids.add(int.from_bytes(raw_val, byteorder=sys.byteorder))
         else:
-            try:
-                pids.add(int(raw_val))
-            except (TypeError, ValueError):
-                continue
+            pids.add(int(raw_val))
     return pids
 
 
@@ -356,18 +359,14 @@ class TestProfileBehavioralConformance:
                         rs.sh,
                         template_from_dict({CKA_CLASS: CKO_CERTIFICATE}),
                     )
-                except AssertionError as exc:
+                except CkrAssertionError as exc:
                     # A clean enumeration error for an advertised profile is an
                     # advertised-but-not-operational read -> xfail (noted deviation).
-                    xfail_as(
-                        "not_operational",
+                    reject_or_classify(
+                        exc,
+                        (),
                         kind="metadata",
                         label="CKP_PUBLIC_CERTIFICATES_TOKEN:C_FindObjects",
-                        operation="C_FindObjects",
-                        summary=(
-                            "Public Certificates Token profile advertised, but "
-                            f"C_FindObjects for CKO_CERTIFICATE cleanly failed: {exc}"
-                        ),
                     )
                 if not certs:
                     # An advertised profile with no required objects present (e.g. an

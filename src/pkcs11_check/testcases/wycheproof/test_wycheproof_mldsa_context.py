@@ -38,7 +38,7 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
@@ -50,6 +50,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_DATA_LEN_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
 )
 from pkcs11_check.testcases.conftest import reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
@@ -79,6 +81,7 @@ _OVERLONG_CTX_REJECT_RVS = (
     CKR_DATA_LEN_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
 )
+_CROSS_CONTEXT_REJECT_RVS = (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE)
 
 
 def _load_context_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -143,7 +146,11 @@ def _context_signing_operational(rs: Any, priv: int, pub: int, msg: bytes) -> bo
         return bool(sig) and verify_single(
             rs.raw, rs.sh, pub, CKM_ML_DSA, msg, sig, mech_param=param
         )
-    except CkrAssertionError:
+    except CkrAssertionError as exc:
+        # A defined/vendor return is a clean probe refusal, not evidence that
+        # context signing works. An undefined CKR remains a hard failure.
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            raise
         return False  # audit-ok: operability probe; CkrAssertionError means not operational
 
 
@@ -166,12 +173,11 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
     try:
         priv, pub = _import_keys(rs, vec)
     except CkrAssertionError as import_exc:
-        classify(
-            "not_operational",
+        reject_or_classify(
+            import_exc,
+            (),
             label="ML_DSA:key-import",
-            summary=f"ML-DSA private/public key import not operational: {import_exc}",
-            source=vec.get("_source"),
-            vector_id=vec.get("_vector_id"),
+            kind="lifecycle",
         )
     if priv is None or pub is None:
         pytest.skip("vector lacks an importable private+public key")
@@ -209,7 +215,16 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
         ctx_param = mech_sign_context(CKM_ML_DSA, context=ctx)
 
         # KAT: the reference signature must verify under its own context.
-        verified = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, msg, sig, mech_param=ctx_param)
+        try:
+            verified = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, msg, sig, mech_param=ctx_param)
+        except CkrAssertionError as verify_exc:
+            reject_or_classify(
+                verify_exc,
+                (),
+                label=f"ML-DSA context KAT verify [{vec_id}]",
+                kind="lifecycle",
+            )
+            verified = False
         assert verified, (
             f"valid ML-DSA signature failed to verify under its context (len={len(ctx)}) [{vec_id}]"
         )
@@ -220,7 +235,13 @@ def test_mldsa_context(vec_id: str, vec: dict[str, Any], p11_module_session: Any
         # parameter -- noted, not a finding.
         try:
             mismatched = verify_single(rs.raw, rs.sh, pub, CKM_ML_DSA, msg, sig)
-        except CkrAssertionError:
+        except CkrAssertionError as exc:
+            reject_or_classify(
+                exc,
+                _CROSS_CONTEXT_REJECT_RVS,
+                label=f"ML-DSA cross-context verify reject [{vec_id}]",
+                kind="crypto",
+            )
             mismatched = False
         assert not mismatched, (
             f"ML-DSA signature over a non-empty context verified under the empty "

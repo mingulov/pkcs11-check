@@ -30,6 +30,7 @@ from pkcs11_check.raw.recipes import (
     import_rsa_public_key,
     sign_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_SIGN,
@@ -51,7 +52,13 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
+from pkcs11_check.testcases.conftest import (
+    AES_KEYGEN_RUNTIME_REJECT_RVS,
+    CIPHER_OP_RUNTIME_REJECT_RVS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
+    gen_rsa_keypair_or_xfail,
+    is_known_error,
+)
 
 pytestmark = pytest.mark.security
 
@@ -158,7 +165,9 @@ class TestWeakRsaKeySize:
             pytest.skip("RSA keygen not supported")
         try:
             pub, priv = gen_rsa_keypair(rs.raw, rs.sh, bits)
-        except (AssertionError, OSError):
+        except CkrAssertionError as exc:
+            if not is_known_error(exc, KEYPAIR_RUNTIME_REJECT_RVS):
+                raise
             return  # audit-ok: hardening probe; rejecting the weak key size is correct
         try:
             note(
@@ -228,7 +237,9 @@ class TestDeprecatedMechanismOperation:
                         ComplianceLevel.VENDOR,
                         reference=f"CKM_{mech_name} uses a weak hash algorithm",
                     )
-                except (AssertionError, OSError):
+                except CkrAssertionError as exc:
+                    if not is_known_error(exc, CIPHER_OP_RUNTIME_REJECT_RVS):
+                        raise
                     pass  # audit-ok: hardening probe; rejecting the deprecated mechanism is correct
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
@@ -255,10 +266,7 @@ class TestRsaPkcsV15Encrypt:
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             return  # Not available
-        try:
-            info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS)
-        except (AssertionError, OSError):
-            return  # audit-ok: capability probe; mechanism-info may be unavailable
+        info = get_mechanism_info(rs.raw, rs.slot_id, CKM_RSA_PKCS)
         if info["flags"] & int(CKF_ENCRYPT):
             note(
                 "Module supports CKM_RSA_PKCS encryption (PKCS v1.5 padding)",
@@ -305,7 +313,9 @@ class TestWeakKeySizeAcceptance:
 
         try:
             key_h = gen_aes_key(rs.raw, rs.sh, bits, mechanism=mechanism)
-        except (AssertionError, OSError):
+        except CkrAssertionError as exc:
+            if not is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
+                raise
             return  # audit-ok: hardening probe; rejecting the weak key size is correct
         try:
             note(
@@ -530,7 +540,9 @@ class TestSmallRsaPublicKeyImport:
 
         try:
             key_h = import_rsa_public_key(rs.raw, rs.sh, n=self._RSA512_N, e=self._RSA512_E)
-        except (AssertionError, OSError):
+        except CkrAssertionError as exc:
+            if not is_known_error(exc, KEYPAIR_RUNTIME_REJECT_RVS):
+                raise
             return  # audit-ok: hardening probe; rejecting the small key is correct
 
         try:

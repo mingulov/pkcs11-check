@@ -421,6 +421,7 @@ class TestHkdfParamLengthTruncation:
     A clean reject of the oversized probe -> classify_negative_rv (conformant).
     """
 
+    @pytest.mark.allocation_amplifying
     @pytest.mark.slow
     def test_hkdf_salt_len_truncation(
         self,

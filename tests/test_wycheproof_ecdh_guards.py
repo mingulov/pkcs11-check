@@ -6,10 +6,23 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKA_VALUE, CKR_MECHANISM_PARAM_INVALID
+from pkcs11_check.raw.types_std import (
+    CKA_VALUE,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_VENDOR_DEFINED,
+)
 from pkcs11_check.testcases.wycheproof import test_wycheproof_ecdh as ecdh
-from pkcs11_check.testcases.wycheproof._key_decoders import ecdh_cofactor1_shared_x
+from pkcs11_check.testcases.wycheproof._key_decoders import (
+    decode_ec_private_scalar,
+    decode_ec_public_point,
+    ecdh_cofactor1_shared_x,
+)
 
 # NIST P-256 generator (SEC 2).
 _P256_GX = 0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296
@@ -38,6 +51,47 @@ def _fail_if_called(*_args: Any, **_kwargs: Any) -> int:
 
 def _read_zeros(_raw: Any, _session: int, _obj: int, attrs: list[int]) -> dict[int, bytes]:
     return {attr: b"\x00" * 32 for attr in attrs}
+
+
+@pytest.fixture(autouse=True)
+def _clear_classifications() -> None:
+    classification.clear()
+
+
+def _synthetic_vector(
+    result: str = "invalid", *, public: bytes | None = None, shared: bytes | None = None
+) -> dict[str, Any]:
+    return {
+        "tcId": 0,
+        "public": (public or _p256_point(_P256_GX, _P256_GY + 1)).hex(),
+        "private": (2).to_bytes(32, "big").hex(),
+        "shared": (shared or b"\xab" * 32).hex(),
+        "result": result,
+        "flags": [],
+        "_curve": "secp256r1",
+        "_encoding": "ecpoint",
+        "_file": "synthetic",
+        "_group": {},
+    }
+
+
+def _setup_success(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    value: bytes = b"\x02" * 32,
+    derive: Any = _handle,
+) -> list[int]:
+    destroyed: list[int] = []
+    monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
+    monkeypatch.setattr(ecdh, "provision_ec_private_key", lambda *_a, **_k: 101)
+    monkeypatch.setattr(ecdh, "derive_key", derive)
+    monkeypatch.setattr(
+        ecdh,
+        "read_attributes",
+        lambda _raw, _sh, _obj, attrs: {attr: value for attr in attrs},
+    )
+    monkeypatch.setattr(ecdh, "destroy_quietly", lambda *_args: destroyed.append(_args[-1]))
+    return destroyed
 
 
 def test_duplicate_ecdh_container_vector_is_skipped(
@@ -215,8 +269,8 @@ def test_shared_x_matches_wycheproof_wrongcurve_vector() -> None:
     """Real WrongCurve vector: helper reproduces the vector's shared value."""
     vec_id = "ecdh_brainpoolP224r1_test.json:tc517-invalid"
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
-    point = ecdh.decode_ec_public_point(vec["public"], vec["_encoding"], vec["_curve"])
-    scalar = ecdh.decode_ec_private_scalar(vec["private"], vec["_encoding"], vec["_curve"])
+    point = decode_ec_public_point(vec["public"], vec["_encoding"], vec["_curve"])
+    scalar = decode_ec_private_scalar(vec["private"], vec["_encoding"], vec["_curve"])
     assert ecdh_cofactor1_shared_x(vec["_curve"], point, scalar) == bytes.fromhex(vec["shared"])
 
 
@@ -342,3 +396,155 @@ def test_point_on_base_curve_validates_against_cryptography() -> None:
     assert on is True
     off = ecdh._point_on_base_curve(_p256_point(_P256_GX, _P256_GY ^ 1), "secp256r1")
     assert off is False
+
+
+@pytest.mark.parametrize("result", ["invalid", "acceptable"])
+def test_ecdh_setup_rejection_preserves_capability_disposition(
+    monkeypatch: pytest.MonkeyPatch, result: str
+) -> None:
+    monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
+    monkeypatch.setattr(
+        ecdh,
+        "provision_ec_private_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("EC private import rejected", int(CKR_ATTRIBUTE_VALUE_INVALID))
+        ),
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="advertised but not operational"):
+        ecdh.test_ecdh(_EcdhSession(), None, f"synthetic:tc0-{result}", _synthetic_vector(result))
+
+
+def test_invalid_ecdh_curve_setup_still_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
+    monkeypatch.setattr(
+        ecdh,
+        "provision_ec_private_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("EC curve unavailable", int(CKR_CURVE_NOT_SUPPORTED))
+        ),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="Cannot import EC private key"):
+        ecdh.test_ecdh(_EcdhSession(), None, "synthetic:tc0-invalid", _synthetic_vector("invalid"))
+
+
+@pytest.mark.parametrize("result", ["invalid", "acceptable"])
+def test_ecdh_setup_non_ckr_assertion_propagates(
+    monkeypatch: pytest.MonkeyPatch, result: str
+) -> None:
+    monkeypatch.setattr(ecdh, "_UNSUPPORTED_CURVES", set())
+    monkeypatch.setattr(
+        ecdh,
+        "provision_ec_private_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("setup harness bug")),
+    )
+
+    with pytest.raises(AssertionError, match="setup harness bug"):
+        ecdh.test_ecdh(_EcdhSession(), None, f"synthetic:tc0-{result}", _synthetic_vector(result))
+
+
+@pytest.mark.parametrize("result", ["invalid", "acceptable"])
+@pytest.mark.parametrize(
+    "rv",
+    [int(CKR_DEVICE_ERROR), int(CKR_GENERAL_ERROR), int(CKR_VENDOR_DEFINED) + 1],
+)
+def test_negative_ecdh_derive_other_clean_rejections_are_visible_xfails(
+    monkeypatch: pytest.MonkeyPatch, rv: int, result: str
+) -> None:
+    destroyed = _setup_success(
+        monkeypatch,
+        derive=lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("negative ECDH vector rejected", rv)
+        ),
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        ecdh.test_ecdh(_EcdhSession(), None, f"synthetic:tc0-{result}", _synthetic_vector(result))
+
+    assert classification.get_records()[-1].reason == "nonspec_reject"
+    assert destroyed == [101]
+
+
+@pytest.mark.parametrize("result", ["invalid", "acceptable"])
+def test_negative_ecdh_derive_undefined_ckr_is_hard_failure(
+    monkeypatch: pytest.MonkeyPatch, result: str
+) -> None:
+    destroyed = _setup_success(
+        monkeypatch,
+        derive=lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("negative ECDH vector rejected", 0x7FFFFFFF)
+        ),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        ecdh.test_ecdh(_EcdhSession(), None, f"synthetic:tc0-{result}", _synthetic_vector(result))
+
+    record = classification.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.kind == "metadata"
+    assert destroyed == [101]
+
+
+@pytest.mark.parametrize("result", ["invalid", "acceptable"])
+def test_negative_ecdh_derive_non_ckr_assertion_propagates(
+    monkeypatch: pytest.MonkeyPatch, result: str
+) -> None:
+    destroyed = _setup_success(
+        monkeypatch,
+        derive=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("derive harness bug")),
+    )
+
+    with pytest.raises(AssertionError, match="derive harness bug"):
+        ecdh.test_ecdh(_EcdhSession(), None, f"synthetic:tc0-{result}", _synthetic_vector(result))
+
+    assert classification.get_records() == []
+    assert destroyed == [101]
+
+
+@pytest.mark.parametrize("result", ["invalid", "acceptable"])
+def test_negative_ecdh_derive_expected_rejection_passes(
+    monkeypatch: pytest.MonkeyPatch, result: str
+) -> None:
+    destroyed = _setup_success(
+        monkeypatch,
+        derive=lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError("negative ECDH vector rejected", int(CKR_MECHANISM_PARAM_INVALID))
+        ),
+    )
+
+    ecdh.test_ecdh(_EcdhSession(), None, f"synthetic:tc0-{result}", _synthetic_vector(result))
+
+    assert classification.get_records() == []
+    assert destroyed == [101]
+
+
+@pytest.mark.parametrize(
+    ("expected", "actual"),
+    [(b"\xab" * 32, b"\x03" * 32), (b"\x00" * 32, b"\x03" * 32)],
+    ids=["nonzero", "all-zero"],
+)
+def test_acceptable_ecdh_wrong_shared_value_is_reported(
+    monkeypatch: pytest.MonkeyPatch, expected: bytes, actual: bytes
+) -> None:
+    destroyed = _setup_success(monkeypatch, value=actual)
+    vec = _synthetic_vector("acceptable", public=_p256_point(_P256_GX, _P256_GY), shared=expected)
+
+    with pytest.raises(pytest.fail.Exception, match="does not match known answer"):
+        ecdh.test_ecdh(_EcdhSession(), None, "synthetic:tc0-acceptable", vec)
+
+    record = classification.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+    assert destroyed == [1, 101]
+
+
+def test_acceptable_ecdh_exact_shared_value_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = _P256_GX.to_bytes(32, "big")
+    destroyed = _setup_success(monkeypatch, value=expected)
+    vec = _synthetic_vector("acceptable", public=_p256_point(_P256_GX, _P256_GY), shared=expected)
+
+    ecdh.test_ecdh(_EcdhSession(), None, "synthetic:tc0-acceptable", vec)
+
+    assert classification.get_records() == []
+    assert destroyed == [1, 101]

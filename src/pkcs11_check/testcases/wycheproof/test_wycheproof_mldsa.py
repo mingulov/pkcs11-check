@@ -6,7 +6,7 @@ Requires PKCS#11 v3.2 with ML-DSA support.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -18,6 +18,7 @@ from pkcs11_check.raw.recipes import (
     import_pqc_public_key,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_KEY_TYPE,
@@ -70,6 +71,28 @@ _MLDSA_INVALID_PUBLIC_KEY_FLAGS = frozenset(
 
 def _has_flag(vec: dict[str, Any], flags: frozenset[str]) -> bool:
     return bool(flags.intersection(vec.get("flags", [])))
+
+
+def _classify_valid_verify_reject(
+    exc: AssertionError,
+    *,
+    label: str,
+    summary: str,
+    source: str | None = None,
+    vector_id: str | None = None,
+) -> NoReturn:
+    """Route a valid-vector verify reject without catching harness failures."""
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    if not signature_rejected_or_xfail(exc, label):
+        classify(
+            "not_operational",
+            label=label,
+            summary=summary,
+            source=source,
+            vector_id=vector_id,
+        )
+    raise exc
 
 
 def _load_mldsa_vectors() -> list[tuple[str, dict[str, Any]]]:
@@ -137,7 +160,7 @@ def test_mldsa_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                     CKA_VERIFY: True,
                 },
             )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         exc_msg = str(exc)
         if is_known_error(exc, _MLDSA_PUBLIC_IMPORT_REJECT_CKRS):
             if result == "invalid" and _has_flag(vec, _MLDSA_INVALID_PUBLIC_KEY_FLAGS):
@@ -180,10 +203,10 @@ def test_mldsa_verify(p11_module_session: Any, vec_id: str, vec: dict[str, Any])
                 source=vec.get("_source"),
                 vector_id=vec.get("_vector_id"),
             )
-    except AssertionError as exc:
+    except CkrAssertionError as exc:
         if result == "valid":
-            classify(
-                "not_operational",
+            _classify_valid_verify_reject(
+                exc,
                 label=f"ML_DSA:{vec_id}",
                 summary=f"Valid ML-DSA sig {vec_id} rejected: {exc}",
                 source=vec.get("_source"),

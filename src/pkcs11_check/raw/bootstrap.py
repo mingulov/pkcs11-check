@@ -5,6 +5,8 @@ from __future__ import annotations
 import ctypes
 from ctypes import byref
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
+
 from .api import RawPKCS11
 from .rv import expect_rv
 from .types_std import (
@@ -103,7 +105,11 @@ def login_user(
 def close_session_quietly(raw: RawPKCS11, session: int) -> None:
     try:
         raw.C_CloseSession(session)
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+        return
+    except (AttributeError, ctypes.ArgumentError):
         return
 
 
@@ -116,7 +122,11 @@ def logout_quietly(raw: RawPKCS11, session: int) -> None:
     """C_Logout -- log out, ignoring errors (for use in finally blocks)."""
     try:
         raw.C_Logout(session)
-    except (AttributeError, OSError, ctypes.ArgumentError):
+    except OSError as exc:
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+        return
+    except (AttributeError, ctypes.ArgumentError):
         return
 
 

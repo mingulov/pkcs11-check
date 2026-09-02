@@ -20,9 +20,10 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_KEY_TYPE,
@@ -37,7 +38,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import require_bool_attr, require_ulong_attr
-from pkcs11_check.testcases.conftest import assert_correct, is_known_error
+from pkcs11_check.testcases.conftest import assert_correct
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -56,26 +57,52 @@ _ATTRIBUTE_READ_UNSUPPORTED_RVS = (
 _ATTRIBUTE_READ_NONCLEAN_RVS = (CKR_ATTRIBUTE_VALUE_INVALID,)
 
 
-def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> Any | None:
-    """Read a single attribute; return None if the module does not expose it."""
+def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> Any:
+    """Read a required generated-key attribute and classify clean refusals."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr_id])
-        return attrs.get(attr_id)
+        value = attrs.get(attr_id)
+        if value is None:
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                summary=f"{label}: provider did not return the requested attribute",
+            )
+        return value
     except AssertionError as exc:
-        if is_known_error(exc, _ATTRIBUTE_READ_UNSUPPORTED_RVS):
-            return None
-        if is_known_error(exc, _ATTRIBUTE_READ_NONCLEAN_RVS):
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        rv = int(exc.rv)
+        if rv in _ATTRIBUTE_READ_NONCLEAN_RVS:
             xfail_as(
                 "nonspec_reject",
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
-                summary=(
-                    f"{label} attribute read rejected with non-clean CKR: "
-                    "CKR_ATTRIBUTE_VALUE_INVALID"
-                ),
+                actual=rv,
+                summary=(f"{label} attribute read rejected with non-clean CKR: {ckr_name(rv)}"),
             )
-        raise AssertionError(f"Unexpected error reading {label} on handle {handle}: {exc}") from exc
+        if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                actual=rv,
+                summary=f"{label} attribute read rejected with clean CKR: {ckr_name(rv)}",
+            )
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            expected=_ATTRIBUTE_READ_UNSUPPORTED_RVS + _ATTRIBUTE_READ_NONCLEAN_RVS,
+            actual=rv,
+            summary=f"{label} attribute read returned undefined CK_RV: {ckr_name(rv)}",
+        )
+        raise AssertionError("unreachable: undefined CK_RV classification must fail")
 
 
 def _xfail_generated_local_false(mech_name: str, label: str) -> NoReturn:
@@ -122,8 +149,6 @@ class TestKeyAttributes:
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     actual = _read_attr_safe(rs, handle, CKA_KEY_TYPE, f"CKA_KEY_TYPE on {label}")
-                    if actual is None:
-                        continue  # Module doesn't expose CKA_KEY_TYPE -- skip this object
                     actual_kt = require_ulong_attr(
                         actual, f"{entry.mech_name} {label} CKA_KEY_TYPE"
                     )
@@ -142,16 +167,15 @@ class TestKeyAttributes:
             key = gen_symmetric_key(rs, entry, config)
             try:
                 actual = _read_attr_safe(rs, key, CKA_KEY_TYPE, "CKA_KEY_TYPE")
-                if actual is not None:
-                    actual_kt = require_ulong_attr(actual, f"{entry.mech_name} CKA_KEY_TYPE")
-                    assert_correct(
-                        actual=actual_kt,
-                        expected=expected_kt,
-                        label=f"{entry.mech_name}:CKA_KEY_TYPE readback",
-                        operation="C_GetAttributeValue",
-                        mechanism=f"CKM_{entry.mech_name}",
-                        kind="metadata",
-                    )
+                actual_kt = require_ulong_attr(actual, f"{entry.mech_name} CKA_KEY_TYPE")
+                assert_correct(
+                    actual=actual_kt,
+                    expected=expected_kt,
+                    label=f"{entry.mech_name}:CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
 
@@ -178,8 +202,6 @@ class TestKeyAttributes:
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     local = _read_attr_safe(rs, handle, CKA_LOCAL, f"CKA_LOCAL on {label}")
-                    if local is None:
-                        continue
                     local = require_bool_attr(local, f"{entry.mech_name} {label} CKA_LOCAL")
                     if local is False:
                         _xfail_generated_local_false(entry.mech_name, f"{label} key")
@@ -193,13 +215,10 @@ class TestKeyAttributes:
             key = gen_symmetric_key(rs, entry, config)
             try:
                 local = _read_attr_safe(rs, key, CKA_LOCAL, "CKA_LOCAL")
-                if local is not None:
-                    local = require_bool_attr(local, f"{entry.mech_name} CKA_LOCAL")
-                    if local is False:
-                        _xfail_generated_local_false(entry.mech_name, "key")
-                    assert local is True, (
-                        f"{entry.mech_name}: CKA_LOCAL is {local!r}, expected True"
-                    )
+                local = require_bool_attr(local, f"{entry.mech_name} CKA_LOCAL")
+                if local is False:
+                    _xfail_generated_local_false(entry.mech_name, "key")
+                assert local is True, f"{entry.mech_name}: CKA_LOCAL is {local!r}, expected True"
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
 
@@ -226,15 +245,14 @@ class TestKeyAttributes:
             try:
                 for label, handle in (("public", pub), ("private", priv)):
                     token = _read_attr_safe(rs, handle, CKA_TOKEN, f"CKA_TOKEN on {label}")
-                    if token is None:
-                        continue
                     token = require_bool_attr(token, f"{entry.mech_name} {label} CKA_TOKEN")
-                    # Some HSMs may always return True for CKA_TOKEN -- that is allowed;
-                    # what is NOT allowed is returning True when we requested False AND the
-                    # module confirmed the key was created. We only check if it's False or True.
-                    # The key existing at all is the primary confirmation.
-                    assert isinstance(token, bool), (
-                        f"{entry.mech_name} {label}: CKA_TOKEN is not bool: {token!r}"
+                    assert_correct(
+                        actual=token,
+                        expected=False,
+                        label=f"{entry.mech_name}:{label} CKA_TOKEN readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=f"CKM_{entry.mech_name}",
+                        kind="metadata",
                     )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
@@ -243,11 +261,15 @@ class TestKeyAttributes:
             key = gen_symmetric_key(rs, entry, config)
             try:
                 token = _read_attr_safe(rs, key, CKA_TOKEN, "CKA_TOKEN")
-                if token is not None:
-                    token = require_bool_attr(token, f"{entry.mech_name} CKA_TOKEN")
-                    assert isinstance(token, bool), (
-                        f"{entry.mech_name}: CKA_TOKEN is not bool: {token!r}"
-                    )
+                token = require_bool_attr(token, f"{entry.mech_name} CKA_TOKEN")
+                assert_correct(
+                    actual=token,
+                    expected=False,
+                    label=f"{entry.mech_name}:CKA_TOKEN readback",
+                    operation="C_GetAttributeValue",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
 
@@ -279,30 +301,28 @@ class TestKeyAttributes:
             try:
                 pub_class = _read_attr_safe(rs, pub, CKA_CLASS, "CKA_CLASS on public")
                 priv_class = _read_attr_safe(rs, priv, CKA_CLASS, "CKA_CLASS on private")
-                if pub_class is not None:
-                    pub_class_value = require_ulong_attr(
-                        pub_class, f"{entry.mech_name} public CKA_CLASS"
-                    )
-                    assert_correct(
-                        actual=pub_class_value,
-                        expected=int(CKO_PUBLIC_KEY),
-                        label=f"{entry.mech_name}:public CKA_CLASS readback",
-                        operation="C_GetAttributeValue",
-                        mechanism=f"CKM_{entry.mech_name}",
-                        kind="metadata",
-                    )
-                if priv_class is not None:
-                    priv_class_value = require_ulong_attr(
-                        priv_class, f"{entry.mech_name} private CKA_CLASS"
-                    )
-                    assert_correct(
-                        actual=priv_class_value,
-                        expected=int(CKO_PRIVATE_KEY),
-                        label=f"{entry.mech_name}:private CKA_CLASS readback",
-                        operation="C_GetAttributeValue",
-                        mechanism=f"CKM_{entry.mech_name}",
-                        kind="metadata",
-                    )
+                pub_class_value = require_ulong_attr(
+                    pub_class, f"{entry.mech_name} public CKA_CLASS"
+                )
+                assert_correct(
+                    actual=pub_class_value,
+                    expected=int(CKO_PUBLIC_KEY),
+                    label=f"{entry.mech_name}:public CKA_CLASS readback",
+                    operation="C_GetAttributeValue",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    kind="metadata",
+                )
+                priv_class_value = require_ulong_attr(
+                    priv_class, f"{entry.mech_name} private CKA_CLASS"
+                )
+                assert_correct(
+                    actual=priv_class_value,
+                    expected=int(CKO_PRIVATE_KEY),
+                    label=f"{entry.mech_name}:private CKA_CLASS readback",
+                    operation="C_GetAttributeValue",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, pub)
                 destroy_quietly(rs.raw, rs.sh, priv)
@@ -310,15 +330,14 @@ class TestKeyAttributes:
             key = gen_symmetric_key(rs, entry, config)
             try:
                 cls = _read_attr_safe(rs, key, CKA_CLASS, "CKA_CLASS")
-                if cls is not None:
-                    cls_value = require_ulong_attr(cls, f"{entry.mech_name} CKA_CLASS")
-                    assert_correct(
-                        actual=cls_value,
-                        expected=int(CKO_SECRET_KEY),
-                        label=f"{entry.mech_name}:CKA_CLASS readback",
-                        operation="C_GetAttributeValue",
-                        mechanism=f"CKM_{entry.mech_name}",
-                        kind="metadata",
-                    )
+                cls_value = require_ulong_attr(cls, f"{entry.mech_name} CKA_CLASS")
+                assert_correct(
+                    actual=cls_value,
+                    expected=int(CKO_SECRET_KEY),
+                    label=f"{entry.mech_name}:CKA_CLASS readback",
+                    operation="C_GetAttributeValue",
+                    mechanism=f"CKM_{entry.mech_name}",
+                    kind="metadata",
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)

@@ -21,6 +21,8 @@ import pytest
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
+    CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_PARAM_INVALID,
 )
@@ -51,6 +53,30 @@ def _ckm_ccm_vec(nonce_len: int = 13) -> dict[str, Any]:
         "ct_expected": bytes(24),
         "tag_len": 16,
     }
+
+
+def _gcm_decrypt_vec() -> dict[str, Any]:
+    return {
+        "key": bytes(16),
+        "iv": bytes(12),
+        "ct": bytes(16),
+        "tag": bytes(16),
+        "aad": b"",
+        "pt_expected": bytes(16),
+        "test_passed": False,
+        "tag_len_bits": 128,
+    }
+
+
+def _operational_probe(*_args: Any, **_kwargs: Any) -> runner.OperabilityResult:
+    return runner.OperabilityResult(runner.Operability.OPERATIONAL, "stubbed operational probe")
+
+
+def _raise_ckr(rv: int) -> Any:
+    def _raise(*_args: Any, **_kwargs: Any) -> Any:
+        raise CkrAssertionError(f"Unexpected CK_RV 0x{rv:08x}", rv)
+
+    return _raise
 
 
 def _expected_canonical_ccm_ct() -> bytes:
@@ -205,3 +231,59 @@ def test_gcm_decrypt_invalid_tag_rejection_on_dead_mech_xfails(
     }
     with pytest.raises(pytest.xfail.Exception, match="vacuous reject"):
         runner.run_gcm_decrypt_test(_AeadSession(), "tc-invalid", vec)
+
+
+def test_gcm_decrypt_setup_data_reject_is_not_invalid_vector_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A data-result CKR from setup must not count as rejecting ciphertext."""
+    monkeypatch.setattr(runner, "_import_aes_key", _raise_ckr(int(CKR_ENCRYPTED_DATA_INVALID)))
+    monkeypatch.setattr(runner, "_aead_operability", _operational_probe)
+
+    with pytest.raises(CkrAssertionError, match="Unexpected CK_RV"):
+        runner.run_gcm_decrypt_test(_AeadSession(), "gcm-import-reject", _gcm_decrypt_vec())
+
+
+def test_ccm_decrypt_setup_device_error_is_not_invalid_vector_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CCM's decrypt-only DEVICE_ERROR allowance must not cover key import."""
+    monkeypatch.setattr(runner, "_import_aes_key", _raise_ckr(int(CKR_DEVICE_ERROR)))
+    monkeypatch.setattr(runner, "_aead_operability", _operational_probe)
+
+    vec = _ckm_ccm_vec()
+    vec.update({"ct": bytes(24), "pt_expected": bytes(8), "test_passed": False})
+    with pytest.raises(pytest.xfail.Exception, match="key import"):
+        runner.run_ccm_decrypt_test(_AeadSession(), "ccm-import-device-error", vec)
+
+
+@pytest.mark.parametrize(
+    "run,vec",
+    [
+        (runner.run_gcm_decrypt_test, _gcm_decrypt_vec()),
+        (
+            runner.run_ccm_decrypt_test,
+            {
+                **_ckm_ccm_vec(),
+                "ct": bytes(24),
+                "pt_expected": bytes(8),
+                "test_passed": False,
+            },
+        ),
+    ],
+    ids=["gcm", "ccm"],
+)
+@pytest.mark.parametrize("error", [OSError("exception: access violation"), AssertionError("bug")])
+def test_aead_decrypt_setup_non_ckr_errors_propagate(
+    monkeypatch: pytest.MonkeyPatch,
+    run: Any,
+    vec: dict[str, Any],
+    error: Exception,
+) -> None:
+    def _raise(*_args: Any, **_kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(runner, "_import_aes_key", _raise)
+
+    with pytest.raises(type(error), match=str(error)):
+        run(_AeadSession(), "non-ckr-setup-error", vec)

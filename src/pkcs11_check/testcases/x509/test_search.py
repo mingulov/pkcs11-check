@@ -9,6 +9,7 @@ import pytest
 from pkcs11_check.classification import xfail_as
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import destroy_quietly, find_objects, read_attributes
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_ISSUER,
@@ -17,7 +18,17 @@ from pkcs11_check.raw.types_std import (
     CKA_SUBJECT,
     CKA_TOKEN,
     CKO_CERTIFICATE,
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases.conftest import is_known_error
 from pkcs11_check.testcases.x509.conftest import (
     import_cert_object,
     load_limbo_testcases,
@@ -26,6 +37,23 @@ from pkcs11_check.testcases.x509.conftest import (
 )
 
 pytestmark = [pytest.mark.cert, pytest.mark.object]
+
+_CERT_IMPORT_REJECT_RVS = (
+    CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+)
+_OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS = (
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
 
 
 def _xfail_if_search_miss(found: list[int], h: int, *, by: str) -> None:
@@ -90,8 +118,14 @@ class TestCertificateSearchExtended:
                     CKA_TOKEN: False,
                 },
             )
-        except AssertionError:
-            pytest.skip(f"Module rejected certificate {tc['id']}")
+        except CkrAssertionError as exc:
+            if is_known_error(exc, _CERT_IMPORT_REJECT_RVS):
+                xfail_as(
+                    "not_operational",
+                    kind="metadata",
+                    summary=f"module rejected searchable certificate {tc['id']}: {exc}",
+                )
+            raise
             return
 
         try:
@@ -100,17 +134,23 @@ class TestCertificateSearchExtended:
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SUBJECT])
                 subject = a[CKA_SUBJECT]
-            except AssertionError:
+            except CkrAssertionError as exc:
+                if not is_known_error(exc, _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS):
+                    raise
                 pass  # audit-ok: CKR error reading CKA_SUBJECT is acceptable; search skipped
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
                 issuer = a[CKA_ISSUER]
-            except AssertionError:
+            except CkrAssertionError as exc:
+                if not is_known_error(exc, _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS):
+                    raise
                 pass  # audit-ok: CKR error reading CKA_ISSUER is acceptable; search skipped
             try:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
                 serial = a[CKA_SERIAL_NUMBER]
-            except AssertionError:
+            except CkrAssertionError as exc:
+                if not is_known_error(exc, _OPTIONAL_ATTRIBUTE_UNAVAILABLE_RVS):
+                    raise
                 pass  # audit-ok: CKR error reading CKA_SERIAL_NUMBER is acceptable; search skipped
 
             # Search by subject

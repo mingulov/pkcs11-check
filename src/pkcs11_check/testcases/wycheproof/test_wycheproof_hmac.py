@@ -12,6 +12,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     verify_single,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_SENSITIVE,
     CKA_SIGN,
@@ -48,10 +49,16 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
+    CKR_SIGNATURE_INVALID,
+    CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import is_known_error, xfail_if_known_ckr
+from pkcs11_check.testcases.conftest import (
+    is_known_error,
+    reject_or_classify,
+    xfail_if_known_ckr,
+)
 
 pytestmark = pytest.mark.wycheproof
 
@@ -217,6 +224,7 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
     key = None
     saw_permanent_rejection = False
     last_exc_msg = ""
+    last_exc: CkrAssertionError | None = None
     for kt in (vec["_key_type"], vec["_fallback_type"]):
         try:
             key = import_secret_key(
@@ -233,6 +241,11 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
             )
             break
         except AssertionError as exc:
+            if not isinstance(exc, CkrAssertionError):
+                raise
+            if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                raise
+            last_exc = exc
             last_exc_msg = str(exc)
             if is_known_error(exc, _HMAC_KEY_IMPORT_UNSUPPORTED_CKRS):
                 saw_permanent_rejection = True
@@ -242,12 +255,11 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
         # Only cache permanent key rejections, not transient errors.
         if saw_permanent_rejection:
             _UNSUPPORTED_HMAC_KEYS.add(cache_key)
-        if result == "invalid":
-            return
         xfail_as(
             "not_operational",
             label="HMAC:key-import",
             summary=f"Cannot import {len(key_bytes)}-byte HMAC key: {last_exc_msg}",
+            actual=last_exc.rv if last_exc is not None else None,
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )
@@ -257,7 +269,14 @@ def test_hmac_wycheproof(p11_module_session: Any, vec_id: str, vec: dict[str, An
     except AssertionError as exc:
         if result == "valid":
             _xfail_if_hmac_runtime_reject(exc, vec_id)
-        # acceptable: module rejected an invalid vector
+        if not isinstance(exc, CkrAssertionError):
+            raise
+        reject_or_classify(
+            exc,
+            (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE),
+            label=f"HMAC:{vec_id}",
+            kind="crypto",
+        )
         return
     finally:
         destroy_quietly(rs.raw, rs.sh, key)

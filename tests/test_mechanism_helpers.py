@@ -489,3 +489,23 @@ def test_gen_keypair_for_mech_xfails_when_advertised_keypair_rejects_runtime() -
         helpers.gen_keypair_for_mech(rs, entry, config)
 
     assert len(fake_raw.keypair_calls) == 1
+
+
+def test_keypair_helper_does_not_classify_plain_assertion_with_ckr_name() -> None:
+    """Harness assertions must stay hard even when their text mentions a CKR."""
+    with pytest.raises(AssertionError, match="CKR_ARGUMENTS_BAD"):
+        helpers._generate_keypair_or_xfail(
+            SimpleNamespace(has_mechanism=lambda _name: True),
+            MechEntry(
+                mech_id=int(CKM_RSA_PKCS_KEY_PAIR_GEN),
+                mech_name="RSA_PKCS_KEY_PAIR_GEN",
+                flags=0,
+                min_key_size=256,
+                max_key_size=512,
+                config=None,
+            ),
+            int(CKM_RSA_PKCS_KEY_PAIR_GEN),
+            lambda: (_ for _ in ()).throw(
+                AssertionError("binding assertion mentions CKR_ARGUMENTS_BAD")
+            ),
+        )

@@ -46,6 +46,16 @@ _DISCLAIMER = (
 )
 
 
+def _is_direct_ctypes_crash_test(test: object) -> bool:
+    """Recognize only a direct caught ctypes access violation in a test detail."""
+    if not isinstance(test, dict) or test.get("outcome") != "crashed":
+        return False
+    from pkcs11_check.core.crash_codes import ctypes_access_violation_from_stderr
+
+    longrepr = test.get("longrepr")
+    return isinstance(longrepr, str) and ctypes_access_violation_from_stderr(longrepr) is not None
+
+
 def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
     """Build Classification-shaped crash findings from a ``results.json`` file.
 
@@ -74,10 +84,58 @@ def crashes_from_results(results_json: Path | None) -> list[dict[str, Any]]:
         if status == "crashed":
             rc_raw = unit.get("returncode")
             rc = -abs(int(rc_raw)) if isinstance(rc_raw, int) and rc_raw else None
-            crashes.append(crash_classification(returncode=rc, target=target))
+            observation = _outer_execution(unit.get("executions"), status=status)
+            tests = unit.get("tests")
+            if (
+                type(rc_raw) is int
+                and rc_raw == 1
+                and observation is None
+                and isinstance(tests, list)
+                and any(_is_direct_ctypes_crash_test(test) for test in tests)
+            ):
+                continue
+            if observation is not None:
+                termination = observation.get("termination")
+                raw_code = termination.get("raw_code") if isinstance(termination, dict) else None
+                if isinstance(raw_code, int):
+                    rc = raw_code
+            crashes.append(
+                crash_classification(returncode=rc, target=target, observation=observation)
+            )
         elif status == "timeout":
-            crashes.append(crash_classification(returncode=None, target=target, timed_out=True))
+            crashes.append(
+                crash_classification(
+                    returncode=None,
+                    target=target,
+                    timed_out=True,
+                    observation=_outer_execution(unit.get("executions"), status=status),
+                )
+            )
     return crashes
+
+
+def _outer_execution(value: Any, *, status: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(value, list):
+        return None
+    executions = [
+        execution
+        for execution in value
+        if isinstance(execution, dict) and execution.get("parent_nodeid") is None
+    ]
+    if status is None:
+        return executions[0] if executions else None
+    if status == "crashed":
+        desired_kinds = {"signal", "exception", "external-kill"}
+    elif status == "timeout":
+        desired_kinds = {"timeout"}
+    else:
+        desired_kinds = set()
+    for execution in reversed(executions):
+        termination = execution.get("termination")
+        kind = termination.get("kind") if isinstance(termination, dict) else None
+        if kind in desired_kinds:
+            return execution
+    return None
 
 
 def _payload_from_results(results_json: Path | None) -> dict[str, Any]:
@@ -177,13 +235,13 @@ def _write_index(
         "",
         "# conformance index",
         "",
-        "| provider | fail | xfail | crash | unclassified |",
+        "| provider | fail | xfail | crash | migration backlog |",
         "|---|---|---|---|---|",
     ]
     for provider in sorted(provider_groups):
         # health.outcome_counts is the single source of truth, matching each
-        # provider header: `fail` excludes the unclassified backlog, which gets
-        # its own column instead of inflating the headline fail number.
+        # provider header: `unclassified` is a separately visible migration-backlog
+        # subset of the provider fail total.
         c = health.outcome_counts(provider_groups[provider])
         lines.append(
             f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | "

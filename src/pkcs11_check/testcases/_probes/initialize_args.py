@@ -35,6 +35,7 @@ import ctypes
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.types_std import (
     CK_C_INITIALIZE_ARGS,
     CK_CREATEMUTEX,
@@ -67,12 +68,11 @@ def _call_initialize(lib: ctypes.CDLL, init_args_ptr: Any) -> None:
         c_final.restype = CK_RV
         c_final.argtypes = [c_void_p]
         c_final(None)
-    except OSError:
-        # On Windows a faulting C_Finalize surfaces as an OSError (structured
-        # exception); swallow it so the child still exits 0 with the RV already
-        # printed, matching the legacy best-effort teardown.  A POSIX fault is an
-        # uncatchable signal the parent records as a crash.
-        pass
+    except OSError as exc:
+        # A ctypes-translated Windows access violation is a provider crash finding,
+        # not ordinary best-effort teardown noise.
+        if ctypes_access_violation_code(exc) is not None:
+            raise
 
 
 def _null_args(lib: ctypes.CDLL) -> None:

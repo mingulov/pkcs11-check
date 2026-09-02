@@ -14,7 +14,12 @@ import pytest
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import get_slot_ids
 from pkcs11_check.raw.recipes import generate_random, get_slot_info
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_TOKEN_INFO,
     CKF_RNG,
@@ -23,7 +28,9 @@ from pkcs11_check.raw.types_std import (
     CKF_USER_PIN_FINAL_TRY,
     CKF_USER_PIN_INITIALIZED,
     CKF_USER_PIN_LOCKED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
+    CKR_RANDOM_NO_RNG,
 )
 
 pytestmark = pytest.mark.access
@@ -85,23 +92,44 @@ class TestTokenFlags:
     """Validate token flags are consistent with behavior."""
 
     def test_rng_flag_matches_capability(self, p11_raw_session: Any) -> None:
-        """If C_GenerateRandom works, CKF_RNG should be set."""
+        """CKF_RNG must agree with C_GenerateRandom behavior."""
         rs = p11_raw_session
-        # Try generating random - if it works, RNG flag must be set
-        has_rng = False
+        info = CK_TOKEN_INFO()
+        expect_rv(rs.raw.C_GetTokenInfo(rs.slot_id, byref(info)), CKR_OK)
         try:
             data = generate_random(rs.raw, rs.sh, 32)
-            assert len(data) == 32
-            has_rng = True
-        except AssertionError:
-            has_rng = False  # RNG not available or failed
+        except CkrAssertionError as exc:
+            if info.flags & CKF_RNG:
+                reason = (
+                    "not_operational"
+                    if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)
+                    else "self_contradiction"
+                )
+                classify(
+                    reason,
+                    kind="metadata",
+                    label="CKF_RNG",
+                    operation="C_GenerateRandom",
+                    actual=exc.rv,
+                    summary=(
+                        f"CKF_RNG is set but C_GenerateRandom refused a positive operation: {exc}"
+                    ),
+                )
+            if exc.rv in (int(CKR_RANDOM_NO_RNG), int(CKR_FUNCTION_NOT_SUPPORTED)):
+                return
+            raise
 
-        if has_rng:
-            info = CK_TOKEN_INFO()
-            rv = rs.raw.C_GetTokenInfo(rs.slot_id, byref(info))
-            expect_rv(rv, CKR_OK)
-            assert info.flags & CKF_RNG, (
-                f"C_GenerateRandom succeeded but CKF_RNG is not set; flags=0x{info.flags:08x}"
+        assert len(data) == 32
+        if not (info.flags & CKF_RNG):
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label="CKF_RNG",
+                operation="C_GenerateRandom",
+                actual=CKR_OK,
+                summary=(
+                    f"C_GenerateRandom succeeded but CKF_RNG is not set; flags=0x{info.flags:08x}"
+                ),
             )
 
     def test_token_initialized(self, p11_raw_session: Any) -> None:

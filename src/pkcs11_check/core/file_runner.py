@@ -6,13 +6,14 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
 from typing import IO, Any
@@ -98,6 +99,9 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _build_report_owner_aliases as _build_report_owner_aliases,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
@@ -105,6 +109,9 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _extract_unit_report_records_from_jsonl as _extract_unit_report_records_from_jsonl,
+)
+from pkcs11_check.core._report_records import (
+    _hydrate_process_observations as _hydrate_process_observations,
 )
 from pkcs11_check.core._report_records import (
     _infer_unit_target_from_records as _infer_unit_target_from_records,
@@ -126,9 +133,6 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_dir as _report_record_cache_dir,
-)
-from pkcs11_check.core._report_records import (
-    _report_record_cache_has_records as _report_record_cache_has_records,
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_path as _report_record_cache_path,
@@ -299,13 +303,25 @@ from pkcs11_check.core._unit_details import (
     _copy_detail as _copy_detail,
 )
 from pkcs11_check.core._unit_details import (
+    _effective_unit_status as _effective_unit_status,
+)
+from pkcs11_check.core._unit_details import (
     _ensure_timeout_recorded as _ensure_timeout_recorded,
+)
+from pkcs11_check.core._unit_details import (
+    _final_state_exit_code as _final_state_exit_code,
 )
 from pkcs11_check.core._unit_details import (
     _group_results_by_file as _group_results_by_file,
 )
 from pkcs11_check.core._unit_details import (
+    _increment_diagnostic_count as _increment_diagnostic_count,
+)
+from pkcs11_check.core._unit_details import (
     _mechanism_name_set as _mechanism_name_set,
+)
+from pkcs11_check.core._unit_details import (
+    _merge_attempt_details as _merge_attempt_details,
 )
 from pkcs11_check.core._unit_details import (
     _merge_special_entries_into_detail as _merge_special_entries_into_detail,
@@ -314,16 +330,13 @@ from pkcs11_check.core._unit_details import (
     _merge_supplemental_special_details as _merge_supplemental_special_details,
 )
 from pkcs11_check.core._unit_details import (
-    _overall_unit_status as _overall_unit_status,
-)
-from pkcs11_check.core._unit_details import (
     _required_ckm_names_for_unit as _required_ckm_names_for_unit,
 )
 from pkcs11_check.core._unit_details import (
-    _special_test_entry_from_result as _special_test_entry_from_result,
+    _resume_exit_code as _resume_exit_code,
 )
 from pkcs11_check.core._unit_details import (
-    _status_with_detail_counts as _status_with_detail_counts,
+    _special_test_entry_from_result as _special_test_entry_from_result,
 )
 from pkcs11_check.core._unit_details import (
     _synthetic_file_skip_detail as _synthetic_file_skip_detail,
@@ -364,6 +377,12 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.collection_errors import (
+    collection_failure_sidecar_path,
+    ensure_failed_collection_report,
+)
+from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.recovery import (
     RecoveryConfig,
     RecoveryController,
@@ -387,6 +406,72 @@ _NO_TESTS_COLLECTED_EXIT = 2
 _POST_EXIT_DRAIN_GRACE_S = 3.0
 
 
+def _completion_verified_for_attempt(
+    jsonl_path: Path | None,
+    status: str,
+    returncode: int,
+    session_exitstatus: int | None,
+) -> bool:
+    """Verify normal pytest completion when an attempt emitted a report stream."""
+    if status in {"crashed", "timeout"} or jsonl_path is None:
+        return True
+    return returncode in {0, 1, 5} and session_exitstatus == returncode
+
+
+def _cache_attempt_report(
+    *,
+    state_file: Path,
+    unit: str,
+    jsonl_path: Path,
+    jsonl_paths: Sequence[Path] | None = None,
+    detail: dict[str, Any] | None,
+    status: str,
+    returncode: int,
+    session_exitstatus: int | None,
+    stdout: str = "",
+    stderr: str = "",
+    evidence_nodeid: str | None = None,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Persist one attempt's report evidence, including unverified completion."""
+    completion_verified = _completion_verified_for_attempt(
+        jsonl_path, status, returncode, session_exitstatus
+    )
+    if not completion_verified:
+        diagnostic = (
+            stderr.strip()
+            or stdout.strip()
+            or (f"pytest exited with code {returncode} without a matching SessionFinish record")
+        )
+        marker_nodeid = evidence_nodeid or unit
+        marker = {
+            "$report_type": "HarnessError",
+            "nodeid": marker_nodeid,
+            "outcome": "error",
+            "returncode": returncode,
+            "completion_verified": False,
+            "longrepr": diagnostic,
+        }
+        with jsonl_path.open("a", encoding="utf-8") as report_fh:
+            report_fh.write(json.dumps(marker) + "\n")
+        detail = _merge_special_entries_into_detail(
+            detail,
+            [
+                {
+                    "nodeid": marker_nodeid,
+                    "outcome": "error",
+                    "evidence_type": "harness",
+                    "returncode": returncode,
+                    "completion_verified": False,
+                    "longrepr": diagnostic,
+                }
+            ],
+        )
+        detail["incomplete"] = True
+        detail["harness_error"] = True
+    _write_unit_report_record_cache_from_jsonl_paths(state_file, unit, jsonl_paths or [jsonl_path])
+    return detail, completion_verified
+
+
 def _unit_timeout_seconds(
     test_timeout: int,
     granularity: IsolationGranularity,
@@ -395,10 +480,12 @@ def _unit_timeout_seconds(
 ) -> int:
     if granularity == "test":
         return max(test_timeout + 60, 120)
+    fallback = max(test_timeout * 30, 900)
     if num_tests > 0:
         # 5s per test + 60s startup overhead, floor 300s, cap 14400s (4h)
-        return min(max(num_tests * 5 + 60, 300), 14400)
-    return max(test_timeout * 30, 900)
+        count_budget = min(max(num_tests * 5 + 60, 300), 14400)
+        return max(fallback, count_budget)
+    return fallback
 
 
 # Plugins the per-unit pytest subprocess actually needs. Disabling autoload of
@@ -469,10 +556,10 @@ def _run_subprocess_tee(
     *,
     env: dict[str, str],
     timeout: int,
-) -> tuple[int, str, str]:
+) -> tuple[int, str, str, dict[str, object]]:
     """Run a subprocess with tee-style output: live display AND capture.
 
-    Returns (returncode, captured_stdout, captured_stderr).
+    Returns (returncode, captured_stdout, captured_stderr, observation).
     If the process is killed by a signal, returncode is negative.
     """
     proc = subprocess.Popen(
@@ -523,31 +610,115 @@ def _run_subprocess_tee(
         threads.append(thread)
 
     deadline = time.monotonic() + timeout
+    timed_out = False
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        # The child is still running at the deadline -- a genuine timeout. Kill,
-        # reap (never leave a zombie behind, R5), and re-raise.
+        # The child is still running at the deadline -- a genuine timeout. Kill
+        # and reap it (never leave a zombie behind, R5), retaining the final
+        # return code in structured evidence.
+        timed_out = True
         proc.kill()
         proc.wait()
-        for thread in threads:
-            thread.join(timeout=max(0.0, deadline + 0.5 - time.monotonic()))
-        raise subprocess.TimeoutExpired(cmd, timeout)
-
-    # The child exited on its own -- cleanly OR via a crash signal (negative
-    # returncode). Drain the readers, but only for a short grace: the child is
-    # gone, so any un-read data is at most the OS pipe buffer. A surviving
-    # grandchild that inherited the pipe (R2) must NOT hold the runner for the
-    # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
-    # the grace and report the child's real returncode.
-    _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
+        _join_readers_bounded(threads, grace=max(0.0, deadline + 0.5 - time.monotonic()))
+    else:
+        # The child exited on its own -- cleanly OR via a crash signal (negative
+        # returncode). Drain the readers, but only for a short grace: the child is
+        # gone, so any un-read data is at most the OS pipe buffer. A surviving
+        # grandchild that inherited the pipe (R2) must NOT hold the runner for the
+        # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
+        # the grace and report the child's real returncode.
+        _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
+        timed_out = proc.returncode == _TIMEOUT_RETURN_CODE
 
     proc.wait()
-    return (
-        proc.returncode,
-        stdout_buf.getvalue().decode("utf-8", errors="replace"),
-        stderr_buf.getvalue().decode("utf-8", errors="replace"),
+    returncode = proc.returncode
+    stdout = stdout_buf.getvalue().decode("utf-8", errors="replace")
+    stderr = stderr_buf.getvalue().decode("utf-8", errors="replace")
+    observation = build_process_observation(
+        target="",
+        role="unit",
+        attempt=0,
+        returncode=returncode,
+        timed_out=timed_out,
+        stderr=stderr,
     )
+    return (
+        _TIMEOUT_RETURN_CODE if timed_out else (returncode if returncode is not None else 1),
+        stdout,
+        stderr,
+        observation,
+    )
+
+
+def _append_process_observation(
+    state: FileRunState,
+    observation: Mapping[str, object],
+    *,
+    target: str,
+    role: str,
+) -> None:
+    entry = dict(observation)
+    entry["target"] = target
+    entry["parent_nodeid"] = None
+    entry["role"] = role
+    entry["attempt"] = sum(
+        1
+        for previous in state.process_observations
+        if previous.get("target") == target
+        and previous.get("parent_nodeid") is None
+        and previous.get("role") == role
+    )
+    state.process_observations.append(entry)
+
+
+def _run_outer_tee(
+    cmd: list[str],
+    *,
+    env: dict[str, str],
+    timeout: int,
+    state: FileRunState,
+    state_file: Path,
+    target: str,
+    role: str,
+) -> tuple[int, str, str]:
+    """Run one outer process, append its evidence, and preserve timeout flow."""
+    try:
+        tee_result = _run_subprocess_tee(cmd, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _append_process_observation(
+            state,
+            build_process_observation(target, role, 0, _TIMEOUT_RETURN_CODE, timed_out=True),
+            target=target,
+            role=role,
+        )
+        save_run_state(state_file, state)
+        raise
+
+    returncode = tee_result[0]
+    captured_stdout = tee_result[1]
+    captured_stderr = tee_result[2]
+    if len(tee_result) > 3 and isinstance(tee_result[3], dict):
+        observation = tee_result[3]
+    else:
+        observation = build_process_observation(
+            target,
+            role,
+            0,
+            returncode,
+            timed_out=returncode == _TIMEOUT_RETURN_CODE,
+        )
+    _append_process_observation(
+        state,
+        observation,
+        target=target,
+        role=role,
+    )
+    save_run_state(state_file, state)
+    termination = observation.get("termination")
+    if isinstance(termination, Mapping) and termination.get("kind") == "timeout":
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    return returncode, captured_stdout, captured_stderr
 
 
 def _build_recovery_controller(
@@ -607,6 +778,153 @@ class _RecoveryAction:
     abort: bool = False
     requeue: list[str] = field(default_factory=list)
     records: list[dict[str, Any]] = field(default_factory=list)
+    requeue_events: list[tuple[dict[str, Any], list[str]]] = field(default_factory=list)
+
+
+def _recovery_attempts_path(state_file: Path) -> Path:
+    """Return the append-only sidecar used while superseded attempts are re-queued."""
+    return state_file.with_name(f"{state_file.name}.recovery.jsonl")
+
+
+def _reset_fresh_run_artifacts(
+    state_file: Path,
+    report_config: IsolatedReportConfig | None,
+) -> None:
+    """Remove durable artifacts that must not survive a fresh run."""
+    state_file.unlink(missing_ok=True)
+    collection_failure_sidecar_path(state_file).unlink(missing_ok=True)
+    _recovery_attempts_path(state_file).unlink(missing_ok=True)
+    report_cache_dir = _report_record_cache_dir(state_file)
+    if report_cache_dir.is_symlink() or report_cache_dir.exists():
+        shutil.rmtree(report_cache_dir)
+    if report_config is None:
+        return
+    sidecar_paths = {
+        report_config.output_path.parent / name
+        for name in ("report.jsonl", "quality.json", "coverage.json", "provisioning.json")
+    }
+    if report_config.jsonl_path is not None:
+        report_config.jsonl_path.unlink(missing_ok=True)
+        sidecar_paths.update(
+            {
+                report_config.jsonl_path.parent / "coverage.json",
+                report_config.jsonl_path.parent / "provisioning.json",
+            }
+        )
+    report_config.output_path.unlink(missing_ok=True)
+    for sidecar_path in sidecar_paths:
+        sidecar_path.unlink(missing_ok=True)
+
+
+def _collection_failure_reporting_copy(
+    state_file: Path,
+    state: FileRunState,
+    inline_records_by_unit: dict[str, Sequence[Mapping[str, Any]]],
+) -> tuple[FileRunState, dict[str, Sequence[Mapping[str, Any]]]]:
+    """Add durable global collection evidence to an output-only state copy."""
+    records = _collection_failure_records(state_file)
+    if not records:
+        return state, inline_records_by_unit
+
+    target = "<collection>"
+    output_units = list(state.units)
+    output_results = [result for result in state.results if result.target != target]
+    output_inline = dict(inline_records_by_unit)
+    if target not in output_units:
+        output_units.append(target)
+    output_results.append(
+        FileRunResult(
+            target=target,
+            status="failed",
+            returncode=2,
+            duration_s=0.0,
+            completion_verified=False,
+        )
+    )
+    # The state-adjacent sidecar is the authoritative global source. A stale
+    # synthetic cache shard must not hide or add to its diagnostics.
+    _delete_unit_report_record_cache(state_file, target)
+    output_inline[target] = [*output_inline.get(target, ()), *records]
+    return replace(state, units=output_units, results=output_results), output_inline
+
+
+def _collection_failure_records(state_file: Path) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in _load_report_log_records(collection_failure_sidecar_path(state_file))
+        if record.get("$report_type") == "CollectReport" and record.get("outcome") == "failed"
+    ]
+
+
+def _state_attempt_history(state: Any) -> list[dict[str, Any]]:
+    history = getattr(state, "attempt_history", None)
+    if not isinstance(history, list):
+        history = []
+        setattr(state, "attempt_history", history)
+    return history
+
+
+def _state_recovery_events(state: Any) -> list[dict[str, Any]]:
+    events = getattr(state, "recovery_events", None)
+    if not isinstance(events, list):
+        events = []
+        setattr(state, "recovery_events", events)
+    return events
+
+
+def _process_observations_for_target(state: Any, target: str) -> list[dict[str, Any]]:
+    observations = getattr(state, "process_observations", [])
+    if not isinstance(observations, list):
+        return []
+    selected: list[dict[str, Any]] = []
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        if _process_observation_matches_target(observation, target):
+            selected.append(dict(observation))
+    return selected
+
+
+def _process_observation_matches_target(observation: Mapping[str, Any], target: str) -> bool:
+    file_target = target.split("::", 1)[0]
+    observed_target = str(observation.get("target", ""))
+    parent_nodeid = str(observation.get("parent_nodeid", "") or "")
+    if "::" in target:
+        return observed_target == target or parent_nodeid == target
+    return observed_target == target or parent_nodeid.startswith(f"{file_target}::")
+
+
+def _records_for_target(state: Any, state_file: Path | None, target: str) -> list[dict[str, Any]]:
+    records_by_unit = getattr(state, "report_records_by_unit", {})
+    records = records_by_unit.get(target, []) if isinstance(records_by_unit, Mapping) else []
+    if records:
+        return [dict(record) for record in records if isinstance(record, Mapping)]
+    if state_file is None:
+        return []
+    return _load_report_log_records(_report_record_cache_path(state_file, target))
+
+
+def _append_recovery_attempt_wrappers(
+    state_file: Path | None, attempts: Sequence[Mapping[str, Any]]
+) -> None:
+    if state_file is None or not attempts:
+        return
+    path = _recovery_attempts_path(state_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for attempt in attempts:
+            fh.write(
+                json.dumps(
+                    {
+                        "$report_type": "RecoveryAttempt",
+                        "target": attempt.get("target", ""),
+                        "attempt": dict(attempt),
+                    }
+                )
+                + "\n"
+            )
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def _scan_hint_rvs(result: FileRunResult, hint_rvs: frozenset[str]) -> frozenset[str]:
@@ -653,7 +971,9 @@ def _apply_recovery_between_units(
             return action
         if assessment.outcome is RecoveryOutcome.RECOVERED_RETRY:
             console.print("[green]Daemon recovered[/green] - re-running the units it took down.")
-            action.requeue.extend(assessment.requeue_units)
+            requeue_units = list(assessment.requeue_units)
+            action.requeue.extend(requeue_units)
+            action.requeue_events.append((assessment.records[0], requeue_units))
         elif assessment.outcome is RecoveryOutcome.QUARANTINE:
             console.print(
                 f"[yellow]Quarantining[/yellow] {result.target} - repeatedly crashed the daemon."
@@ -668,10 +988,18 @@ def _record_recovery_findings(state: Any, records: Sequence[dict[str, Any]]) -> 
     they survive the re-queue that deletes the dying daemon's false failures -- the crash
     itself is a finding and must never be dropped along with the noise it caused.
     """
+    events = _state_recovery_events(state)
     for record in records:
+        event = dict(record)
+        event["event_id"] = len(events) + 1
+        events.append(event)
+        record["event_id"] = event["event_id"]
         trigger = str(record.get("trigger_unit") or "")
         entry = {
             "schema": 1,
+            "$report_type": "RecoveryEvent",
+            "event_id": event["event_id"],
+            "target": trigger,
             "reason": record.get("reason", "crash"),
             "outcome": "fail",
             "severity": "HIGH",
@@ -685,7 +1013,11 @@ def _record_recovery_findings(state: Any, records: Sequence[dict[str, Any]]) -> 
             "spec_ref": "",
             "source": None,
             "vector_id": None,
-            "detail": {"mode": "daemon_death", "streak": record.get("streak", [])},
+            "detail": {
+                "mode": "daemon_death",
+                "streak": record.get("streak", []),
+                "recovery_event": event,
+            },
         }
         state.report_records_by_unit.setdefault(f"{trigger}::daemon-recovery", []).append(entry)
 
@@ -697,6 +1029,8 @@ def _requeue_units_after_recovery(
     index: int,
     pending_units: list[str],
     state: Any,
+    state_file: Path | None = None,
+    recovery_event: Mapping[str, Any] | None = None,
 ) -> int | None:
     """Drop the failures a dying daemon produced and rewind so those units run again.
 
@@ -714,6 +1048,43 @@ def _requeue_units_after_recovery(
     if not positions:
         return None
     targets = {units[i] for i in positions}
+    attempts: list[dict[str, Any]] = []
+    history = _state_attempt_history(state)
+    for result in state.results:
+        if result.target not in targets:
+            continue
+        attempt_number = (
+            sum(1 for previous in history if previous.get("target") == result.target) + 1
+        )
+        attempt: dict[str, Any] = {
+            "target": result.target,
+            "status": result.status,
+            "returncode": result.returncode,
+            "completion_verified": result.completion_verified,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "records": _records_for_target(state, state_file, result.target),
+            "reason": "daemon-recovery-requeue",
+            "attempt": attempt_number,
+            "recovery_event": dict(recovery_event) if recovery_event is not None else None,
+            "process_observations": _process_observations_for_target(state, result.target),
+        }
+        history.append(attempt)
+        attempts.append(attempt)
+    _append_recovery_attempt_wrappers(state_file, attempts)
+    observations = getattr(state, "process_observations", [])
+    if isinstance(observations, list) and hasattr(state, "process_observations"):
+        state.process_observations[:] = [
+            observation
+            for observation in observations
+            if not isinstance(observation, Mapping)
+            or not any(
+                _process_observation_matches_target(observation, target) for target in targets
+            )
+        ]
+    if state_file is not None:
+        for target in targets:
+            _delete_unit_report_record_cache(state_file, target)
     state.results[:] = [result for result in state.results if result.target not in targets]
     for unit in targets:
         state.report_records_by_unit.pop(unit, None)
@@ -739,6 +1110,7 @@ def run_isolated_pytest_units(
     max_crashes_per_file: int = 10,
     provenance: dict[str, Any] | None = None,
     recovery_config: RecoveryConfig | None = None,
+    collected_items: Sequence[CollectedPytestItem] | None = None,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress.
 
@@ -747,6 +1119,32 @@ def run_isolated_pytest_units(
     cascade, and resumes or aborts honestly. The wiring is inert unless mode != "off", so a
     default run is byte-identical. See core/recovery.py.
     """
+    env = os.environ.copy()
+    deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
+    file_test_counts: dict[str, int] = {}
+    for item in collected_items or ():
+        file_key = normalize_policy_file_key(item.file_path)
+        file_test_counts[file_key] = file_test_counts.get(file_key, 0) + 1
+    fingerprint = (
+        build_state_fingerprint(
+            units,
+            pytest_args,
+            env,
+            baseline_fingerprint=baseline_fingerprint,
+        )
+        if units
+        else ""
+    )
+    if not resume:
+        _reset_fresh_run_artifacts(state_file, report_config)
+    previous_state = load_run_state(state_file) if resume else None
+    collection_failure_records = _collection_failure_records(state_file)
+    collection_failure_present = bool(collection_failure_records)
+    if collection_failure_present:
+        console.print("[red]INCOMPLETE[/red] prior pytest collection failure evidence retained")
+        for record in collection_failure_records:
+            if diagnostic := str(record.get("longrepr", "")).strip():
+                console.print(diagnostic)
     if not units:
         # No tests were collected — the module / marker / match / path selection
         # matched nothing. A run that executed zero tests must NOT report success
@@ -757,38 +1155,32 @@ def run_isolated_pytest_units(
             "match / path selection matched nothing. Refusing to report success "
             "for a run that executed zero tests."
         )
-        if report_config is not None:
-            empty_state = FileRunState(units=[], fingerprint="", results=[])
-            if report_config.output_format == "json":
-                payload = write_isolated_json_report(
-                    report_config.output_path, empty_state, provenance=provenance
-                )
-                write_quality_json_report(
-                    report_config.output_path.parent / "quality.json", payload
-                )
-            else:
-                write_isolated_report(report_config, empty_state)
-        return _NO_TESTS_COLLECTED_EXIT
-    env = os.environ.copy()
-    deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
-    fingerprint = build_state_fingerprint(
-        units,
-        pytest_args,
-        env,
-        baseline_fingerprint=baseline_fingerprint,
-    )
-    previous_state = load_run_state(state_file) if resume else None
-    if previous_state is not None and previous_state.fingerprint != fingerprint:
+        if resume and previous_state is not None:
+            state = previous_state
+        else:
+            state = FileRunState(units=[], fingerprint=fingerprint, results=[])
+            if not resume:
+                save_run_state(state_file, state)
+        pending_units: list[str] = []
+    elif previous_state is not None and previous_state.fingerprint != fingerprint:
         msg = (
             f"state file {state_file} belongs to a different isolated run; "
             "use a different --state-file or remove the old one"
         )
         raise ValueError(msg)
+    else:
+        state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
+        pending_units = units_remaining_for_resume(units, previous_state)
 
-    state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
-    pending_units = units_remaining_for_resume(units, previous_state)
+    if units and resume and previous_state is not None and not state.process_observations_complete:
+        state.process_observations = _hydrate_process_observations(
+            state.process_observations,
+            report_config.jsonl_path if report_config is not None else None,
+        )
+        state.process_observations_complete = True
+        save_run_state(state_file, state)
 
-    if resume:
+    if resume and units:
         if previous_state is None:
             console.print(
                 f"[yellow]No prior state[/yellow] at [bold]{state_file}[/bold]; starting fresh."
@@ -799,7 +1191,7 @@ def run_isolated_pytest_units(
                 f"[cyan]Resuming[/cyan] isolated run from "
                 f"[bold]{state_file}[/bold] ({len(pending_units)}/{len(units)} units pending)"
             )
-    else:
+    elif units:
         state = FileRunState(units=units, fingerprint=fingerprint, results=[])
         save_run_state(state_file, state)
         if granularity == "test":
@@ -818,42 +1210,80 @@ def run_isolated_pytest_units(
     executed_units: set[str] = set()
     available_mechanisms = _load_available_mechanisms(pytest_args)
     recovery_controller = _build_recovery_controller(recovery_config, pytest_args)
+    recovery_enabled = isinstance(recovery_controller, RecoveryController)
     # Number of results already fed to the recovery controller. Seed from any results already in
     # state (a --resume run) so the look-back only ever covers deaths in THIS session, not stale
     # historical failures (which are already recorded).
     recovery_assessed = len(state.results)
 
     if not pending_units:
-        console.print("[green]Nothing to do[/green] - all isolated units already completed.")
+        resume_exit_code = max(
+            _NO_TESTS_COLLECTED_EXIT if not units else 0,
+            1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
+            1 if collection_failure_present else 0,
+        )
         if report_config is not None:
             coverage_data: dict[str, Any] | None = None
             quality_records: list[dict[str, Any]] = []
             inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
             for unit, records in state.report_records_by_unit.items():
                 inline_report_records_by_unit.setdefault(unit, records)
+            output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
+                state_file,
+                state,
+                inline_report_records_by_unit,
+            )
+            owner_aliases = _build_report_owner_aliases(
+                list(
+                    dict.fromkeys(
+                        [
+                            *output_state.units,
+                            *(result.target for result in output_state.results),
+                        ]
+                    )
+                ),
+                collected_items or (),
+            )
             if (
                 resume
                 and report_config.jsonl_path is not None
                 and report_config.jsonl_path.exists()
             ):
-                candidate_targets = set(state.units) | {result.target for result in state.results}
+                candidate_targets = set(output_state.units) | {
+                    result.target for result in output_state.results
+                }
                 _seed_missing_report_record_caches_from_jsonl(
                     state_file,
                     report_config.jsonl_path,
                     candidate_targets=candidate_targets,
-                    skip_units=inline_report_records_by_unit,
+                    skip_units=set(state.report_records_by_unit)
+                    | set(inline_report_records_by_unit),
+                    owner_aliases=owner_aliases,
                 )
             merged_details = _build_per_unit_details_from_record_sources(
                 state_file,
-                units=state.units,
+                units=output_state.units,
                 inline_records_by_unit=inline_report_records_by_unit,
             )
+            for result in state.results:
+                if result.status not in {"crashed", "timeout"}:
+                    continue
+                resume_detail = merged_details.setdefault(
+                    result.target,
+                    {"counts": _empty_counts(), "tests": []},
+                )
+                counts = resume_detail.setdefault("counts", _empty_counts())
+                counts[result.status] = max(counts.get(result.status, 0), 1)
+            resume_exit_code = _final_state_exit_code(state, resume_exit_code, merged_details)
             if report_config.jsonl_path is not None:
                 wrote_report_jsonl = _write_report_jsonl_from_record_sources(
                     state_file,
-                    units=state.units,
+                    units=output_state.units,
                     inline_records_by_unit=inline_report_records_by_unit,
                     output_path=report_config.jsonl_path,
+                    attempt_history=state.attempt_history,
+                    recovery_events=state.recovery_events,
+                    collection_failure_path=collection_failure_sidecar_path(state_file),
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
@@ -862,8 +1292,9 @@ def run_isolated_pytest_units(
                     )
                     coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
                         coverage_data,
-                        state,
+                        output_state,
                         per_unit_details=merged_details,
+                        owner_aliases=owner_aliases,
                     )
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
@@ -883,10 +1314,11 @@ def run_isolated_pytest_units(
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
                     provenance=provenance,
+                    owner_aliases=owner_aliases,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -898,26 +1330,58 @@ def run_isolated_pytest_units(
             else:
                 write_isolated_report(
                     report_config,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
+                    owner_aliases=owner_aliases,
                 )
-        return 0
+        else:
+            inline_report_records_by_unit = {
+                unit: records for unit, records in state.report_records_by_unit.items()
+            }
+            merged_details = _build_per_unit_details_from_record_sources(
+                state_file,
+                units=state.units,
+                inline_records_by_unit=inline_report_records_by_unit,
+            )
+            for result in state.results:
+                if result.status not in {"crashed", "timeout"}:
+                    continue
+                resume_detail = merged_details.setdefault(
+                    result.target,
+                    {"counts": _empty_counts(), "tests": []},
+                )
+                counts = resume_detail.setdefault("counts", _empty_counts())
+                counts[result.status] = max(counts.get(result.status, 0), 1)
+            resume_exit_code = _final_state_exit_code(state, resume_exit_code, merged_details)
+        if units:
+            if resume_exit_code:
+                console.print(
+                    "[red]Nothing to do[/red] - durable isolated state is not green; "
+                    "review the recorded failures before accepting this run."
+                )
+            else:
+                console.print(
+                    "[green]Nothing to do[/green] - all isolated units already completed."
+                )
+        return resume_exit_code
 
-    exit_code = 0
+    exit_code = max(
+        1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
+        1 if collection_failure_present else 0,
+    )
     index = 0
     try:
-        while index < len(units):
-            unit = units[index]
-            if unit not in pending_units:
-                index += 1
-                continue
-
+        while index < len(units) or (recovery_enabled and recovery_assessed < len(state.results)):
             # -- Crashing-daemon recovery (between-unit look-back) --
             # Feed every result completed since the last check to the controller, in order, BEFORE
             # running the next unit. A confirmed daemon death triggers wait/restart + re-probe here,
             # so the upcoming unit runs against a recovered daemon (or the run aborts honestly).
             # Inert unless recovery is enabled, so default runs are byte-identical.
-            if recovery_controller is not None and recovery_assessed < len(state.results):
+            if (
+                recovery_enabled
+                and recovery_controller is not None
+                and recovery_assessed < len(state.results)
+            ):
                 recovery_action = _apply_recovery_between_units(
                     recovery_controller,
                     state.results[recovery_assessed:],
@@ -925,17 +1389,37 @@ def run_isolated_pytest_units(
                 )
                 recovery_assessed = len(state.results)
                 _record_recovery_findings(state, recovery_action.records)
+                if recovery_action.records and not recovery_action.requeue:
+                    save_run_state(state_file, state)
+                if recovery_action.records:
+                    exit_code = 1
                 if recovery_action.abort:
                     exit_code = 1
                     break
                 if recovery_action.requeue:
-                    rewind_to = _requeue_units_after_recovery(
-                        recovery_action.requeue,
-                        units=units,
-                        index=index,
-                        pending_units=pending_units,
-                        state=state,
-                    )
+                    rewind_to: int | None = None
+                    requeue_events = recovery_action.requeue_events or [
+                        (
+                            recovery_action.records[-1] if recovery_action.records else {},
+                            recovery_action.requeue,
+                        )
+                    ]
+                    for recovery_event, recovery_units in requeue_events:
+                        candidate = _requeue_units_after_recovery(
+                            recovery_units,
+                            units=units,
+                            index=index,
+                            pending_units=pending_units,
+                            state=state,
+                            state_file=state_file,
+                            recovery_event=recovery_event,
+                        )
+                        for recovery_unit in recovery_units:
+                            per_unit_details.pop(recovery_unit, None)
+                        if candidate is not None:
+                            rewind_to = (
+                                candidate if rewind_to is None else min(rewind_to, candidate)
+                            )
                     if rewind_to is not None:
                         # The dropped results were never the module's verdict; re-run them
                         # against the recovered daemon so the report says what it really does.
@@ -944,25 +1428,26 @@ def run_isolated_pytest_units(
                         index = rewind_to
                         continue
 
-            unit_granularity = _effective_granularity(unit, granularity)
-            if resume and unit_granularity == "file" and "::" not in unit:
-                file_key = _unit_file_key(unit)
-                previous_result_count = len(state.results)
-                state.results[:] = [
-                    result
-                    for result in state.results
-                    if not (
-                        result.target == unit
-                        or (
-                            result.status == "crash_limited"
-                            and _unit_file_key(result.target) == file_key
-                        )
-                    )
-                ]
-                recovery_assessed -= previous_result_count - len(state.results)
+            if index >= len(units):
+                break
+            unit = units[index]
+            if unit not in pending_units:
+                index += 1
+                continue
 
+            unit_granularity = _effective_granularity(unit, granularity)
             executed_units.add(unit)
-            if report_config is not None and report_config.jsonl_path is not None:
+            prior_cache_snapshot: Path | None = None
+            if resume:
+                prior_cache = _report_record_cache_path(state_file, unit)
+                if prior_cache.exists():
+                    snapshot_fd, snapshot_raw = tempfile.mkstemp(
+                        prefix="pkcs11-check-resume-cache-", suffix=".jsonl"
+                    )
+                    os.close(snapshot_fd)
+                    prior_cache_snapshot = Path(snapshot_raw)
+                    shutil.copyfile(prior_cache, prior_cache_snapshot)
+            if report_config is not None and not resume:
                 _delete_unit_report_record_cache(state_file, unit)
                 state.report_records_by_unit.pop(unit, None)
             console.print(f"[cyan][{index + 1}/{len(units)}][/cyan] {unit}")
@@ -997,15 +1482,13 @@ def run_isolated_pytest_units(
                 set(deselect_by_file.get(unit, set())) if unit_granularity == "file" else set()
             )
 
-            # File-level runs always benefit from JSONL detail. Test-level runs
-            # only need it when we are building merged JSON artifacts.
+            # Keep JSONL detail for every isolated subprocess so harness exits
+            # and incomplete sessions retain direct evidence at any granularity.
             unit_jsonl_path: Path | None = None
             initial_deselect_path: Path | None = None
             run_env = _subprocess_plugin_env(env, unit)
             _maybe_set_crash_journal(run_env, unit)
-            collect_report_log = unit_granularity == "file" or (
-                report_config is not None and report_config.jsonl_path is not None
-            )
+            collect_report_log = True
             if unit_disabled_nodeids:
                 initial_deselect_path = write_deselect_file(unit_disabled_nodeids)
                 run_env["PKCS11_CHECK_DESELECT_FILE"] = str(initial_deselect_path)
@@ -1029,21 +1512,39 @@ def run_isolated_pytest_units(
 
             try:
                 try:
-                    returncode, captured_stdout, captured_stderr = _run_subprocess_tee(
+                    returncode, captured_stdout, captured_stderr = _run_outer_tee(
                         cmd,
                         env=run_env,
-                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                        timeout=_unit_timeout_seconds(
+                            timeout,
+                            unit_granularity,
+                            num_tests=file_test_counts.get(_unit_file_key(unit), 0),
+                        ),
+                        state=state,
+                        state_file=state_file,
+                        target=unit,
+                        role="unit",
                     )
                     status = _status_from_returncode(returncode)
+                    if unit_jsonl_path is not None:
+                        ensure_failed_collection_report(
+                            unit_jsonl_path,
+                            target=unit,
+                            status=status,
+                            returncode=returncode,
+                            stdout=captured_stdout,
+                            stderr=captured_stderr,
+                        )
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start
+                    status = "timeout"
+                    returncode = _TIMEOUT_RETURN_CODE
                     if unit_jsonl_path is not None:
-                        if report_config is not None and report_config.jsonl_path is not None:
-                            _write_unit_report_record_cache_from_jsonl_paths(
-                                state_file,
-                                unit,
-                                [unit_jsonl_path],
-                            )
+                        _write_unit_report_record_cache_from_jsonl_paths(
+                            state_file,
+                            unit,
+                            [unit_jsonl_path],
+                        )
                     result = FileRunResult(
                         target=unit,
                         status="timeout",
@@ -1066,15 +1567,35 @@ def run_isolated_pytest_units(
                         total_retry_dur = 0.0
                         to_iter_jsonl: Path | None = unit_jsonl_path
                         to_retry_temps: list[Path] = []
+                        to_report_jsonl_paths: list[Path] = (
+                            [prior_cache_snapshot] if prior_cache_snapshot is not None else []
+                        ) + ([unit_jsonl_path] if unit_jsonl_path is not None else [])
+                        iter_status = status
+                        iter_returncode = returncode
                         escalate = False
                         retry_count = 0
+                        confirmed_crash_returncode: int | None = None
+                        all_confirmation_completion_verified = True
 
                         try:
-                            while retry_count < _MAX_TIMEOUT_RETRIES:
+                            while True:
                                 # Stream JSONL once for completed + culprit + detail.
                                 if to_iter_jsonl is not None:
-                                    iter_detail, culprit, completed = _analyze_report_jsonl(
-                                        to_iter_jsonl
+                                    (
+                                        iter_detail,
+                                        culprit,
+                                        completed,
+                                        _session_exitstatus,
+                                    ) = _analyze_report_jsonl(to_iter_jsonl)
+                                    iter_detail, _ = _cache_attempt_report(
+                                        state_file=state_file,
+                                        unit=unit,
+                                        jsonl_path=to_iter_jsonl,
+                                        jsonl_paths=to_report_jsonl_paths,
+                                        detail=iter_detail,
+                                        status=iter_status,
+                                        returncode=iter_returncode,
+                                        session_exitstatus=_session_exitstatus,
                                     )
                                 else:
                                     culprit, completed = None, []
@@ -1084,76 +1605,154 @@ def run_isolated_pytest_units(
 
                                 # Merge partial results
                                 if iter_detail is not None:
-                                    if to_accum_detail is None:
-                                        to_accum_detail = iter_detail
-                                    else:
-                                        for k in to_accum_detail["counts"]:
-                                            to_accum_detail["counts"][k] += iter_detail[
-                                                "counts"
-                                            ].get(k, 0)
-                                        to_accum_detail["tests"].extend(
-                                            iter_detail["tests"],
-                                        )
-                                        for reason, cnt in iter_detail.get(
-                                            "skip_reasons", {}
-                                        ).items():
-                                            to_accum_detail.setdefault("skip_reasons", {})[
-                                                reason
-                                            ] = (
-                                                to_accum_detail.get("skip_reasons", {}).get(
-                                                    reason, 0
-                                                )
-                                                + cnt
-                                            )
+                                    to_accum_detail = _merge_attempt_details(
+                                        to_accum_detail, iter_detail, unit=unit
+                                    )
 
                                 if culprit:
                                     # Confirm timeout culprit individually
                                     console.print(
                                         f"[yellow]Confirming timeout culprit:[/yellow] {culprit}"
                                     )
+                                    confirmation_target = _absolute_nodeid(
+                                        _unit_file_key(unit), culprit
+                                    )
+                                    confirm_jsonl_fd, confirm_jsonl_raw = tempfile.mkstemp(
+                                        prefix="pkcs11-check-confirmation-",
+                                        suffix=".jsonl",
+                                    )
+                                    os.close(confirm_jsonl_fd)
+                                    confirm_jsonl_path = Path(confirm_jsonl_raw)
+                                    to_report_jsonl_paths.append(confirm_jsonl_path)
                                     try:
-                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                        confirm_rc, confirm_out, confirm_err = _run_outer_tee(
                                             [
                                                 sys.executable,
                                                 "-m",
                                                 "pytest",
-                                                culprit,
+                                                confirmation_target,
                                                 *pytest_args,
+                                                "--report-log",
+                                                str(confirm_jsonl_path),
                                             ],
                                             env=env,
                                             timeout=_unit_timeout_seconds(timeout, "test"),
+                                            state=state,
+                                            state_file=state_file,
+                                            target=unit,
+                                            role="confirmation",
+                                        )
+                                        confirm_status = _status_from_returncode(confirm_rc)
+                                        ensure_failed_collection_report(
+                                            confirm_jsonl_path,
+                                            target=culprit,
+                                            status=confirm_status,
+                                            returncode=confirm_rc,
+                                            stdout=confirm_out,
+                                            stderr=confirm_err,
+                                        )
+                                        (
+                                            _confirm_detail,
+                                            _confirm_culprit,
+                                            _confirm_completed,
+                                            confirm_exitstatus,
+                                        ) = _analyze_report_jsonl(confirm_jsonl_path)
+                                        _confirm_detail, confirm_completion_verified = (
+                                            _cache_attempt_report(
+                                                state_file=state_file,
+                                                unit=unit,
+                                                jsonl_path=confirm_jsonl_path,
+                                                jsonl_paths=to_report_jsonl_paths,
+                                                detail=_confirm_detail,
+                                                status=confirm_status,
+                                                returncode=confirm_rc,
+                                                session_exitstatus=confirm_exitstatus,
+                                                stdout=confirm_out,
+                                                stderr=confirm_err,
+                                                evidence_nodeid=culprit,
+                                            )
                                         )
                                     except subprocess.TimeoutExpired:
                                         confirm_rc = _TIMEOUT_RETURN_CODE
                                         confirm_out = confirm_err = ""
-                                    confirm_status = _status_from_returncode(confirm_rc)
+                                        confirm_status = "timeout"
+                                        ensure_failed_collection_report(
+                                            confirm_jsonl_path,
+                                            target=culprit,
+                                            status=confirm_status,
+                                            returncode=confirm_rc,
+                                            stdout=confirm_out,
+                                            stderr=confirm_err,
+                                        )
+                                        (
+                                            _confirm_detail,
+                                            _confirm_culprit,
+                                            _confirm_completed,
+                                            confirm_exitstatus,
+                                        ) = _analyze_report_jsonl(confirm_jsonl_path)
+                                        _confirm_detail, confirm_completion_verified = (
+                                            _cache_attempt_report(
+                                                state_file=state_file,
+                                                unit=unit,
+                                                jsonl_path=confirm_jsonl_path,
+                                                jsonl_paths=to_report_jsonl_paths,
+                                                detail=_confirm_detail,
+                                                status=confirm_status,
+                                                returncode=confirm_rc,
+                                                session_exitstatus=confirm_exitstatus,
+                                                stdout=confirm_out,
+                                                stderr=confirm_err,
+                                                evidence_nodeid=culprit,
+                                            )
+                                        )
+                                    all_confirmation_completion_verified = (
+                                        all_confirmation_completion_verified
+                                        and confirm_completion_verified
+                                    )
                                     culprit_outcome = (
-                                        "timeout"
-                                        if confirm_status == "timeout"
-                                        else "passed-in-isolation"
+                                        confirm_status
+                                        if confirm_status in {"crashed", "timeout", "failed"}
+                                        and confirm_completion_verified
+                                        else (
+                                            "error"
+                                            if not confirm_completion_verified
+                                            else "passed-in-isolation"
+                                        )
                                     )
                                     to_culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
+                                        "evidence_type": (
+                                            "harness"
+                                            if not confirm_completion_verified
+                                            else "provider"
+                                        ),
+                                        "returncode": confirm_rc,
+                                        "completion_verified": confirm_completion_verified,
                                     }
-                                    if confirm_status == "timeout":
+                                    if culprit_outcome in {
+                                        "crashed",
+                                        "timeout",
+                                        "failed",
+                                        "error",
+                                    }:
                                         to_culprit_entry["longrepr"] = (
-                                            confirm_err.strip() or confirm_out.strip()
+                                            confirm_err.strip()
+                                            or confirm_out.strip()
+                                            or f"confirmation exited with code {confirm_rc}"
                                         )
                                     if confirm_out.strip():
                                         to_culprit_entry["stdout"] = confirm_out
                                     if confirm_err.strip():
                                         to_culprit_entry["stderr"] = confirm_err
-                                    if to_accum_detail is None:
-                                        to_accum_detail = {
-                                            "counts": _empty_counts(),
-                                            "tests": [],
-                                        }
-                                    to_accum_detail["tests"].append(to_culprit_entry)
-                                    if culprit_outcome == "timeout":
-                                        to_accum_detail["counts"]["timeout"] = (
-                                            to_accum_detail["counts"].get("timeout", 0) + 1
-                                        )
+                                    to_accum_detail = _merge_special_entries_into_detail(
+                                        to_accum_detail, [to_culprit_entry]
+                                    )
+                                    if not confirm_completion_verified:
+                                        to_accum_detail["incomplete"] = True
+                                        to_accum_detail["harness_error"] = True
+                                    if culprit_outcome == "crashed":
+                                        confirmed_crash_returncode = confirm_rc
                                     to_deselect.add(culprit)
 
                                 # -- check exit conditions --
@@ -1161,6 +1760,9 @@ def run_isolated_pytest_units(
                                     escalate = True
                                     break
                                 if not to_deselect:
+                                    escalate = True
+                                    break
+                                if retry_count >= _MAX_TIMEOUT_RETRIES:
                                     escalate = True
                                     break
 
@@ -1175,8 +1777,9 @@ def run_isolated_pytest_units(
                                 os.close(retry_jsonl_fd)
                                 retry_jsonl_path = Path(retry_jsonl_raw)
                                 to_retry_temps.append(retry_jsonl_path)
+                                to_report_jsonl_paths.append(retry_jsonl_path)
 
-                                retry_env = dict(env)
+                                retry_env = dict(run_env)
                                 retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
                                 retry_cmd = [
                                     sys.executable,
@@ -1196,31 +1799,61 @@ def run_isolated_pytest_units(
                                 )
                                 retry_start = time.monotonic()
                                 try:
-                                    retry_rc, retry_out, retry_err = _run_subprocess_tee(
+                                    retry_rc, retry_out, retry_err = _run_outer_tee(
                                         retry_cmd,
                                         env=retry_env,
-                                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                        timeout=_unit_timeout_seconds(
+                                            timeout,
+                                            unit_granularity,
+                                            num_tests=file_test_counts.get(_unit_file_key(unit), 0),
+                                        ),
+                                        state=state,
+                                        state_file=state_file,
+                                        target=unit,
+                                        role="retry",
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
+                                    ensure_failed_collection_report(
+                                        retry_jsonl_path,
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        stdout=retry_out,
+                                        stderr=retry_err,
+                                    )
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
                                     retry_rc = _TIMEOUT_RETURN_CODE
                                     retry_out = retry_err = ""
                                 retry_dur = time.monotonic() - retry_start
                                 total_retry_dur += retry_dur
+                                iter_status = retry_status
+                                iter_returncode = retry_rc
 
                                 if retry_status != "timeout":
                                     # Retry completed (pass or fail) - merge
-                                    final_detail = _read_jsonl_results(retry_jsonl_path)
+                                    (
+                                        final_detail,
+                                        _retry_culprit,
+                                        _retry_completed,
+                                        retry_exitstatus,
+                                    ) = _analyze_report_jsonl(retry_jsonl_path)
+                                    final_detail, retry_completion_verified = _cache_attempt_report(
+                                        state_file=state_file,
+                                        unit=unit,
+                                        jsonl_path=retry_jsonl_path,
+                                        jsonl_paths=to_report_jsonl_paths,
+                                        detail=final_detail,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        session_exitstatus=retry_exitstatus,
+                                        stdout=retry_out,
+                                        stderr=retry_err,
+                                    )
                                     if final_detail is not None:
-                                        if to_accum_detail is None:
-                                            to_accum_detail = final_detail
-                                        else:
-                                            for k in to_accum_detail["counts"]:
-                                                to_accum_detail["counts"][k] += final_detail[
-                                                    "counts"
-                                                ].get(k, 0)
-                                            to_accum_detail["tests"].extend(final_detail["tests"])
+                                        to_accum_detail = _merge_attempt_details(
+                                            to_accum_detail, final_detail, unit=unit
+                                        )
 
                                     # The file timed out at least once. When a
                                     # specific test was confirmed as the culprit
@@ -1234,36 +1867,82 @@ def run_isolated_pytest_units(
                                         to_accum_detail, unit
                                     )
 
-                                    keep = retry_status != "passed" or (
-                                        to_accum_detail is not None
-                                        and any(
-                                            to_accum_detail["counts"].get(k, 0) > 0
-                                            for k in (
-                                                "failed",
-                                                "xfailed",
-                                                "xpassed",
-                                                "error",
+                                    final_result = FileRunResult(
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        duration_s=retry_dur,
+                                    )
+                                    final_status = _effective_unit_status(
+                                        [final_result],
+                                        to_accum_detail.get("counts")
+                                        if to_accum_detail is not None
+                                        else None,
+                                    )
+                                    final_returncode = retry_rc
+                                    if final_status == "timeout":
+                                        final_returncode = _TIMEOUT_RETURN_CODE
+                                    elif final_status == "crashed":
+                                        final_returncode = (
+                                            confirmed_crash_returncode
+                                            if confirmed_crash_returncode is not None
+                                            else retry_rc
+                                        )
+
+                                    keep = (
+                                        final_status != "passed"
+                                        or not retry_completion_verified
+                                        or (
+                                            to_accum_detail is not None
+                                            and any(
+                                                to_accum_detail["counts"].get(k, 0) > 0
+                                                for k in (
+                                                    "failed",
+                                                    "xfailed",
+                                                    "xpassed",
+                                                    "error",
+                                                )
                                             )
                                         )
                                     )
                                     result = FileRunResult(
                                         target=unit,
-                                        status=retry_status,
-                                        returncode=retry_rc,
+                                        status=final_status,
+                                        returncode=final_returncode,
                                         duration_s=(duration_s + total_retry_dur),
                                         stdout=(retry_out if keep else ""),
                                         stderr=(retry_err if keep else ""),
+                                        completion_verified=(
+                                            retry_completion_verified
+                                            and all_confirmation_completion_verified
+                                        ),
                                     )
                                     _record_result(state, result)
                                     save_run_state(state_file, state)
                                     if to_accum_detail is not None:
                                         per_unit_details[unit] = to_accum_detail
-                                    console.print(
-                                        f"[green]RETRY OK[/green] {unit} "
-                                        f"({total_retry_dur:.1f}s, "
-                                        f"{len(to_deselect)} deselected)"
-                                    )
-                                    if retry_status == "failed":
+                                    if not (
+                                        retry_completion_verified
+                                        and all_confirmation_completion_verified
+                                    ):
+                                        console.print(
+                                            f"[red]INCOMPLETE[/red] {unit}: retry report log "
+                                            "has no valid SessionFinish matching the exit code"
+                                        )
+                                        exit_code = 1
+                                    elif final_status not in {"passed", "empty"}:
+                                        console.print(
+                                            f"[red]RETRY {final_status.upper()}[/red] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(to_deselect)} deselected)"
+                                        )
+                                    else:
+                                        console.print(
+                                            f"[green]RETRY OK[/green] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(to_deselect)} deselected)"
+                                        )
+                                    if final_status in {"failed", "crashed", "timeout"}:
                                         exit_code = 1
                                     index += 1
                                     break  # exit retry loop
@@ -1277,22 +1956,15 @@ def run_isolated_pytest_units(
                                 to_iter_jsonl = retry_jsonl_path
                                 # Continue the while loop
 
-                            else:
-                                # while loop exhausted retries without break
-                                escalate = True
-
                         finally:
-                            all_iter_jsonls = (
-                                [unit_jsonl_path] if unit_jsonl_path else []
-                            ) + to_retry_temps
-                            if report_config is not None and report_config.jsonl_path is not None:
-                                _write_unit_report_record_cache_from_jsonl_paths(
-                                    state_file,
-                                    unit,
-                                    all_iter_jsonls,
-                                )
-                                save_run_state(state_file, state)
-                            for tmp in all_iter_jsonls:
+                            all_iter_jsonls = to_report_jsonl_paths
+                            _write_unit_report_record_cache_from_jsonl_paths(
+                                state_file,
+                                unit,
+                                all_iter_jsonls,
+                            )
+                            save_run_state(state_file, state)
+                            for tmp in dict.fromkeys(to_retry_temps + all_iter_jsonls):
                                 tmp.unlink(missing_ok=True)
 
                         if not escalate:
@@ -1323,6 +1995,7 @@ def run_isolated_pytest_units(
                                     status="escalated",
                                     returncode=_TIMEOUT_RETURN_CODE,
                                     duration_s=duration_s,
+                                    completion_verified=all_confirmation_completion_verified,
                                 ),
                             )
                             save_run_state(state_file, state)
@@ -1355,7 +2028,7 @@ def run_isolated_pytest_units(
                             f"[yellow]Stopped[/yellow] at {unit}. Resume with "
                             f"[bold]--resume --state-file {state_file}[/bold]."
                         )
-                        return exit_code
+                        return _final_state_exit_code(state, exit_code, per_unit_details)
                     index += 1
                     continue
 
@@ -1367,15 +2040,29 @@ def run_isolated_pytest_units(
                 # needs to re-read it for culprit identification).
                 crash_jsonl_path: Path | None = unit_jsonl_path
                 detail: dict[str, Any] | None = None
+                completion_verified = True
                 if unit_jsonl_path is not None:
-                    if report_config is not None and report_config.jsonl_path is not None:
-                        detail, _culprit, _completed = _analyze_report_jsonl(
-                            unit_jsonl_path,
-                            state_file=state_file,
-                            unit=unit,
-                        )
-                    else:
-                        detail, _culprit, _completed = _analyze_report_jsonl(unit_jsonl_path)
+                    (
+                        detail,
+                        _culprit,
+                        _completed,
+                        _session_exitstatus,
+                    ) = _analyze_report_jsonl(unit_jsonl_path)
+                    detail, completion_verified = _cache_attempt_report(
+                        state_file=state_file,
+                        unit=unit,
+                        jsonl_path=unit_jsonl_path,
+                        jsonl_paths=(
+                            ([prior_cache_snapshot] if prior_cache_snapshot is not None else [])
+                            + [unit_jsonl_path]
+                        ),
+                        detail=detail,
+                        status=status,
+                        returncode=returncode,
+                        session_exitstatus=_session_exitstatus,
+                        stdout=captured_stdout,
+                        stderr=captured_stderr,
+                    )
                     if status not in ("crashed", "timeout"):
                         unit_jsonl_path.unlink(missing_ok=True)
                         crash_jsonl_path = None
@@ -1388,7 +2075,9 @@ def run_isolated_pytest_units(
                     detail["counts"].get(k, 0) > 0
                     for k in ("failed", "xfailed", "xpassed", "error")
                 )
-                keep_output = status not in ("passed",) or has_notable_tests
+                keep_output = (
+                    status not in ("passed",) or has_notable_tests or not completion_verified
+                )
                 result = FileRunResult(
                     target=unit,
                     status=status,
@@ -1396,11 +2085,27 @@ def run_isolated_pytest_units(
                     duration_s=duration_s,
                     stdout=captured_stdout if keep_output else "",
                     stderr=captured_stderr if keep_output else "",
+                    completion_verified=completion_verified,
                 )
                 _record_result(state, result)
                 save_run_state(state_file, state)
                 if detail is not None:
                     per_unit_details[unit] = detail
+
+                if not completion_verified:
+                    console.print(
+                        f"[red]INCOMPLETE[/red] {unit}: report log has no valid "
+                        "SessionFinish matching the subprocess exit code"
+                    )
+                    exit_code = 1
+                    if stop_on_failure:
+                        console.print(
+                            f"[yellow]Stopped[/yellow] at {unit}. Resume with "
+                            f"[bold]--resume --state-file {state_file}[/bold]."
+                        )
+                        return _final_state_exit_code(state, exit_code, per_unit_details)
+                    index += 1
+                    continue
 
                 if status in {"passed", "empty"}:
                     console.print(f"[green]{status.upper()}[/green] {unit} ({duration_s:.1f}s)")
@@ -1432,14 +2137,33 @@ def run_isolated_pytest_units(
                         total_retry_dur = 0.0
                         iter_jsonl_path: Path | None = crash_jsonl_path
                         retry_temp_files: list[Path] = []
+                        report_jsonl_paths: list[Path] = (
+                            [prior_cache_snapshot] if prior_cache_snapshot is not None else []
+                        ) + ([crash_jsonl_path] if crash_jsonl_path is not None else [])
+                        iter_status = status
+                        iter_returncode = returncode
                         escalate = False
+                        all_confirmation_completion_verified = True
 
                         try:
                             while True:
                                 # Stream JSONL once for completed + culprit + detail.
                                 if iter_jsonl_path is not None:
-                                    iter_detail, culprit, completed = _analyze_report_jsonl(
-                                        iter_jsonl_path
+                                    (
+                                        iter_detail,
+                                        culprit,
+                                        completed,
+                                        _session_exitstatus,
+                                    ) = _analyze_report_jsonl(iter_jsonl_path)
+                                    iter_detail, _ = _cache_attempt_report(
+                                        state_file=state_file,
+                                        unit=unit,
+                                        jsonl_path=iter_jsonl_path,
+                                        jsonl_paths=report_jsonl_paths,
+                                        detail=iter_detail,
+                                        status=iter_status,
+                                        returncode=iter_returncode,
+                                        session_exitstatus=_session_exitstatus,
                                     )
                                 else:
                                     culprit, completed = None, []
@@ -1449,45 +2173,73 @@ def run_isolated_pytest_units(
 
                                 # Merge partial results
                                 if iter_detail is not None:
-                                    if accumulated_detail is None:
-                                        accumulated_detail = iter_detail
-                                    else:
-                                        for k in accumulated_detail["counts"]:
-                                            accumulated_detail["counts"][k] += iter_detail[
-                                                "counts"
-                                            ].get(k, 0)
-                                        accumulated_detail["tests"].extend(iter_detail["tests"])
-                                        # Merge skip_reasons
-                                        for reason, cnt in iter_detail.get(
-                                            "skip_reasons", {}
-                                        ).items():
-                                            accumulated_detail.setdefault("skip_reasons", {})[
-                                                reason
-                                            ] = (
-                                                accumulated_detail.get("skip_reasons", {}).get(
-                                                    reason, 0
-                                                )
-                                                + cnt
-                                            )
+                                    accumulated_detail = _merge_attempt_details(
+                                        accumulated_detail, iter_detail, unit=unit
+                                    )
 
                                 if culprit:
                                     # Confirm crash by running culprit alone
                                     console.print(
                                         f"[yellow]Confirming crash culprit:[/yellow] {culprit}"
                                     )
+                                    confirmation_target = _absolute_nodeid(
+                                        _unit_file_key(unit), culprit
+                                    )
+                                    confirm_jsonl_fd, confirm_jsonl_raw = tempfile.mkstemp(
+                                        prefix="pkcs11-check-confirmation-",
+                                        suffix=".jsonl",
+                                    )
+                                    os.close(confirm_jsonl_fd)
+                                    confirm_jsonl_path = Path(confirm_jsonl_raw)
+                                    report_jsonl_paths.append(confirm_jsonl_path)
                                     try:
-                                        confirm_rc, confirm_out, confirm_err = _run_subprocess_tee(
+                                        confirm_rc, confirm_out, confirm_err = _run_outer_tee(
                                             [
                                                 sys.executable,
                                                 "-m",
                                                 "pytest",
-                                                culprit,
+                                                confirmation_target,
                                                 *pytest_args,
+                                                "--report-log",
+                                                str(confirm_jsonl_path),
                                             ],
                                             env=env,
                                             timeout=_unit_timeout_seconds(timeout, "test"),
+                                            state=state,
+                                            state_file=state_file,
+                                            target=unit,
+                                            role="confirmation",
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
+                                        ensure_failed_collection_report(
+                                            confirm_jsonl_path,
+                                            target=culprit,
+                                            status=confirm_status,
+                                            returncode=confirm_rc,
+                                            stdout=confirm_out,
+                                            stderr=confirm_err,
+                                        )
+                                        (
+                                            _confirm_detail,
+                                            _confirm_culprit,
+                                            _confirm_completed,
+                                            confirm_exitstatus,
+                                        ) = _analyze_report_jsonl(confirm_jsonl_path)
+                                        _confirm_detail, confirm_completion_verified = (
+                                            _cache_attempt_report(
+                                                state_file=state_file,
+                                                unit=unit,
+                                                jsonl_path=confirm_jsonl_path,
+                                                jsonl_paths=report_jsonl_paths,
+                                                detail=_confirm_detail,
+                                                status=confirm_status,
+                                                returncode=confirm_rc,
+                                                session_exitstatus=confirm_exitstatus,
+                                                stdout=confirm_out,
+                                                stderr=confirm_err,
+                                                evidence_nodeid=culprit,
+                                            )
+                                        )
                                     except subprocess.TimeoutExpired:
                                         confirm_rc = _TIMEOUT_RETURN_CODE
                                         confirm_out = ""
@@ -1496,18 +2248,65 @@ def run_isolated_pytest_units(
                                             f"{_unit_timeout_seconds(timeout, 'test')} seconds"
                                         )
                                         confirm_status = "timeout"
+                                        confirm_completion_verified = True
+                                        ensure_failed_collection_report(
+                                            confirm_jsonl_path,
+                                            target=culprit,
+                                            status=confirm_status,
+                                            returncode=confirm_rc,
+                                            stdout=confirm_out,
+                                            stderr=confirm_err,
+                                        )
+                                        (
+                                            _confirm_detail,
+                                            _confirm_culprit,
+                                            _confirm_completed,
+                                            confirm_exitstatus,
+                                        ) = _analyze_report_jsonl(confirm_jsonl_path)
+                                        _confirm_detail, confirm_completion_verified = (
+                                            _cache_attempt_report(
+                                                state_file=state_file,
+                                                unit=unit,
+                                                jsonl_path=confirm_jsonl_path,
+                                                jsonl_paths=report_jsonl_paths,
+                                                detail=_confirm_detail,
+                                                status=confirm_status,
+                                                returncode=confirm_rc,
+                                                session_exitstatus=confirm_exitstatus,
+                                                stdout=confirm_out,
+                                                stderr=confirm_err,
+                                                evidence_nodeid=culprit,
+                                            )
+                                        )
+                                    all_confirmation_completion_verified = (
+                                        all_confirmation_completion_verified
+                                        and confirm_completion_verified
+                                    )
                                     # Record culprit as a standalone result
                                     if confirm_status in {"crashed", "timeout"}:
                                         culprit_outcome = confirm_status
+                                    elif not confirm_completion_verified:
+                                        culprit_outcome = "error"
                                     else:
                                         culprit_outcome = "crashed"
                                     culprit_entry: dict[str, Any] = {
                                         "nodeid": culprit,
                                         "outcome": culprit_outcome,
+                                        "evidence_type": (
+                                            "harness"
+                                            if not confirm_completion_verified
+                                            else "provider"
+                                        ),
+                                        "returncode": confirm_rc,
+                                        "completion_verified": confirm_completion_verified,
                                     }
-                                    if confirm_status in {"crashed", "timeout"}:
+                                    if confirm_status in {"crashed", "timeout"} or (
+                                        not confirm_completion_verified
+                                    ):
                                         culprit_entry["longrepr"] = (
-                                            confirm_err.strip() or confirm_out.strip()
+                                            confirm_err.strip()
+                                            or confirm_out.strip()
+                                            or f"confirmation exited with code {confirm_rc}"
                                         )
                                     else:
                                         crash_detail = (
@@ -1525,16 +2324,16 @@ def run_isolated_pytest_units(
                                         culprit_entry["stdout"] = confirm_out
                                     if confirm_err.strip():
                                         culprit_entry["stderr"] = confirm_err
-                                    if accumulated_detail is None:
-                                        accumulated_detail = {
-                                            "counts": _empty_counts(),
-                                            "tests": [],
-                                        }
-                                    accumulated_detail["tests"].append(culprit_entry)
-                                    if culprit_outcome in {"crashed", "timeout"}:
-                                        accumulated_detail["counts"][culprit_outcome] = (
-                                            accumulated_detail["counts"].get(culprit_outcome, 0) + 1
-                                        )
+                                    accumulated_detail = _merge_special_entries_into_detail(
+                                        accumulated_detail, [culprit_entry]
+                                    )
+                                    if not confirm_completion_verified:
+                                        accumulated_detail["incomplete"] = True
+                                        accumulated_detail["harness_error"] = True
+                                    if culprit_outcome == "error":
+                                        # The file-level crash remains a finding even when
+                                        # confirmation itself only produced harness evidence.
+                                        _increment_diagnostic_count(accumulated_detail, "crashed")
                                     deselect_set.add(culprit)
                                     crash_count += 1
                                     if (
@@ -1550,6 +2349,9 @@ def run_isolated_pytest_units(
                                                 status="crashed",
                                                 returncode=returncode,
                                                 duration_s=(duration_s + total_retry_dur),
+                                                completion_verified=(
+                                                    all_confirmation_completion_verified
+                                                ),
                                                 stderr=(
                                                     "per-file crash limit reached after "
                                                     f"{crash_count} confirmed crashes"
@@ -1645,8 +2447,9 @@ def run_isolated_pytest_units(
                                 os.close(retry_jsonl_fd)
                                 retry_jsonl_path = Path(retry_jsonl_raw)
                                 retry_temp_files.append(retry_jsonl_path)
+                                report_jsonl_paths.append(retry_jsonl_path)
 
-                                retry_env = dict(env)
+                                retry_env = dict(run_env)
                                 retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
                                 retry_cmd = [
                                     sys.executable,
@@ -1664,55 +2467,95 @@ def run_isolated_pytest_units(
                                 )
                                 retry_start = time.monotonic()
                                 try:
-                                    retry_rc, retry_out, retry_err = _run_subprocess_tee(
+                                    retry_rc, retry_out, retry_err = _run_outer_tee(
                                         retry_cmd,
                                         env=retry_env,
-                                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                        timeout=_unit_timeout_seconds(
+                                            timeout,
+                                            unit_granularity,
+                                            num_tests=file_test_counts.get(_unit_file_key(unit), 0),
+                                        ),
+                                        state=state,
+                                        state_file=state_file,
+                                        target=unit,
+                                        role="retry",
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
+                                    ensure_failed_collection_report(
+                                        retry_jsonl_path,
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        stdout=retry_out,
+                                        stderr=retry_err,
+                                    )
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
                                     retry_rc = _TIMEOUT_RETURN_CODE
                                     retry_out = retry_err = ""
                                 retry_dur = time.monotonic() - retry_start
                                 total_retry_dur += retry_dur
+                                iter_status = retry_status
+                                iter_returncode = retry_rc
 
                                 if retry_status not in ("crashed", "timeout"):
                                     # Retry succeeded - merge final results
-                                    final_detail = _read_jsonl_results(retry_jsonl_path)
+                                    (
+                                        final_detail,
+                                        _retry_culprit,
+                                        _retry_completed,
+                                        retry_exitstatus,
+                                    ) = _analyze_report_jsonl(retry_jsonl_path)
+                                    final_detail, retry_completion_verified = _cache_attempt_report(
+                                        state_file=state_file,
+                                        unit=unit,
+                                        jsonl_path=retry_jsonl_path,
+                                        jsonl_paths=report_jsonl_paths,
+                                        detail=final_detail,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        session_exitstatus=retry_exitstatus,
+                                        stdout=retry_out,
+                                        stderr=retry_err,
+                                    )
                                     if final_detail is not None:
-                                        if accumulated_detail is None:
-                                            accumulated_detail = final_detail
-                                        else:
-                                            for k in accumulated_detail["counts"]:
-                                                accumulated_detail["counts"][k] += final_detail[
-                                                    "counts"
-                                                ].get(k, 0)
-                                            accumulated_detail["tests"].extend(
-                                                final_detail["tests"]
-                                            )
+                                        accumulated_detail = _merge_attempt_details(
+                                            accumulated_detail, final_detail, unit=unit
+                                        )
 
-                                    final_status = retry_status
+                                    final_result = FileRunResult(
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        duration_s=retry_dur,
+                                    )
+                                    final_status = _effective_unit_status(
+                                        [final_result],
+                                        accumulated_detail.get("counts")
+                                        if accumulated_detail is not None
+                                        else None,
+                                    )
                                     final_returncode = retry_rc
-                                    if retry_status == "passed" and accumulated_detail is not None:
-                                        if accumulated_detail["counts"].get("crashed", 0) > 0:
-                                            final_status = "crashed"
-                                            final_returncode = returncode
-                                        elif accumulated_detail["counts"].get("timeout", 0) > 0:
-                                            final_status = "timeout"
-                                            final_returncode = _TIMEOUT_RETURN_CODE
+                                    if final_status == "timeout":
+                                        final_returncode = _TIMEOUT_RETURN_CODE
+                                    elif final_status == "crashed":
+                                        final_returncode = returncode
 
-                                    keep = final_status != "passed" or (
-                                        accumulated_detail is not None
-                                        and any(
-                                            accumulated_detail["counts"].get(k, 0) > 0
-                                            for k in (
-                                                "failed",
-                                                "xfailed",
-                                                "xpassed",
-                                                "error",
-                                                "crashed",
-                                                "timeout",
+                                    keep = (
+                                        final_status != "passed"
+                                        or not retry_completion_verified
+                                        or (
+                                            accumulated_detail is not None
+                                            and any(
+                                                accumulated_detail["counts"].get(k, 0) > 0
+                                                for k in (
+                                                    "failed",
+                                                    "xfailed",
+                                                    "xpassed",
+                                                    "error",
+                                                    "crashed",
+                                                    "timeout",
+                                                )
                                             )
                                         )
                                     )
@@ -1723,16 +2566,36 @@ def run_isolated_pytest_units(
                                         duration_s=(duration_s + total_retry_dur),
                                         stdout=(retry_out if keep else ""),
                                         stderr=(retry_err if keep else ""),
+                                        completion_verified=(
+                                            retry_completion_verified
+                                            and all_confirmation_completion_verified
+                                        ),
                                     )
                                     _record_result(state, result)
                                     save_run_state(state_file, state)
                                     if accumulated_detail is not None:
                                         per_unit_details[unit] = accumulated_detail
-                                    console.print(
-                                        f"[green]RETRY OK[/green] {unit} "
-                                        f"({total_retry_dur:.1f}s, "
-                                        f"{len(deselect_set)} deselected)"
-                                    )
+                                    if not (
+                                        retry_completion_verified
+                                        and all_confirmation_completion_verified
+                                    ):
+                                        console.print(
+                                            f"[red]INCOMPLETE[/red] {unit}: retry report log "
+                                            "has no valid SessionFinish matching the exit code"
+                                        )
+                                        exit_code = 1
+                                    elif final_status in {"passed", "empty"}:
+                                        console.print(
+                                            f"[green]RETRY OK[/green] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(deselect_set)} deselected)"
+                                        )
+                                    else:
+                                        console.print(
+                                            f"[red]RETRY {final_status.upper()}[/red] {unit} "
+                                            f"({total_retry_dur:.1f}s, "
+                                            f"{len(deselect_set)} deselected)"
+                                        )
                                     if final_status in {"failed", "crashed", "timeout"}:
                                         exit_code = 1
                                     index += 1
@@ -1746,17 +2609,14 @@ def run_isolated_pytest_units(
                                 # Continue the while loop
 
                         finally:
-                            all_iter_jsonls = (
-                                [crash_jsonl_path] if crash_jsonl_path else []
-                            ) + retry_temp_files
-                            if report_config is not None and report_config.jsonl_path is not None:
-                                _write_unit_report_record_cache_from_jsonl_paths(
-                                    state_file,
-                                    unit,
-                                    all_iter_jsonls,
-                                )
-                                save_run_state(state_file, state)
-                            for tmp in all_iter_jsonls:
+                            all_iter_jsonls = report_jsonl_paths
+                            _write_unit_report_record_cache_from_jsonl_paths(
+                                state_file,
+                                unit,
+                                all_iter_jsonls,
+                            )
+                            save_run_state(state_file, state)
+                            for tmp in dict.fromkeys(retry_temp_files + all_iter_jsonls):
                                 tmp.unlink(missing_ok=True)
 
                         if not escalate:
@@ -1776,6 +2636,7 @@ def run_isolated_pytest_units(
                             env=env,
                             console=console,
                             disabled_nodeids=unit_disabled_nodeids,
+                            exclude_nodeids=deselect_set,
                             baseline_fingerprint=baseline_fingerprint,
                         )
                         if escalated_units:
@@ -1822,25 +2683,43 @@ def run_isolated_pytest_units(
                         f"[yellow]Stopped[/yellow] at {unit}. Resume with "
                         f"[bold]--resume --state-file {state_file}[/bold]."
                     )
-                    return exit_code
+                    return _final_state_exit_code(state, exit_code, per_unit_details)
                 index += 1
             finally:
                 if initial_deselect_path is not None:
                     initial_deselect_path.unlink(missing_ok=True)
                 if unit_jsonl_path is not None:
                     unit_jsonl_path.unlink(missing_ok=True)
+                if prior_cache_snapshot is not None:
+                    prior_cache_snapshot.unlink(missing_ok=True)
     finally:
         coverage_data = None
         quality_records = []
         merged_details = dict(per_unit_details)
         if report_config is not None:
+            inline_report_records_by_unit = {}
+            for unit, records in state.report_records_by_unit.items():
+                inline_report_records_by_unit.setdefault(unit, records)
+            output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
+                state_file,
+                state,
+                inline_report_records_by_unit,
+            )
+            owner_aliases = _build_report_owner_aliases(
+                list(
+                    dict.fromkeys(
+                        [
+                            *output_state.units,
+                            *(result.target for result in output_state.results),
+                        ]
+                    )
+                ),
+                collected_items or (),
+            )
             if report_config.jsonl_path is not None:
-                inline_report_records_by_unit = {}
-                for unit, records in state.report_records_by_unit.items():
-                    inline_report_records_by_unit.setdefault(unit, records)
                 if resume and report_config.jsonl_path.exists():
-                    candidate_targets = set(state.units) | {
-                        result.target for result in state.results
+                    candidate_targets = set(output_state.units) | {
+                        result.target for result in output_state.results
                     }
                     for unit in executed_units:
                         inline_report_records_by_unit.pop(unit, None)
@@ -1848,18 +2727,24 @@ def run_isolated_pytest_units(
                         state_file,
                         report_config.jsonl_path,
                         candidate_targets=candidate_targets,
-                        skip_units=set(inline_report_records_by_unit) | executed_units,
+                        skip_units=set(state.report_records_by_unit)
+                        | set(inline_report_records_by_unit)
+                        | executed_units,
+                        owner_aliases=owner_aliases,
                     )
                 wrote_report_jsonl = _write_report_jsonl_from_record_sources(
                     state_file,
-                    units=state.units,
+                    units=output_state.units,
                     inline_records_by_unit=inline_report_records_by_unit,
                     output_path=report_config.jsonl_path,
+                    attempt_history=state.attempt_history,
+                    recovery_events=state.recovery_events,
+                    collection_failure_path=collection_failure_sidecar_path(state_file),
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     merged_details = _build_per_unit_details_from_record_sources(
                         state_file,
-                        units=state.units,
+                        units=output_state.units,
                         inline_records_by_unit=inline_report_records_by_unit,
                     )
                     merged_details = _merge_supplemental_special_details(
@@ -1872,8 +2757,9 @@ def run_isolated_pytest_units(
                     )
                     coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
                         coverage_data,
-                        state,
+                        output_state,
                         per_unit_details=merged_details,
+                        owner_aliases=owner_aliases,
                     )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
@@ -1890,13 +2776,24 @@ def run_isolated_pytest_units(
                         _emit_external_provision_banner(
                             provisioning_data["totals"]["ran_via_external"]
                         )
+            else:
+                merged_details = _build_per_unit_details_from_record_sources(
+                    state_file,
+                    units=output_state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
+                )
+                merged_details = _merge_supplemental_special_details(
+                    merged_details,
+                    per_unit_details,
+                )
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
                     provenance=provenance,
+                    owner_aliases=owner_aliases,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -1908,11 +2805,12 @@ def run_isolated_pytest_units(
             else:
                 write_isolated_report(
                     report_config,
-                    state,
-                    per_unit_details=per_unit_details,
+                    output_state,
+                    per_unit_details=merged_details,
+                    owner_aliases=owner_aliases,
                 )
 
-    return exit_code
+    return _final_state_exit_code(state, exit_code, merged_details)
 
 
 def state_results_by_status(path: Path) -> dict[str, int]:

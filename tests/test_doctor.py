@@ -11,7 +11,7 @@ import pytest
 import typer
 
 from pkcs11_check.cli import doctor_cmd
-from pkcs11_check.core.doctor_probe import LoginProbe, run_login_probe_subprocess
+from pkcs11_check.core.doctor_probe import LoginProbe, probe_login, run_login_probe_subprocess
 from pkcs11_check.core.preflight import CapabilityManifest
 
 
@@ -92,3 +92,34 @@ def test_login_probe_subprocess_handles_bad_module(tmp_path: Path) -> None:
     bad.write_bytes(b"not a library")
     result = run_login_probe_subprocess(bad, interface="auto", slot=0, pin=b"1234", timeout=15)
     assert result.status in {"error", "crashed", "timeout"}
+
+
+def test_login_probe_cleanup_surfaces_ctypes_access_violation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    class _Raw:
+        def C_Initialize(self, _arg: object) -> int:  # noqa: N802
+            return 0
+
+        def C_OpenSession(self, *_args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Login(self, *_args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Logout(self, _session: int) -> int:  # noqa: N802
+            raise OSError("exception: access violation reading 0x0")
+
+        def C_CloseSession(self, _session: int) -> int:  # noqa: N802
+            return 0
+
+        def C_Finalize(self, _arg: object) -> int:  # noqa: N802
+            return 0
+
+    monkeypatch.setattr(RawPKCS11, "from_lib", classmethod(lambda *_a, **_k: _Raw()))
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.get_slot_ids", lambda *_a, **_k: [0])
+
+    with pytest.raises(OSError, match="access violation"):
+        probe_login(Path("module.so"), "auto", 0, b"1234")

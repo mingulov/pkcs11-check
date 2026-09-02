@@ -28,10 +28,16 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _canonical_executions as _canonical_executions,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
     _delete_unit_report_record_cache as _delete_unit_report_record_cache,
+)
+from pkcs11_check.core._report_records import (
+    _execution_owner_file as _execution_owner_file,
 )
 from pkcs11_check.core._report_records import (
     _extract_unit_report_records_from_jsonl as _extract_unit_report_records_from_jsonl,
@@ -151,10 +157,13 @@ from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
 from pkcs11_check.core.report_log import (
+    SessionCompletionTracker as _SessionCompletionTracker,
+)
+from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
-    map_report_outcome as _map_outcome,
+    map_report_record_outcome as _map_record_outcome,
 )
 from pkcs11_check.core.run_metrics import (
     RESULT_OUTCOME_KEYS,
@@ -358,33 +367,26 @@ def postprocess_jsonl_to_unified(
     If ``provenance`` is provided, it is included in the output payload.
     """
     file_counts: dict[str, dict[str, int]] = {}
-    session_finished = False
+    completion = _SessionCompletionTracker()
 
     def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
         nodeid = str(rec.get("nodeid", ""))
-        file_part = nodeid.split("::")[0]
-        if not file_part:
-            return
+        file_part = nodeid.split("::")[0] or "<collection>"
         if file_part not in file_counts:
             file_counts[file_part] = _empty_counts()
-        outcome = _map_outcome(rec.get("outcome", "passed"), rec.get("wasxfail"))
+        outcome = _map_record_outcome(rec)
         file_counts[file_part][outcome] = file_counts[file_part].get(outcome, 0) + 1
 
     def _records_with_completion() -> Iterator[dict[str, Any]]:
-        nonlocal session_finished
-        for record in _iter_report_log_records(jsonl_path):
-            if (
-                record.get("$report_type") == "SessionFinish"
-                and type(record.get("exitstatus")) is int
-            ):
-                session_finished = True
+        for record in _iter_report_log_records(jsonl_path, on_invalid=completion.invalidate):
+            completion.observe(record)
             yield record
 
     # Parse the JSONL once: build the aggregate detail and the per-file counts
     # from the same streaming record pass.
     detail = _build_detail_from_report_records(
         _records_with_completion(),
-        call_record_hook=_accumulate_file_count,
+        result_record_hook=_accumulate_file_count,
     )
     # An empty / vacuous JSONL (no records at all) returns None from the builder;
     # treat it as a zero-count run so we still produce a results.json payload.
@@ -406,11 +408,27 @@ def postprocess_jsonl_to_unified(
             continue
         compliance_notes_by_file.setdefault(file_part, []).append(dict(note))
 
+    raw_executions = [
+        execution
+        for execution in detail.get("executions", [])
+        if isinstance(execution, Mapping) and _execution_owner_file(execution) is not None
+    ]
+    executions_by_file: dict[str, list[dict[str, Any]]] = {}
+    for execution in _canonical_executions(raw_executions):
+        file_part = _execution_owner_file(execution)
+        if file_part is not None:
+            executions_by_file.setdefault(file_part, []).append(execution)
+
     summary: dict[str, int] = _empty_counts()
     units: list[dict[str, Any]] = []
 
     for target in sorted(
-        set(list(by_file.keys()) + list(file_counts.keys()) + list(compliance_notes_by_file.keys()))
+        set(
+            list(by_file.keys())
+            + list(file_counts.keys())
+            + list(compliance_notes_by_file.keys())
+            + list(executions_by_file.keys())
+        )
     ):
         counts = file_counts.get(target, _empty_counts())
         for key in summary:
@@ -418,27 +436,45 @@ def postprocess_jsonl_to_unified(
         has_failure = any(
             counts.get(key, 0) > 0 for key in ("failed", "error", "crashed", "timeout")
         )
+        status = (
+            "timeout"
+            if counts.get("timeout", 0)
+            else ("crashed" if counts.get("crashed", 0) else "failed")
+        )
         unit: dict[str, Any] = {
             "target": target,
-            "status": "failed" if has_failure else "passed",
+            "status": status if has_failure else "passed",
             "returncode": 1 if has_failure else 0,
             "duration_s": 0.0,
             "counts": counts,
         }
+        incomplete_files = detail.get("incomplete_files")
+        if detail.get("incomplete") is True and (
+            not isinstance(incomplete_files, list) or target in incomplete_files
+        ):
+            unit["incomplete"] = True
+        if not completion.complete:
+            unit["completion_verified"] = False
         tests = by_file.get(target, [])
         if tests:
             unit["tests"] = tests
         compliance_notes = compliance_notes_by_file.get(target, [])
         if compliance_notes:
             unit["compliance_notes"] = compliance_notes
+        executions = executions_by_file.get(target, [])
+        if executions:
+            unit["executions"] = executions
         units.append(unit)
 
     summary["total"] = sum(summary[key] for key in RESULT_OUTCOME_KEYS)
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = not session_finished
+    summary["incomplete"] = not completion.complete
     summary["incomplete"] = run_is_incomplete(summary, units)
+    if not completion.complete:
+        for unit in units:
+            unit["incomplete"] = True
     payload: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",

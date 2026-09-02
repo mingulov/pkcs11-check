@@ -19,8 +19,6 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
-from pkcs11_check.compliance import ComplianceLevel, note
-from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.raw import types_std
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import ckr_name
@@ -52,11 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
-from pkcs11_check.testcases._subprocess_preamble import (
-    SUBPROCESS_TIMEOUT_MARKER,
-    SUBPROCESS_TIMEOUT_RC,
-    pin_from_config,
-)
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     destroy_returned_handles,
@@ -135,16 +129,25 @@ def _classify_unhonorable_length_outcome(
     """Classify the outcome of an un-honorable (2^63) length probe.
 
     Verdict matrix:
+    - Timeout/crash -> hard crash-class finding. The normal honeypot cannot map 2^63
+      bytes, so read-vs-write attribution remains pending an ASAN rerun; lack of that
+      evidence must not exonerate a provider crash or hang.
     - SETUP_XFAIL line present -> xfail (not_operational, setup didn't reach probe).
-    - Timeout (rc==SUBPROCESS_TIMEOUT_RC or SUBPROCESS_TIMEOUT_MARKER in stderr) ->
-      note (honoring an un-backable length is caller-UB territory, not silent truncation).
-    - Crash (is_crash_returncode) -> note (over-read on caller-induced UB, not a module defect).
     - CKR_OK -> fail (accepted_invalid: silent truncation of an un-honorable length).
     - rv in reject_rvs -> pass.
     - other clean code -> xfail (nonspec_reject).
     """
     from pkcs11_check.testcases._probes.honeypot import SETUP_XFAIL_PREFIX
     from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+
+    if rc != 0:
+        assert_subprocess_completed(
+            rc,
+            stdout,
+            stderr,
+            context=f"{label_op} (near-SIZE_MAX; ASAN read/write classification pending)",
+        )
+        return
 
     # SETUP_XFAIL: setup (keygen/Init) cleanly errored before the probe ran.
     for line in stdout.splitlines():
@@ -154,36 +157,6 @@ def _classify_unhonorable_length_outcome(
                 label=label_op,
                 summary=line.removeprefix(SETUP_XFAIL_PREFIX).strip(),
             )
-
-    # Timeout: module attempted the un-honorable length (honoring attempt).
-    if SUBPROCESS_TIMEOUT_MARKER in stderr or rc == SUBPROCESS_TIMEOUT_RC:
-        note(
-            f"{label_op}: module attempted an un-honorable 2^63 length and was "
-            "killed at 30 s — it neither rejected nor silently truncated "
-            "(caller cannot supply 2^63 bytes; honoring attempt, not a defect)",
-            ComplianceLevel.EXTENDED,
-            reference="PKCS#11 length semantics",
-            test_id=test_id,
-        )
-        return
-
-    # Crash (POSIX signal OR Windows NTSTATUS): module over-read on caller-induced UB.
-    # The same provider behavior must yield the same verdict on every platform.
-    if is_crash_returncode(rc):
-        note(
-            f"{label_op}: module crashed ({crash_detail_name(rc)}) on an un-honorable "
-            "2^63 length — caller cannot supply 2^63 bytes; this is caller-induced UB, "
-            "not a module defect",
-            ComplianceLevel.EXTENDED,
-            reference="PKCS#11 length semantics",
-            test_id=test_id,
-        )
-        return
-
-    # Non-crash non-zero exit (e.g. a clean error code): classify via assert_subprocess_completed
-    if rc > 0:
-        assert_subprocess_completed(rc, stdout, stderr, context=label_op)
-        return
 
     # rc == 0: parse TARGET_RV.
     rv = _parse_prefixed_int(stdout, "TARGET_RV:")

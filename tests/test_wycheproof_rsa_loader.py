@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+import pytest
 
 from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_oaep as rsa_oaep
 from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_pss as rsa_pss
@@ -104,3 +107,85 @@ def test_rsa_oaep_import_uses_unsigned_pkcs11_bigint_encoding(
     assert len(captured["p"]) == 128
     assert not captured["q"].startswith(b"\x00")
     assert len(captured["q"]) == 128
+
+
+def test_rsa_oaep_loader_retains_multiprime_material(tmp_path: Any, monkeypatch: Any) -> None:
+    """OAEP vectors retain exact PKCS#8 and multi-prime metadata for provisioning."""
+    payload = {
+        "testGroups": [
+            {
+                "keySize": 2048,
+                "sha": "SHA-1",
+                "mgfSha": "SHA-1",
+                "privateKey": {
+                    "modulus": "01",
+                    "publicExponent": "03",
+                    "privateExponent": "01",
+                    "prime1": "01",
+                    "prime2": "01",
+                    "exponent1": "01",
+                    "exponent2": "01",
+                    "coefficient": "01",
+                    "otherPrimeInfos": [["02", "03", "04"]],
+                },
+                "privateKeyPkcs8": "deadbeef",
+                "tests": [{"tcId": 1, "result": "valid", "ct": "00", "msg": ""}],
+            }
+        ]
+    }
+    filename = "synthetic_oaep.json"
+    (tmp_path / filename).write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(rsa_oaep, "WYCHEPROOF_DIR", tmp_path)
+    monkeypatch.setattr(rsa_oaep, "_OAEP_FILES", [filename])
+
+    vectors = rsa_oaep._load_oaep_vectors()
+
+    assert vectors[0][1]["_pkcs8_hex"] == "deadbeef"
+    assert vectors[0][1]["_other_prime_infos"] == [["02", "03", "04"]]
+
+
+@pytest.mark.parametrize(
+    ("other_prime_infos", "modulus"),
+    [([], "01"), (["extra-prime"], "01"), ([], "02")],
+)
+def test_rsa_oaep_caller_only_passes_pkcs8_for_multiprime(
+    monkeypatch: Any, other_prime_infos: list[str], modulus: str
+) -> None:
+    """OAEP passes corpus PKCS#8 only for explicit or inferred multi-prime keys."""
+    private_key = {
+        "modulus": modulus,
+        "publicExponent": "03",
+        "privateExponent": "01",
+        "prime1": "01",
+        "prime2": "01",
+        "exponent1": "01",
+        "exponent2": "01",
+        "coefficient": "01",
+    }
+    if other_prime_infos:
+        private_key["otherPrimeInfos"] = other_prime_infos
+    vec = {
+        "ct": "00",
+        "msg": "",
+        "result": "valid",
+        "label": "",
+        "_sha": "SHA-1",
+        "_mgfSha": "SHA-1",
+        "_pkcs8_hex": "deadbeef",
+        "_other_prime_infos": other_prime_infos,
+        "_group": {"privateKey": private_key, "privateKeyPkcs8": "deadbeef"},
+    }
+    captured: dict[str, Any] = {}
+
+    def fake_provision(rs: Any, cfg: Any, **kwargs: Any) -> int:
+        captured.update(kwargs)
+        return 1
+
+    monkeypatch.setattr(rsa_oaep, "provision_rsa_private_key", fake_provision)
+    monkeypatch.setattr(rsa_oaep, "decrypt_single", lambda *args, **kwargs: b"")
+    monkeypatch.setattr(rsa_oaep, "destroy_quietly", lambda *args: None)
+
+    rsa_oaep.test_rsa_oaep(_RsaSession(), None, "synthetic", vec)
+
+    inferred_multiprime = bool(other_prime_infos) or modulus != "01"
+    assert captured.get("pkcs8") == (b"\xde\xad\xbe\xef" if inferred_multiprime else None)
