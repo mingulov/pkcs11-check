@@ -169,6 +169,13 @@ _SENSITIVE_WRAP_RUNTIME_REJECT_RVS = {
     CKR_MECHANISM_PARAM_INVALID,
 }
 
+_SENSITIVE_UNWRAP_POLICY_REJECT_RVS = (
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ACTION_PROHIBITED,
+)
+
 
 def _gen_cve_aes_key_or_xfail(
     rs: Any,
@@ -291,10 +298,11 @@ class TestCKADeriveOnEC:
 
 
 class TestTookanUnwrapAttrs:
-    """Tookan wrap/unwrap attribute preservation (task 7.23).
+    """Tookan/Cryptosense wrap/unwrap key-separation posture (task 7.23).
 
-    Unwrapped keys must preserve security attributes.
-    Reference: Tookan paper - CKA_SENSITIVE ignored on unwrap.
+    The unbound C_UnwrapKey flow is a posture observation because the caller
+    controls the output template. The explicit CKA_UNWRAP_TEMPLATE binding
+    oracle lives in ``security/test_unwrap_reimport.py``.
     """
 
     def test_unwrapped_key_preserves_extractable(
@@ -349,10 +357,34 @@ class TestTookanUnwrapAttrs:
                     unwrapped,
                     [CKA_EXTRACTABLE, CKA_SENSITIVE],
                 )
-                assert attrs[CKA_EXTRACTABLE] is False, (
-                    "Tookan: unwrapped key is EXTRACTABLE despite template saying False"
-                )
-                assert attrs[CKA_SENSITIVE] is True, "Tookan: unwrapped key lost SENSITIVE flag"
+                extractable_after = attrs.get(CKA_EXTRACTABLE)
+                sensitive_after = attrs.get(CKA_SENSITIVE)
+                if extractable_after is True or sensitive_after is False:
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        label="Tookan unwrapped key contradicts requested protection",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "SECURITY: C_UnwrapKey returned a result contradicting its "
+                            "requested protection template: "
+                            f"CKA_EXTRACTABLE={extractable_after!r}, "
+                            f"CKA_SENSITIVE={sensitive_after!r}"
+                        ),
+                    )
+                if type(extractable_after) is not bool or type(sensitive_after) is not bool:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Tookan unwrapped key protection readback",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "Tookan C_UnwrapKey result protection readback is missing or "
+                            "malformed: "
+                            f"CKA_EXTRACTABLE={extractable_after!r}, "
+                            f"CKA_SENSITIVE={sensitive_after!r}"
+                        ),
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -363,17 +395,15 @@ class TestTookanUnwrapAttrs:
         self,
         p11_raw_session: Any,
     ) -> None:
-        """Tookan sec.3.3: unwrap with attacker-supplied CKA_SENSITIVE=False
-        on a key that was originally SENSITIVE=True must not produce a
-        non-sensitive copy.
+        """Probe unbound re-import of a sensitive/extractable source key.
 
-        The attack: an attacker who can wrap a sensitive key and then unwrap
-        it provides a template requesting CKA_SENSITIVE=False, hoping the
-        module will silently accept the attribute downgrade and let them
-        read the key value. Either the unwrap must be rejected, or the
-        resulting key must keep CKA_SENSITIVE=True.
-
-        Closes Phase 4.5 GAP-T3 (HIGH).
+        The source protection and resulting value readability are recorded as
+        a Tookan/Cryptosense posture observation. Caller control of the
+        unbound C_UnwrapKey output template is specification-permitted because
+        this wrapping key has no CKA_UNWRAP_TEMPLATE binding. A provider that
+        advertises the unwrap path but cleanly refuses this template is not
+        spec-correctly operational, so the exact policy refusals are visible
+        xfails; unexpected errors remain hard failures.
         """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
@@ -395,6 +425,12 @@ class TestTookanUnwrapAttrs:
             attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: True},
         )
         try:
+            source_attrs = read_attributes(
+                rs.raw,
+                rs.sh,
+                target,
+                [CKA_SENSITIVE, CKA_EXTRACTABLE],
+            )
             try:
                 wrapped = wrap_key_recipe(
                     rs.raw,
@@ -428,41 +464,101 @@ class TestTookanUnwrapAttrs:
                     },
                 )
             except CkrAssertionError as exc:
-                # Module rejected the attacker template — correct behaviour only
-                # for the exact policy CKRs; all other provider returns stay visible.
-                if exc.rv in {
-                    CKR_TEMPLATE_INCONSISTENT,
-                    CKR_ATTRIBUTE_VALUE_INVALID,
-                    CKR_ATTRIBUTE_READ_ONLY,
-                    CKR_ACTION_PROHIBITED,
-                }:
-                    return
+                if exc.rv in _SENSITIVE_UNWRAP_POLICY_REJECT_RVS:
+                    classify(
+                        "not_operational",
+                        label="Tookan unbound unwrap rejected attacker output template",
+                        operation="C_UnwrapKey",
+                        expected=_SENSITIVE_UNWRAP_POLICY_REJECT_RVS,
+                        actual=exc.rv,
+                        summary=(
+                            "Tookan unbound C_UnwrapKey cleanly rejected the advertised "
+                            "output-template path with "
+                            f"{exc.rv!r}; this is not operational"
+                        ),
+                    )
                 raise
 
             try:
-                attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_SENSITIVE])
-                if attrs.get(CKA_SENSITIVE) is False:
-                    from pkcs11_check.compliance import ComplianceLevel, note
-
-                    note(
-                        "Module honoured CKA_SENSITIVE=False on unwrap of a "
-                        "SENSITIVE=True key — Tookan sec.3.3 attack succeeded.",
-                        ComplianceLevel.CRITICAL,
-                        reference="Tookan paper §3.3 / PKCS#11 v3.2",
-                    )
+                attrs = read_attributes(
+                    rs.raw,
+                    rs.sh,
+                    unwrapped,
+                    [CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_VALUE],
+                )
+                sensitive_after = attrs.get(CKA_SENSITIVE)
+                extractable_after = attrs.get(CKA_EXTRACTABLE)
+                value = attrs.get(CKA_VALUE)
+                policy_readback_valid = (
+                    type(sensitive_after) is bool and type(extractable_after) is bool
+                )
+                value_readable = type(value) is bytes and bool(value)
+                protected = sensitive_after is True or extractable_after is False
+                if value_readable and protected:
                     classify(
                         "self_contradiction",
                         kind="policy",
-                        label="Tookan unwrap sensitive downgrade",
-                        operation="C_UnwrapKey",
-                        mechanism="CKM_AES_KEY_WRAP",
-                        spec_ref="Tookan paper §3.3 / PKCS#11 v3.2",
-                        summary="SECURITY: Tookan §3.3 — unwrap with CKA_SENSITIVE=False "
-                        "produced a non-sensitive copy of a SENSITIVE=True key. "
-                        "Sensitive-key boundary breached on unwrap.",
+                        label="Tookan unbound unwrap result exposes protected key material",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "SECURITY: unbound C_UnwrapKey result contains nonempty "
+                            "CKA_VALUE while the same result key reports protective "
+                            f"attributes (CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r})"
+                        ),
                     )
-                # SENSITIVE preserved: correct behaviour (template ignored
-                # for security-downgrade).
+                if not policy_readback_valid:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Tookan unbound unwrap result-key protection readback",
+                        operation="C_GetAttributeValue",
+                        summary=(
+                            "Tookan unbound unwrap result-key protection readback is "
+                            "missing or malformed: "
+                            f"CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r}"
+                        ),
+                    )
+
+                if sensitive_after is not False or extractable_after is not True:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Tookan unbound unwrap result did not honor output template",
+                        operation="C_UnwrapKey",
+                        summary=(
+                            "Tookan unbound C_UnwrapKey result did not honor the requested "
+                            "output template (CKA_SENSITIVE=False, CKA_EXTRACTABLE=True): "
+                            f"CKA_SENSITIVE={sensitive_after!r}, "
+                            f"CKA_EXTRACTABLE={extractable_after!r}"
+                        ),
+                    )
+
+                if sensitive_after is False and extractable_after is True:
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        "Tookan/Cryptosense unbound wrap/unwrap posture: source key "
+                        "reported "
+                        f"CKA_SENSITIVE={source_attrs.get(CKA_SENSITIVE)!r}, "
+                        f"CKA_EXTRACTABLE={source_attrs.get(CKA_EXTRACTABLE)!r}; the "
+                        "caller requested CKA_SENSITIVE=False and CKA_EXTRACTABLE=True, "
+                        f"yielding CKA_SENSITIVE={sensitive_after!r}, "
+                        f"CKA_EXTRACTABLE={extractable_after!r}, and CKA_VALUE readable="
+                        f"{value_readable!r}. This is a posture observation, not a "
+                        "provider contradiction: the caller requested a sensitivity "
+                        "downgrade on an unbound C_UnwrapKey output. Only "
+                        "CKA_UNWRAP_TEMPLATE on the wrapping key binds output "
+                        "attributes; CKA_WRAP_WITH_TRUSTED on the wrapped key and "
+                        "CKA_TRUSTED on the wrapping key govern trusted wrapping, but "
+                        "do not bind output sensitivity.",
+                        ComplianceLevel.NOT_RECOMMENDED,
+                        reference=(
+                            "PKCS#11 C_UnwrapKey caller-controlled output template; "
+                            "Tookan/Cryptosense key-separation attack class"
+                        ),
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:

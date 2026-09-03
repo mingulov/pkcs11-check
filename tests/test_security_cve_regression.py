@@ -6,16 +6,27 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 
+import pkcs11_check.compliance as compliance
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_EXTRACTABLE,
+    CKA_SENSITIVE,
+    CKA_VALUE,
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_MECHANISM_INVALID,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.security import test_cve_regression
+
+_MISSING = object()
 
 
 class _EncryptStateRaw:
@@ -57,6 +68,11 @@ def _run_tookan_sensitive_unwrap_until_wrap(
 ) -> None:
     monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_args: None)
+    monkeypatch.setattr(
+        test_cve_regression,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_SENSITIVE: True, CKA_EXTRACTABLE: True},
+    )
     monkeypatch.setattr(
         test_cve_regression,
         "wrap_key_recipe",
@@ -203,7 +219,7 @@ def test_tookan_sensitive_unwrap_xfails_generic_wrap_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        test_cve_regression.pytest,
+        pytest,
         "skip",
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
@@ -212,6 +228,233 @@ def test_tookan_sensitive_unwrap_xfails_generic_wrap_runtime_error(
         _run_tookan_sensitive_unwrap_until_wrap(
             monkeypatch,
             CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR)),
+        )
+
+
+def test_tookan_sensitive_unwrap_records_unbound_extraction_posture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_cve_regression, "wrap_key_recipe", lambda *_a, **_k: b"wrapped")
+    monkeypatch.setattr(test_cve_regression, "unwrap_key", lambda *_a, **_k: 2)
+    monkeypatch.setattr(
+        test_cve_regression,
+        "classify",
+        lambda *_a, **_k: pytest.fail("unbound Tookan path must not classify output control"),
+    )
+    notes: list[str] = []
+    monkeypatch.setattr(
+        compliance,
+        "note",
+        lambda description, *_a, **_k: notes.append(description),
+    )
+    reads: list[list[int]] = []
+
+    def _read(_raw: object, _sh: object, _handle: object, attrs: list[int]) -> dict[int, object]:
+        reads.append(attrs)
+        if CKA_VALUE in attrs:
+            return {
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_VALUE: b"\x11" * 16,
+            }
+        return {CKA_SENSITIVE: True, CKA_EXTRACTABLE: True}
+
+    monkeypatch.setattr(test_cve_regression, "read_attributes", _read)
+    test_cve_regression.TestTookanUnwrapAttrs().test_unwrapped_key_cannot_unset_sensitive(
+        _session(_EncryptStateRaw(), "AES_KEY_WRAP", "AES_KEY_GEN")
+    )
+    assert reads[0] == [CKA_SENSITIVE, CKA_EXTRACTABLE]
+    assert reads[-1] == [CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_VALUE]
+    assert notes and "unbound" in notes[0]
+    assert "downgrade" in notes[0]
+    assert "CKA_SENSITIVE=False" in notes[0]
+    assert "CKA_VALUE readable=True" in notes[0]
+
+
+@pytest.mark.parametrize(
+    "reject_rv",
+    [
+        CKR_TEMPLATE_INCONSISTENT,
+        CKR_ATTRIBUTE_VALUE_INVALID,
+        CKR_ATTRIBUTE_READ_ONLY,
+        CKR_ACTION_PROHIBITED,
+    ],
+)
+def test_tookan_sensitive_unwrap_clean_refusal_is_visible_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+    reject_rv: int,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        test_cve_regression,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_SENSITIVE: True, CKA_EXTRACTABLE: True},
+    )
+    monkeypatch.setattr(test_cve_regression, "wrap_key_recipe", lambda *_a, **_k: b"wrapped")
+    monkeypatch.setattr(
+        test_cve_regression,
+        "unwrap_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            CkrAssertionError(f"rv={reject_rv}", int(reject_rv))
+        ),
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_cve_regression.TestTookanUnwrapAttrs().test_unwrapped_key_cannot_unset_sensitive(
+            _session(_EncryptStateRaw(), "AES_KEY_WRAP", "AES_KEY_GEN")
+        )
+
+
+def _run_tookan_unbound_result(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sensitive: object = False,
+    extractable: object = True,
+    value: object = b"\x11" * 16,
+) -> list[str]:
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_cve_regression, "wrap_key_recipe", lambda *_a, **_k: b"wrapped")
+    monkeypatch.setattr(test_cve_regression, "unwrap_key", lambda *_a, **_k: 2)
+    notes: list[str] = []
+    monkeypatch.setattr(
+        compliance,
+        "note",
+        lambda description, *_a, **_k: notes.append(description),
+    )
+
+    def _read(_raw: object, _sh: object, _handle: object, attrs: list[int]) -> dict[int, object]:
+        if CKA_VALUE in attrs:
+            result: dict[int, object] = {CKA_VALUE: value}
+            if sensitive is not _MISSING:
+                result[CKA_SENSITIVE] = sensitive
+            if extractable is not _MISSING:
+                result[CKA_EXTRACTABLE] = extractable
+            return result
+        return {CKA_SENSITIVE: True, CKA_EXTRACTABLE: True}
+
+    monkeypatch.setattr(test_cve_regression, "read_attributes", _read)
+    test_cve_regression.TestTookanUnwrapAttrs().test_unwrapped_key_cannot_unset_sensitive(
+        _session(_EncryptStateRaw(), "AES_KEY_WRAP", "AES_KEY_GEN")
+    )
+    return notes
+
+
+def _run_tookan_preservation_result(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sensitive: object = True,
+    extractable: object = False,
+) -> None:
+    monkeypatch.setattr(test_cve_regression, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_cve_regression, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_cve_regression, "wrap_key_recipe", lambda *_a, **_k: b"wrapped")
+    monkeypatch.setattr(test_cve_regression, "unwrap_key", lambda *_a, **_k: 2)
+
+    def _read(_raw: object, _sh: object, _handle: object, _attrs: list[int]) -> dict[int, object]:
+        result: dict[int, object] = {}
+        if sensitive is not _MISSING:
+            result[CKA_SENSITIVE] = sensitive
+        if extractable is not _MISSING:
+            result[CKA_EXTRACTABLE] = extractable
+        return result
+
+    monkeypatch.setattr(test_cve_regression, "read_attributes", _read)
+    test_cve_regression.TestTookanUnwrapAttrs().test_unwrapped_key_preserves_extractable(
+        _session(_EncryptStateRaw(), "AES_KEY_WRAP", "AES_KEY_GEN")
+    )
+
+
+def test_tookan_preservation_valid_claims_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_tookan_preservation_result(monkeypatch)
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable"),
+    [(False, _MISSING), (_MISSING, True)],
+)
+def test_tookan_preservation_definitive_mismatch_fails_with_missing_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: object,
+    extractable: object,
+) -> None:
+    with pytest.raises(Failed, match="result contradicting its requested protection"):
+        _run_tookan_preservation_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable"),
+    [(True, _MISSING), (_MISSING, False), (_MISSING, _MISSING)],
+)
+def test_tookan_preservation_incomplete_claims_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: object,
+    extractable: object,
+) -> None:
+    with pytest.raises(XFailed, match="result protection readback"):
+        _run_tookan_preservation_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable"),
+    [(True, True), (False, False), (True, _MISSING), (_MISSING, False)],
+)
+def test_tookan_unbound_definitive_protection_claim_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+    extractable: bool,
+) -> None:
+    with pytest.raises(Failed, match="same result key reports protective attributes"):
+        _run_tookan_unbound_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable"),
+    [(_MISSING, True), (False, _MISSING), ("true", True)],
+)
+def test_tookan_unbound_malformed_protection_readback_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: object,
+    extractable: object,
+) -> None:
+    with pytest.raises(XFailed, match="result-key protection readback"):
+        _run_tookan_unbound_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable"),
+    [(True, True), (False, False), (True, False)],
+)
+def test_tookan_unbound_different_result_template_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: bool,
+    extractable: bool,
+) -> None:
+    with pytest.raises(XFailed, match="did not honor the requested output template"):
+        _run_tookan_unbound_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+            value=b"",
         )
 
 

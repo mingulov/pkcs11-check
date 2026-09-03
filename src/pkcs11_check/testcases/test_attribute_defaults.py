@@ -257,23 +257,17 @@ class TestKeyPairDefaults:
         assert isinstance(val, bool)
 
     def test_private_key_extractable(self, rsa_keypair: Any) -> None:
-        """Private key CKA_EXTRACTABLE defaults to False."""
+        """Private key CKA_EXTRACTABLE follows the token's default posture."""
         rs, _pub, priv = rsa_keypair
         val = _read_attr(rs.raw, rs.sh, priv, CKA_EXTRACTABLE)
         if val is not False:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "Module defaults CKA_EXTRACTABLE=True for RSA private key (spec recommends False)",
+                "Module defaults CKA_EXTRACTABLE=True for RSA private key; recording the "
+                "token-specific posture (not a PKCS#11 violation)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 v3.2: default CKA_EXTRACTABLE for private keys",
-            )
-            classify(
-                "honest_deviation",
-                kind="metadata",
-                label="CKA_EXTRACTABLE default (RSA private key)",
-                spec_ref="PKCS#11 v3.2",
-                summary="Module defaults CKA_EXTRACTABLE=True for RSA private key (spec violation)",
+                reference="PKCS#11 CKA_EXTRACTABLE token-specific default posture",
             )
 
     def test_private_key_private(self, rsa_keypair: Any) -> None:
