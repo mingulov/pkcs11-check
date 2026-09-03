@@ -192,6 +192,33 @@ def test_create_absent_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "C_CreateObject" in str(exc_info.value)
 
 
+def test_create_prohibited_user_type_invalid_skip_keeps_probe_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A role-prohibited create probe must not be described as an unimplemented API."""
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_USER_TYPE_INVALID
+
+    def fake_import_prohibited(raw: Any, sh: int, key_type: Any, value: bytes, attrs: Any) -> int:
+        raise CkrAssertionError("user role cannot create", CKR_USER_TYPE_INVALID)
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.import_secret_key", fake_import_prohibited)
+    monkeypatch.setattr(_prov, "external_provision", lambda *args, **kwargs: None)
+    _reset_cache()
+
+    from pkcs11_check.testcases._provisioning import provision_secret_key
+
+    rs = _make_rs(sh=203)
+    cfg = _make_cfg("off")
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+
+    message = str(exc_info.value)
+    assert "CKR_USER_TYPE_INVALID" in message
+    assert "create_prohibited" in message
+    assert "does not implement C_CreateObject" not in message
+
+
 # ---------------------------------------------------------------------------
 # (d) create_absent + key_inject=unwrap -> unwrap path, integrity readback runs
 # ---------------------------------------------------------------------------

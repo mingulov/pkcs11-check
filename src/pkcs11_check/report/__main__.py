@@ -235,13 +235,13 @@ def _write_index(
         "",
         "# conformance index",
         "",
-        "| provider | fail | xfail | crash | unclassified |",
+        "| provider | fail | xfail | crash | migration backlog |",
         "|---|---|---|---|---|",
     ]
     for provider in sorted(provider_groups):
         # health.outcome_counts is the single source of truth, matching each
-        # provider header: `fail` excludes the unclassified backlog, which gets
-        # its own column instead of inflating the headline fail number.
+        # provider header: `unclassified` is a separately visible migration-backlog
+        # subset of the provider fail total.
         c = health.outcome_counts(provider_groups[provider])
         lines.append(
             f"| [{provider}]({provider}.md) | {c['fail']} | {c['xfail']} | "

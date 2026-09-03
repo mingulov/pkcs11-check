@@ -54,11 +54,8 @@ def test_disclaimer_not_empty() -> None:
     _DISCLAIMER.encode("ascii")  # must not raise
 
 
-def test_index_fail_count_excludes_unclassified(tmp_path: Path) -> None:
-    """The index fail column must agree with the per-provider header: the
-    unclassified backlog (framework debt) is NOT a scored fail and must not inflate
-    it. Previously _counts folded unclassified into fail, so the index overstated
-    softhsm2 as 160 fails when the header (health.outcome_counts) scored 28."""
+def test_index_fail_count_includes_unclassified_and_labels_backlog(tmp_path: Path) -> None:
+    """The index counts unclassified evidence as provider fail plus a backlog subset."""
     groups = [
         _minimal_group(reason="accepted_invalid", outcome="fail", severity="CRITICAL", count=2),
         _minimal_group(reason="unclassified", outcome="fail", severity="HIGH", count=130),
@@ -68,6 +65,7 @@ def test_index_fail_count_excludes_unclassified(tmp_path: Path) -> None:
     _write_index(provider_groups, correlation, tmp_path)
     content = (tmp_path / "_index.md").read_text(encoding="utf-8")
     row = next(ln for ln in content.splitlines() if ln.startswith("| [alpha]"))
-    # 2 scored fails, NOT 132; the 130 unclassified must surface in its own column
-    assert "| 2 |" in row, f"fail count folded in unclassified: {row}"
-    assert "130" in row, f"unclassified backlog not surfaced separately: {row}"
+    # 132 provider fails includes the 130 unclassified records; the subset remains visible.
+    assert "| 132 |" in row, f"unclassified fail evidence was dropped: {row}"
+    assert "130" in row, f"migration backlog not surfaced separately: {row}"
+    assert "migration backlog" in content

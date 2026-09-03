@@ -56,6 +56,58 @@ def test_single_provider_outlier() -> None:
     assert len(outliers) == 2
 
 
+def test_correlate_excludes_harness_errors_but_keeps_provider_evidence() -> None:
+    harness = _group(
+        reason="harness_error",
+        outcome="fail",
+        severity="HIGH",
+        mechanism="CKM_HARNESS_ONLY",
+    )
+    unclassified = _group(
+        reason="unclassified",
+        outcome="fail",
+        severity="HIGH",
+        mechanism="CKM_UNCLASSIFIED",
+    )
+    xfail = _group(
+        reason="not_operational",
+        outcome="xfail",
+        severity="LOW",
+        mechanism="CKM_XFAIL",
+    )
+
+    result = correlate(
+        {
+            "provider-a": [harness, unclassified, xfail],
+            "provider-b": [
+                _group(
+                    reason="harness_error",
+                    outcome="fail",
+                    severity="HIGH",
+                    mechanism="CKM_HARNESS_ONLY",
+                ),
+                _group(
+                    reason="unclassified",
+                    outcome="fail",
+                    severity="HIGH",
+                    mechanism="CKM_UNCLASSIFIED",
+                ),
+                _group(
+                    reason="not_operational",
+                    outcome="xfail",
+                    severity="LOW",
+                    mechanism="CKM_XFAIL",
+                ),
+            ],
+        }
+    )
+
+    universal = {(theme["reason"], theme["mechanism"]) for theme in result["universal_themes"]}
+    assert ("harness_error", "CKM_HARNESS_ONLY") not in universal
+    assert ("unclassified", "CKM_UNCLASSIFIED") in universal
+    assert ("not_operational", "CKM_XFAIL") in universal
+
+
 def test_enrich_default_fail_routing() -> None:
     groups = [_group()]
     enrich(groups, module_issues_text="", provider="softhsm2")
@@ -90,7 +142,7 @@ def test_enrich_xfail_is_deviation() -> None:
     assert groups[0]["category"] == "deviation"
 
 
-def test_enrich_unclassified_routes_to_harness() -> None:
+def test_enrich_unclassified_routes_to_provider_reporting() -> None:
     groups = [
         _group(
             reason="unclassified",
@@ -100,8 +152,8 @@ def test_enrich_unclassified_routes_to_harness() -> None:
         )
     ]
     enrich(groups, module_issues_text="", provider="p")
-    assert groups[0]["category"] == "HARNESS_OR_UNMIGRATED"
-    assert groups[0]["routing"] == "HARNESS_FIX"
+    assert groups[0]["category"] == "PROVIDER_BUG"
+    assert groups[0]["routing"] == "PROVIDER_REPORT"
 
 
 def test_enrich_harness_error_routes_to_harness() -> None:

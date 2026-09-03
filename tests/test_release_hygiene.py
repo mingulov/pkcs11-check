@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -220,3 +221,17 @@ def test_version_is_consistent_across_release_files() -> None:
     assert not problems, "release version state is inconsistent:\n" + "\n".join(
         str(problem) for problem in problems
     )
+
+
+def test_frozen_no_dev_export_contains_runtime_benchmark_plugin() -> None:
+    """The published no-dev dependency export must install pytest-benchmark."""
+    result = subprocess.run(
+        ["uv", "export", "--frozen", "--no-dev", "--no-annotate", "--no-header"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert any(line.startswith("pytest-benchmark==") for line in result.stdout.splitlines())

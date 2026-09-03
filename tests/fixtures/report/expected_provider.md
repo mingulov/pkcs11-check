@@ -1,6 +1,6 @@
 # example-provider - conformance report
 
-passed 0/0 (0%) · fail 7 (CRITICAL 4 · HIGH 3) · crash 1 · xfail 3 · unclassified 1 (not scored)
+passed 0/0 (0%) · fail 8 (CRITICAL 4 · HIGH 4) · crash 1 · xfail 3 · unclassified 1 (migration backlog)
 
 ## before you report
 
@@ -26,7 +26,7 @@ This report is produced by an automated suite and is not hand-verified: it can b
 [1] C_GetAttributeValue CKM_AES_KEY_GEN - CKA_SENSITIVE key value extractable
   got CKR_OK · PKCS#11 v3.2 §4.9 · tests/test_attr_sensitive.py::test_leak
 
-## HIGH - fail (3)
+## HIGH - fail (4)
 
 ### lifecycle · self_contradiction
 [1] C_DestroyObject - object usable after destroy reported success
@@ -39,6 +39,10 @@ This report is produced by an automated suite and is not hand-verified: it can b
 ### crypto · oracle
 [1] C_Decrypt CKM_RSA_PKCS - distinguishable padding-error oracle (Bleichenbacher)
   PKCS#11 v3.2 §6.7 · (soft-token caveat) · tests/test_rsa_oracle.py::test_padding
+
+### other · unclassified
+[1] - raw pytest.fail with no classification
+  tests/test_legacy_unmigrated.py::test_old
 
 ## capability gaps
 
@@ -53,5 +57,5 @@ This report is produced by an automated suite and is not hand-verified: it can b
 ## appendix
 
 - compliance: 1 sanctioned refusals (CKR_OPERATION_NOT_VALIDATED)
-- unclassified backlog: 1 un-migrated fail/xfail (framework debt)
+- migration backlog: 1 unclassified fail/xfail (framework debt)
 - full detail (raw stdout/stderr, full traces, full hex): see <provider>.jsonl

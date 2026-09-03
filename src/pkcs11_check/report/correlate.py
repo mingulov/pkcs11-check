@@ -31,6 +31,8 @@ def correlate(provider_groups: dict[str, list[dict[str, Any]]]) -> dict[str, Any
     theme_providers: dict[ThemeKey, set[str]] = {}
     for provider, groups in provider_groups.items():
         for group in groups:
+            if group.get("reason") in HARNESS_REASONS:
+                continue
             theme_providers.setdefault(_theme_key(group), set()).add(provider)
 
     universal: list[dict[str, Any]] = []
@@ -124,7 +126,7 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
     * fails default to ``category=PROVIDER_BUG`` / ``routing=PROVIDER_REPORT``
     * xfails -> ``category="deviation"`` / ``routing=DOCS_ONLY``
     * harness errors -> ``category=HARNESS_OR_UNMIGRATED`` / ``routing=HARNESS_FIX``
-    * unclassified -> ``category=HARNESS_OR_UNMIGRATED`` / ``routing=HARNESS_FIX``
+    * unclassified -> provider fail evidence with the default provider-report route
     * a module-issues match re-tags ``category=KNOWN_ISSUE`` / ``routing=DOCS_ONLY``
     * oracle/crypto (padding-oracle class) get ``soft_token_caveat=True``
     """
@@ -134,9 +136,6 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
         outcome = group.get("outcome")
 
         if reason in HARNESS_REASONS:
-            group["category"] = "HARNESS_OR_UNMIGRATED"
-            group["routing"] = "HARNESS_FIX"
-        elif reason == "unclassified":
             group["category"] = "HARNESS_OR_UNMIGRATED"
             group["routing"] = "HARNESS_FIX"
         elif outcome == "xfail":

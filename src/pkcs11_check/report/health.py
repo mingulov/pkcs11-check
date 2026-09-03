@@ -19,12 +19,16 @@ _SEP = " · "  # middle dot, matching the existing report separator
 
 
 def fail_severity_counts(groups: list[dict[str, Any]]) -> dict[str, int]:
-    """Sum ``count`` per severity for scored fails (outcome fail, excluding crash/unclassified)."""
+    """Sum ``count`` per severity for provider-attributed fails.
+
+    ``unclassified`` is a provider-fail subset and remains separately counted as
+    migration backlog; only crashes and harness errors stay outside these totals.
+    """
     out = {sev: 0 for sev in _FAIL_SEVERITIES}
     for g in groups:
         if g.get("outcome") != "fail":
             continue
-        if g.get("reason") in ("crash", "unclassified") or g.get("reason") in HARNESS_REASONS:
+        if g.get("reason") == "crash" or g.get("reason") in HARNESS_REASONS:
             continue
         sev = str(g.get("severity") or "")
         if sev in out:
@@ -35,8 +39,8 @@ def fail_severity_counts(groups: list[dict[str, Any]]) -> dict[str, int]:
 def outcome_counts(groups: list[dict[str, Any]]) -> dict[str, int]:
     """Partition finding ``count`` into fail / crash / xfail / unclassified buckets.
 
-    ``fail`` excludes crashes and the unclassified backlog so the header numbers do
-    not double-count; crashes and unclassified are reported on their own.
+    ``unclassified`` is retained as a separate migration-backlog subset while also
+    contributing to the provider fail total. Crashes and harness errors stay separate.
     """
     out = {"fail": 0, "crash": 0, "xfail": 0, "unclassified": 0, "harness_error": 0}
     for g in groups:
@@ -47,12 +51,12 @@ def outcome_counts(groups: list[dict[str, Any]]) -> dict[str, int]:
             out["harness_error"] += n
         elif reason == "crash":
             out["crash"] += n
-        elif reason == "unclassified":
-            out["unclassified"] += n
         elif g.get("outcome") == "xfail":
             out["xfail"] += n
         elif g.get("outcome") == "fail":
             out["fail"] += n
+        if reason == "unclassified":
+            out["unclassified"] += n
     return out
 
 
@@ -111,7 +115,7 @@ def health_lines(
         f"xfail {counts['xfail']}",
     ]
     if counts["unclassified"]:
-        parts.append(f"unclassified {counts['unclassified']} (not scored)")
+        parts.append(f"unclassified {counts['unclassified']} (migration backlog)")
     error = int(summary.get("error", 0))
     if error:
         parts.append(f"error {error}")

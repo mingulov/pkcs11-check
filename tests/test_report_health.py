@@ -26,13 +26,13 @@ GROUPS = [
 ]
 
 
-def test_fail_severity_counts_excludes_crash_and_unclassified() -> None:
-    assert fail_severity_counts(GROUPS) == {"CRITICAL": 2, "HIGH": 3, "MEDIUM": 0, "LOW": 0}
+def test_fail_severity_counts_includes_unclassified_but_excludes_crash() -> None:
+    assert fail_severity_counts(GROUPS) == {"CRITICAL": 2, "HIGH": 14, "MEDIUM": 0, "LOW": 0}
 
 
 def test_outcome_counts_partitions_findings() -> None:
     assert outcome_counts(GROUPS) == {
-        "fail": 5,
+        "fail": 16,
         "crash": 7,
         "xfail": 50,
         "unclassified": 11,
@@ -46,11 +46,11 @@ def test_harness_error_is_never_counted_against_the_provider() -> None:
 
     counts = outcome_counts(groups)
     assert counts["harness_error"] == 4
-    assert counts["fail"] == 5, "harness error leaked into the provider fail count"
+    assert counts["fail"] == 16, "harness error leaked into the provider fail count"
     assert counts["crash"] == 7
 
     severities = fail_severity_counts(groups)
-    assert severities["HIGH"] == 3, "harness error leaked into the scored severities"
+    assert severities["HIGH"] == 14, "harness error leaked into the scored severities"
 
 
 def test_health_first_line_content() -> None:
@@ -58,11 +58,11 @@ def test_health_first_line_content() -> None:
     assert len(lines) == 1
     line = lines[0]
     assert line.startswith("passed 100/200 (50%)")
-    assert "fail 5 (CRITICAL 2" in line
-    assert "HIGH 3)" in line
+    assert "fail 16 (CRITICAL 2" in line
+    assert "HIGH 14)" in line
     assert "crash 7" in line
     assert "xfail 50" in line
-    assert "unclassified 11 (not scored)" in line
+    assert "unclassified 11 (migration backlog)" in line
 
 
 def test_health_omits_unclassified_when_zero() -> None:

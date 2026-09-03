@@ -105,6 +105,11 @@ CK_RV traces ride in `user_properties` when `--rv-trace` is on. A fresh non-resu
 known path before execution; resumed runs preserve saved per-unit shards and merge them.
 Daemon-recovery evidence uses `RecoveryAttempt` and `RecoveryEvent` records. Consumers that do not
 understand custom record types may ignore them, but must not reinterpret them as `TestReport`.
+Call-phase `TestReport` records may carry serialized `pkcs11_classification` entries. Their
+`reason`/`outcome`/`severity` fields are the source evidence used by the per-provider report;
+reserved runtime-gate `unclassified` entries are fail-closed provider evidence, rendered and
+included in provider fail/severity totals, while also contributing to a separately labeled
+migration-backlog count. Only `harness_error` entries are excluded from provider totals.
 
 ### JUnit output
 

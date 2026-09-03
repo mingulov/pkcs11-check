@@ -126,7 +126,7 @@ def test_kind_keywords_no_type_aliases() -> None:
         assert f"(Type {letter})" not in out
 
 
-def test_unclassified_in_appendix_not_enumerated() -> None:
+def test_unclassified_is_scored_and_detail_rendered_with_backlog_count() -> None:
     unc = _group(
         reason="unclassified",
         outcome="fail",
@@ -140,9 +140,10 @@ def test_unclassified_in_appendix_not_enumerated() -> None:
         count=37,
     )
     out = render_provider("p", [unc])
-    # the appendix carries a single backlog line, not 37 enumerated findings
-    assert "unclassified backlog: 37" in out
-    assert out.lower().count("raw pytest.fail") == 0
+    assert "## HIGH - fail (37)" in out
+    assert "### other · unclassified" in out
+    assert "raw pytest.fail" in out
+    assert "migration backlog: 37 unclassified" in out
 
 
 def test_incomplete_banner_from_summary_names_unit() -> None:

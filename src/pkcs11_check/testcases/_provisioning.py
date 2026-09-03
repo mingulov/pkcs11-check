@@ -281,6 +281,12 @@ class ProvisioningProfile:
     rs: Any
     rsa_pub_der_probe: bytes | None = None
     _verdicts: dict[str, str] = field(default_factory=dict)
+    _verdict_rvs: dict[str, int] = field(default_factory=dict)
+
+    def create_verdict_detail(self, obj_class: str) -> tuple[str, int | None]:
+        """Return the create verdict and the probe CKR, when a probe was refused."""
+        verdict = self.create_verdict(obj_class)
+        return verdict, self._verdict_rvs.get(obj_class)
 
     def supports_unwrap_mech(self, mech: int) -> bool:
         """True iff the RS advertises ``mech`` with the unwrap operation flag."""
@@ -327,6 +333,7 @@ class ProvisioningProfile:
                 },
             )
         except CkrAssertionError as exc:
+            self._verdict_rvs["secret"] = int(exc.rv)
             if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
                 return "create_absent"
             if exc.rv in _CREATE_PROHIBITED_RVS:
@@ -391,6 +398,7 @@ class ProvisioningProfile:
                 shape_rejects=IMPORT_STORAGE_SHAPE_REJECTS,
             )
         except CkrAssertionError as exc:
+            self._verdict_rvs[obj_class] = int(exc.rv)
             if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
                 return "create_absent"
             if exc.rv in _CREATE_PROHIBITED_RVS:
@@ -431,6 +439,7 @@ class ProvisioningProfile:
                 ec_point=ec_point,
             )
         except CkrAssertionError as exc:
+            self._verdict_rvs["public"] = int(exc.rv)
             if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
                 return "create_absent"
             if exc.rv in _CREATE_PROHIBITED_RVS:
@@ -490,6 +499,7 @@ class ProvisioningProfile:
                 },
             )
         except CkrAssertionError as exc:
+            self._verdict_rvs["cert"] = int(exc.rv)
             if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
                 return "create_absent"
             if exc.rv in _CREATE_PROHIBITED_RVS:
@@ -522,6 +532,7 @@ class ProvisioningProfile:
                 },
             )
         except CkrAssertionError as exc:
+            self._verdict_rvs["data"] = int(exc.rv)
             if exc.rv == CKR_FUNCTION_NOT_SUPPORTED:
                 return "create_absent"
             if exc.rv in _CREATE_PROHIBITED_RVS:
@@ -1844,6 +1855,23 @@ def _external_or_skip(
     if handle is not None:
         return handle
     record_provisioning_event(obj_class, "skipped_no_path")
+
+    # A cached create probe makes the dependent skip explainable.  Do not probe here:
+    # force-unwrap intentionally bypasses create, and this helper is also used after
+    # independent unwrap-path failures.  A policy refusal is not API absence, so keep
+    # its CKR and create classification visible in the dependent test's skip reason.
+    profile = _PROFILE_CACHE.get(rs.sh)
+    if getattr(cfg, "key_inject", "off") != "force-unwrap" and profile is not None:
+        if obj_class in profile._verdicts:
+            verdict, rv = profile.create_verdict_detail(obj_class)
+            if verdict != "create_available":
+                probe_rv = ckr_name(rv) if rv is not None else "CKR_UNKNOWN"
+                if verdict == "create_prohibited":
+                    skip_msg = skip_msg.replace(
+                        "Module does not implement C_CreateObject",
+                        "Module prohibits plaintext key import via C_CreateObject",
+                    ).replace("no C_CreateObject", "C_CreateObject prohibited")
+                skip_msg = f"{skip_msg} [C_CreateObject: {probe_rv}; {verdict}]"
     pytest.skip(skip_msg)
 
 

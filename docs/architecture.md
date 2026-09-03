@@ -239,7 +239,9 @@ never fabricated).
 ### Report generator (`pkcs11_check.report` / `pkcs11-check-report`)
 
 Rolls the records up into per-provider reports: `<provider>.md` (compact, severity-first, grouped by
-`kind`) + `<provider>.jsonl` (one enriched group per line); with more than one
+`kind`) + `<provider>.jsonl` (one enriched group per line); `unclassified` runtime-gate records are
+fail-closed provider evidence rendered in the relevant severity section and retained as a separately
+labeled migration-backlog count; with more than one
 provider it also writes `_index.md` (counts table + top themes) and `_universal.md` (cross-provider
 correlation). See [../src/pkcs11_check/report/README.md](../src/pkcs11_check/report/README.md) and
 [commands.md](commands.md) for invocation.
