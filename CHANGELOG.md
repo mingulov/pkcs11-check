@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Collection failures leave durable harness evidence (GH #16).** Metadata and isolated pytest
+  collection/configuration failures are recorded as `CollectReport` harness errors with labeled
+  diagnostics, incomplete JSON/JUnit output, and preserved resume evidence. They are never
+  classified as provider fail/xfail/crash findings.
 - **Isolation preserves explicit targets.** In `--isolation auto`, an explicit `path::node`
   remains an exact node unit even when its file has the module-level `subprocess` marker; a bare
   file remains file-isolated.

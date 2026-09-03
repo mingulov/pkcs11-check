@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
 from typing import IO, Any
@@ -130,9 +130,6 @@ from pkcs11_check.core._report_records import (
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_dir as _report_record_cache_dir,
-)
-from pkcs11_check.core._report_records import (
-    _report_record_cache_has_records as _report_record_cache_has_records,
 )
 from pkcs11_check.core._report_records import (
     _report_record_cache_path as _report_record_cache_path,
@@ -369,6 +366,10 @@ from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
 from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.collection_errors import (
+    collection_failure_sidecar_path,
+    ensure_failed_collection_report,
+)
 from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.recovery import (
     RecoveryConfig,
@@ -724,13 +725,18 @@ def _reset_fresh_run_artifacts(
     report_config: IsolatedReportConfig | None,
 ) -> None:
     """Remove durable artifacts that must not survive a fresh run."""
+    state_file.unlink(missing_ok=True)
+    collection_failure_sidecar_path(state_file).unlink(missing_ok=True)
     _recovery_attempts_path(state_file).unlink(missing_ok=True)
     report_cache_dir = _report_record_cache_dir(state_file)
     if report_cache_dir.is_symlink() or report_cache_dir.exists():
         shutil.rmtree(report_cache_dir)
     if report_config is None:
         return
-    sidecar_paths = {report_config.output_path.parent / "quality.json"}
+    sidecar_paths = {
+        report_config.output_path.parent / name
+        for name in ("report.jsonl", "quality.json", "coverage.json", "provisioning.json")
+    }
     if report_config.jsonl_path is not None:
         report_config.jsonl_path.unlink(missing_ok=True)
         sidecar_paths.update(
@@ -742,6 +748,46 @@ def _reset_fresh_run_artifacts(
     report_config.output_path.unlink(missing_ok=True)
     for sidecar_path in sidecar_paths:
         sidecar_path.unlink(missing_ok=True)
+
+
+def _collection_failure_reporting_copy(
+    state_file: Path,
+    state: FileRunState,
+    inline_records_by_unit: dict[str, Sequence[Mapping[str, Any]]],
+) -> tuple[FileRunState, dict[str, Sequence[Mapping[str, Any]]]]:
+    """Add durable global collection evidence to an output-only state copy."""
+    records = _collection_failure_records(state_file)
+    if not records:
+        return state, inline_records_by_unit
+
+    target = "<collection>"
+    output_units = list(state.units)
+    output_results = [result for result in state.results if result.target != target]
+    output_inline = dict(inline_records_by_unit)
+    if target not in output_units:
+        output_units.append(target)
+    output_results.append(
+        FileRunResult(
+            target=target,
+            status="failed",
+            returncode=2,
+            duration_s=0.0,
+            completion_verified=False,
+        )
+    )
+    # The state-adjacent sidecar is the authoritative global source. A stale
+    # synthetic cache shard must not hide or add to its diagnostics.
+    _delete_unit_report_record_cache(state_file, target)
+    output_inline[target] = [*output_inline.get(target, ()), *records]
+    return replace(state, units=output_units, results=output_results), output_inline
+
+
+def _collection_failure_records(state_file: Path) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in _load_report_log_records(collection_failure_sidecar_path(state_file))
+        if record.get("$report_type") == "CollectReport" and record.get("outcome") == "failed"
+    ]
 
 
 def _state_attempt_history(state: Any) -> list[dict[str, Any]]:
@@ -1025,6 +1071,14 @@ def run_isolated_pytest_units(
     )
     if not resume:
         _reset_fresh_run_artifacts(state_file, report_config)
+    previous_state = load_run_state(state_file) if resume else None
+    collection_failure_records = _collection_failure_records(state_file)
+    collection_failure_present = bool(collection_failure_records)
+    if collection_failure_present:
+        console.print("[red]INCOMPLETE[/red] prior pytest collection failure evidence retained")
+        for record in collection_failure_records:
+            if diagnostic := str(record.get("longrepr", "")).strip():
+                console.print(diagnostic)
     if not units:
         # No tests were collected — the module / marker / match / path selection
         # matched nothing. A run that executed zero tests must NOT report success
@@ -1038,29 +1092,19 @@ def run_isolated_pytest_units(
         empty_state = FileRunState(units=[], fingerprint=fingerprint, results=[])
         if not resume:
             save_run_state(state_file, empty_state)
-        if report_config is not None:
-            if report_config.output_format == "json":
-                payload = write_isolated_json_report(
-                    report_config.output_path, empty_state, provenance=provenance
-                )
-                write_quality_json_report(
-                    report_config.output_path.parent / "quality.json", payload
-                )
-            else:
-                write_isolated_report(report_config, empty_state)
-        return _NO_TESTS_COLLECTED_EXIT
-    previous_state = load_run_state(state_file) if resume else None
-    if previous_state is not None and previous_state.fingerprint != fingerprint:
+        state = empty_state
+        pending_units: list[str] = []
+    elif previous_state is not None and previous_state.fingerprint != fingerprint:
         msg = (
             f"state file {state_file} belongs to a different isolated run; "
             "use a different --state-file or remove the old one"
         )
         raise ValueError(msg)
+    else:
+        state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
+        pending_units = units_remaining_for_resume(units, previous_state)
 
-    state = previous_state or FileRunState(units=units, fingerprint=fingerprint, results=[])
-    pending_units = units_remaining_for_resume(units, previous_state)
-
-    if resume and previous_state is not None and not state.process_observations_complete:
+    if units and resume and previous_state is not None and not state.process_observations_complete:
         state.process_observations = _hydrate_process_observations(
             state.process_observations,
             report_config.jsonl_path if report_config is not None else None,
@@ -1068,7 +1112,7 @@ def run_isolated_pytest_units(
         state.process_observations_complete = True
         save_run_state(state_file, state)
 
-    if resume:
+    if resume and units:
         if previous_state is None:
             console.print(
                 f"[yellow]No prior state[/yellow] at [bold]{state_file}[/bold]; starting fresh."
@@ -1079,7 +1123,7 @@ def run_isolated_pytest_units(
                 f"[cyan]Resuming[/cyan] isolated run from "
                 f"[bold]{state_file}[/bold] ({len(pending_units)}/{len(units)} units pending)"
             )
-    else:
+    elif units:
         state = FileRunState(units=units, fingerprint=fingerprint, results=[])
         save_run_state(state_file, state)
         if granularity == "test":
@@ -1106,46 +1150,63 @@ def run_isolated_pytest_units(
 
     if not pending_units:
         resume_exit_code = _final_state_exit_code(
-            state, 1 if _state_recovery_events(state) or _state_attempt_history(state) else 0
+            state,
+            max(
+                _NO_TESTS_COLLECTED_EXIT if not units else 0,
+                1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
+                1 if collection_failure_present else 0,
+            ),
         )
-        if resume_exit_code:
-            console.print(
-                "[red]Nothing to do[/red] - durable isolated state is not green; "
-                "review the recorded failures before accepting this run."
-            )
-        else:
-            console.print("[green]Nothing to do[/green] - all isolated units already completed.")
+        if units:
+            if resume_exit_code:
+                console.print(
+                    "[red]Nothing to do[/red] - durable isolated state is not green; "
+                    "review the recorded failures before accepting this run."
+                )
+            else:
+                console.print(
+                    "[green]Nothing to do[/green] - all isolated units already completed."
+                )
         if report_config is not None:
             coverage_data: dict[str, Any] | None = None
             quality_records: list[dict[str, Any]] = []
             inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
             for unit, records in state.report_records_by_unit.items():
                 inline_report_records_by_unit.setdefault(unit, records)
+            output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
+                state_file,
+                state,
+                inline_report_records_by_unit,
+            )
             if (
                 resume
                 and report_config.jsonl_path is not None
                 and report_config.jsonl_path.exists()
             ):
-                candidate_targets = set(state.units) | {result.target for result in state.results}
+                candidate_targets = set(output_state.units) | {
+                    result.target for result in output_state.results
+                }
                 _seed_missing_report_record_caches_from_jsonl(
                     state_file,
                     report_config.jsonl_path,
                     candidate_targets=candidate_targets,
-                    skip_units=inline_report_records_by_unit,
+                    skip_units=set(state.report_records_by_unit)
+                    | set(inline_report_records_by_unit),
                 )
             merged_details = _build_per_unit_details_from_record_sources(
                 state_file,
-                units=state.units,
+                units=output_state.units,
                 inline_records_by_unit=inline_report_records_by_unit,
             )
             if report_config.jsonl_path is not None:
                 wrote_report_jsonl = _write_report_jsonl_from_record_sources(
                     state_file,
-                    units=state.units,
+                    units=output_state.units,
                     inline_records_by_unit=inline_report_records_by_unit,
                     output_path=report_config.jsonl_path,
                     attempt_history=state.attempt_history,
                     recovery_events=state.recovery_events,
+                    collection_failure_path=collection_failure_sidecar_path(state_file),
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
@@ -1154,7 +1215,7 @@ def run_isolated_pytest_units(
                     )
                     coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
                         coverage_data,
-                        state,
+                        output_state,
                         per_unit_details=merged_details,
                     )
                     if coverage_data:
@@ -1175,7 +1236,7 @@ def run_isolated_pytest_units(
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
                     provenance=provenance,
@@ -1190,12 +1251,15 @@ def run_isolated_pytest_units(
             else:
                 write_isolated_report(
                     report_config,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
                 )
         return resume_exit_code
 
-    exit_code = 1 if _state_recovery_events(state) or _state_attempt_history(state) else 0
+    exit_code = max(
+        1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
+        1 if collection_failure_present else 0,
+    )
     index = 0
     try:
         while index < len(units) or (recovery_enabled and recovery_assessed < len(state.results)):
@@ -1343,6 +1407,15 @@ def run_isolated_pytest_units(
                         role="unit",
                     )
                     status = _status_from_returncode(returncode)
+                    if unit_jsonl_path is not None:
+                        ensure_failed_collection_report(
+                            unit_jsonl_path,
+                            target=unit,
+                            status=status,
+                            returncode=returncode,
+                            stdout=captured_stdout,
+                            stderr=captured_stderr,
+                        )
                 except subprocess.TimeoutExpired:
                     duration_s = time.monotonic() - start
                     if unit_jsonl_path is not None:
@@ -1530,6 +1603,14 @@ def run_isolated_pytest_units(
                                         role="retry",
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
+                                    ensure_failed_collection_report(
+                                        retry_jsonl_path,
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        stdout=retry_out,
+                                        stderr=retry_err,
+                                    )
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
                                     retry_rc = _TIMEOUT_RETURN_CODE
@@ -2101,6 +2182,14 @@ def run_isolated_pytest_units(
                                         role="retry",
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
+                                    ensure_failed_collection_report(
+                                        retry_jsonl_path,
+                                        target=unit,
+                                        status=retry_status,
+                                        returncode=retry_rc,
+                                        stdout=retry_out,
+                                        stderr=retry_err,
+                                    )
                                 except subprocess.TimeoutExpired:
                                     retry_status = "timeout"
                                     retry_rc = _TIMEOUT_RETURN_CODE
@@ -2302,13 +2391,18 @@ def run_isolated_pytest_units(
         quality_records = []
         merged_details = dict(per_unit_details)
         if report_config is not None:
+            inline_report_records_by_unit = {}
+            for unit, records in state.report_records_by_unit.items():
+                inline_report_records_by_unit.setdefault(unit, records)
+            output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
+                state_file,
+                state,
+                inline_report_records_by_unit,
+            )
             if report_config.jsonl_path is not None:
-                inline_report_records_by_unit = {}
-                for unit, records in state.report_records_by_unit.items():
-                    inline_report_records_by_unit.setdefault(unit, records)
                 if resume and report_config.jsonl_path.exists():
-                    candidate_targets = set(state.units) | {
-                        result.target for result in state.results
+                    candidate_targets = set(output_state.units) | {
+                        result.target for result in output_state.results
                     }
                     for unit in executed_units:
                         inline_report_records_by_unit.pop(unit, None)
@@ -2316,20 +2410,23 @@ def run_isolated_pytest_units(
                         state_file,
                         report_config.jsonl_path,
                         candidate_targets=candidate_targets,
-                        skip_units=set(inline_report_records_by_unit) | executed_units,
+                        skip_units=set(state.report_records_by_unit)
+                        | set(inline_report_records_by_unit)
+                        | executed_units,
                     )
                 wrote_report_jsonl = _write_report_jsonl_from_record_sources(
                     state_file,
-                    units=state.units,
+                    units=output_state.units,
                     inline_records_by_unit=inline_report_records_by_unit,
                     output_path=report_config.jsonl_path,
                     attempt_history=state.attempt_history,
                     recovery_events=state.recovery_events,
+                    collection_failure_path=collection_failure_sidecar_path(state_file),
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     merged_details = _build_per_unit_details_from_record_sources(
                         state_file,
-                        units=state.units,
+                        units=output_state.units,
                         inline_records_by_unit=inline_report_records_by_unit,
                     )
                     merged_details = _merge_supplemental_special_details(
@@ -2342,7 +2439,7 @@ def run_isolated_pytest_units(
                     )
                     coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
                         coverage_data,
-                        state,
+                        output_state,
                         per_unit_details=merged_details,
                     )
                 if coverage_data:
@@ -2363,8 +2460,8 @@ def run_isolated_pytest_units(
             else:
                 merged_details = _build_per_unit_details_from_record_sources(
                     state_file,
-                    units=state.units,
-                    inline_records_by_unit=state.report_records_by_unit,
+                    units=output_state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
                 )
                 merged_details = _merge_supplemental_special_details(
                     merged_details,
@@ -2373,7 +2470,7 @@ def run_isolated_pytest_units(
             if report_config.output_format == "json":
                 results_payload = write_isolated_json_report(
                     report_config.output_path,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
                     coverage=coverage_data,
                     provenance=provenance,
@@ -2388,7 +2485,7 @@ def run_isolated_pytest_units(
             else:
                 write_isolated_report(
                     report_config,
-                    state,
+                    output_state,
                     per_unit_details=merged_details,
                 )
 

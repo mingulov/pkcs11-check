@@ -124,6 +124,29 @@ def test_differential_override_is_visible_once(tmp_path) -> None:
     assert result.output.count("WARNING: provenance verification disabled") == 1
 
 
+def test_differential_rejects_incomplete_results_even_with_provenance_override(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {"t.py::x": "passed"})
+    b = _write_artifact(tmp_path, "b", {"t.py::x": "passed"})
+    results_path = b.with_name("results.json")
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
+    payload["summary"] = {"incomplete": True}
+    results_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "differential",
+            f"a={a}",
+            f"b={b}",
+            "--all",
+            "--allow-unverified-provenance",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "incomplete" in result.output
+
+
 def test_differential_rejects_malformed_results_json(tmp_path) -> None:
     a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})

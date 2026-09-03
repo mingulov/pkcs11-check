@@ -9,7 +9,7 @@ default (the sound target); pass --all to include every node-id.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +204,14 @@ def differential_command(
             outcomes = load_provider_outcomes(_iter_report_records_strict(path))
             if not outcomes:
                 raise ValueError(f"report log contains no test outcomes: {path}")
+            results_path = path.with_name("results.json")
+            try:
+                payload = json.loads(results_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, Mapping) and isinstance(payload.get("summary"), Mapping):
+                if payload["summary"].get("incomplete") is True:
+                    raise ValueError(f"incomplete sibling results.json: {results_path}")
         except ValueError as exc:
             _err.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(code=2) from exc

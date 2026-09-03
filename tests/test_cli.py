@@ -14,6 +14,13 @@ from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
 from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
 from pkcs11_check.core.collection import CollectedPytestItem
+from pkcs11_check.core.file_runner import (
+    FileRunResult,
+    FileRunState,
+    IsolatedReportConfig,
+    run_isolated_pytest_units,
+    save_run_state,
+)
 from pkcs11_check.core.preflight import CapabilityManifest
 from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.test_selection import DisabledBaseline
@@ -22,6 +29,38 @@ from tests._plain_cli_runner import PlainCliRunner
 # Strips ANSI so assertions on message content hold regardless of the caller's
 # terminal environment (FORCE_COLOR/TERM). See tests/_plain_cli_runner.py.
 runner = PlainCliRunner()
+
+
+def _ok_preflight(
+    module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+) -> CapabilityManifest:
+    del timeout
+    output_path.write_text("{}", encoding="utf-8")
+    return CapabilityManifest(
+        status="ok",
+        module_path=str(module),
+        requested_interface=interface,
+        interface_version="3.2",
+        slot_index=slot,
+        slot_count=1,
+        mechanisms=[],
+    )
+
+
+def _persist_failure(
+    state_file: Path,
+    diagnostic: str,
+    *,
+    report_config: IsolatedReportConfig | None = None,
+    resume: bool = False,
+) -> None:
+    test_cmd._persist_collection_failure(
+        diagnostic=diagnostic,
+        state_file=state_file,
+        report_config=report_config,
+        resume=resume,
+        provenance={},
+    )
 
 
 class TestVersionCommand:
@@ -139,22 +178,7 @@ class TestTestCommand:
                 str(default_root / "test_alpha.py")
             ],
         )
-        monkeypatch.setattr(
-            test_cmd,
-            "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}", encoding="utf-8"),
-                CapabilityManifest(
-                    status="ok",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version="3.2",
-                    slot_index=slot,
-                    slot_count=1,
-                    mechanisms=[],
-                ),
-            )[1],
-        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
 
         result = runner.invoke(
             app,
@@ -242,22 +266,7 @@ class TestTestCommand:
                 str(default_root / "test_alpha.py")
             ],
         )
-        monkeypatch.setattr(
-            test_cmd,
-            "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
-                output_path.write_text("{}", encoding="utf-8"),
-                CapabilityManifest(
-                    status="ok",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version="3.2",
-                    slot_index=slot,
-                    slot_count=1,
-                    mechanisms=[],
-                ),
-            )[1],
-        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
 
         result = runner.invoke(
             app,
@@ -535,6 +544,361 @@ class TestTestCommand:
         ]
         assert called["granularity"] == "mixed"
         assert called["collected_items"] == collected
+
+    def test_test_auto_collection_failure_json_preserves_diagnostic_and_replaces_stale_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "artifacts" / "results.json"
+        state_path = tmp_path / "state.json"
+        report_path = output_path.parent / "report.jsonl"
+        output_path.parent.mkdir()
+        output_path.write_text("stale results", encoding="utf-8")
+        report_path.write_text("stale report", encoding="utf-8")
+        for name in ("quality.json", "coverage.json", "provisioning.json"):
+            (output_path.parent / name).write_text("stale", encoding="utf-8")
+        state_path.write_text('{"stale": true}\n', encoding="utf-8")
+        cache_dir = state_path.parent / f".{state_path.name}.report-records"
+        cache_dir.mkdir()
+        (cache_dir / "stale.jsonl").write_text("stale\n", encoding="utf-8")
+        collection_sidecar = state_path.with_name(f"{state_path.name}.collection.jsonl")
+        collection_sidecar.write_text("stale\n", encoding="utf-8")
+
+        diagnostic = "ImportError: Error importing plugin benchmark"
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        def fail_collection(*_args: object, **_kwargs: object) -> list[str]:
+            assert not output_path.exists()
+            assert not report_path.exists()
+            assert not state_path.exists()
+            raise ValueError(diagnostic)
+
+        monkeypatch.setattr(test_cmd, "discover_auto_isolation_units", fail_collection)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "auto",
+                "--output",
+                "json",
+                "--output-file",
+                str(output_path),
+                "--state-file",
+                str(state_path),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 2
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["error"] >= 1
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["incomplete"] is True
+        records = [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert [record["$report_type"] for record in records] == ["CollectReport"]
+        collects = [record for record in records if record["$report_type"] == "CollectReport"]
+        assert len(collects) == 1
+        assert diagnostic in collects[0]["longrepr"]
+        assert payload["provenance"]
+        assert not state_path.exists()
+        assert not (cache_dir / "stale.jsonl").exists()
+        assert "stale" not in collection_sidecar.read_text(encoding="utf-8")
+        assert "stale" not in report_path.read_text(encoding="utf-8")
+        for name in ("quality.json", "coverage.json", "provisioning.json"):
+            artifact = output_path.parent / name
+            assert not artifact.exists() or "stale" not in artifact.read_text(encoding="utf-8")
+
+    def test_test_auto_collection_failure_junit_is_an_error_with_diagnostic(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        output_path = tmp_path / "artifacts" / "results.xml"
+        state_path = tmp_path / "state.json"
+        diagnostic = "ImportError: Error importing plugin benchmark"
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        def fail_collection(*_args: object, **_kwargs: object) -> list[str]:
+            raise ValueError(diagnostic)
+
+        monkeypatch.setattr(test_cmd, "discover_auto_isolation_units", fail_collection)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "auto",
+                "--output",
+                "junit",
+                "--output-file",
+                str(output_path),
+                "--state-file",
+                str(state_path),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 2
+        junit = output_path.read_text(encoding="utf-8")
+        assert 'errors="1"' in junit
+        assert "<error" in junit
+        assert diagnostic in junit
+
+    def test_test_auto_collection_failure_resume_preserves_prior_report_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        state_path = tmp_path / "state.json"
+        output_path = tmp_path / "results.json"
+        report_path = tmp_path / "report.jsonl"
+        save_run_state(
+            state_path,
+            FileRunState(
+                units=["old.py"],
+                fingerprint="old-fingerprint",
+                results=[FileRunResult("old.py", "passed", 0, 0.1)],
+            ),
+        )
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": "old.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        _persist_failure(
+            state_path,
+            "ImportError: current collection failed",
+            report_config=IsolatedReportConfig("json", output_path, jsonl_path=report_path),
+            resume=True,
+        )
+
+        merged = report_path.read_text(encoding="utf-8")
+        assert "old.py::test_ok" in merged
+        assert "ImportError: current collection failed" in merged
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["passed"] == 1
+        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["incomplete"] is True
+        saved = json.loads(state_path.read_text(encoding="utf-8"))
+        assert saved["units"] == ["old.py"]
+        assert saved["fingerprint"] == "old-fingerprint"
+        assert {result["target"] for result in saved["results"]} == {"old.py"}
+
+        _persist_failure(
+            state_path,
+            "ImportError: current collection failed",
+            report_config=IsolatedReportConfig("json", output_path, jsonl_path=report_path),
+            resume=True,
+        )
+        records = [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert sum(record["$report_type"] == "CollectReport" for record in records) == 1
+
+        _persist_failure(
+            state_path,
+            "ImportError: changed collection failure",
+            report_config=IsolatedReportConfig("json", output_path, jsonl_path=report_path),
+            resume=True,
+        )
+        records = [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ]
+        collects = [record for record in records if record["$report_type"] == "CollectReport"]
+        assert len(collects) == 2
+        assert "changed collection failure" in collects[-1]["longrepr"]
+
+    @pytest.mark.parametrize(
+        ("status", "returncode"),
+        [("failed", 1), ("crashed", -11)],
+        ids=["provider-failure", "provider-crash"],
+    )
+    def test_collection_failure_json_keeps_prior_result_without_raw_report(
+        self, tmp_path: Path, status: str, returncode: int
+    ) -> None:
+        state_path = tmp_path / "state.json"
+        output_path = tmp_path / "results.json"
+        target = "provider/test_backend.py"
+        save_run_state(
+            state_path,
+            FileRunState(
+                units=[target],
+                fingerprint="prior-fingerprint",
+                results=[FileRunResult(target, status, returncode, 0.1)],
+            ),
+        )
+
+        _persist_failure(
+            state_path,
+            "current collection failed",
+            report_config=IsolatedReportConfig(
+                "json", output_path, jsonl_path=tmp_path / "report.jsonl"
+            ),
+            resume=True,
+        )
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        units = {unit["target"]: unit for unit in payload["units"]}
+        provider = units[target]
+        assert provider["status"] == status
+        assert provider["counts"][status] == 1
+        assert "incomplete" not in provider
+        assert payload["summary"][status] == 1
+        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["incomplete"] is True
+
+    def test_collection_failure_json_keeps_prior_xfail_details(self, tmp_path: Path) -> None:
+        state_path = tmp_path / "state.json"
+        output_path = tmp_path / "results.json"
+        target = "provider/test_backend.py"
+        xfail_record = {
+            "$report_type": "TestReport",
+            "nodeid": f"{target}::test_expected_refusal",
+            "when": "call",
+            "outcome": "skipped",
+            "wasxfail": "provider limitation",
+        }
+        report_path = tmp_path / "report.jsonl"
+        report_path.write_text(json.dumps(xfail_record) + "\n", encoding="utf-8")
+        save_run_state(
+            state_path,
+            FileRunState(
+                units=[target],
+                fingerprint="prior-fingerprint",
+                results=[FileRunResult(target, "passed", 0, 0.1)],
+                report_records_by_unit={target: [xfail_record]},
+            ),
+        )
+
+        _persist_failure(
+            state_path,
+            "current collection failed",
+            report_config=IsolatedReportConfig("json", output_path, jsonl_path=report_path),
+            resume=True,
+        )
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        provider = next(unit for unit in payload["units"] if unit["target"] == target)
+        assert provider["status"] == "passed"
+        assert provider["counts"]["xfailed"] == 1
+        assert provider["tests"][0]["outcome"] == "xfailed"
+        assert payload["summary"]["xfailed"] == 1
+        assert payload["summary"]["error"] == 1
+
+    def test_global_collection_sidecar_survives_successful_resume(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state_path = tmp_path / "state.json"
+        output_path = tmp_path / "results.json"
+        report_path = tmp_path / "report.jsonl"
+        target = tmp_path / "test_ok.py"
+        target.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+        _persist_failure(
+            state_path,
+            "global collection interrupted",
+            report_config=IsolatedReportConfig("json", output_path, jsonl_path=report_path),
+            resume=True,
+        )
+        assert not state_path.exists()
+
+        def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+            report = Path(cmd[cmd.index("--report-log") + 1])
+            report.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": f"{target}::test_ok",
+                                "when": "call",
+                                "outcome": "passed",
+                            }
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return 0, "", ""
+
+        monkeypatch.setattr(test_cmd, "_reset_fresh_run_artifacts", lambda *_: None)
+        monkeypatch.setattr("pkcs11_check.core.file_runner._run_subprocess_tee", fake_run)
+        run_isolated_pytest_units(
+            [str(target)],
+            [],
+            timeout=12,
+            state_file=state_path,
+            policy_file=None,
+            report_config=IsolatedReportConfig("json", output_path, jsonl_path=report_path),
+            resume=True,
+            stop_on_failure=False,
+            console=SimpleNamespace(print=lambda *_args, **_kwargs: None),
+            granularity="file",
+        )
+        merged = report_path.read_text(encoding="utf-8")
+        assert "global collection interrupted" in merged
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["incomplete"] is True
+
+    def test_global_collection_failure_without_output_keeps_sidecar(self, tmp_path: Path) -> None:
+        state_path = tmp_path / "state.json"
+        _persist_failure(state_path, "global collection failed")
+        sidecar = state_path.with_name(f"{state_path.name}.collection.jsonl")
+        assert sidecar.exists()
+        assert "global collection failed" in sidecar.read_text(encoding="utf-8")
+        assert not state_path.exists()
+
+    def test_collection_skip_is_not_a_harness_error(self, tmp_path: Path) -> None:
+        report_path = tmp_path / "report.jsonl"
+        output_path = tmp_path / "results.json"
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "CollectReport",
+                            "nodeid": "test_empty.py",
+                            "when": "collect",
+                            "outcome": "skipped",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 5}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        payload = test_cmd.postprocess_jsonl_to_unified(report_path, output_path)
+        assert payload["summary"]["error"] == 0
+        assert payload["summary"]["incomplete"] is False
 
     def test_test_defaults_to_auto_isolation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1030,12 +1394,125 @@ class TestTestCommand:
 
         assert result.exit_code == 0
         assert results_path.exists()
+        assert results_path.parent.joinpath("report.jsonl").exists()
         assert results_path.parent.joinpath("coverage.json").exists()
         quality_path = results_path.parent / "quality.json"
         assert quality_path.exists()
         report = json.loads(quality_path.read_text(encoding="utf-8"))
         assert report["schema_version"] == "1"
         assert report["selection_findings"][0]["selected_but_not_invoked"] == ["CKM_AES_GCM"]
+
+    def test_test_none_json_keeps_native_collection_error_in_report_and_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "artifacts" / "results.json"
+        results_path.parent.mkdir()
+        for name in ("coverage.json", "provisioning.json"):
+            (results_path.parent / name).write_text("stale", encoding="utf-8")
+        diagnostic = "SyntaxError: invalid syntax"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            report_log = os.environ["PKCS11_CHECK_REPORT_LOG"]
+            Path(report_log).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps(
+                            {
+                                "$report_type": "CollectReport",
+                                "nodeid": "test_broken.py",
+                                "when": "collect",
+                                "outcome": "failed",
+                                "longrepr": diagnostic,
+                            }
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 2}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return 2
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 2
+        report_path = results_path.parent / "report.jsonl"
+        assert diagnostic in report_path.read_text(encoding="utf-8")
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["failed"] == 0
+        assert payload["summary"]["xfailed"] == 0
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["incomplete"] is True
+        assert not (results_path.parent / "coverage.json").exists()
+        assert not (results_path.parent / "provisioning.json").exists()
+
+    def test_test_none_json_empty_reportlog_gets_collection_error_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "artifacts" / "results.json"
+        results_path.parent.mkdir()
+        for name in ("coverage.json", "provisioning.json"):
+            (results_path.parent / name).write_text("stale", encoding="utf-8")
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text("", encoding="utf-8")
+            return 2
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 2
+        report_path = results_path.parent / "report.jsonl"
+        records = [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(records) == 1
+        assert records[0]["$report_type"] == "CollectReport"
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["incomplete"] is True
+        assert not (results_path.parent / "coverage.json").exists()
+        assert not (results_path.parent / "provisioning.json").exists()
 
     def test_test_none_json_writes_quality_report_when_jsonl_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

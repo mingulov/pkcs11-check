@@ -292,6 +292,8 @@ def _group_results_by_file(
         merged_compliance_notes: list[dict[str, Any]] = []
         merged_skip_reasons: dict[str, int] = {}
         merged_executions: list[dict[str, Any]] = []
+        merged_incomplete = False
+        merged_incomplete_files: set[str] = set()
         file_skip = False
         for r in file_results:
             detail = _copy_detail(details.get(r.target, {}))
@@ -309,6 +311,13 @@ def _group_results_by_file(
                 )
             if detail.get("file_skip"):
                 file_skip = True
+            if detail.get("incomplete") is True:
+                merged_incomplete = True
+            incomplete_files = detail.get("incomplete_files")
+            if isinstance(incomplete_files, list):
+                merged_incomplete_files.update(
+                    file_part for file_part in incomplete_files if isinstance(file_part, str)
+                )
         merged_detail: dict[str, Any] = {"counts": merged_counts, "tests": merged_tests}
         if merged_compliance_notes:
             merged_detail["compliance_notes"] = merged_compliance_notes
@@ -316,6 +325,10 @@ def _group_results_by_file(
             merged_detail["skip_reasons"] = merged_skip_reasons
         if file_skip:
             merged_detail["file_skip"] = True
+        if merged_incomplete:
+            merged_detail["incomplete"] = True
+        if merged_incomplete_files:
+            merged_detail["incomplete_files"] = sorted(merged_incomplete_files)
         if merged_executions:
             merged_detail["executions"] = _canonical_executions(merged_executions)
         out.append((file_target, file_results, merged_detail))
@@ -366,6 +379,12 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
         copied["executions"] = executions
     if isinstance(detail, Mapping) and detail.get("file_skip"):
         copied["file_skip"] = True
+    if isinstance(detail, Mapping) and detail.get("incomplete") is True:
+        copied["incomplete"] = True
+    if isinstance(detail, Mapping) and isinstance(detail.get("incomplete_files"), list):
+        copied["incomplete_files"] = [
+            str(file_part) for file_part in detail["incomplete_files"] if isinstance(file_part, str)
+        ]
     return copied
 
 

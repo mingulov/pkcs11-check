@@ -1107,6 +1107,224 @@ def test_normal_exit_completion_matches_subprocess_status(
         assert state.results[0].stdout == "captured stdout"
 
 
+@pytest.mark.parametrize("output_format", ["json", "junit"])
+def test_failed_unit_with_empty_reportlog_gets_one_collect_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, output_format: str
+) -> None:
+    target = tmp_path / "test_benchmark.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    results_path = tmp_path / ("results.json" if output_format == "json" else "results.xml")
+    report_path = tmp_path / "report.jsonl"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text("", encoding="utf-8")
+        return 1, "pytest stdout diagnostic", "pytest stderr diagnostic"
+
+    real_save_run_state = file_runner_mod.save_run_state
+    cache_dir = state_path.parent / f".{state_path.name}.report-records"
+
+    def observing_save_run_state(path: Path, state: FileRunState) -> None:
+        if any(result.target == str(target) for result in state.results):
+            assert list(cache_dir.glob("*.jsonl")), "cache must precede attempted-unit state"
+        real_save_run_state(path, state)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(file_runner_mod, "save_run_state", observing_save_run_state)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=tmp_path / "policy.json",
+        report_config=IsolatedReportConfig(
+            output_format,
+            results_path,
+            jsonl_path=report_path if output_format == "json" else None,
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    if output_format == "json":
+        records = [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ]
+        collects = [record for record in records if record["$report_type"] == "CollectReport"]
+        assert len(collects) == 1
+        diagnostic = collects[0]["longrepr"]
+        assert "stderr:" in diagnostic
+        assert "pytest stderr diagnostic" in diagnostic
+        assert "stdout:" in diagnostic
+        assert "pytest stdout diagnostic" in diagnostic
+        assert diagnostic.index("stderr:") < diagnostic.index("stdout:")
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["incomplete"] is True
+        assert payload["units"][0]["incomplete"] is True
+        assert payload["units"][0]["tests"][0]["outcome"] == "error"
+    else:
+        junit = results_path.read_text(encoding="utf-8")
+        assert 'errors="1"' in junit
+        assert 'type="collection"' in junit
+        assert "stderr:" in junit
+        assert "pytest stderr diagnostic" in junit
+        assert "stdout:" in junit
+        assert "pytest stdout diagnostic" in junit
+
+
+def test_failed_unit_exit_three_with_test_report_gets_collection_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_broken.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    report_path = tmp_path / "report.jsonl"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    _jsonl_line(
+                        nodeid=f"{target}::test_case",
+                        when="call",
+                        outcome="passed",
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 3}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 3, "pytest internal error", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=tmp_path / "policy.json",
+        report_config=IsolatedReportConfig(
+            "json", tmp_path / "results.json", jsonl_path=report_path
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
+    collects = [record for record in records if record["$report_type"] == "CollectReport"]
+    assert len(collects) == 1
+    assert "pytest internal error" in collects[0]["longrepr"]
+
+
+def test_resume_success_keeps_global_collection_failure_non_green_without_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_demo.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    diagnostic = "previous plugin collection failed"
+    sidecar = state_path.with_name(f"{state_path.name}.collection.jsonl")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "$report_type": "CollectReport",
+                "nodeid": "<collection>",
+                "when": "collect",
+                "outcome": "failed",
+                "longrepr": diagnostic,
+                "source": "runner-fallback",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        _write_session_report(cmd)
+        return 0, "", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    console_output = StringIO()
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=None,
+        report_config=None,
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=console_output, force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    assert diagnostic in console_output.getvalue()
+
+
+def test_failed_unit_fallback_precedes_matching_session_finish(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_config.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    report_path = tmp_path / "report.jsonl"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 1}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 1, "stdout config diagnostic", "stderr config diagnostic"
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=tmp_path / "policy.json",
+        report_config=IsolatedReportConfig(
+            "json", tmp_path / "results.json", jsonl_path=report_path
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
+    report_types = [record["$report_type"] for record in records]
+    assert report_types.index("CollectReport") < report_types.index("SessionFinish")
+    collect = next(record for record in records if record["$report_type"] == "CollectReport")
+    assert "stderr config diagnostic" in collect["longrepr"]
+    assert "stdout config diagnostic" in collect["longrepr"]
+    state = load_run_state(tmp_path / "state.json")
+    assert state is not None
+    assert state.results[0].completion_verified is True
+    payload = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["error"] == 1
+    assert payload["summary"]["incomplete"] is True
+    assert payload["units"][0]["incomplete"] is True
+
+
 def test_incomplete_normal_exit_does_not_promote_or_retry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -6363,6 +6581,33 @@ def test_read_jsonl_results_handles_collect_error(tmp_path: Path) -> None:
     assert result["counts"]["error"] == 1
     assert len(result["tests"]) == 1
     assert result["tests"][0]["outcome"] == "error"
+
+
+def test_junit_collection_error_is_error_even_when_completion_is_verified(tmp_path: Path) -> None:
+    state = FileRunState(
+        units=["test_broken.py"],
+        fingerprint="abc123",
+        results=[FileRunResult("test_broken.py", "failed", 1, 0.1)],
+    )
+    junit_path = tmp_path / "results.xml"
+
+    write_isolated_junit_report(
+        junit_path,
+        state,
+        per_unit_details={
+            "test_broken.py": {
+                "counts": {"error": 1},
+                "incomplete": True,
+                "tests": [{"outcome": "error", "longrepr": "SyntaxError: invalid syntax"}],
+            }
+        },
+    )
+
+    junit = junit_path.read_text(encoding="utf-8")
+    assert 'failures="0"' in junit
+    assert 'errors="1"' in junit
+    assert 'type="collection"' in junit
+    assert "SyntaxError: invalid syntax" in junit
 
 
 def test_read_jsonl_results_returns_none_for_missing(tmp_path: Path) -> None:

@@ -58,6 +58,15 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   `"completion_verified": false` and `"incomplete": true`; the aggregate carries
   `"summary": {"incomplete": true}`. These fields are additive, and an omitted
   `completion_verified` in an older state is read as verified for compatibility.
+- A pytest collection/configuration failure that prevents a unit or run from starting is a
+  harness error: it is represented by a failed `CollectReport`, counted under `error`, and marks
+  the affected unit and run `incomplete`; it is not a provider fail, xfail, or crash finding. A
+  standalone/global collection result also exposes `"completion_verified": false` on its unit.
+  The attempt is retained in an atomic state-adjacent collection sidecar so interruption and
+  `--resume` cannot erase it; JSON output retains the raw evidence as `report.jsonl`, and JUnit
+  renders it as `<error type="collection">` with labeled stderr/stdout diagnostics. Fresh runs
+  clear the sidecar and report artifacts. `CollectReport` records with outcome `skipped` remain
+  no-tests/skip behavior and are not converted into harness errors.
 - `--resume` is continuation-only: every planned target already present in saved results is
   skipped, regardless of status or `completion_verified`; only missing targets run. This means
   failed, crashed, timed-out, unverified, escalated, and crash-limited results are preserved, not
@@ -103,6 +112,10 @@ The raw pytest-reportlog stream (one JSON record per line: TestReport,
 CoverageReport, SelectionReport, …). Large; stream it line-by-line. Per-test
 CK_RV traces ride in `user_properties` when `--rv-trace` is on. A fresh non-resume run clears the
 known path before execution; resumed runs preserve saved per-unit shards and merge them.
+Collection/configuration failures add a failed `CollectReport` with `stderr:` and `stdout:`
+diagnostics. The state-adjacent collection-attempt sidecar is an internal durable source used to
+replay this evidence while resuming; consumers should use `report.jsonl` as the documented raw
+artifact and must not reinterpret these harness records as provider findings.
 Daemon-recovery evidence uses `RecoveryAttempt` and `RecoveryEvent` records. Consumers that do not
 understand custom record types may ignore them, but must not reinterpret them as `TestReport`.
 Call-phase `TestReport` records may carry serialized `pkcs11_classification` entries. Their

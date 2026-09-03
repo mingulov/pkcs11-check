@@ -316,6 +316,7 @@ def _write_report_jsonl_from_record_sources(
     output_path: Path,
     attempt_history: Sequence[Mapping[str, Any]] = (),
     recovery_events: Sequence[Mapping[str, Any]] = (),
+    collection_failure_path: Path | None = None,
 ) -> bool:
     """Write merged report.jsonl from per-unit cache shards without loading all records."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -334,6 +335,15 @@ def _write_report_jsonl_from_record_sources(
                 durable_events.append(dict(event))
     try:
         with tmp_path.open("w", encoding="utf-8") as out_fh:
+            collection_records = (
+                _load_report_log_records(collection_failure_path)
+                if collection_failure_path is not None
+                else []
+            )
+            collection_keys = {
+                json.dumps(record, sort_keys=True, separators=(",", ":"))
+                for record in collection_records
+            }
             saved_observations = [
                 observation
                 for observation in _saved_process_observations(state_file)
@@ -425,8 +435,17 @@ def _write_report_jsonl_from_record_sources(
                 ):
                     if record.get("$report_type") in {"ProcessReport", "RecoveryEvent"}:
                         continue
+                    if (
+                        collection_keys
+                        and json.dumps(record, sort_keys=True, separators=(",", ":"))
+                        in collection_keys
+                    ):
+                        continue
                     out_fh.write(json.dumps(record) + "\n")
                     wrote = True
+            for record in collection_records:
+                out_fh.write(json.dumps(record) + "\n")
+                wrote = True
         if wrote:
             tmp_path.replace(output_path)
         else:
@@ -794,6 +813,7 @@ def _build_detail_from_report_records(
     call_events: list[Mapping[str, Any]] = []
     teardown_events: list[Mapping[str, Any]] = []
     collect_errors: list[Mapping[str, Any]] = []
+    collect_error_files: set[str] = set()
     finalize_events: list[Mapping[str, Any]] = []
     execution_records_seen: set[str] = set()
     execution_observations: list[dict[str, Any]] = []
@@ -821,7 +841,7 @@ def _build_detail_from_report_records(
             continue
 
         if report_type == "CollectReport":
-            if outcome == "passed":
+            if outcome != "failed":
                 continue
             collect_errors.append(rec)
             continue
@@ -958,8 +978,13 @@ def _build_detail_from_report_records(
 
     for rec in collect_errors:
         counts["error"] = counts.get("error", 0) + 1
+        nodeid = str(rec.get("nodeid", ""))
+        file_part = nodeid.split("::", 1)[0] or "<collection>"
+        collect_error_files.add(file_part)
+        if result_record_hook is not None:
+            result_record_hook({**rec, "nodeid": file_part, "outcome": "error"})
         entry = {
-            "nodeid": rec.get("nodeid", ""),
+            "nodeid": nodeid or file_part,
             "outcome": "error",
             "duration": rec.get("duration", 0.0),
         }
@@ -1020,6 +1045,10 @@ def _build_detail_from_report_records(
     if not any(counts.values()) and not compliance_notes and not executions:
         return None
     result: dict[str, Any] = {"counts": counts, "tests": non_passing}
+    if collect_errors:
+        result["incomplete"] = True
+        if collect_error_files:
+            result["incomplete_files"] = sorted(collect_error_files)
     if compliance_notes:
         result["compliance_notes"] = compliance_notes
     if skip_reasons:

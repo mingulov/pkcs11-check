@@ -371,9 +371,7 @@ def postprocess_jsonl_to_unified(
 
     def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
         nodeid = str(rec.get("nodeid", ""))
-        file_part = nodeid.split("::")[0]
-        if not file_part:
-            return
+        file_part = nodeid.split("::")[0] or "<collection>"
         if file_part not in file_counts:
             file_counts[file_part] = _empty_counts()
         outcome = _map_record_outcome(rec)
@@ -450,6 +448,13 @@ def postprocess_jsonl_to_unified(
             "duration_s": 0.0,
             "counts": counts,
         }
+        incomplete_files = detail.get("incomplete_files")
+        if detail.get("incomplete") is True and (
+            not isinstance(incomplete_files, list) or target in incomplete_files
+        ):
+            unit["incomplete"] = True
+        if not completion.complete:
+            unit["completion_verified"] = False
         tests = by_file.get(target, [])
         if tests:
             unit["tests"] = tests

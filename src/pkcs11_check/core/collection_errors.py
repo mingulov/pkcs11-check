@@ -15,11 +15,108 @@ up front, so the next report arrives diagnosable.
 
 from __future__ import annotations
 
+import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
+
+from pkcs11_check.core.nodeids import normalize_nodeid
+from pkcs11_check.core.report_log import iter_report_log_records
 
 _MAX_STREAM = 4000
+
+
+def collection_failure_sidecar_path(state_file: Path) -> Path:
+    """Return the durable collection-attempt source beside a runner state file."""
+    return state_file.with_name(f"{state_file.name}.collection.jsonl")
+
+
+def ensure_failed_collection_report(
+    path: Path,
+    *,
+    target: str | None,
+    status: str,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> bool:
+    """Append one collection record when pytest failed before reportlog emitted evidence."""
+    if status != "failed" or returncode == 0:
+        return False
+
+    def matches_target(record: Mapping[str, Any]) -> bool:
+        if target is None:
+            return record.get("$report_type") in {"TestReport", "CollectReport"}
+        nodeid = str(record.get("nodeid", ""))
+        if not nodeid:
+            return True
+        target_file = normalize_nodeid(target.split("::", 1)[0])
+        node_file = normalize_nodeid(nodeid.split("::", 1)[0])
+        if nodeid == target or node_file == target_file:
+            return True
+        try:
+            return Path(node_file).resolve() == Path(target_file).resolve()
+        except OSError:
+            return False
+
+    diagnostic = (
+        "\n".join([*_stream_excerpt("stderr", stderr), *_stream_excerpt("stdout", stdout)])
+        if stderr.strip() or stdout.strip()
+        else f"pytest unit {target or '<collection>'} failed with exit code {returncode}"
+    )
+    for record in iter_report_log_records(path):
+        if not matches_target(record):
+            continue
+        if record.get("$report_type") == "CollectReport" and record.get("outcome") == "failed":
+            if record.get("source") != "runner-fallback" or record.get("longrepr") == diagnostic:
+                return False
+        elif (
+            returncode == 1
+            and record.get("$report_type") == "TestReport"
+            and target != "<collection>"
+        ):
+            return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record_target = target or "<collection>"
+    record_line = (
+        json.dumps(
+            {
+                "$report_type": "CollectReport",
+                "nodeid": record_target,
+                "when": "collect",
+                "outcome": "failed",
+                "longrepr": diagnostic,
+                "source": "runner-fallback",
+            }
+        )
+        + "\n"
+    )
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except OSError:
+        raw_lines = []
+    insert_at: int | None = None
+    for index, raw_line in enumerate(raw_lines):
+        try:
+            parsed = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(parsed, dict)
+            and parsed.get("$report_type") == "SessionFinish"
+            and parsed.get("exitstatus") == returncode
+        ):
+            insert_at = index
+            break
+    if insert_at is None:
+        raw_lines.append(record_line)
+    else:
+        raw_lines.insert(insert_at, record_line)
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    temporary_path.write_text("".join(raw_lines), encoding="utf-8")
+    temporary_path.replace(path)
+    return True
 
 
 def _describe_target(raw_target: str) -> str:

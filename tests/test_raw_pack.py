@@ -1275,6 +1275,37 @@ def test_sdist_and_wheel_ship_generated_raw_modules_without_the_vendored_header(
     wheel_path = next(dist_dir.glob("*.whl"))
     with zipfile.ZipFile(wheel_path) as wheel:
         wheel_names = set(wheel.namelist())
+        metadata_name = next(name for name in wheel_names if name.endswith(".dist-info/METADATA"))
+        wheel_metadata = wheel.read(metadata_name).decode("utf-8")
+
+    assert any(
+        line.startswith("Requires-Dist: pytest-benchmark") for line in wheel_metadata.splitlines()
+    )
+    assert "pkcs11_check/testcases/test_benchmark.py" in wheel_names
+
+    smoke = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--isolated",
+            "--no-project",
+            "--with",
+            str(wheel_path),
+            "--",
+            "python",
+            "-m",
+            "pytest",
+            "--pyargs",
+            "pkcs11_check.testcases.test_benchmark",
+            "--collect-only",
+            "-q",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert smoke.returncode == 0, smoke.stderr
 
     sdist_path = next(dist_dir.glob("*.tar.gz"))
     with tarfile.open(sdist_path, mode="r:gz") as sdist:

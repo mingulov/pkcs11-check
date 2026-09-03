@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import tomllib
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -16,13 +17,24 @@ from rich.console import Console
 
 from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.config import P11TestConfig
+from pkcs11_check.core._report_records import (
+    _build_per_unit_details_from_record_sources,
+    _seed_missing_report_record_caches_from_jsonl,
+    _write_report_jsonl_from_record_sources,
+)
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
+from pkcs11_check.core.collection_errors import (
+    collection_failure_sidecar_path,
+    ensure_failed_collection_report,
+)
 from pkcs11_check.core.disabled_baseline import resolve_disabled_nodeids
 from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
     IsolatedReportConfig,
+    _collection_failure_reporting_copy,
     _emit_external_provision_banner,
+    _reset_fresh_run_artifacts,
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
@@ -33,6 +45,7 @@ from pkcs11_check.core.file_runner import (
     run_isolated_pytest_units,
     validate_subprocess_per_test_expansion,
     write_isolated_json_report,
+    write_isolated_report,
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
@@ -214,37 +227,143 @@ def _isolated_report_config(output: str, output_file: str | None) -> IsolatedRep
     return IsolatedReportConfig("junit", Path(output_file or "pkcs11-check-results.xml"))
 
 
+def _persist_collection_failure(
+    *,
+    diagnostic: str,
+    state_file: Path,
+    report_config: IsolatedReportConfig | None,
+    resume: bool,
+    provenance: dict[str, Any],
+) -> None:
+    """Persist collection failure evidence before the isolated runner can start."""
+    target = "<collection>"
+    if not resume:
+        _reset_fresh_run_artifacts(state_file, report_config)
+        prior_state = None
+    else:
+        prior_state = load_run_state(state_file)
+
+    jsonl_path = report_config.jsonl_path if report_config is not None else None
+    collection_sidecar = collection_failure_sidecar_path(state_file)
+    for path in (collection_sidecar, jsonl_path):
+        if path is not None:
+            ensure_failed_collection_report(
+                path,
+                target=target,
+                status="failed",
+                returncode=2,
+                stdout="",
+                stderr=diagnostic,
+            )
+
+    base_state = prior_state or FileRunState(units=[], fingerprint="", results=[])
+    inline_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = dict(
+        base_state.report_records_by_unit
+    )
+    reporting_state, inline_records_by_unit = _collection_failure_reporting_copy(
+        state_file,
+        base_state,
+        inline_records_by_unit,
+    )
+
+    if report_config is None:
+        return
+    if jsonl_path is not None and jsonl_path.exists():
+        candidate_targets = set(reporting_state.units) | {
+            result.target for result in reporting_state.results
+        }
+        _seed_missing_report_record_caches_from_jsonl(
+            state_file,
+            jsonl_path,
+            candidate_targets=candidate_targets,
+            skip_units=set(inline_records_by_unit),
+        )
+        _write_report_jsonl_from_record_sources(
+            state_file,
+            units=reporting_state.units,
+            inline_records_by_unit=inline_records_by_unit,
+            output_path=jsonl_path,
+            collection_failure_path=collection_sidecar,
+        )
+    details = _build_per_unit_details_from_record_sources(
+        state_file,
+        units=reporting_state.units,
+        inline_records_by_unit=inline_records_by_unit,
+    )
+    if report_config.output_format == "json":
+        payload = write_isolated_json_report(
+            report_config.output_path,
+            reporting_state,
+            per_unit_details=details,
+            provenance=provenance,
+        )
+        write_quality_json_report(
+            report_config.output_path.parent / "quality.json",
+            payload,
+            report_log_records=(
+                extract_quality_report_records_from_jsonl(jsonl_path)
+                if jsonl_path is not None
+                else []
+            ),
+        )
+    else:
+        write_isolated_report(report_config, reporting_state, per_unit_details=details)
+
+
 def _assemble_json_artifacts_from_jsonl(
-    jsonl_p: Path, output_file: str | None, run_provenance: dict[str, Any]
+    jsonl_p: Path,
+    output_file: str | None,
+    run_provenance: dict[str, Any],
+    *,
+    returncode: int = 0,
 ) -> None:
     """Build the results/coverage/quality/provisioning JSON artifacts from a raw report JSONL.
 
     Used by the non-isolated (``--isolation none``) path; the isolated path produces the same
-    artifacts inside ``run_isolated_pytest_units``. Consumes (deletes) the raw JSONL when done.
+    artifacts inside ``run_isolated_pytest_units``. Moves the raw JSONL to the documented
+    ``report.jsonl`` artifact when done.
     """
     unified_path = Path(output_file or "pkcs11-check-results.json")
     unified_path.parent.mkdir(parents=True, exist_ok=True)
-    coverage_data = extract_coverage_from_jsonl(jsonl_p)
-    quality_records = extract_quality_report_records_from_jsonl(jsonl_p)
+    report_path = unified_path.parent / "report.jsonl"
+    jsonl_p.replace(report_path)
+    if returncode not in {0, 5}:
+        ensure_failed_collection_report(
+            report_path,
+            # Non-isolated output contains one session for all selected targets;
+            # any native collection report in it is sufficient evidence for the run.
+            target=None,
+            status="failed",
+            returncode=returncode,
+            stdout="",
+            stderr="",
+        )
+    coverage_data = extract_coverage_from_jsonl(report_path)
+    quality_records = extract_quality_report_records_from_jsonl(report_path)
     if coverage_data:
         (unified_path.parent / "coverage.json").write_text(
             json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
         )
-    provisioning_data = extract_provisioning_from_jsonl(jsonl_p)
+    else:
+        (unified_path.parent / "coverage.json").unlink(missing_ok=True)
+    provisioning_data = extract_provisioning_from_jsonl(report_path)
     if provisioning_data is not None:
         (unified_path.parent / "provisioning.json").write_text(
             json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
         )
         if provisioning_data["totals"].get("ran_via_external", 0) > 0:
             _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
-    results_payload = postprocess_jsonl_to_unified(jsonl_p, unified_path, provenance=run_provenance)
+    else:
+        (unified_path.parent / "provisioning.json").unlink(missing_ok=True)
+    results_payload = postprocess_jsonl_to_unified(
+        report_path, unified_path, provenance=run_provenance
+    )
     write_quality_json_report(
         unified_path.parent / "quality.json",
         results_payload,
         coverage=coverage_data,
         report_log_records=quality_records,
     )
-    jsonl_p.unlink(missing_ok=True)
 
 
 def test_command(
@@ -548,6 +667,11 @@ def test_command(
     report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
 
     target_args = targets or [_TESTCASES_DIR]
+    if isolation in {"auto", "file", "test"} and not resume:
+        # Remove stale output/state before any metadata collection can fail. The
+        # isolated runner repeats this reset when execution starts; keeping it
+        # here closes the pre-run collection gap.
+        _reset_fresh_run_artifacts(state_file, report_config)
     try:
         try:
             runtime_config = P11TestConfig(
@@ -581,6 +705,7 @@ def test_command(
             raise typer.Exit(code=2) from exc
 
         if isolation in {"auto", "file", "test"}:
+            collection_phase = True
             if sessions != 1:
                 console.print(
                     "[yellow]Warning:[/yellow] "
@@ -596,10 +721,12 @@ def test_command(
                         units = prior_state.units
                         collected_items = collect_pytest_item_metadata(target_args, pytest_args)
                         auto_collected = collected_items
+                        collection_phase = False
                         validate_subprocess_per_test_expansion(
                             units,
                             collected_items,
                         )
+                        collection_phase = True
                     else:
                         # Capture the collection metadata produced during unit
                         # discovery so we don't run a second identical
@@ -632,6 +759,7 @@ def test_command(
                         )
                     elif runner_granularity == "file":
                         collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                    collection_phase = False
                     selection_plan = build_disabled_selection_plan(
                         units=units,
                         disabled_nodeids=disabled_nodeids,
@@ -644,6 +772,7 @@ def test_command(
                         deselect_by_file={},
                         baseline_fingerprint=baseline_fingerprint,
                     )
+                collection_phase = False
                 try:
                     recovery_config = build_recovery_config(
                         mode=recover_mode, recover_cmd=recover_cmd
@@ -673,6 +802,14 @@ def test_command(
                     **runner_kwargs,
                 )
             except (FileNotFoundError, ValueError) as exc:
+                if collection_phase:
+                    _persist_collection_failure(
+                        diagnostic=str(exc) or type(exc).__name__,
+                        state_file=state_file,
+                        report_config=report_config,
+                        resume=resume,
+                        provenance=run_provenance,
+                    )
                 console.print(f"[red]Error:[/red] {exc}")
                 raise typer.Exit(code=2) from exc
             raise typer.Exit(code=exit_code)
@@ -698,7 +835,12 @@ def test_command(
             if deselect_path is not None:
                 deselect_path.unlink(missing_ok=True)
         if output == "json" and jsonl_raw is not None:
-            _assemble_json_artifacts_from_jsonl(Path(jsonl_raw), output_file, run_provenance)
+            _assemble_json_artifacts_from_jsonl(
+                Path(jsonl_raw),
+                output_file,
+                run_provenance,
+                returncode=int(exit_code),
+            )
         raise typer.Exit(code=int(exit_code))
     finally:
         manifest_path.unlink(missing_ok=True)

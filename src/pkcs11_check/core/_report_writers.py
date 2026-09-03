@@ -439,6 +439,8 @@ def _build_isolated_json_payload(
         if any(not r.completion_verified for r in file_results):
             unit["incomplete"] = True
             unit["completion_verified"] = False
+        if detail.get("incomplete") is True:
+            unit["incomplete"] = True
         if stdout_parts:
             unit["stdout"] = "\n".join(stdout_parts)
         if stderr_parts:
@@ -556,17 +558,22 @@ def write_isolated_junit_report(
         counts = detail.get("counts") if isinstance(detail, Mapping) else None
         return _effective_unit_status([result], counts)
 
+    def has_collection_error(result: FileRunResult) -> bool:
+        detail = details.get(result.target)
+        return isinstance(detail, Mapping) and detail.get("incomplete") is True
+
     effective_results = [(result, effective_status(result)) for result in state.results]
     failures = sum(
         1
         for result, status in effective_results
-        if status == "failed" and result.completion_verified
+        if status == "failed" and result.completion_verified and not has_collection_error(result)
     )
     errors = sum(
         1
         for result, status in effective_results
         if status in {"crashed", "timeout", "escalated", "crash_limited"}
         or not result.completion_verified
+        or has_collection_error(result)
     ) + len(recovery_events)
     skipped = sum(
         1
@@ -598,6 +605,7 @@ def write_isolated_junit_report(
                     for record in records
                     if isinstance(record, Mapping) and record.get("longrepr")
                 )
+        captured_diagnostic = result.stderr.strip() or result.stdout.strip()
         class_name, case_name = _junit_case_identity(result.target)
         case = ET.SubElement(
             suite,
@@ -609,15 +617,27 @@ def write_isolated_junit_report(
             },
         )
 
-        if not result.completion_verified:
+        if not result.completion_verified and not has_collection_error(result):
             error = ET.SubElement(
                 case,
                 "error",
                 {"message": "report log completion could not be verified", "type": "incomplete"},
             )
             error.text = (
-                f"Unit {result.target} exited with code {result.returncode} without a "
+                captured_diagnostic
+                or f"Unit {result.target} exited with code {result.returncode} without a "
                 "matching SessionFinish record."
+            )
+        elif has_collection_error(result):
+            error = ET.SubElement(
+                case,
+                "error",
+                {"message": "pytest collection failed", "type": "collection"},
+            )
+            error.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} failed during pytest collection."
             )
         elif status == "failed":
             failure = ET.SubElement(
