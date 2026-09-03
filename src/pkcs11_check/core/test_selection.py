@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -447,6 +448,15 @@ def write_deselect_file(nodeids: Iterable[str]) -> Path:
     unique_sorted = sorted({nodeid for nodeid in nodeids if nodeid})
     fd, raw_path = tempfile.mkstemp(prefix="pkcs11-check-deselect-", suffix=".txt")
     path = Path(raw_path)
-    os.close(fd)
-    path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted), encoding="utf-8")
+    try:
+        os.close(fd)
+        fd = -1
+        path.write_text("".join(f"{nodeid}\n" for nodeid in unique_sorted), encoding="utf-8")
+    except BaseException:
+        if fd >= 0:
+            with suppress(OSError):
+                os.close(fd)
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
+        raise
     return path

@@ -9,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from xml.etree import ElementTree as ET
 
 import pytest
 from rich.console import Console
@@ -554,6 +555,35 @@ def test_legacy_state_result_defaults_to_verified_completion(tmp_path: Path) -> 
 
     assert loaded is not None
     assert loaded.results[0].completion_verified is True
+
+
+@pytest.mark.parametrize("returncode", [2, 3, 4])
+def test_legacy_state_harness_exit_is_unverified_without_field(
+    tmp_path: Path, returncode: int
+) -> None:
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "units": ["test_a.py"],
+                "fingerprint": "abc123",
+                "results": [
+                    {
+                        "target": "test_a.py",
+                        "status": "failed",
+                        "returncode": returncode,
+                        "duration_s": 0.1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_run_state(state_file)
+
+    assert loaded is not None
+    assert loaded.results[0].completion_verified is False
 
 
 def test_process_observations_survive_replacement_and_resume(
@@ -1107,8 +1137,112 @@ def test_normal_exit_completion_matches_subprocess_status(
         assert state.results[0].stdout == "captured stdout"
 
 
+@pytest.mark.parametrize("returncode", [2, 3, 4])
+def test_harness_returncodes_are_incomplete_and_public_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
+) -> None:
+    target = tmp_path / "test_harness.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    _jsonl_line(
+                        nodeid=f"{target}::test_case",
+                        when="call",
+                        outcome="passed",
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": returncode}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return returncode, "harness stdout", "harness stderr"
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="test",
+    )
+
+    state = load_run_state(state_path)
+    assert exit_code == 2
+    assert state is not None
+    assert state.results[0].returncode == returncode
+    assert state.results[0].completion_verified is False
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
+    assert payload["units"][0]["returncode"] == returncode
+    assert payload["summary"]["failed"] == 0
+    assert payload["summary"]["incomplete"] is True
+
+
+def test_same_unit_provider_failure_wins_over_harness_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_provider.py"
+    target.write_text("def test_case():\n    assert False\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    _jsonl_line(
+                        nodeid=f"{target}::test_case",
+                        when="call",
+                        outcome="failed",
+                        longrepr="provider failure",
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 2}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 2, "late pytest harness error", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["failed"] == 1
+    assert payload["summary"]["error"] == 1
+    assert payload["summary"]["incomplete"] is True
+
+
 @pytest.mark.parametrize("output_format", ["json", "junit"])
-def test_failed_unit_with_empty_reportlog_gets_one_collect_report(
+def test_failed_unit_with_empty_reportlog_gets_one_harness_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, output_format: str
 ) -> None:
     target = tmp_path / "test_benchmark.py"
@@ -1154,14 +1288,12 @@ def test_failed_unit_with_empty_reportlog_gets_one_collect_report(
         records = [
             json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
         ]
-        collects = [record for record in records if record["$report_type"] == "CollectReport"]
-        assert len(collects) == 1
-        diagnostic = collects[0]["longrepr"]
-        assert "stderr:" in diagnostic
+        harness = [record for record in records if record["$report_type"] == "HarnessError"]
+        assert len(harness) == 1
+        assert harness[0]["returncode"] == 1
+        assert harness[0]["completion_verified"] is False
+        diagnostic = harness[0]["longrepr"]
         assert "pytest stderr diagnostic" in diagnostic
-        assert "stdout:" in diagnostic
-        assert "pytest stdout diagnostic" in diagnostic
-        assert diagnostic.index("stderr:") < diagnostic.index("stdout:")
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["summary"]["error"] == 1
         assert payload["summary"]["incomplete"] is True
@@ -1170,15 +1302,13 @@ def test_failed_unit_with_empty_reportlog_gets_one_collect_report(
     else:
         junit = results_path.read_text(encoding="utf-8")
         assert 'errors="1"' in junit
-        assert 'type="collection"' in junit
-        assert "stderr:" in junit
+        assert 'type="incomplete"' in junit
         assert "pytest stderr diagnostic" in junit
-        assert "stdout:" in junit
-        assert "pytest stdout diagnostic" in junit
 
 
-def test_failed_unit_exit_three_with_test_report_gets_collection_fallback(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("returncode", [2, 3, 4])
+def test_harness_exit_with_test_report_keeps_explicit_harness_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
 ) -> None:
     target = tmp_path / "test_broken.py"
     target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
@@ -1195,13 +1325,13 @@ def test_failed_unit_exit_three_with_test_report_gets_collection_fallback(
                         when="call",
                         outcome="passed",
                     ),
-                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 3}),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": returncode}),
                 ]
             )
             + "\n",
             encoding="utf-8",
         )
-        return 3, "pytest internal error", ""
+        return returncode, "pytest harness error", ""
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
     exit_code = run_isolated_pytest_units(
@@ -1219,11 +1349,15 @@ def test_failed_unit_exit_three_with_test_report_gets_collection_fallback(
         granularity="file",
     )
 
-    assert exit_code == 1
+    assert exit_code == 2
     records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
     collects = [record for record in records if record["$report_type"] == "CollectReport"]
-    assert len(collects) == 1
-    assert "pytest internal error" in collects[0]["longrepr"]
+    assert not collects
+    assert any(record["$report_type"] == "TestReport" for record in records)
+    harness = [record for record in records if record["$report_type"] == "HarnessError"]
+    assert len(harness) == 1
+    assert harness[0]["returncode"] == returncode
+    assert harness[0]["completion_verified"] is False
 
 
 def test_resume_success_keeps_global_collection_failure_non_green_without_report(
@@ -1585,6 +1719,62 @@ def test_final_resume_health_rejects_escalated_trigger() -> None:
     assert file_runner_mod._final_state_exit_code(state, 0) == 1
 
 
+def test_final_state_provider_finding_wins_existing_harness_exit() -> None:
+    state = FileRunState(
+        units=["provider.py", "collection.py"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult("provider.py", "failed", 1, 0.1),
+            FileRunResult("collection.py", "failed", 2, 0.1, completion_verified=False),
+        ],
+    )
+
+    assert file_runner_mod._final_state_exit_code(state, 2) == 1
+
+
+def test_final_state_all_empty_results_are_not_green() -> None:
+    state = FileRunState(
+        units=["empty.py"],
+        fingerprint="abc123",
+        results=[FileRunResult("empty.py", "empty", 5, 0.1)],
+    )
+
+    assert file_runner_mod._final_state_exit_code(state, 0) == 2
+
+
+def test_final_state_empty_unit_does_not_mask_executed_result() -> None:
+    state = FileRunState(
+        units=["empty.py", "passed.py"],
+        fingerprint="abc123",
+        results=[
+            FileRunResult("empty.py", "empty", 5, 0.1),
+            FileRunResult("passed.py", "passed", 0, 0.1),
+        ],
+    )
+
+    assert file_runner_mod._final_state_exit_code(state, 0) == 0
+
+
+def test_final_state_empty_status_uses_detail_to_detect_executed_tests() -> None:
+    state = FileRunState(
+        units=["test_empty.py", "test_report.py"],
+        fingerprint="",
+        results=[
+            FileRunResult("test_empty.py", "empty", 5, 0.1),
+            FileRunResult("test_report.py", "empty", 5, 0.1),
+        ],
+    )
+
+    assert (
+        file_runner_mod._final_state_exit_code(
+            state,
+            0,
+            {"test_report.py": {"counts": {"passed": 1}}},
+        )
+        == 0
+    )
+
+
 def test_effective_status_preserves_unrecognized_escalation_trigger() -> None:
     results = [
         FileRunResult("test_a.py", "escalated", 7, 0.1),
@@ -1592,6 +1782,35 @@ def test_effective_status_preserves_unrecognized_escalation_trigger() -> None:
     ]
 
     assert unit_details_mod._effective_unit_status(results) == "escalated"
+
+
+@pytest.mark.parametrize("status", ["escalated", "crash_limited"])
+def test_status_with_detail_counts_preserves_residue_over_generic_error(status: str) -> None:
+    assert unit_details_mod._status_with_detail_counts(status, {"error": 1}) == status
+
+
+@pytest.mark.parametrize(
+    "provider_result",
+    [
+        FileRunResult("provider.py", "failed", 1, 0.1),
+        FileRunResult("provider.py", "crashed", -11, 0.1),
+        FileRunResult("provider.py", "timeout", 124, 0.1),
+    ],
+    ids=["failed", "crashed", "timeout"],
+)
+def test_final_state_exit_code_keeps_provider_finding_over_harness_exit(
+    provider_result: FileRunResult,
+) -> None:
+    state = FileRunState(
+        units=[provider_result.target, "harness.py"],
+        fingerprint="abc123",
+        results=[
+            provider_result,
+            FileRunResult("harness.py", "failed", 2, 0.1, completion_verified=False),
+        ],
+    )
+
+    assert unit_details_mod._final_state_exit_code(state, 0) == 1
 
 
 @pytest.mark.parametrize("output_format", ["json", "junit"])
@@ -2355,6 +2574,25 @@ def test_resume_runs_only_missing_child_and_retains_escalated_parent(
     ) -> tuple[int, str, str]:
         del env, timeout
         calls.append(cmd[3])
+        report_path = Path(cmd[cmd.index("--report-log") + 1])
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": f"{cmd[3]}",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
@@ -3110,6 +3348,63 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
     ]
 
 
+def test_cache_attempt_checkpoint_keeps_all_attempt_sources(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_a.py::test_crashed",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "provider crash",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    second.write_text(
+        "\n".join(
+            [
+                json.dumps({"$report_type": "SessionStart"}),
+                json.dumps({"$report_type": "SessionFinish", "exitstatus": 1}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    file_runner_mod._cache_attempt_report(
+        state_file=state_file,
+        unit="test_a.py",
+        jsonl_path=first,
+        jsonl_paths=[first],
+        detail={"counts": {"failed": 1}, "tests": []},
+        status="crashed",
+        returncode=-11,
+        session_exitstatus=None,
+    )
+    file_runner_mod._cache_attempt_report(
+        state_file=state_file,
+        unit="test_a.py",
+        jsonl_path=second,
+        jsonl_paths=[first, second],
+        detail={"counts": {"failed": 1}, "tests": []},
+        status="failed",
+        returncode=1,
+        session_exitstatus=1,
+    )
+
+    cached = _load_cached_report_records_by_unit(state_file, ["test_a.py"])["test_a.py"]
+    assert [record["$report_type"] for record in cached] == [
+        "TestReport",
+        "SessionStart",
+        "SessionFinish",
+    ]
+
+
 def test_run_isolated_pytest_units_resume_json_rebuilds_multi_unit_log_without_coverage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3718,6 +4013,22 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
             return (-11, "", "")
 
         if target == "test_a.py::test_culprit":
+            assert report_log_path is not None
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_culprit",
+                            when="call",
+                            outcome="passed",
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             return (0, "", "")
 
         if target == "test_a.py" and env is not None and "PKCS11_CHECK_DESELECT_FILE" in env:
@@ -3799,7 +4110,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
         record["$report_type"]
         for record in records
         if record["$report_type"] in {"SessionStart", "SessionFinish"}
-    ] == ["SessionStart", "SessionStart", "SessionFinish"]
+    ] == ["SessionStart", "SessionStart", "SessionFinish", "SessionStart", "SessionFinish"]
     report_records = [
         record
         for record in records
@@ -3811,6 +4122,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
         "test_a.py::test_done",
         "test_a.py::test_culprit",
         None,
+        "test_a.py::test_culprit",
         "test_a.py::test_remaining",
         None,
     ]
@@ -3820,6 +4132,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
         "TestReport",
         "TestReport",
         "SelectionReport",
+        "TestReport",
         "TestReport",
         "CoverageReport",
     ]
@@ -4439,12 +4752,22 @@ def test_run_isolated_pytest_units_filters_disabled_tests_when_escalating_file(
     assert calls == [str(target), f"{target}::test_one", "test_after.py"]
 
 
+@pytest.mark.parametrize(
+    ("confirmation_rc", "confirmation_outcome", "expected_error"),
+    [(-11, "crashed", 0), (2, "error", 1)],
+    ids=["confirmed-crash", "confirmation-harness"],
+)
 def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_after_retry_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    confirmation_rc: int,
+    confirmation_outcome: str,
+    expected_error: int,
 ) -> None:
     state_file = tmp_path / "state.json"
     results_path = tmp_path / "results.json"
     report_jsonl_path = tmp_path / "report.jsonl"
+    confirmation_marker = f"confirmation-report-{confirmation_rc}"
     seen_file_runs = 0
 
     def fake_run(
@@ -4508,7 +4831,27 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
             return (1, "retry failure", "")
 
         if target == "test_a.py::test_culprit":
-            return (-11, "", "segmentation fault")
+            if report_log_path is None:
+                raise AssertionError("expected report-log path for crash confirmation")
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_culprit",
+                            when="call",
+                            outcome="passed",
+                            longrepr=confirmation_marker,
+                        ),
+                        json.dumps(
+                            {"$report_type": "SessionFinish", "exitstatus": confirmation_rc}
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return (confirmation_rc, "", "segmentation fault")
 
         raise AssertionError(f"unexpected target {target}")
 
@@ -4535,16 +4878,48 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     assert unit["status"] == "crashed"
     assert unit["counts"]["failed"] == 1
     assert unit["counts"]["crashed"] == 1
-    assert unit["counts"]["error"] == 0
+    assert unit["counts"]["error"] == expected_error
     by_nodeid = {entry["nodeid"]: entry for entry in unit["tests"]}
-    assert by_nodeid["test_a.py::test_culprit"]["outcome"] == "crashed"
+    culprit = by_nodeid["test_a.py::test_culprit"]
+    assert culprit["outcome"] == confirmation_outcome
+    assert culprit["returncode"] == confirmation_rc
+    assert culprit["completion_verified"] is (confirmation_rc == -11)
     assert by_nodeid["test_a.py::test_other"]["outcome"] == "failed"
     assert report["summary"]["failed"] == 1
     assert report["summary"]["crashed"] == 1
-    assert report["summary"]["error"] == 0
+    assert report["summary"]["error"] == expected_error
+    cached_records = _load_cached_report_records_by_unit(state_file, ["test_a.py"])["test_a.py"]
+    assert any(record.get("longrepr") == confirmation_marker for record in cached_records)
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert saved.results[0].completion_verified is (confirmation_rc == -11)
+    if confirmation_rc == 2:
+        first_summary = report["summary"]
+        monkeypatch.setattr(
+            file_runner_mod,
+            "_run_subprocess_tee",
+            lambda *_args, **_kwargs: pytest.fail("unhealthy confirmed unit must not rerun"),
+        )
+        second_exit = run_isolated_pytest_units(
+            ["test_a.py"],
+            ["--p11-module", "/tmp/module.so"],
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="mixed",
+        )
+        second = json.loads(results_path.read_text(encoding="utf-8"))
+        assert second_exit == 1
+        assert second["summary"]["crashed"] == first_summary["crashed"] == 1
+        assert second["summary"]["error"] == first_summary["error"] == expected_error
+        assert second["summary"]["incomplete"] is first_summary["incomplete"] is True
     assert "RETRY OK" not in console_output.getvalue()
     assert "RETRY OK" not in console_output.getvalue()
-    assert "RETRY CRASHED" in console_output.getvalue()
+    assert ("RETRY CRASHED" in console_output.getvalue()) is (confirmation_rc == -11)
 
 
 def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
@@ -4708,6 +5083,22 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
             return (0, "", "")
 
         if target == "test_a.py::test_culprit":
+            assert report_log_path is not None
+            report_log_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        _jsonl_line(
+                            nodeid="test_a.py::test_culprit",
+                            when="call",
+                            outcome="passed",
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             return (0, "", "")
 
         raise AssertionError(f"unexpected target {target}")
@@ -4788,7 +5179,26 @@ def test_run_isolated_pytest_units_test_granularity_uses_shorter_outer_timeout(
         stdout: object = None,
         stderr: object = None,
     ) -> tuple[int, str, str]:
-        del cmd, check, env, stdout, stderr
+        del check, env, stdout, stderr
+        report_path = Path(cmd[cmd.index("--report-log") + 1])
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": "tests/test_demo.py::test_case",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         seen["timeout"] = timeout
         return (0, "", "")
 
@@ -5141,13 +5551,63 @@ def test_junit_durable_recovery_residue_is_an_error(tmp_path: Path, status: str)
     assert f'type="{status}"' in payload
 
 
+def test_junit_recovery_residue_keeps_collection_and_harness_errors(tmp_path: Path) -> None:
+    target = "test_demo.py"
+    state = FileRunState(
+        units=[target],
+        fingerprint="abc123",
+        results=[FileRunResult(target, "crash_limited", 0, 0.1)],
+    )
+    details = {
+        target: {
+            "counts": {"error": 2},
+            "incomplete": True,
+            "harness_error": True,
+            "tests": [
+                {
+                    "nodeid": target,
+                    "outcome": "error",
+                    "evidence_type": "collection",
+                    "longrepr": "collection diagnostic",
+                },
+                {
+                    "nodeid": target,
+                    "outcome": "error",
+                    "evidence_type": "harness",
+                    "longrepr": "harness diagnostic",
+                },
+            ],
+        }
+    }
+
+    report_path = tmp_path / "results.xml"
+    write_isolated_junit_report(report_path, state, per_unit_details=details)
+
+    root = ET.parse(report_path).getroot()
+    cases = root.findall("testcase")
+    assert len(cases) == 3
+    assert root.attrib["errors"] == "3"
+    assert root.find("testcase/error[@type='crash_limited']") is not None
+    assert root.find("testcase/error[@type='collection']") is not None
+    assert root.find("testcase/error[@type='incomplete']") is not None
+
+
 @pytest.mark.parametrize(
-    ("confirmation_rc", "expected_outcome", "confirmation_output"),
+    ("confirmation_rc", "expected_outcome", "confirmation_output", "finish"),
     [
-        (-11, "crashed", "segmentation fault in selected test"),
-        (1, "failed", "AssertionError: selected test failed"),
+        (-11, "crashed", "segmentation fault in selected test", -11),
+        (1, "failed", "AssertionError: selected test failed", 1),
+        (2, "error", "pytest usage error in selected test", 2),
+        (3, "error", "pytest internal error in selected test", None),
+        (4, "error", "pytest config error in selected test", 0),
     ],
-    ids=["confirmation-crash", "confirmation-failure"],
+    ids=[
+        "confirmation-crash",
+        "confirmation-failure",
+        "confirmation-harness-usage",
+        "confirmation-harness-missing-finish",
+        "confirmation-harness-mismatch",
+    ],
 )
 def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
     monkeypatch: pytest.MonkeyPatch,
@@ -5155,11 +5615,13 @@ def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
     confirmation_rc: int,
     expected_outcome: str,
     confirmation_output: str,
+    finish: object | None,
 ) -> None:
     target = "test_a.py"
     culprit = "test_a.py::test_slow"
     report_path = tmp_path / "results.json"
     state_file = tmp_path / "state.json"
+    confirmation_marker = f"timeout-confirmation-report-{confirmation_rc}"
     calls: list[str] = []
 
     def fake_run(
@@ -5190,6 +5652,21 @@ def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
             raise subprocess.TimeoutExpired(cmd, timeout=12)
 
         if unit == culprit:
+            assert report_log_path is not None
+            confirmation_records = [
+                json.dumps({"$report_type": "SessionStart"}),
+                _jsonl_line(
+                    nodeid=culprit,
+                    when="call",
+                    outcome="passed",
+                    longrepr=confirmation_marker,
+                ),
+            ]
+            if finish is not None:
+                confirmation_records.append(
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": finish})
+                )
+            report_log_path.write_text("\n".join(confirmation_records) + "\n", encoding="utf-8")
             return confirmation_rc, confirmation_output, confirmation_output
 
         assert unit == target
@@ -5229,7 +5706,38 @@ def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
     assert unit_report["counts"][expected_outcome] == 1
     selected = next(item for item in unit_report["tests"] if item["nodeid"] == culprit)
     assert selected["outcome"] == expected_outcome
+    assert selected["returncode"] == confirmation_rc
+    assert selected["completion_verified"] is (expected_outcome in {"crashed", "failed"})
     assert confirmation_output in selected["longrepr"]
+    cached_records = _load_cached_report_records_by_unit(state_file, [target])[target]
+    assert any(record.get("longrepr") == confirmation_marker for record in cached_records)
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert saved.results[0].completion_verified is (expected_outcome in {"crashed", "failed"})
+    if confirmation_rc == 2:
+        first_summary = payload["summary"]
+        monkeypatch.setattr(
+            file_runner_mod,
+            "_run_subprocess_tee",
+            lambda *_args, **_kwargs: pytest.fail("unhealthy confirmed unit must not rerun"),
+        )
+        second_exit = run_isolated_pytest_units(
+            [target],
+            ["--p11-module", "/tmp/module.so"],
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig("json", report_path),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="mixed",
+        )
+        second = json.loads(report_path.read_text(encoding="utf-8"))
+        assert second_exit == 1
+        assert second["summary"]["timeout"] == first_summary["timeout"] == 1
+        assert second["summary"]["error"] == first_summary["error"] == 1
+        assert second["summary"]["incomplete"] is first_summary["incomplete"] is True
 
 
 def test_junit_only_report_records_are_cached_and_reloaded_on_resume(
@@ -5314,6 +5822,144 @@ def test_junit_only_report_records_are_cached_and_reloaded_on_resume(
 
     assert second_exit == 1
     assert selected_longrepr in report_path.read_text(encoding="utf-8")
+
+
+def test_isolated_rich_resume_reuses_cached_provider_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = "test_provider.py"
+    state_file = tmp_path / "state.json"
+    calls = 0
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise AssertionError("resume must not rerun an attempted unit")
+        report_path = Path(cmd[cmd.index("--report-log") + 1])
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": f"{target}::test_failed",
+                            "when": "call",
+                            "outcome": "failed",
+                            "longrepr": "provider diagnostic",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 2}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 2, "", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    first = run_isolated_pytest_units(
+        [target],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+    assert first == 1
+    assert _load_cached_report_records_by_unit(state_file, [target])[target]
+
+    second = run_isolated_pytest_units(
+        [target],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+    assert second == 1
+    saved = load_run_state(state_file)
+    assert saved is not None
+    assert saved.results[0].completion_verified is False
+
+
+def test_isolated_resume_pending_unit_keeps_prior_cache_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = str(tmp_path / "test_provider.py")
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_path = tmp_path / "report.jsonl"
+    calls = 0
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        nonlocal calls
+        calls += 1
+        jsonl_path = Path(cmd[cmd.index("--report-log") + 1])
+        outcome = "failed" if calls == 1 else "passed"
+        diagnostic = "prior provider evidence" if calls == 1 else "new provider evidence"
+        records = [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"{target}::test_case",
+                "when": "call",
+                "outcome": outcome,
+                "longrepr": diagnostic,
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ]
+        jsonl_path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+        )
+        return (-11, "", "") if calls == 1 else (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    config = IsolatedReportConfig("json", results_path, jsonl_path=report_path)
+    first = run_isolated_pytest_units(
+        [target],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=config,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+    assert first == 1
+    saved = load_run_state(state_file)
+    assert saved is not None
+    saved.results.clear()
+    save_run_state(state_file, saved)
+
+    second = run_isolated_pytest_units(
+        [target],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=config,
+        resume=True,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+    assert second == 1
+    assert calls == 2
+    report = report_path.read_text(encoding="utf-8")
+    assert "prior provider evidence" in report
+    assert "new provider evidence" in report
 
 
 def test_no_pending_resume_does_not_print_green_for_unhealthy_state(
@@ -5801,10 +6447,10 @@ def test_run_isolated_pytest_units_keeps_output_for_xfailed_unit(
     assert result.stdout == "xfail output here\n"
 
 
-def test_run_isolated_pytest_units_skips_report_log_for_test_level(
+def test_run_isolated_pytest_units_writes_report_log_for_test_level(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Performance guard: plain test-level runs must not create temp JSONL files."""
+    """Every isolated test-level attempt keeps completion evidence."""
     seen_cmds: list[list[str]] = []
 
     def fake_run(
@@ -5815,6 +6461,25 @@ def test_run_isolated_pytest_units_skips_report_log_for_test_level(
     ) -> tuple[int, str, str]:
         del env, timeout
         seen_cmds.append(list(cmd))
+        report_path = Path(cmd[cmd.index("--report-log") + 1])
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": "test_a.py::test_case",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
@@ -5834,7 +6499,7 @@ def test_run_isolated_pytest_units_skips_report_log_for_test_level(
 
     assert exit_code == 0
     cmd = seen_cmds[0]
-    assert "--report-log" not in cmd
+    assert "--report-log" in cmd
 
 
 def test_run_isolated_pytest_units_uses_report_log_for_test_level_when_merging_jsonl(
@@ -6608,6 +7273,286 @@ def test_junit_collection_error_is_error_even_when_completion_is_verified(tmp_pa
     assert 'errors="1"' in junit
     assert 'type="collection"' in junit
     assert "SyntaxError: invalid syntax" in junit
+
+
+@pytest.mark.parametrize(
+    ("status", "provider_outcome", "expected_failures", "expected_errors"),
+    [
+        ("failed", "failed", 1, 1),
+        ("crashed", "crashed", 0, 2),
+    ],
+)
+def test_junit_collection_error_is_additive_to_provider_evidence(
+    tmp_path: Path,
+    status: str,
+    provider_outcome: str,
+    expected_failures: int,
+    expected_errors: int,
+) -> None:
+    target = "test_backend.py"
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        FileRunState(
+            units=[target],
+            fingerprint="abc123",
+            results=[
+                FileRunResult(
+                    target,
+                    status,
+                    1 if status == "failed" else -11,
+                    0.1,
+                    completion_verified=False,
+                )
+            ],
+        ),
+        per_unit_details={
+            target: {
+                "counts": {provider_outcome: 1, "error": 1},
+                "incomplete": True,
+                "incomplete_files": [target],
+                "tests": [
+                    {
+                        "nodeid": f"{target}::test_provider",
+                        "outcome": provider_outcome,
+                        "longrepr": "provider diagnostic",
+                    },
+                    {
+                        "nodeid": target,
+                        "outcome": "error",
+                        "longrepr": "collection diagnostic",
+                    },
+                ],
+            }
+        },
+    )
+
+    junit = junit_path.read_text(encoding="utf-8")
+    assert 'tests="2"' in junit
+    assert f'failures="{expected_failures}"' in junit
+    assert f'errors="{expected_errors}"' in junit
+    assert "provider diagnostic" in junit
+    assert "collection diagnostic" in junit
+
+
+@pytest.mark.parametrize(
+    ("status", "completion_verified", "provider_outcome", "expected_failures", "expected_errors"),
+    [
+        ("failed", False, "failed", 1, 1),
+        ("crashed", False, "crashed", 0, 2),
+        ("crashed", True, "crashed", 0, 2),
+        ("failed", False, "error", 0, 1),
+        ("failed", True, "error", 0, 1),
+    ],
+    ids=[
+        "unverified-provider-failure",
+        "unverified-provider-crash",
+        "verified-provider-crash",
+        "harness-only-unverified",
+        "harness-only-verified",
+    ],
+)
+def test_junit_generic_harness_evidence_is_additive(
+    tmp_path: Path,
+    status: str,
+    completion_verified: bool,
+    provider_outcome: str,
+    expected_failures: int,
+    expected_errors: int,
+) -> None:
+    target = "test_backend.py"
+    junit_path = tmp_path / "results.xml"
+    tests = [
+        {
+            "nodeid": f"{target}::test_provider",
+            "outcome": provider_outcome,
+            "longrepr": (
+                "provider diagnostic" if provider_outcome != "error" else "late harness diagnostic"
+            ),
+        }
+    ]
+    counts = {provider_outcome: 1}
+    if provider_outcome != "error":
+        counts["error"] = 1
+        tests.append(
+            {
+                "nodeid": target,
+                "outcome": "error",
+                "longrepr": "late harness diagnostic",
+            }
+        )
+    write_isolated_junit_report(
+        junit_path,
+        FileRunState(
+            units=[target],
+            fingerprint="abc123",
+            results=[
+                FileRunResult(
+                    target,
+                    status,
+                    1 if status == "failed" else -11,
+                    0.1,
+                    completion_verified=completion_verified,
+                )
+            ],
+        ),
+        per_unit_details={
+            target: {
+                "counts": counts,
+                "incomplete": True,
+                "harness_error": True,
+                "tests": tests,
+            }
+        },
+    )
+
+    root = ET.parse(junit_path).getroot()
+    cases = root.findall("testcase")
+    assert len(cases) == (1 if provider_outcome == "error" else 2)
+    assert root.attrib["tests"] == str(len(cases))
+    assert root.attrib["failures"] == str(expected_failures)
+    assert root.attrib["errors"] == str(expected_errors)
+    provider_diagnostic = (
+        "provider diagnostic" if provider_outcome != "error" else "late harness diagnostic"
+    )
+    if provider_outcome != "error":
+        provider_case = next(
+            case for case in cases if provider_diagnostic in ET.tostring(case, encoding="unicode")
+        )
+        harness_cases = [
+            case for case in cases if case.find("error[@type='incomplete']") is not None
+        ]
+        assert len(harness_cases) == 1
+        assert "late harness diagnostic" in ET.tostring(harness_cases[0], encoding="unicode")
+    else:
+        provider_case = cases[0]
+        assert provider_diagnostic in ET.tostring(provider_case, encoding="unicode")
+        assert cases[0].find("error[@type='incomplete']") is not None
+
+
+def test_junit_collection_and_harness_are_separate_without_provider(
+    tmp_path: Path,
+) -> None:
+    target = "test_backend.py"
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        FileRunState(
+            units=[target],
+            fingerprint="abc123",
+            results=[FileRunResult(target, "failed", 2, 0.1, completion_verified=False)],
+        ),
+        per_unit_details={
+            target: {
+                "counts": {"error": 2},
+                "incomplete": True,
+                "harness_error": True,
+                "tests": [
+                    {
+                        "nodeid": target,
+                        "outcome": "error",
+                        "evidence_type": "collection",
+                        "longrepr": "collection diagnostic",
+                    },
+                    {
+                        "nodeid": target,
+                        "outcome": "error",
+                        "evidence_type": "harness",
+                        "longrepr": "harness diagnostic",
+                    },
+                ],
+            }
+        },
+    )
+
+    root = ET.parse(junit_path).getroot()
+    cases = root.findall("testcase")
+    assert len(cases) == 2
+    assert root.attrib["tests"] == "2"
+    assert root.attrib["failures"] == "0"
+    assert root.attrib["errors"] == "2"
+    collection_case = next(
+        case for case in cases if case.find("error[@type='collection']") is not None
+    )
+    harness_case = next(
+        case for case in cases if case.find("error[@type='incomplete']") is not None
+    )
+    assert "collection diagnostic" in ET.tostring(collection_case, encoding="unicode")
+    assert "harness diagnostic" not in ET.tostring(collection_case, encoding="unicode")
+    assert "harness diagnostic" in ET.tostring(harness_case, encoding="unicode")
+    assert "collection diagnostic" not in ET.tostring(harness_case, encoding="unicode")
+
+
+def test_report_record_cache_keeps_provider_collection_and_harness_evidence_typed(
+    tmp_path: Path,
+) -> None:
+    """All independent evidence survives the cache boundary with its origin intact."""
+    target = "test_backend.py"
+    records: list[dict[str, Any]] = [
+        {"$report_type": "SessionStart"},
+        {
+            "$report_type": "TestReport",
+            "nodeid": f"{target}::test_provider",
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "provider diagnostic",
+        },
+        {
+            "$report_type": "CollectReport",
+            "nodeid": target,
+            "when": "collect",
+            "outcome": "failed",
+            "longrepr": "collection diagnostic",
+        },
+        {
+            "$report_type": "HarnessError",
+            "nodeid": target,
+            "outcome": "error",
+            "returncode": 2,
+            "completion_verified": False,
+            "longrepr": "harness diagnostic",
+        },
+        {"$report_type": "SessionFinish", "exitstatus": 2},
+    ]
+    state_file = tmp_path / "state.json"
+    _write_unit_report_record_cache(state_file, target, records)
+
+    cached = _load_cached_report_records_by_unit(state_file, [target])[target]
+    details = report_records_mod._build_detail_from_report_records(cached)
+
+    assert details is not None
+    assert details["incomplete"] is True
+    assert details["harness_error"] is True
+    assert details["counts"]["failed"] == 1
+    assert details["counts"]["error"] == 2
+    by_type = {entry.get("evidence_type"): entry for entry in details["tests"]}
+    provider = next(entry for entry in details["tests"] if "evidence_type" not in entry)
+    assert provider["longrepr"] == "provider diagnostic"
+    assert by_type["collection"]["longrepr"] == "collection diagnostic"
+    assert by_type["harness"]["longrepr"] == "harness diagnostic"
+    assert by_type["harness"]["returncode"] == 2
+    assert by_type["harness"]["completion_verified"] is False
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        FileRunState(
+            units=[target],
+            fingerprint="abc123",
+            results=[FileRunResult(target, "failed", 2, 0.1, completion_verified=False)],
+        ),
+        per_unit_details={target: details},
+    )
+    root = ET.parse(junit_path).getroot()
+    cases = root.findall("testcase")
+    assert len(cases) == 3
+    assert root.attrib["tests"] == "3"
+    assert root.attrib["failures"] == "1"
+    assert root.attrib["errors"] == "2"
+    xml = ET.tostring(root, encoding="unicode")
+    assert "provider diagnostic" in xml
+    assert "collection diagnostic" in xml
+    assert "harness diagnostic" in xml
 
 
 def test_read_jsonl_results_returns_none_for_missing(tmp_path: Path) -> None:

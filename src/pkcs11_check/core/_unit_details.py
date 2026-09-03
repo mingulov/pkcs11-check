@@ -6,6 +6,7 @@ Moved verbatim from file_runner.py (god-module split, 2026-07-17).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core._jsonl_extract import (
@@ -293,6 +294,7 @@ def _group_results_by_file(
         merged_skip_reasons: dict[str, int] = {}
         merged_executions: list[dict[str, Any]] = []
         merged_incomplete = False
+        merged_harness_error = False
         merged_incomplete_files: set[str] = set()
         file_skip = False
         for r in file_results:
@@ -313,6 +315,8 @@ def _group_results_by_file(
                 file_skip = True
             if detail.get("incomplete") is True:
                 merged_incomplete = True
+            if detail.get("harness_error") is True:
+                merged_harness_error = True
             incomplete_files = detail.get("incomplete_files")
             if isinstance(incomplete_files, list):
                 merged_incomplete_files.update(
@@ -327,6 +331,8 @@ def _group_results_by_file(
             merged_detail["file_skip"] = True
         if merged_incomplete:
             merged_detail["incomplete"] = True
+        if merged_harness_error:
+            merged_detail["harness_error"] = True
         if merged_incomplete_files:
             merged_detail["incomplete_files"] = sorted(merged_incomplete_files)
         if merged_executions:
@@ -381,6 +387,8 @@ def _copy_detail(detail: Mapping[str, Any] | None) -> dict[str, Any]:
         copied["file_skip"] = True
     if isinstance(detail, Mapping) and detail.get("incomplete") is True:
         copied["incomplete"] = True
+    if isinstance(detail, Mapping) and detail.get("harness_error") is True:
+        copied["harness_error"] = True
     if isinstance(detail, Mapping) and isinstance(detail.get("incomplete_files"), list):
         copied["incomplete_files"] = [
             str(file_part) for file_part in detail["incomplete_files"] if isinstance(file_part, str)
@@ -477,7 +485,11 @@ def _merge_special_entries_into_detail(
 ) -> dict[str, Any]:
     merged = _copy_detail(detail)
     existing = {
-        (str(record.get("nodeid", "")), str(record.get("outcome", "")))
+        (
+            str(record.get("nodeid", "")),
+            str(record.get("outcome", "")),
+            str(record.get("evidence_type", "")),
+        )
         for record in merged["tests"]
         if isinstance(record, Mapping)
     }
@@ -487,12 +499,25 @@ def _merge_special_entries_into_detail(
         outcome = str(entry.get("outcome", "")).strip()
         if not nodeid or not outcome:
             continue
-        key = (nodeid, outcome)
+        key = (nodeid, outcome, str(entry.get("evidence_type", "")))
         if key in existing:
+            for record in merged["tests"]:
+                if not isinstance(record, dict):
+                    continue
+                if (
+                    str(record.get("nodeid", "")),
+                    str(record.get("outcome", "")),
+                    str(record.get("evidence_type", "")),
+                ) != key:
+                    continue
+                for field, value in entry.items():
+                    if field not in record:
+                        record[field] = value
+                break
             continue
         merged["tests"].append(dict(entry))
         existing.add(key)
-        if outcome in {"crashed", "timeout", "crash_limited", "failed"}:
+        if outcome in {"crashed", "timeout", "crash_limited", "failed", "error"}:
             merged["counts"][outcome] += 1
 
     return merged
@@ -542,6 +567,12 @@ def _effective_unit_status(
 def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) -> str:
     if not counts:
         return status
+    if (
+        status in {"escalated", "crash_limited"}
+        and counts.get("error", 0) > 0
+        and not any(counts.get(outcome, 0) > 0 for outcome in ("timeout", "crashed", "failed"))
+    ):
+        return status
     candidates = {status}
     candidates.update(
         outcome for outcome in ("timeout", "crashed", "failed") if counts.get(outcome, 0) > 0
@@ -554,16 +585,68 @@ def _status_with_detail_counts(status: str, counts: Mapping[str, int] | None) ->
     )
 
 
-def _final_state_exit_code(state: FileRunState, existing_exit_code: int) -> int:
+def _final_state_exit_code(
+    state: FileRunState,
+    existing_exit_code: int,
+    per_unit_details: Mapping[str, Mapping[str, Any]] | None = None,
+) -> int:
     """Keep infrastructure codes and reject any non-green durable result state."""
+    results = getattr(state, "results", [])
+
+    def has_provider_finding(result: FileRunResult) -> bool:
+        if result.status in {"crashed", "timeout", "escalated", "crash_limited"}:
+            return True
+        detail = per_unit_details.get(result.target) if per_unit_details is not None else None
+        counts = detail.get("counts") if isinstance(detail, Mapping) else None
+        if isinstance(counts, Mapping) and any(
+            int(counts.get(outcome, 0) or 0) > 0 for outcome in ("failed", "crashed", "timeout")
+        ):
+            return True
+        return result.status == "failed" and result.returncode not in {2, 3, 4}
+
+    if any(has_provider_finding(result) for result in results):
+        return 1
     if existing_exit_code >= 2:
         return existing_exit_code
+    if any(result.returncode in {2, 3, 4} for result in results):
+        return 2
+    if results and all(result.status == "empty" for result in results):
+        detail_has_tests = False
+        for detail in (per_unit_details or {}).values():
+            counts = detail.get("counts") if isinstance(detail, Mapping) else None
+            if isinstance(counts, Mapping) and any(
+                int(counts.get(outcome, 0) or 0) > 0
+                for outcome in ("passed", "failed", "skipped", "xfailed", "xpassed")
+            ):
+                detail_has_tests = True
+                break
+        if not detail_has_tests:
+            return 2
     if any(
         not result.completion_verified or result.status not in {"passed", "empty"}
-        for result in state.results
+        for result in results
     ):
         return max(existing_exit_code, 1)
     return existing_exit_code
+
+
+def _resume_exit_code(state_file: Path, existing_exit_code: int) -> int:
+    """Apply durable resume findings, including cached and inline report details."""
+    state = load_run_state(state_file)
+    if state is None:
+        return existing_exit_code
+    units = list(dict.fromkeys([*state.units, *(result.target for result in state.results)]))
+    inline_records = {
+        unit: records
+        for unit, records in state.report_records_by_unit.items()
+        if isinstance(unit, str)
+    }
+    details = _build_per_unit_details_from_record_sources(
+        state_file,
+        units=units,
+        inline_records_by_unit=inline_records,
+    )
+    return _final_state_exit_code(state, existing_exit_code, details)
 
 
 def _merge_supplemental_special_details(
@@ -588,18 +671,34 @@ def _merge_supplemental_special_details(
                     [item for item in source_executions if isinstance(item, Mapping)],
                 )
             )
+        if detail.get("harness_error") is True:
+            target = merged.setdefault(unit, _copy_detail(None))
+            target["incomplete"] = True
+            target["harness_error"] = True
         raw_tests = detail.get("tests")
         if not isinstance(raw_tests, list):
             continue
+        special_outcomes = _SPECIAL_DETAIL_OUTCOMES.union({"failed"})
+        if detail.get("harness_error") is True:
+            special_outcomes.add("error")
         special_entries = [
             record
             for record in raw_tests
             if isinstance(record, Mapping)
-            and str(record.get("outcome", "")).strip() in _SPECIAL_DETAIL_OUTCOMES.union({"failed"})
+            and str(record.get("outcome", "")).strip() in special_outcomes
         ]
         if not special_entries:
             continue
         merged[unit] = _merge_special_entries_into_detail(merged.get(unit), special_entries)
+        source_counts = detail.get("counts")
+        if isinstance(source_counts, Mapping):
+            target = merged[unit]
+            for outcome, value in source_counts.items():
+                try:
+                    source_count = int(value)
+                except (TypeError, ValueError):
+                    continue
+                target["counts"][outcome] = max(target["counts"].get(outcome, 0), source_count)
 
     return merged
 

@@ -306,7 +306,16 @@ def load_run_state(path: Path) -> FileRunState | None:
         return None
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    results = [FileRunResult(**item) for item in raw.get("results", [])]
+    results = [
+        FileRunResult(
+            **(
+                {**item, "completion_verified": False}
+                if item.get("returncode") in {2, 3, 4}
+                else item
+            )
+        )
+        for item in raw.get("results", [])
+    ]
     report_records_by_unit: dict[str, list[dict[str, Any]]] = {}
     raw_records = raw.get("report_records_by_unit", {})
     if isinstance(raw_records, dict):

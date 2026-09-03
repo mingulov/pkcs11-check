@@ -16,11 +16,15 @@ Both collectors -- the metadata one used by ``test`` and the node-id one used by
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from pkcs11_check.core.collection_errors import collection_failure_message
+from pkcs11_check.core.collection_errors import (
+    collection_failure_message,
+    ensure_failed_collection_report,
+)
 
 
 def test_reports_both_streams() -> None:
@@ -108,3 +112,55 @@ def test_both_collectors_use_the_shared_message(module: str) -> None:
 
     assert "unknown collection error" not in text, f"{module} still has the blind message"
     assert "collection_failure_message" in text
+
+
+def test_failed_collection_insertion_streams_the_existing_report_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = tmp_path / "report.jsonl"
+    report.write_text(
+        "\n".join(
+            [
+                '{"$report_type":"SessionStart"}',
+                '{"$report_type":"SessionFinish","exitstatus":1}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original_read_text = Path.read_text
+    original_open = Path.open
+    report_open_count = 0
+
+    def forbid_full_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path == report:
+            pytest.fail("collection fallback must copy the report log as a stream")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", forbid_full_read)
+
+    def count_report_open(path: Path, *args: object, **kwargs: object):
+        nonlocal report_open_count
+        if path == report:
+            report_open_count += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", count_report_open)
+
+    assert ensure_failed_collection_report(
+        report,
+        target="test_demo.py",
+        status="failed",
+        returncode=1,
+        stdout="",
+        stderr="",
+    )
+    with original_open(report, encoding="utf-8") as report_fh:
+        records = [json.loads(line) for line in report_fh]
+    assert [record["$report_type"] for record in records] == [
+        "SessionStart",
+        "CollectReport",
+        "SessionFinish",
+    ]
+    assert report_open_count == 1
+    assert not list(tmp_path.glob(".*.tmp"))

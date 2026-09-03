@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.report_log import iter_report_log_records
+from pkcs11_check.core.report_log import SessionCompletionTracker
 
 _MAX_STREAM = 4000
 
@@ -65,18 +66,6 @@ def ensure_failed_collection_report(
         if stderr.strip() or stdout.strip()
         else f"pytest unit {target or '<collection>'} failed with exit code {returncode}"
     )
-    for record in iter_report_log_records(path):
-        if not matches_target(record):
-            continue
-        if record.get("$report_type") == "CollectReport" and record.get("outcome") == "failed":
-            if record.get("source") != "runner-fallback" or record.get("longrepr") == diagnostic:
-                return False
-        elif (
-            returncode == 1
-            and record.get("$report_type") == "TestReport"
-            and target != "<collection>"
-        ):
-            return False
     path.parent.mkdir(parents=True, exist_ok=True)
     record_target = target or "<collection>"
     record_line = (
@@ -92,30 +81,84 @@ def ensure_failed_collection_report(
         )
         + "\n"
     )
+    completion = SessionCompletionTracker()
+    existing_collection = False
+    existing_test = False
+    temporary_path: Path | None = None
     try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except OSError:
-        raw_lines = []
-    insert_at: int | None = None
-    for index, raw_line in enumerate(raw_lines):
-        try:
-            parsed = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if (
-            isinstance(parsed, dict)
-            and parsed.get("$report_type") == "SessionFinish"
-            and parsed.get("exitstatus") == returncode
-        ):
-            insert_at = index
-            break
-    if insert_at is None:
-        raw_lines.append(record_line)
-    else:
-        raw_lines.insert(insert_at, record_line)
-    temporary_path = path.with_name(f".{path.name}.tmp")
-    temporary_path.write_text("".join(raw_lines), encoding="utf-8")
-    temporary_path.replace(path)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            inserted = False
+            try:
+                source = path.open(encoding="utf-8")
+            except OSError:
+                source = None
+            if source is not None:
+                with source:
+                    for raw_line in source:
+                        parsed: object | None = None
+                        if raw_line.strip():
+                            try:
+                                parsed = json.loads(raw_line)
+                            except json.JSONDecodeError:
+                                completion.invalidate()
+                            else:
+                                if isinstance(parsed, dict):
+                                    completion.observe(parsed)
+                                    if matches_target(parsed):
+                                        if (
+                                            parsed.get("$report_type") == "CollectReport"
+                                            and parsed.get("outcome") == "failed"
+                                        ):
+                                            if (
+                                                parsed.get("source") != "runner-fallback"
+                                                or parsed.get("longrepr") == diagnostic
+                                            ):
+                                                existing_collection = True
+                                        elif (
+                                            parsed.get("$report_type") == "TestReport"
+                                            and target != "<collection>"
+                                        ):
+                                            existing_test = True
+                                else:
+                                    completion.invalidate()
+                        if not inserted:
+                            if (
+                                isinstance(parsed, dict)
+                                and parsed.get("$report_type") == "SessionFinish"
+                                and parsed.get("exitstatus") == returncode
+                            ):
+                                temporary.write(record_line)
+                                inserted = True
+                        temporary.write(raw_line)
+            if existing_collection or existing_test:
+                return False
+            if (
+                target != "<collection>"
+                and returncode in {1, 2, 3, 4}
+                and not (
+                    returncode in {0, 1, 5}
+                    and completion.complete
+                    and completion.starts == 1
+                    and completion.finishes == 1
+                    and completion.single_exitstatus == returncode
+                )
+            ):
+                return False
+            if not inserted:
+                temporary.write(record_line)
+        assert temporary_path is not None
+        temporary_path.replace(path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     return True
 
 

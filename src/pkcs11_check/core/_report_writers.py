@@ -414,7 +414,9 @@ def _build_isolated_json_payload(
         detail = _merge_special_entries_into_detail(merged_detail, special_entries)
         counts = detail.get("counts")
         overall_status = _effective_unit_status(file_results, counts)
-        if overall_status in {"failed", "crashed", "timeout"}:
+        if overall_status in {"failed", "crashed", "timeout"} and all(
+            result.completion_verified for result in file_results
+        ):
             matching_outcome = "failed" if overall_status == "failed" else overall_status
             has_matching_evidence = detail["counts"].get(matching_outcome, 0) > 0
             if overall_status == "failed":
@@ -558,35 +560,176 @@ def write_isolated_junit_report(
         counts = detail.get("counts") if isinstance(detail, Mapping) else None
         return _effective_unit_status([result], counts)
 
-    def has_collection_error(result: FileRunResult) -> bool:
+    def detail_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
         detail = details.get(result.target)
-        return isinstance(detail, Mapping) and detail.get("incomplete") is True
+        if not isinstance(detail, Mapping):
+            return []
+        raw_tests = detail.get("tests")
+        return (
+            [record for record in raw_tests if isinstance(record, Mapping)]
+            if isinstance(raw_tests, list)
+            else []
+        )
 
-    effective_results = [(result, effective_status(result)) for result in state.results]
+    def _evidence_type(record: Mapping[str, Any]) -> str:
+        value = record.get("evidence_type")
+        return value if value in {"provider", "collection", "harness"} else ""
+
+    def collection_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
+        tests = detail_entries(result)
+        typed = [record for record in tests if _evidence_type(record) == "collection"]
+        if typed:
+            return typed
+        detail = details.get(result.target)
+        if not isinstance(detail, Mapping) or detail.get("incomplete") is not True:
+            return []
+        if detail.get("harness_error") is True:
+            return []
+        # Legacy detail had no per-entry discriminator; incomplete_files was its
+        # only reliable collection origin marker.
+        raw_files = detail.get("incomplete_files")
+        files = (
+            {str(file_part) for file_part in raw_files if isinstance(file_part, str)}
+            if isinstance(raw_files, list)
+            else set()
+        )
+        if not files:
+            return [record for record in tests if record.get("outcome") == "error"]
+        entries: list[Mapping[str, Any]] = []
+        for record in tests:
+            if record.get("outcome") != "error":
+                continue
+            nodeid = str(record.get("nodeid", ""))
+            file_part = nodeid.split("::", 1)[0]
+            if file_part in files:
+                entries.append(record)
+        return entries
+
+    def harness_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
+        tests = detail_entries(result)
+        typed = [record for record in tests if _evidence_type(record) == "harness"]
+        if typed:
+            return typed
+        detail = details.get(result.target)
+        if not isinstance(detail, Mapping) or detail.get("harness_error") is not True:
+            return []
+        collection = {id(record) for record in collection_entries(result)}
+        return [
+            record
+            for record in tests
+            if record.get("outcome") == "error" and id(record) not in collection
+        ]
+
+    def has_collection_error(result: FileRunResult) -> bool:
+        return bool(collection_entries(result))
+
+    def has_generic_harness_error(result: FileRunResult) -> bool:
+        detail = details.get(result.target)
+        return bool(harness_entries(result)) or (
+            isinstance(detail, Mapping) and detail.get("harness_error") is True
+        )
+
+    def provider_evidence(
+        result: FileRunResult, status: str, detail: Mapping[str, Any] | None
+    ) -> bool:
+        if status in {"crashed", "timeout", "escalated", "crash_limited"}:
+            return True
+        if status != "failed":
+            return False
+        counts = detail.get("counts") if isinstance(detail, Mapping) else None
+        if isinstance(counts, Mapping) and any(
+            int(counts.get(outcome, 0) or 0) > 0 for outcome in ("failed", "crashed", "timeout")
+        ):
+            return True
+        return (
+            result.completion_verified
+            and not has_collection_error(result)
+            and not has_generic_harness_error(result)
+        )
+
+    def has_generic_harness_evidence(result: FileRunResult) -> bool:
+        return has_generic_harness_error(result) or (
+            not result.completion_verified
+            and not has_collection_error(result)
+            and not has_generic_harness_error(result)
+        )
+
+    effective_results: list[
+        tuple[
+            FileRunResult,
+            str,
+            Mapping[str, Any] | None,
+            bool,
+            bool,
+            bool,
+        ]
+    ] = []
+    for result in state.results:
+        status = effective_status(result)
+        detail = details.get(result.target)
+        has_provider = provider_evidence(result, status, detail)
+        has_collection = has_collection_error(result)
+        has_harness = has_generic_harness_evidence(result)
+        effective_results.append(
+            (result, status, detail, has_provider, has_collection, has_harness)
+        )
     failures = sum(
         1
-        for result, status in effective_results
-        if status == "failed" and result.completion_verified and not has_collection_error(result)
+        for (
+            _result,
+            status,
+            _detail,
+            has_provider,
+            _has_collection,
+            _has_harness,
+        ) in effective_results
+        if status == "failed" and has_provider
     )
-    errors = sum(
-        1
-        for result, status in effective_results
-        if status in {"crashed", "timeout", "escalated", "crash_limited"}
-        or not result.completion_verified
-        or has_collection_error(result)
-    ) + len(recovery_events)
+    errors = len(recovery_events) + sum(
+        int(status in {"crashed", "timeout", "escalated", "crash_limited"})
+        + int(has_collection)
+        + int(has_harness)
+        for (
+            _result,
+            status,
+            _detail,
+            _has_provider,
+            has_collection,
+            has_harness,
+        ) in effective_results
+    )
     skipped = sum(
         1
-        for result, status in effective_results
+        for (
+            result,
+            status,
+            _detail,
+            _has_provider,
+            _has_collection,
+            _has_harness,
+        ) in effective_results
         if status == "empty" and result.completion_verified
     )
-    duration_s = sum(result.duration_s for result, _ in effective_results)
+    duration_s = sum(result.duration_s for result, *_rest in effective_results)
+    extra_cases = sum(
+        int(has_collection) + int(has_harness)
+        if has_provider
+        else max(int(has_collection) + int(has_harness) - 1, 0)
+        for (
+            _result,
+            _status,
+            _detail,
+            has_provider,
+            has_collection,
+            has_harness,
+        ) in effective_results
+    )
 
     suite = ET.Element(
         "testsuite",
         {
             "name": suite_name,
-            "tests": str(len(state.results) + len(recovery_events)),
+            "tests": str(len(state.results) + len(recovery_events) + extra_cases),
             "failures": str(failures),
             "errors": str(errors),
             "skipped": str(skipped),
@@ -594,17 +737,41 @@ def write_isolated_junit_report(
         },
     )
 
-    for result, status in effective_results:
-        detail = details.get(result.target)
+    for (
+        result,
+        status,
+        unit_detail,
+        has_provider,
+        has_collection,
+        has_harness,
+    ) in effective_results:
         detail_longrepr = ""
-        if isinstance(detail, Mapping):
-            records = detail.get("tests")
+        harness_longrepr = ""
+        if isinstance(unit_detail, Mapping):
+            records = unit_detail.get("tests")
             if isinstance(records, list):
+                collection_ids = {id(record) for record in collection_entries(result)}
+                harness_ids = {id(record) for record in harness_entries(result)}
                 detail_longrepr = "\n\n".join(
                     str(record["longrepr"])
                     for record in records
-                    if isinstance(record, Mapping) and record.get("longrepr")
+                    if isinstance(record, Mapping)
+                    and record.get("longrepr")
+                    and id(record) not in collection_ids
+                    and id(record) not in harness_ids
                 )
+                harness_longrepr = "\n\n".join(
+                    str(record["longrepr"])
+                    for record in records
+                    if isinstance(record, Mapping)
+                    and record.get("longrepr")
+                    and id(record) in harness_ids
+                )
+        collection_detail = "\n\n".join(
+            str(record["longrepr"])
+            for record in collection_entries(result)
+            if record.get("longrepr")
+        )
         captured_diagnostic = result.stderr.strip() or result.stdout.strip()
         class_name, case_name = _junit_case_identity(result.target)
         case = ET.SubElement(
@@ -617,25 +784,26 @@ def write_isolated_junit_report(
             },
         )
 
-        if not result.completion_verified and not has_collection_error(result):
+        if has_harness and not has_provider and not has_collection:
             error = ET.SubElement(
                 case,
                 "error",
                 {"message": "report log completion could not be verified", "type": "incomplete"},
             )
             error.text = (
-                captured_diagnostic
+                harness_longrepr
+                or captured_diagnostic
                 or f"Unit {result.target} exited with code {result.returncode} without a "
                 "matching SessionFinish record."
             )
-        elif has_collection_error(result):
+        elif has_collection and not has_provider:
             error = ET.SubElement(
                 case,
                 "error",
                 {"message": "pytest collection failed", "type": "collection"},
             )
             error.text = (
-                detail_longrepr
+                collection_detail
                 or captured_diagnostic
                 or f"Unit {result.target} failed during pytest collection."
             )
@@ -648,7 +816,11 @@ def write_isolated_junit_report(
                     "type": "failure",
                 },
             )
-            failure.text = detail_longrepr or f"Unit {result.target} failed in isolated mode."
+            failure.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} failed in isolated mode."
+            )
         elif status == "crashed":
             error = ET.SubElement(
                 case,
@@ -658,7 +830,11 @@ def write_isolated_junit_report(
                     "type": "crashed",
                 },
             )
-            error.text = detail_longrepr or f"Unit {result.target} crashed in isolated mode."
+            error.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} crashed in isolated mode."
+            )
         elif status == "timeout":
             error = ET.SubElement(
                 case,
@@ -668,7 +844,11 @@ def write_isolated_junit_report(
                     "type": "timeout",
                 },
             )
-            error.text = detail_longrepr or f"Unit {result.target} timed out in isolated mode."
+            error.text = (
+                detail_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} timed out in isolated mode."
+            )
         elif status == "empty":
             skipped_node = ET.SubElement(case, "skipped", {"message": "no tests collected"})
             skipped_node.text = f"Unit {result.target} collected no tests."
@@ -694,6 +874,51 @@ def write_isolated_junit_report(
             error.text = detail_longrepr or (
                 f"Unit {result.target} was skipped because this file exceeded the configured "
                 "per-file crash limit in isolated mode."
+            )
+
+        if has_collection and has_provider:
+            collection_case = ET.SubElement(
+                suite,
+                "testcase",
+                {
+                    "classname": class_name,
+                    "name": f"{case_name}::collection-error",
+                    "time": "0.000000",
+                },
+            )
+            error = ET.SubElement(
+                collection_case,
+                "error",
+                {"message": "pytest collection failed", "type": "collection"},
+            )
+            error.text = (
+                collection_detail
+                or captured_diagnostic
+                or f"Unit {result.target} failed during pytest collection."
+            )
+
+        if has_harness and (has_provider or has_collection):
+            harness_case = ET.SubElement(
+                suite,
+                "testcase",
+                {
+                    "classname": class_name,
+                    "name": f"{case_name}::harness-error",
+                    "time": "0.000000",
+                },
+            )
+            error = ET.SubElement(
+                harness_case,
+                "error",
+                {
+                    "message": "report log completion could not be verified",
+                    "type": "incomplete",
+                },
+            )
+            error.text = (
+                harness_longrepr
+                or captured_diagnostic
+                or f"Unit {result.target} has additional harness error evidence."
             )
 
     for event_index, event in enumerate(recovery_events, start=1):

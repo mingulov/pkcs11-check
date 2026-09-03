@@ -25,6 +25,7 @@ from pkcs11_check.core.differential import (
     load_provider_outcomes,
     provenance_fingerprint,
 )
+from pkcs11_check.core.report_log import SessionCompletionTracker
 
 console = Console()
 _err = Console(stderr=True)
@@ -56,8 +57,8 @@ def _parse_provider_arg(arg: str) -> tuple[str, Path]:
 def _iter_report_records_strict(path: Path) -> Iterator[dict[str, Any]]:
     """Yield records from one complete, structurally valid pytest report log."""
     seen_record = False
-    seen_start = False
-    seen_finish = False
+    session_active = False
+    completion = SessionCompletionTracker()
     try:
         with path.open(encoding="utf-8") as report:
             for line_number, raw_line in enumerate(report, start=1):
@@ -79,33 +80,35 @@ def _iter_report_records_strict(path: Path) -> Iterator[dict[str, Any]]:
                     raise ValueError(
                         f"malformed report log {path}:{line_number}: missing $report_type"
                     )
-                if not seen_start and report_type != "SessionStart":
+                if not seen_record and report_type in {"TestReport", "CollectReport"}:
                     raise ValueError(
                         f"malformed report log {path}:{line_number}: "
                         "first record is not SessionStart"
                     )
                 if report_type == "SessionStart":
-                    if seen_start or seen_finish:
+                    if session_active:
                         raise ValueError(
                             f"malformed report log {path}:{line_number}: duplicate SessionStart"
                         )
-                    seen_start = True
+                    session_active = True
+                    completion.observe(record)
                 elif report_type == "SessionFinish":
                     exitstatus = record.get("exitstatus")
                     if (
-                        seen_finish
+                        not session_active
                         or not isinstance(exitstatus, int)
                         or isinstance(exitstatus, bool)
                     ):
                         raise ValueError(
                             f"malformed report log {path}:{line_number}: invalid SessionFinish"
                         )
-                    seen_finish = True
+                    completion.observe(record)
+                    session_active = False
                 elif report_type == "TestReport":
                     nodeid = record.get("nodeid")
                     when = record.get("when")
                     outcome = record.get("outcome")
-                    if seen_finish or not isinstance(nodeid, str) or not nodeid.strip():
+                    if not session_active or not isinstance(nodeid, str) or not nodeid.strip():
                         raise ValueError(
                             f"malformed report log {path}:{line_number}: invalid TestReport nodeid"
                         )
@@ -121,13 +124,36 @@ def _iter_report_records_strict(path: Path) -> Iterator[dict[str, Any]]:
                         raise ValueError(
                             f"malformed report log {path}:{line_number}: invalid TestReport outcome"
                         )
+                    completion.observe(record)
+                elif report_type == "CollectReport":
+                    nodeid = record.get("nodeid")
+                    outcome = record.get("outcome")
+                    if not session_active or not isinstance(nodeid, str) or not nodeid.strip():
+                        raise ValueError(
+                            f"malformed report log {path}:{line_number}: invalid CollectReport"
+                        )
+                    if outcome == "failed":
+                        raise ValueError(
+                            f"incomplete report log {path}:{line_number}: failed CollectReport"
+                        )
+                    if outcome not in {"passed", "skipped"}:
+                        raise ValueError(
+                            f"malformed report log {path}:{line_number}: invalid CollectReport"
+                        )
+                    completion.observe(record)
+                elif report_type == "HarnessError":
+                    raise ValueError(f"incomplete report log {path}:{line_number}: HarnessError")
+                else:
+                    # Coverage/selection/process records are global evidence and may occur
+                    # between complete pytest sessions.
+                    completion.observe(record)
                 seen_record = True
                 yield record
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"cannot read report log {path}: {exc}") from exc
     if not seen_record:
         raise ValueError(f"report log is empty: {path}")
-    if not seen_start or not seen_finish:
+    if not completion.complete:
         raise ValueError(f"incomplete report log (missing start/finish): {path}")
 
 

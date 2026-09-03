@@ -147,6 +147,42 @@ def test_differential_rejects_incomplete_results_even_with_provenance_override(t
     assert "incomplete" in result.output
 
 
+def test_differential_rejects_harness_error_before_provenance_override(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    b.with_name("results.json").unlink()
+    report = b
+    report.write_text(
+        report.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "$report_type": "HarnessError",
+                "nodeid": _KAT_A.split("::", 1)[0],
+                "outcome": "error",
+                "returncode": 2,
+                "completion_verified": False,
+                "longrepr": "harness failed",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "differential",
+            f"a={a}",
+            f"b={report}",
+            "--all",
+            "--allow-unverified-provenance",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "HarnessError" in result.output or "harness" in result.output.lower()
+
+
 def test_differential_rejects_malformed_results_json(tmp_path) -> None:
     a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
     b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
@@ -669,6 +705,76 @@ def test_differential_accepts_nonzero_integer_exitstatus_and_summary_after_finis
     result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
     assert result.exit_code == 0
     assert "1 comparable deterministic KAT node-ids" in result.output
+
+
+def test_differential_accepts_complete_multi_session_log_with_global_records(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    records = [
+        {"$report_type": "CoverageReport", "scope": "global"},
+        {"$report_type": "SessionStart", "pytest_version": "test"},
+        {
+            "$report_type": "TestReport",
+            "when": "call",
+            "outcome": "passed",
+            "nodeid": _KAT_A,
+        },
+        {"$report_type": "SessionFinish", "exitstatus": 0},
+        {"$report_type": "SelectionReport", "selected": 1},
+        {"$report_type": "SessionStart", "pytest_version": "test"},
+        {
+            "$report_type": "TestReport",
+            "when": "call",
+            "outcome": "passed",
+            "nodeid": _KAT_A,
+        },
+        {"$report_type": "SessionFinish", "exitstatus": 0},
+    ]
+    _write_records(b, records)
+
+    result = runner.invoke(app, ["differential", f"a={a}", f"b={b}"])
+
+    assert result.exit_code == 0
+    assert "1 comparable deterministic KAT node-ids" in result.output
+
+
+def test_differential_rejects_failed_collection_before_provenance_override(tmp_path) -> None:
+    a = _write_artifact(tmp_path, "a", {_KAT_A: "passed"})
+    b = _write_artifact(tmp_path, "b", {_KAT_A: "passed"})
+    b.with_name("results.json").unlink()
+    _write_records(
+        b,
+        [
+            {"$report_type": "SessionStart", "pytest_version": "test"},
+            {
+                "$report_type": "CollectReport",
+                "nodeid": "test_broken.py",
+                "when": "collect",
+                "outcome": "failed",
+                "longrepr": "SyntaxError: invalid syntax",
+            },
+            {
+                "$report_type": "TestReport",
+                "when": "call",
+                "outcome": "passed",
+                "nodeid": _KAT_A,
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 2},
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "differential",
+            f"a={a}",
+            f"b={b}",
+            "--allow-unverified-provenance",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "failed CollectReport" in result.output
 
 
 def test_differential_rejects_test_report_after_session_finish(tmp_path) -> None:

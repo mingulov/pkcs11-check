@@ -575,7 +575,7 @@ def _infer_unit_target_from_records(
     for record in records:
         report_type = record.get("$report_type", "TestReport")
         field = "target" if report_type == "ProcessReport" else "nodeid"
-        if report_type not in {"TestReport", "CollectReport", "ProcessReport"}:
+        if report_type not in {"TestReport", "CollectReport", "HarnessError", "ProcessReport"}:
             continue
         value = str(record.get(field, "")).strip()
         if value:
@@ -602,7 +602,7 @@ def _unit_candidate_from_record(
     candidate_targets: set[str],
 ) -> str | None:
     report_type = record.get("$report_type", "TestReport")
-    if report_type not in {"TestReport", "CollectReport", "ProcessReport"}:
+    if report_type not in {"TestReport", "CollectReport", "HarnessError", "ProcessReport"}:
         return None
     field = "target" if report_type == "ProcessReport" else "nodeid"
     nodeid = str(record.get(field, "")).strip()
@@ -813,6 +813,7 @@ def _build_detail_from_report_records(
     call_events: list[Mapping[str, Any]] = []
     teardown_events: list[Mapping[str, Any]] = []
     collect_errors: list[Mapping[str, Any]] = []
+    harness_errors: list[Mapping[str, Any]] = []
     collect_error_files: set[str] = set()
     finalize_events: list[Mapping[str, Any]] = []
     execution_records_seen: set[str] = set()
@@ -844,6 +845,10 @@ def _build_detail_from_report_records(
             if outcome != "failed":
                 continue
             collect_errors.append(rec)
+            continue
+
+        if report_type == "HarnessError":
+            harness_errors.append(rec)
             continue
 
         if report_type != "TestReport":
@@ -986,12 +991,32 @@ def _build_detail_from_report_records(
         entry = {
             "nodeid": nodeid or file_part,
             "outcome": "error",
+            "evidence_type": "collection",
             "duration": rec.get("duration", 0.0),
         }
         flat = _flatten_longrepr(rec.get("longrepr"))
         if flat:
             entry["longrepr"] = flat
         non_passing.append(entry)
+
+    for rec in harness_errors:
+        counts["error"] = counts.get("error", 0) + 1
+        nodeid = str(rec.get("nodeid") or rec.get("target") or "<harness>")
+        harness_entry: dict[str, Any] = {
+            "nodeid": nodeid,
+            "outcome": "error",
+            "evidence_type": "harness",
+            "duration": rec.get("duration", 0.0),
+        }
+        for field in ("returncode", "completion_verified", "stdout", "stderr"):
+            if field in rec:
+                harness_entry[field] = rec[field]
+        flat = _flatten_longrepr(rec.get("longrepr"))
+        if flat:
+            harness_entry["longrepr"] = flat
+        non_passing.append(harness_entry)
+        if result_record_hook is not None:
+            result_record_hook({**rec, "nodeid": nodeid, "outcome": "error"})
 
     if finalize_events:
 
@@ -1049,6 +1074,9 @@ def _build_detail_from_report_records(
         result["incomplete"] = True
         if collect_error_files:
             result["incomplete_files"] = sorted(collect_error_files)
+    if harness_errors:
+        result["incomplete"] = True
+        result["harness_error"] = True
     if compliance_notes:
         result["compliance_notes"] = compliance_notes
     if skip_reasons:

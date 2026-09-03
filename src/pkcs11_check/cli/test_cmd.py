@@ -7,6 +7,7 @@ import os
 import tempfile
 import tomllib
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -18,6 +19,7 @@ from rich.console import Console
 from pkcs11_check import provenance as provenance_mod
 from pkcs11_check.config import P11TestConfig
 from pkcs11_check.core._report_records import (
+    _build_detail_from_report_records,
     _build_per_unit_details_from_record_sources,
     _seed_missing_report_record_caches_from_jsonl,
     _write_report_jsonl_from_record_sources,
@@ -35,6 +37,7 @@ from pkcs11_check.core.file_runner import (
     _collection_failure_reporting_copy,
     _emit_external_provision_banner,
     _reset_fresh_run_artifacts,
+    _resume_exit_code,
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
@@ -45,11 +48,13 @@ from pkcs11_check.core.file_runner import (
     run_isolated_pytest_units,
     validate_subprocess_per_test_expansion,
     write_isolated_json_report,
+    write_isolated_junit_report,
     write_isolated_report,
     write_quality_json_report,
 )
 from pkcs11_check.core.preflight import run_preflight_subprocess
 from pkcs11_check.core.recovery import build_recovery_config
+from pkcs11_check.core.report_log import SessionCompletionTracker, iter_report_log_records
 from pkcs11_check.core.test_selection import (
     DisabledSelectionPlan,
     build_disabled_selection_plan,
@@ -227,6 +232,63 @@ def _isolated_report_config(output: str, output_file: str | None) -> IsolatedRep
     return IsolatedReportConfig("junit", Path(output_file or "pkcs11-check-results.xml"))
 
 
+def _ensure_nonisolated_completion_record(
+    report_path: Path,
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> bool:
+    """Append one typed harness record when the captured pytest session is incomplete."""
+    completion = SessionCompletionTracker()
+    first_target: str | None = None
+    has_harness_error = False
+    for record in iter_report_log_records(report_path, on_invalid=completion.invalidate):
+        completion.observe(record)
+        report_type = record.get("$report_type")
+        if report_type == "HarnessError":
+            has_harness_error = True
+        elif first_target is None and report_type in {"TestReport", "CollectReport"}:
+            nodeid = record.get("nodeid")
+            if isinstance(nodeid, str) and nodeid:
+                first_target = nodeid.split("::", 1)[0]
+    verified = (
+        returncode in {0, 1, 5}
+        and completion.complete
+        and completion.starts == 1
+        and completion.finishes == 1
+        and completion.single_exitstatus == returncode
+    )
+    if verified:
+        return True
+
+    if not has_harness_error:
+        target = first_target or "<harness>"
+        diagnostic = (
+            stderr.strip()
+            or stdout.strip()
+            or (
+                f"pytest exited with code {returncode} without a complete SessionFinish "
+                f"matching the raw exit code"
+            )
+        )
+        with report_path.open("a", encoding="utf-8") as report_fh:
+            report_fh.write(
+                json.dumps(
+                    {
+                        "$report_type": "HarnessError",
+                        "nodeid": target,
+                        "outcome": "error",
+                        "returncode": returncode,
+                        "completion_verified": False,
+                        "longrepr": diagnostic,
+                    }
+                )
+                + "\n"
+            )
+    return False
+
+
 def _persist_collection_failure(
     *,
     diagnostic: str,
@@ -316,7 +378,8 @@ def _assemble_json_artifacts_from_jsonl(
     run_provenance: dict[str, Any],
     *,
     returncode: int = 0,
-) -> None:
+    completion_verified: bool | None = None,
+) -> dict[str, Any]:
     """Build the results/coverage/quality/provisioning JSON artifacts from a raw report JSONL.
 
     Used by the non-isolated (``--isolation none``) path; the isolated path produces the same
@@ -327,7 +390,7 @@ def _assemble_json_artifacts_from_jsonl(
     unified_path.parent.mkdir(parents=True, exist_ok=True)
     report_path = unified_path.parent / "report.jsonl"
     jsonl_p.replace(report_path)
-    if returncode not in {0, 5}:
+    if returncode in {2, 3, 4} or (returncode == 1 and completion_verified is not False):
         ensure_failed_collection_report(
             report_path,
             # Non-isolated output contains one session for all selected targets;
@@ -358,12 +421,23 @@ def _assemble_json_artifacts_from_jsonl(
     results_payload = postprocess_jsonl_to_unified(
         report_path, unified_path, provenance=run_provenance
     )
+    if completion_verified is False or (completion_verified is None and returncode in {2, 3, 4}):
+        for unit in results_payload.get("units", []):
+            if isinstance(unit, dict):
+                unit["returncode"] = returncode
+                unit["completion_verified"] = False
+                unit["incomplete"] = True
+        results_payload["summary"]["incomplete"] = True
+        unified_path.write_text(
+            json.dumps(results_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
     write_quality_json_report(
         unified_path.parent / "quality.json",
         results_payload,
         coverage=coverage_data,
         report_log_records=quality_records,
     )
+    return results_payload
 
 
 def test_command(
@@ -542,137 +616,223 @@ def test_command(
     """Run the PKCS#11 test suite against a module."""
     if not module.exists():
         console.print(f"[red]Error:[/red] Module not found: {module}")
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=_resume_exit_code(state_file, 3) if resume else 3)
 
     if isolation not in {"none", "auto", "file", "test"}:
         console.print(f"[red]Error:[/red] Unsupported isolation mode: {isolation}")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2)
 
     if skip_slow and only_slow:
         console.print("[red]Error:[/red] --skip-slow and --only-slow are mutually exclusive")
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2)
     marker = _combine_marker(marker, skip_slow=skip_slow, only_slow=only_slow)
-
-    if no_collection_cache:
-        os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
 
     original_pin = os.environ.get("P11TEST_PIN")
     had_original_pin = "P11TEST_PIN" in os.environ
-
-    # Pass PIN via env so pytest fixtures pick it up
-    if pin:
-        os.environ["P11TEST_PIN"] = pin
-
     original_so_pin = os.environ.get("P11TEST_SO_PIN")
     had_original_so_pin = "P11TEST_SO_PIN" in os.environ
 
-    if so_pin:
-        os.environ["P11TEST_SO_PIN"] = so_pin
+    original_no_collection_cache = os.environ.get("PKCS11_CHECK_NO_COLLECTION_CACHE")
+    had_no_collection_cache = "PKCS11_CHECK_NO_COLLECTION_CACHE" in os.environ
+    original_report_log = os.environ.get("PKCS11_CHECK_REPORT_LOG")
+    had_report_log = "PKCS11_CHECK_REPORT_LOG" in os.environ
+    original_deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
+    had_deselect_file = "PKCS11_CHECK_DESELECT_FILE" in os.environ
+    manifest_path: Path | None = None
+    manifest_fd: int | None = None
+    jsonl_path: Path | None = None
+    jsonl_fd: int | None = None
+    deselect_path: Path | None = None
 
-    manifest_fd, manifest_raw_path = tempfile.mkstemp(
-        prefix="pkcs11-check-manifest-",
-        suffix=".json",
-    )
-    os.close(manifest_fd)
-    manifest_path = Path(manifest_raw_path)
+    def restore_caller_environment() -> None:
+        if had_original_pin:
+            os.environ["P11TEST_PIN"] = original_pin or ""
+        else:
+            os.environ.pop("P11TEST_PIN", None)
+        if had_original_so_pin:
+            os.environ["P11TEST_SO_PIN"] = original_so_pin or ""
+        else:
+            os.environ.pop("P11TEST_SO_PIN", None)
+        if had_no_collection_cache:
+            os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = original_no_collection_cache or ""
+        else:
+            os.environ.pop("PKCS11_CHECK_NO_COLLECTION_CACHE", None)
+        if had_report_log:
+            os.environ["PKCS11_CHECK_REPORT_LOG"] = original_report_log or ""
+        else:
+            os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
+        if had_deselect_file:
+            os.environ["PKCS11_CHECK_DESELECT_FILE"] = original_deselect_file or ""
+        else:
+            os.environ.pop("PKCS11_CHECK_DESELECT_FILE", None)
 
-    manifest = run_preflight_subprocess(
-        module,
-        interface=interface,
-        slot=slot,
-        timeout=_preflight_timeout_seconds(timeout),
-        output_path=manifest_path,
-    )
-    if manifest.status != "ok":
-        console.print(f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}")
-        if output == "json" and manifest.status in {"crashed", "timeout"}:
-            results_path = Path(output_file or "pkcs11-check-results.json")
-            observation = manifest.process_observation
-            raw_code = (
-                observation.get("termination", {}).get("raw_code")
-                if isinstance(observation, dict)
-                and isinstance(observation.get("termination"), dict)
-                else None
-            )
-            legacy_returncode = (
-                124
-                if manifest.status == "timeout"
-                else (int(raw_code) if isinstance(raw_code, int) else 1)
-            )
-            result = FileRunResult(
-                target=str(module),
-                status=manifest.status,
-                returncode=legacy_returncode,
-                duration_s=0.0,
-            )
-            state = FileRunState(
-                units=[str(module)],
-                fingerprint="",
-                results=[result],
-                process_observations=[observation] if isinstance(observation, dict) else [],
-            )
-            payload = write_isolated_json_report(results_path, state)
-            payload["summary"]["incomplete"] = True
-            results_path.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-            )
-        manifest_path.unlink(missing_ok=True)
-        raise typer.Exit(code=1 if manifest.status in {"crashed", "timeout"} else 2)
+    def close_manifest_fd() -> None:
+        nonlocal manifest_fd
+        if manifest_fd is None:
+            return
+        try:
+            os.close(manifest_fd)
+        except Exception:  # noqa: BLE001  # cleanup must not mask the original error
+            try:
+                os.close(manifest_fd)
+            except Exception:  # noqa: BLE001  # cleanup must not mask the original error
+                return
+            manifest_fd = None
+        else:
+            manifest_fd = None
 
-    run_provenance = _build_run_provenance(manifest, resolve_data_dir())
-    fw = run_provenance.get("framework") or {}
-    fw_version = fw.get("version") or "?"
-    prov_info = run_provenance.get("provider") or {}
-    if prov_info.get("name"):
-        commit_short = (prov_info.get("commit") or "")[:8]
-        ref = prov_info.get("ref", "")
-        prov_line = f"{prov_info['name']} {ref}@{commit_short}".strip()
-    else:
-        prov_line = ""
-    console.print(
-        f"[dim]provenance: pkcs11-check {fw_version}"
-        f" | {prov_line or 'provider: build info absent'}[/dim]"
-    )
+    def close_jsonl_fd() -> None:
+        nonlocal jsonl_fd
+        if jsonl_fd is None:
+            return
+        try:
+            os.close(jsonl_fd)
+        except Exception:  # noqa: BLE001  # cleanup must not mask the original error
+            try:
+                os.close(jsonl_fd)
+            except Exception:  # noqa: BLE001  # cleanup must not mask the original error
+                return
+            jsonl_fd = None
+        else:
+            jsonl_fd = None
 
-    pytest_args = _build_pytest_args(
-        module=module,
-        interface=interface,
-        timeout=timeout,
-        category=category,
-        match=match,
-        marker=marker,
-        include_pin_arg=isolation == "none",
-        pin=pin,
-        so_pin=so_pin,
-        slot=slot,
-        destructive=destructive,
-        rv_trace=rv_trace,
-        rv_trace_compact=rv_trace_compact,
-        output=output,
-        output_file=output_file,
-        include_machine_report_args=isolation == "none",
-        verbose=verbose,
-        key_inject=key_inject,
-        wrap_key_source=wrap_key_source,
-        wrap_key_label=wrap_key_label,
-        wrap_key_handle=wrap_key_handle,
-        wrap_key_value=wrap_key_value,
-        wrap_mech=wrap_mech,
-        wrap_rsa_bits=wrap_rsa_bits,
-        wrap_oaep_hash=wrap_oaep_hash,
-        allow_external_provision=allow_external_provision,
-        external_provision_cmd=external_provision_cmd,
-    )
-    pytest_args.extend(["--p11-manifest", str(manifest_path)])
-    report_config = _isolated_report_config(output, output_file) if isolation != "none" else None
+    def cleanup_owned_resources() -> None:
+        # Restore caller-owned environment first; cleanup failures must not hide it.
+        restore_caller_environment()
+        close_manifest_fd()
+        close_jsonl_fd()
+        for path in (manifest_path, jsonl_path, deselect_path):
+            if path is not None:
+                with suppress(Exception):
+                    path.unlink(missing_ok=True)
 
-    target_args = targets or [_TESTCASES_DIR]
-    if isolation in {"auto", "file", "test"} and not resume:
-        # Remove stale output/state before any metadata collection can fail. The
-        # isolated runner repeats this reset when execution starts; keeping it
-        # here closes the pre-run collection gap.
-        _reset_fresh_run_artifacts(state_file, report_config)
     try:
+        manifest_fd, manifest_raw_path = tempfile.mkstemp(
+            prefix="pkcs11-check-manifest-",
+            suffix=".json",
+        )
+        manifest_path = Path(manifest_raw_path)
+        os.close(manifest_fd)
+        manifest_fd = None
+
+        if no_collection_cache:
+            os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
+
+        # Pass PIN via env so pytest fixtures pick it up
+        if pin:
+            os.environ["P11TEST_PIN"] = pin
+        if so_pin:
+            os.environ["P11TEST_SO_PIN"] = so_pin
+
+        assert manifest_path is not None
+        manifest = run_preflight_subprocess(
+            module,
+            interface=interface,
+            slot=slot,
+            timeout=_preflight_timeout_seconds(timeout),
+            output_path=manifest_path,
+        )
+        if manifest.status != "ok":
+            console.print(
+                f"[red]Error:[/red] PKCS#11 preflight {manifest.status}: {manifest.error}"
+            )
+            if output == "json" and manifest.status in {"crashed", "timeout"}:
+                results_path = Path(output_file or "pkcs11-check-results.json")
+                observation = manifest.process_observation
+                raw_code = (
+                    observation.get("termination", {}).get("raw_code")
+                    if isinstance(observation, dict)
+                    and isinstance(observation.get("termination"), dict)
+                    else None
+                )
+                legacy_returncode = (
+                    124
+                    if manifest.status == "timeout"
+                    else (int(raw_code) if isinstance(raw_code, int) else 1)
+                )
+                result = FileRunResult(
+                    target=str(module),
+                    status=manifest.status,
+                    returncode=legacy_returncode,
+                    duration_s=0.0,
+                )
+                state = FileRunState(
+                    units=[str(module)],
+                    fingerprint="",
+                    results=[result],
+                    process_observations=[observation] if isinstance(observation, dict) else [],
+                )
+                payload = write_isolated_json_report(results_path, state)
+                payload["summary"]["incomplete"] = True
+                results_path.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                )
+            if manifest.status in {"crashed", "timeout"}:
+                preflight_exit_code = 1
+            elif manifest.reason == "module_unloadable":
+                preflight_exit_code = 3
+            else:
+                preflight_exit_code = 2
+            if resume:
+                preflight_exit_code = _resume_exit_code(state_file, preflight_exit_code)
+            raise typer.Exit(code=preflight_exit_code)
+
+        assert manifest_path is not None
+        run_provenance = _build_run_provenance(manifest, resolve_data_dir())
+        fw = run_provenance.get("framework") or {}
+        fw_version = fw.get("version") or "?"
+        prov_info = run_provenance.get("provider") or {}
+        if prov_info.get("name"):
+            commit_short = (prov_info.get("commit") or "")[:8]
+            ref = prov_info.get("ref", "")
+            prov_line = f"{prov_info['name']} {ref}@{commit_short}".strip()
+        else:
+            prov_line = ""
+        console.print(
+            f"[dim]provenance: pkcs11-check {fw_version}"
+            f" | {prov_line or 'provider: build info absent'}[/dim]"
+        )
+
+        pytest_args = _build_pytest_args(
+            module=module,
+            interface=interface,
+            timeout=timeout,
+            category=category,
+            match=match,
+            marker=marker,
+            include_pin_arg=isolation == "none",
+            pin=pin,
+            so_pin=so_pin,
+            slot=slot,
+            destructive=destructive,
+            rv_trace=rv_trace,
+            rv_trace_compact=rv_trace_compact,
+            output=output,
+            output_file=output_file,
+            include_machine_report_args=isolation == "none",
+            verbose=verbose,
+            key_inject=key_inject,
+            wrap_key_source=wrap_key_source,
+            wrap_key_label=wrap_key_label,
+            wrap_key_handle=wrap_key_handle,
+            wrap_key_value=wrap_key_value,
+            wrap_mech=wrap_mech,
+            wrap_rsa_bits=wrap_rsa_bits,
+            wrap_oaep_hash=wrap_oaep_hash,
+            allow_external_provision=allow_external_provision,
+            external_provision_cmd=external_provision_cmd,
+        )
+        pytest_args.extend(["--p11-manifest", str(manifest_path)])
+        report_config = (
+            _isolated_report_config(output, output_file) if isolation != "none" else None
+        )
+
+        target_args = targets or [_TESTCASES_DIR]
+        if isolation in {"auto", "file", "test"} and not resume:
+            # Remove stale output/state before any metadata collection can fail. The
+            # isolated runner repeats this reset when execution starts; keeping it
+            # here closes the pre-run collection gap.
+            _reset_fresh_run_artifacts(state_file, report_config)
         try:
             runtime_config = P11TestConfig(
                 module=module,
@@ -702,7 +862,8 @@ def test_command(
             )
         except FileNotFoundError as exc:
             console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(code=2) from exc
+            setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
+            raise typer.Exit(code=setup_exit_code) from exc
 
         if isolation in {"auto", "file", "test"}:
             collection_phase = True
@@ -779,7 +940,8 @@ def test_command(
                     )
                 except ValueError as exc:
                     console.print(f"[red]Error:[/red] {exc}")
-                    raise typer.Exit(code=2) from exc
+                    setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
+                    raise typer.Exit(code=setup_exit_code) from exc
                 runner_kwargs: dict[str, Any] = {}
                 if isolation == "auto" and collected_items:
                     runner_kwargs["collected_items"] = collected_items
@@ -811,46 +973,107 @@ def test_command(
                         provenance=run_provenance,
                     )
                 console.print(f"[red]Error:[/red] {exc}")
-                raise typer.Exit(code=2) from exc
+                collection_exit_code = 2
+                if resume:
+                    collection_exit_code = _resume_exit_code(state_file, collection_exit_code)
+                raise typer.Exit(code=collection_exit_code) from exc
             raise typer.Exit(code=exit_code)
 
         args = [*target_args, *pytest_args]
-        # For JSON output, set PKCS11_CHECK_REPORT_LOG so plugin.py injects
-        # --report-log into the pytest session for per-test JSONL capture.
-        jsonl_raw: str | None = None
-        deselect_path: Path | None = None
+        # Keep report-log evidence for every output mode. JSON moves this temp
+        # file to the documented report.jsonl artifact; other modes clean it.
+        results_path = Path(output_file or "pkcs11-check-results.json")
         if output == "json":
-            jsonl_fd, jsonl_raw = tempfile.mkstemp(prefix="pkcs11-check-jsonl-", suffix=".jsonl")
-            os.close(jsonl_fd)
-            os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
+            results_path.parent.mkdir(parents=True, exist_ok=True)
+        jsonl_fd, jsonl_raw = tempfile.mkstemp(
+            prefix="pkcs11-check-jsonl-",
+            suffix=".jsonl",
+            dir=str(results_path.parent) if output == "json" else None,
+        )
+        jsonl_path = Path(jsonl_raw)
+        os.close(jsonl_fd)
+        jsonl_fd = None
+        os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
         if disabled_nodeids:
             deselect_path = write_deselect_file(disabled_nodeids)
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
-        try:
-            exit_code = pytest.main(args)
-        finally:
-            if jsonl_raw is not None:
-                os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
-            os.environ.pop("PKCS11_CHECK_DESELECT_FILE", None)
-            if deselect_path is not None:
+        exit_code = pytest.main(args)
+        restore_caller_environment()
+        if deselect_path is not None:
+            with suppress(Exception):
                 deselect_path.unlink(missing_ok=True)
-        if output == "json" and jsonl_raw is not None:
-            _assemble_json_artifacts_from_jsonl(
-                Path(jsonl_raw),
+        assert jsonl_path is not None
+        completion_verified = _ensure_nonisolated_completion_record(
+            jsonl_path,
+            returncode=int(exit_code),
+            stdout="",
+            stderr="",
+        )
+        assembled_payload: dict[str, Any] | None = None
+        if output == "json" and jsonl_path is not None:
+            assembled_payload = _assemble_json_artifacts_from_jsonl(
+                jsonl_path,
                 output_file,
                 run_provenance,
                 returncode=int(exit_code),
+                completion_verified=completion_verified,
             )
-        raise typer.Exit(code=int(exit_code))
+        elif jsonl_path is not None:
+            detail = _build_detail_from_report_records(iter_report_log_records(jsonl_path))
+            jsonl_path.unlink(missing_ok=True)
+            if not completion_verified and output == "rich":
+                console.print(
+                    f"[red]INCOMPLETE[/red] non-isolated pytest run: report log completion "
+                    f"could not be verified for raw exit code {exit_code}"
+                )
+            if not completion_verified and output == "junit":
+                report_target = "<non-isolated>"
+                report_detail = detail or {"counts": {}, "tests": []}
+                counts = report_detail.get("counts", {})
+                if isinstance(counts, Mapping) and counts.get("timeout", 0) > 0:
+                    report_status = "timeout"
+                elif isinstance(counts, Mapping) and counts.get("crashed", 0) > 0:
+                    report_status = "crashed"
+                elif isinstance(counts, Mapping) and counts.get("failed", 0) > 0:
+                    report_status = "failed"
+                else:
+                    report_status = "passed"
+                report_state = FileRunState(
+                    units=[report_target],
+                    fingerprint="",
+                    results=[
+                        FileRunResult(
+                            target=report_target,
+                            status=report_status,
+                            returncode=int(exit_code),
+                            duration_s=0.0,
+                            completion_verified=False,
+                        )
+                    ],
+                )
+                write_isolated_junit_report(
+                    Path(output_file or "pkcs11-check-results.xml"),
+                    report_state,
+                    per_unit_details={report_target: report_detail},
+                )
+        raw_exit_code = int(exit_code)
+        public_exit_code = raw_exit_code if raw_exit_code in {0, 1} else 1
+        if raw_exit_code in {2, 3, 4, 5}:
+            public_exit_code = 2
+        if raw_exit_code in {0, 1, 5} and not completion_verified:
+            public_exit_code = 1
+        if raw_exit_code in {2, 3, 4}:
+            summary = assembled_payload.get("summary") if assembled_payload is not None else None
+            provider_finding = isinstance(summary, Mapping) and any(
+                int(summary.get(key, 0) or 0) > 0 for key in ("failed", "crashed", "timeout")
+            )
+            if assembled_payload is None:
+                counts = detail.get("counts") if isinstance(detail, Mapping) else None
+                provider_finding = isinstance(counts, Mapping) and any(
+                    int(counts.get(key, 0) or 0) > 0 for key in ("failed", "crashed", "timeout")
+                )
+            if provider_finding:
+                public_exit_code = 1
+        raise typer.Exit(code=public_exit_code)
     finally:
-        manifest_path.unlink(missing_ok=True)
-        if pin:
-            if had_original_pin:
-                os.environ["P11TEST_PIN"] = original_pin or ""
-            else:
-                os.environ.pop("P11TEST_PIN", None)
-        if so_pin:
-            if had_original_so_pin:
-                os.environ["P11TEST_SO_PIN"] = original_so_pin or ""
-            else:
-                os.environ.pop("P11TEST_SO_PIN", None)
+        cleanup_owned_resources()

@@ -6,13 +6,16 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree as ET
 
 import pytest
 
 from pkcs11_check import __version__
 from pkcs11_check.cli import test_cmd
 from pkcs11_check.cli.app import app
+from pkcs11_check.core import collection_errors as collection_errors_mod
 from pkcs11_check.core import disabled_baseline as disabled_baseline_mod
+from pkcs11_check.core._report_records import _write_unit_report_record_cache
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.file_runner import (
     FileRunResult,
@@ -68,6 +71,102 @@ class TestVersionCommand:
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
         assert f"pkcs11-check {__version__}" in result.output
+
+
+def test_test_none_json_uses_output_directory_for_report_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "dummy.so"
+    module.write_text("", encoding="utf-8")
+    results_path = tmp_path / "nested" / "artifacts" / "results.json"
+    observed_dirs: list[Path | None] = []
+    real_mkstemp = test_cmd.tempfile.mkstemp
+
+    def observing_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        raw_dir = kwargs.get("dir")
+        observed_dirs.append(Path(raw_dir) if isinstance(raw_dir, str) else raw_dir)
+        return real_mkstemp(*args, **kwargs)
+
+    def fake_main(args: list[str]) -> int:
+        del args
+        Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": "test_demo.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    monkeypatch.setattr(test_cmd.tempfile, "mkstemp", observing_mkstemp)
+    monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+    monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+    result = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            str(module),
+            "--output",
+            "json",
+            "--output-file",
+            str(results_path),
+            "--isolation",
+            "none",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed_dirs[-1] == results_path.parent
+    assert results_path.parent.joinpath("report.jsonl").exists()
+
+
+def test_test_none_non_json_detail_building_streams_report_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "dummy.so"
+    module.write_text("", encoding="utf-8")
+
+    def fake_main(args: list[str]) -> int:
+        del args
+        Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+            "\n".join(
+                [
+                    '{"$report_type":"SessionStart"}',
+                    '{"$report_type":"SessionFinish","exitstatus":0}',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    def assert_stream(records: object) -> dict[str, object]:
+        assert not isinstance(records, list), "detail builder must receive the report stream"
+        return {"counts": {}, "tests": []}
+
+    monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+    monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+    monkeypatch.setattr(test_cmd, "_build_detail_from_report_records", assert_stream)
+
+    result = runner.invoke(
+        app,
+        ["test", "--module", str(module), "--output", "rich", "--isolation", "none"],
+    )
+
+    assert result.exit_code == 0
 
 
 class TestCompareCoverageCommand:
@@ -1305,6 +1404,7 @@ class TestTestCommand:
             Path(report_log).write_text(
                 "\n".join(
                     [
+                        json.dumps({"$report_type": "SessionStart"}),
                         json.dumps(
                             {
                                 "$report_type": "TestReport",
@@ -1352,6 +1452,7 @@ class TestTestCommand:
                                 },
                             }
                         ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
                     ]
                 )
                 + "\n",
@@ -1459,7 +1560,7 @@ class TestTestCommand:
         report_path = results_path.parent / "report.jsonl"
         assert diagnostic in report_path.read_text(encoding="utf-8")
         payload = json.loads(results_path.read_text(encoding="utf-8"))
-        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["error"] == 2
         assert payload["summary"]["failed"] == 0
         assert payload["summary"]["xfailed"] == 0
         assert payload["summary"]["incomplete"] is True
@@ -1506,13 +1607,299 @@ class TestTestCommand:
             json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
         ]
         assert len(records) == 1
-        assert records[0]["$report_type"] == "CollectReport"
+        assert records[0]["$report_type"] == "HarnessError"
+        assert records[0]["returncode"] == 2
+        assert records[0]["completion_verified"] is False
         payload = json.loads(results_path.read_text(encoding="utf-8"))
         assert payload["summary"]["error"] == 1
         assert payload["summary"]["incomplete"] is True
         assert payload["units"][0]["incomplete"] is True
         assert not (results_path.parent / "coverage.json").exists()
         assert not (results_path.parent / "provisioning.json").exists()
+
+    @pytest.mark.parametrize("returncode", [2, 3, 4])
+    def test_test_none_json_preserves_harness_returncode_and_public_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "nested" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": "test_demo.py::test_ok",
+                                "when": "call",
+                                "outcome": "passed",
+                            }
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": returncode}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return returncode
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 2
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["units"][0]["returncode"] == returncode
+        assert payload["units"][0]["completion_verified"] is False
+        assert payload["units"][0]["incomplete"] is True
+        assert payload["summary"]["failed"] == 0
+        assert payload["summary"]["incomplete"] is True
+
+    def test_test_none_json_provider_failure_wins_over_harness_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "nested" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps(
+                            {
+                                "$report_type": "TestReport",
+                                "nodeid": "test_demo.py::test_failed",
+                                "when": "call",
+                                "outcome": "failed",
+                                "longrepr": "provider failure",
+                            }
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 2}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return 2
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--output",
+                "json",
+                "--output-file",
+                str(results_path),
+                "--isolation",
+                "none",
+            ],
+        )
+
+        assert result.exit_code == 1
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["failed"] == 1
+        assert payload["summary"]["incomplete"] is True
+
+    @pytest.mark.parametrize(
+        ("output", "returncode", "finish", "expected_exit"),
+        [
+            ("rich", 0, None, 1),
+            ("junit", 1, 0, 1),
+            ("json", 1, 0, 1),
+            ("json", 2, 2, 2),
+            ("rich", 5, 5, 2),
+        ],
+        ids=[
+            "missing-finish",
+            "mismatched-finish",
+            "harness-exit",
+            "harness-exit-json",
+            "empty-session",
+        ],
+    )
+    def test_test_none_validates_report_completion_for_every_output(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        output: str,
+        returncode: int,
+        finish: int | None,
+        expected_exit: int,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        results_path = tmp_path / "nested" / "results.json"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            records = [json.dumps({"$report_type": "SessionStart"})]
+            if returncode != 5:
+                records.append(
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": "test_demo.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    )
+                )
+            if finish is not None:
+                records.append(json.dumps({"$report_type": "SessionFinish", "exitstatus": finish}))
+            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+                "\n".join(records) + "\n", encoding="utf-8"
+            )
+            return returncode
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        args = [
+            "test",
+            "--module",
+            str(module),
+            "--output",
+            output,
+            "--isolation",
+            "none",
+        ]
+        if output in {"json", "junit"}:
+            args.extend(["--output-file", str(results_path)])
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == expected_exit
+        if output == "json":
+            payload = json.loads(results_path.read_text(encoding="utf-8"))
+            assert payload["summary"]["incomplete"] is True
+            assert payload["units"]
+            assert payload["units"][0]["completion_verified"] is False
+            assert payload["units"][0]["incomplete"] is True
+            report_records = [
+                json.loads(line)
+                for line in (results_path.parent / "report.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            harness = [
+                record for record in report_records if record["$report_type"] == "HarnessError"
+            ]
+            assert len(harness) == 1
+            assert harness[0]["returncode"] == returncode
+            assert harness[0]["completion_verified"] is False
+        else:
+            assert not (tmp_path / "pkcs11-check-results.json").exists()
+            if output == "rich" and (finish is None or finish != returncode):
+                assert "INCOMPLETE" in result.output
+            if output == "junit":
+                root = ET.parse(results_path).getroot()
+                assert root.attrib["tests"] == "1"
+                assert root.attrib["errors"] == "1"
+                error = root.find("testcase/error")
+                assert error is not None
+                assert error.attrib["type"] == "incomplete"
+
+    @pytest.mark.parametrize("output", ["rich", "junit"])
+    @pytest.mark.parametrize("provider_failure", [False, True])
+    def test_test_none_non_json_collects_report_log_and_provider_wins(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        output: str,
+        provider_failure: bool,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, Path] = {}
+        output_path = tmp_path / "nested" / "results.xml"
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            report_path = Path(os.environ["PKCS11_CHECK_REPORT_LOG"])
+            observed["path"] = report_path
+            report_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        *(
+                            [
+                                json.dumps(
+                                    {
+                                        "$report_type": "TestReport",
+                                        "nodeid": "test_demo.py::test_failed",
+                                        "when": "call",
+                                        "outcome": "failed",
+                                        "longrepr": "provider diagnostic",
+                                    }
+                                )
+                            ]
+                            if provider_failure
+                            else []
+                        ),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 2}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            assert report_path.exists()
+            return 2
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        args = [
+            "test",
+            "--module",
+            str(module),
+            "--output",
+            output,
+            "--isolation",
+            "none",
+        ]
+        if output == "junit":
+            args.extend(["--output-file", str(output_path)])
+        result = runner.invoke(
+            app,
+            args,
+        )
+
+        assert result.exit_code == (1 if provider_failure else 2)
+        report_path = observed["path"]
+        assert not report_path.exists()
+        if output == "junit":
+            root = ET.parse(output_path).getroot()
+            assert root.attrib["tests"] == ("2" if provider_failure else "1")
+            assert root.attrib["failures"] == ("1" if provider_failure else "0")
+            assert root.attrib["errors"] == "1"
+            if provider_failure:
+                assert root.find("testcase/failure") is not None
+                assert root.find("testcase/error") is not None
 
     def test_test_none_json_writes_quality_report_when_jsonl_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1558,7 +1945,7 @@ class TestTestCommand:
             ],
         )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         quality_path = results_path.parent / "quality.json"
         assert quality_path.exists()
         report = json.loads(quality_path.read_text(encoding="utf-8"))
@@ -1571,12 +1958,24 @@ class TestTestCommand:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
+        caller_deselect_file = tmp_path / "caller-deselect.txt"
+        restored: dict[str, str | None] = {}
 
         def fake_main(args: list[str]) -> int:
             del args
             deselect_path = Path(os.environ["PKCS11_CHECK_DESELECT_FILE"])
             called["path"] = deselect_path
             called["text"] = deselect_path.read_text(encoding="utf-8")
+            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             return 0
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
@@ -1606,12 +2005,38 @@ class TestTestCommand:
                 ),
             )[1],
         )
+        real_ensure_completion = test_cmd._ensure_nonisolated_completion_record
 
-        result = runner.invoke(app, ["test", "--module", str(module), "--isolation", "none"])
+        def observe_restored_deselect_file(
+            report_path: Path,
+            *,
+            returncode: int,
+            stdout: str,
+            stderr: str,
+        ) -> bool:
+            restored["value"] = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
+            return real_ensure_completion(
+                report_path,
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        monkeypatch.setattr(
+            test_cmd,
+            "_ensure_nonisolated_completion_record",
+            observe_restored_deselect_file,
+        )
+
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "none"],
+            env={"PKCS11_CHECK_DESELECT_FILE": str(caller_deselect_file)},
+        )
 
         assert result.exit_code == 0
         assert called["text"] == "test_demo.py::test_disabled\n"
-        assert "PKCS11_CHECK_DESELECT_FILE" not in os.environ
+        assert restored["value"] == str(caller_deselect_file)
 
     def test_test_none_ignore_disabled_tests_skips_baseline_loading(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1622,6 +2047,16 @@ class TestTestCommand:
         def fake_main(args: list[str]) -> int:
             del args
             assert "PKCS11_CHECK_DESELECT_FILE" not in os.environ
+            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+                "\n".join(
+                    [
+                        json.dumps({"$report_type": "SessionStart"}),
+                        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             return 0
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
@@ -1994,6 +2429,722 @@ class TestTestCommand:
         assert "PKCS#11 preflight error" in result.output
 
     @pytest.mark.parametrize(
+        ("reason", "expected_exit"),
+        [("module_unloadable", 3), (None, 2)],
+        ids=["module-unloadable", "later-config-error"],
+    )
+    def test_test_preflight_maps_only_module_load_failure_to_three(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reason: str | None,
+        expected_exit: int,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status="error",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                reason=reason,
+                error="preflight error",
+            ),
+        )
+
+        result = runner.invoke(app, ["test", "--module", str(module)])
+
+        assert result.exit_code == expected_exit
+
+    def test_test_preflight_exception_restores_overrides_and_manifest_temp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, Path] = {}
+        monkeypatch.setenv("P11TEST_PIN", "caller-pin")
+        monkeypatch.setenv("P11TEST_SO_PIN", "caller-so-pin")
+
+        def fail_preflight(
+            module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+        ) -> CapabilityManifest:
+            del module, interface, slot, timeout
+            observed["manifest"] = output_path
+            raise RuntimeError("preflight helper failed")
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", fail_preflight)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "override-pin",
+                "--so-pin",
+                "override-so-pin",
+            ],
+        )
+
+        assert result.exception is not None
+        assert result.exception.args == ("preflight helper failed",)
+        assert os.environ["P11TEST_PIN"] == "caller-pin"
+        assert os.environ["P11TEST_SO_PIN"] == "caller-so-pin"
+        assert not observed["manifest"].exists()
+
+    def test_test_build_args_exception_restores_overrides_and_manifest_temp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, Path] = {}
+        monkeypatch.setenv("P11TEST_PIN", "caller-pin")
+        monkeypatch.setenv("P11TEST_SO_PIN", "caller-so-pin")
+
+        def ok_preflight(
+            module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+        ) -> CapabilityManifest:
+            manifest = _ok_preflight(
+                module,
+                interface=interface,
+                slot=slot,
+                timeout=timeout,
+                output_path=output_path,
+            )
+            observed["manifest"] = output_path
+            return manifest
+
+        def fail_build_args(**_kwargs: object) -> list[str]:
+            raise RuntimeError("argument construction failed")
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", ok_preflight)
+        monkeypatch.setattr(test_cmd, "_build_pytest_args", fail_build_args)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "override-pin",
+                "--so-pin",
+                "override-so-pin",
+            ],
+        )
+
+        assert result.exception is not None
+        assert result.exception.args == ("argument construction failed",)
+        assert os.environ["P11TEST_PIN"] == "caller-pin"
+        assert os.environ["P11TEST_SO_PIN"] == "caller-so-pin"
+        assert not observed["manifest"].exists()
+
+    def test_test_manifest_close_failure_retries_close_and_preserves_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, Path] = {}
+        real_mkstemp = test_cmd.tempfile.mkstemp
+        real_close = test_cmd.os.close
+        close_calls = 0
+
+        def observing_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+            fd, raw_path = real_mkstemp(*args, **kwargs)
+            observed["manifest"] = Path(raw_path)
+            return fd, raw_path
+
+        def fail_once_close(fd: int) -> None:
+            nonlocal close_calls
+            close_calls += 1
+            if close_calls == 1:
+                raise OSError("manifest close failed")
+            real_close(fd)
+
+        monkeypatch.setattr(test_cmd.tempfile, "mkstemp", observing_mkstemp)
+        monkeypatch.setattr(test_cmd.os, "close", fail_once_close)
+
+        result = runner.invoke(app, ["test", "--module", str(module)])
+
+        assert result.exception is not None
+        assert result.exception.args == ("manifest close failed",)
+        assert close_calls == 2
+        assert not observed["manifest"].exists()
+
+    def test_test_jsonl_close_failure_is_retried_and_fd_is_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, int | Path] = {}
+        real_mkstemp = test_cmd.tempfile.mkstemp
+        real_close = test_cmd.os.close
+        injected = False
+
+        def observing_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+            fd, raw_path = real_mkstemp(*args, **kwargs)
+            if str(kwargs.get("prefix", "")).startswith("pkcs11-check-jsonl-"):
+                observed["jsonl_fd"] = fd
+                observed["jsonl"] = Path(raw_path)
+            return fd, raw_path
+
+        def fail_jsonl_close(fd: int) -> None:
+            nonlocal injected
+            if fd == observed.get("jsonl_fd") and not injected:
+                injected = True
+                raise OSError("jsonl close failed")
+            real_close(fd)
+
+        monkeypatch.setattr(test_cmd.tempfile, "mkstemp", observing_mkstemp)
+        monkeypatch.setattr(test_cmd.os, "close", fail_jsonl_close)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--isolation", "none"],
+        )
+
+        assert result.exception is not None
+        assert result.exception.args == ("jsonl close failed",)
+        jsonl_fd = observed["jsonl_fd"]
+        assert isinstance(jsonl_fd, int)
+        with pytest.raises(OSError):
+            os.fstat(jsonl_fd)
+        jsonl_path = observed["jsonl"]
+        assert isinstance(jsonl_path, Path)
+        assert not jsonl_path.exists()
+
+    def test_test_setup_error_survives_manifest_unlink_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, Path] = {}
+        monkeypatch.setenv("P11TEST_PIN", "caller-pin")
+        monkeypatch.setenv("P11TEST_SO_PIN", "caller-so-pin")
+        real_unlink = Path.unlink
+
+        def ok_preflight(
+            module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+        ) -> CapabilityManifest:
+            manifest = _ok_preflight(
+                module,
+                interface=interface,
+                slot=slot,
+                timeout=timeout,
+                output_path=output_path,
+            )
+            observed["manifest"] = output_path
+            return manifest
+
+        def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
+            if self == observed.get("manifest"):
+                raise OSError("manifest unlink failed")
+            real_unlink(self, *args, **kwargs)
+
+        def fail_build_args(**_kwargs: object) -> list[str]:
+            raise RuntimeError("argument construction failed")
+
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", ok_preflight)
+        monkeypatch.setattr(test_cmd, "_build_pytest_args", fail_build_args)
+        monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--pin",
+                "override-pin",
+                "--so-pin",
+                "override-so-pin",
+            ],
+        )
+
+        assert result.exception is not None
+        assert result.exception.args == ("argument construction failed",)
+        assert os.environ["P11TEST_PIN"] == "caller-pin"
+        assert os.environ["P11TEST_SO_PIN"] == "caller-so-pin"
+        assert observed["manifest"].exists()
+
+    def test_test_none_parse_failure_cleans_report_temp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        observed: dict[str, Path] = {}
+
+        def fake_main(args: list[str]) -> int:
+            del args
+            path = Path(os.environ["PKCS11_CHECK_REPORT_LOG"])
+            observed["report"] = path
+            path.write_text(
+                '{"$report_type":"SessionStart"}\n'
+                '{"$report_type":"SessionFinish","exitstatus":0}\n',
+                encoding="utf-8",
+            )
+            return 0
+
+        def fail_detail(_records: object) -> None:
+            raise RuntimeError("post-run parse failed")
+
+        monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        monkeypatch.setattr(test_cmd, "_build_detail_from_report_records", fail_detail)
+
+        result = runner.invoke(
+            app,
+            ["test", "--module", str(module), "--output", "rich", "--isolation", "none"],
+        )
+
+        assert result.exception is not None
+        assert result.exception.args == ("post-run parse failed",)
+        assert not observed["report"].exists()
+
+    def test_test_resume_preflight_failure_preserves_prior_provider_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "failed", 1, 0.1)],
+            ),
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "run_preflight_subprocess",
+            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                status="error",
+                module_path=str(module),
+                requested_interface=interface,
+                interface_version=None,
+                slot_index=slot,
+                slot_count=None,
+                mechanisms=[],
+                error="collection/configuration failure",
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 1
+
+    @pytest.mark.parametrize("preflight_reason", [None, "module_unloadable"])
+    @pytest.mark.parametrize("returncode", [2, 3, 4])
+    @pytest.mark.parametrize("evidence_storage", ["cached", "inline"])
+    def test_test_resume_early_exit_uses_cached_provider_evidence(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        preflight_reason: str | None,
+        returncode: int,
+        evidence_storage: str,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        target = "provider.py"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=[target],
+                fingerprint="prior",
+                results=[
+                    FileRunResult(target, "failed", returncode, 0.1, completion_verified=False)
+                ],
+            ),
+        )
+        records = [
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"{target}::test_provider",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "provider failed",
+            },
+            {
+                "$report_type": "HarnessError",
+                "nodeid": target,
+                "outcome": "error",
+                "returncode": returncode,
+                "completion_verified": False,
+                "longrepr": "collection failed",
+            },
+        ]
+        if evidence_storage == "cached":
+            _write_unit_report_record_cache(state_file, target, records)
+        else:
+            state_payload = json.loads(state_file.read_text(encoding="utf-8"))
+            state_payload["report_records_by_unit"] = {target: records}
+            state_file.write_text(json.dumps(state_payload), encoding="utf-8")
+
+        if preflight_reason is None:
+            monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+            def fail_collection(*_args: object, **_kwargs: object) -> list[str]:
+                raise ValueError("current collection failed")
+
+            monkeypatch.setattr(test_cmd, "discover_pytest_units", fail_collection)
+        else:
+            monkeypatch.setattr(
+                test_cmd,
+                "run_preflight_subprocess",
+                lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                    status="error",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    reason=preflight_reason,
+                    error="module is unloadable",
+                ),
+            )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 1
+
+    def test_test_resume_missing_module_uses_cached_provider_evidence(self, tmp_path: Path) -> None:
+        state_file = tmp_path / "state.json"
+        target = "provider.py"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=[target],
+                fingerprint="prior",
+                results=[FileRunResult(target, "failed", 2, 0.1, completion_verified=False)],
+            ),
+        )
+        _write_unit_report_record_cache(
+            state_file,
+            target,
+            [
+                {
+                    "$report_type": "TestReport",
+                    "nodeid": f"{target}::test_provider",
+                    "when": "call",
+                    "outcome": "failed",
+                },
+                {
+                    "$report_type": "HarnessError",
+                    "nodeid": target,
+                    "outcome": "error",
+                    "returncode": 2,
+                    "completion_verified": False,
+                },
+            ],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(tmp_path / "missing.so"),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+
+        assert result.exit_code == 1
+
+    def test_test_resume_missing_module_preserves_prior_provider_failure(
+        self, tmp_path: Path
+    ) -> None:
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "failed", 1, 0.1)],
+            ),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(tmp_path / "missing.so"),
+                "--resume",
+                "--state-file",
+                str(state_file),
+            ],
+        )
+
+        assert result.exit_code == 1
+
+    @pytest.mark.parametrize("provider_evidence", [False, True], ids=["harness-only", "provider"])
+    @pytest.mark.parametrize(
+        "early_exit", ["unsupported-isolation", "conflicting-flags"], ids=["isolation", "flags"]
+    )
+    def test_test_resume_configuration_exit_uses_prior_provider_evidence(
+        self,
+        tmp_path: Path,
+        provider_evidence: bool,
+        early_exit: str,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        target = "provider.py"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=[target],
+                fingerprint="prior",
+                results=[FileRunResult(target, "failed", 2, 0.1, completion_verified=False)],
+            ),
+        )
+        if provider_evidence:
+            _write_unit_report_record_cache(
+                state_file,
+                target,
+                [
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": f"{target}::test_provider",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ],
+            )
+
+        args = [
+            "test",
+            "--module",
+            str(module),
+            "--resume",
+            "--state-file",
+            str(state_file),
+        ]
+        if early_exit == "unsupported-isolation":
+            args.extend(["--isolation", "invalid"])
+        else:
+            args.extend(["--skip-slow", "--only-slow"])
+
+        result = runner.invoke(app, args)
+
+        assert result.exit_code == (1 if provider_evidence else 2)
+
+    @pytest.mark.parametrize("provider_evidence", [False, True], ids=["harness-only", "provider"])
+    @pytest.mark.parametrize(
+        "config_branch", ["disabled-baseline", "recovery"], ids=["disabled", "recovery"]
+    )
+    def test_test_resume_setup_exit_uses_prior_provider_evidence(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        provider_evidence: bool,
+        config_branch: str,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        target = "provider.py"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=[target],
+                fingerprint="prior",
+                results=[FileRunResult(target, "failed", 2, 0.1, completion_verified=False)],
+            ),
+        )
+        if provider_evidence:
+            _write_unit_report_record_cache(
+                state_file,
+                target,
+                [
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": f"{target}::test_provider",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ],
+            )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+        if config_branch == "disabled-baseline":
+            monkeypatch.setattr(
+                test_cmd,
+                "resolve_disabled_nodeids",
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    FileNotFoundError("disabled baseline missing")
+                ),
+            )
+        else:
+            monkeypatch.setattr(
+                test_cmd,
+                "discover_pytest_units",
+                lambda *_args, **_kwargs: [target],
+            )
+            monkeypatch.setattr(
+                test_cmd,
+                "build_recovery_config",
+                lambda **_kwargs: (_ for _ in ()).throw(ValueError("bad recovery config")),
+            )
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == (1 if provider_evidence else 2)
+
+    @pytest.mark.parametrize("returncode", [2, 3, 4])
+    @pytest.mark.parametrize("early_exit", ["collection", "unloadable"])
+    def test_test_resume_early_exit_without_provider_evidence_keeps_infra_code(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        early_exit: str,
+        returncode: int,
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "failed", returncode, 0.1)],
+            ),
+        )
+        if early_exit == "collection":
+            monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+            def fail_collection(*_args: object, **_kwargs: object) -> list[str]:
+                raise ValueError("current collection failed")
+
+            monkeypatch.setattr(test_cmd, "discover_pytest_units", fail_collection)
+            expected_exit = 2
+        else:
+            monkeypatch.setattr(
+                test_cmd,
+                "run_preflight_subprocess",
+                lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
+                    status="error",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    reason="module_unloadable",
+                    error="module is unloadable",
+                ),
+            )
+            expected_exit = 3
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == expected_exit
+
+    def test_test_resume_collection_failure_preserves_prior_provider_exit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        state_file = tmp_path / "state.json"
+        save_run_state(
+            state_file,
+            FileRunState(
+                units=["provider.py"],
+                fingerprint="prior",
+                results=[FileRunResult("provider.py", "crashed", -11, 0.1)],
+            ),
+        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        def fail_collection(*_args: object, **_kwargs: object) -> list[str]:
+            raise ValueError("resumed collection failure")
+
+        monkeypatch.setattr(test_cmd, "discover_pytest_units", fail_collection)
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--isolation",
+                "file",
+                "--resume",
+                "--state-file",
+                str(state_file),
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 1
+
+    @pytest.mark.parametrize(
         ("status", "returncode", "timed_out"),
         [("crashed", -11, False), ("timeout", -9, True)],
     )
@@ -2231,3 +3382,57 @@ class TestFetchDisabledCommand:
         result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
 
         assert result.exit_code == 1
+
+
+def test_completion_helpers_stream_report_logs_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OnePassRecords:
+        def __init__(self, records: list[dict[str, object]]) -> None:
+            self._records = iter(records)
+
+        def __iter__(self) -> OnePassRecords:
+            return self
+
+        def __next__(self) -> dict[str, object]:
+            return next(self._records)
+
+        def __length_hint__(self) -> int:
+            raise AssertionError("report records must be consumed as a stream")
+
+    records = [
+        {"$report_type": "SessionStart"},
+        {"$report_type": "SessionFinish", "exitstatus": 0},
+    ]
+    cli_calls = 0
+
+    def cli_records(*_args: object, **_kwargs: object) -> OnePassRecords:
+        nonlocal cli_calls
+        cli_calls += 1
+        return OnePassRecords(records)
+
+    monkeypatch.setattr(test_cmd, "iter_report_log_records", cli_records)
+    assert not test_cmd._ensure_nonisolated_completion_record(
+        tmp_path / "cli.jsonl", returncode=1, stdout="", stderr=""
+    )
+    assert cli_calls == 1
+
+    collection_open_count = 0
+    original_open = Path.open
+
+    def collection_open(path: Path, *args: object, **kwargs: object):
+        nonlocal collection_open_count
+        if path == tmp_path / "collection.jsonl":
+            collection_open_count += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", collection_open)
+    assert not collection_errors_mod.ensure_failed_collection_report(
+        tmp_path / "collection.jsonl",
+        target="test_demo.py",
+        status="failed",
+        returncode=1,
+        stdout="",
+        stderr="",
+    )
+    assert collection_open_count == 1

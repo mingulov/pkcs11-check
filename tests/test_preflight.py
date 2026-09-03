@@ -62,6 +62,32 @@ def test_probe_capabilities_returns_error_manifest(tmp_path: Path) -> None:
     assert manifest.error == "RuntimeError: boom"
 
 
+def test_probe_capabilities_marks_module_load_failure(tmp_path: Path) -> None:
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+
+    with patch("pkcs11_check.core.preflight.load_module", side_effect=RuntimeError("boom")):
+        manifest = probe_capabilities(module_path, interface="3.2", slot=0)
+
+    assert manifest.status == "error"
+    assert manifest.reason == "module_unloadable"
+
+
+def test_probe_capabilities_does_not_mark_later_slot_failure_as_unloadable(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    mock_module = MagicMock(interface_version="3.2")
+    mock_module.get_slots.side_effect = RuntimeError("C_GetSlotList failed")
+
+    with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
+        manifest = probe_capabilities(module_path, interface="auto", slot=0)
+
+    assert manifest.status == "error"
+    assert manifest.reason is None
+
+
 def test_advertised_mechanism_info_failure_makes_preflight_non_green(tmp_path: Path) -> None:
     module_path = tmp_path / "module.so"
     module_path.touch()

@@ -19,6 +19,7 @@ from pkcs11_check.core.test_selection import (
     extract_required_mechanisms,
     load_disabled_baseline,
     parse_disabled_nodeids,
+    write_deselect_file,
 )
 
 
@@ -60,6 +61,32 @@ def test_load_disabled_baseline_fingerprint_changes_with_content(tmp_path: Path)
     assert isinstance(second, DisabledBaseline)
 
     assert first.fingerprint != second.fingerprint
+
+
+def test_write_deselect_file_removes_temp_when_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, Path] = {}
+    real_mkstemp = test_selection_mod.tempfile.mkstemp
+    real_write_text = Path.write_text
+
+    def observing_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        fd, raw_path = real_mkstemp(*args, **kwargs)
+        observed["path"] = Path(raw_path)
+        return fd, raw_path
+
+    def fail_write(self: Path, *args: object, **kwargs: object) -> int:
+        if self == observed["path"]:
+            raise RuntimeError("deselect write failed")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(test_selection_mod.tempfile, "mkstemp", observing_mkstemp)
+    monkeypatch.setattr(Path, "write_text", fail_write)
+
+    with pytest.raises(RuntimeError, match="deselect write failed"):
+        write_deselect_file(["test_demo.py::test_disabled"])
+
+    assert not observed["path"].exists()
 
 
 def test_build_disabled_selection_plan_drops_disabled_test_units(tmp_path: Path) -> None:

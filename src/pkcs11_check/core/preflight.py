@@ -32,6 +32,7 @@ class CapabilityManifest:
     mechanisms: list[str]
     functions: list[str] = field(default_factory=list)
     error: str | None = None
+    reason: str | None = None
     mechanism_info: dict[str, dict[str, Any]] = field(default_factory=dict)
     process_observation: dict[str, Any] | None = None
 
@@ -49,8 +50,13 @@ def _mechanism_name(value: object) -> str:
 
 def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityManifest:
     """Probe module capabilities inside a short-lived helper process."""
+    load_failure = False
     try:
-        p11 = load_module(module, interface=interface)
+        try:
+            p11 = load_module(module, interface=interface)
+        except Exception:
+            load_failure = True
+            raise
         slots = p11.get_slots(token_present=True)
         if slot >= len(slots):
             msg = f"slot {slot} not found (token-present slots: {len(slots)})"
@@ -91,6 +97,7 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
                 if windows_status is not None
                 else f"{type(exc).__name__}: {exc}"
             ),
+            reason="module_unloadable" if load_failure else None,
         )
 
 
