@@ -28,6 +28,7 @@ from pkcs11_check.core.file_runner import (
     load_run_state,
     run_isolated_pytest_units,
 )
+from pkcs11_check.core.process_observation import build_process_observation
 
 
 def test_child_exit_124_preserves_partial_report_records(
@@ -94,6 +95,87 @@ def test_child_exit_124_preserves_partial_report_records(
         "the test the unit completed before hanging must be preserved; a child-reported "
         "timeout discarded it because the caching lives inside `except TimeoutExpired`"
     )
+
+
+def test_child_exit_124_enters_mixed_progressive_timeout_recovery(
+    monkeypatch: object, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_a.py"
+    target.write_text("def test_done():\n    pass\n", encoding="utf-8")
+    culprit = f"{target}::test_slow"
+    calls: list[tuple[str, bool]] = []
+
+    def report_line(nodeid: str, when: str) -> str:
+        return json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": nodeid,
+                "when": when,
+                "outcome": "passed",
+                "duration": 0.01,
+            }
+        )
+
+    def write_report(path: Path, completed: list[str], started: list[str] | None = None) -> None:
+        records = [
+            report_line(nodeid, when)
+            for nodeid in completed
+            for when in ("setup", "call", "teardown")
+        ]
+        records.extend(report_line(nodeid, "setup") for nodeid in started or ())
+        path.write_text("\n".join(records) + "\n", encoding="utf-8")
+
+    timeout_observation = build_process_observation(
+        "", "unit", 0, _TIMEOUT_RETURN_CODE, timed_out=True
+    )
+    clean_observation = build_process_observation("", "unit", 0, 0)
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str, dict[str, object]]:
+        del timeout
+        unit = cmd[3]
+        has_deselect = bool(env and env.get("PKCS11_CHECK_DESELECT_FILE"))
+        calls.append((unit, has_deselect))
+
+        if unit == culprit:
+            return (0, "", "", clean_observation)
+
+        if unit != str(target):
+            raise AssertionError(f"unexpected subprocess invocation: {cmd!r}")
+
+        report_path = Path(cmd[cmd.index("--report-log") + 1])
+        if has_deselect:
+            assert env is not None
+            deselected = Path(env["PKCS11_CHECK_DESELECT_FILE"]).read_text(encoding="utf-8")
+            assert f"{target}::test_done" in deselected
+            assert culprit in deselected
+            write_report(report_path, [f"{target}::test_remaining"])
+            return (0, "", "", clean_observation)
+
+        write_report(report_path, [f"{target}::test_done"], [culprit])
+        return (_TIMEOUT_RETURN_CODE, "", "", timeout_observation)
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)  # type: ignore[attr-defined]
+
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert calls == [(str(target), False), (culprit, False), (str(target), True)]
+    assert exit_code == 1
 
 
 def test_child_units_are_marked_so_the_timeout_hook_arms(

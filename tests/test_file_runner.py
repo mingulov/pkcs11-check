@@ -4428,6 +4428,7 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
     results_path = tmp_path / "results.json"
     report_jsonl_path = tmp_path / "report.jsonl"
     seen_file_runs = 0
+    seen_envs: list[dict[str, str]] = []
 
     def fake_run(
         cmd: list[str],
@@ -4435,7 +4436,7 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
         env: dict[str, str] | None = None,
         timeout: int = 0,
     ) -> tuple[int, str, str]:
-        del env, timeout
+        del timeout
         target = cmd[3]
         report_log_path: Path | None = None
         for i, arg in enumerate(cmd):
@@ -4444,6 +4445,8 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
                 break
 
         if target == "test_a.py":
+            assert env is not None
+            seen_envs.append(env)
             if report_log_path is None:
                 raise AssertionError("expected report-log path for file run")
             nonlocal seen_file_runs
@@ -4492,6 +4495,7 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
         raise AssertionError(f"unexpected target {target}")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(file_runner_mod, "_unit_plugin_addopts", lambda _path: "-p pkcs11-check")
 
     exit_code = run_isolated_pytest_units(
         ["test_a.py"],
@@ -4516,6 +4520,11 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
     by_nodeid = {entry["nodeid"]: entry for entry in unit["tests"]}
     assert by_nodeid["test_a.py::test_culprit"]["outcome"] == "crashed"
     assert "passed in isolation" in by_nodeid["test_a.py::test_culprit"]["longrepr"]
+    assert len(seen_envs) == 2
+    for env in seen_envs:
+        assert env["PKCS11_CHECK_UNIT_CHILD"] == "1"
+        assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+        assert "-p pkcs11-check" in env["PYTEST_ADDOPTS"]
 
 
 def test_run_isolated_pytest_units_resume_rejects_mismatched_state(
@@ -6665,14 +6674,56 @@ def test_unit_timeout_seconds_with_num_tests() -> None:
     # Per-test granularity ignores num_tests
     assert _unit_timeout_seconds(120, "test", num_tests=100) == 180
 
-    # Per-file with num_tests uses scaled formula
-    assert _unit_timeout_seconds(120, "file", num_tests=100) == 560  # 100*5+60
-    assert _unit_timeout_seconds(120, "file", num_tests=10) == 300  # floor
+    # Per-file count-aware budgets never shrink the existing fallback.
+    assert _unit_timeout_seconds(120, "file", num_tests=100) == 3600  # fallback wins
+    assert _unit_timeout_seconds(120, "file", num_tests=10) == 3600  # fallback wins
+    assert _unit_timeout_seconds(120, "file", num_tests=1000) == 5060  # 1000*5+60
     assert _unit_timeout_seconds(120, "file", num_tests=30000) == 14400  # cap
 
     # Per-file without num_tests uses legacy formula
     assert _unit_timeout_seconds(120, "file") == 3600  # 120*30
     assert _unit_timeout_seconds(120, "file", num_tests=0) == 3600  # same as no num_tests
+
+
+def test_file_unit_timeout_uses_collected_item_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "test_many.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    seen_timeouts: list[int] = []
+
+    def fake_run(
+        cmd: list[str], *, env: dict[str, str] | None = None, timeout: int = 0
+    ) -> tuple[int, str, str]:
+        del cmd, env
+        seen_timeouts.append(timeout)
+        return 0, "", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    items = [
+        CollectedPytestItem(
+            nodeid=f"{target}::test_case_{index}",
+            file_path=str(target),
+            markers=[],
+        )
+        for index in range(1000)
+    ]
+
+    run_isolated_pytest_units(
+        [str(target)],
+        [],
+        timeout=120,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=None,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+        collected_items=items,
+    )
+
+    assert seen_timeouts == [5060]
 
 
 # ---------------------------------------------------------------------------
@@ -6689,6 +6740,7 @@ def test_progressive_timeout_retry_succeeds(
     pytest_args = ["--p11-module", "/tmp/module.so"]
     state_file = tmp_path / "state.json"
     calls: list[tuple[str, list[str]]] = []
+    seen_envs: list[dict[str, str]] = []
     call_count = 0
 
     def fake_run(
@@ -6707,6 +6759,9 @@ def test_progressive_timeout_retry_succeeds(
                 report_log_path = Path(cmd[i + 1])
                 break
 
+        if target == "test_a.py":
+            assert env is not None
+            seen_envs.append(env)
         # First call: file run that times out with partial JSONL
         if target == "test_a.py" and (env is None or "PKCS11_CHECK_DESELECT_FILE" not in env):
             assert report_log_path is not None
@@ -6783,6 +6838,7 @@ def test_progressive_timeout_retry_succeeds(
         raise AssertionError(f"unexpected subprocess invocation: {cmd!r} env={env!r}")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(file_runner_mod, "_unit_plugin_addopts", lambda _path: "-p pkcs11-check")
 
     exit_code = run_isolated_pytest_units(
         units,
@@ -6812,6 +6868,11 @@ def test_progressive_timeout_retry_succeeds(
     assert exit_code == 1
     assert saved.results[0].status == "timeout"
     assert saved.results[0].returncode == file_runner_mod._TIMEOUT_RETURN_CODE
+    assert len(seen_envs) == 2
+    for env in seen_envs:
+        assert env["PKCS11_CHECK_UNIT_CHILD"] == "1"
+        assert env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+        assert "-p pkcs11-check" in env["PYTEST_ADDOPTS"]
 
 
 def test_progressive_timeout_retry_exhausted_escalates_remaining(

@@ -368,6 +368,7 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.process_observation import build_process_observation
 from pkcs11_check.core.recovery import (
     RecoveryConfig,
@@ -412,10 +413,12 @@ def _unit_timeout_seconds(
 ) -> int:
     if granularity == "test":
         return max(test_timeout + 60, 120)
+    fallback = max(test_timeout * 30, 900)
     if num_tests > 0:
         # 5s per test + 60s startup overhead, floor 300s, cap 14400s (4h)
-        return min(max(num_tests * 5 + 60, 300), 14400)
-    return max(test_timeout * 30, 900)
+        count_budget = min(max(num_tests * 5 + 60, 300), 14400)
+        return max(fallback, count_budget)
+    return fallback
 
 
 # Plugins the per-unit pytest subprocess actually needs. Disabling autoload of
@@ -559,6 +562,7 @@ def _run_subprocess_tee(
         # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
         # the grace and report the child's real returncode.
         _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
+        timed_out = proc.returncode == _TIMEOUT_RETURN_CODE
 
     proc.wait()
     returncode = proc.returncode
@@ -994,6 +998,7 @@ def run_isolated_pytest_units(
     max_crashes_per_file: int = 10,
     provenance: dict[str, Any] | None = None,
     recovery_config: RecoveryConfig | None = None,
+    collected_items: Sequence[CollectedPytestItem] | None = None,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress.
 
@@ -1004,6 +1009,10 @@ def run_isolated_pytest_units(
     """
     env = os.environ.copy()
     deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
+    file_test_counts: dict[str, int] = {}
+    for item in collected_items or ():
+        file_key = normalize_policy_file_key(item.file_path)
+        file_test_counts[file_key] = file_test_counts.get(file_key, 0) + 1
     fingerprint = (
         build_state_fingerprint(
             units,
@@ -1323,7 +1332,11 @@ def run_isolated_pytest_units(
                     returncode, captured_stdout, captured_stderr = _run_outer_tee(
                         cmd,
                         env=run_env,
-                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                        timeout=_unit_timeout_seconds(
+                            timeout,
+                            unit_granularity,
+                            num_tests=file_test_counts.get(_unit_file_key(unit), 0),
+                        ),
                         state=state,
                         state_file=state_file,
                         target=unit,
@@ -1483,7 +1496,7 @@ def run_isolated_pytest_units(
                                 retry_jsonl_path = Path(retry_jsonl_raw)
                                 to_retry_temps.append(retry_jsonl_path)
 
-                                retry_env = dict(env)
+                                retry_env = dict(run_env)
                                 retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
                                 retry_cmd = [
                                     sys.executable,
@@ -1506,7 +1519,11 @@ def run_isolated_pytest_units(
                                     retry_rc, retry_out, retry_err = _run_outer_tee(
                                         retry_cmd,
                                         env=retry_env,
-                                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                        timeout=_unit_timeout_seconds(
+                                            timeout,
+                                            unit_granularity,
+                                            num_tests=file_test_counts.get(_unit_file_key(unit), 0),
+                                        ),
                                         state=state,
                                         state_file=state_file,
                                         target=unit,
@@ -2052,7 +2069,7 @@ def run_isolated_pytest_units(
                                 retry_jsonl_path = Path(retry_jsonl_raw)
                                 retry_temp_files.append(retry_jsonl_path)
 
-                                retry_env = dict(env)
+                                retry_env = dict(run_env)
                                 retry_env["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
                                 retry_cmd = [
                                     sys.executable,
@@ -2073,7 +2090,11 @@ def run_isolated_pytest_units(
                                     retry_rc, retry_out, retry_err = _run_outer_tee(
                                         retry_cmd,
                                         env=retry_env,
-                                        timeout=_unit_timeout_seconds(timeout, unit_granularity),
+                                        timeout=_unit_timeout_seconds(
+                                            timeout,
+                                            unit_granularity,
+                                            num_tests=file_test_counts.get(_unit_file_key(unit), 0),
+                                        ),
                                         state=state,
                                         state_file=state_file,
                                         target=unit,

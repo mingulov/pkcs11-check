@@ -440,6 +440,13 @@ class TestTestCommand:
     ) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
+        collected = [
+            CollectedPytestItem(
+                nodeid="src/pkcs11_check/testcases/test_demo.py::test_case",
+                file_path="src/pkcs11_check/testcases/test_demo.py",
+                markers=[],
+            )
+        ]
         called: dict[str, object] = {}
 
         def fake_run(
@@ -459,6 +466,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -475,16 +483,20 @@ class TestTestCommand:
             )
             called["units"] = units
             called["granularity"] = granularity
+            called["collected_items"] = collected_items
             return 0
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
         monkeypatch.setattr(
             test_cmd,
             "discover_auto_isolation_units",
-            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: [  # type: ignore[arg-type]
-                "src/pkcs11_check/testcases/test_demo.py",
-                "src/pkcs11_check/testcases/test_marked.py::test_case",
-            ],
+            lambda targets, default_root, *, pytest_args, policy_file, collected_out=None: (
+                (collected_out.extend(collected) if collected_out is not None else None)
+                or [
+                    "src/pkcs11_check/testcases/test_demo.py",
+                    "src/pkcs11_check/testcases/test_marked.py::test_case",
+                ]
+            ),  # type: ignore[arg-type]
         )
         monkeypatch.setattr(
             test_cmd,
@@ -522,6 +534,7 @@ class TestTestCommand:
             "src/pkcs11_check/testcases/test_marked.py::test_case",
         ]
         assert called["granularity"] == "mixed"
+        assert called["collected_items"] == collected
 
     def test_test_defaults_to_auto_isolation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -601,6 +614,9 @@ class TestTestCommand:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
         state_file = tmp_path / "state.json"
+        collected = [
+            CollectedPytestItem(nodeid="saved.py::test_case", file_path="saved.py", markers=[])
+        ]
         called: dict[str, object] = {}
 
         def fake_run(
@@ -620,6 +636,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -636,6 +653,7 @@ class TestTestCommand:
             called["units"] = units
             called["resume"] = resume
             called["granularity"] = granularity
+            called["collected_items"] = collected_items
             return 0
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
@@ -654,7 +672,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "collect_pytest_item_metadata",
-            lambda targets, pytest_args: [],  # type: ignore[arg-type]
+            lambda targets, pytest_args: collected,  # type: ignore[arg-type]
         )
         monkeypatch.setattr(
             test_cmd,
@@ -692,6 +710,7 @@ class TestTestCommand:
         assert called["units"] == ["saved.py", "saved.py::test_case"]
         assert called["resume"] is True
         assert called["granularity"] == "mixed"
+        assert called["collected_items"] == collected
 
     def test_test_auto_resume_rejects_unexpanded_subprocess_per_test_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -95,6 +95,18 @@ def test_genuinely_hung_child_still_times_out() -> None:
         assert observation["termination"]["raw_code"] == -signal.SIGKILL  # type: ignore[index]
 
 
+def test_child_exit_124_is_timeout_evidence() -> None:
+    rc, _out, _err, observation = _run_subprocess_tee(
+        [sys.executable, "-c", "raise SystemExit(124)"],
+        env=dict(os.environ),
+        timeout=10,
+    )
+
+    assert rc == 124
+    assert observation["termination"]["kind"] == "timeout"  # type: ignore[index]
+    assert observation["termination"]["raw_code"] == 124  # type: ignore[index]
+
+
 def test_tee_captures_both_streams_and_returncode() -> None:
     # tee must capture stdout AND stderr in full and return the real exit code.
     # (The reader must not depend on select(), which cannot poll OS pipes on

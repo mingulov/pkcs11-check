@@ -594,9 +594,11 @@ def test_command(
                     prior_state = load_run_state(state_file) if resume else None
                     if prior_state is not None:
                         units = prior_state.units
+                        collected_items = collect_pytest_item_metadata(target_args, pytest_args)
+                        auto_collected = collected_items
                         validate_subprocess_per_test_expansion(
                             units,
-                            collect_pytest_item_metadata(target_args, pytest_args),
+                            collected_items,
                         )
                     else:
                         # Capture the collection metadata produced during unit
@@ -610,6 +612,7 @@ def test_command(
                             policy_file=policy_file,
                             collected_out=auto_collected,
                         )
+                        collected_items = auto_collected
                     runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
                 else:
                     isolated_mode = cast(Literal["file", "test"], isolation)
@@ -648,6 +651,9 @@ def test_command(
                 except ValueError as exc:
                     console.print(f"[red]Error:[/red] {exc}")
                     raise typer.Exit(code=2) from exc
+                runner_kwargs: dict[str, Any] = {}
+                if isolation == "auto" and collected_items:
+                    runner_kwargs["collected_items"] = collected_items
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
@@ -664,6 +670,7 @@ def test_command(
                     max_crashes_per_file=max_crashes_per_file,
                     provenance=run_provenance,
                     recovery_config=recovery_config,
+                    **runner_kwargs,
                 )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")
