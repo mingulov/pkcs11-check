@@ -314,6 +314,7 @@ def discover_pytest_units(
     granularity: IsolationGranularity = "file",
     pytest_args: list[str] | None = None,
     env: Mapping[str, str] | None = None,
+    collected_out: list[CollectedPytestItem] | None = None,
 ) -> list[str]:
     """Expand pytest targets into an ordered list of file or test units."""
     requested = targets or [str(default_root)]
@@ -322,7 +323,21 @@ def discover_pytest_units(
         _validate_pytest_target_exists(target)
 
     if granularity == "test":
-        return collect_pytest_nodeids(requested, pytest_args or [], env=env)
+        # The listing collector has no file metadata. Use metadata here so the path is
+        # anchored to the actual file, independent of pytest's rootdir.
+        collection_env = dict(env or os.environ)
+        collection_env["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
+        collected_items = collect_pytest_item_metadata(
+            requested,
+            pytest_args or [],
+            env=collection_env,
+        )
+        if collected_out is not None:
+            collected_out.extend(collected_items)
+        return [
+            _absolute_nodeid(normalize_policy_file_key(item.file_path), item.nodeid)
+            for item in collected_items
+        ]
 
     units: list[str] = []
     seen: set[str] = set()

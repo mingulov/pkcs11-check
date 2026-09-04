@@ -904,12 +904,26 @@ def test_command(
                     runner_granularity: Literal["mixed"] | Literal["file", "test"] = "mixed"
                 else:
                     isolated_mode = cast(Literal["file", "test"], isolation)
-                    units = discover_pytest_units(
-                        target_args,
-                        Path(_TESTCASES_DIR),
-                        granularity=isolated_mode,
-                        pytest_args=pytest_args,
+                    explicit_collected: list[CollectedPytestItem] | None = (
+                        [] if isolated_mode == "test" and disabled_nodeids else None
                     )
+                    if explicit_collected is None:
+                        units = discover_pytest_units(
+                            target_args,
+                            Path(_TESTCASES_DIR),
+                            granularity=isolated_mode,
+                            pytest_args=pytest_args,
+                        )
+                    else:
+                        units = discover_pytest_units(
+                            target_args,
+                            Path(_TESTCASES_DIR),
+                            granularity=isolated_mode,
+                            pytest_args=pytest_args,
+                            collected_out=explicit_collected,
+                        )
+                    if explicit_collected is not None:
+                        collected_items = explicit_collected
                     runner_granularity = isolated_mode
                 if disabled_nodeids:
                     if isolation == "auto":

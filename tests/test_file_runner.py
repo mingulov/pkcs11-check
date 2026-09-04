@@ -590,6 +590,7 @@ def test_process_observations_survive_replacement_and_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     target = tmp_path / "test_demo.py"
+    confirmation_target = str(target.resolve())
     target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
     pytest_args = ["--p11-module", "/tmp/module.so"]
     state_file = tmp_path / "state.json"
@@ -659,7 +660,7 @@ def test_process_observations_survive_replacement_and_resume(
         == 0
     )
     assert load_run_state(state_file).process_observations == resumed.process_observations  # type: ignore[union-attr]
-    assert calls == [str(target), "culprit", str(target)]
+    assert calls == [str(target), confirmation_target, str(target)]
 
 
 def test_resume_hydrates_incomplete_process_history_before_outer_run(
@@ -1304,6 +1305,58 @@ def test_failed_unit_with_empty_reportlog_gets_one_harness_error(
         assert 'errors="1"' in junit
         assert 'type="incomplete"' in junit
         assert "pytest stderr diagnostic" in junit
+
+
+def test_rootdir_relative_provider_failure_is_not_a_collection_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = (tmp_path / "test_provider.py").resolve()
+    target.write_text("def test_case():\n    assert False\n", encoding="utf-8")
+    root_relative = target.relative_to(target.anchor).as_posix()
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    _jsonl_line(
+                        nodeid=f"{root_relative}::test_case",
+                        when="call",
+                        outcome="failed",
+                        longrepr="provider failure",
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 1}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 1, "provider failure", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+
+    assert exit_code == 1
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["failed"] == 1
+    assert payload["summary"]["error"] == 0
+    assert payload["summary"]["incomplete"] is False
+    records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
+    assert not any(record.get("source") == "runner-fallback" for record in records)
 
 
 @pytest.mark.parametrize("returncode", [2, 3, 4])
@@ -1978,19 +2031,14 @@ def test_run_isolated_pytest_units_escalates_crashed_file_in_same_run(
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
 
-    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
-        return (
-            [  # type: ignore[arg-type]
-                f"{target}::test_one",
-                f"{target}::test_two",
-            ]
-            if granularity == "test"
-            else list(targets)
-        )
-
-    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
-    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
-    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(
+        escalation_mod,
+        "collect_pytest_item_metadata",
+        lambda *args, **kwargs: [
+            CollectedPytestItem(f"{target}::test_one", str(target), []),
+            CollectedPytestItem(f"{target}::test_two", str(target), []),
+        ],
+    )
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -2054,20 +2102,15 @@ def test_run_isolated_pytest_units_limits_repeated_crashes_in_same_file(
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
 
-    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
-        return (
-            [  # type: ignore[arg-type]
-                f"{target}::test_one",
-                f"{target}::test_two",
-                f"{target}::test_three",
-            ]
-            if granularity == "test"
-            else list(targets)
-        )
-
-    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
-    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
-    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(
+        escalation_mod,
+        "collect_pytest_item_metadata",
+        lambda *args, **kwargs: [
+            CollectedPytestItem(f"{target}::test_one", str(target), []),
+            CollectedPytestItem(f"{target}::test_two", str(target), []),
+            CollectedPytestItem(f"{target}::test_three", str(target), []),
+        ],
+    )
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -3947,6 +3990,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     units = ["test_a.py"]
+    confirmation_target = f"{Path('test_a.py').resolve()}::test_culprit"
     pytest_args = ["--p11-module", "/tmp/module.so"]
     state_file = tmp_path / "state.json"
     results_path = tmp_path / "results.json"
@@ -4012,7 +4056,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
             )
             return (-11, "", "")
 
-        if target == "test_a.py::test_culprit":
+        if target == confirmation_target:
             assert report_log_path is not None
             report_log_path.write_text(
                 "\n".join(
@@ -4101,8 +4145,13 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     assert report["summary"]["crashed"] == 1
     assert report["units"][0]["status"] == "crashed"
     assert calls[0][0] == "test_a.py"
-    assert calls[1][0] == "test_a.py::test_culprit"
+    assert calls[1][0] == confirmation_target
     assert calls[2][0] == "test_a.py"
+    assert [execution["role"] for execution in report["units"][0]["executions"]] == [
+        "unit",
+        "confirmation",
+        "retry",
+    ]
     # Aggregated records persist as a per-unit shard, not inline in state.json.
     records_by_unit = _load_cached_report_records_by_unit(state_file, units)
     records = records_by_unit["test_a.py"]
@@ -4165,6 +4214,8 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
     reported_file = str(target.relative_to(target.anchor)) if relative_nodeids else str(target)
     reported_crash_1 = f"{reported_file}::test_crash_1"
     reported_crash_2 = f"{reported_file}::test_crash_2"
+    confirmation_crash_1 = f"{target}::test_crash_1"
+    confirmation_crash_2 = f"{target}::test_crash_2"
     reported_untouched_1 = f"{reported_file}::test_untouched_1"
     reported_untouched_2 = f"{reported_file}::test_untouched_2"
     reported_disabled = f"{reported_file}::test_disabled"
@@ -4209,7 +4260,7 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
             )
             return (0, "", "")
 
-        if unit in {reported_crash_1, reported_crash_2}:
+        if unit in {confirmation_crash_1, confirmation_crash_2}:
             return (-11, "", "segmentation fault")
 
         if unit == str(after):
@@ -4253,9 +4304,9 @@ def test_run_isolated_pytest_units_caps_iterative_deselect_crashes(
     assert exit_code == 1
     assert calls == [
         str(target),
-        reported_crash_1,
+        confirmation_crash_1,
         str(target),
-        reported_crash_2,
+        confirmation_crash_2,
         str(after),
     ]
 
@@ -4719,19 +4770,14 @@ def test_run_isolated_pytest_units_filters_disabled_tests_when_escalating_file(
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
 
-    def _fake_discover(targets, default_root, *, granularity, pytest_args, env=None):
-        return (
-            [  # type: ignore[arg-type]
-                f"{target}::test_one",
-                f"{target}::test_two",
-            ]
-            if granularity == "test"
-            else list(targets)
-        )
-
-    monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
-    monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
-    monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(
+        escalation_mod,
+        "collect_pytest_item_metadata",
+        lambda *args, **kwargs: [
+            CollectedPytestItem(f"{target}::test_one", str(target), []),
+            CollectedPytestItem(f"{target}::test_two", str(target), []),
+        ],
+    )
 
     exit_code = run_isolated_pytest_units(
         [str(target), "test_after.py"],
@@ -4768,6 +4814,7 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
     results_path = tmp_path / "results.json"
     report_jsonl_path = tmp_path / "report.jsonl"
     confirmation_marker = f"confirmation-report-{confirmation_rc}"
+    confirmation_target = f"{Path('test_a.py').resolve()}::test_culprit"
     seen_file_runs = 0
 
     def fake_run(
@@ -4830,7 +4877,7 @@ def test_run_isolated_pytest_units_preserves_confirmed_crash_in_json_report_afte
             )
             return (1, "retry failure", "")
 
-        if target == "test_a.py::test_culprit":
+        if target == confirmation_target:
             if report_log_path is None:
                 raise AssertionError("expected report-log path for crash confirmation")
             report_log_path.write_text(
@@ -4928,6 +4975,7 @@ def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
     state_file = tmp_path / "state.json"
     results_path = tmp_path / "results.json"
     report_jsonl_path = tmp_path / "report.jsonl"
+    confirmation_target = f"{Path('test_a.py').resolve()}::test_culprit"
     seen_file_runs = 0
 
     def fake_run(
@@ -4981,7 +5029,7 @@ def test_run_isolated_pytest_units_records_crash_confirmation_timeout(
             )
             return (0, "", "")
 
-        if target == "test_a.py::test_culprit":
+        if target == confirmation_target:
             raise subprocess.TimeoutExpired(cmd, timeout=12)
 
         raise AssertionError(f"unexpected target {target}")
@@ -5020,6 +5068,7 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
     state_file = tmp_path / "state.json"
     results_path = tmp_path / "results.json"
     report_jsonl_path = tmp_path / "report.jsonl"
+    confirmation_target = f"{Path('test_a.py').resolve()}::test_culprit"
     seen_file_runs = 0
     seen_envs: list[dict[str, str]] = []
 
@@ -5082,7 +5131,7 @@ def test_run_isolated_pytest_units_preserves_file_crash_after_successful_retry(
             )
             return (0, "", "")
 
-        if target == "test_a.py::test_culprit":
+        if target == confirmation_target:
             assert report_log_path is not None
             report_log_path.write_text(
                 "\n".join(
@@ -5617,8 +5666,11 @@ def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
     confirmation_output: str,
     finish: object | None,
 ) -> None:
-    target = "test_a.py"
-    culprit = "test_a.py::test_slow"
+    target_path = (tmp_path / "test_a.py").resolve()
+    target = str(target_path)
+    reported_file = target_path.relative_to(target_path.anchor).as_posix()
+    culprit = f"{reported_file}::test_slow"
+    confirmation_target = f"{target}::test_slow"
     report_path = tmp_path / "results.json"
     state_file = tmp_path / "state.json"
     confirmation_marker = f"timeout-confirmation-report-{confirmation_rc}"
@@ -5651,7 +5703,7 @@ def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
             )
             raise subprocess.TimeoutExpired(cmd, timeout=12)
 
-        if unit == culprit:
+        if unit == confirmation_target:
             assert report_log_path is not None
             confirmation_records = [
                 json.dumps({"$report_type": "SessionStart"}),
@@ -5697,12 +5749,18 @@ def test_progressive_timeout_confirmation_keeps_nonpassing_outcome(
     )
 
     assert exit_code == 1
-    assert calls == [target, culprit, target]
+    assert calls == [target, confirmation_target, target]
     saved = load_run_state(state_file)
     assert saved is not None
     assert saved.results[0].status == "timeout"
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     unit_report = payload["units"][0]
+    assert [execution["role"] for execution in unit_report["executions"]] == [
+        "unit",
+        "confirmation",
+        "retry",
+    ]
+    assert {execution["target"] for execution in unit_report["executions"]} == {target}
     assert unit_report["counts"][expected_outcome] == 1
     selected = next(item for item in unit_report["tests"] if item["nodeid"] == culprit)
     assert selected["outcome"] == expected_outcome
@@ -7929,6 +7987,7 @@ def test_progressive_timeout_retry_succeeds(
     units = ["test_a.py"]
     pytest_args = ["--p11-module", "/tmp/module.so"]
     state_file = tmp_path / "state.json"
+    confirmation_target = f"{Path('test_a.py').resolve()}::test_slow"
     calls: list[tuple[str, list[str]]] = []
     seen_envs: list[dict[str, str]] = []
     call_count = 0
@@ -8004,7 +8063,7 @@ def test_progressive_timeout_retry_succeeds(
             raise subprocess.TimeoutExpired(cmd, timeout=12)
 
         # Second call: culprit confirmation (test_slow alone) - passes
-        if target == "test_a.py::test_slow":
+        if target == confirmation_target:
             return (0, "", "")
 
         # Third call: retry file with deselect - succeeds
@@ -8048,7 +8107,7 @@ def test_progressive_timeout_retry_succeeds(
     # File was NOT escalated - progressive retry handled it
     assert call_count == 3
     assert calls[0][0] == "test_a.py"
-    assert calls[1][0] == "test_a.py::test_slow"
+    assert calls[1][0] == confirmation_target
     assert calls[2][0] == "test_a.py"
     # No per-test units should appear in the state (no escalation)
     assert all("::" not in u for u in saved.units)

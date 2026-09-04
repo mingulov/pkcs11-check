@@ -2170,20 +2170,33 @@ class TestTestCommand:
             called["baseline_fingerprint"] = baseline_fingerprint
             return 0
 
-        unit_a = f"{file_path}::test_a"
-        unit_b = f"{file_path}::test_b"
+        unit_a = f"{file_path.resolve()}::test_a"
+        unit_b = f"{file_path.resolve()}::test_b"
+        raw_a = "app/test_demo.py::test_a"
+        raw_b = "app/test_demo.py::test_b"
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+
+        def fake_discover(targets, default_root, *, granularity, pytest_args, collected_out=None):
+            if collected_out is not None:
+                collected_out.extend(
+                    [
+                        CollectedPytestItem(raw_a, str(file_path), []),
+                        CollectedPytestItem(raw_b, str(file_path), []),
+                    ]
+                )
+            return [unit_a, unit_b]
+
         monkeypatch.setattr(
             test_cmd,
             "discover_pytest_units",
-            lambda targets, default_root, *, granularity, pytest_args: [unit_a, unit_b],  # type: ignore[arg-type]
+            fake_discover,
         )
         monkeypatch.setattr(
             disabled_baseline_mod,
             "load_disabled_baseline",
             lambda path: DisabledBaseline(
                 source_path=Path("config/disabled-tests.txt"),
-                disabled_nodeids=frozenset({unit_b}),
+                disabled_nodeids=frozenset({raw_b}),
                 fingerprint="baseline-fp-test",
             ),
             raising=False,

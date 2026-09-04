@@ -18,11 +18,9 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
-from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.report_log import SessionCompletionTracker
 
 _MAX_STREAM = 4000
@@ -45,21 +43,6 @@ def ensure_failed_collection_report(
     """Append one collection record when pytest failed before reportlog emitted evidence."""
     if status != "failed" or returncode == 0:
         return False
-
-    def matches_target(record: Mapping[str, Any]) -> bool:
-        if target is None:
-            return record.get("$report_type") in {"TestReport", "CollectReport"}
-        nodeid = str(record.get("nodeid", ""))
-        if not nodeid:
-            return True
-        target_file = normalize_nodeid(target.split("::", 1)[0])
-        node_file = normalize_nodeid(nodeid.split("::", 1)[0])
-        if nodeid == target or node_file == target_file:
-            return True
-        try:
-            return Path(node_file).resolve() == Path(target_file).resolve()
-        except OSError:
-            return False
 
     diagnostic = (
         "\n".join([*_stream_excerpt("stderr", stderr), *_stream_excerpt("stdout", stdout)])
@@ -112,21 +95,27 @@ def ensure_failed_collection_report(
                             else:
                                 if isinstance(parsed, dict):
                                     completion.observe(parsed)
-                                    if matches_target(parsed):
-                                        if (
-                                            parsed.get("$report_type") == "CollectReport"
-                                            and parsed.get("outcome") == "failed"
-                                        ):
-                                            if (
-                                                parsed.get("source") != "runner-fallback"
-                                                or parsed.get("longrepr") == diagnostic
-                                            ):
-                                                existing_collection = True
-                                        elif (
-                                            parsed.get("$report_type") == "TestReport"
-                                            and target != "<collection>"
-                                        ):
-                                            existing_test = True
+                                    report_type = parsed.get("$report_type")
+                                    if (
+                                        report_type == "CollectReport"
+                                        and parsed.get("outcome") == "failed"
+                                        and (
+                                            target != "<collection>"
+                                            or not parsed.get("nodeid")
+                                            or parsed.get("nodeid") == target
+                                        )
+                                        and (
+                                            parsed.get("source") != "runner-fallback"
+                                            or parsed.get("longrepr") == diagnostic
+                                        )
+                                    ):
+                                        existing_collection = True
+                                    elif report_type == "TestReport" and target != "<collection>":
+                                        # Per-unit logs belong to one fresh pytest invocation.
+                                        # pytest's rootdir can make its nodeid path unrelated to
+                                        # the command-line spelling, but any TestReport proves
+                                        # that this invocation reached test execution.
+                                        existing_test = True
                                 else:
                                     completion.invalidate()
                         if not inserted:

@@ -1610,6 +1610,9 @@ def run_isolated_pytest_units(
                                     console.print(
                                         f"[yellow]Confirming timeout culprit:[/yellow] {culprit}"
                                     )
+                                    confirmation_target = _absolute_nodeid(
+                                        _unit_file_key(unit), culprit
+                                    )
                                     confirm_jsonl_fd, confirm_jsonl_raw = tempfile.mkstemp(
                                         prefix="pkcs11-check-confirmation-",
                                         suffix=".jsonl",
@@ -1623,7 +1626,7 @@ def run_isolated_pytest_units(
                                                 sys.executable,
                                                 "-m",
                                                 "pytest",
-                                                culprit,
+                                                confirmation_target,
                                                 *pytest_args,
                                                 "--report-log",
                                                 str(confirm_jsonl_path),
@@ -1632,7 +1635,7 @@ def run_isolated_pytest_units(
                                             timeout=_unit_timeout_seconds(timeout, "test"),
                                             state=state,
                                             state_file=state_file,
-                                            target=culprit,
+                                            target=unit,
                                             role="confirmation",
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
@@ -2210,6 +2213,9 @@ def run_isolated_pytest_units(
                                     console.print(
                                         f"[yellow]Confirming crash culprit:[/yellow] {culprit}"
                                     )
+                                    confirmation_target = _absolute_nodeid(
+                                        _unit_file_key(unit), culprit
+                                    )
                                     confirm_jsonl_fd, confirm_jsonl_raw = tempfile.mkstemp(
                                         prefix="pkcs11-check-confirmation-",
                                         suffix=".jsonl",
@@ -2223,7 +2229,7 @@ def run_isolated_pytest_units(
                                                 sys.executable,
                                                 "-m",
                                                 "pytest",
-                                                culprit,
+                                                confirmation_target,
                                                 *pytest_args,
                                                 "--report-log",
                                                 str(confirm_jsonl_path),
@@ -2232,7 +2238,7 @@ def run_isolated_pytest_units(
                                             timeout=_unit_timeout_seconds(timeout, "test"),
                                             state=state,
                                             state_file=state_file,
-                                            target=culprit,
+                                            target=unit,
                                             role="confirmation",
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)

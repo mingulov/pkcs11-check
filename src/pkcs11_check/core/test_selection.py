@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from pkcs11_check.core._run_units import _absolute_nodeid
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.report_log import (
@@ -153,16 +154,22 @@ def build_disabled_selection_plan(
     planned_units: list[str] = []
     deselect_by_file: dict[str, set[str]] = {}
 
-    items_by_file: dict[str, list[str]] = {}
+    items_by_file: dict[str, list[tuple[str, str]]] = {}
+    raw_nodeids_by_unit: dict[str, set[str]] = {}
     if collected_items is not None:
         for item in collected_items:
-            items_by_file.setdefault(str(Path(item.file_path).resolve()), []).append(
-                normalize_nodeid(item.nodeid)
-            )
+            file_key = str(Path(item.file_path).resolve())
+            raw_nodeid = normalize_nodeid(item.nodeid)
+            canonical_nodeid = normalize_nodeid(_absolute_nodeid(file_key, item.nodeid))
+            items_by_file.setdefault(file_key, []).append((raw_nodeid, canonical_nodeid))
+            raw_nodeids_by_unit.setdefault(canonical_nodeid, set()).add(raw_nodeid)
 
     for unit in units:
         if "::" in unit:
-            if normalize_nodeid(unit) in disabled_nodeids:
+            canonical_nodeid = normalize_nodeid(unit)
+            if canonical_nodeid in disabled_nodeids or disabled_nodeids.intersection(
+                raw_nodeids_by_unit.get(canonical_nodeid, set())
+            ):
                 continue
             planned_units.append(unit)
             continue
@@ -173,7 +180,11 @@ def build_disabled_selection_plan(
             planned_units.append(unit)
             continue
 
-        disabled_for_unit = {nodeid for nodeid in unit_nodeids if nodeid in disabled_nodeids}
+        disabled_for_unit = {
+            raw_nodeid
+            for raw_nodeid, canonical_nodeid in unit_nodeids
+            if raw_nodeid in disabled_nodeids or canonical_nodeid in disabled_nodeids
+        }
         if len(disabled_for_unit) == len(unit_nodeids):
             continue
         if disabled_for_unit:

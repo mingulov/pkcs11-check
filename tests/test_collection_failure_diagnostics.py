@@ -164,3 +164,38 @@ def test_failed_collection_insertion_streams_the_existing_report_log(
     ]
     assert report_open_count == 1
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_rootdir_relative_test_report_is_not_a_collection_failure(tmp_path: Path) -> None:
+    target = (tmp_path / "test_demo.py").resolve()
+    root_relative = target.relative_to(target.anchor).as_posix()
+    report = tmp_path / "report.jsonl"
+    report.write_text(
+        "\n".join(
+            [
+                '{"$report_type":"SessionStart"}',
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": f"{root_relative}::test_provider_failure",
+                        "when": "call",
+                        "outcome": "failed",
+                    }
+                ),
+                '{"$report_type":"SessionFinish","exitstatus":1}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    original = report.read_text(encoding="utf-8")
+
+    assert not ensure_failed_collection_report(
+        report,
+        target=str(target),
+        status="failed",
+        returncode=1,
+        stdout="provider failure",
+        stderr="",
+    )
+    assert report.read_text(encoding="utf-8") == original
