@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Added
+
+- **Exact case batching via `--selection-manifest`.** For oversized KAT suites on slow
+  execution profiles (e.g. OP-TEE), `pkcs11-check test --selection-manifest PATH` executes a
+  deterministic slice of test cases from a single test file in one file-isolated subprocess,
+  without weakening the per-test watchdog or changing test node IDs. It requires `--format json`
+  (or `--output json`), `--isolation file`, and exactly one bare file target matching the
+  manifest's `source`; any other combination exits `2` before execution. The schema-1 manifest
+  (`plan_id`, `batch_id`, `source`, `source_collection_count`, `source_collection_sha256`,
+  `nodeids`) is validated before execution: any count mismatch, digest mismatch, missing or
+  duplicate node, path escape, or intersection with the disabled baseline raises an immediate
+  error (exit `2`). Unselected cases in the file are reported to `pytest_deselected`, never marked
+  skipped, and the selected batch count, not the full-file count, authoritatively overrides the
+  aggregate file timeout allowance while the per-test watchdog stays unchanged.
+- **`--format` alias for `pkcs11-check test`.** A permanent third alias alongside `--output`/`-o`
+  for selecting the output format (`rich`, `json`, `junit`).
+- **`results.json` selection schema.** For runs executed under `--selection-manifest`,
+  `results.json` gains a top-level `selection` object repeating the validated canonical manifest,
+  and the selected unit is annotated with `selection_batch_id`. Canonical `selection.json` is
+  materialized beside the JSON artifacts before execution. `--resume` state fingerprinting binds
+  `selection_batch_id` and `selection_digest`, so a changed selection invalidates resume state
+  while an identical selection resumes cleanly.
+- **Merge-side plan and batch integrity validation.** Shard merge validates selection metadata
+  fail-closed: conflicting `plan_id`s across merged shards, duplicate `batch_id`s, overlapping
+  node IDs across batches, a unit's `selection_batch_id` not matching its payload, and a mismatch
+  between a shard's `results.json` selection and its `selection.json` sidecar all raise an error
+  instead of silently merging.
+- **Batch membership must be proven by the payload.** An intact `results.json` proves its own
+  batch membership, because the framework emits the top-level `selection` block whenever
+  `--selection-manifest` was honored. Shard merge now rejects an intact `results.json` that omits
+  that block while a `selection.json` sidecar is present, instead of stamping the batch identity
+  from the sidecar: such a run executed the full source file rather than the assigned slice.
+  Sidecar recovery remains in place for salvage only (corrupt or missing `results.json`, or an
+  externally salvaged `partial` payload), where it is warned as unproven and the payload stays
+  `incomplete`.
+
 ### Fixed
 
 - **Collection failures leave durable harness evidence (GH #16).** Metadata and isolated pytest

@@ -205,10 +205,16 @@ def test_explicit_non_green_manifest_is_rejected(monkeypatch: pytest.MonkeyPatch
 
 
 class _FakeItem:
-    def __init__(self, path: Path, markers: dict[str, object]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        markers: dict[str, object],
+        *,
+        nodeid: str | None = None,
+    ) -> None:
         self.path = path
         self.fspath = path
-        self.nodeid = f"{path}::test_case"
+        self.nodeid = nodeid if nodeid is not None else f"{path}::test_case"
         self._markers = markers
         self.added: list[object] = []
 
@@ -880,3 +886,105 @@ def test_mldsa_runs_but_mlkem_encaps_skips_on_v240_module() -> None:
         plugin_mod._runtime_skip_reason(mlkem_item, config, manifest)
         == "Function C_EncapsulateKey not present in module"
     )
+
+
+def test_plugin_collection_modifyitems_selection_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from pkcs11_check.core.test_selection import (
+        compute_batch_id,
+        compute_collection_sha256,
+        get_testcases_root,
+    )
+
+    root = get_testcases_root().resolve()
+    source = "test_encrypt.py"
+    full_path = root / source
+
+    # Multi-case file items:
+    # 1. basic
+    # 2. unicode
+    # 3. spaces and brackets
+    # 4. backslash in parameter ID
+    # 5. Windows cross-drive empty path node ID (::test_cross_drive[1])
+    item1 = _FakeItem(full_path, {}, nodeid=f"{full_path}::test_roundtrip")
+    item2 = _FakeItem(full_path, {}, nodeid=f"{full_path}::test_param[unicode-✓-ü-🔥]")
+    item3 = _FakeItem(
+        full_path, {}, nodeid=f"{full_path}::test_param[with spaces and brackets [x]]"
+    )
+    item4 = _FakeItem(full_path, {}, nodeid=rf"{full_path}::test_param[with\backslash]")
+    item5 = _FakeItem(full_path, {}, nodeid="::test_cross_drive[1]")
+
+    all_items = [item1, item2, item3, item4, item5]
+
+    portable_all = [
+        f"{source}::test_roundtrip",
+        f"{source}::test_param[unicode-✓-ü-🔥]",
+        f"{source}::test_param[with spaces and brackets [x]]",
+        rf"{source}::test_param[with\backslash]",
+        f"{source}::test_cross_drive[1]",
+    ]
+    col_sha = compute_collection_sha256(portable_all)
+
+    # Select items 1, 2, 3
+    selected_nodeids = portable_all[:3]
+    batch_id = compute_batch_id(
+        source=source,
+        source_collection_count=len(portable_all),
+        source_collection_sha256=col_sha,
+        nodeids=selected_nodeids,
+    )
+
+    manifest_data = {
+        "schema": 1,
+        "plan_id": "c" * 64,
+        "batch_id": batch_id,
+        "source": source,
+        "source_collection_count": len(portable_all),
+        "source_collection_sha256": col_sha,
+        "nodeids": selected_nodeids,
+    }
+    manifest_file = tmp_path / "selection.json"
+    manifest_file.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    hook = _FakeHook()
+    config = SimpleNamespace(
+        hook=hook,
+        getoption=lambda name, default=None: {
+            "p11_module": "/tmp/module.so",
+            "p11_destructive": False,
+            "p11_thread_safe": False,
+        }.get(name, default),
+    )
+
+    # 1. Normal successful run: items 1, 2, 3 selected; 4, 5 deselected
+    items_copy = list(all_items)
+    monkeypatch.setenv("PKCS11_CHECK_SELECTION_MANIFEST", str(manifest_file))
+    plugin_mod.pytest_collection_modifyitems(config, items_copy)
+
+    assert items_copy == [item1, item2, item3]
+    assert hook.deselected == [item4, item5]
+    # Verify deselected items are NOT marked skipped
+    assert not any(item4.added)
+    assert not any(item5.added)
+
+    # 2. Source gains a case (collection count mismatch)
+    extra_item = _FakeItem(full_path, {}, nodeid=f"{full_path}::test_extra")
+    items_extra = [*all_items, extra_item]
+    with pytest.raises(pytest.UsageError, match="source_collection_count"):
+        plugin_mod.pytest_collection_modifyitems(config, items_extra)
+
+    # 3. Assigned node is absent from collection
+    items_missing = [item2, item3, item4, item5]  # item1 missing
+    with pytest.raises(pytest.UsageError, match="source_collection_count"):
+        plugin_mod.pytest_collection_modifyitems(config, items_missing)
+
+    # 4. Selected membership intersects disabled baseline
+    disabled_file = tmp_path / "disabled.txt"
+    disabled_file.write_text(f"{source}::test_roundtrip\n", encoding="utf-8")
+    monkeypatch.setenv("PKCS11_CHECK_DESELECT_FILE", str(disabled_file))
+    items_copy2 = list(all_items)
+    with pytest.raises(pytest.UsageError, match="disabled"):
+        plugin_mod.pytest_collection_modifyitems(config, items_copy2)

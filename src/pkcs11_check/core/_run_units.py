@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from pkcs11_check.core.test_selection import CaseSelection
 
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
 
@@ -96,6 +99,7 @@ class IsolatedReportConfig:
     output_format: Literal["json", "junit"]
     output_path: Path
     jsonl_path: Path | None = None
+    selection: CaseSelection | None = None
 
 
 def _absolute_nodeid(file_key: str, nodeid: str) -> str:

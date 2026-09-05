@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pkcs11_check.core._run_units import _absolute_nodeid
 from pkcs11_check.core.collection import CollectedPytestItem
@@ -471,3 +471,353 @@ def write_deselect_file(nodeids: Iterable[str]) -> Path:
             path.unlink(missing_ok=True)
         raise
     return path
+
+
+@dataclass(frozen=True)
+class CaseSelection:
+    """Validated selection manifest for one exact case batch."""
+
+    schema: int
+    plan_id: str
+    batch_id: str
+    source: str
+    source_collection_count: int
+    source_collection_sha256: str
+    nodeids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "plan_id": self.plan_id,
+            "batch_id": self.batch_id,
+            "source": self.source,
+            "source_collection_count": self.source_collection_count,
+            "source_collection_sha256": self.source_collection_sha256,
+            "nodeids": list(self.nodeids),
+        }
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Any,
+        *,
+        disabled_nodeids: Iterable[str] | None = None,
+        testcases_root: Path | None = None,
+    ) -> CaseSelection:
+        """Validate and construct a CaseSelection from a manifest dictionary."""
+        return _validate_selection_manifest_dict(
+            data,
+            disabled_nodeids=disabled_nodeids,
+            testcases_root=testcases_root,
+        )
+
+
+_HEX_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DRIVE_LETTER_RE = re.compile(r"^[a-zA-Z]:")
+
+
+def get_testcases_root() -> Path:
+    """Return the resolved path to the packaged testcases root directory."""
+    import pkcs11_check.testcases
+
+    return Path(pkcs11_check.testcases.__file__).resolve().parent
+
+
+def compute_collection_sha256(nodeids: Iterable[str]) -> str:
+    """Compute SHA-256 over canonical JSON of the sorted unique node IDs."""
+    canonical_list = sorted(set(nodeids))
+    canonical_bytes = json.dumps(
+        canonical_list,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_bytes).hexdigest()
+
+
+def compute_batch_id(
+    *,
+    source: str,
+    source_collection_count: int,
+    source_collection_sha256: str,
+    nodeids: Iterable[str],
+) -> str:
+    """Compute SHA-256 over canonical JSON for one exact case batch."""
+    payload = {
+        "nodeids": sorted(set(nodeids)),
+        "source": source,
+        "source_collection_count": source_collection_count,
+        "source_collection_sha256": source_collection_sha256,
+    }
+    canonical_bytes = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_bytes).hexdigest()
+
+
+def _validate_source_path(source: str, root: Path) -> Path:
+    if not isinstance(source, str) or not source or source != source.strip():
+        raise ValueError(f"invalid source path: {source!r}")
+    if "\\" in source:
+        raise ValueError(f"source path must use forward slashes: {source!r}")
+    if source.startswith("/"):
+        raise ValueError(f"source path must not be absolute: {source!r}")
+    if _DRIVE_LETTER_RE.match(source):
+        raise ValueError(f"source path must not contain a drive letter: {source!r}")
+    parts = source.split("/")
+    if any(p in {"..", ".", ""} for p in parts):
+        raise ValueError(f"source path must not contain '.' or '..': {source!r}")
+
+    resolved_root = root.resolve()
+    target_path = (root / source).resolve()
+    if not target_path.is_relative_to(resolved_root):
+        raise ValueError(f"source escapes testcase root: {source!r}")
+    if not target_path.is_file():
+        raise ValueError(f"source does not resolve to a regular file: {source!r}")
+    return target_path
+
+
+def _resolve_candidate_file(head: str, expected_file: Path, root: Path) -> Path | None:
+    norm_head = head.replace("\\", "/")
+    # Direct match or relative to testcases root
+    try:
+        if (root / norm_head).resolve() == expected_file:
+            return expected_file
+    except OSError:
+        pass
+    p = Path(head)
+    try:
+        if p.is_absolute() and p.resolve() == expected_file:
+            return expected_file
+    except OSError:
+        pass
+    # Slash-less absolute path (e.g. 'usr/lib/.../testcases/test_encrypt.py')
+    try:
+        if Path("/" + norm_head).resolve() == expected_file:
+            return expected_file
+    except OSError:
+        pass
+    # Relative to project / repo root (walk up from root)
+    curr: Path | None = root.parent
+    while curr is not None and curr != curr.parent:
+        try:
+            if (curr / norm_head).resolve() == expected_file:
+                return expected_file
+        except OSError:
+            pass
+        curr = curr.parent
+    # Check relative to CWD if not resolved yet
+    try:
+        if p.resolve() == expected_file:
+            return expected_file
+    except OSError:
+        pass
+    return None
+
+
+def load_case_selection(
+    path: Path | str,
+    *,
+    disabled_nodeids: Iterable[str] | None = None,
+    testcases_root: Path | None = None,
+) -> CaseSelection:
+    """Load and validate an exact case batch selection manifest."""
+    manifest_path = Path(path)
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"selection manifest file not found: {manifest_path}")
+
+    try:
+        raw_text = manifest_path.read_text(encoding="utf-8")
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in selection manifest {manifest_path}: {exc}") from exc
+
+    return CaseSelection.from_dict(
+        data,
+        disabled_nodeids=disabled_nodeids,
+        testcases_root=testcases_root,
+    )
+
+
+def _validate_selection_manifest_dict(
+    data: Any,
+    *,
+    disabled_nodeids: Iterable[str] | None = None,
+    testcases_root: Path | None = None,
+) -> CaseSelection:
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"selection manifest root must be a JSON object, got {type(data).__name__}"
+        )
+
+    required_keys = {
+        "schema",
+        "plan_id",
+        "batch_id",
+        "source",
+        "source_collection_count",
+        "source_collection_sha256",
+        "nodeids",
+    }
+    manifest_keys = set(data.keys())
+    missing_keys = required_keys - manifest_keys
+    if missing_keys:
+        raise ValueError(f"missing required keys in selection manifest: {sorted(missing_keys)}")
+    unknown_keys = manifest_keys - required_keys
+    if unknown_keys:
+        raise ValueError(f"unknown keys in selection manifest: {sorted(unknown_keys)}")
+
+    # Schema
+    schema = data["schema"]
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        raise ValueError(f"schema must be an integer, got {type(schema).__name__}")
+    if schema != 1:
+        raise ValueError(f"unsupported selection schema version: {schema}")
+
+    # plan_id
+    plan_id = data["plan_id"]
+    if not isinstance(plan_id, str) or not _HEX_SHA256_RE.match(plan_id):
+        raise ValueError(f"invalid plan_id (expected 64-char lowercase hex): {plan_id!r}")
+
+    # source
+    root = (testcases_root or get_testcases_root()).resolve()
+    source = data["source"]
+    expected_file = _validate_source_path(source, root)
+
+    # source_collection_sha256
+    source_collection_sha256 = data["source_collection_sha256"]
+    if not isinstance(source_collection_sha256, str) or not _HEX_SHA256_RE.match(
+        source_collection_sha256
+    ):
+        raise ValueError(
+            "invalid source_collection_sha256 (expected 64-char lowercase hex): "
+            f"{source_collection_sha256!r}"
+        )
+
+    # source_collection_count
+    source_collection_count = data["source_collection_count"]
+    if isinstance(source_collection_count, bool) or not isinstance(source_collection_count, int):
+        raise ValueError(
+            "source_collection_count must be an integer, "
+            f"got {type(source_collection_count).__name__}"
+        )
+    if source_collection_count <= 0:
+        raise ValueError(f"source_collection_count must be positive, got {source_collection_count}")
+
+    # nodeids
+    raw_nodeids = data["nodeids"]
+    if not isinstance(raw_nodeids, list) or isinstance(raw_nodeids, (str, bytes)):
+        raise ValueError(f"nodeids must be a list of strings, got {type(raw_nodeids).__name__}")
+    if not raw_nodeids:
+        raise ValueError("nodeids must not be empty")
+
+    nodeids: list[str] = []
+    seen_nodeids: set[str] = set()
+    for nid in raw_nodeids:
+        if not isinstance(nid, str):
+            raise ValueError(f"nodeid item must be a string, got {type(nid).__name__}")
+        if nid in seen_nodeids:
+            raise ValueError(f"duplicate nodeid in selection manifest: {nid!r}")
+        seen_nodeids.add(nid)
+
+        head, sep, tail = nid.partition("::")
+        if not sep or not head or not tail:
+            raise ValueError(
+                f"malformed nodeid (must contain '::' with non-empty head and tail): {nid!r}"
+            )
+        if head != source:
+            raise ValueError(
+                f"mixed source in nodeid: {head!r} does not match manifest source {source!r}"
+            )
+        nodeids.append(nid)
+
+    if source_collection_count < len(nodeids):
+        raise ValueError(
+            f"source_collection_count ({source_collection_count}) cannot be less than "
+            f"selected nodeids count ({len(nodeids)})"
+        )
+
+    # batch_id validation
+    batch_id = data["batch_id"]
+    if not isinstance(batch_id, str) or not _HEX_SHA256_RE.match(batch_id):
+        raise ValueError(f"invalid batch_id (expected 64-char lowercase hex): {batch_id!r}")
+    expected_batch_id = compute_batch_id(
+        source=source,
+        source_collection_count=source_collection_count,
+        source_collection_sha256=source_collection_sha256,
+        nodeids=nodeids,
+    )
+    if batch_id != expected_batch_id:
+        raise ValueError(f"batch_id mismatch: expected {expected_batch_id}, got {batch_id}")
+
+    # disabled baseline intersection check
+    if disabled_nodeids is not None:
+        disabled_portable: set[str] = set()
+        for d in disabled_nodeids:
+            d_norm = normalize_nodeid(d)
+            d_head, d_sep, d_tail = d_norm.partition("::")
+            if not d_sep or not d_tail:
+                continue
+            resolved = _resolve_candidate_file(d_head, expected_file, root)
+            if resolved == expected_file:
+                disabled_portable.add(f"{source}::{d_tail}")
+            else:
+                disabled_portable.add(d_norm)
+
+        intersect = {
+            nid
+            for nid in nodeids
+            if nid in disabled_portable or normalize_nodeid(nid) in disabled_portable
+        }
+        if intersect:
+            raise ValueError(f"selected nodeids intersect disabled baseline: {sorted(intersect)}")
+
+    return CaseSelection(
+        schema=schema,
+        plan_id=plan_id,
+        batch_id=batch_id,
+        source=source,
+        source_collection_count=source_collection_count,
+        source_collection_sha256=source_collection_sha256,
+        nodeids=tuple(nodeids),
+    )
+
+
+def portable_nodeid(
+    source: str,
+    collected_nodeid: str,
+    *,
+    testcases_root: Path | None = None,
+) -> str:
+    """Convert a collected pytest item node-id to a testcase-root-relative portable node-id.
+
+    Replaces only the path head before the first ``::`` with the given manifest ``source``,
+    preserving the test and parameter identity after ``::`` byte-for-byte.
+    """
+    head, sep, tail = collected_nodeid.partition("::")
+    if not sep or not head or not tail:
+        raise ValueError(f"malformed collected nodeid: {collected_nodeid!r}")
+
+    root = (testcases_root or get_testcases_root()).resolve()
+    _validate_source_path(source, root)
+    expected_file = (root / source).resolve()
+
+    resolved = _resolve_candidate_file(head, expected_file, root)
+    if resolved != expected_file:
+        raise ValueError(
+            f"collected nodeid source {head!r} does not match manifest source {source!r} "
+            f"(expected file: {expected_file})"
+        )
+
+    return f"{source}{sep}{tail}"

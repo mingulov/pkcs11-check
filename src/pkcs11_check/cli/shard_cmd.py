@@ -72,10 +72,16 @@ def merge_shards_command(
 ) -> None:
     """Merge N shard artifact directories into one combined result set."""
     existing = [
-        d for d in shard_dirs if (d / "results.json").exists() or (d / "report.jsonl").exists()
+        d
+        for d in shard_dirs
+        if (d / "results.json").exists()
+        or (d / "report.jsonl").exists()
+        or (d / "selection.json").exists()
     ]
     if not existing:
-        console.print("[red]Error:[/red] no shard dirs with results.json/report.jsonl found")
+        console.print(
+            "[red]Error:[/red] no shard dirs with results.json/report.jsonl/selection.json found"
+        )
         raise typer.Exit(code=2)
 
     merged = merge_shard_dirs(existing, output)

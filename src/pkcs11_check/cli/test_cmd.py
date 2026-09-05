@@ -52,12 +52,17 @@ from pkcs11_check.core.file_runner import (
     write_isolated_report,
     write_quality_json_report,
 )
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.preflight import run_preflight_subprocess
 from pkcs11_check.core.recovery import build_recovery_config
 from pkcs11_check.core.report_log import SessionCompletionTracker, iter_report_log_records
 from pkcs11_check.core.test_selection import (
+    CaseSelection,
     DisabledSelectionPlan,
+    _resolve_candidate_file,
     build_disabled_selection_plan,
+    get_testcases_root,
+    load_case_selection,
     write_deselect_file,
 )
 from pkcs11_check.testcases.data import SOURCES_TOML, resolve_data_dir
@@ -222,14 +227,22 @@ def _build_pytest_args(
     return args
 
 
-def _isolated_report_config(output: str, output_file: str | None) -> IsolatedReportConfig | None:
+def _isolated_report_config(
+    output: str,
+    output_file: str | None,
+    selection: CaseSelection | None = None,
+) -> IsolatedReportConfig | None:
     if output not in {"json", "junit"}:
         return None
     if output == "json":
         results_path = Path(output_file or "pkcs11-check-results.json")
         jsonl_path = results_path.parent / "report.jsonl"
-        return IsolatedReportConfig("json", results_path, jsonl_path=jsonl_path)
-    return IsolatedReportConfig("junit", Path(output_file or "pkcs11-check-results.xml"))
+        return IsolatedReportConfig(
+            "json", results_path, jsonl_path=jsonl_path, selection=selection
+        )
+    return IsolatedReportConfig(
+        "junit", Path(output_file or "pkcs11-check-results.xml"), selection=selection
+    )
 
 
 def _ensure_nonisolated_completion_record(
@@ -358,6 +371,7 @@ def _persist_collection_failure(
             reporting_state,
             per_unit_details=details,
             provenance=provenance,
+            selection=report_config.selection,
         )
         write_quality_json_report(
             report_config.output_path.parent / "quality.json",
@@ -464,7 +478,9 @@ def test_command(
     destructive: bool = typer.Option(
         False, "--destructive", help="Enable destructive tests", rich_help_panel="Advanced"
     ),
-    output: str = typer.Option("rich", "--output", "-o", help="Output: rich, json, junit"),
+    output: str = typer.Option(
+        "rich", "--output", "-o", "--format", help="Output: rich, json, junit"
+    ),
     output_file: str | None = typer.Option(None, "--output-file", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-V", help="Verbose output"),
     ignore_disabled_tests: bool = typer.Option(
@@ -611,9 +627,55 @@ def test_command(
         ),
         rich_help_panel="Key provisioning",
     ),
+    selection_manifest: Path | None = typer.Option(
+        None,
+        "--selection-manifest",
+        help="Path to an exact case batch selection manifest",
+        rich_help_panel="Selection",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
+    case_selection: CaseSelection | None = None
+    if selection_manifest is not None:
+        if output != "json":
+            console.print("[red]Error:[/red] --selection-manifest requires --format json")
+            raise typer.Exit(code=2)
+        if isolation != "file":
+            console.print("[red]Error:[/red] --selection-manifest requires --isolation file")
+            raise typer.Exit(code=2)
+        if not targets or len(targets) != 1 or "::" in targets[0]:
+            console.print(
+                "[red]Error:[/red] --selection-manifest requires exactly one bare file target"
+            )
+            raise typer.Exit(code=2)
+        try:
+            case_selection = load_case_selection(selection_manifest)
+        except (ValueError, FileNotFoundError) as exc:
+            console.print(f"[red]Error:[/red] invalid selection manifest: {exc}")
+            raise typer.Exit(code=2) from exc
+
+        target_str = targets[0]
+        target_matches = False
+        if target_str == case_selection.source or normalize_nodeid(target_str) == normalize_nodeid(
+            case_selection.source
+        ):
+            target_matches = True
+        else:
+            try:
+                root = get_testcases_root().resolve()
+                expected_file = (root / case_selection.source).resolve()
+                if _resolve_candidate_file(target_str, expected_file, root) == expected_file:
+                    target_matches = True
+            except (OSError, ValueError):
+                pass
+        if not target_matches:
+            console.print(
+                f"[red]Error:[/red] target {target_str!r} does not match manifest source "
+                f"{case_selection.source!r}"
+            )
+            raise typer.Exit(code=2)
+
     if not module.exists():
         console.print(f"[red]Error:[/red] Module not found: {module}")
         raise typer.Exit(code=_resume_exit_code(state_file, 3) if resume else 3)
@@ -638,6 +700,8 @@ def test_command(
     had_report_log = "PKCS11_CHECK_REPORT_LOG" in os.environ
     original_deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
     had_deselect_file = "PKCS11_CHECK_DESELECT_FILE" in os.environ
+    original_selection_manifest = os.environ.get("PKCS11_CHECK_SELECTION_MANIFEST")
+    had_selection_manifest = "PKCS11_CHECK_SELECTION_MANIFEST" in os.environ
     manifest_path: Path | None = None
     manifest_fd: int | None = None
     jsonl_path: Path | None = None
@@ -665,6 +729,10 @@ def test_command(
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = original_deselect_file or ""
         else:
             os.environ.pop("PKCS11_CHECK_DESELECT_FILE", None)
+        if had_selection_manifest:
+            os.environ["PKCS11_CHECK_SELECTION_MANIFEST"] = original_selection_manifest or ""
+        else:
+            os.environ.pop("PKCS11_CHECK_SELECTION_MANIFEST", None)
 
     def close_manifest_fd() -> None:
         nonlocal manifest_fd
@@ -718,6 +786,15 @@ def test_command(
         if no_collection_cache:
             os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = "1"
 
+        if case_selection is not None:
+            results_path = Path(output_file or "pkcs11-check-results.json")
+            results_path.parent.mkdir(parents=True, exist_ok=True)
+            canonical_selection_path = results_path.parent / "selection.json"
+            canonical_selection_path.write_text(
+                case_selection.canonical_json() + "\n", encoding="utf-8"
+            )
+            os.environ["PKCS11_CHECK_SELECTION_MANIFEST"] = str(canonical_selection_path)
+
         # Pass PIN via env so pytest fixtures pick it up
         if pin:
             os.environ["P11TEST_PIN"] = pin
@@ -762,7 +839,11 @@ def test_command(
                     results=[result],
                     process_observations=[observation] if isinstance(observation, dict) else [],
                 )
-                payload = write_isolated_json_report(results_path, state)
+                payload = write_isolated_json_report(
+                    results_path,
+                    state,
+                    selection=case_selection,
+                )
                 payload["summary"]["incomplete"] = True
                 results_path.write_text(
                     json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -824,7 +905,9 @@ def test_command(
         )
         pytest_args.extend(["--p11-manifest", str(manifest_path)])
         report_config = (
-            _isolated_report_config(output, output_file) if isolation != "none" else None
+            _isolated_report_config(output, output_file, selection=case_selection)
+            if isolation != "none"
+            else None
         )
 
         target_args = targets or [_TESTCASES_DIR]
@@ -959,6 +1042,15 @@ def test_command(
                 runner_kwargs: dict[str, Any] = {}
                 if collected_items:
                     runner_kwargs["collected_items"] = collected_items
+                if case_selection is not None:
+                    selected_count = len(case_selection.nodeids)
+                    unit_key = selection_plan.units[0] if selection_plan.units else targets[0]
+                    runner_kwargs["unit_test_counts"] = {
+                        unit_key: selected_count,
+                        case_selection.source: selected_count,
+                    }
+                    runner_kwargs["selection_batch_id"] = case_selection.batch_id
+                    runner_kwargs["selection_digest"] = case_selection.source_collection_sha256
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,

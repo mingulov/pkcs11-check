@@ -10309,3 +10309,230 @@ def test_child_metrics_and_incomplete_excluded_from_total() -> None:
             "crash_limited",
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Exact case batching runner tests
+# ---------------------------------------------------------------------------
+
+
+def test_runner_selected_batch_produces_single_outer_tee_and_overrides_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pkcs11_check.core import file_runner as file_runner_mod
+    from pkcs11_check.core._run_units import IsolatedReportConfig
+    from pkcs11_check.core.collection import CollectedPytestItem
+    from pkcs11_check.core.file_runner import run_isolated_pytest_units
+
+    target_file = tmp_path / "test_kat.py"
+    target_file.write_text("def test_dummy(): pass\n", encoding="utf-8")
+    target_str = str(target_file)
+
+    # 5,000 full items collected during baseline discovery
+    collected = [
+        CollectedPytestItem(nodeid=f"{target_str}::test_{i}", file_path=target_str, markers=[])
+        for i in range(5000)
+    ]
+
+    outer_tee_calls: list[dict[str, Any]] = []
+
+    def fake_run_outer_tee(
+        cmd: list[str],
+        *,
+        env: dict[str, str],
+        timeout: int,
+        state: Any,
+        state_file: Path,
+        target: str,
+        role: str,
+    ) -> tuple[int, str, str]:
+        outer_tee_calls.append(
+            {
+                "cmd": cmd,
+                "timeout": timeout,
+                "target": target,
+                "role": role,
+            }
+        )
+        return (0, "", "")
+
+    monkeypatch.setattr(file_runner_mod, "_run_outer_tee", fake_run_outer_tee)
+
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_config = IsolatedReportConfig("json", results_path)
+
+    # 1,000 selected cases for this batch
+    unit_test_counts = {target_str: 1000}
+
+    pytest_args = ["--timeout", "180", "--p11-module", "/tmp/fake.so"]
+    run_isolated_pytest_units(
+        units=[target_str],
+        pytest_args=pytest_args,
+        deselect_by_file={target_str: {f"{target_str}::test_0"}},
+        timeout=180,
+        state_file=state_file,
+        policy_file=None,
+        report_config=report_config,
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+        collected_items=collected,
+        unit_test_counts=unit_test_counts,
+    )
+
+    # Exactly ONE outer tee call with the bare file target
+    assert len(outer_tee_calls) == 1
+    call = outer_tee_calls[0]
+    assert call["target"] == target_str
+
+    # Timeout passed to runner must be based on 1000 items:
+    # min(max(1000 * 5 + 60, 300), 14400) = 5060s, max(fallback=5400, 5060) = 5400s
+    # If 5000 items had been used, min(5000*5+60, 14400) = 14400s
+    expected_timeout = file_runner_mod._unit_timeout_seconds(180, "file", num_tests=1000)
+    assert call["timeout"] == expected_timeout
+    assert call["timeout"] != file_runner_mod._unit_timeout_seconds(180, "file", num_tests=5000)
+
+    # Pytest --timeout arg is untouched
+    assert "--timeout" in call["cmd"]
+    idx = call["cmd"].index("--timeout")
+    assert call["cmd"][idx + 1] == "180"
+
+
+def test_runner_resume_rejects_changed_selection_same_count_accepts_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pkcs11_check.core import file_runner as file_runner_mod
+    from pkcs11_check.core._run_state import FileRunState, build_state_fingerprint, save_run_state
+    from pkcs11_check.core._run_units import FileRunResult
+    from pkcs11_check.core.file_runner import run_isolated_pytest_units
+
+    target = str(tmp_path / "test_kat.py")
+    units = [target]
+    pytest_args = ["--timeout", "180", "--p11-module", "/tmp/fake.so"]
+
+    state_file = tmp_path / "state.json"
+
+    # Initial state with selection batch A
+    batch_id_a = "a" * 64
+    digest_a = "1" * 64
+    fp_a = build_state_fingerprint(
+        units,
+        pytest_args,
+        selection_batch_id=batch_id_a,
+        selection_digest=digest_a,
+    )
+    save_run_state(state_file, FileRunState(units=units, fingerprint=fp_a, results=[]))
+
+    console = Console(file=StringIO(), force_terminal=False)
+
+    # 1. Resume with selection batch B (same count, different batch/digest) is rejected
+    batch_id_b = "b" * 64
+    digest_b = "2" * 64
+    with pytest.raises(ValueError, match="belongs to a different isolated run"):
+        run_isolated_pytest_units(
+            units=units,
+            pytest_args=pytest_args,
+            timeout=180,
+            state_file=state_file,
+            policy_file=None,
+            report_config=None,
+            resume=True,
+            stop_on_failure=False,
+            console=console,
+            granularity="file",
+            selection_batch_id=batch_id_b,
+            selection_digest=digest_b,
+        )
+
+    # 2. Resume with unchanged selection batch A succeeds and honors continuation-only behavior
+    outer_calls: list[str] = []
+    result_completed = FileRunResult(
+        target=target,
+        status="passed",
+        returncode=0,
+        duration_s=1.0,
+        completion_verified=True,
+    )
+    save_run_state(
+        state_file,
+        FileRunState(units=units, fingerprint=fp_a, results=[result_completed]),
+    )
+
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_run_outer_tee",
+        lambda *args, **kwargs: outer_calls.append(str(kwargs.get("target", ""))),
+    )
+
+    # Resuming with unchanged selection A does not raise and does not re-run completed unit
+    rc = run_isolated_pytest_units(
+        units=units,
+        pytest_args=pytest_args,
+        timeout=180,
+        state_file=state_file,
+        policy_file=None,
+        report_config=None,
+        resume=True,
+        stop_on_failure=False,
+        console=console,
+        granularity="file",
+        selection_batch_id=batch_id_a,
+        selection_digest=digest_a,
+    )
+    assert rc == 0
+    assert outer_calls == []  # continuation-only: already completed unit was skipped
+
+
+def test_isolated_json_report_emits_selection_and_batch_id(tmp_path: Path) -> None:
+    from pkcs11_check.core._report_writers import write_isolated_json_report
+    from pkcs11_check.core._run_state import FileRunState
+    from pkcs11_check.core._run_units import FileRunResult
+    from pkcs11_check.core.test_selection import CaseSelection
+
+    selection = CaseSelection(
+        schema=1,
+        plan_id="0" * 64,
+        batch_id="1" * 64,
+        source="test_encrypt.py",
+        source_collection_count=10,
+        source_collection_sha256="2" * 64,
+        nodeids=("test_encrypt.py::test_a", "test_encrypt.py::test_b"),
+    )
+
+    state = FileRunState(
+        units=["test_encrypt.py"],
+        fingerprint="fp",
+        results=[
+            FileRunResult(
+                target="test_encrypt.py",
+                status="passed",
+                returncode=0,
+                duration_s=0.5,
+                completion_verified=True,
+            )
+        ],
+    )
+
+    out_file = tmp_path / "results.json"
+    payload = write_isolated_json_report(out_file, state, selection=selection)
+
+    assert "selection" in payload
+    assert payload["selection"] == selection.to_dict()
+    assert len(payload["units"]) == 1
+    assert payload["units"][0]["target"] == "test_encrypt.py"
+    assert payload["units"][0]["selection_batch_id"] == selection.batch_id
+
+    # Verify written JSON file on disk
+    loaded = json.loads(out_file.read_text(encoding="utf-8"))
+    assert loaded["selection"] == selection.to_dict()
+    assert loaded["units"][0]["selection_batch_id"] == selection.batch_id

@@ -47,6 +47,7 @@ from pkcs11_check.core.run_metrics import (
     run_is_incomplete,
 )
 from pkcs11_check.core.subprocess_trace import extract_subprocess_rv_trace
+from pkcs11_check.core.test_selection import CaseSelection, load_case_selection
 
 _SUMMARY_KEYS = RESULT_OUTCOME_KEYS
 
@@ -202,14 +203,105 @@ def _promote_rv_traces_to_outcome_reports(jsonl_path: Path) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
+def _stamp_selection_batch_id(
+    units: Any,
+    batch_id: str,
+    *,
+    conflict_label: str,
+    shard_name: str | None = None,
+    overwrite: bool = False,
+) -> None:
+    """Annotate each real unit with ``batch_id``, refusing an explicit conflict.
+
+    The single definition of the ``::daemon-recovery-`` rule: those synthetic
+    units stand for a confirmed daemon death, not for a collected test case, so
+    they are never part of a case batch and are deliberately left unstamped.
+    Every stamping site in this module goes through here so that rule has one
+    definition.
+
+    ``overwrite`` replaces an existing value instead of only filling a missing
+    one; a truthy value that disagrees with ``batch_id`` is an error either way.
+    """
+    for unit in units or []:
+        if not isinstance(unit, dict):
+            continue
+        target = str(unit.get("target", ""))
+        if "::daemon-recovery-" in target:
+            continue
+        unit_batch = unit.get("selection_batch_id")
+        if unit_batch and unit_batch != batch_id:
+            location = f" in {shard_name}" if shard_name else ""
+            raise ValueError(
+                f"unit selection_batch_id {unit_batch} does not match "
+                f"{conflict_label} {batch_id}{location}"
+            )
+        if overwrite:
+            unit["selection_batch_id"] = batch_id
+        else:
+            unit.setdefault("selection_batch_id", batch_id)
+
+
+def _validate_selection_payloads(
+    payloads: list[dict[str, Any]],
+    *,
+    testcases_root: Path | None = None,
+) -> list[CaseSelection]:
+    """Validate selection metadata consistency across shard payloads."""
+    selections: list[CaseSelection] = []
+    for payload in payloads:
+        raw_selection = payload.get("selection")
+        if raw_selection is not None:
+            if not isinstance(raw_selection, dict):
+                raise ValueError(
+                    f"invalid selection payload: expected dict, got {type(raw_selection).__name__}"
+                )
+            selection = CaseSelection.from_dict(raw_selection, testcases_root=testcases_root)
+            selections.append(selection)
+            _stamp_selection_batch_id(
+                payload.get("units"),
+                selection.batch_id,
+                conflict_label="payload batch_id",
+            )
+        else:
+            for unit in payload.get("units", []) or []:
+                if isinstance(unit, dict) and unit.get("selection_batch_id"):
+                    raise ValueError(
+                        "unit has selection_batch_id but payload has no selection manifest"
+                    )
+
+    if selections:
+        plan_ids = {s.plan_id for s in selections}
+        if len(plan_ids) > 1:
+            raise ValueError(
+                f"conflicting selection plan IDs across merged shards: {sorted(plan_ids)}"
+            )
+        seen_batch_ids: set[str] = set()
+        seen_nodeids: set[str] = set()
+        for s in selections:
+            if s.batch_id in seen_batch_ids:
+                raise ValueError(f"duplicate selection batch ID in merge: {s.batch_id}")
+            seen_batch_ids.add(s.batch_id)
+            overlap = seen_nodeids.intersection(s.nodeids)
+            if overlap:
+                raise ValueError(
+                    f"overlapping node IDs across selection batches in merge: {sorted(overlap)}"
+                )
+            seen_nodeids.update(s.nodeids)
+
+    return selections
+
+
 def merge_results_payloads(
     payloads: list[dict[str, Any]],
     *,
     coverage: dict[str, Any] | None,
     shard_meta: dict[str, Any] | None = None,
     incomplete_evidence: bool = False,
+    testcases_root: Path | None = None,
 ) -> dict[str, Any]:
     """Combine N ``results.json`` payloads (summary summed, units concatenated)."""
+    _validate_selection_payloads(payloads, testcases_root=testcases_root)
+
     summary: dict[str, int] = {key: 0 for key in _SUMMARY_KEYS}
     units: list[dict[str, Any]] = []
     incoming_incomplete = False
@@ -247,7 +339,46 @@ def merge_results_payloads(
     return merged
 
 
-def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] | None:
+def _recover_selection_from_sidecar(
+    payload: dict[str, Any],
+    sidecar_selection: CaseSelection,
+    shard_dir: Path,
+    warnings: list[str],
+) -> None:
+    """Recover batch membership from ``selection.json`` for a *salvaged* payload.
+
+    Salvage only. An intact ``results.json`` proves its own membership: the
+    framework emits the top-level ``selection`` block whenever
+    ``--selection-manifest`` was honored, so a missing block there means the
+    manifest never reached the child and the run covered the full source file.
+    Where the payload could not be produced normally (corrupt/missing
+    ``results.json``, or an externally salvaged ``partial`` payload) that
+    self-proof does not exist, and the sidecar is the only membership evidence
+    left — it records what the batch was *planned* to be, not that it was
+    enforced. The recovery is therefore always warned, and every such payload is
+    also marked incomplete by its caller.
+    """
+    payload["selection"] = sidecar_selection.to_dict()
+    _stamp_selection_batch_id(
+        payload.get("units"),
+        sidecar_selection.batch_id,
+        conflict_label="sidecar batch_id",
+        shard_name=shard_dir.name,
+        overwrite=True,
+    )
+    warnings.append(
+        f"{shard_dir.name}: selection membership recovered from selection.json for a "
+        f"salvaged payload; exact batch enforcement is unproven "
+        f"(batch {sidecar_selection.batch_id})"
+    )
+
+
+def _load_shard_payload(
+    shard_dir: Path,
+    warnings: list[str],
+    *,
+    testcases_root: Path | None = None,
+) -> dict[str, Any] | None:
     """Load a shard's ``results.json``, salvaging it from ``report.jsonl`` if needed.
 
     A shard is finalized by writing ``report.jsonl`` incrementally and
@@ -257,16 +388,27 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
     JSONL into the merged report while dropping such a shard from the summed
     summary would *hide findings* from the headline counts. So:
 
-    - present and valid ``results.json`` → use it;
+    - present and valid ``results.json`` → use it. Such a payload also proves its
+      own case-batch membership: the framework emits the top-level ``selection``
+      block whenever ``--selection-manifest`` was honored, so a missing block
+      beside a ``selection.json`` sidecar means the manifest never reached the
+      child (that run covered the full source file) and is an error, not
+      something to be stamped from the sidecar;
     - missing or corrupt ``results.json`` but a non-empty ``report.jsonl`` →
       reconstruct an equivalent summary/units payload from that JSONL and record
-      a warning;
+      a warning. Only here (and for an externally salvaged ``partial`` payload)
+      is batch membership recovered from the sidecar, warned as unproven;
     - neither usable → record a warning so the loss is never silent.
 
     Any abnormality is appended to ``warnings`` for the caller to surface.
     """
     results_path = shard_dir / "results.json"
     report_path = shard_dir / "report.jsonl"
+    selection_path = shard_dir / "selection.json"
+
+    sidecar_selection: CaseSelection | None = None
+    if selection_path.exists():
+        sidecar_selection = load_case_selection(selection_path, testcases_root=testcases_root)
 
     if results_path.exists():
         try:
@@ -279,7 +421,12 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
         else:
             if isinstance(data, dict):
                 partial = data.get("partial")
-                if isinstance(partial, dict):
+                # A ``partial`` block marks an externally salvaged payload (e.g.
+                # docker/optee-pkcs11/salvage-artifacts.py rebuilding results.json from
+                # state.json after the guest died). Such a payload parses as an object but
+                # legitimately never carried the framework's own ``selection`` block.
+                salvaged = isinstance(partial, dict)
+                if isinstance(partial, dict):  # narrows for mypy
                     completed = partial.get("completed_units", "?")
                     planned = partial.get("planned_units", "?")
                     reason = str(partial.get("reason", "partial shard results"))
@@ -290,6 +437,48 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
                     summary = data.setdefault("summary", {})
                     if isinstance(summary, dict):
                         summary["incomplete"] = True
+
+                if sidecar_selection is not None:
+                    if "selection" in data:
+                        if data["selection"] != sidecar_selection.to_dict():
+                            raise ValueError(
+                                f"selection mismatch between results.json and "
+                                f"selection.json in {shard_dir.name}"
+                            )
+                        _stamp_selection_batch_id(
+                            data.get("units"),
+                            sidecar_selection.batch_id,
+                            conflict_label="sidecar batch_id",
+                            shard_name=shard_dir.name,
+                        )
+                    elif salvaged:
+                        # Salvaged payload: the run never got to emit its own proof, so
+                        # membership can only come from the sidecar (see the helper).
+                        _recover_selection_from_sidecar(
+                            data, sidecar_selection, shard_dir, warnings
+                        )
+                    else:
+                        raise ValueError(
+                            f"results.json in {shard_dir.name} has no selection block but "
+                            f"selection.json is present: the run did not honor "
+                            f"--selection-manifest, so it executed the full source file "
+                            f"instead of batch {sidecar_selection.batch_id}"
+                        )
+                elif "selection" in data:
+                    if isinstance(data["selection"], dict):
+                        parsed_sel = CaseSelection.from_dict(
+                            data["selection"], testcases_root=testcases_root
+                        )
+                        _stamp_selection_batch_id(
+                            data.get("units"),
+                            parsed_sel.batch_id,
+                            conflict_label="results.json selection batch_id",
+                            shard_name=shard_dir.name,
+                        )
+                    else:
+                        raise ValueError(
+                            f"results.json selection is not a dict in {shard_dir.name}"
+                        )
                 return data
             warnings.append(
                 f"{shard_dir.name}: results.json is not an object; "
@@ -316,6 +505,8 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
                 f"{shard_dir.name}: results.json corrupt and report.jsonl empty; "
                 "shard findings LOST from the merged summary"
             )
+        if sidecar_selection is not None:
+            _recover_selection_from_sidecar(payload, sidecar_selection, shard_dir, warnings)
         return payload
 
     if results_path.exists():
@@ -329,16 +520,51 @@ def _load_shard_payload(shard_dir: Path, warnings: list[str]) -> dict[str, Any] 
             f"{shard_dir.name}: results.json and report.jsonl missing; "
             "shard findings LOST from the merged summary"
         )
+    if sidecar_selection is not None:
+        synthetic: dict[str, Any] = {
+            "tool": "pkcs11-check",
+            "kind": "test-run",
+            "summary": {"incomplete": True, "total": 0},
+            "units": [],
+        }
+        _recover_selection_from_sidecar(synthetic, sidecar_selection, shard_dir, warnings)
+        return synthetic
     return None
 
 
-def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
+def merge_shard_dirs(
+    shard_dirs: list[Path],
+    output_dir: Path,
+    *,
+    testcases_root: Path | None = None,
+) -> dict[str, Any]:
     """Merge the artifact directories of N shard runs into ``output_dir``.
 
     Each shard dir is expected to contain ``results.json`` and ``report.jsonl``
     (as produced by ``pkcs11-check test --output json``). Returns the merged
     ``results.json`` payload.
     """
+    payloads: list[dict[str, Any]] = []
+    files_per_shard: list[int] = []
+    warnings: list[str] = []
+    for d in shard_dirs:
+        payload = _load_shard_payload(d, warnings, testcases_root=testcases_root)
+        if payload is None:
+            files_per_shard.append(0)
+            continue
+        payloads.append(payload)
+        files_per_shard.append(len(payload.get("units", []) or []))
+
+    # Cross-shard validation BEFORE any output writes or concatenation:
+    _validate_selection_payloads(payloads, testcases_root=testcases_root)
+
+    shard_provenance = [p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)]
+    merged_provenance = shard_provenance[0] if shard_provenance else None
+    if merged_provenance is not None and any(
+        provenance != merged_provenance for provenance in shard_provenance[1:]
+    ):
+        raise ValueError("shard provenance differs; refusing to merge mismatched test inputs")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     report_paths = [d / "report.jsonl" for d in shard_dirs]
@@ -351,17 +577,6 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
         (output_dir / "coverage.json").write_text(
             json.dumps(coverage, indent=2) + "\n", encoding="utf-8"
         )
-
-    payloads: list[dict[str, Any]] = []
-    files_per_shard: list[int] = []
-    warnings: list[str] = []
-    for d in shard_dirs:
-        payload = _load_shard_payload(d, warnings)
-        if payload is None:
-            files_per_shard.append(0)
-            continue
-        payloads.append(payload)
-        files_per_shard.append(len(payload.get("units", []) or []))
 
     for warning in warnings:
         print(f"[merge] WARNING: {warning}", file=sys.stderr)
@@ -378,6 +593,7 @@ def merge_shard_dirs(shard_dirs: list[Path], output_dir: Path) -> dict[str, Any]
         coverage=coverage,
         shard_meta=shard_meta,
         incomplete_evidence=bool(warnings),
+        testcases_root=testcases_root,
     )
     (output_dir / "results.json").write_text(
         json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

@@ -207,3 +207,40 @@ form), `--out` (output directory), `--module-issues PATH` (known-issue enrichmen
 `PKCS11_CHECK_MODULE_ISSUES` env). Writes `<provider>.md` + `<provider>.jsonl` per provider, and
 `_index.md` + `_universal.md` when more than one provider is given. See
 [../src/pkcs11_check/report/README.md](../src/pkcs11_check/report/README.md).
+
+## Exact case batching (`--selection-manifest`)
+
+For oversized KAT suites on slow execution profiles (e.g. OP-TEE), exact case batching executes a deterministic slice of test cases from a single test file in one file subprocess without weakening the per-test watchdog or changing test node IDs.
+
+```bash
+uv run pkcs11-check test \
+  --module /path/to/module.so \
+  --selection-manifest /path/to/batch-manifest.json \
+  --format json \
+  --isolation file \
+  test_kat.py
+```
+
+### Strict invocation requirements
+- `--selection-manifest` requires `--format json` (or `--output json`).
+- `--selection-manifest` requires `--isolation file`.
+- Requires exactly one bare file target matching the manifest `source` attribute (e.g. `test_kat.py`). Any other combination exits `2` before execution.
+
+### Manifest schema and verification
+A schema-1 manifest defines:
+- `schema`: Integer `1`.
+- `plan_id`: 64-character lowercase hex SHA-256 over the complete batch inventory.
+- `batch_id`: 64-character lowercase hex SHA-256 over canonical JSON of `(source, source_collection_count, source_collection_sha256, nodeids)`.
+- `source`: Testcase-root relative file path (e.g. `test_kat.py`). Path traversals, absolute paths, and symlink escapes are rejected.
+- `source_collection_count`: Total effective collected items in the source file after marker/path filtering and disabled baseline subtraction.
+- `source_collection_sha256`: SHA-256 over the sorted, unique portable node IDs of the effective collection.
+- `nodeids`: Non-empty list of exact, unique portable test node IDs (`source::test_name[...]`).
+
+The framework validates the manifest before execution. Any count mismatch, digest mismatch, missing node, duplicate node, path escape, or intersection with the disabled baseline raises an immediate error (exit `2`).
+
+### Execution and timeout behavior
+- The batch executes in a single file-isolated subprocess.
+- Unselected cases in the file are reported to `pytest_deselected` (never marked skipped).
+- **Timeout separation**: The manifest's selected count authoritatively overrides the full-file count for computing the subprocess aggregate file allowance (`_unit_timeout_seconds`), preventing premature aggregate timeouts while keeping the per-test watchdog (`180s`) strictly unchanged.
+- Canonical `selection.json` is materialized beside the output JSON artifacts.
+- `--resume` contract remains continuation-only: state fingerprinting binds `selection_batch_id` and `selection_digest` so changing a selection invalidates resume state, while an identical selection resumes cleanly.

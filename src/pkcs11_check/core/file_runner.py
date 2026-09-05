@@ -1111,6 +1111,9 @@ def run_isolated_pytest_units(
     provenance: dict[str, Any] | None = None,
     recovery_config: RecoveryConfig | None = None,
     collected_items: Sequence[CollectedPytestItem] | None = None,
+    unit_test_counts: Mapping[str, int] | None = None,
+    selection_batch_id: str | None = None,
+    selection_digest: str | None = None,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress.
 
@@ -1125,12 +1128,21 @@ def run_isolated_pytest_units(
     for item in collected_items or ():
         file_key = normalize_policy_file_key(item.file_path)
         file_test_counts[file_key] = file_test_counts.get(file_key, 0) + 1
+    if unit_test_counts:
+        for k, v in unit_test_counts.items():
+            norm_k = normalize_policy_file_key(k)
+            unit_k = _unit_file_key(k)
+            file_test_counts[k] = v
+            file_test_counts[norm_k] = v
+            file_test_counts[unit_k] = v
     fingerprint = (
         build_state_fingerprint(
             units,
             pytest_args,
             env,
             baseline_fingerprint=baseline_fingerprint,
+            selection_batch_id=selection_batch_id,
+            selection_digest=selection_digest,
         )
         if units
         else ""
@@ -1319,6 +1331,7 @@ def run_isolated_pytest_units(
                     coverage=coverage_data,
                     provenance=provenance,
                     owner_aliases=owner_aliases,
+                    selection=report_config.selection if report_config else None,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -2794,6 +2807,7 @@ def run_isolated_pytest_units(
                     coverage=coverage_data,
                     provenance=provenance,
                     owner_aliases=owner_aliases,
+                    selection=report_config.selection if report_config else None,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(

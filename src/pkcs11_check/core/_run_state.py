@@ -602,6 +602,8 @@ def build_state_fingerprint(
     env: Mapping[str, str] | None = None,
     *,
     baseline_fingerprint: str | None = None,
+    selection_batch_id: str | None = None,
+    selection_digest: str | None = None,
 ) -> str:
     """Build a stable fingerprint for resume validation."""
     redacted_args: list[str] = []
@@ -631,6 +633,8 @@ def build_state_fingerprint(
             "manifest_digest": manifest_digest,
             "module": module_snapshot,
             "pytest_args": redacted_args,
+            "selection_batch_id": selection_batch_id,
+            "selection_digest": selection_digest,
             "unit_files": _fingerprint_units(units),
             "units": units,
         },
