@@ -1277,6 +1277,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
                 units,
@@ -1293,6 +1294,7 @@ class TestTestCommand:
                 baseline_fingerprint,
             )
             called["report_config"] = report_config
+            called["collected_items"] = collected_items
             return 0
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
@@ -1309,6 +1311,13 @@ class TestTestCommand:
             lambda targets, default_root, *, granularity, pytest_args: [
                 str(default_root / "test_alpha.py")
             ],  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(
+            test_cmd,
+            "collect_pytest_item_metadata",
+            lambda *_args, **_kwargs: pytest.fail(  # type: ignore[arg-type]
+                "ignored disabled baseline must not trigger metadata collection"
+            ),
         )
         monkeypatch.setattr(
             test_cmd,
@@ -1346,6 +1355,8 @@ class TestTestCommand:
         assert report_config is not None
         assert getattr(report_config, "output_format") == output_name
         assert Path(getattr(report_config, "output_path")).name == expected_name
+        if mode == "file":
+            assert called["collected_items"] is None
 
     def test_test_file_isolation_resume_mismatch_is_reported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2152,6 +2163,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -2236,6 +2248,7 @@ class TestTestCommand:
         file_a.write_text("", encoding="utf-8")
         file_b.write_text("", encoding="utf-8")
         called: dict[str, object] = {}
+        collection_calls: list[None] = []
 
         def fake_run(
             units: list[str],
@@ -2254,6 +2267,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
                 pytest_args,
@@ -2270,6 +2284,7 @@ class TestTestCommand:
             called["units"] = units
             called["granularity"] = granularity
             called["deselect_by_file"] = deselect_by_file
+            called["collected_items"] = collected_items
             return 0
 
         monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
@@ -2278,27 +2293,35 @@ class TestTestCommand:
             "discover_pytest_units",
             lambda targets, default_root, *, granularity, pytest_args: [str(file_a), str(file_b)],  # type: ignore[arg-type]
         )
+        collected = [
+            CollectedPytestItem(
+                nodeid=f"{file_a}::test_keep",
+                file_path=str(file_a),
+                markers=[],
+            ),
+            CollectedPytestItem(
+                nodeid=f"{file_a}::test_drop",
+                file_path=str(file_a),
+                markers=[],
+            ),
+            CollectedPytestItem(
+                nodeid=f"{file_b}::test_only",
+                file_path=str(file_b),
+                markers=[],
+            ),
+        ]
+
+        def fake_collect(
+            targets: list[str], pytest_args: list[str], *, env: dict[str, str] | None = None
+        ) -> list[CollectedPytestItem]:
+            del targets, pytest_args, env
+            collection_calls.append(None)
+            return collected
+
         monkeypatch.setattr(
             test_cmd,
             "collect_pytest_item_metadata",
-            lambda targets, pytest_args, *, env=None: [  # type: ignore[arg-type]
-                CollectedPytestItem(
-                    nodeid=f"{file_a}::test_keep",
-                    file_path=str(file_a),
-                    markers=[],
-                ),
-                CollectedPytestItem(
-                    nodeid=f"{file_a}::test_drop",
-                    file_path=str(file_a),
-                    markers=[],
-                ),
-                CollectedPytestItem(
-                    nodeid=f"{file_b}::test_only",
-                    file_path=str(file_b),
-                    markers=[],
-                ),
-            ],
-            raising=False,
+            fake_collect,
         )
         monkeypatch.setattr(
             disabled_baseline_mod,
@@ -2332,6 +2355,8 @@ class TestTestCommand:
         assert result.exit_code == 0
         assert called["units"] == [str(file_a)]
         assert called["granularity"] == "file"
+        assert called["collected_items"] == collected
+        assert len(collection_calls) == 1
         # Keys are scheduling units (native paths); node-id VALUES are canonical
         # forward-slash form so they match a disabled-tests file written on any platform.
         assert called["deselect_by_file"] == {str(file_a): {f"{file_a.as_posix()}::test_drop"}}

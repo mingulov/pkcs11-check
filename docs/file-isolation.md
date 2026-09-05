@@ -29,6 +29,10 @@ uv run pkcs11-check test \
 - Expands the requested pytest targets into an ordered list of files or individual pytest nodeids.
 - Collects pytest item metadata in a short-lived helper subprocess so `auto` can use
   real marker names instead of source-text scans.
+- When disabled-test selection needs metadata, already-collected items are forwarded to
+  explicit `file`/`test` runs; an empty or ignored baseline does not trigger an additional
+  metadata collection. This fixes dropped metadata when available; explicit file runs
+  without metadata retain the runner's unknown-count fallback, with no second collection.
 - Probes PKCS#11 capabilities in a short-lived helper subprocess and passes the
   resulting manifest into pytest instead of loading the module during collection.
 - Runs each unit in a fresh `python -m pytest` subprocess.

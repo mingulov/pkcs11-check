@@ -957,7 +957,7 @@ def test_command(
                     setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
                     raise typer.Exit(code=setup_exit_code) from exc
                 runner_kwargs: dict[str, Any] = {}
-                if isolation == "auto" and collected_items:
+                if collected_items:
                     runner_kwargs["collected_items"] = collected_items
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
