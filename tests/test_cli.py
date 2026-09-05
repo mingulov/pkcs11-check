@@ -702,7 +702,15 @@ class TestTestCommand:
         records = [
             json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
         ]
-        assert [record["$report_type"] for record in records] == ["CollectReport"]
+        assert records[0] == {
+            "$report_type": "IsolatedUnitReport",
+            "target": "<collection>",
+            "attempt": 0,
+        }
+        assert [record["$report_type"] for record in records] == [
+            "IsolatedUnitReport",
+            "CollectReport",
+        ]
         collects = [record for record in records if record["$report_type"] == "CollectReport"]
         assert len(collects) == 1
         assert diagnostic in collects[0]["longrepr"]

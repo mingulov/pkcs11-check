@@ -3184,6 +3184,110 @@ def test_marked_owner_rejects_conflicting_recognized_record_before_replacement(
     assert not cache_b.exists()
 
 
+@pytest.mark.parametrize(
+    "collection_nodeid",
+    ["/app/discovery", "/app/test_a.py"],
+    ids=["unrecognized-nodeid", "recognized-other-unit"],
+)
+@pytest.mark.parametrize("cache_mode", ["cacheless", "partial"])
+def test_resume_keeps_global_collection_failure_outside_ordinary_unit_cache(
+    tmp_path: Path,
+    collection_nodeid: str,
+    cache_mode: str,
+) -> None:
+    units = ["/app/test_a.py", "/app/test_b.py"]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+    state = FileRunState(
+        units=units,
+        fingerprint=build_state_fingerprint(units, pytest_args),
+        results=[FileRunResult(unit, "passed", 0, 0.1) for unit in units],
+    )
+    save_run_state(state_file, state)
+    ordinary_records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": f"{unit}::test_ok",
+            "when": "call",
+            "outcome": "passed",
+        }
+        for unit in units
+    ]
+    for unit, record in zip(units, ordinary_records, strict=True):
+        _write_unit_report_record_cache(state_file, unit, [record])
+    collection_record = {
+        "$report_type": "CollectReport",
+        "nodeid": collection_nodeid,
+        "when": "collect",
+        "outcome": "failed",
+        "longrepr": "global collection failed",
+    }
+    sidecar = file_runner_mod.collection_failure_sidecar_path(state_file)
+    sidecar.write_text(json.dumps(collection_record) + "\n", encoding="utf-8")
+    sidecar_bytes = sidecar.read_bytes()
+    output_state, inline_records = file_runner_mod._collection_failure_reporting_copy(
+        state_file, state, {}
+    )
+    assert report_records_mod._write_report_jsonl_from_record_sources(
+        state_file,
+        units=output_state.units,
+        inline_records_by_unit=inline_records,
+        output_path=report_path,
+        collection_failure_path=sidecar,
+    )
+    source_records = [*ordinary_records, collection_record]
+
+    file_runner_mod._delete_unit_report_record_cache(state_file, units[-1])
+    if cache_mode == "cacheless":
+        file_runner_mod._delete_unit_report_record_cache(state_file, units[0])
+
+    for _resume_attempt in range(2):
+        assert (
+            run_isolated_pytest_units(
+                units,
+                pytest_args,
+                timeout=12,
+                state_file=state_file,
+                policy_file=None,
+                report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+                resume=True,
+                stop_on_failure=False,
+                console=Console(file=StringIO(), force_terminal=False),
+                granularity="file",
+            )
+            == 1
+        )
+
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert payload["summary"]["passed"] == 2
+        assert payload["summary"]["error"] == 1
+        assert payload["summary"]["total"] == 3
+        by_target = {unit["target"]: unit for unit in payload["units"]}
+        for unit in units:
+            assert by_target[unit]["status"] == "passed"
+            assert by_target[unit]["counts"]["passed"] == 1
+            assert by_target[unit]["counts"]["error"] == 0
+        assert by_target["<collection>"]["status"] == "failed"
+        assert by_target["<collection>"]["counts"]["error"] == 1
+
+        output_records = [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert [
+            record for record in output_records if record["$report_type"] != "IsolatedUnitReport"
+        ] == source_records
+        assert [
+            record for record in output_records if record["$report_type"] == "IsolatedUnitReport"
+        ][-1] == {
+            "$report_type": "IsolatedUnitReport",
+            "target": "<collection>",
+            "attempt": 0,
+        }
+        assert sidecar.read_bytes() == sidecar_bytes
+
+
 def test_cacheless_legacy_overlapping_parent_child_fails_before_replacement(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

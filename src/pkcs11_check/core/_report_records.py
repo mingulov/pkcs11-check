@@ -613,6 +613,9 @@ def _write_report_jsonl_from_record_sources(
                         source_started = True
                     out_fh.write(json.dumps(record) + "\n")
                     wrote = True
+            if collection_records:
+                out_fh.write(json.dumps(_isolated_unit_report("<collection>", 0)) + "\n")
+                wrote = True
             for record in collection_records:
                 out_fh.write(json.dumps(record) + "\n")
                 wrote = True
@@ -782,6 +785,8 @@ def _infer_unit_target_from_records(
         else:
             possible_owners = aliases.possible_legacy_owners(value) if value else frozenset()
         if explicit_owner is not None:
+            if explicit_owner == "<collection>" and report_type == "CollectReport":
+                continue
             if possible_owners and explicit_owner not in possible_owners:
                 raise ValueError(
                     "conflicting report ownership: "
