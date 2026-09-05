@@ -14,6 +14,8 @@ For ordinary pytest `TestReport` records, `counts` describes logical testcases, 
 
 Collection, harness, process, finalization, recovery, and other file-level diagnostics are not ordinary testcase outcomes. Any counts they contribute remain separately additive. Grouped at-source classification reports are also occurrence reports: their `count` is the number of serialized classification occurrences, not a distinct-testcase count.
 
+JUnit output remains unit-oriented: one isolated unit is one `<testcase>`. A completed xfail is retained as public finding evidence in that testcase's `<system-out>` with its count and, when available, nodeid, outcome, and reason; it does not become a JUnit failure or change the existing exit/CI coloring policy. A genuinely all-skipped unit uses `<skipped type="skip">`; a mixed pass/skip unit is not marked wholly skipped.
+
 `IsolatedUnitReport` records delimit retained source chunks and identify their scheduled owner. Their zero-based `attempt` is an ingestion-order marker; on a legacy seeded shard it is only a seed-local boundary, not a recovered historical attempt ID. Physical-file grouping uses collected owner aliases to reconcile equivalent nodeid spellings. Resume remains continuation-only, and daemon-recovery attempts superseded from the active aggregate remain archived in `attempt_history` and `recovery_events` rather than being folded back into the active testcase summary.
 
 ## `not_operational` is mostly a capability gap, amplified by vector count

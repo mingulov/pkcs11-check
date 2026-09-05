@@ -7614,6 +7614,310 @@ def test_junit_detail_failure_overrides_passing_state(tmp_path: Path) -> None:
     assert "provider failure" in junit
 
 
+def test_junit_preserves_completed_xfail_finding(tmp_path: Path) -> None:
+    target = "test_provider.py"
+    nodeid = f"{target}::test_advertised_operation"
+    state = FileRunState(
+        units=[target],
+        fingerprint="abc123",
+        results=[FileRunResult(target, "passed", 0, 0.1, completion_verified=True)],
+    )
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        state,
+        per_unit_details={
+            target: {
+                "counts": {"xfailed": 1},
+                "tests": [
+                    {
+                        "nodeid": nodeid,
+                        "outcome": "xfailed",
+                        "wasxfail": "unique provider finding",
+                        "longrepr": "unique provider finding",
+                    }
+                ],
+                "_logical_test_outcomes": {nodeid: "xfailed"},
+            }
+        },
+    )
+
+    root = ET.parse(junit_path).getroot()
+    assert root.attrib["failures"] == "0"
+    assert root.attrib["errors"] == "0"
+    testcase = root.find("testcase")
+    assert testcase is not None
+    output = testcase.find("system-out")
+    assert output is not None
+    serialized = output.text or ""
+    assert nodeid in serialized
+    assert "xfailed" in serialized
+    assert "unique provider finding" in serialized
+    assert "_logical_test_outcomes" not in serialized
+
+
+def test_junit_mixed_fail_xfail_crash_keeps_xfail_finding_visible(tmp_path: Path) -> None:
+    target = "test_provider.py"
+    xfail_nodeid = f"{target}::test_xfail"
+    state = FileRunState(
+        units=[target],
+        fingerprint="abc123",
+        results=[FileRunResult(target, "crashed", -11, 0.1, completion_verified=True)],
+    )
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        state,
+        per_unit_details={
+            target: {
+                "counts": {"failed": 1, "xfailed": 1, "crashed": 1},
+                "tests": [
+                    {
+                        "nodeid": f"{target}::test_fail",
+                        "outcome": "failed",
+                        "longrepr": "provider failure",
+                    },
+                    {
+                        "nodeid": xfail_nodeid,
+                        "outcome": "xfailed",
+                        "wasxfail": "mixed provider finding",
+                        "longrepr": "mixed provider finding",
+                    },
+                    {
+                        "nodeid": f"{target}::test_crash",
+                        "outcome": "crashed",
+                        "longrepr": "provider crash",
+                    },
+                ],
+            }
+        },
+    )
+
+    root = ET.parse(junit_path).getroot()
+    assert root.attrib["failures"] == "0"
+    assert root.attrib["errors"] == "1"
+    testcase = root.find("testcase")
+    assert testcase is not None
+    output = testcase.find("system-out")
+    assert output is not None
+    serialized = output.text or ""
+    assert xfail_nodeid in serialized
+    assert "xfailed" in serialized
+    assert "mixed provider finding" in serialized
+
+
+def test_junit_keeps_genuine_skip_only_unit_distinguishable(tmp_path: Path) -> None:
+    target = "test_capability.py"
+    state = FileRunState(
+        units=[target],
+        fingerprint="abc123",
+        results=[FileRunResult(target, "passed", 0, 0.1, completion_verified=True)],
+    )
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        state,
+        per_unit_details={
+            target: {
+                "counts": {"skipped": 1},
+                "skip_reasons": {"mechanism not supported": 1},
+                "tests": [],
+                "_logical_test_outcomes": {f"{target}::test_capability": "skipped"},
+            }
+        },
+    )
+
+    root = ET.parse(junit_path).getroot()
+    assert root.attrib["skipped"] == "1"
+    testcase = root.find("testcase")
+    assert testcase is not None
+    skipped = testcase.find("skipped")
+    assert skipped is not None
+    assert skipped.attrib["type"] == "skip"
+    assert "mechanism not supported" in (skipped.text or "")
+    assert testcase.find("system-out") is None
+
+
+@pytest.mark.parametrize(
+    "order",
+    [("skip", "xfail"), ("xfail", "skip")],
+    ids=["skip-first", "xfail-first"],
+)
+def test_junit_skip_total_matches_skip_children_in_any_unit_order(
+    tmp_path: Path, order: tuple[str, str]
+) -> None:
+    skip_target = "test_capability.py"
+    xfail_target = "test_provider.py"
+    details = {
+        skip_target: {
+            "counts": {"skipped": 1},
+            "skip_reasons": {"mechanism not supported": 1},
+            "tests": [],
+        },
+        xfail_target: {
+            "counts": {"xfailed": 1},
+            "tests": [
+                {
+                    "nodeid": f"{xfail_target}::test_advertised_operation",
+                    "outcome": "xfailed",
+                    "wasxfail": "provider deviation",
+                }
+            ],
+        },
+    }
+    targets = {"skip": skip_target, "xfail": xfail_target}
+    state = FileRunState(
+        units=[targets[kind] for kind in order],
+        fingerprint="abc123",
+        results=[
+            FileRunResult(targets[kind], "passed", 0, 0.1, completion_verified=True)
+            for kind in order
+        ],
+    )
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(junit_path, state, per_unit_details=details)
+
+    root = ET.parse(junit_path).getroot()
+    cases = root.findall("testcase")
+    assert root.attrib["skipped"] == "1"
+    assert sum(case.find("skipped") is not None for case in cases) == 1
+
+
+def test_junit_mixed_pass_and_skip_is_not_all_skipped(tmp_path: Path) -> None:
+    target = "test_capability.py"
+    state = FileRunState(
+        units=[target],
+        fingerprint="abc123",
+        results=[FileRunResult(target, "passed", 0, 0.1, completion_verified=True)],
+    )
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        state,
+        per_unit_details={
+            target: {
+                "counts": {"passed": 1, "skipped": 1},
+                "skip_reasons": {"mechanism not supported": 1},
+                "tests": [],
+            }
+        },
+    )
+
+    root = ET.parse(junit_path).getroot()
+    testcase = root.find("testcase")
+    assert testcase is not None
+    assert root.attrib["skipped"] == "0"
+    assert testcase.find("skipped") is None
+
+
+def test_junit_count_only_xfail_is_not_a_bare_success(tmp_path: Path) -> None:
+    target = "test_provider.py"
+    state = FileRunState(
+        units=[target],
+        fingerprint="abc123",
+        results=[FileRunResult(target, "passed", 0, 0.1, completion_verified=True)],
+    )
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(
+        junit_path,
+        state,
+        per_unit_details={target: {"counts": {"xfailed": 1}, "tests": []}},
+    )
+
+    root = ET.parse(junit_path).getroot()
+    testcase = root.find("testcase")
+    assert testcase is not None
+    output = testcase.find("system-out")
+    assert output is not None
+    assert '"xfailed": 1' in (output.text or "")
+    assert "_logical_test_outcomes" not in (output.text or "")
+
+
+def test_junit_legacy_inferred_collection_and_harness_stay_out_of_provider_output(
+    tmp_path: Path,
+) -> None:
+    collection_target = "test_legacy_collection.py"
+    harness_target = "test_legacy_harness.py"
+    state = FileRunState(
+        units=[collection_target, harness_target],
+        fingerprint="abc123",
+        results=[
+            FileRunResult(collection_target, "failed", 1, 0.1, completion_verified=True),
+            FileRunResult(harness_target, "failed", 1, 0.1, completion_verified=False),
+        ],
+    )
+    details = {
+        collection_target: {
+            "counts": {"failed": 1, "error": 1},
+            "incomplete": True,
+            "incomplete_files": [collection_target],
+            "tests": [
+                {
+                    "nodeid": f"{collection_target}::test_provider",
+                    "outcome": "failed",
+                    "longrepr": "collection-unit provider finding",
+                },
+                {
+                    "nodeid": collection_target,
+                    "outcome": "error",
+                    "longrepr": "legacy collection diagnostic",
+                },
+            ],
+        },
+        harness_target: {
+            "counts": {"failed": 1, "error": 1},
+            "incomplete": True,
+            "harness_error": True,
+            "tests": [
+                {
+                    "nodeid": f"{harness_target}::test_provider",
+                    "outcome": "failed",
+                    "longrepr": "harness-unit provider finding",
+                },
+                {
+                    "nodeid": harness_target,
+                    "outcome": "error",
+                    "longrepr": "legacy harness diagnostic",
+                },
+            ],
+        },
+    }
+
+    junit_path = tmp_path / "results.xml"
+    write_isolated_junit_report(junit_path, state, per_unit_details=details)
+
+    root = ET.parse(junit_path).getroot()
+    collection_case = next(
+        case
+        for case in root.findall("testcase")
+        if case.find("error[@type='collection']") is not None
+    )
+    harness_case = next(
+        case
+        for case in root.findall("testcase")
+        if case.find("error[@type='incomplete']") is not None
+    )
+    provider_cases = [
+        case
+        for case in root.findall("testcase")
+        if case.find("failure") is not None
+    ]
+    assert len(provider_cases) == 2
+    for case in provider_cases:
+        serialized = ET.tostring(case, encoding="unicode")
+        assert "provider finding" in serialized
+        assert "legacy collection diagnostic" not in serialized
+        assert "legacy harness diagnostic" not in serialized
+    assert "legacy collection diagnostic" in ET.tostring(collection_case, encoding="unicode")
+    assert "legacy harness diagnostic" in ET.tostring(harness_case, encoding="unicode")
+
+
 @pytest.mark.parametrize("status", ["passed", "failed"])
 def test_junit_timeout_detail_matches_json_status(tmp_path: Path, status: str) -> None:
     state = FileRunState(

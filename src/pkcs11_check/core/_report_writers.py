@@ -654,6 +654,93 @@ def write_isolated_junit_report(
             if record.get("outcome") == "error" and id(record) not in collection
         ]
 
+    def public_detail_output(result: FileRunResult, detail: Mapping[str, Any] | None) -> str:
+        """Serialize public finding evidence without exposing reducer metadata."""
+        if not isinstance(detail, Mapping):
+            return ""
+        raw_tests = detail.get("tests")
+        if not isinstance(raw_tests, list):
+            return ""
+        excluded = {id(record) for record in collection_entries(result)}
+        excluded.update(id(record) for record in harness_entries(result))
+        findings: list[dict[str, str]] = []
+        for record in raw_tests:
+            if not isinstance(record, Mapping):
+                continue
+            if id(record) in excluded:
+                continue
+            outcome = str(record.get("outcome") or "")
+            if outcome not in {
+                "failed",
+                "skipped",
+                "xfailed",
+                "xpassed",
+                "error",
+                "crashed",
+                "timeout",
+                "crash_limited",
+            }:
+                continue
+            finding = {
+                "nodeid": str(record.get("nodeid") or ""),
+                "outcome": outcome,
+            }
+            xfail_reason = record.get("wasxfail")
+            detail_reason = record.get("longrepr")
+            if xfail_reason:
+                finding["reason"] = str(xfail_reason)
+            if detail_reason and detail_reason != xfail_reason:
+                finding["detail"] = str(detail_reason)
+            findings.append(finding)
+        counts = detail.get("counts")
+        public_counts = (
+            {
+                key: int(value)
+                for key, value in counts.items()
+                if key in RESULT_OUTCOME_KEYS and isinstance(value, int) and value
+            }
+            if isinstance(counts, Mapping)
+            else {}
+        )
+        if not findings and not any(public_counts.get(key, 0) for key in ("xfailed", "xpassed")):
+            return ""
+        lines = [f"counts: {json.dumps(public_counts, sort_keys=True)}"]
+        lines.extend(f"finding: {json.dumps(finding, sort_keys=True)}" for finding in findings)
+        return "\n".join(lines)
+
+    def genuine_skip_only(detail: Mapping[str, Any] | None, status: str) -> bool:
+        if status != "passed" or not isinstance(detail, Mapping):
+            return False
+        counts = detail.get("counts")
+        if not isinstance(counts, Mapping) or int(counts.get("skipped", 0) or 0) <= 0:
+            return False
+        if int(counts.get("passed", 0) or 0) > 0:
+            return False
+        return not any(
+            int(counts.get(outcome, 0) or 0) > 0
+            for outcome in (
+                "failed",
+                "xfailed",
+                "xpassed",
+                "error",
+                "crashed",
+                "timeout",
+                "crash_limited",
+            )
+        )
+
+    def skip_reason_text(detail: Mapping[str, Any] | None) -> str:
+        if not isinstance(detail, Mapping):
+            return "tests were skipped"
+        reasons = detail.get("skip_reasons")
+        if not isinstance(reasons, Mapping):
+            return "tests were skipped"
+        return "; ".join(
+            f"{reason} ({count})"
+            for reason, count in reasons.items()
+            if isinstance(count, int)
+        ) or "tests were skipped"
+
     def has_collection_error(result: FileRunResult) -> bool:
         return bool(collection_entries(result))
 
@@ -742,7 +829,10 @@ def write_isolated_junit_report(
             _has_collection,
             _has_harness,
         ) in effective_results
-        if status == "empty" and result.completion_verified
+        if (
+            result.completion_verified
+            and (status == "empty" or genuine_skip_only(_detail, status))
+        )
     )
     duration_s = sum(result.duration_s for result, *_rest in effective_results)
     extra_cases = sum(
@@ -886,6 +976,13 @@ def write_isolated_junit_report(
         elif status == "empty":
             skipped_node = ET.SubElement(case, "skipped", {"message": "no tests collected"})
             skipped_node.text = f"Unit {result.target} collected no tests."
+        elif genuine_skip_only(unit_detail, status):
+            skipped_node = ET.SubElement(
+                case,
+                "skipped",
+                {"message": "tests were skipped", "type": "skip"},
+            )
+            skipped_node.text = skip_reason_text(unit_detail)
         elif status == "escalated":
             error = ET.SubElement(
                 case,
@@ -909,6 +1006,11 @@ def write_isolated_junit_report(
                 f"Unit {result.target} was skipped because this file exceeded the configured "
                 "per-file crash limit in isolated mode."
             )
+
+        serialized_detail = public_detail_output(result, unit_detail)
+        if serialized_detail:
+            output = ET.SubElement(case, "system-out")
+            output.text = serialized_detail
 
         if has_collection and has_provider:
             collection_case = ET.SubElement(
