@@ -21,6 +21,7 @@ from pathlib import Path
 from rich.console import Console
 
 from pkcs11_check.core import file_runner as file_runner_mod
+from pkcs11_check.core._report_records import _build_detail_from_report_records
 from pkcs11_check.core.file_runner import (
     _TIMEOUT_RETURN_CODE,
     IsolatedReportConfig,
@@ -29,6 +30,42 @@ from pkcs11_check.core.file_runner import (
     run_isolated_pytest_units,
 )
 from pkcs11_check.core.process_observation import build_process_observation
+
+
+def test_timeout_survives_retry_pass_without_double_counting() -> None:
+    nodeid = "test_a.py::test_slow"
+    records = [
+        {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "timeout",
+            "longrepr": "child timeout",
+        },
+        {"$report_type": "IsolatedUnitReport", "target": nodeid, "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "passed",
+        },
+    ]
+
+    detail = _build_detail_from_report_records(records)
+
+    assert detail is not None
+    assert detail["counts"]["timeout"] == 1
+    assert detail["counts"]["passed"] == 0
+    assert sum(detail["counts"].values()) == 1
+    assert detail["tests"] == [
+        {
+            "nodeid": nodeid,
+            "outcome": "timeout",
+            "duration": 0.0,
+            "longrepr": "child timeout",
+        }
+    ]
 
 
 def test_child_exit_124_preserves_partial_report_records(

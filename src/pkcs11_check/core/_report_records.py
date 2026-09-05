@@ -1066,12 +1066,31 @@ def _compliance_notes_from_user_properties(
     return notes
 
 
+_LOGICAL_TEST_OUTCOMES = "_logical_test_outcomes"
+_DIAGNOSTIC_COUNTS = "_diagnostic_counts"
+_LOGICAL_SKIP_REASONS = "_logical_skip_reasons"
+_TEST_OUTCOME_PRIORITY = {
+    outcome: priority
+    for priority, outcome in enumerate(
+        reversed(
+            ("timeout", "crashed", "error", "failed", "xpassed", "xfailed", "passed", "skipped")
+        )
+    )
+}
+
+
+def _outcome_is_higher(candidate: str, current: str | None) -> bool:
+    return current is None or _TEST_OUTCOME_PRIORITY.get(candidate, 0) > _TEST_OUTCOME_PRIORITY.get(
+        current, 0
+    )
+
+
 def _build_detail_from_report_records(
     records: Iterable[Mapping[str, Any]],
     *,
     result_record_hook: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any] | None:
-    """Build per-unit detail payload from parsed report-log records."""
+    """Build detail with one conservative outcome per ordinary logical testcase."""
     counts: dict[str, int] = {
         "passed": 0,
         "failed": 0,
@@ -1086,10 +1105,10 @@ def _build_detail_from_report_records(
     compliance_notes: list[dict[str, str]] = []
     seen_compliance_notes: set[tuple[tuple[str, str], ...]] = set()
     skip_reasons: dict[str, int] = {}
-    seen_call: set[str] = set()
-    setup_events: list[Mapping[str, Any]] = []
-    call_events: list[Mapping[str, Any]] = []
-    teardown_events: list[Mapping[str, Any]] = []
+    logical_outcomes: dict[str, str] = {}
+    logical_records: dict[str, Mapping[str, Any]] = {}
+    logical_skip_reasons: dict[str, str] = {}
+    diagnostic_counts = _empty_counts()
     collect_errors: list[Mapping[str, Any]] = []
     harness_errors: list[Mapping[str, Any]] = []
     collect_error_files: set[str] = set()
@@ -1132,66 +1151,63 @@ def _build_detail_from_report_records(
         if report_type != "TestReport":
             continue
 
+        if when not in {"setup", "call", "teardown"}:
+            continue
+
         if when == "call":
-            seen_call.add(str(nodeid))
-            call_events.append(rec)
             observations = _process_observations_from_user_properties(rec.get("user_properties"))
             if observations:
                 source_key = json.dumps(rec, sort_keys=True, separators=(",", ":"))
                 if source_key not in execution_records_seen:
                     execution_records_seen.add(source_key)
                     execution_observations.extend(observations)
-        elif when == "setup" and outcome in ("skipped", "failed", "error"):
-            setup_events.append(rec)
-        elif when == "teardown" and outcome in ("failed", "error"):
-            teardown_events.append(rec)
+            for note in _compliance_notes_from_user_properties(
+                rec.get("user_properties"), nodeid=str(nodeid)
+            ):
+                key = tuple((field, note.get(field, "")) for field in _COMPLIANCE_NOTE_FIELDS)
+                if key in seen_compliance_notes:
+                    continue
+                seen_compliance_notes.add(key)
+                compliance_notes.append(note)
 
-    teardown_nodeids = {str(rec.get("nodeid", "")) for rec in teardown_events}
-
-    for rec in call_events:
-        nodeid = rec.get("nodeid", "")
-        raw_outcome = rec.get("outcome", "passed")
-        wasxfail = rec.get("wasxfail")
-        for note in _compliance_notes_from_user_properties(
-            rec.get("user_properties"), nodeid=str(nodeid)
-        ):
-            key = tuple((field, note.get(field, "")) for field in _COMPLIANCE_NOTE_FIELDS)
-            if key in seen_compliance_notes:
-                continue
-            seen_compliance_notes.add(key)
-            compliance_notes.append(note)
-
-        overridden_by_teardown = str(nodeid) in teardown_nodeids
-        if result_record_hook is not None and not overridden_by_teardown:
-            result_record_hook(rec)
         mapped = _map_record_outcome(rec)
-        if not overridden_by_teardown:
-            counts[mapped] = counts.get(mapped, 0) + 1
-
-        if mapped == "skipped":
-            if overridden_by_teardown:
-                continue
-            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
-            if reason.startswith("(") and "Skipped:" in reason:
-                parts = reason.split("Skipped:", 1)
-                if len(parts) > 1:
-                    reason = parts[1].strip().rstrip("')")
-            elif reason.startswith("Skipped:"):
-                reason = reason[8:].strip()
-            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+        if when != "call" and mapped == "passed":
             continue
-        if mapped == "passed":
+        effective_outcome = (
+            mapped
+            if when == "call"
+            or mapped in {"skipped", "xfailed", "xpassed", "crashed", "timeout"}
+            else "error"
+        )
+        logical_nodeid = str(nodeid)
+        if _outcome_is_higher(effective_outcome, logical_outcomes.get(logical_nodeid)):
+            logical_outcomes[logical_nodeid] = effective_outcome
+            if result_record_hook is not None:
+                logical_records[logical_nodeid] = (
+                    rec if effective_outcome == mapped else {**rec, "outcome": effective_outcome}
+                )
+            if effective_outcome == "skipped":
+                reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
+                if "Skipped:" in reason:
+                    reason = reason.split("Skipped:", 1)[1].strip().rstrip("')")
+                logical_skip_reasons[logical_nodeid] = reason
+            else:
+                logical_skip_reasons.pop(logical_nodeid, None)
+
+        if effective_outcome in {"passed", "skipped"}:
             continue
 
         entry: dict[str, Any] = {
             "nodeid": nodeid,
-            "outcome": mapped,
+            "outcome": effective_outcome,
             "duration": rec.get("duration", 0.0),
         }
+        if when != "call":
+            entry["when"] = when
         if rec.get("start") is not None:
             entry["start"] = rec["start"]
-        if wasxfail is not None:
-            entry["wasxfail"] = wasxfail
+        if rec.get("wasxfail") is not None:
+            entry["wasxfail"] = rec["wasxfail"]
         flat = _flatten_longrepr(rec.get("longrepr"))
         if flat:
             entry["longrepr"] = flat
@@ -1206,61 +1222,17 @@ def _build_detail_from_report_records(
                     entry["stderr"] = content
         non_passing.append(entry)
 
-    seen_error_reprs: set[str] = set()
-    for rec in setup_events:
-        nodeid = rec.get("nodeid", "")
-        if nodeid in seen_call:
-            continue
-        raw_outcome = rec.get("outcome", "")
-        if raw_outcome == "skipped":
-            if result_record_hook is not None:
-                result_record_hook(rec)
-            counts["skipped"] = counts.get("skipped", 0) + 1
-            reason = _flatten_longrepr(rec.get("longrepr")) or "skipped"
-            if "Skipped:" in reason:
-                parts = reason.split("Skipped:", 1)
-                reason = parts[1].strip().rstrip("')")
+    for nodeid, effective_outcome in logical_outcomes.items():
+        counts[effective_outcome] = counts.get(effective_outcome, 0) + 1
+        if result_record_hook is not None:
+            result_record_hook(logical_records[nodeid])
+        if effective_outcome == "skipped":
+            reason = logical_skip_reasons[nodeid]
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-            continue
-
-        mapped = _map_record_outcome(rec)
-        effective_outcome = "crashed" if mapped == "crashed" else "error"
-        if result_record_hook is not None:
-            result_record_hook({**rec, "outcome": effective_outcome})
-        counts[effective_outcome] = counts.get(effective_outcome, 0) + 1
-        flat = _flatten_longrepr(rec.get("longrepr"))
-        dedup_key = flat or str(nodeid)
-        if dedup_key in seen_error_reprs:
-            continue
-        seen_error_reprs.add(dedup_key)
-        entry = {
-            "nodeid": nodeid,
-            "outcome": effective_outcome,
-            "duration": rec.get("duration", 0.0),
-        }
-        if flat:
-            entry["longrepr"] = flat
-        non_passing.append(entry)
-
-    for rec in teardown_events:
-        nodeid = rec.get("nodeid", "")
-        mapped = _map_record_outcome(rec)
-        effective_outcome = "crashed" if mapped == "crashed" else "error"
-        if result_record_hook is not None:
-            result_record_hook({**rec, "outcome": effective_outcome})
-        counts[effective_outcome] = counts.get(effective_outcome, 0) + 1
-        flat = _flatten_longrepr(rec.get("longrepr"))
-        entry = {
-            "nodeid": nodeid,
-            "outcome": effective_outcome,
-            "duration": rec.get("duration", 0.0),
-        }
-        if flat:
-            entry["longrepr"] = flat
-        non_passing.append(entry)
 
     for rec in collect_errors:
         counts["error"] = counts.get("error", 0) + 1
+        diagnostic_counts["error"] += 1
         nodeid = str(rec.get("nodeid", ""))
         file_part = nodeid.split("::", 1)[0] or "<collection>"
         collect_error_files.add(file_part)
@@ -1279,6 +1251,7 @@ def _build_detail_from_report_records(
 
     for rec in harness_errors:
         counts["error"] = counts.get("error", 0) + 1
+        diagnostic_counts["error"] += 1
         nodeid = str(rec.get("nodeid") or rec.get("target") or "<harness>")
         harness_entry: dict[str, Any] = {
             "nodeid": nodeid,
@@ -1334,6 +1307,7 @@ def _build_detail_from_report_records(
                 "longrepr": error,
             }
             counts[finalize_effective_outcome] = counts.get(finalize_effective_outcome, 0) + 1
+            diagnostic_counts[finalize_effective_outcome] += 1
             non_passing.append(entry)
             if result_record_hook is not None:
                 result_record_hook(
@@ -1347,7 +1321,13 @@ def _build_detail_from_report_records(
     executions = execution_observations
     if not any(counts.values()) and not compliance_notes and not executions:
         return None
-    result: dict[str, Any] = {"counts": counts, "tests": non_passing}
+    result: dict[str, Any] = {
+        "counts": counts,
+        "tests": non_passing,
+        _LOGICAL_TEST_OUTCOMES: logical_outcomes,
+        _DIAGNOSTIC_COUNTS: diagnostic_counts,
+        _LOGICAL_SKIP_REASONS: logical_skip_reasons,
+    }
     if collect_errors:
         result["incomplete"] = True
         if collect_error_files:

@@ -315,7 +315,13 @@ from pkcs11_check.core._unit_details import (
     _group_results_by_file as _group_results_by_file,
 )
 from pkcs11_check.core._unit_details import (
+    _increment_diagnostic_count as _increment_diagnostic_count,
+)
+from pkcs11_check.core._unit_details import (
     _mechanism_name_set as _mechanism_name_set,
+)
+from pkcs11_check.core._unit_details import (
+    _merge_attempt_details as _merge_attempt_details,
 )
 from pkcs11_check.core._unit_details import (
     _merge_special_entries_into_detail as _merge_special_entries_into_detail,
@@ -447,23 +453,21 @@ def _cache_attempt_report(
         }
         with jsonl_path.open("a", encoding="utf-8") as report_fh:
             report_fh.write(json.dumps(marker) + "\n")
-        if detail is None:
-            detail = {"counts": _empty_counts(), "tests": []}
-        detail.setdefault("counts", _empty_counts())
-        detail.setdefault("tests", [])
+        detail = _merge_special_entries_into_detail(
+            detail,
+            [
+                {
+                    "nodeid": marker_nodeid,
+                    "outcome": "error",
+                    "evidence_type": "harness",
+                    "returncode": returncode,
+                    "completion_verified": False,
+                    "longrepr": diagnostic,
+                }
+            ],
+        )
         detail["incomplete"] = True
         detail["harness_error"] = True
-        detail["counts"]["error"] = detail["counts"].get("error", 0) + 1
-        detail["tests"].append(
-            {
-                "nodeid": marker_nodeid,
-                "outcome": "error",
-                "evidence_type": "harness",
-                "returncode": returncode,
-                "completion_verified": False,
-                "longrepr": diagnostic,
-            }
-        )
     _write_unit_report_record_cache_from_jsonl_paths(state_file, unit, jsonl_paths or [jsonl_path])
     return detail, completion_verified
 
@@ -1601,27 +1605,9 @@ def run_isolated_pytest_units(
 
                                 # Merge partial results
                                 if iter_detail is not None:
-                                    if to_accum_detail is None:
-                                        to_accum_detail = iter_detail
-                                    else:
-                                        for k in to_accum_detail["counts"]:
-                                            to_accum_detail["counts"][k] += iter_detail[
-                                                "counts"
-                                            ].get(k, 0)
-                                        to_accum_detail["tests"].extend(
-                                            iter_detail["tests"],
-                                        )
-                                        for reason, cnt in iter_detail.get(
-                                            "skip_reasons", {}
-                                        ).items():
-                                            to_accum_detail.setdefault("skip_reasons", {})[
-                                                reason
-                                            ] = (
-                                                to_accum_detail.get("skip_reasons", {}).get(
-                                                    reason, 0
-                                                )
-                                                + cnt
-                                            )
+                                    to_accum_detail = _merge_attempt_details(
+                                        to_accum_detail, iter_detail, unit=unit
+                                    )
 
                                 if culprit:
                                     # Confirm timeout culprit individually
@@ -1759,24 +1745,12 @@ def run_isolated_pytest_units(
                                         to_culprit_entry["stdout"] = confirm_out
                                     if confirm_err.strip():
                                         to_culprit_entry["stderr"] = confirm_err
-                                    if to_accum_detail is None:
-                                        to_accum_detail = {
-                                            "counts": _empty_counts(),
-                                            "tests": [],
-                                        }
+                                    to_accum_detail = _merge_special_entries_into_detail(
+                                        to_accum_detail, [to_culprit_entry]
+                                    )
                                     if not confirm_completion_verified:
                                         to_accum_detail["incomplete"] = True
                                         to_accum_detail["harness_error"] = True
-                                    to_accum_detail["tests"].append(to_culprit_entry)
-                                    if culprit_outcome in {
-                                        "crashed",
-                                        "timeout",
-                                        "failed",
-                                        "error",
-                                    }:
-                                        to_accum_detail["counts"][culprit_outcome] = (
-                                            to_accum_detail["counts"].get(culprit_outcome, 0) + 1
-                                        )
                                     if culprit_outcome == "crashed":
                                         confirmed_crash_returncode = confirm_rc
                                     to_deselect.add(culprit)
@@ -1877,14 +1851,9 @@ def run_isolated_pytest_units(
                                         stderr=retry_err,
                                     )
                                     if final_detail is not None:
-                                        if to_accum_detail is None:
-                                            to_accum_detail = final_detail
-                                        else:
-                                            for k in to_accum_detail["counts"]:
-                                                to_accum_detail["counts"][k] += final_detail[
-                                                    "counts"
-                                                ].get(k, 0)
-                                            to_accum_detail["tests"].extend(final_detail["tests"])
+                                        to_accum_detail = _merge_attempt_details(
+                                            to_accum_detail, final_detail, unit=unit
+                                        )
 
                                     # The file timed out at least once. When a
                                     # specific test was confirmed as the culprit
@@ -2204,26 +2173,9 @@ def run_isolated_pytest_units(
 
                                 # Merge partial results
                                 if iter_detail is not None:
-                                    if accumulated_detail is None:
-                                        accumulated_detail = iter_detail
-                                    else:
-                                        for k in accumulated_detail["counts"]:
-                                            accumulated_detail["counts"][k] += iter_detail[
-                                                "counts"
-                                            ].get(k, 0)
-                                        accumulated_detail["tests"].extend(iter_detail["tests"])
-                                        # Merge skip_reasons
-                                        for reason, cnt in iter_detail.get(
-                                            "skip_reasons", {}
-                                        ).items():
-                                            accumulated_detail.setdefault("skip_reasons", {})[
-                                                reason
-                                            ] = (
-                                                accumulated_detail.get("skip_reasons", {}).get(
-                                                    reason, 0
-                                                )
-                                                + cnt
-                                            )
+                                    accumulated_detail = _merge_attempt_details(
+                                        accumulated_detail, iter_detail, unit=unit
+                                    )
 
                                 if culprit:
                                     # Confirm crash by running culprit alone
@@ -2372,23 +2324,18 @@ def run_isolated_pytest_units(
                                         culprit_entry["stdout"] = confirm_out
                                     if confirm_err.strip():
                                         culprit_entry["stderr"] = confirm_err
-                                    if accumulated_detail is None:
-                                        accumulated_detail = {
-                                            "counts": _empty_counts(),
-                                            "tests": [],
-                                        }
+                                    accumulated_detail = _merge_special_entries_into_detail(
+                                        accumulated_detail, [culprit_entry]
+                                    )
                                     if not confirm_completion_verified:
                                         accumulated_detail["incomplete"] = True
                                         accumulated_detail["harness_error"] = True
-                                    accumulated_detail["tests"].append(culprit_entry)
-                                    if culprit_outcome in {"crashed", "timeout", "error"}:
-                                        accumulated_detail["counts"][culprit_outcome] = (
-                                            accumulated_detail["counts"].get(culprit_outcome, 0) + 1
-                                        )
                                     if culprit_outcome == "error":
                                         # The file-level crash remains a finding even when
                                         # confirmation itself only produced harness evidence.
-                                        accumulated_detail["counts"]["crashed"] += 1
+                                        _increment_diagnostic_count(
+                                            accumulated_detail, "crashed"
+                                        )
                                     deselect_set.add(culprit)
                                     crash_count += 1
                                     if (
@@ -2574,16 +2521,9 @@ def run_isolated_pytest_units(
                                         stderr=retry_err,
                                     )
                                     if final_detail is not None:
-                                        if accumulated_detail is None:
-                                            accumulated_detail = final_detail
-                                        else:
-                                            for k in accumulated_detail["counts"]:
-                                                accumulated_detail["counts"][k] += final_detail[
-                                                    "counts"
-                                                ].get(k, 0)
-                                            accumulated_detail["tests"].extend(
-                                                final_detail["tests"]
-                                            )
+                                        accumulated_detail = _merge_attempt_details(
+                                            accumulated_detail, final_detail, unit=unit
+                                        )
 
                                     final_result = FileRunResult(
                                         target=unit,

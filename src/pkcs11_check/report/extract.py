@@ -1,7 +1,8 @@
 """Extract and group at-source classification findings from a pytest report log.
 
-A finding is one serialized :class:`pkcs11_check.classification.Classification`
-dict. They come from two places:
+A finding occurrence is one serialized :class:`pkcs11_check.classification.Classification`
+dict. Counts in this module are occurrence counts, not unique-testcase counts. Occurrences come
+from two places:
 
 * ``report.jsonl`` (pytest-reportlog): a setup/call/teardown ``TestReport`` can carry a
   phase-scoped ``pkcs11_classification`` list in ``user_properties``.
@@ -182,8 +183,8 @@ def extract_groups(
 ) -> list[dict[str, Any]]:
     """Group classification findings from a report log plus crash findings.
 
-    Returns a list of group dicts, each with ``count``, sample ``nodeids``,
-    sorted unique ``vector_ids`` (capped, with a ``+N`` overflow marker),
+    Returns a list of group dicts, each with classification-occurrence ``count``, sample
+    ``nodeids``, sorted unique ``vector_ids`` (capped, with a ``+N`` overflow marker),
     ``sources``, and first-member metadata
     (severity/summary/spec_ref/reason/kind/operation/mechanism/expected_ckr/actual_ckr/detail).
     """

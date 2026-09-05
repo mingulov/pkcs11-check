@@ -115,6 +115,97 @@ def test_supplemental_special_merge_preserves_nested_execution_once() -> None:
     assert merged["test.py"]["executions"] == [observation]
 
 
+def test_attempt_detail_merge_reduces_retry_pass_and_keeps_synthetic_timeout() -> None:
+    unit = "/app/test_demo.py"
+    nodeid = f"{unit}::test_case"
+    failed = report_records_mod._build_detail_from_report_records(
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": nodeid,
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "provider finding",
+            }
+        ]
+    )
+    passed = report_records_mod._build_detail_from_report_records(
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": nodeid,
+                "when": "call",
+                "outcome": "passed",
+            }
+        ]
+    )
+    assert failed is not None
+    assert passed is not None
+
+    merged = unit_details_mod._merge_attempt_details(failed, passed, unit=unit)
+    merged = unit_details_mod._ensure_timeout_recorded(merged, unit)
+
+    assert merged["counts"]["failed"] == 1
+    assert merged["counts"]["passed"] == 0
+    assert merged["counts"]["timeout"] == 1
+    assert sum(merged["counts"].values()) == 2
+    assert [entry["outcome"] for entry in merged["tests"]] == ["failed", "timeout"]
+
+
+def test_supplemental_merge_does_not_restore_retry_pass_in_public_json() -> None:
+    unit = "/app/test_demo.py"
+    nodeid = f"{unit}::test_case"
+    records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "provider finding",
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "passed",
+        },
+    ]
+    base = report_records_mod._build_detail_from_report_records(records)
+    supplemental = report_records_mod._build_detail_from_report_records(records[:1])
+    assert base is not None
+    assert supplemental is not None
+    supplemental["counts"]["passed"] = 1
+    supplemental["counts"]["timeout"] = 1
+    supplemental["tests"].append(
+        {
+            "nodeid": unit,
+            "outcome": "timeout",
+            "longrepr": "file timed out before retry completed",
+        }
+    )
+
+    details = unit_details_mod._merge_supplemental_special_details(
+        {unit: base},
+        {unit: supplemental},
+    )
+    state = FileRunState(
+        units=[unit],
+        fingerprint="",
+        results=[FileRunResult(unit, "timeout", 124, 0.1)],
+    )
+    payload = _build_isolated_json_payload(state, per_unit_details=details)
+
+    counts = payload["units"][0]["counts"]
+    assert counts["failed"] == 1
+    assert counts["passed"] == 0
+    assert counts["timeout"] == 1
+    assert sum(counts.values()) == 2
+    assert [entry["outcome"] for entry in payload["units"][0]["tests"]] == [
+        "failed",
+        "timeout",
+    ]
+
+
 def test_test_level_grouping_preserves_nested_executions() -> None:
     observation = build_process_observation(
         "probe", "probe", 0, -11, parent_nodeid="test.py::test_a"
@@ -7963,6 +8054,281 @@ def test_read_jsonl_results_handles_setup_skip(tmp_path: Path) -> None:
     assert result["counts"]["passed"] == 0
 
 
+def test_setup_xfail_is_a_finding() -> None:
+    from pkcs11_check.core._report_records import _build_detail_from_report_records
+
+    detail = _build_detail_from_report_records(
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_demo.py::test_case",
+                "when": "setup",
+                "outcome": "skipped",
+                "duration": 0.1,
+                "wasxfail": "provider defect",
+                "longrepr": "provider defect",
+            }
+        ]
+    )
+    assert detail is not None
+    assert detail["counts"]["xfailed"] == 1
+    assert detail["counts"]["skipped"] == 0
+    assert detail["tests"][0]["wasxfail"] == "provider defect"
+
+
+@pytest.mark.parametrize(
+    ("first", "expected"),
+    [
+        ({"outcome": "failed", "longrepr": "provider failure"}, "failed"),
+        (
+            {
+                "outcome": "skipped",
+                "wasxfail": "provider deviation",
+                "longrepr": "provider deviation",
+            },
+            "xfailed",
+        ),
+    ],
+    ids=["failed", "xfailed"],
+)
+def test_retry_pass_does_not_erase_prior_finding(
+    first: dict[str, object], expected: str
+) -> None:
+    nodeid = "test_demo.py::test_case"
+    records = [
+        {"$report_type": "IsolatedUnitReport", "target": "test_demo.py", "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "duration": 0.1,
+            **first,
+        },
+        {"$report_type": "IsolatedUnitReport", "target": nodeid, "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": "passed",
+            "duration": 0.1,
+        },
+    ]
+
+    detail = report_records_mod._build_detail_from_report_records(records)
+
+    assert detail is not None
+    assert detail["counts"][expected] == 1
+    assert detail["counts"]["passed"] == 0
+    assert sum(detail["counts"].values()) == 1
+    assert [test["outcome"] for test in detail["tests"]] == [expected]
+
+
+@pytest.mark.parametrize(
+    ("higher", "lower"),
+    [
+        ("timeout", "crashed"),
+        ("crashed", "error"),
+        ("error", "failed"),
+        ("failed", "xpassed"),
+        ("xpassed", "xfailed"),
+        ("xfailed", "passed"),
+        ("passed", "skipped"),
+    ],
+)
+def test_logical_case_uses_conservative_outcome_priority(higher: str, lower: str) -> None:
+    nodeid = "test_demo.py::test_case"
+
+    def report(outcome: str) -> dict[str, object]:
+        record: dict[str, object] = {
+            "$report_type": "TestReport",
+            "nodeid": nodeid,
+            "when": "call",
+            "outcome": outcome,
+        }
+        if outcome == "error":
+            record.update(when="setup", outcome="failed")
+        elif outcome == "crashed":
+            record.update(
+                outcome="failed",
+                user_properties=[
+                    [
+                        "pkcs11_classification",
+                        [{"reason": "crash", "detail": {"windows_status": 0xC0000005}}],
+                    ]
+                ],
+            )
+        elif outcome == "xpassed":
+            record.update(outcome="passed", wasxfail="provider deviation")
+        elif outcome == "xfailed":
+            record.update(outcome="skipped", wasxfail="provider deviation")
+        return record
+
+    detail = report_records_mod._build_detail_from_report_records(
+        [
+            {"$report_type": "IsolatedUnitReport", "target": nodeid, "attempt": 0},
+            report(lower),
+            {"$report_type": "IsolatedUnitReport", "target": nodeid, "attempt": 1},
+            report(higher),
+        ]
+    )
+
+    assert detail is not None
+    assert detail["counts"][higher] == 1
+    assert detail["counts"][lower] == 0
+    assert sum(detail["counts"].values()) == 1
+
+
+def test_physical_file_grouping_reduces_parent_child_attempts_by_alias(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    app_root = tmp_path / "app"
+    target = app_root / "src/test_demo.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(app_root)
+    parent = "src/test_demo.py"
+    child = f"{target}::test_case"
+    raw_nodeid = "app/src/test_demo.py::test_case"
+    aliases = report_records_mod._build_report_owner_aliases(
+        [parent, child],
+        [CollectedPytestItem(raw_nodeid, str(target), [])],
+    )
+    parent_detail = report_records_mod._build_detail_from_report_records(
+        [
+            {"$report_type": "IsolatedUnitReport", "target": parent, "attempt": 0},
+            {
+                "$report_type": "TestReport",
+                "nodeid": raw_nodeid,
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "provider finding",
+            },
+            {
+                "$report_type": "CollectReport",
+                "nodeid": "app/src/test_demo.py",
+                "outcome": "failed",
+                "longrepr": "collection diagnostic",
+            },
+        ]
+    )
+    child_detail = report_records_mod._build_detail_from_report_records(
+        [
+            {"$report_type": "IsolatedUnitReport", "target": child, "attempt": 0},
+            {
+                "$report_type": "TestReport",
+                "nodeid": child,
+                "when": "call",
+                "outcome": "passed",
+            },
+            {
+                "$report_type": "TeardownFinalize",
+                "outcome": "error",
+                "error": "finalization diagnostic",
+            },
+        ]
+    )
+    assert parent_detail is not None
+    assert child_detail is not None
+
+    groups = unit_details_mod._group_results_by_file(
+        [
+            FileRunResult(parent, "failed", 1, 0.1),
+            FileRunResult(child, "passed", 0, 0.1),
+        ],
+        {parent: parent_detail, child: child_detail},
+        owner_aliases=aliases,
+    )
+
+    detail = groups[0][2]
+    assert detail["counts"]["failed"] == 1
+    assert detail["counts"]["passed"] == 0
+    assert detail["counts"]["error"] == 2
+    assert sum(detail["counts"].values()) == 3
+    assert detail["tests"][0]["longrepr"] == "provider finding"
+
+
+def test_marked_owner_anchors_unknown_raw_alias_without_collection_metadata(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "app/test_demo.py"
+    target.parent.mkdir()
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    parent = str(target)
+    child = f"{target}::test_case"
+    raw_relative = "app/test_demo.py::test_case"
+    failed_records = [
+        {"$report_type": "IsolatedUnitReport", "target": parent, "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": raw_relative,
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "provider finding",
+        },
+    ]
+    passed_records = [
+        {"$report_type": "IsolatedUnitReport", "target": child, "attempt": 0},
+        {
+            "$report_type": "TestReport",
+            "nodeid": child,
+            "when": "call",
+            "outcome": "passed",
+        },
+    ]
+    original_records = [dict(record) for record in [*failed_records, *passed_records]]
+    failed_detail = report_records_mod._build_detail_from_report_records(failed_records)
+    passed_detail = report_records_mod._build_detail_from_report_records(passed_records)
+    assert failed_detail is not None
+    assert passed_detail is not None
+    aliases = report_records_mod._build_report_owner_aliases([parent, child])
+
+    groups = unit_details_mod._group_results_by_file(
+        [
+            FileRunResult(parent, "failed", 1, 0.1),
+            FileRunResult(child, "passed", 0, 0.1),
+        ],
+        {parent: failed_detail, child: passed_detail},
+        owner_aliases=aliases,
+    )
+
+    assert groups[0][2]["counts"]["failed"] == 1
+    assert groups[0][2]["counts"]["passed"] == 0
+    assert [dict(record) for record in [*failed_records, *passed_records]] == original_records
+
+
+def test_synthetic_timeout_stays_additive_with_logical_case_metadata(tmp_path: Path) -> None:
+    target = tmp_path / "test_demo.py"
+    nodeid = f"{target}::test_case"
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    detail = report_records_mod._build_detail_from_report_records(
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": nodeid,
+                "when": "call",
+                "outcome": "passed",
+            }
+        ]
+    )
+    assert detail is not None
+    detail = unit_details_mod._ensure_timeout_recorded(detail, str(target))
+    aliases = report_records_mod._build_report_owner_aliases(
+        [str(target)],
+        [CollectedPytestItem(nodeid, str(target), [])],
+    )
+
+    groups = unit_details_mod._group_results_by_file(
+        [FileRunResult(str(target), "timeout", 124, 0.1)],
+        {str(target): detail},
+        owner_aliases=aliases,
+    )
+
+    counts = groups[0][2]["counts"]
+    assert counts["passed"] == 1
+    assert counts["timeout"] == 1
+    assert sum(counts.values()) == 2
+
+
 def test_read_jsonl_results_handles_collect_error(tmp_path: Path) -> None:
     """CollectReport with outcome=error is recorded as an error."""
 
@@ -8392,8 +8758,8 @@ def test_identify_crash_culprit_missing_file(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_read_jsonl_results_deduplicates_fixture_errors(tmp_path: Path) -> None:
-    """Session fixture failure: N identical setup/error entries -> 1 detail + N count."""
+def test_read_jsonl_results_preserves_fixture_error_identities(tmp_path: Path) -> None:
+    """Identical setup errors remain inspectable for every affected testcase."""
     shared_longrepr = "fixture 'db_session' raised RuntimeError: connection failed"
     lines = [
         _jsonl_line(
@@ -8422,7 +8788,11 @@ def test_read_jsonl_results_deduplicates_fixture_errors(tmp_path: Path) -> None:
     assert result is not None
     assert result["counts"]["error"] == 3
     error_entries = [t for t in result["tests"] if t["outcome"] == "error"]
-    assert len(error_entries) == 1  # deduplicated to single detail entry
+    assert {entry["nodeid"] for entry in error_entries} == {
+        "tests/test_a.py::test_one",
+        "tests/test_a.py::test_two",
+        "tests/test_a.py::test_three",
+    }
 
 
 def test_identify_crash_culprit_with_completed_and_partial(tmp_path: Path) -> None:

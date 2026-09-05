@@ -76,6 +76,25 @@ def test_two_records_same_key_merge_into_one_group(tmp_path: Path) -> None:
     assert len(grp["nodeids"]) == 2
 
 
+def test_count_remains_classification_occurrences_across_attempts(tmp_path: Path) -> None:
+    path = tmp_path / "report.jsonl"
+    nodeid = "tests/test_rsa.py::test_case"
+    classification = _classification(vector_id="tc101")
+    lines = [
+        {"$report_type": "IsolatedUnitReport", "target": "tests/test_rsa.py", "attempt": 0},
+        _test_report(nodeid, [classification]),
+        {"$report_type": "IsolatedUnitReport", "target": nodeid, "attempt": 0},
+        _test_report(nodeid, [classification]),
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+
+    groups = extract_groups(path, crashes=[])
+
+    assert len(groups) == 1
+    assert groups[0]["count"] == 2
+    assert groups[0]["nodeids"] == [nodeid]
+
+
 def test_distinct_keys_make_distinct_groups(tmp_path: Path) -> None:
     path = tmp_path / "report.jsonl"
     a = _classification(mechanism="CKM_RSA_PKCS")
