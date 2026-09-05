@@ -8,8 +8,11 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET  # nosec B405
+
+if TYPE_CHECKING:
+    from pkcs11_check.core.test_selection import CaseSelection
 
 from pkcs11_check.core._jsonl_extract import (
     _emit_external_provision_banner as _emit_external_provision_banner,
@@ -315,6 +318,7 @@ def write_isolated_json_report(
     coverage: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
     owner_aliases: _ReportOwnerAliases | None = None,
+    selection: CaseSelection | None = None,
 ) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
     payload = _build_isolated_json_payload(
@@ -323,6 +327,7 @@ def write_isolated_json_report(
         coverage=coverage,
         provenance=provenance,
         owner_aliases=owner_aliases,
+        selection=selection,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -336,6 +341,7 @@ def _build_isolated_json_payload(
     coverage: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
     owner_aliases: _ReportOwnerAliases | None = None,
+    selection: CaseSelection | None = None,
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
@@ -490,6 +496,28 @@ def _build_isolated_json_payload(
         if executions:
             unit["executions"] = executions
 
+        if selection is not None:
+            is_selection_unit = False
+            if file_target == selection.source or normalize_nodeid(file_target) == normalize_nodeid(
+                selection.source
+            ):
+                is_selection_unit = True
+            else:
+                try:
+                    from pkcs11_check.core.test_selection import (
+                        _resolve_candidate_file,
+                        get_testcases_root,
+                    )
+
+                    root = get_testcases_root().resolve()
+                    expected_file = (root / selection.source).resolve()
+                    if _resolve_candidate_file(file_target, expected_file, root) == expected_file:
+                        is_selection_unit = True
+                except (OSError, ValueError):
+                    pass
+            if is_selection_unit:
+                unit["selection_batch_id"] = selection.batch_id
+
         units_out.append(unit)
 
     recovery_events = _recovery_events_from_state(state)
@@ -523,6 +551,8 @@ def _build_isolated_json_payload(
         "summary": summary,
         "units": units_out,
     }
+    if selection is not None:
+        payload["selection"] = selection.to_dict()
     if coverage:
         payload["coverage"] = coverage
     if provenance:
@@ -1098,6 +1128,7 @@ def write_isolated_report(
             state,
             per_unit_details=per_unit_details,
             owner_aliases=owner_aliases,
+            selection=config.selection,
         )
         return
     write_isolated_junit_report(

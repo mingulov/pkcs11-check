@@ -35,8 +35,10 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   },
   "units": [                   // one per isolated unit (file or test)
     {"target": "src/.../test_x.py", "status": "passed",
-     "returncode": 0, "duration_s": 0.0}
+     "returncode": 0, "duration_s": 0.0,
+     "selection_batch_id": "..."} // optional, present for batched case runs
   ],
+  "selection": { ... },        // optional canonical CaseSelection (schema 1)
   "attempt_history": [ ... ],  // optional superseded daemon-recovery attempts
   "recovery_events": [ ... ],  // optional confirmed daemon deaths
   "coverage": { ... },         // optional, == coverage.json
@@ -51,6 +53,33 @@ Drive a gate on `0` vs non-zero; distinguish "findings" (`1`) from "couldn't run
   and JUnit output, even when its per-test children passed.
   `returncode < 0`
   means the unit's subprocess died on a signal (a crash finding).
+- For runs executed under `--selection-manifest`, `results.json` emits top-level `selection`
+  repeating the validated canonical manifest (`schema`, `plan_id`, `batch_id`, `source`,
+  `source_collection_count`, `source_collection_sha256`, `nodeids`), and annotates the selected
+  unit with `selection_batch_id`. The CLI materializes canonical `selection.json` beside JSON
+  artifacts before execution. The runner aggregate file allowance (`_unit_timeout_seconds`)
+  is computed from the selected batch count rather than the full-file count, while the 180s
+  per-test watchdog is unchanged. State fingerprinting binds `selection_batch_id` and
+  `selection_digest`, so `--resume` rejects modified selections and accepts identical selections.
+- The top-level `selection` block is the run's own **proof** that the batch was enforced: it is
+  emitted only when `--selection-manifest` was honored (including the preflight- and
+  collection-failure paths, which still write it). `merge-shards` therefore treats an intact
+  `results.json` that omits `selection` while a `selection.json` sidecar sits beside it as a
+  selection-integrity error and aborts the merge: such a run executed the full source file, not
+  the assigned slice, and must never be stamped with the batch identity. Sidecar recovery is
+  **salvage-only**: it applies when `results.json` is corrupt, missing, or an externally salvaged
+  `partial` payload, and it carries no exact-selection proof, so every recovered shard is warned
+  (`selection membership recovered ... unproven`) and its payload stays `"incomplete": true`.
+- **Salvage contract for external tools.** A tool that rebuilds `results.json` outside the
+  framework (as `docker/optee-pkcs11/salvage-artifacts.py` does from `state.json` when a guest
+  dies before final report generation) MUST emit a top-level `partial` object to declare itself a
+  salvage; that object is what grants it sidecar recovery. Without it, a rebuilt payload is
+  indistinguishable from a normal run whose `--selection-manifest` was dropped, and `merge-shards`
+  rejects it whenever a `selection.json` sidecar is present. `partial` carries
+  `{"reason": str, "completed_units": int, "planned_units": int}`; merge warns with those counts
+  and forces `"incomplete": true` on the shard. A salvaged payload must not fabricate a
+  `selection` block it cannot prove: leave it out and let the sidecar recovery record the
+  membership as unproven.
 - For an isolated attempt with a report log, normal collected pytest exits `0`, `1`, and `5`
   are accepted only when the stream has one valid `SessionStart`/`SessionFinish` pair and the
   finish's integer `exitstatus` exactly matches the subprocess return code. If the finish is
@@ -165,7 +194,12 @@ unbalanced session, or a `TestReport` outside an active session is rejected as i
 ### Sharded runs
 `pkcs11-check shard-units` plans N balanced file batches; run each batch
 (`PKCS11_CHECK_TARGETS`), then `pkcs11-check merge-shards` reproduces the
-single-run artifacts (a split→merge round-trip is exact).
+single-run artifacts (a split→merge round-trip is exact). All selection
+validation (per-shard proof, plan-ID agreement, duplicate batch IDs, overlapping
+node IDs) runs before any output file is written or concatenated, so a rejected
+merge leaves a previous merged artifact set untouched. Merge warnings (lost or
+salvaged shards, and unproven sidecar-recovered batch membership) are printed
+to stderr and retained in `shards.warnings` of the merged `results.json`.
 
 ### Coverage comparison
 `pkcs11-check compare-coverage BASELINE CANDIDATE` compares mechanism coverage

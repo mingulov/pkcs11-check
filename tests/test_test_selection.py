@@ -596,3 +596,308 @@ def test_cctv_mldsa_declares_required_mechanisms() -> None:
         "ML_DSA",
         "ML_DSA_KEY_PAIR_GEN",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Exact case batching tests (Schema 1 selection manifest)
+# ---------------------------------------------------------------------------
+
+
+def test_case_selection_valid_manifest_and_canonical_json(tmp_path: Path) -> None:
+    from pkcs11_check.core.test_selection import (
+        CaseSelection,
+        compute_batch_id,
+        compute_collection_sha256,
+        get_testcases_root,
+        load_case_selection,
+    )
+
+    root = get_testcases_root()
+    # Find a real test file in testcases root
+    target_rel = "test_encrypt.py"
+    assert (root / target_rel).is_file()
+
+    nodeids = [
+        f"{target_rel}::test_roundtrip",
+        f"{target_rel}::test_param[unicode-✓-ü-🔥]",
+        f"{target_rel}::test_param[with spaces and brackets [x]]",
+        r"test_encrypt.py::test_param[with\backslash]",
+    ]
+    col_sha = compute_collection_sha256(nodeids)
+    batch_id = compute_batch_id(
+        source=target_rel,
+        source_collection_count=len(nodeids),
+        source_collection_sha256=col_sha,
+        nodeids=nodeids,
+    )
+    plan_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    manifest_data = {
+        "schema": 1,
+        "plan_id": plan_id,
+        "batch_id": batch_id,
+        "source": target_rel,
+        "source_collection_count": len(nodeids),
+        "source_collection_sha256": col_sha,
+        "nodeids": nodeids,
+    }
+    manifest_file = tmp_path / "selection.json"
+    manifest_file.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    sel = load_case_selection(manifest_file)
+    assert isinstance(sel, CaseSelection)
+    assert sel.schema == 1
+    assert sel.plan_id == plan_id
+    assert sel.batch_id == batch_id
+    assert sel.source == target_rel
+    assert sel.source_collection_count == len(nodeids)
+    assert sel.source_collection_sha256 == col_sha
+    assert sel.nodeids == tuple(nodeids)
+
+    # Check canonical JSON preserves suffix and formatting
+    canonical = sel.canonical_json()
+    roundtrip = json.loads(canonical)
+    assert roundtrip["nodeids"] == nodeids
+    assert roundtrip["batch_id"] == batch_id
+
+
+def test_case_selection_rejects_missing_file(tmp_path: Path) -> None:
+    from pkcs11_check.core.test_selection import load_case_selection
+
+    with pytest.raises(FileNotFoundError):
+        load_case_selection(tmp_path / "nonexistent.json")
+
+
+def test_case_selection_rejects_non_json(tmp_path: Path) -> None:
+    from pkcs11_check.core.test_selection import load_case_selection
+
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON"):
+        load_case_selection(bad_file)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda d: d.update({"extra": 123}), "unknown keys"),
+        (lambda d: d.pop("schema"), "missing required keys"),
+        (lambda d: d.pop("plan_id"), "missing required keys"),
+        (lambda d: d.pop("batch_id"), "missing required keys"),
+        (lambda d: d.pop("source"), "missing required keys"),
+        (lambda d: d.pop("source_collection_count"), "missing required keys"),
+        (lambda d: d.pop("source_collection_sha256"), "missing required keys"),
+        (lambda d: d.pop("nodeids"), "missing required keys"),
+        (lambda d: d.update({"schema": 2}), "schema version"),
+        (lambda d: d.update({"schema": "1"}), "schema"),
+        (lambda d: d.update({"schema": True}), "schema"),
+        (lambda d: d.update({"plan_id": "not-64-chars"}), "plan_id"),
+        (lambda d: d.update({"plan_id": "G" * 64}), "plan_id"),
+        (lambda d: d.update({"batch_id": "0" * 64}), "batch_id mismatch"),
+        (lambda d: d.update({"source_collection_sha256": "invalid"}), "source_collection_sha256"),
+        (lambda d: d.update({"source_collection_count": 0}), "source_collection_count"),
+        (lambda d: d.update({"source_collection_count": -5}), "source_collection_count"),
+        (lambda d: d.update({"source_collection_count": True}), "source_collection_count"),
+        (lambda d: d.update({"source_collection_count": 1}), "count"),  # < len(nodeids)
+        (lambda d: d.update({"nodeids": []}), "empty"),
+        (lambda d: d.update({"nodeids": "string"}), "nodeids"),
+        (lambda d: d.update({"nodeids": [d["nodeids"][0], d["nodeids"][0]]}), "duplicate"),
+        (lambda d: d.update({"nodeids": ["other_file.py::test_foo"]}), "mixed source"),
+        (lambda d: d.update({"nodeids": [d["source"]]}), "malformed"),  # missing ::
+        (lambda d: d.update({"nodeids": [f"::{d['source']}"]}), "malformed"),
+        (lambda d: d.update({"nodeids": [f"{d['source']}::"]}), "malformed"),
+        (lambda d: d.update({"source": ""}), "source"),
+        (lambda d: d.update({"source": "../test_encrypt.py"}), "source"),
+        (lambda d: d.update({"source": "/test_encrypt.py"}), "source"),
+        (lambda d: d.update({"source": r"C:\test_encrypt.py"}), "source"),
+        (lambda d: d.update({"source": r"\\server\share\test_encrypt.py"}), "source"),
+        (lambda d: d.update({"source": "nonexistent_dir/"}), "source"),
+        (lambda d: d.update({"source": "testcases"}), "source"),
+    ],
+)
+def test_case_selection_schema_validation_failures(
+    tmp_path: Path, mutate: object, match: str
+) -> None:
+    from pkcs11_check.core.test_selection import (
+        compute_batch_id,
+        compute_collection_sha256,
+        get_testcases_root,
+        load_case_selection,
+    )
+
+    root = get_testcases_root()
+    target_rel = "test_encrypt.py"
+    assert (root / target_rel).is_file()
+
+    nodeids = [f"{target_rel}::test_a", f"{target_rel}::test_b"]
+    col_sha = compute_collection_sha256(nodeids)
+    batch_id = compute_batch_id(
+        source=target_rel,
+        source_collection_count=10,
+        source_collection_sha256=col_sha,
+        nodeids=nodeids,
+    )
+    plan_id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    manifest_data = {
+        "schema": 1,
+        "plan_id": plan_id,
+        "batch_id": batch_id,
+        "source": target_rel,
+        "source_collection_count": 10,
+        "source_collection_sha256": col_sha,
+        "nodeids": list(nodeids),
+    }
+
+    assert callable(mutate)
+    mutate(manifest_data)
+
+    p = tmp_path / "manifest.json"
+    p.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        load_case_selection(p)
+
+
+@pytest.mark.parametrize(
+    "disabled_entry",
+    [
+        "test_encrypt.py::test_a",
+        "src/pkcs11_check/testcases/test_encrypt.py::test_a",
+        r"src\pkcs11_check\testcases\test_encrypt.py::test_a",
+        None,  # will be computed as absolute path
+    ],
+)
+def test_case_selection_rejects_disabled_intersection(
+    tmp_path: Path, disabled_entry: str | None
+) -> None:
+    from pkcs11_check.core.test_selection import (
+        compute_batch_id,
+        compute_collection_sha256,
+        get_testcases_root,
+        load_case_selection,
+    )
+
+    root = get_testcases_root()
+    target_rel = "test_encrypt.py"
+    nodeids = [f"{target_rel}::test_a", f"{target_rel}::test_b"]
+    col_sha = compute_collection_sha256(nodeids)
+    batch_id = compute_batch_id(
+        source=target_rel,
+        source_collection_count=2,
+        source_collection_sha256=col_sha,
+        nodeids=nodeids,
+    )
+    plan_id = "a" * 64
+
+    manifest_data = {
+        "schema": 1,
+        "plan_id": plan_id,
+        "batch_id": batch_id,
+        "source": target_rel,
+        "source_collection_count": 2,
+        "source_collection_sha256": col_sha,
+        "nodeids": nodeids,
+    }
+    p = tmp_path / "manifest.json"
+    p.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    if disabled_entry is None:
+        disabled = {f"{(root / target_rel).resolve()}::test_a"}
+    else:
+        disabled = {disabled_entry}
+
+    with pytest.raises(ValueError, match="disabled"):
+        load_case_selection(p, disabled_nodeids=disabled)
+
+
+def test_case_selection_rejects_symlink_escape(tmp_path: Path) -> None:
+    from pkcs11_check.core.test_selection import (
+        compute_batch_id,
+        compute_collection_sha256,
+        load_case_selection,
+    )
+
+    mock_root = tmp_path / "testcases"
+    mock_root.mkdir()
+    outside_file = tmp_path / "outside.py"
+    outside_file.write_text("def test_outside(): pass\n", encoding="utf-8")
+
+    symlink_target = mock_root / "symlink_escape.py"
+    try:
+        symlink_target.symlink_to(outside_file)
+    except OSError:
+        pytest.skip("symlinks not supported on this platform/filesystem")
+
+    source = "symlink_escape.py"
+    nodeids = [f"{source}::test_outside"]
+    col_sha = compute_collection_sha256(nodeids)
+    batch_id = compute_batch_id(
+        source=source,
+        source_collection_count=1,
+        source_collection_sha256=col_sha,
+        nodeids=nodeids,
+    )
+    manifest_data = {
+        "schema": 1,
+        "plan_id": "b" * 64,
+        "batch_id": batch_id,
+        "source": source,
+        "source_collection_count": 1,
+        "source_collection_sha256": col_sha,
+        "nodeids": nodeids,
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="escapes testcase root"):
+        load_case_selection(manifest_path, testcases_root=mock_root)
+
+
+def test_portable_nodeid_valid_and_preserves_suffix() -> None:
+    from pkcs11_check.core.test_selection import get_testcases_root, portable_nodeid
+
+    root = get_testcases_root()
+    source = "test_encrypt.py"
+    full_path = (root / source).resolve()
+
+    # Absolute path
+    collected = f"{full_path}::test_foo[param-1]"
+    assert portable_nodeid(source, collected) == f"{source}::test_foo[param-1]"
+
+    # Relative path from project
+    rel_collected = f"src/pkcs11_check/testcases/{source}::test_bar[✓-unicode]"
+    assert portable_nodeid(source, rel_collected) == f"{source}::test_bar[✓-unicode]"
+
+    # Slash-less absolute path (rootdir = /)
+    slashless = f"{full_path.as_posix().lstrip('/')}::test_slashless[1]"
+    assert portable_nodeid(source, slashless) == f"{source}::test_slashless[1]"
+
+    # Suffix with brackets, spaces, backslash
+    raw_tail = r"test_complex[a[b] c\d]"
+    assert portable_nodeid(source, f"{full_path}::{raw_tail}") == f"{source}::{raw_tail}"
+
+
+def test_portable_nodeid_mismatched_source_fails() -> None:
+    from pkcs11_check.core.test_selection import get_testcases_root, portable_nodeid
+
+    root = get_testcases_root()
+    source = "test_encrypt.py"
+    other_file = root / "test_reinitialize.py"
+
+    with pytest.raises(ValueError, match="match"):
+        portable_nodeid(source, f"{other_file}::test_reinit")
+
+
+def test_portable_nodeid_invalid_source_escapes_fails() -> None:
+    from pkcs11_check.core.test_selection import portable_nodeid
+
+    with pytest.raises(ValueError, match="source path"):
+        portable_nodeid("../outside.py", "outside.py::test_case")
+
+
+def test_portable_nodeid_malformed_fails() -> None:
+    from pkcs11_check.core.test_selection import portable_nodeid
+
+    with pytest.raises(ValueError, match="malformed"):
+        portable_nodeid("test_encrypt.py", "no_double_colon")

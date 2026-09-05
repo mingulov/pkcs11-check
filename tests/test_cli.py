@@ -3482,3 +3482,267 @@ def test_completion_helpers_stream_report_logs_once(
         stderr="",
     )
     assert collection_open_count == 1
+
+
+# ---------------------------------------------------------------------------
+# CLI tests for --selection-manifest
+# ---------------------------------------------------------------------------
+
+
+def test_cli_selection_manifest_requires_format_json(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(manifest),
+            "--format",
+            "junit",
+            "--isolation",
+            "file",
+            "test_encrypt.py",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--selection-manifest requires --format json" in result.output
+
+
+def test_cli_selection_manifest_requires_isolation_file(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    for iso in ["auto", "none", "test"]:
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                "/tmp/fake.so",
+                "--selection-manifest",
+                str(manifest),
+                "--format",
+                "json",
+                "--isolation",
+                iso,
+                "test_encrypt.py",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "--selection-manifest requires --isolation file" in result.output
+
+
+def test_cli_selection_manifest_requires_single_bare_file_target(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    # No targets
+    res1 = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(manifest),
+            "--format",
+            "json",
+            "--isolation",
+            "file",
+        ],
+    )
+    assert res1.exit_code == 2
+    assert "requires exactly one bare file target" in res1.output
+
+    # Multiple targets
+    res2 = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(manifest),
+            "--format",
+            "json",
+            "--isolation",
+            "file",
+            "test_a.py",
+            "test_b.py",
+        ],
+    )
+    assert res2.exit_code == 2
+    assert "requires exactly one bare file target" in res2.output
+
+    # Node ID target with ::
+    res3 = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(manifest),
+            "--format",
+            "json",
+            "--isolation",
+            "file",
+            "test_encrypt.py::test_roundtrip",
+        ],
+    )
+    assert res3.exit_code == 2
+    assert "requires exactly one bare file target" in res3.output
+
+
+def test_cli_selection_manifest_rejects_mismatched_target(tmp_path: Path) -> None:
+    from pkcs11_check.core.test_selection import (
+        compute_batch_id,
+        compute_collection_sha256,
+    )
+
+    source = "test_encrypt.py"
+    nodeids = [f"{source}::test_roundtrip"]
+    col_sha = compute_collection_sha256(nodeids)
+    batch_id = compute_batch_id(
+        source=source,
+        source_collection_count=1,
+        source_collection_sha256=col_sha,
+        nodeids=nodeids,
+    )
+    manifest_data = {
+        "schema": 1,
+        "plan_id": "a" * 64,
+        "batch_id": batch_id,
+        "source": source,
+        "source_collection_count": 1,
+        "source_collection_sha256": col_sha,
+        "nodeids": nodeids,
+    }
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(manifest),
+            "--format",
+            "json",
+            "--isolation",
+            "file",
+            "test_reinitialize.py",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "does not match manifest source" in result.output
+
+
+def test_cli_selection_manifest_rejects_nonexistent_or_invalid_file(tmp_path: Path) -> None:
+    # 1. Non-existent file
+    nonexistent = tmp_path / "nonexistent.json"
+    res1 = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(nonexistent),
+            "--format",
+            "json",
+            "--isolation",
+            "file",
+            "test_encrypt.py",
+        ],
+    )
+    assert res1.exit_code == 2
+    assert "invalid selection manifest" in res1.output or "not found" in res1.output
+
+    # 2. Malformed JSON
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("{not valid json", encoding="utf-8")
+    res2 = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            "/tmp/fake.so",
+            "--selection-manifest",
+            str(bad_json),
+            "--format",
+            "json",
+            "--isolation",
+            "file",
+            "test_encrypt.py",
+        ],
+    )
+    assert res2.exit_code == 2
+    assert "invalid selection manifest" in res2.output
+
+
+def test_merge_shards_cli_includes_shard_with_only_selection_json(tmp_path: Path) -> None:
+    from pkcs11_check.core.test_selection import CaseSelection, compute_batch_id
+
+    source = "wycheproof/test_wycheproof_ecdsa.py"
+    nodeids = (f"{source}::test_verify[c1]",)
+    batch_id = compute_batch_id(
+        source=source,
+        source_collection_count=1,
+        source_collection_sha256="a" * 64,
+        nodeids=nodeids,
+    )
+    sel = CaseSelection(
+        schema=1,
+        plan_id="b" * 64,
+        batch_id=batch_id,
+        source=source,
+        source_collection_count=1,
+        source_collection_sha256="a" * 64,
+        nodeids=nodeids,
+    )
+
+    # Shard 0: complete shard
+    s0 = tmp_path / "shard0"
+    s0.mkdir()
+    (s0 / "results.json").write_text(
+        json.dumps(
+            {
+                "tool": "pkcs11-check",
+                "kind": "test-run",
+                "summary": {"passed": 1, "total": 1},
+                "units": [{"target": "test_ok.py", "status": "passed"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (s0 / "report.jsonl").write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_ok.py::test_1",
+                "when": "call",
+                "outcome": "passed",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    # Shard 1: only selection.json (no results.json, no report.jsonl)
+    s1 = tmp_path / "shard1"
+    s1.mkdir()
+    (s1 / "selection.json").write_text(json.dumps(sel.to_dict(), indent=2) + "\n", encoding="utf-8")
+
+    out_dir = tmp_path / "merged"
+    res = runner.invoke(app, ["merge-shards", str(s0), str(s1), "-o", str(out_dir)])
+    assert res.exit_code == 0
+    assert (out_dir / "results.json").exists()
+    merged_data = json.loads((out_dir / "results.json").read_text(encoding="utf-8"))
+    assert merged_data["summary"]["incomplete"] is True
+    assert any(
+        "shard1" in w and "LOST" in w for w in merged_data.get("shards", {}).get("warnings", [])
+    )

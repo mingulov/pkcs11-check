@@ -207,8 +207,15 @@ from pkcs11_check._plugin_state import (
 from pkcs11_check._plugin_state import (
     _is_testcase_item as _is_testcase_item,
 )
-from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.test_selection import parse_disabled_nodeids
+from pkcs11_check.core.nodeids import item_nodeid, normalize_nodeid
+from pkcs11_check.core.test_selection import (
+    _resolve_candidate_file,
+    compute_collection_sha256,
+    get_testcases_root,
+    load_case_selection,
+    parse_disabled_nodeids,
+    portable_nodeid,
+)
 
 # Re-export fixtures so pytest discovers them
 from pkcs11_check.fixtures import (  # noqa: F401
@@ -559,10 +566,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Apply collection-safe static skips and file-based deselection."""
-    # File-based deselect: read nodeids from env-specified file and remove
-    # matching items.  Used by the iterative deselect loop in file_runner.py
-    # to avoid ARG_MAX limits on --deselect arguments.
+    selection_manifest = os.environ.get("PKCS11_CHECK_SELECTION_MANIFEST")
     deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
+    deselect_nodeids: set[str] = set()
     if deselect_file:
         try:
             deselect_nodeids = set(
@@ -570,17 +576,100 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             )
         except (FileNotFoundError, OSError):
             deselect_nodeids = set()
+
+    if selection_manifest:
+        try:
+            selection = load_case_selection(
+                selection_manifest,
+                disabled_nodeids=deselect_nodeids if deselect_nodeids else None,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            raise pytest.UsageError(f"invalid selection manifest: {exc}") from exc
+
+        portable_map: list[tuple[pytest.Item, str]] = []
+        for item in items:
+            raw_id = item_nodeid(item)
+            try:
+                p_id = portable_nodeid(selection.source, raw_id)
+            except ValueError as exc:
+                raise pytest.UsageError(
+                    f"collected item {raw_id!r} does not match manifest source "
+                    f"{selection.source!r}: {exc}"
+                ) from exc
+            portable_map.append((item, p_id))
+
+        disabled_set: set[str] = set()
         if deselect_nodeids:
-            remaining: list[pytest.Item] = []
-            deselected: list[pytest.Item] = []
-            for item in items:
-                if normalize_nodeid(item.nodeid) in deselect_nodeids:
-                    deselected.append(item)
+            try:
+                root = get_testcases_root().resolve()
+                expected_file = (root / selection.source).resolve()
+            except (OSError, ValueError):
+                root = None
+                expected_file = None
+
+            for d in deselect_nodeids:
+                d_norm = normalize_nodeid(d)
+                d_head, d_sep, d_tail = d_norm.partition("::")
+                if expected_file is not None and root is not None and d_sep and d_tail:
+                    resolved = _resolve_candidate_file(d_head, expected_file, root)
+                    if resolved == expected_file:
+                        disabled_set.add(f"{selection.source}::{d_tail}")
+                    else:
+                        disabled_set.add(d_norm)
                 else:
-                    remaining.append(item)
-            if deselected:
-                config.hook.pytest_deselected(items=deselected)
-                items[:] = remaining
+                    disabled_set.add(d_norm)
+
+        effective_items: list[tuple[pytest.Item, str]] = []
+        disabled_items: list[pytest.Item] = []
+        for item, p_id in portable_map:
+            norm_raw = normalize_nodeid(item_nodeid(item))
+            norm_nodeid = normalize_nodeid(getattr(item, "nodeid", norm_raw))
+            if p_id in disabled_set or norm_raw in disabled_set or norm_nodeid in disabled_set:
+                disabled_items.append(item)
+            else:
+                effective_items.append((item, p_id))
+
+        effective_portable = [p_id for _, p_id in effective_items]
+        if len(effective_portable) != selection.source_collection_count:
+            raise pytest.UsageError(
+                f"source_collection_count mismatch for {selection.source}: "
+                f"expected {selection.source_collection_count}, collected {len(effective_portable)}"
+            )
+
+        effective_sha = compute_collection_sha256(effective_portable)
+        if effective_sha != selection.source_collection_sha256:
+            raise pytest.UsageError(
+                f"source_collection_sha256 mismatch for {selection.source}: "
+                f"expected {selection.source_collection_sha256}, got {effective_sha}"
+            )
+
+        assigned_set = set(selection.nodeids)
+        missing = assigned_set - set(effective_portable)
+        if missing:
+            raise pytest.UsageError(f"selected nodeids missing from collection: {sorted(missing)}")
+
+        selected_items: list[pytest.Item] = []
+        deselected_items: list[pytest.Item] = list(disabled_items)
+        for item, p_id in effective_items:
+            if p_id in assigned_set:
+                selected_items.append(item)
+            else:
+                deselected_items.append(item)
+
+        if deselected_items:
+            config.hook.pytest_deselected(items=deselected_items)
+        items[:] = selected_items
+    elif deselect_nodeids:
+        remaining: list[pytest.Item] = []
+        deselected: list[pytest.Item] = []
+        for item in items:
+            if normalize_nodeid(item.nodeid) in deselect_nodeids:
+                deselected.append(item)
+            else:
+                remaining.append(item)
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+            items[:] = remaining
 
     module_path = config.getoption("p11_module", default=None)
 
