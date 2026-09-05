@@ -872,9 +872,10 @@ def test_process_observations_checkpoint_before_empty_escalation(
         "retry",
         "confirmation",
         "retry",
+        "confirmation",
     ]
-    assert [item["attempt"] for item in saved.process_observations] == [0, 0, 0, 1, 1, 2, 2]
-    assert len(calls) == 7
+    assert [item["attempt"] for item in saved.process_observations] == [0, 0, 0, 1, 1, 2, 2, 3]
+    assert len(calls) == 8
 
 
 def test_old_or_malformed_process_observations_load_empty(tmp_path: Path) -> None:
@@ -4185,6 +4186,90 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
         "TestReport",
         "CoverageReport",
     ]
+
+
+def test_crash_escalation_excludes_completed_findings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = str(tmp_path / "test_a.py")
+    Path(target).write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    completed_finding = f"{target}::test_finding"
+    culprit = f"{target}::test_crash"
+    remaining = f"{target}::test_remaining"
+    report_path = tmp_path / "results.json"
+    calls: list[str] = []
+    file_runs = 0
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        timeout: int = 0,
+    ) -> tuple[int, str, str]:
+        del timeout
+        nonlocal file_runs
+        unit = cmd[3]
+        calls.append(unit)
+        report_log_path = Path(cmd[cmd.index("--report-log") + 1])
+        if unit == target:
+            file_runs += 1
+            if file_runs == 1:
+                report_log_path.write_text(
+                    "\n".join(
+                        [
+                            json.dumps({"$report_type": "SessionStart"}),
+                            _jsonl_line(nodeid=completed_finding, when="setup"),
+                            _jsonl_line(
+                                nodeid=completed_finding,
+                                when="call",
+                                outcome="failed",
+                                longrepr="provider finding",
+                            ),
+                            _jsonl_line(nodeid=completed_finding, when="teardown"),
+                            _jsonl_line(nodeid=culprit, when="setup"),
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            else:
+                report_log_path.write_text("", encoding="utf-8")
+            return -11, "", "segmentation fault"
+        if unit == culprit:
+            return -11, "", "segmentation fault"
+        _write_session_report(cmd, finish=0)
+        return 0, "", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    monkeypatch.setattr(
+        escalation_mod,
+        "collect_pytest_item_metadata",
+        lambda *_args, **_kwargs: [
+            CollectedPytestItem(nodeid, target, [])
+            for nodeid in (completed_finding, culprit, remaining)
+        ],
+    )
+
+    exit_code = run_isolated_pytest_units(
+        [target],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=tmp_path / "state.json",
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert exit_code == 1
+    assert calls == [target, culprit, target, remaining]
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    parent = next(unit for unit in report["units"] if unit["target"] == target)
+    by_nodeid = {test["nodeid"]: test for test in parent["tests"]}
+    assert by_nodeid[completed_finding]["outcome"] == "failed"
+    assert by_nodeid[culprit]["outcome"] == "crashed"
 
 
 @pytest.mark.parametrize(
@@ -8136,6 +8221,7 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
     units = [str(target)]
     pytest_args = ["--p11-module", str(module)]
     state_file = tmp_path / "state.json"
+    report_path = tmp_path / "results.json"
     calls: list[tuple[str, list[str]]] = []
     timeout_count = 0
 
@@ -8177,6 +8263,44 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
                             when="teardown",
                             outcome="passed",
                         ),
+                        *(
+                            [
+                                _jsonl_line(
+                                    nodeid=f"{target}::test_failed4",
+                                    when="setup",
+                                    outcome="passed",
+                                ),
+                                _jsonl_line(
+                                    nodeid=f"{target}::test_failed4",
+                                    when="call",
+                                    outcome="failed",
+                                    longrepr="final-attempt failure",
+                                ),
+                                _jsonl_line(
+                                    nodeid=f"{target}::test_failed4",
+                                    when="teardown",
+                                    outcome="passed",
+                                ),
+                                _jsonl_line(
+                                    nodeid=f"{target}::test_xfailed4",
+                                    when="setup",
+                                    outcome="passed",
+                                ),
+                                _jsonl_line(
+                                    nodeid=f"{target}::test_xfailed4",
+                                    when="call",
+                                    outcome="skipped",
+                                    wasxfail="expected provider deviation",
+                                ),
+                                _jsonl_line(
+                                    nodeid=f"{target}::test_xfailed4",
+                                    when="teardown",
+                                    outcome="passed",
+                                ),
+                            ]
+                            if timeout_count == 4
+                            else []
+                        ),
                         _jsonl_line(
                             nodeid=f"{target}::test_slow{timeout_count}",
                             when="setup",
@@ -8191,9 +8315,18 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
 
         # Culprit confirmations pass
         if "::" in t and "test_slow" in t:
+            assert report_log_path is not None
+            report_log_path.write_text(
+                "\n".join(
+                    _session_bookends([_jsonl_line(nodeid=t, when="call", outcome="passed")])
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             return (0, "", "")
 
         # Escalated per-test units pass
+        _write_session_report(cmd, finish=0)
         return (0, "", "")
 
     monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
@@ -8204,9 +8337,13 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
                 f"{target}::test_done1",
                 f"{target}::test_done2",
                 f"{target}::test_done3",
+                f"{target}::test_done4",
+                f"{target}::test_failed4",
+                f"{target}::test_xfailed4",
                 f"{target}::test_slow1",
                 f"{target}::test_slow2",
                 f"{target}::test_slow3",
+                f"{target}::test_slow4",
                 f"{target}::test_remaining",
             ]
             if granularity == "test"
@@ -8216,6 +8353,19 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
     monkeypatch.setattr(file_runner_mod, "discover_pytest_units", _fake_discover)
     monkeypatch.setattr(unit_discovery_mod, "discover_pytest_units", _fake_discover)
     monkeypatch.setattr(escalation_mod, "discover_pytest_units", _fake_discover)
+    monkeypatch.setattr(
+        escalation_mod,
+        "collect_pytest_item_metadata",
+        lambda *_args, **_kwargs: [
+            CollectedPytestItem(nodeid, str(target), [])
+            for nodeid in _fake_discover(
+                [str(target)],
+                target.parent,
+                granularity="test",
+                pytest_args=pytest_args,
+            )
+        ],
+    )
 
     exit_code = run_isolated_pytest_units(
         units,
@@ -8223,7 +8373,7 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
         timeout=12,
         state_file=state_file,
         policy_file=None,
-        report_config=None,
+        report_config=IsolatedReportConfig("json", report_path),
         resume=False,
         stop_on_failure=False,
         console=Console(file=StringIO(), force_terminal=False),
@@ -8236,21 +8386,41 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
     # File should be escalated
     file_results = [r for r in saved.results if r.target == str(target)]
     assert any(r.status == "escalated" for r in file_results)
-    # Escalated units should NOT include completed tests (test_done1..3)
-    # or confirmed culprits (test_slow1..3)
+    # Escalated units should NOT include completed tests (test_done1..4)
+    # or confirmed culprits (test_slow1..4)
     escalated_targets = [u for u in saved.units if "::" in u]
     completed_and_culprits = {
         f"{target}::test_done1",
         f"{target}::test_done2",
         f"{target}::test_done3",
+        f"{target}::test_done4",
+        f"{target}::test_failed4",
+        f"{target}::test_xfailed4",
         f"{target}::test_slow1",
         f"{target}::test_slow2",
         f"{target}::test_slow3",
+        f"{target}::test_slow4",
     }
     for nodeid in escalated_targets:
         assert nodeid not in completed_and_culprits, (
             f"Escalated unit {nodeid} should have been excluded"
         )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert any(
+        test["nodeid"] == f"{target}::test_slow4"
+        for unit in report["units"]
+        for test in unit.get("tests", [])
+    )
+    final_attempt_findings = {
+        test["nodeid"]: test["outcome"]
+        for unit in report["units"]
+        for test in unit.get("tests", [])
+        if test["nodeid"] in {f"{target}::test_failed4", f"{target}::test_xfailed4"}
+    }
+    assert final_attempt_findings == {
+        f"{target}::test_failed4": "failed",
+        f"{target}::test_xfailed4": "xfailed",
+    }
 
 
 def test_timeout_does_not_promote_to_policy(

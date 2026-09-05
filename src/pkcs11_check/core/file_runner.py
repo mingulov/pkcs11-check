@@ -1556,7 +1556,7 @@ def run_isolated_pytest_units(
                         all_confirmation_completion_verified = True
 
                         try:
-                            while retry_count < _MAX_TIMEOUT_RETRIES:
+                            while True:
                                 # Stream JSONL once for completed + culprit + detail.
                                 if to_iter_jsonl is not None:
                                     (
@@ -1770,6 +1770,9 @@ def run_isolated_pytest_units(
                                 if not to_deselect:
                                     escalate = True
                                     break
+                                if retry_count >= _MAX_TIMEOUT_RETRIES:
+                                    escalate = True
+                                    break
 
                                 # -- retry file with deselect --
                                 deselect_path = write_deselect_file(to_deselect)
@@ -1965,10 +1968,6 @@ def run_isolated_pytest_units(
                                 )
                                 to_iter_jsonl = retry_jsonl_path
                                 # Continue the while loop
-
-                            else:
-                                # while loop exhausted retries without break
-                                escalate = True
 
                         finally:
                             all_iter_jsonls = to_report_jsonl_paths
@@ -2681,6 +2680,7 @@ def run_isolated_pytest_units(
                             env=env,
                             console=console,
                             disabled_nodeids=unit_disabled_nodeids,
+                            exclude_nodeids=deselect_set,
                             baseline_fingerprint=baseline_fingerprint,
                         )
                         if escalated_units:
