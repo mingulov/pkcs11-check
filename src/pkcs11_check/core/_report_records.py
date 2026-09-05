@@ -757,9 +757,7 @@ def _infer_unit_target_from_records(
         }:
             continue
         field = (
-            "target"
-            if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE}
-            else "nodeid"
+            "target" if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE} else "nodeid"
         )
         value = str(record.get(field, "")).strip()
         if report_type == "CollectReport" and not value and record.get("outcome") == "passed":
@@ -768,8 +766,7 @@ def _infer_unit_target_from_records(
             owner = aliases.candidate_for_target(value) if value else None
             if owner is None:
                 raise ValueError(
-                    "cannot safely reconstruct report ownership; "
-                    f"unknown owner marker {value!r}"
+                    f"cannot safely reconstruct report ownership; unknown owner marker {value!r}"
                 )
             if explicit_owner is not None and owner != explicit_owner:
                 raise ValueError(
@@ -811,8 +808,7 @@ def _infer_unit_target_from_records(
     unique_owners = list(dict.fromkeys(owners))
     if len(unique_owners) != 1:
         raise ValueError(
-            "ambiguous report ownership within one legacy record chunk: "
-            + ", ".join(unique_owners)
+            "ambiguous report ownership within one legacy record chunk: " + ", ".join(unique_owners)
         )
     return unique_owners[0]
 
@@ -833,9 +829,7 @@ def _unit_candidate_from_record(
         _ISOLATED_UNIT_REPORT_TYPE,
     }:
         return None
-    field = (
-        "target" if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE} else "nodeid"
-    )
+    field = "target" if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE} else "nodeid"
     nodeid = str(record.get(field, "")).strip()
     if not nodeid:
         return None
@@ -904,10 +898,7 @@ def _iter_unit_report_record_chunks_from_jsonl(
             candidate_targets,
             owner_aliases=aliases,
         )
-        if (
-            current_chunk
-            and current_chunk[0].get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE
-        ):
+        if current_chunk and current_chunk[0].get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE:
             record_target = current_target
         if (
             current_chunk
@@ -992,8 +983,7 @@ def _seed_missing_report_record_caches_from_jsonl(
                 tmp_paths[unit] = tmp_path
             with tmp_path.open("a", encoding="utf-8") as out_fh:
                 if not any(
-                    record.get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE
-                    for record in records
+                    record.get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE for record in records
                 ):
                     attempt = attempts_by_unit.get(unit, 0)
                     out_fh.write(json.dumps(_isolated_unit_report(unit, attempt)) + "\n")
@@ -1175,8 +1165,7 @@ def _build_detail_from_report_records(
             continue
         effective_outcome = (
             mapped
-            if when == "call"
-            or mapped in {"skipped", "xfailed", "xpassed", "crashed", "timeout"}
+            if when == "call" or mapped in {"skipped", "xfailed", "xpassed", "crashed", "timeout"}
             else "error"
         )
         logical_nodeid = str(nodeid)

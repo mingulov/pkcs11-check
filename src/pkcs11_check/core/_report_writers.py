@@ -735,11 +735,12 @@ def write_isolated_junit_report(
         reasons = detail.get("skip_reasons")
         if not isinstance(reasons, Mapping):
             return "tests were skipped"
-        return "; ".join(
-            f"{reason} ({count})"
-            for reason, count in reasons.items()
-            if isinstance(count, int)
-        ) or "tests were skipped"
+        return (
+            "; ".join(
+                f"{reason} ({count})" for reason, count in reasons.items() if isinstance(count, int)
+            )
+            or "tests were skipped"
+        )
 
     def has_collection_error(result: FileRunResult) -> bool:
         return bool(collection_entries(result))
@@ -830,8 +831,7 @@ def write_isolated_junit_report(
             _has_harness,
         ) in effective_results
         if (
-            result.completion_verified
-            and (status == "empty" or genuine_skip_only(_detail, status))
+            result.completion_verified and (status == "empty" or genuine_skip_only(_detail, status))
         )
     )
     duration_s = sum(result.duration_s for result, *_rest in effective_results)

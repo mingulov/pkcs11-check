@@ -2333,9 +2333,7 @@ def run_isolated_pytest_units(
                                     if culprit_outcome == "error":
                                         # The file-level crash remains a finding even when
                                         # confirmation itself only produced harness evidence.
-                                        _increment_diagnostic_count(
-                                            accumulated_detail, "crashed"
-                                        )
+                                        _increment_diagnostic_count(accumulated_detail, "crashed")
                                     deselect_set.add(culprit)
                                     crash_count += 1
                                     if (

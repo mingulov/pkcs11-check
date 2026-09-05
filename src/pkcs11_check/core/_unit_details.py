@@ -298,9 +298,7 @@ def _group_results_by_file(
     order: list[str] = []
     for result in results:
         file_key = (
-            owner_aliases.file_identity(result.target)
-            if owner_aliases is not None
-            else None
+            owner_aliases.file_identity(result.target) if owner_aliases is not None else None
         ) or result.target.split("::", 1)[0]
         if file_key not in groups:
             groups[file_key] = []
@@ -344,9 +342,7 @@ def _group_results_by_file(
                         if owner_aliases is not None
                         else None
                     ) or normalize_nodeid(_absolute_nodeid(file_key, raw_nodeid))
-                    if _outcome_is_higher(
-                        raw_outcome, merged_logical_outcomes.get(logical_nodeid)
-                    ):
+                    if _outcome_is_higher(raw_outcome, merged_logical_outcomes.get(logical_nodeid)):
                         merged_logical_outcomes[logical_nodeid] = raw_outcome
                         if (
                             raw_outcome == "skipped"
@@ -522,8 +518,7 @@ def _merge_attempt_details(
     logical_skip_reasons: dict[str, str] = {}
     diagnostic_counts = _empty_counts()
     has_logical_metadata = any(
-        isinstance(detail.get(_LOGICAL_TEST_OUTCOMES), Mapping)
-        for detail in (merged, source)
+        isinstance(detail.get(_LOGICAL_TEST_OUTCOMES), Mapping) for detail in (merged, source)
     )
 
     if has_logical_metadata:
@@ -561,9 +556,7 @@ def _merge_attempt_details(
                 for outcome in diagnostic_counts:
                     value = raw_counts.get(outcome, 0)
                     if isinstance(value, int):
-                        diagnostic_counts[outcome] += max(
-                            value - represented_counts[outcome], 0
-                        )
+                        diagnostic_counts[outcome] += max(value - represented_counts[outcome], 0)
 
         counts = dict(diagnostic_counts)
         for outcome in logical_outcomes.values():
@@ -936,9 +929,7 @@ def _merge_supplemental_special_details(
                     else 0
                 )
                 supplemental_count = explicit_diagnostic_count + max(
-                    source_count
-                    - source_logical_counts[outcome]
-                    - explicit_diagnostic_count,
+                    source_count - source_logical_counts[outcome] - explicit_diagnostic_count,
                     0,
                 )
                 if isinstance(target_diagnostic_counts, dict):
@@ -947,9 +938,7 @@ def _merge_supplemental_special_details(
                         target["counts"][outcome] += supplemental_count - current_count
                         target_diagnostic_counts[outcome] = supplemental_count
                 else:
-                    target["counts"][outcome] = max(
-                        target["counts"].get(outcome, 0), source_count
-                    )
+                    target["counts"][outcome] = max(target["counts"].get(outcome, 0), source_count)
 
     return merged
 

@@ -4848,8 +4848,7 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     report_records = [
         record
         for record in records
-        if record["$report_type"]
-        not in {"SessionStart", "SessionFinish", "IsolatedUnitReport"}
+        if record["$report_type"] not in {"SessionStart", "SessionFinish", "IsolatedUnitReport"}
     ]
     assert [record.get("nodeid") for record in report_records] == [
         "test_a.py::test_done",
@@ -7903,11 +7902,7 @@ def test_junit_legacy_inferred_collection_and_harness_stay_out_of_provider_outpu
         for case in root.findall("testcase")
         if case.find("error[@type='incomplete']") is not None
     )
-    provider_cases = [
-        case
-        for case in root.findall("testcase")
-        if case.find("failure") is not None
-    ]
+    provider_cases = [case for case in root.findall("testcase") if case.find("failure") is not None]
     assert len(provider_cases) == 2
     for case in provider_cases:
         serialized = ET.tostring(case, encoding="unicode")
@@ -8395,9 +8390,7 @@ def test_setup_xfail_is_a_finding() -> None:
     ],
     ids=["failed", "xfailed"],
 )
-def test_retry_pass_does_not_erase_prior_finding(
-    first: dict[str, object], expected: str
-) -> None:
+def test_retry_pass_does_not_erase_prior_finding(first: dict[str, object], expected: str) -> None:
     nodeid = "test_demo.py::test_case"
     records = [
         {"$report_type": "IsolatedUnitReport", "target": "test_demo.py", "attempt": 0},
@@ -9585,9 +9578,7 @@ def test_progressive_timeout_retry_exhausted_escalates_remaining(
         if "::" in t and "test_slow" in t:
             assert report_log_path is not None
             report_log_path.write_text(
-                "\n".join(
-                    _session_bookends([_jsonl_line(nodeid=t, when="call", outcome="passed")])
-                )
+                "\n".join(_session_bookends([_jsonl_line(nodeid=t, when="call", outcome="passed")]))
                 + "\n",
                 encoding="utf-8",
             )

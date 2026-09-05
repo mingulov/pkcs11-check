@@ -692,7 +692,11 @@ def test_resume_same_unit_state_and_cache_keep_attempt_multiplicity(tmp_path: Pa
         output_path=report_path,
     )
     records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
-    assert [record["observation"]["attempt"] for record in records] == [0, 1]
+    process_records = [record for record in records if record["$report_type"] == "ProcessReport"]
+    assert [record["observation"]["attempt"] for record in process_records] == [0, 1]
+    assert [record for record in records if record["$report_type"] == "IsolatedUnitReport"] == [
+        {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0}
+    ]
 
     details = _build_per_unit_details_from_record_sources(
         state_path,
@@ -741,7 +745,11 @@ def test_incomplete_cache_attempt_is_reconciled_with_saved_state_attempt(
         output_path=report_path,
     )
     records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
-    assert [record["observation"]["attempt"] for record in records] == [0, 1]
+    process_records = [record for record in records if record["$report_type"] == "ProcessReport"]
+    assert [record["observation"]["attempt"] for record in process_records] == [0, 1]
+    assert [record for record in records if record["$report_type"] == "IsolatedUnitReport"] == [
+        {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0}
+    ]
 
     details = _build_per_unit_details_from_record_sources(
         state_path,
@@ -877,7 +885,12 @@ def test_complete_state_ignores_shuffled_cache_process_reports(tmp_path: Path) -
         output_path=report_path,
     )
     records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
-    assert [record["observation"]["target"] for record in records] == ["old.py", "new.py"]
+    process_records = [record for record in records if record["$report_type"] == "ProcessReport"]
+    assert [record["observation"]["target"] for record in process_records] == ["old.py", "new.py"]
+    assert [record for record in records if record["$report_type"] == "IsolatedUnitReport"] == [
+        {"$report_type": "IsolatedUnitReport", "target": "new.py", "attempt": 0},
+        {"$report_type": "IsolatedUnitReport", "target": "old.py", "attempt": 0},
+    ]
 
     details = _build_per_unit_details_from_record_sources(
         state_path,
@@ -1200,7 +1213,8 @@ def test_saved_process_observations_emit_once_and_feed_unified_executions(tmp_pa
     )
     records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
     assert records[0] == {"$report_type": "ProcessReport", "target": "a.py", "observation": outer}
-    assert records[1] == call
+    assert records[1] == {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0}
+    assert records[2] == call
 
     payload = _build_isolated_json_payload(
         state,
