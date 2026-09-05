@@ -12,6 +12,7 @@ import json
 import shutil
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,7 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
+from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.crash_codes import (
     CTYPES_ACCESS_VIOLATION,
     ctypes_access_violation_from_stderr,
@@ -87,6 +89,157 @@ from pkcs11_check.core.report_log import (
 from pkcs11_check.core.report_log import (
     map_report_record_outcome as _map_record_outcome,
 )
+
+_ISOLATED_UNIT_REPORT_TYPE = "IsolatedUnitReport"
+
+
+def _resolved_report_file(path: str, cwd: Path) -> str:
+    normalized = normalize_nodeid(path)
+    candidate = Path(normalized)
+    if not candidate.is_absolute():
+        candidate = cwd / candidate
+    return normalize_nodeid(str(candidate.resolve()))
+
+
+@dataclass(frozen=True)
+class _ReportOwnerAliases:
+    """Authoritative report aliases derived from scheduling and collection metadata."""
+
+    file_identities_by_alias: Mapping[str, str]
+    file_identities_by_candidate: Mapping[str, str]
+    candidates_by_alias: Mapping[str, str]
+    candidates_by_canonical_nodeid: Mapping[str, str]
+    file_owners: Mapping[str, str]
+    report_targets: Mapping[str, str]
+
+    def file_identity(self, target: str) -> str | None:
+        normalized = normalize_nodeid(target.strip())
+        candidate_identity = self.file_identities_by_candidate.get(normalized)
+        if candidate_identity is not None:
+            return candidate_identity
+        return self.file_identities_by_alias.get(normalized.split("::", 1)[0])
+
+    def canonical_nodeid(self, nodeid: str) -> str | None:
+        normalized = normalize_nodeid(nodeid.strip())
+        file_identity = self.file_identity(normalized)
+        if file_identity is None:
+            return None
+        return normalize_nodeid(_absolute_nodeid(file_identity, normalized))
+
+    def owner_for_nodeid(self, nodeid: str) -> str | None:
+        normalized = normalize_nodeid(nodeid.strip())
+        direct = self.candidates_by_alias.get(normalized)
+        if direct is not None:
+            file_identity = self.file_identity(direct)
+            if file_identity is not None and file_identity in self.file_owners:
+                return self.file_owners[file_identity]
+            return direct
+        file_identity = self.file_identity(normalized)
+        if file_identity is None:
+            return None
+        file_owner = self.file_owners.get(file_identity)
+        if file_owner is not None:
+            return file_owner
+        canonical = self.canonical_nodeid(normalized)
+        return self.candidates_by_canonical_nodeid.get(canonical or "")
+
+    def candidate_for_target(self, target: str) -> str | None:
+        normalized = normalize_nodeid(target.strip())
+        direct = self.candidates_by_alias.get(normalized)
+        if direct is not None:
+            return direct
+        canonical = self.canonical_nodeid(normalized)
+        return self.candidates_by_canonical_nodeid.get(canonical or "")
+
+    def possible_legacy_owners(self, nodeid: str) -> frozenset[str]:
+        file_identity = self.file_identity(nodeid)
+        if file_identity is None:
+            return frozenset()
+        owners = {self.file_owners[file_identity]} if file_identity in self.file_owners else set()
+        canonical = self.canonical_nodeid(nodeid)
+        exact = self.candidates_by_canonical_nodeid.get(canonical or "")
+        if exact is not None:
+            owners.add(exact)
+        return frozenset(owners)
+
+    def report_target(self, file_identity: str) -> str | None:
+        return self.report_targets.get(file_identity)
+
+
+def _build_report_owner_aliases(
+    candidate_targets: Sequence[str],
+    collected_items: Sequence[CollectedPytestItem] = (),
+    *,
+    cwd: Path | None = None,
+) -> _ReportOwnerAliases:
+    """Build the one report-owner index used by resume extraction and reporting."""
+    base = (cwd or Path.cwd()).resolve()
+    file_identities_by_alias: dict[str, str] = {}
+    file_identities_by_candidate: dict[str, str] = {}
+    candidates_by_alias: dict[str, str] = {}
+    candidates_by_canonical_nodeid: dict[str, str] = {}
+    candidates_by_file: dict[str, list[str]] = {}
+
+    def register_file_alias(alias: str, file_identity: str) -> None:
+        normalized_alias = normalize_nodeid(alias.strip()).split("::", 1)[0]
+        prior = file_identities_by_alias.get(normalized_alias)
+        if prior is not None and prior != file_identity:
+            raise ValueError(
+                "ambiguous report owner alias "
+                f"{normalized_alias!r}: collected as both {prior!r} and {file_identity!r}"
+            )
+        file_identities_by_alias[normalized_alias] = file_identity
+
+    ordered_candidates = list(dict.fromkeys(str(target) for target in candidate_targets))
+    for target in ordered_candidates:
+        normalized = normalize_nodeid(target.strip())
+        if not normalized:
+            continue
+        file_part = normalized.split("::", 1)[0]
+        file_identity = _resolved_report_file(file_part, base)
+        register_file_alias(file_part, file_identity)
+        register_file_alias(file_identity, file_identity)
+        file_identities_by_candidate[normalized] = file_identity
+        candidates_by_alias.setdefault(normalized, target)
+        candidates_by_file.setdefault(file_identity, []).append(target)
+        canonical = normalize_nodeid(_absolute_nodeid(file_identity, normalized))
+        candidates_by_canonical_nodeid.setdefault(canonical, target)
+
+    for item in collected_items:
+        raw_nodeid = normalize_nodeid(item.nodeid.strip())
+        if not raw_nodeid:
+            continue
+        file_identity = _resolved_report_file(item.file_path, base)
+        register_file_alias(raw_nodeid, file_identity)
+        register_file_alias(item.file_path, file_identity)
+        register_file_alias(file_identity, file_identity)
+
+    file_owners: dict[str, str] = {}
+    report_targets: dict[str, str] = {}
+    for file_identity, candidates in candidates_by_file.items():
+        bare_candidates = [candidate for candidate in candidates if "::" not in candidate]
+        if bare_candidates:
+            file_owners[file_identity] = bare_candidates[0]
+            report_targets[file_identity] = bare_candidates[0]
+        else:
+            report_targets[file_identity] = candidates[0].split("::", 1)[0]
+
+    return _ReportOwnerAliases(
+        file_identities_by_alias=file_identities_by_alias,
+        file_identities_by_candidate=file_identities_by_candidate,
+        candidates_by_alias=candidates_by_alias,
+        candidates_by_canonical_nodeid=candidates_by_canonical_nodeid,
+        file_owners=file_owners,
+        report_targets=report_targets,
+    )
+
+
+def _isolated_unit_report(unit: str, attempt: int) -> dict[str, Any]:
+    return {
+        "$report_type": _ISOLATED_UNIT_REPORT_TYPE,
+        "target": unit,
+        "attempt": attempt,
+    }
 
 
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -161,10 +314,21 @@ def _write_unit_report_record_cache_from_jsonl_paths(
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = cache_path.with_suffix(".jsonl.tmp")
     wrote = False
+    next_attempt = 0
     try:
         with tmp_path.open("w", encoding="utf-8") as out_fh:
             for jsonl_path in jsonl_paths:
+                source_started = False
                 for record in _iter_report_log_records(jsonl_path):
+                    if record.get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE:
+                        source_started = True
+                        raw_attempt = record.get("attempt")
+                        if isinstance(raw_attempt, int):
+                            next_attempt = max(next_attempt, raw_attempt + 1)
+                    elif not source_started:
+                        out_fh.write(json.dumps(_isolated_unit_report(unit, next_attempt)) + "\n")
+                        next_attempt += 1
+                        source_started = True
                     out_fh.write(json.dumps(record) + "\n")
                     wrote = True
         if wrote:
@@ -430,6 +594,7 @@ def _write_report_jsonl_from_record_sources(
                 )
                 wrote = True
             for unit in _ordered_report_record_units(units, inline_records_by_unit):
+                source_started = False
                 for record in _iter_unit_report_record_source(
                     state_file, unit, inline_records_by_unit
                 ):
@@ -441,6 +606,11 @@ def _write_report_jsonl_from_record_sources(
                         in collection_keys
                     ):
                         continue
+                    if not source_started:
+                        if record.get("$report_type") != _ISOLATED_UNIT_REPORT_TYPE:
+                            out_fh.write(json.dumps(_isolated_unit_report(unit, 0)) + "\n")
+                            wrote = True
+                        source_started = True
                     out_fh.write(json.dumps(record) + "\n")
                     wrote = True
             for record in collection_records:
@@ -570,64 +740,122 @@ def write_report_jsonl(jsonl_paths: list[Path], output_path: Path) -> None:
 def _infer_unit_target_from_records(
     records: Sequence[Mapping[str, Any]],
     candidate_targets: set[str],
+    *,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> str | None:
-    nodeids = []
+    aliases = owner_aliases or _build_report_owner_aliases(sorted(candidate_targets))
+    owners: list[str] = []
+    explicit_owner: str | None = None
     for record in records:
         report_type = record.get("$report_type", "TestReport")
-        field = "target" if report_type == "ProcessReport" else "nodeid"
-        if report_type not in {"TestReport", "CollectReport", "HarnessError", "ProcessReport"}:
+        if report_type not in {
+            "TestReport",
+            "CollectReport",
+            "HarnessError",
+            "ProcessReport",
+            _ISOLATED_UNIT_REPORT_TYPE,
+        }:
             continue
+        field = (
+            "target"
+            if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE}
+            else "nodeid"
+        )
         value = str(record.get(field, "")).strip()
-        if value:
-            nodeids.append(value)
-    if not nodeids:
+        if report_type == "CollectReport" and not value and record.get("outcome") == "passed":
+            continue
+        if report_type == _ISOLATED_UNIT_REPORT_TYPE:
+            owner = aliases.candidate_for_target(value) if value else None
+            if owner is None:
+                raise ValueError(
+                    "cannot safely reconstruct report ownership; "
+                    f"unknown owner marker {value!r}"
+                )
+            if explicit_owner is not None and owner != explicit_owner:
+                raise ValueError(
+                    "ambiguous explicit report ownership within one record chunk: "
+                    f"{explicit_owner}, {owner}"
+                )
+            explicit_owner = owner
+            continue
+
+        if report_type == "ProcessReport":
+            owner = aliases.candidate_for_target(value) if value else None
+            possible_owners = frozenset({owner}) if owner is not None else frozenset()
+        else:
+            possible_owners = aliases.possible_legacy_owners(value) if value else frozenset()
+        if explicit_owner is not None:
+            if possible_owners and explicit_owner not in possible_owners:
+                raise ValueError(
+                    "conflicting report ownership: "
+                    f"marker owns {explicit_owner!r}, record belongs to "
+                    f"{', '.join(sorted(possible_owners))}"
+                )
+            continue
+        if not possible_owners:
+            raise ValueError(
+                "cannot safely reconstruct report ownership; "
+                f"unmarked record owner {value!r} is unknown"
+            )
+        if len(possible_owners) > 1:
+            raise ValueError(
+                "ambiguous legacy report ownership for "
+                f"{value!r}: {', '.join(sorted(possible_owners))}"
+            )
+        owners.extend(possible_owners)
+
+    if explicit_owner is not None:
+        return explicit_owner
+    if not owners:
         return None
-
-    unique_nodeids = sorted(set(nodeids))
-    file_targets = sorted({nodeid.split("::", 1)[0] for nodeid in unique_nodeids})
-
-    if len(unique_nodeids) == 1 and unique_nodeids[0] in candidate_targets:
-        return unique_nodeids[0]
-    if len(file_targets) == 1 and file_targets[0] in candidate_targets:
-        return file_targets[0]
-    if len(unique_nodeids) == 1:
-        return unique_nodeids[0]
-    if len(file_targets) == 1:
-        return file_targets[0]
-    return None
+    unique_owners = list(dict.fromkeys(owners))
+    if len(unique_owners) != 1:
+        raise ValueError(
+            "ambiguous report ownership within one legacy record chunk: "
+            + ", ".join(unique_owners)
+        )
+    return unique_owners[0]
 
 
 def _unit_candidate_from_record(
     record: Mapping[str, Any],
     candidate_targets: set[str],
+    *,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> str | None:
+    aliases = owner_aliases or _build_report_owner_aliases(sorted(candidate_targets))
     report_type = record.get("$report_type", "TestReport")
-    if report_type not in {"TestReport", "CollectReport", "HarnessError", "ProcessReport"}:
+    if report_type not in {
+        "TestReport",
+        "CollectReport",
+        "HarnessError",
+        "ProcessReport",
+        _ISOLATED_UNIT_REPORT_TYPE,
+    }:
         return None
-    field = "target" if report_type == "ProcessReport" else "nodeid"
+    field = (
+        "target" if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE} else "nodeid"
+    )
     nodeid = str(record.get(field, "")).strip()
     if not nodeid:
         return None
-    file_target = nodeid.split("::", 1)[0]
-    if file_target in candidate_targets and nodeid not in candidate_targets:
-        return file_target
-    if nodeid in candidate_targets:
-        return nodeid
-    if file_target in candidate_targets:
-        return file_target
-    return nodeid
+    if report_type in {"ProcessReport", _ISOLATED_UNIT_REPORT_TYPE}:
+        return aliases.candidate_for_target(nodeid)
+    return aliases.owner_for_nodeid(nodeid)
 
 
 def _extract_unit_report_records_from_jsonl(
     jsonl_path: Path,
     *,
     candidate_targets: set[str],
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Split a merged report.jsonl back into per-unit record chunks."""
     records_by_unit: dict[str, list[dict[str, Any]]] = {}
     for unit_target, records in _iter_unit_report_record_chunks_from_jsonl(
         jsonl_path,
         candidate_targets=candidate_targets,
+        owner_aliases=owner_aliases,
     ):
         records_by_unit.setdefault(unit_target, []).extend(records)
     return records_by_unit
@@ -637,8 +865,10 @@ def _iter_unit_report_record_chunks_from_jsonl(
     jsonl_path: Path,
     *,
     candidate_targets: set[str],
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> Iterable[tuple[str, list[dict[str, Any]]]]:
     """Yield per-unit record chunks from a merged report.jsonl without a full map."""
+    aliases = owner_aliases or _build_report_owner_aliases(sorted(candidate_targets))
     current_chunk: list[dict[str, Any]] = []
     current_target: str | None = None
 
@@ -646,23 +876,39 @@ def _iter_unit_report_record_chunks_from_jsonl(
         nonlocal current_chunk, current_target
         if not current_chunk:
             return None
-        unit_target = _infer_unit_target_from_records(current_chunk, candidate_targets)
+        unit_target = _infer_unit_target_from_records(
+            current_chunk,
+            candidate_targets,
+            owner_aliases=aliases,
+        )
         chunk = current_chunk
         current_chunk = []
         current_target = None
         if unit_target is not None:
             return unit_target, chunk
-        return None
+        raise ValueError(
+            "cannot safely reconstruct report ownership; original report was not replaced"
+        )
 
     for record in _iter_report_log_records(jsonl_path):
         # RecoveryAttempt is a global archival record, not part of the preceding unit's
         # TestReport chunk. The final merge writes the authoritative state history once.
-        if record.get("$report_type") == "RecoveryAttempt":
+        if record.get("$report_type") in {"RecoveryAttempt", _ISOLATED_UNIT_REPORT_TYPE}:
             chunk = pop_current_chunk()
             if chunk is not None:
                 yield chunk
-            continue
-        record_target = _unit_candidate_from_record(record, candidate_targets)
+            if record.get("$report_type") == "RecoveryAttempt":
+                continue
+        record_target = _unit_candidate_from_record(
+            record,
+            candidate_targets,
+            owner_aliases=aliases,
+        )
+        if (
+            current_chunk
+            and current_chunk[0].get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE
+        ):
+            record_target = current_target
         if (
             current_chunk
             and current_target is not None
@@ -675,10 +921,6 @@ def _iter_unit_report_record_chunks_from_jsonl(
         current_chunk.append(record)
         if current_target is None and record_target is not None:
             current_target = record_target
-        if record.get("$report_type") == "CoverageReport":
-            chunk = pop_current_chunk()
-            if chunk is not None:
-                yield chunk
 
     chunk = pop_current_chunk()
     if chunk is not None:
@@ -691,21 +933,50 @@ def _report_record_cache_has_records(state_file: Path, unit: str) -> bool:
     return False
 
 
+def _validate_legacy_report_ownership(
+    jsonl_path: Path,
+    *,
+    candidate_targets: set[str],
+    owner_aliases: _ReportOwnerAliases,
+) -> None:
+    """Validate every source chunk before replacing any report-record cache."""
+    for _unit, _records in _iter_unit_report_record_chunks_from_jsonl(
+        jsonl_path,
+        candidate_targets=candidate_targets,
+        owner_aliases=owner_aliases,
+    ):
+        pass
+
+
 def _seed_missing_report_record_caches_from_jsonl(
     state_file: Path,
     jsonl_path: Path,
     *,
     candidate_targets: set[str],
     skip_units: Iterable[str] = (),
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> None:
     """Populate absent per-unit cache shards by streaming an existing merged report."""
     skip_unit_set = set(skip_units)
+    if all(
+        unit in skip_unit_set or _report_record_cache_has_records(state_file, unit)
+        for unit in candidate_targets
+    ):
+        return
+    aliases = owner_aliases or _build_report_owner_aliases(sorted(candidate_targets))
+    _validate_legacy_report_ownership(
+        jsonl_path,
+        candidate_targets=candidate_targets,
+        owner_aliases=aliases,
+    )
     existing_cache_units: set[str] = set()
     tmp_paths: dict[str, Path] = {}
+    attempts_by_unit: dict[str, int] = {}
     try:
         for unit, records in _iter_unit_report_record_chunks_from_jsonl(
             jsonl_path,
             candidate_targets=candidate_targets,
+            owner_aliases=aliases,
         ):
             if unit in skip_unit_set or unit in existing_cache_units:
                 continue
@@ -720,6 +991,13 @@ def _seed_missing_report_record_caches_from_jsonl(
                 tmp_path.unlink(missing_ok=True)
                 tmp_paths[unit] = tmp_path
             with tmp_path.open("a", encoding="utf-8") as out_fh:
+                if not any(
+                    record.get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE
+                    for record in records
+                ):
+                    attempt = attempts_by_unit.get(unit, 0)
+                    out_fh.write(json.dumps(_isolated_unit_report(unit, attempt)) + "\n")
+                    attempts_by_unit[unit] = attempt + 1
                 for record in records:
                     out_fh.write(json.dumps(record) + "\n")
         for unit, tmp_path in tmp_paths.items():

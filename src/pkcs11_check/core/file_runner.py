@@ -99,6 +99,9 @@ from pkcs11_check.core._report_records import (
     _build_per_unit_details_from_record_sources as _build_per_unit_details_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _build_report_owner_aliases as _build_report_owner_aliases,
+)
+from pkcs11_check.core._report_records import (
     _compliance_notes_from_user_properties as _compliance_notes_from_user_properties,
 )
 from pkcs11_check.core._report_records import (
@@ -1226,6 +1229,17 @@ def run_isolated_pytest_units(
                 state,
                 inline_report_records_by_unit,
             )
+            owner_aliases = _build_report_owner_aliases(
+                list(
+                    dict.fromkeys(
+                        [
+                            *output_state.units,
+                            *(result.target for result in output_state.results),
+                        ]
+                    )
+                ),
+                collected_items or (),
+            )
             if (
                 resume
                 and report_config.jsonl_path is not None
@@ -1240,6 +1254,7 @@ def run_isolated_pytest_units(
                     candidate_targets=candidate_targets,
                     skip_units=set(state.report_records_by_unit)
                     | set(inline_report_records_by_unit),
+                    owner_aliases=owner_aliases,
                 )
             merged_details = _build_per_unit_details_from_record_sources(
                 state_file,
@@ -1275,6 +1290,7 @@ def run_isolated_pytest_units(
                         coverage_data,
                         output_state,
                         per_unit_details=merged_details,
+                        owner_aliases=owner_aliases,
                     )
                     if coverage_data:
                         coverage_path = report_config.jsonl_path.parent / "coverage.json"
@@ -1298,6 +1314,7 @@ def run_isolated_pytest_units(
                     per_unit_details=merged_details,
                     coverage=coverage_data,
                     provenance=provenance,
+                    owner_aliases=owner_aliases,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -1311,6 +1328,7 @@ def run_isolated_pytest_units(
                     report_config,
                     output_state,
                     per_unit_details=merged_details,
+                    owner_aliases=owner_aliases,
                 )
         else:
             inline_report_records_by_unit = {
@@ -2749,6 +2767,17 @@ def run_isolated_pytest_units(
                 state,
                 inline_report_records_by_unit,
             )
+            owner_aliases = _build_report_owner_aliases(
+                list(
+                    dict.fromkeys(
+                        [
+                            *output_state.units,
+                            *(result.target for result in output_state.results),
+                        ]
+                    )
+                ),
+                collected_items or (),
+            )
             if report_config.jsonl_path is not None:
                 if resume and report_config.jsonl_path.exists():
                     candidate_targets = set(output_state.units) | {
@@ -2763,6 +2792,7 @@ def run_isolated_pytest_units(
                         skip_units=set(state.report_records_by_unit)
                         | set(inline_report_records_by_unit)
                         | executed_units,
+                        owner_aliases=owner_aliases,
                     )
                 wrote_report_jsonl = _write_report_jsonl_from_record_sources(
                     state_file,
@@ -2791,6 +2821,7 @@ def run_isolated_pytest_units(
                         coverage_data,
                         output_state,
                         per_unit_details=merged_details,
+                        owner_aliases=owner_aliases,
                     )
                 if coverage_data:
                     coverage_path = report_config.jsonl_path.parent / "coverage.json"
@@ -2824,6 +2855,7 @@ def run_isolated_pytest_units(
                     per_unit_details=merged_details,
                     coverage=coverage_data,
                     provenance=provenance,
+                    owner_aliases=owner_aliases,
                 )
                 quality_path = report_config.output_path.parent / "quality.json"
                 write_quality_json_report(
@@ -2837,6 +2869,7 @@ def run_isolated_pytest_units(
                     report_config,
                     output_state,
                     per_unit_details=merged_details,
+                    owner_aliases=owner_aliases,
                 )
 
     return _final_state_exit_code(state, exit_code, merged_details)

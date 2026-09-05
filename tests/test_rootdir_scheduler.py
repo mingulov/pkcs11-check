@@ -8,9 +8,86 @@ import pytest
 from rich.console import Console
 
 from pkcs11_check.core import _escalation as escalation_mod
+from pkcs11_check.core import _report_records as report_records_mod
 from pkcs11_check.core import _unit_discovery as discovery_mod
 from pkcs11_check.core._run_units import FileRunState
 from pkcs11_check.core.collection import CollectedPytestItem
+
+
+def _report_ownership_fixture() -> tuple[list[str], list[CollectedPytestItem]]:
+    dsa_file = "/app/src/pkcs11_check/testcases/test_dsa_complete.py"
+    duplicate_a = "/app/src/a/test_duplicate.py"
+    duplicate_b = "/app/src/b/test_duplicate.py"
+    return (
+        [
+            "src/pkcs11_check/testcases/test_dsa_complete.py",
+            f"{dsa_file}::TestDSA::test_case[SHA3-512]",
+            "src/a/test_duplicate.py",
+            "src/b/test_duplicate.py",
+        ],
+        [
+            CollectedPytestItem(
+                nodeid=(
+                    "app/src/pkcs11_check/testcases/test_dsa_complete.py::"
+                    "TestDSA::test_case[SHA3-512]"
+                ),
+                file_path=dsa_file,
+                markers=[],
+            ),
+            CollectedPytestItem(
+                nodeid="app/src/a/test_duplicate.py::test_a",
+                file_path=duplicate_a,
+                markers=[],
+            ),
+            CollectedPytestItem(
+                nodeid="app/src/b/test_duplicate.py::test_b",
+                file_path=duplicate_b,
+                markers=[],
+            ),
+        ],
+    )
+
+
+def test_report_ownership_uses_collected_file_identity_without_basename_guessing() -> None:
+    candidates, items = _report_ownership_fixture()
+
+    aliases = report_records_mod._build_report_owner_aliases(
+        candidates,
+        items,
+        cwd=Path("/app"),
+    )
+
+    raw_dsa = (
+        "app/src/pkcs11_check/testcases/test_dsa_complete.py::"
+        "TestDSA::test_case[SHA3-512]"
+    )
+    assert aliases.canonical_nodeid(raw_dsa) == (
+        "/app/src/pkcs11_check/testcases/test_dsa_complete.py::"
+        "TestDSA::test_case[SHA3-512]"
+    )
+    assert aliases.owner_for_nodeid(raw_dsa) == candidates[0]
+    assert aliases.file_identity(candidates[0]) == aliases.file_identity(candidates[1])
+    assert aliases.file_identity(candidates[2]) != aliases.file_identity(candidates[3])
+    assert aliases.owner_for_nodeid("app/src/a/test_duplicate.py::test_a") == candidates[2]
+    assert aliases.owner_for_nodeid("app/src/b/test_duplicate.py::test_b") == candidates[3]
+
+
+def test_report_ownership_rejects_ambiguous_collected_alias() -> None:
+    raw_nodeid = "app/src/test_duplicate.py::test_case"
+    items = [
+        CollectedPytestItem(raw_nodeid, "/app/src/a/test_duplicate.py", []),
+        CollectedPytestItem(raw_nodeid, "/app/src/b/test_duplicate.py", []),
+    ]
+
+    with pytest.raises(ValueError, match="ambiguous report owner alias"):
+        report_records_mod._build_report_owner_aliases(
+            [
+                "/app/src/a/test_duplicate.py",
+                "/app/src/b/test_duplicate.py",
+            ],
+            items,
+            cwd=Path("/app"),
+        )
 
 
 def test_explicit_test_discovery_anchors_collected_item_to_file_path(

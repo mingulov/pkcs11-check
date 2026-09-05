@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+from collections import Counter
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -2767,6 +2769,554 @@ def test_run_isolated_pytest_units_resume_json_rebuilds_artifacts_when_complete(
     assert quality["selection_findings"][0]["scenario"] == "encrypt_roundtrip"
 
 
+@pytest.mark.parametrize(
+    "cache_state",
+    ["cacheless", "partial-parent", "partial-child", "complete"],
+)
+def test_rootdir_aliased_resume_preserves_every_attempt_and_file_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cache_state: str,
+) -> None:
+    app_root = tmp_path / "app"
+    dsa_file = app_root / "src/pkg/test_dsa_complete.py"
+    duplicate_a = app_root / "src/a/test_duplicate.py"
+    duplicate_b = app_root / "src/b/test_duplicate.py"
+    for path in (dsa_file, duplicate_a, duplicate_b):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def test_case(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(app_root)
+
+    dsa_parent = "src/pkg/test_dsa_complete.py"
+    dsa_child = f"{dsa_file}::TestDSA::test_case[SHA3-512]"
+    duplicate_a_unit = "src/a/test_duplicate.py"
+    duplicate_b_unit = "src/b/test_duplicate.py"
+    units = [dsa_parent, dsa_child, duplicate_a_unit, duplicate_b_unit]
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    raw_dsa_file = "app/src/pkg/test_dsa_complete.py"
+    raw_a_file = "app/src/a/test_duplicate.py"
+    raw_b_file = "app/src/b/test_duplicate.py"
+    records_by_owner = {
+        dsa_parent: [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"{raw_dsa_file}::TestDSA::test_case[SHA3-512]",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "parent attempt finding",
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 1},
+        ],
+        dsa_child: [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"{raw_dsa_file}::TestDSA::test_case[SHA3-512]",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "child attempt finding",
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 1},
+        ],
+        duplicate_a_unit: [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"{raw_a_file}::test_case",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "directory a finding",
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 1},
+        ],
+        duplicate_b_unit: [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": f"{raw_b_file}::test_case",
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": "directory b finding",
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 1},
+        ],
+    }
+    source_dir = tmp_path / "input"
+    source_dir.mkdir()
+    source_state = source_dir / "state.json"
+    source_report = source_dir / "report.jsonl"
+    save_run_state(
+        source_state,
+        FileRunState(
+            units=units,
+            fingerprint=build_state_fingerprint(units, pytest_args),
+            results=[FileRunResult(unit, "failed", 1, 0.1) for unit in units],
+        ),
+    )
+    source_records = [
+        record
+        for owner, records in records_by_owner.items()
+        for record in (
+            [
+                {
+                    "$report_type": "IsolatedUnitReport",
+                    "target": owner,
+                    "attempt": 0,
+                }
+            ]
+            + records
+            if cache_state != "complete"
+            else records
+        )
+    ]
+    source_report.write_text(
+        "".join(json.dumps(record) + "\n" for record in source_records),
+        encoding="utf-8",
+    )
+
+    run_dir = tmp_path / "resume"
+    run_dir.mkdir()
+    state_file = run_dir / "state.json"
+    report_path = run_dir / "report.jsonl"
+    results_path = run_dir / "results.json"
+    shutil.copy2(source_state, state_file)
+    shutil.copy2(source_report, report_path)
+    if cache_state in {"partial-parent", "complete"}:
+        _write_unit_report_record_cache(state_file, dsa_parent, records_by_owner[dsa_parent])
+    if cache_state in {"partial-child", "complete"}:
+        _write_unit_report_record_cache(state_file, dsa_child, records_by_owner[dsa_child])
+    if cache_state == "complete":
+        for owner in (duplicate_a_unit, duplicate_b_unit):
+            _write_unit_report_record_cache(state_file, owner, records_by_owner[owner])
+
+    collected_items = [
+        CollectedPytestItem(
+            f"{raw_dsa_file}::TestDSA::test_case[SHA3-512]",
+            str(dsa_file),
+            [],
+        ),
+        CollectedPytestItem(
+            f"{raw_dsa_file}::TestDSA::test_case[SHA3-512]",
+            str(dsa_file),
+            [],
+        ),
+        CollectedPytestItem(f"{raw_a_file}::test_case", str(duplicate_a), []),
+        CollectedPytestItem(f"{raw_b_file}::test_case", str(duplicate_b), []),
+    ]
+
+    def finding_multiset(path: Path) -> Counter[tuple[str, str, str]]:
+        return Counter(
+            (
+                str(record.get("nodeid", "")),
+                str(record.get("outcome", "")),
+                str(record.get("longrepr", "")),
+            )
+            for record in (
+                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+            )
+            if record.get("$report_type") == "TestReport" and record.get("when") == "call"
+        )
+
+    expected_findings = finding_multiset(report_path)
+    for _resume_attempt in range(2):
+        exit_code = run_isolated_pytest_units(
+            units,
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="mixed",
+            collected_items=collected_items,
+        )
+
+        assert exit_code == 1
+        assert finding_multiset(report_path) == expected_findings
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+        assert [unit["target"] for unit in payload["units"]] == [
+            dsa_parent,
+            duplicate_a_unit,
+            duplicate_b_unit,
+        ]
+
+
+@pytest.mark.parametrize("cached_owner", ["parent", "child"])
+def test_legacy_overlapping_parent_child_partial_cache_fails_before_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cached_owner: str,
+) -> None:
+    app_root = tmp_path / "app"
+    target = app_root / "src/pkg/test_dsa_complete.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(app_root)
+    parent = "src/pkg/test_dsa_complete.py"
+    child = f"{target}::TestDSA::test_case[SHA3-512]"
+    raw_nodeid = "app/src/pkg/test_dsa_complete.py::TestDSA::test_case[SHA3-512]"
+    records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": raw_nodeid,
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "parent attempt finding",
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": raw_nodeid,
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "child attempt finding",
+        },
+    ]
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    report_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    owner = parent if cached_owner == "parent" else child
+    _write_unit_report_record_cache(state_file, owner, [records[0]])
+    cache_path = file_runner_mod._report_record_cache_path(state_file, owner)
+    original_report = report_path.read_bytes()
+    original_cache = cache_path.read_bytes()
+    aliases = report_records_mod._build_report_owner_aliases(
+        [parent, child],
+        [CollectedPytestItem(raw_nodeid, str(target), [])],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous legacy report ownership"):
+        report_records_mod._seed_missing_report_record_caches_from_jsonl(
+            state_file,
+            report_path,
+            candidate_targets={parent, child},
+            owner_aliases=aliases,
+        )
+
+    assert report_path.read_bytes() == original_report
+    assert cache_path.read_bytes() == original_cache
+
+
+def test_legacy_unknown_record_fails_before_replacement(tmp_path: Path) -> None:
+    known = "/app/a.py"
+    missing = "/app/b.py"
+    known_record = {
+        "$report_type": "TestReport",
+        "nodeid": f"{known}::test_a",
+        "when": "call",
+        "outcome": "failed",
+        "longrepr": "known finding",
+    }
+    unknown_record = {
+        "$report_type": "TestReport",
+        "nodeid": "app/b.py::test_b",
+        "when": "call",
+        "outcome": "failed",
+        "longrepr": "unknown finding",
+    }
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    report_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in (known_record, unknown_record)),
+        encoding="utf-8",
+    )
+    _write_unit_report_record_cache(state_file, known, [known_record])
+    known_cache = file_runner_mod._report_record_cache_path(state_file, known)
+    missing_cache = file_runner_mod._report_record_cache_path(state_file, missing)
+    original_report = report_path.read_bytes()
+    original_cache = known_cache.read_bytes()
+
+    with pytest.raises(ValueError, match="cannot safely reconstruct report ownership"):
+        report_records_mod._seed_missing_report_record_caches_from_jsonl(
+            state_file,
+            report_path,
+            candidate_targets={known, missing},
+        )
+
+    assert report_path.read_bytes() == original_report
+    assert known_cache.read_bytes() == original_cache
+    assert not missing_cache.exists()
+
+
+def test_marked_owner_rejects_conflicting_recognized_record_before_replacement(
+    tmp_path: Path,
+) -> None:
+    owner_a = "/app/a.py"
+    owner_b = "/app/b.py"
+    record_a = {
+        "$report_type": "TestReport",
+        "nodeid": f"{owner_a}::test_a",
+        "when": "call",
+        "outcome": "failed",
+        "longrepr": "a finding",
+    }
+    record_b = {
+        "$report_type": "TestReport",
+        "nodeid": f"{owner_b}::test_b",
+        "when": "call",
+        "outcome": "failed",
+        "longrepr": "b finding",
+    }
+    records = [
+        {"$report_type": "IsolatedUnitReport", "target": owner_a, "attempt": 0},
+        record_a,
+        {"$report_type": "SessionFinish", "exitstatus": 1},
+        {"$report_type": "SessionStart"},
+        record_b,
+    ]
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    report_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    _write_unit_report_record_cache(state_file, owner_a, [record_a])
+    cache_a = file_runner_mod._report_record_cache_path(state_file, owner_a)
+    cache_b = file_runner_mod._report_record_cache_path(state_file, owner_b)
+    original_report = report_path.read_bytes()
+    original_cache = cache_a.read_bytes()
+
+    with pytest.raises(ValueError, match="conflicting report ownership"):
+        report_records_mod._seed_missing_report_record_caches_from_jsonl(
+            state_file,
+            report_path,
+            candidate_targets={owner_a, owner_b},
+        )
+
+    assert report_path.read_bytes() == original_report
+    assert cache_a.read_bytes() == original_cache
+    assert not cache_b.exists()
+
+
+def test_cacheless_legacy_overlapping_parent_child_fails_before_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    target = app_root / "src/pkg/test_dsa_complete.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(app_root)
+    parent = "src/pkg/test_dsa_complete.py"
+    child = f"{target}::TestDSA::test_case[SHA3-512]"
+    raw_nodeid = "app/src/pkg/test_dsa_complete.py::TestDSA::test_case[SHA3-512]"
+    records = [
+        {
+            "$report_type": "TestReport",
+            "nodeid": raw_nodeid,
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": finding,
+        }
+        for finding in ("parent attempt finding", "child attempt finding")
+    ]
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    report_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    original_report = report_path.read_bytes()
+    aliases = report_records_mod._build_report_owner_aliases(
+        [parent, child],
+        [CollectedPytestItem(raw_nodeid, str(target), [])],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous legacy report ownership"):
+        report_records_mod._seed_missing_report_record_caches_from_jsonl(
+            state_file,
+            report_path,
+            candidate_targets={parent, child},
+            owner_aliases=aliases,
+        )
+
+    assert report_path.read_bytes() == original_report
+    assert not file_runner_mod._report_record_cache_path(state_file, parent).exists()
+    assert not file_runner_mod._report_record_cache_path(state_file, child).exists()
+
+
+def test_cacheless_resume_preserves_empty_nodeid_passing_collect_report(
+    tmp_path: Path,
+) -> None:
+    unit = "/app/a.py"
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    records = [
+        {"$report_type": "SessionStart"},
+        {
+            "$report_type": "CollectReport",
+            "nodeid": "",
+            "outcome": "passed",
+        },
+        {
+            "$report_type": "TestReport",
+            "nodeid": f"{unit}::test_a",
+            "when": "call",
+            "outcome": "failed",
+            "longrepr": "provider finding",
+        },
+        {"$report_type": "SessionFinish", "exitstatus": 1},
+    ]
+    source_dir = tmp_path / "input"
+    source_dir.mkdir()
+    source_state = source_dir / "state.json"
+    source_report = source_dir / "report.jsonl"
+    save_run_state(
+        source_state,
+        FileRunState(
+            units=[unit],
+            fingerprint=build_state_fingerprint([unit], pytest_args),
+            results=[FileRunResult(unit, "failed", 1, 0.1)],
+        ),
+    )
+    source_report.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    source_bytes = source_report.read_bytes()
+
+    run_dir = tmp_path / "resume"
+    run_dir.mkdir()
+    state_file = run_dir / "state.json"
+    report_path = run_dir / "report.jsonl"
+    results_path = run_dir / "results.json"
+    shutil.copy2(source_state, state_file)
+    shutil.copy2(source_report, report_path)
+
+    assert (
+        run_isolated_pytest_units(
+            [unit],
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="file",
+        )
+        == 1
+    )
+
+    assert source_report.read_bytes() == source_bytes
+    assert report_path.read_bytes().endswith(source_bytes)
+    output_records = [
+        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert output_records == [
+        {"$report_type": "IsolatedUnitReport", "target": unit, "attempt": 0},
+        *records,
+    ]
+
+
+@pytest.mark.parametrize("complete_cache", [False, True])
+def test_explicit_file_resume_without_collection_metadata_requires_complete_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    complete_cache: bool,
+) -> None:
+    app_root = tmp_path / "app"
+    target = app_root / "src/pkg/test_dsa_complete.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_case(): pass\n", encoding="utf-8")
+    monkeypatch.chdir(app_root)
+    unit = "src/pkg/test_dsa_complete.py"
+    pytest_args = ["--p11-module", "/tmp/module.so"]
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+    save_run_state(
+        state_file,
+        FileRunState(
+            units=[unit],
+            fingerprint=build_state_fingerprint([unit], pytest_args),
+            results=[FileRunResult(unit, "passed", 0, 0.1)],
+        ),
+    )
+    report_record = json.loads(
+        _jsonl_line(
+            nodeid="app/src/pkg/test_dsa_complete.py::test_case",
+            when="call",
+            outcome="passed",
+        )
+    )
+    report_path.write_text(json.dumps(report_record) + "\n", encoding="utf-8")
+    if complete_cache:
+        _write_unit_report_record_cache(state_file, unit, [report_record])
+    original = report_path.read_bytes()
+
+    def resume() -> int:
+        return run_isolated_pytest_units(
+            [unit],
+            pytest_args,
+            timeout=12,
+            state_file=state_file,
+            policy_file=None,
+            report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+            resume=True,
+            stop_on_failure=False,
+            console=Console(file=StringIO(), force_terminal=False),
+            granularity="file",
+        )
+
+    if complete_cache:
+        assert resume() == 0
+        assert json.loads(results_path.read_text(encoding="utf-8"))["summary"]["passed"] == 1
+    else:
+        with pytest.raises(ValueError, match="cannot safely reconstruct report ownership"):
+            resume()
+        assert not results_path.exists()
+
+    if complete_cache:
+        assert [
+            json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
+        ] == [
+            {"$report_type": "IsolatedUnitReport", "target": unit, "attempt": 0},
+            report_record,
+        ]
+    else:
+        assert report_path.read_bytes() == original
+
+
+def test_junit_writer_uses_resolved_report_file_alias(tmp_path: Path) -> None:
+    app_root = tmp_path / "app"
+    file_path = app_root / "src/pkg/test_dsa_complete.py"
+    parent = "src/pkg/test_dsa_complete.py"
+    child = f"{file_path}::TestDSA::test_case[SHA3-512]"
+    aliases = report_records_mod._build_report_owner_aliases(
+        [parent, child],
+        [
+            CollectedPytestItem(
+                "app/src/pkg/test_dsa_complete.py::TestDSA::test_case[SHA3-512]",
+                str(file_path),
+                [],
+            )
+        ],
+        cwd=app_root,
+    )
+    state = FileRunState(
+        units=[parent, child],
+        fingerprint="fp",
+        results=[
+            FileRunResult(parent, "passed", 0, 0.1),
+            FileRunResult(child, "passed", 0, 0.1),
+        ],
+    )
+    output = tmp_path / "results.xml"
+
+    write_isolated_junit_report(output, state, owner_aliases=aliases)
+
+    rendered = output.read_text(encoding="utf-8")
+    assert str(tmp_path) not in rendered
+    assert "src.pkg.test_dsa_complete" in rendered
+    assert "TestDSA::test_case[SHA3-512]" in rendered
+
+
 def test_run_isolated_pytest_units_resume_json_streams_complete_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3373,12 +3923,14 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
         encoding="utf-8"
     )
     assert [json.loads(line) for line in cache_text.splitlines()] == [
+        {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": 0},
         {
             "$report_type": "TestReport",
             "nodeid": "test_a.py::test_one",
             "when": "call",
             "outcome": "passed",
         },
+        {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": 1},
         {
             "$report_type": "SelectionReport",
             "selection_coverage": {
@@ -3389,6 +3941,43 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
                 }
             },
         },
+    ]
+
+
+def test_write_report_jsonl_adds_owner_boundaries_to_legacy_cache_shards(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    records = {
+        "test_a.py": {
+            "$report_type": "TestReport",
+            "nodeid": "test_a.py::test_a",
+            "when": "call",
+            "outcome": "failed",
+        },
+        "test_b.py": {
+            "$report_type": "TestReport",
+            "nodeid": "test_b.py::test_b",
+            "when": "call",
+            "outcome": "failed",
+        },
+    }
+    for unit, record in records.items():
+        _write_unit_report_record_cache(state_file, unit, [record])
+
+    assert report_records_mod._write_report_jsonl_from_record_sources(
+        state_file,
+        units=list(records),
+        inline_records_by_unit={},
+        output_path=report_path,
+    )
+
+    assert [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()] == [
+        {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": 0},
+        records["test_a.py"],
+        {"$report_type": "IsolatedUnitReport", "target": "test_b.py", "attempt": 0},
+        records["test_b.py"],
     ]
 
 
@@ -3443,7 +4032,9 @@ def test_cache_attempt_checkpoint_keeps_all_attempt_sources(tmp_path: Path) -> N
 
     cached = _load_cached_report_records_by_unit(state_file, ["test_a.py"])["test_a.py"]
     assert [record["$report_type"] for record in cached] == [
+        "IsolatedUnitReport",
         "TestReport",
+        "IsolatedUnitReport",
         "SessionStart",
         "SessionFinish",
     ]
@@ -3828,6 +4419,7 @@ def test_run_isolated_pytest_units_persists_report_records_into_state(
     records_by_unit = _load_cached_report_records_by_unit(state_file, units)
     assert list(records_by_unit) == ["test_a.py"]
     assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
+        "IsolatedUnitReport",
         "SessionStart",
         "TestReport",
         "SelectionReport",
@@ -3982,6 +4574,7 @@ def test_run_isolated_pytest_units_timeout_persists_partial_report_records(
     records_by_unit = _load_cached_report_records_by_unit(state_file, units)
     assert list(records_by_unit) == ["test_a.py"]
     assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
+        "IsolatedUnitReport",
         "TestReport",
         "SelectionReport",
     ]
@@ -4164,7 +4757,8 @@ def test_run_isolated_pytest_units_iterative_deselect_persists_aggregated_record
     report_records = [
         record
         for record in records
-        if record["$report_type"] not in {"SessionStart", "SessionFinish"}
+        if record["$report_type"]
+        not in {"SessionStart", "SessionFinish", "IsolatedUnitReport"}
     ]
     assert [record.get("nodeid") for record in report_records] == [
         "test_a.py::test_done",

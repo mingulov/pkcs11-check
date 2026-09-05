@@ -84,6 +84,9 @@ from pkcs11_check.core._report_records import (
     _report_record_cache_path as _report_record_cache_path,
 )
 from pkcs11_check.core._report_records import (
+    _ReportOwnerAliases as _ReportOwnerAliases,
+)
+from pkcs11_check.core._report_records import (
     _seed_missing_report_record_caches_from_jsonl as _seed_missing_report_record_caches_from_jsonl,
 )
 from pkcs11_check.core._report_records import (
@@ -311,6 +314,7 @@ def write_isolated_json_report(
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
     payload = _build_isolated_json_payload(
@@ -318,6 +322,7 @@ def write_isolated_json_report(
         per_unit_details=per_unit_details,
         coverage=coverage,
         provenance=provenance,
+        owner_aliases=owner_aliases,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -330,12 +335,17 @@ def _build_isolated_json_payload(
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
     summary: dict[str, int] = {key: 0 for key in RESULT_OUTCOME_KEYS}
 
-    grouped = _group_results_by_file(state.results, details)
+    grouped = _group_results_by_file(
+        state.results,
+        details,
+        owner_aliases=owner_aliases,
+    )
     units_out: list[dict[str, Any]] = []
 
     executions_by_unit: dict[str, list[list[Mapping[str, Any]]]] = {}
@@ -345,9 +355,17 @@ def _build_isolated_json_payload(
         if isinstance(observation, Mapping) and observation.get("parent_nodeid") is None
     ]
 
+    def execution_owner(execution: Mapping[str, Any]) -> str | None:
+        owner = _execution_owner_file(execution)
+        if owner is None or owner_aliases is None:
+            return owner
+        parent = execution.get("parent_nodeid")
+        raw_target = parent if isinstance(parent, str) else execution.get("target", "")
+        return owner_aliases.file_identity(str(raw_target)) or owner
+
     if state.process_observations_complete:
         for observation in state_outer:
-            target = normalize_nodeid(str(observation.get("target", "")).split("::", 1)[0])
+            target = execution_owner(observation)
             if target:
                 executions_by_unit.setdefault(target, []).append([observation])
         for detail in details.values():
@@ -361,10 +379,10 @@ def _build_isolated_json_payload(
                 for execution in executions
                 if isinstance(execution, Mapping)
                 and execution.get("parent_nodeid") is not None
-                and _execution_owner_file(execution) is not None
+                and execution_owner(execution) is not None
             ]
             for execution in nested_executions:
-                owner = _execution_owner_file(execution)
+                owner = execution_owner(execution)
                 if owner is not None:
                     executions_by_unit.setdefault(owner, []).append([execution])
     else:
@@ -388,18 +406,18 @@ def _build_isolated_json_payload(
                 for execution in executions
                 if isinstance(execution, Mapping)
                 and execution.get("parent_nodeid") is not None
-                and _execution_owner_file(execution) is not None
+                and execution_owner(execution) is not None
             ]
             if outer:
                 cached_outer.extend(outer)
             if nested:
                 for execution in nested:
-                    owner = _execution_owner_file(execution)
+                    owner = execution_owner(execution)
                     if owner is not None:
                         nested_by_unit.setdefault(owner, []).append([execution])
 
         for observation in _reconcile_process_observations(cached_outer, state_outer):
-            owner = _execution_owner_file(observation)
+            owner = execution_owner(observation)
             if owner is not None:
                 executions_by_unit.setdefault(owner, []).append([observation])
         for target, groups in nested_by_unit.items():
@@ -463,9 +481,12 @@ def _build_isolated_json_payload(
             unit["skip_reasons"] = sr
         if detail.get("file_skip"):
             unit["file_skip"] = True
-        executions = _canonical_executions(
-            *executions_by_unit.get(normalize_nodeid(file_target), [])
-        )
+        execution_key = (
+            owner_aliases.file_identity(file_target)
+            if owner_aliases is not None
+            else normalize_nodeid(file_target)
+        ) or normalize_nodeid(file_target)
+        executions = _canonical_executions(*executions_by_unit.get(execution_key, []))
         if executions:
             unit["executions"] = executions
 
@@ -548,6 +569,7 @@ def write_isolated_junit_report(
     *,
     suite_name: str = "pkcs11-check-isolated",
     per_unit_details: dict[str, dict[str, Any]] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> None:
     """Write an aggregated JUnit XML report for an isolated run."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -559,6 +581,18 @@ def write_isolated_junit_report(
         detail = details.get(result.target)
         counts = detail.get("counts") if isinstance(detail, Mapping) else None
         return _effective_unit_status([result], counts)
+
+    def report_target(target: str) -> str:
+        if owner_aliases is None:
+            return target
+        file_identity = owner_aliases.file_identity(target)
+        if file_identity is None:
+            return target
+        file_target = owner_aliases.report_target(file_identity)
+        if file_target is None:
+            return target
+        _, separator, suffix = target.partition("::")
+        return f"{file_target}{separator}{suffix}"
 
     def detail_entries(result: FileRunResult) -> list[Mapping[str, Any]]:
         detail = details.get(result.target)
@@ -773,7 +807,7 @@ def write_isolated_junit_report(
             if record.get("longrepr")
         )
         captured_diagnostic = result.stderr.strip() or result.stdout.strip()
-        class_name, case_name = _junit_case_identity(result.target)
+        class_name, case_name = _junit_case_identity(report_target(result.target))
         case = ET.SubElement(
             suite,
             "testcase",
@@ -953,6 +987,7 @@ def write_isolated_report(
     state: FileRunState,
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> None:
     """Write the requested aggregated report format for an isolated run."""
     if config.output_format == "json":
@@ -960,10 +995,12 @@ def write_isolated_report(
             config.output_path,
             state,
             per_unit_details=per_unit_details,
+            owner_aliases=owner_aliases,
         )
         return
     write_isolated_junit_report(
         config.output_path,
         state,
         per_unit_details=per_unit_details,
+        owner_aliases=owner_aliases,
     )

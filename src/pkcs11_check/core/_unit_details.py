@@ -79,6 +79,9 @@ from pkcs11_check.core._report_records import (
     _report_record_cache_path as _report_record_cache_path,
 )
 from pkcs11_check.core._report_records import (
+    _ReportOwnerAliases as _ReportOwnerAliases,
+)
+from pkcs11_check.core._report_records import (
     _seed_missing_report_record_caches_from_jsonl as _seed_missing_report_record_caches_from_jsonl,
 )
 from pkcs11_check.core._report_records import (
@@ -265,6 +268,8 @@ from pkcs11_check.core.test_selection import extract_required_mechanisms
 def _group_results_by_file(
     results: list[FileRunResult],
     details: dict[str, dict[str, Any]],
+    *,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> list[tuple[str, list[FileRunResult], dict[str, Any]]]:
     """Group results into file-level aggregates for the unified report.
 
@@ -273,21 +278,28 @@ def _group_results_by_file(
     prefix and merges counts/tests from *details*.
     """
     has_test_level = any("::" in r.target for r in results)
-    if not has_test_level:
+    if not has_test_level and owner_aliases is None:
         return [(r.target, [r], details.get(r.target, {})) for r in results]
 
     groups: dict[str, list[FileRunResult]] = {}
     order: list[str] = []
     for result in results:
-        file_key = result.target.split("::", 1)[0]
+        file_key = (
+            owner_aliases.file_identity(result.target)
+            if owner_aliases is not None
+            else None
+        ) or result.target.split("::", 1)[0]
         if file_key not in groups:
             groups[file_key] = []
             order.append(file_key)
         groups[file_key].append(result)
 
     out: list[tuple[str, list[FileRunResult], dict[str, Any]]] = []
-    for file_target in order:
-        file_results = groups[file_target]
+    for file_key in order:
+        file_results = groups[file_key]
+        file_target = (
+            owner_aliases.report_target(file_key) if owner_aliases is not None else None
+        ) or file_results[0].target.split("::", 1)[0]
         merged_counts: dict[str, int] = _empty_counts()
         merged_tests: list[dict[str, Any]] = []
         merged_compliance_notes: list[dict[str, Any]] = []
@@ -725,6 +737,7 @@ def _augment_mechanism_coverage_from_unit_outcomes(
     state: FileRunState,
     *,
     per_unit_details: Mapping[str, dict[str, Any]] | None,
+    owner_aliases: _ReportOwnerAliases | None = None,
 ) -> dict[str, Any] | None:
     """Annotate coverage states for explicit per-file mechanism outcomes."""
     if coverage is None:
@@ -748,6 +761,7 @@ def _augment_mechanism_coverage_from_unit_outcomes(
     for unit, file_results, merged_detail in _group_results_by_file(
         state.results,
         dict(per_unit_details or {}),
+        owner_aliases=owner_aliases,
     ):
         required_names = _required_ckm_names_for_unit(unit)
         if not required_names:
