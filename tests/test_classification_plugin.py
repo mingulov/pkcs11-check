@@ -2,11 +2,35 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pkcs11_check.core.file_runner import postprocess_jsonl_to_unified
 
 pytest_plugins = ["pytester"]
+pytestmark = pytest.mark.usefixtures("classification_report_plugin_enabled")
+
+
+def _report_lines(pytester: pytest.Pytester) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in (pytester.path / "report.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _phase_reports(pytester: pytest.Pytester) -> dict[str, dict[str, object]]:
+    return {
+        str(report["when"]): report
+        for report in _report_lines(pytester)
+        if report.get("$report_type") == "TestReport"
+    }
+
+
+def _phase_classifications(report: dict[str, object]) -> list[dict[str, object]]:
+    properties = dict(report.get("user_properties", []))
+    return list(properties.get("pkcs11_classification", []))
 
 
 def test_classification_lands_in_user_properties(pytester: pytest.Pytester) -> None:
@@ -257,3 +281,388 @@ def test_call_access_violation_survives_an_earlier_classification(
     )
     assert payload["summary"]["crashed"] == 1
     assert payload["units"][0]["counts"]["crashed"] == 1
+
+
+def test_setup_xfail_classification_is_serialized_once(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_setup_xfail='''
+import pytest
+from pkcs11_check import classification as C
+
+@pytest.fixture(autouse=True)
+def setup_finding():
+    C.xfail_as("not_operational", label="setup deviation", summary="setup deviation")
+
+def test_body():
+    raise AssertionError("setup xfail must prevent the call")
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(xfailed=1)
+    setup = next(report for report in _report_lines(pytester) if report.get("when") == "setup")
+    classifications = _phase_classifications(setup)
+    assert [entry["reason"] for entry in classifications] == ["not_operational"]
+    assert len(classifications) == 1
+
+
+def test_setup_xfail_does_not_leak_to_independent_next_test(pytester: pytest.Pytester) -> None:
+    """A setup refusal belongs only to its item; the next item runs independently."""
+    pytester.makepyfile(
+        test_setup_xfail_leak='''
+import pytest
+from pkcs11_check import classification as C
+
+@pytest.fixture
+def setup_finding(request):
+    if request.node.name == "test_first":
+        C.xfail_as("not_operational", label="first setup", summary="first setup")
+
+def test_first(setup_finding):
+    raise AssertionError("the setup refusal must prevent only this call")
+
+def test_second():
+    pass
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(xfailed=1, passed=1)
+    second_call = next(
+        report
+        for report in _report_lines(pytester)
+        if report.get("$report_type") == "TestReport"
+        and report.get("nodeid", "").endswith("test_second")
+        and report.get("when") == "call"
+    )
+    assert _phase_classifications(second_call) == []
+    setup = next(
+        report
+        for report in _report_lines(pytester)
+        if report.get("$report_type") == "TestReport"
+        and report.get("nodeid", "").endswith("test_first")
+        and report.get("when") == "setup"
+    )
+    assert [entry["reason"] for entry in _phase_classifications(setup)] == [
+        "not_operational"
+    ]
+
+
+def test_setup_observation_does_not_prevent_call(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_setup_observation='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture(autouse=True)
+def setup_finding():
+    record(Classification(
+        reason="sanctioned_refusal", outcome="pass", severity="INFO",
+        label="setup observation", summary="setup observation",
+    ))
+
+def test_body():
+    assert True
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(passed=1)
+    reports = _phase_reports(pytester)
+    assert reports["call"]["outcome"] == "passed"
+    assert [entry["reason"] for entry in _phase_classifications(reports["setup"])] == [
+        "sanctioned_refusal"
+    ]
+    assert _phase_classifications(reports["call"]) == []
+
+
+def test_teardown_classification_is_serialized_once(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_teardown_finding='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture(autouse=True)
+def teardown_finding():
+    yield
+    record(Classification(
+        reason="sanctioned_refusal", outcome="pass", severity="INFO",
+        label="teardown observation", summary="teardown observation",
+    ))
+
+def test_body():
+    assert True
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(passed=1)
+    reports = _phase_reports(pytester)
+    assert _phase_classifications(reports["call"]) == []
+    assert [entry["reason"] for entry in _phase_classifications(reports["teardown"])] == [
+        "sanctioned_refusal"
+    ]
+
+
+def test_setup_call_teardown_occurrences_are_not_duplicated(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_all_phases='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+def finding(label):
+    record(Classification(
+        reason="sanctioned_refusal", outcome="pass", severity="INFO",
+        label=label, summary=label,
+    ))
+
+@pytest.fixture(autouse=True)
+def setup_and_teardown():
+    finding("setup")
+    yield
+    finding("teardown")
+
+def test_body():
+    finding("call")
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(passed=1)
+    reports = _phase_reports(pytester)
+    assert [entry["label"] for entry in _phase_classifications(reports["setup"])] == ["setup"]
+    assert [entry["label"] for entry in _phase_classifications(reports["call"])] == ["call"]
+    assert [entry["label"] for entry in _phase_classifications(reports["teardown"])] == [
+        "teardown"
+    ]
+
+
+def test_teardown_observation_does_not_leak_to_next_item(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_teardown_leak='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture
+def teardown_finding():
+    yield
+    record(Classification(
+        reason="sanctioned_refusal", outcome="pass", severity="INFO",
+        label="first teardown", summary="first teardown",
+    ))
+
+def test_first(teardown_finding):
+    pass
+
+def test_second():
+    pass
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(passed=2)
+    reports = [
+        report
+        for report in _report_lines(pytester)
+        if report.get("$report_type") == "TestReport" and report.get("when") == "teardown"
+    ]
+    assert len(reports) == 2
+    assert [entry["label"] for entry in _phase_classifications(reports[0])] == ["first teardown"]
+    assert _phase_classifications(reports[1]) == []
+
+
+def test_raw_failure_after_recorded_xfail_is_retained(pytester: pytest.Pytester) -> None:
+    pytester.makeconftest(
+        """
+        def pytest_configure():
+            import pkcs11_check._plugin_report_attach as attach
+            attach._is_testcase_item = lambda _item: True
+        """
+    )
+    pytester.makepyfile(
+        test_raw_failure='''
+from pkcs11_check.classification import Classification, record
+
+def test_body():
+    record(Classification(
+        reason="nonspec_reject", outcome="xfail", severity="LOW",
+        label="provider deviation", summary="provider deviation",
+    ))
+    assert False, "raw failure"
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(failed=1)
+    call = next(report for report in _report_lines(pytester) if report.get("when") == "call")
+    assert [entry["reason"] for entry in _phase_classifications(call)] == [
+        "nonspec_reject",
+        "unclassified",
+    ]
+
+
+def test_classified_failure_does_not_gain_duplicate_unclassified(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_classified_failure='''
+from pkcs11_check import classification as C
+
+def test_body():
+    C.fail_as("accepted_invalid", kind="crypto", label="provider failure")
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(failed=1)
+    call = next(report for report in _report_lines(pytester) if report.get("when") == "call")
+    assert [entry["reason"] for entry in _phase_classifications(call)] == ["accepted_invalid"]
+
+
+def test_caught_terminating_classification_still_controls_public_result(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyfile(
+        test_caught_classification='''
+from pkcs11_check import classification as C
+
+def test_body():
+    try:
+        C.fail_as("accepted_invalid", kind="crypto", label="caught provider failure")
+    except BaseException:
+        pass
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(failed=1)
+    call = next(report for report in _report_lines(pytester) if report.get("when") == "call")
+    assert call["outcome"] == "failed"
+    assert [entry["reason"] for entry in _phase_classifications(call)] == ["accepted_invalid"]
+
+
+def test_call_failure_and_cleanup_failure_both_survive(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_call_cleanup='''
+import pytest
+from pkcs11_check import classification as C
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture
+def cleanup_failure():
+    yield
+    record(Classification(
+        reason="harness_error", outcome="fail", severity="HIGH",
+        label="cleanup", summary="cleanup failed",
+    ))
+
+def test_body(cleanup_failure):
+    C.fail_as("accepted_invalid", kind="crypto", label="provider failure")
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(failed=1, errors=1)
+    reports = _phase_reports(pytester)
+    assert [entry["reason"] for entry in _phase_classifications(reports["call"])] == [
+        "accepted_invalid"
+    ]
+    assert [entry["reason"] for entry in _phase_classifications(reports["teardown"])] == [
+        "harness_error"
+    ]
+
+
+def test_setup_only_recorded_xfail_controls_passing_call(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_setup_xfail_public='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture(autouse=True)
+def setup_finding():
+    record(Classification(
+        reason="nonspec_reject", outcome="xfail", severity="LOW",
+        label="setup deviation", summary="setup deviation",
+    ))
+
+def test_body():
+    assert True
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(xfailed=1)
+    reports = _phase_reports(pytester)
+    assert reports["setup"]["outcome"] == "passed"
+    assert reports["call"]["outcome"] == "skipped"
+    assert reports["call"].get("wasxfail") == "setup deviation"
+
+
+@pytest.mark.parametrize("terminal", ["xfail", "skip"])
+def test_recorded_fail_then_xfail_or_skip_stays_failed(
+    pytester: pytest.Pytester, terminal: str
+) -> None:
+    pytester.makepyfile(
+        test_recorded_fail='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture(autouse=True)
+def setup_finding():
+    record(Classification(
+        reason="accepted_invalid", outcome="fail", severity="CRITICAL",
+        label="recorded failure", summary="recorded failure",
+    ))
+    pytest.{terminal}("later disposition")
+
+def test_body():
+    pass
+'''.replace("{terminal}", terminal)
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(errors=1)
+    setup = next(report for report in _report_lines(pytester) if report.get("when") == "setup")
+    assert setup["outcome"] == "failed"
+    assert "recorded failure" in str(setup.get("longrepr", ""))
+    assert [entry["reason"] for entry in _phase_classifications(setup)] == ["accepted_invalid"]
+
+
+def test_nonterminating_teardown_fail_is_public_failure(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_teardown_failure='''
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture(autouse=True)
+def teardown_finding():
+    yield
+    record(Classification(
+        reason="harness_error", outcome="fail", severity="HIGH",
+        label="teardown failure", summary="teardown failure",
+    ))
+
+def test_body():
+    assert True
+'''
+    )
+
+    result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
+
+    result.assert_outcomes(passed=1, errors=1)
+    teardown = next(
+        report for report in _report_lines(pytester) if report.get("when") == "teardown"
+    )
+    assert teardown["outcome"] == "failed"
+    assert "teardown failure" in str(teardown.get("longrepr", ""))
+    assert [entry["reason"] for entry in _phase_classifications(teardown)] == ["harness_error"]

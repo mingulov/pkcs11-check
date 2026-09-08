@@ -26,7 +26,6 @@ from __future__ import annotations
 import binascii
 import ctypes
 import hashlib
-import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -44,13 +43,9 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_KEY_GEN,
     CKM_SHA256,
     CKO_SECRET_KEY,
-    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
-    CKR_OPERATION_ACTIVE,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
-
-_DUAL_UNSUPPORTED = (CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_ACTIVE)
 
 
 def _template_ptr(attrs: Any) -> Any:
@@ -61,8 +56,8 @@ def _byte_array(data: bytes) -> Any:
     return (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
 
 
-def _generate_key(raw: Any, sh: int) -> Any:
-    """Generate a session AES-256 key; SKIP/FATAL + exit on the same paths as the legacy child."""
+def _generate_key(raw: Any, sh: int) -> Any | None:
+    """Generate a session AES-256 key and report clean provider refusals."""
     attrs = template(
         attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
         attr_ulong(CKA_KEY_TYPE, CKK_AES),
@@ -77,12 +72,9 @@ def _generate_key(raw: Any, sh: int) -> Any:
     rv = raw.C_GenerateKey(
         sh, kg_mech.byref(), _template_ptr(attrs), attrs.count, ctypes.byref(h_key)
     )
-    if rv == CKR_FUNCTION_NOT_SUPPORTED:
-        print(f"SKIP:GenerateKeyUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:GenerateKey:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:GenerateKey:0x{rv:08x}")
+        return None
     print(f"KEY_GENERATED:{h_key.value}")
     return h_key
 
@@ -99,6 +91,8 @@ def _run_digest_encrypt_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     c_void_p = ctypes.c_void_p
 
     h_key = _generate_key(raw, sh)
+    if h_key is None:
+        return
 
     # 16-byte IV; two 16-byte plaintext blocks (AES-CBC requires block alignment)
     iv = b"\x00" * 16
@@ -125,28 +119,25 @@ def _run_digest_encrypt_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
 
     # Reference encrypt via C_EncryptInit / C_EncryptUpdate / C_EncryptFinal
     rv = raw.C_EncryptInit(sh, ctypes.byref(enc_mech), h_key)
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:EncryptInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:EncryptInit_ref:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptInit_ref:0x{rv:08x}")
+        return
 
     ct_ref = bytearray()
     out_len = c_ulong(64)
     out_buf = (c_ubyte * 64)()
     rv = raw.C_EncryptUpdate(sh, data_buf, c_ulong(len(data)), out_buf, byref(out_len))
     if rv != CKR_OK:
-        print(f"FATAL:EncryptUpdate_ref:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptUpdate_ref:0x{rv:08x}")
+        return
     ct_ref += bytes(out_buf[: out_len.value])
 
     fin_len = c_ulong(64)
     fin_buf = (c_ubyte * 64)()
     rv = raw.C_EncryptFinal(sh, fin_buf, byref(fin_len))
     if rv != CKR_OK:
-        print(f"FATAL:EncryptFinal_ref:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptFinal_ref:0x{rv:08x}")
+        return
     ct_ref += bytes(fin_buf[: fin_len.value])
     ct_ref_hex = binascii.hexlify(bytes(ct_ref)).decode()
     print(f"CT_REF:{ct_ref_hex}")
@@ -156,34 +147,25 @@ def _run_digest_encrypt_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     # -----------------------------------------------------------------------
 
     rv = raw.C_DigestInit(sh, ctypes.byref(sha_mech))
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:DigestInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:DigestInit_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DigestInit_dual:0x{rv:08x}")
+        return
 
     # Starting EncryptInit while DigestInit is active requires dual-function support.
     # Modules that only allow one active operation return CKR_OPERATION_ACTIVE here.
     rv = raw.C_EncryptInit(sh, ctypes.byref(enc_mech), h_key)
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:EncryptInit_dual_Unsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:EncryptInit_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptInit_dual:0x{rv:08x}")
+        return
 
     # DigestEncryptUpdate: digest the plaintext and encrypt it simultaneously
     ct_dual = bytearray()
     deu_len = c_ulong(64)
     deu_buf = (c_ubyte * 64)()
     rv = raw.C_DigestEncryptUpdate(sh, data_buf, c_ulong(len(data)), deu_buf, byref(deu_len))
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:DigestEncryptUpdateUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:DigestEncryptUpdate:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DigestEncryptUpdate:0x{rv:08x}")
+        return
     ct_dual += bytes(deu_buf[: deu_len.value])
 
     # Finalise the encrypt operation
@@ -191,8 +173,8 @@ def _run_digest_encrypt_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     efin_buf = (c_ubyte * 64)()
     rv = raw.C_EncryptFinal(sh, efin_buf, byref(efin_len))
     if rv != CKR_OK:
-        print(f"FATAL:EncryptFinal_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptFinal_dual:0x{rv:08x}")
+        return
     ct_dual += bytes(efin_buf[: efin_len.value])
     ct_dual_hex = binascii.hexlify(bytes(ct_dual)).decode()
     print(f"CT_DUAL:{ct_dual_hex}")
@@ -202,10 +184,11 @@ def _run_digest_encrypt_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     d_buf = (c_ubyte * 32)()
     rv = raw.C_DigestFinal(sh, d_buf, byref(d_len))
     if rv != CKR_OK:
-        print(f"FATAL:DigestFinal_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DigestFinal_dual:0x{rv:08x}")
+        return
     digest_dual = binascii.hexlify(bytes(d_buf[: d_len.value])).decode()
     print(f"DIGEST_DUAL:{digest_dual}")
+    print("OK:digest_encrypt_update")
 
 
 def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
@@ -220,6 +203,8 @@ def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     c_void_p = ctypes.c_void_p
 
     h_key = _generate_key(raw, sh)
+    if h_key is None:
+        return
 
     # 16-byte IV; two 16-byte plaintext blocks (AES-CBC requires block alignment)
     iv = b"\x00" * 16
@@ -247,28 +232,25 @@ def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     # -----------------------------------------------------------------------
 
     rv = raw.C_EncryptInit(sh, ctypes.byref(enc_mech), h_key)
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:EncryptInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:EncryptInit:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptInit:0x{rv:08x}")
+        return
 
     ciphertext = bytearray()
     eu_len = c_ulong(64)
     eu_buf = (c_ubyte * 64)()
     rv = raw.C_EncryptUpdate(sh, plaintext_buf, c_ulong(len(plaintext)), eu_buf, byref(eu_len))
     if rv != CKR_OK:
-        print(f"FATAL:EncryptUpdate:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptUpdate:0x{rv:08x}")
+        return
     ciphertext += bytes(eu_buf[: eu_len.value])
 
     ef_len = c_ulong(64)
     ef_buf = (c_ubyte * 64)()
     rv = raw.C_EncryptFinal(sh, ef_buf, byref(ef_len))
     if rv != CKR_OK:
-        print(f"FATAL:EncryptFinal:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:EncryptFinal:0x{rv:08x}")
+        return
     ciphertext += bytes(ef_buf[: ef_len.value])
     ct_hex = binascii.hexlify(bytes(ciphertext)).decode()
     print(f"CIPHERTEXT:{ct_hex}")
@@ -278,22 +260,16 @@ def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     # -----------------------------------------------------------------------
 
     rv = raw.C_DigestInit(sh, ctypes.byref(sha_mech))
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:DigestInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:DigestInit_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DigestInit_dual:0x{rv:08x}")
+        return
 
     # Starting DecryptInit while DigestInit is active requires dual-function support.
     # Modules that only allow one active operation return CKR_OPERATION_ACTIVE here.
     rv = raw.C_DecryptInit(sh, ctypes.byref(enc_mech), h_key)
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:DecryptInit_dual_Unsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:DecryptInit_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DecryptInit_dual:0x{rv:08x}")
+        return
 
     # DecryptDigestUpdate: decrypt ciphertext and simultaneously digest the plaintext
     ct_bytes = bytes(ciphertext)
@@ -302,12 +278,9 @@ def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     ddu_len = c_ulong(64)
     ddu_buf = (c_ubyte * 64)()
     rv = raw.C_DecryptDigestUpdate(sh, ct_buf, c_ulong(len(ct_bytes)), ddu_buf, byref(ddu_len))
-    if rv in _DUAL_UNSUPPORTED:
-        print(f"SKIP:DecryptDigestUpdateUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:DecryptDigestUpdate:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DecryptDigestUpdate:0x{rv:08x}")
+        return
     recovered += bytes(ddu_buf[: ddu_len.value])
 
     # Finalise the decrypt operation
@@ -315,8 +288,8 @@ def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     dfin_buf = (c_ubyte * 64)()
     rv = raw.C_DecryptFinal(sh, dfin_buf, byref(dfin_len))
     if rv != CKR_OK:
-        print(f"FATAL:DecryptFinal_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DecryptFinal_dual:0x{rv:08x}")
+        return
     recovered += bytes(dfin_buf[: dfin_len.value])
     recovered_hex = binascii.hexlify(bytes(recovered)).decode()
     print(f"RECOVERED:{recovered_hex}")
@@ -326,10 +299,11 @@ def _run_decrypt_digest_update(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
     d_buf = (c_ubyte * 32)()
     rv = raw.C_DigestFinal(sh, d_buf, byref(d_len))
     if rv != CKR_OK:
-        print(f"FATAL:DigestFinal_dual:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:DigestFinal_dual:0x{rv:08x}")
+        return
     digest_dual = binascii.hexlify(bytes(d_buf[: d_len.value])).decode()
     print(f"DIGEST_DUAL:{digest_dual}")
+    print("OK:decrypt_digest_update")
 
 
 _DISPATCH: dict[str, Callable[[ProbeContext, dict[str, Any]], None]] = {

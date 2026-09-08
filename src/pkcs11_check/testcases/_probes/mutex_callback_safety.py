@@ -15,10 +15,13 @@ Dispatch on ``extra["probe"]``:
   ``"lock_returns_general_error"``   -- LockMutex returns CKR_GENERAL_ERROR, then C_GetInfo.
   ``"python_exception_in_create"``   -- CreateMutex raises a Python exception.
 
-Output protocol (byte-identical to the legacy child):
-  ``RV=0x{rv:08x}``       -- C_Initialize return value (create / python-exception probes).
-  ``INIT_RV=0x{rv:08x}``  -- C_Initialize return value (lock probe).
-  ``CALL_RV=0x{rv2:08x}`` -- C_GetInfo return value (lock probe, only when INIT_RV == CKR_OK).
+Output protocol:
+  ``RV=0x{rv:08x}``        -- C_Initialize return value (create / python-exception probes).
+  ``INIT_RV=0x{rv:08x}``   -- C_Initialize return value (lock probe).
+  ``CALL_RV=0x{rv2:08x}``  -- C_GetInfo return value (lock probe, only when INIT_RV == CKR_OK).
+
+Exactly one RV result is emitted.  The lock probe emits exactly one INIT_RV, and emits
+CALL_RV only after CKR_OK initialization.
 
 Required ``extra`` keys:
   ``"probe"`` -- one of the three names above.
@@ -69,7 +72,7 @@ def _create_returns_general_error(lib: ctypes.CDLL) -> None:
     c_init.restype = CK_RV
     c_init.argtypes = [c_void_p]
     rv = c_init(cast(byref(args), c_void_p))
-    print(f"RV=0x{rv:08x}")
+    print(f"RV=0x{rv:08x}", flush=True)
 
     # Cleanup best-effort.
     c_final = lib.C_Finalize
@@ -109,7 +112,7 @@ def _lock_returns_general_error(lib: ctypes.CDLL) -> None:
     c_init.restype = CK_RV
     c_init.argtypes = [c_void_p]
     rv = c_init(cast(byref(args), c_void_p))
-    print(f"INIT_RV=0x{rv:08x}")
+    print(f"INIT_RV=0x{rv:08x}", flush=True)
 
     if rv == CKR_OK:
         # Try a trivial call that should internally lock.
@@ -119,7 +122,7 @@ def _lock_returns_general_error(lib: ctypes.CDLL) -> None:
         c_getinfo.restype = CK_RV
         c_getinfo.argtypes = [c_void_p]
         rv2 = c_getinfo(cast(byref(info), c_void_p))
-        print(f"CALL_RV=0x{rv2:08x}")
+        print(f"CALL_RV=0x{rv2:08x}", flush=True)
 
         c_final = lib.C_Finalize
         c_final.restype = CK_RV
@@ -149,7 +152,7 @@ def _python_exception_in_create(lib: ctypes.CDLL) -> None:
     c_init.restype = CK_RV
     c_init.argtypes = [c_void_p]
     rv = c_init(cast(byref(args), c_void_p))
-    print(f"RV=0x{rv:08x}")
+    print(f"RV=0x{rv:08x}", flush=True)
 
     try:
         c_final = lib.C_Finalize

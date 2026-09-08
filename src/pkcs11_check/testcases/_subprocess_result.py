@@ -7,7 +7,7 @@ import re
 import pytest
 
 from pkcs11_check.classification import Classification, classify, fail_as, record
-from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+from pkcs11_check.core.crash_codes import crash_detail_name
 from pkcs11_check.core.process_observation import termination_from_returncode
 from pkcs11_check.core.subprocess_trace import (
     RV_TRACE_MARKER,
@@ -55,17 +55,27 @@ def _is_dispatcher_capability_error(stderr: str) -> bool:
     return bool(lines and _MISSING_FUNCTION_ERROR.fullmatch(lines[-1]))
 
 
-def _report_harness_error(detail: str, *, rc: int, stdout: str, context: str) -> None:
+def _report_harness_error(
+    detail: str,
+    *,
+    rc: int,
+    stdout: str,
+    stderr: str,
+    context: str,
+    classification_detail: dict[str, object] | None = None,
+) -> bool:
     """Record a harness defect against the harness, never against the module.
 
     Exit 0 means the probe delivered its measurement and only cleanup broke: record the
     defect (never silent, and it rides to report.jsonl) and let the caller go on to read
-    the verdict the module legitimately produced. A non-zero exit means the harness died
-    before delivering anything, so there is no verdict to keep and the test fails.
+    the verdict the module legitimately produced. The return value tells callers that
+    this explicit harness marker was handled. A non-zero exit means the harness did not
+    complete a supported process protocol, so the test fails.
     """
     summary = (
         f"{context}: pkcs11-check itself failed, NOT the module under test -- {detail}\n"
-        f"stdout: {_format_subprocess_stream(stdout)}"
+        f"stdout: {_format_subprocess_stream(stdout)}\n"
+        f"stderr: {_format_subprocess_stream(stderr)}"
     )
     if rc == 0:
         record(
@@ -75,10 +85,12 @@ def _report_harness_error(detail: str, *, rc: int, stdout: str, context: str) ->
                 severity="HIGH",
                 label=context,
                 summary=summary,
+                detail=classification_detail,
             )
         )
-        return
-    fail_as("harness_error", label=context, summary=summary)
+        return True
+    fail_as("harness_error", label=context, summary=summary, detail=classification_detail)
+    return False
 
 
 def assert_subprocess_completed(
@@ -87,61 +99,87 @@ def assert_subprocess_completed(
     stderr: str,
     *,
     context: str,
-) -> None:
-    """Fail if a crash-survival subprocess crashed or failed internally."""
+) -> tuple[dict[str, object], bool]:
+    """Fail if a crash-survival subprocess crashed or failed internally.
+
+    On a non-terminating path, return the normalized process termination and whether an
+    explicit HARNESS_ERROR marker was handled. Callers that know their own output
+    protocol can use the latter to continue reading a valid measurement after cleanup.
+    """
     record_subprocess_rv_trace(stdout, stderr)
-    if SUBPROCESS_TIMEOUT_MARKER in stderr:
+    timed_out = SUBPROCESS_TIMEOUT_MARKER in stderr
+    termination = termination_from_returncode(rc, timed_out=timed_out, stderr=stderr)
+    termination_kind = termination["kind"]
+    if termination_kind in {"signal", "exception", "timeout"}:
         # The module hung on the probe input (subprocess timed out without
         # returning). A conformant module must reject an impossible input, not
         # hang on it -- classify as a crash-class finding, never a record-less
         # runtime-gate leak. (Checked first: the sentinel rc is incidental.)
-        classify(
-            "crash",
-            label=context,
-            detail={"termination": termination_from_returncode(rc, timed_out=True, stderr=stderr)},
-            summary=(
+        if termination_kind == "timeout":
+            summary = (
                 f"{context}: module hung -- subprocess timed out without returning "
                 f"on the probe input (must reject impossible inputs, not hang)\n"
                 f"stdout: {_format_subprocess_stream(stdout)}\n"
                 f"stderr: {_format_subprocess_stream(stderr)}"
-            ),
-        )
-        return
-    if is_crash_returncode(rc):
-        crash_name = f"signal {-rc}" if rc < 0 else f"Windows exception {crash_detail_name(rc)}"
-        classify(
-            "crash",
-            label=context,
-            detail={"termination": termination_from_returncode(rc, stderr=stderr)},
-            summary=(
+            )
+        elif termination_kind == "signal":
+            crash_name = f"signal {-rc}" if rc < 0 else "signal"
+            summary = (
                 f"{context}: module crashed with {crash_name}\n"
                 f"stdout: {_format_subprocess_stream(stdout)}\n"
                 f"stderr: {_format_subprocess_stream(stderr)}"
-            ),
+            )
+        else:
+            windows_status = termination.get("windows_status")
+            crash_code = windows_status if isinstance(windows_status, int) else rc
+            summary = (
+                f"{context}: module crashed with Windows exception "
+                f"{crash_detail_name(crash_code)}\n"
+                f"stdout: {_format_subprocess_stream(stdout)}\n"
+                f"stderr: {_format_subprocess_stream(stderr)}"
+            )
+        classify(
+            "crash",
+            label=context,
+            detail={"termination": termination},
+            summary=summary,
         )
-        return
+        return termination, False
     if (harness_error := _harness_error_line(stdout, stderr)) is not None:
-        _report_harness_error(harness_error, rc=rc, stdout=stdout, context=context)
-        return
-    if rc > 0:
+        explicit_harness = _report_harness_error(
+            harness_error,
+            rc=rc,
+            stdout=stdout,
+            stderr=stderr,
+            context=context,
+            classification_detail={"termination": termination},
+        )
+        return termination, explicit_harness
+    if rc != 0:
         # A child that exited cleanly (non-zero, not a signal) only because it
         # called a PKCS#11 function the module does not implement is a capability
         # gap, not a crash/finding: the dispatcher raises
         # AttributeError("<C_Fn> not available in this module"). Skip rather than
-        # fail. Real abnormal exits (e.g. an empty-output exit-5 over-read) carry
-        # no such marker and still fail.
+        # fail. An ordinary positive exit without this exact capability traceback is
+        # incomplete harness evidence, not a provider crash.
         if rc == 1 and _is_dispatcher_capability_error(stderr):
             pytest.skip(
                 f"{context}: a PKCS#11 function used by this probe is not "
                 "implemented by the module (absent from the function list)"
             )
-        classify(
-            "crash",
-            label=context,
-            detail={"termination": termination_from_returncode(rc, stderr=stderr)},
-            summary=(
-                f"{context}: subprocess failed with exit code {rc}\n"
-                f"stdout: {_format_subprocess_stream(stdout)}\n"
-                f"stderr: {_format_subprocess_stream(stderr)}"
+        _report_harness_error(
+            (
+                f"subprocess failed with exit code {rc}; child did not provide a recognized "
+                "crash/termination protocol"
             ),
+            rc=rc,
+            stdout=stdout,
+            stderr=stderr,
+            context=context,
+            classification_detail={
+                "probe_incomplete": True,
+                "termination": termination,
+            },
         )
+        return termination, False
+    return termination, False
