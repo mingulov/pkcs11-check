@@ -17,10 +17,16 @@ which error code a vector run happened to return.
 
 from __future__ import annotations
 
+import hashlib
+from typing import Any
+
 import pytest
 
+from pkcs11_check.classification import get_records
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKG_MGF1_SHA1,
+    CKM_SHA512_224,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_GENERAL_ERROR,
     CKR_MECHANISM_PARAM_INVALID,
@@ -32,6 +38,7 @@ from pkcs11_check.testcases._operability import (
     probe_operability,
     reset_operability_cache,
 )
+from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_oaep as oaep
 
 
 @pytest.fixture(autouse=True)
@@ -41,6 +48,58 @@ def _fresh_cache() -> None:
 
 def _ckr(rv: int) -> CkrAssertionError:
     return CkrAssertionError(f"Unexpected CK_RV; rv={rv}", int(rv))
+
+
+def _missing_host_hash(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    real_new = hashlib.new
+
+    def _new(hash_name: str, *args: Any, **kwargs: Any) -> Any:
+        if hash_name == name:
+            raise ValueError(f"unsupported hash type {name}")
+        return real_new(hash_name, *args, **kwargs)
+
+    monkeypatch.setattr(hashlib, "new", _new)
+
+
+def _oaep_probe_args(*, sha: str, mgf_sha: str) -> dict[str, Any]:
+    return {
+        "modulus": b"\x01" * 256,
+        "pub_exponent": b"\x01\x00\x01",
+        "sha": sha,
+        "mgf_sha": mgf_sha,
+        "hash_mech": int(CKM_SHA512_224),
+        "mgf": int(CKG_MGF1_SHA1),
+    }
+
+
+class _RsaSession:
+    raw = object()
+    sh = 1
+
+    def has_mechanism(self, _name: str) -> bool:
+        return True
+
+
+def _synthetic_oaep_vector(*, result: str, sha: str, mgf_sha: str) -> dict[str, Any]:
+    key = {
+        "modulus": "01" * 256,
+        "publicExponent": "010001",
+        "privateExponent": "01",
+        "prime1": "01",
+        "prime2": "01",
+        "exponent1": "01",
+        "exponent2": "01",
+        "coefficient": "01",
+    }
+    return {
+        "ct": "00",
+        "msg": "",
+        "result": result,
+        "label": "",
+        "_sha": sha,
+        "_mgfSha": mgf_sha,
+        "_group": {"privateKey": key},
+    }
 
 
 OPERATIONAL = OperabilityResult(Operability.OPERATIONAL, "canonical OK")
@@ -213,3 +272,143 @@ def test_oaep_combo_probe_classifies_by_canonical_effect(
         mgf=int(CKG_MGF1_SHA256),
     )
     assert res.status is Operability.OPERATIONAL
+
+
+def test_oaep_missing_primary_host_hash_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_host_hash(monkeypatch, "sha512_224")
+
+    result = oaep._oaep_combo_probe(
+        _RsaSession(),
+        7,
+        **_oaep_probe_args(sha="SHA-512/224", mgf_sha="SHA-1"),
+    )
+
+    assert result.status is Operability.INCONCLUSIVE
+    assert result.detail == "host Python hashlib lacks SHA-512/224; provider was not probed"
+
+
+def test_oaep_missing_mgf_host_hash_is_inconclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_host_hash(monkeypatch, "sha512_224")
+
+    result = oaep._oaep_combo_probe(
+        _RsaSession(),
+        7,
+        **_oaep_probe_args(sha="SHA-1", mgf_sha="SHA-512/224"),
+    )
+
+    assert result.status is Operability.INCONCLUSIVE
+    assert result.detail == "host Python hashlib lacks SHA-512/224; provider was not probed"
+
+
+def test_missing_host_hash_does_not_call_provider_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_host_hash(monkeypatch, "sha512_224")
+    calls: list[tuple[object, ...]] = []
+
+    def _decrypt(*args: object, **_kwargs: object) -> bytes:
+        calls.append(args)
+        raise AssertionError("canonical provider probe must not run")
+
+    monkeypatch.setattr(oaep, "decrypt_single", _decrypt)
+
+    result = oaep._oaep_combo_probe(
+        _RsaSession(),
+        7,
+        **_oaep_probe_args(sha="SHA-512/224", mgf_sha="SHA-1"),
+    )
+
+    assert result.status is Operability.INCONCLUSIVE
+    assert calls == []
+
+
+def test_provider_observation_survives_later_inconclusive_oracle() -> None:
+    key = "RSA_OAEP:SHA-512/224:SHA-1:decrypt"
+    provider_result = OperabilityResult(Operability.NOT_OPERATIONAL, "provider rejected")
+    host_result = OperabilityResult(
+        Operability.INCONCLUSIVE,
+        "host Python hashlib lacks SHA-512/224; provider was not probed",
+    )
+    calls = 0
+
+    assert probe_operability(key, lambda: provider_result) is provider_result
+
+    def _unexpected_reprobe() -> OperabilityResult:
+        nonlocal calls
+        calls += 1
+        return host_result
+
+    assert probe_operability(key, _unexpected_reprobe) is provider_result
+    assert calls == 0
+
+
+def test_supplied_oaep_vector_still_executes_without_host_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_host_hash(monkeypatch, "sha512_224")
+    vec = _synthetic_oaep_vector(result="valid", sha="SHA-512/224", mgf_sha="SHA-1")
+    supplied_calls: list[bytes] = []
+
+    monkeypatch.setattr(oaep, "provision_rsa_private_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(oaep, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _decrypt(*args: object, **_kwargs: object) -> bytes:
+        supplied_calls.append(args[4])
+        raise _ckr(CKR_GENERAL_ERROR)
+
+    monkeypatch.setattr(oaep, "decrypt_single", _decrypt)
+
+    with pytest.raises(pytest.xfail.Exception):
+        oaep.test_rsa_oaep(_RsaSession(), None, "synthetic-valid", vec)
+
+    assert supplied_calls == [b"\x00"]
+
+
+def test_original_vector_provider_response_survives_inconclusive_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_host_hash(monkeypatch, "sha512_224")
+    vec = _synthetic_oaep_vector(result="valid", sha="SHA-512/224", mgf_sha="SHA-1")
+
+    monkeypatch.setattr(oaep, "provision_rsa_private_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(oaep, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _decrypt(*_args: object, **_kwargs: object) -> bytes:
+        raise _ckr(CKR_GENERAL_ERROR)
+
+    monkeypatch.setattr(oaep, "decrypt_single", _decrypt)
+
+    with pytest.raises(pytest.xfail.Exception):
+        oaep.test_rsa_oaep(_RsaSession(), None, "synthetic-record", vec)
+
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].actual_ckr == "CKR_GENERAL_ERROR"
+
+
+def test_missing_host_hash_does_not_make_negative_reject_vacuous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _missing_host_hash(monkeypatch, "sha512_224")
+    vec = _synthetic_oaep_vector(result="invalid", sha="SHA-512/224", mgf_sha="SHA-1")
+    calls = 0
+
+    monkeypatch.setattr(oaep, "provision_rsa_private_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(oaep, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _decrypt(*_args: object, **_kwargs: object) -> bytes:
+        nonlocal calls
+        calls += 1
+        raise _ckr(CKR_ENCRYPTED_DATA_INVALID)
+
+    monkeypatch.setattr(oaep, "decrypt_single", _decrypt)
+
+    oaep.test_rsa_oaep(_RsaSession(), None, "synthetic-invalid", vec)
+
+    assert calls == 1
+    assert get_records() == []

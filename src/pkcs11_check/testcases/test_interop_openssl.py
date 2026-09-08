@@ -155,6 +155,8 @@ class TestP11KitProxy:
 
     def test_p11kit_list_modules(self) -> None:
         """p11-kit can list registered modules."""
+        if not _have_p11kit():
+            pytest.skip("p11-kit not installed")
         rc, out, err = _run(["p11-kit", "list-modules"])
         # p11-kit may return 0 or non-zero depending on config
         # The key test: no crash

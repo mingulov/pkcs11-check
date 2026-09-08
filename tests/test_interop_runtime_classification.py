@@ -6,8 +6,10 @@ import pytest
 
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR
-from pkcs11_check.testcases import test_crossverify
+from pkcs11_check.testcases import test_crossverify, test_interop_openssl
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
+
+pytest_plugins = ["pytester"]
 
 
 class _Session:
@@ -56,3 +58,55 @@ def test_crossverify_hmac_sha1_generic_key_import_reject_is_xfail(
 
     with pytest.raises(pytest.xfail.Exception, match="SHA_1_HMAC key import"):
         test_crossverify.TestHMACCrossVerify().test_hmac_sha1(_Session())
+
+
+def test_p11kit_list_modules_skips_when_executable_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_interop_openssl, "_have_p11kit", lambda: False)
+
+    def _unexpected_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
+        pytest.fail("p11-kit CLI must not run when it is unavailable")
+
+    monkeypatch.setattr(test_interop_openssl, "_run", _unexpected_run)
+
+    with pytest.raises(pytest.skip.Exception, match="p11-kit not installed"):
+        test_interop_openssl.TestP11KitProxy().test_p11kit_list_modules()
+
+
+def test_p11kit_list_modules_runs_when_executable_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(test_interop_openssl, "_have_p11kit", lambda: True)
+
+    def _run(cmd: list[str], **_kwargs: object) -> tuple[int, str, str]:
+        calls.append(cmd)
+        return 0, "module: test", ""
+
+    monkeypatch.setattr(test_interop_openssl, "_run", _run)
+
+    test_interop_openssl.TestP11KitProxy().test_p11kit_list_modules()
+
+    assert calls == [["p11-kit", "list-modules"]]
+
+
+def test_missing_p11kit_does_not_skip_independent_interop_test(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.makepyfile(
+        """
+        from pkcs11_check.testcases import test_interop_openssl
+
+        def test_missing_p11kit(monkeypatch):
+            monkeypatch.setattr(test_interop_openssl, "_have_p11kit", lambda: False)
+            test_interop_openssl.TestP11KitProxy().test_p11kit_list_modules()
+
+        def test_independent_interop_case():
+            assert True
+        """
+    )
+
+    result = pytester.runpytest_inprocess("-q")
+
+    result.assert_outcomes(passed=1, skipped=1)
