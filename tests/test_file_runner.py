@@ -58,6 +58,7 @@ from pkcs11_check.core.file_runner import (
 )
 from pkcs11_check.core.merge import merge_results_payloads
 from pkcs11_check.core.process_observation import build_process_observation
+from pkcs11_check.report.extract import extract_groups
 
 
 def test_unit_status_priority_is_the_overall_status_set() -> None:
@@ -8522,6 +8523,107 @@ def test_retry_pass_does_not_erase_prior_finding(first: dict[str, object], expec
     assert detail["counts"]["passed"] == 0
     assert sum(detail["counts"].values()) == 1
     assert [test["outcome"] for test in detail["tests"]] == [expected]
+
+
+def test_retry_pass_keeps_real_setup_finding_and_conservative_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real pytest/file-runner retry path keeps phase ownership and xfail status."""
+    target = tmp_path / "test_retry_provider.py"
+    marker = tmp_path / "crasher-ran"
+    target.write_text(
+        f'''
+import ctypes
+import os
+import signal
+import sys
+from pathlib import Path
+
+import pytest
+from pkcs11_check.classification import Classification, record
+
+@pytest.fixture(autouse=True)
+def setup_observation(request):
+    if request.node.name == "test_observed":
+        record(Classification(
+            reason="nonspec_reject", outcome="xfail", severity="LOW",
+            label="setup deviation", summary="setup deviation",
+        ))
+
+def test_observed():
+    pass
+
+def test_crasher():
+    marker = Path({str(marker)!r})
+    if marker.exists():
+        return
+    marker.write_text("first attempt", encoding="utf-8")
+    if sys.platform == "win32":
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel.TerminateProcess(kernel.GetCurrentProcess(), 0xC0000005)
+    else:
+        os.kill(os.getpid(), signal.SIGSEGV)
+
+def test_remaining():
+    pass
+''',
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "state.json"
+    results_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+    monkeypatch.setattr(
+        file_runner_mod,
+        "_unit_plugin_addopts",
+        lambda _path: "-p pkcs11-check -p pytest_reportlog -p timeout",
+    )
+
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        [],
+        timeout=12,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_jsonl_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="mixed",
+    )
+
+    assert exit_code == 1
+    unified = json.loads(results_path.read_text(encoding="utf-8"))
+    unit_report = unified["units"][0]
+    assert unit_report["counts"]["xfailed"] == 1
+    assert unit_report["counts"]["passed"] >= 1
+    assert unit_report["counts"]["crashed"] == 1
+    observed = next(test for test in unit_report["tests"] if "test_observed" in test["nodeid"])
+    assert observed["outcome"] == "xfailed"
+
+    merged_records = [
+        json.loads(line)
+        for line in report_jsonl_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    classification_phases = [
+        report["when"]
+        for report in merged_records
+        if report.get("$report_type") == "TestReport"
+        and dict(report.get("user_properties", [])).get("pkcs11_classification")
+    ]
+    assert classification_phases == ["setup"]
+    assert any(
+        record.get("nodeid", "").endswith("::test_remaining")
+        and record.get("when") == "call"
+        and record.get("outcome") == "passed"
+        for record in merged_records
+    )
+    groups = extract_groups(report_jsonl_path, crashes=[])
+    assert len(groups) == 1
+    assert groups[0]["reason"] == "nonspec_reject"
+    assert groups[0]["count"] == 1
 
 
 @pytest.mark.parametrize(

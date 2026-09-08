@@ -35,6 +35,7 @@ from pkcs11_check.raw.bootstrap import (
     open_session,
     resolve_slot_id,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
@@ -174,8 +175,17 @@ def probe_main(
             return
 
         # --- C_Initialize (all levels above LOAD) ---
-        rv = raw.C_Initialize(None)
-        assert rv in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED), f"C_Initialize: 0x{rv:08x}"
+        # A clean provider refusal is evidence that the advertised operation is not
+        # operational, not a Python/bootstrap failure.  Emit a terminal marker and
+        # return normally so the parent can classify it after inspecting process
+        # disposition.  Only CkrAssertionError is caught here; OSError/SEH and all
+        # other Python defects must retain their crash/harness attribution.
+        try:
+            rv = raw.C_Initialize(None)
+            expect_rv(rv, CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
+        except CkrAssertionError as exc:
+            print(f"SETUP_XFAIL:C_Initialize rejected with {ckr_name(exc.rv)}")
+            return
         teardown.initialized = True
 
         if level == Level.INIT:
@@ -186,7 +196,11 @@ def probe_main(
         # params.slot_id is a slot INDEX (config.slot semantics), not a raw slot ID: resolve it
         # through the present-token slot list exactly as fixtures.py does. Passing the raw index to
         # C_OpenSession crashes with CKR_SLOT_ID_INVALID on dynamic-slot modules (index != id).
-        slots = get_slot_ids(raw)
+        try:
+            slots = get_slot_ids(raw)
+        except CkrAssertionError as exc:
+            print(f"SETUP_XFAIL:C_GetSlotList rejected with {ckr_name(exc.rv)}")
+            return
         if not slots:
             print("SETUP_XFAIL:no slot with a present token")
             return
@@ -194,7 +208,11 @@ def probe_main(
         ctx.slot_id = slot_id
 
         # --- Open session ---
-        sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        try:
+            sh = open_session(raw, slot_id, CKF_SERIAL_SESSION | CKF_RW_SESSION)
+        except CkrAssertionError as exc:
+            print(f"SETUP_XFAIL:C_OpenSession rejected with {ckr_name(exc.rv)}")
+            return
         teardown.sh = sh
         ctx.sh = sh
 
@@ -202,7 +220,11 @@ def probe_main(
         if level == Level.LOGIN:
             pin = os.environ.get("_P11CHECK_PIN")
             if pin is not None:
-                login_user(raw, sh, CKU_USER, pin.encode())
+                try:
+                    login_user(raw, sh, CKU_USER, pin.encode())
+                except CkrAssertionError as exc:
+                    print(f"SETUP_XFAIL:C_Login rejected with {ckr_name(exc.rv)}")
+                    return
 
         run_fn(ctx, params.extra)
     finally:

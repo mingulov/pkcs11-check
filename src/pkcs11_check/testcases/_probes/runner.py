@@ -5,7 +5,7 @@ modules.  PIN travels only via ``_P11CHECK_PIN`` env (I3).  Coverage is routed
 to the correct accumulator by the ``coverage`` argument (I6).  The rv-trace is
 recorded by ``record_subprocess_rv_trace`` (I7).  Timeouts are converted to rc
 124 + ``SUBPROCESS_TIMEOUT_MARKER`` on stderr (I8).  The child is launched via
-``python -m pkcs11_check.testcases._probes.<probe>`` (I11, no shell).
+``python -u -m pkcs11_check.testcases._probes.<probe>`` (I11, no shell).
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def run_probe(
         with os.fdopen(params_fd, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
 
-        cmd = [sys.executable, "-m", f"pkcs11_check.testcases._probes.{probe}", params_path]
+        cmd = [sys.executable, "-u", "-m", f"pkcs11_check.testcases._probes.{probe}", params_path]
         try:
             proc = subprocess.run(
                 cmd,

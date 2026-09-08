@@ -48,11 +48,11 @@ def demand_zero_buffer() -> ctypes.POINTER(ctypes.c_ubyte):  # type: ignore[vali
         return _honeypot_ptr
     flags = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
     flags |= getattr(mmap, "MAP_NORESERVE", 0)
-    last_exc: OSError | ValueError | None = None
+    last_exc: OSError | ValueError | OverflowError | None = None
     for size in _HONEYPOT_SIZES:
         try:
             mm = mmap.mmap(-1, size, flags=flags)
-        except (OSError, ValueError) as exc:  # ValueError: size too large for this build
+        except (OSError, ValueError, OverflowError) as exc:  # Size too large for this build
             last_exc = exc
             continue
         _honeypot_mapping = mm

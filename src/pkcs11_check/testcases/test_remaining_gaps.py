@@ -38,7 +38,15 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import (
+    Classification,
+    classify,
+    derive_verdict,
+    fail_as,
+    raise_for_record,
+    record,
+    xfail_as,
+)
 from pkcs11_check.raw.pack import mech_ulong
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -47,6 +55,7 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import (
     CkrAssertionError,
+    ckr_name,
     expect_rv,
     is_standard_ckr,
     is_vendor_defined_ckr,
@@ -108,6 +117,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
+from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
@@ -230,6 +240,190 @@ def _run_gap_probe(
         coverage="session",
     )
     return result.returncode, result.stdout, result.stderr
+
+
+def _inspect_gap_probe(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    *,
+    context: str,
+    ckr_prefix: str | None = None,
+    operation: str | None = None,
+) -> tuple[int | None, Classification | None]:
+    """Record terminal semantic markers before applying process disposition."""
+    semantic: list[Classification] = []
+    malformed = False
+    for line in stdout.splitlines():
+        if line.startswith("SETUP_XFAIL:"):
+            reason, kind, prefix = "not_operational", None, "SETUP_XFAIL:"
+        elif line.startswith("BREAK:"):
+            reason, kind, prefix = "self_contradiction", "crypto", "BREAK:"
+        elif line.startswith("DEVIATION_XFAIL:"):
+            reason, kind, prefix = "honest_deviation", None, "DEVIATION_XFAIL:"
+        else:
+            continue
+        payload = line.removeprefix(prefix).strip()
+        if not payload:
+            malformed = True
+            continue
+        outcome, severity = derive_verdict(reason, kind)
+        semantic.append(
+            Classification(
+                reason=reason,
+                outcome=outcome,
+                severity=severity,
+                kind=kind,
+                label=context,
+                summary=f"{context}: {payload}",
+                detail={"protocol_marker": prefix.removesuffix(":")},
+            )
+        )
+    provider_rv: int | None = None
+    provider_record: Classification | None = None
+    malformed_ckr = False
+    if ckr_prefix is not None:
+        provider_rv, provider_record, malformed_ckr = _parse_gap_ckr_marker(
+            stdout,
+            ckr_prefix,
+            context=context,
+            operation=operation or context,
+            allow_missing=bool(semantic) or "SKIP:" in stdout,
+        )
+    for item in semantic:
+        record(item)
+    if provider_record is not None:
+        record(provider_record)
+    _termination, explicit_harness = assert_subprocess_completed(
+        returncode, stdout, stderr, context=context
+    )
+    if explicit_harness:
+        return provider_rv, provider_record
+    if malformed or malformed_ckr:
+        fail_as(
+            "harness_error",
+            label=context,
+            summary=f"{context}: malformed semantic or CKR protocol marker",
+            detail={"probe_incomplete": True, "protocol": "malformed_marker"},
+        )
+    for item in semantic:
+        raise_for_record(item)
+    return provider_rv, provider_record
+
+
+def _parse_gap_ckr_marker(
+    stdout: str,
+    prefix: str,
+    *,
+    context: str,
+    operation: str,
+    allow_missing: bool = False,
+) -> tuple[int | None, Classification | None, bool]:
+    """Parse one complete dual-function CKR marker without raising.
+
+    The returned classification is recorded before subprocess disposition.  This keeps a
+    clean provider rejection visible when teardown later terminates the child abnormally;
+    normal callers raise it only after ``assert_subprocess_completed`` has run.
+    """
+    marker = f"{prefix}:"
+    lines = [line for line in stdout.splitlines() if line.startswith(marker)]
+    if not lines:
+        return None, None, not allow_missing
+    if len(lines) != 1:
+        return None, None, True
+    raw_rv = lines[0].removeprefix(marker).strip()
+    try:
+        rv = int(raw_rv, 0)
+    except ValueError:
+        return None, None, True
+    if rv == CKR_OK:
+        return rv, None, False
+    if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+        outcome, severity = derive_verdict("self_contradiction", "metadata")
+        return (
+            rv,
+            Classification(
+                reason="self_contradiction",
+                outcome=outcome,
+                severity=severity,
+                kind="metadata",
+                label=context,
+                operation=operation,
+                actual_ckr=ckr_name(rv),
+                summary=f"{context}: returned undefined CK_RV {ckr_name(rv)}",
+                detail={"protocol_marker": prefix, "probe_incomplete": True},
+            ),
+            False,
+        )
+    outcome, severity = derive_verdict("not_operational", "crypto")
+    return (
+        rv,
+        Classification(
+            reason="not_operational",
+            outcome=outcome,
+            severity=severity,
+            kind="crypto",
+            label=context,
+            operation=operation,
+            actual_ckr=ckr_name(rv),
+            summary=f"{context}: advertised function is not operational ({ckr_name(rv)})",
+            detail={"protocol_marker": prefix, "operation": operation},
+        ),
+        False,
+    )
+
+
+def _probe_ckr(
+    stdout: str,
+    prefix: str,
+    *,
+    context: str,
+) -> int:
+    """Parse one dual-function CKR marker, treating malformed output as harness error."""
+    marker = f"{prefix}:"
+    lines = [line for line in stdout.splitlines() if line.startswith(marker)]
+    if not lines:
+        fail_as(
+            "harness_error",
+            label=context,
+            summary=f"{context}: missing {prefix} result",
+            detail={"probe_incomplete": True, "protocol": "missing_result"},
+        )
+    line = lines[0]
+    raw_rv = line.removeprefix(marker).strip()
+    try:
+        rv = int(raw_rv, 0)
+    except ValueError:
+        fail_as(
+            "harness_error",
+            label=context,
+            summary=f"{context}: malformed {prefix} CKR {raw_rv!r}",
+            detail={"probe_incomplete": True, "protocol": "malformed_result"},
+        )
+    _validate_defined_ckr(rv, context)
+    return rv
+
+
+def _classify_dual_ckr(
+    rv: int,
+    *,
+    context: str,
+    operation: str,
+    recorded: Classification | None = None,
+) -> None:
+    """A defined CKR refusal is not operational; CKR_OK is the only positive pass."""
+    if rv == CKR_OK:
+        return
+    if recorded is not None:
+        raise_for_record(recorded)
+    classify(
+        "not_operational",
+        kind="crypto",
+        label=context,
+        operation=operation,
+        actual=rv,
+        summary=f"{context}: advertised dual function is not operational ({ckr_name(rv)})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1191,50 +1385,53 @@ class TestDualFunctionRemaining:
     def test_sign_encrypt_update_callable(self, p11_config: Any) -> None:
         """C_SignEncryptUpdate (index 56) exists and returns a defined CKR code."""
         returncode, stdout, stderr = _run_gap_probe(p11_config, "sign_encrypt_update")
+        rv, measurement = _inspect_gap_probe(
+            returncode,
+            stdout,
+            stderr,
+            context="C_SignEncryptUpdate",
+            ckr_prefix="SEU",
+            operation="C_SignEncryptUpdate",
+        )
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
-        if returncode < 0:
-            classify(
-                "crash",
+        if rv is None:
+            fail_as(
+                "harness_error",
                 label="C_SignEncryptUpdate",
-                operation="C_SignEncryptUpdate",
-                summary=(
-                    f"C_SignEncryptUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
-                ),
+                summary="C_SignEncryptUpdate: missing parsed CKR result",
+                detail={"probe_incomplete": True, "protocol": "missing_result"},
             )
-        if returncode != 0:
-            classify(
-                "crash",
-                label="C_SignEncryptUpdate probe subprocess",
-                operation="C_SignEncryptUpdate",
-                summary=f"No output: {stdout!r} {stderr[:200]}",
-            )
-        seu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("SEU:")), None)
-        assert seu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
-        # Any defined CKR response is valid - we're testing the function exists and doesn't crash.
-        _parse_defined_probe_ckr(seu_line, "SEU", "C_SignEncryptUpdate")
+        _classify_dual_ckr(
+            rv,
+            context="C_SignEncryptUpdate",
+            operation="C_SignEncryptUpdate",
+            recorded=measurement,
+        )
 
     def test_decrypt_verify_update_callable(self, p11_config: Any) -> None:
         """C_DecryptVerifyUpdate (index 57) exists and returns a defined CKR code."""
         returncode, stdout, stderr = _run_gap_probe(p11_config, "decrypt_verify_update")
+        rv, measurement = _inspect_gap_probe(
+            returncode,
+            stdout,
+            stderr,
+            context="C_DecryptVerifyUpdate",
+            ckr_prefix="DVU",
+            operation="C_DecryptVerifyUpdate",
+        )
         if "SKIP:" in stdout:
             pytest.skip(stdout.strip())
-        if returncode < 0:
-            classify(
-                "crash",
+        if rv is None:
+            fail_as(
+                "harness_error",
                 label="C_DecryptVerifyUpdate",
-                operation="C_DecryptVerifyUpdate",
-                summary=(
-                    f"C_DecryptVerifyUpdate crashed (signal {-returncode}). Stderr: {stderr[:200]}"
-                ),
+                summary="C_DecryptVerifyUpdate: missing parsed CKR result",
+                detail={"probe_incomplete": True, "protocol": "missing_result"},
             )
-        if returncode != 0:
-            classify(
-                "crash",
-                label="C_DecryptVerifyUpdate probe subprocess",
-                operation="C_DecryptVerifyUpdate",
-                summary=f"No output: {stdout!r} {stderr[:200]}",
-            )
-        dvu_line = next((ln for ln in stdout.strip().split("\n") if ln.startswith("DVU:")), None)
-        assert dvu_line is not None, f"No output: {stdout!r} {stderr[:200]}"
-        _parse_defined_probe_ckr(dvu_line, "DVU", "C_DecryptVerifyUpdate")
+        _classify_dual_ckr(
+            rv,
+            context="C_DecryptVerifyUpdate",
+            operation="C_DecryptVerifyUpdate",
+            recorded=measurement,
+        )
