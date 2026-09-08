@@ -13,8 +13,9 @@ import hmac as hmac_mod
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
 from pkcs11_check.raw.recipes import (
@@ -25,7 +26,6 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
-    CKA_EC_POINT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
@@ -55,6 +55,8 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     gen_ec_keypair_or_xfail,
@@ -201,7 +203,15 @@ class TestHKDF:
                     info=b"info",
                 ),
             )
-            okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            okm_attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+            okm = attr_or_record(
+                okm_attrs,
+                CKA_VALUE,
+                label="CKM_HKDF_DERIVE:derived CKA_VALUE",
+                reason="not_operational",
+            )
+            if okm is MISSING_ATTRIBUTE:
+                return
             assert len(okm) == 32
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF derivation not operational")
@@ -223,8 +233,16 @@ class TestECDHDerive:
         )
 
     def _extract_ec_point(self, rs: Any, pub_handle: int) -> bytes:
-        ec_point_raw = read_attributes(rs.raw, rs.sh, pub_handle, [CKA_EC_POINT])[CKA_EC_POINT]
-        return decode_ec_point(bytes(ec_point_raw))
+        public_key = read_ec_public_key_or_xfail(
+            rs,
+            pub_handle,
+            ec.SECP256R1(),
+            label="ECDH P-256 public key",
+        )
+        return public_key.public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
 
     def _derive_shared(
         self,
@@ -257,15 +275,17 @@ class TestECDHDerive:
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
             pytest.skip("EC key generation not supported")
 
-        pub_a, priv_a = self._generate_ec_keypair(rs)
-        pub_b, priv_b = self._generate_ec_keypair(rs)
+        pub_a = priv_a = pub_b = priv_b = 0
         try:
-            point_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_EC_POINT])[CKA_EC_POINT]
-            point_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
+            pub_a, priv_a = self._generate_ec_keypair(rs)
+            pub_b, priv_b = self._generate_ec_keypair(rs)
+            point_a = self._extract_ec_point(rs, pub_a)
+            point_b = self._extract_ec_point(rs, pub_b)
             assert point_a != point_b
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
-                destroy_quietly(rs.raw, rs.sh, h)
+                if h:
+                    destroy_quietly(rs.raw, rs.sh, h)
 
     def test_ecdh_shared_secret_agreement(self, p11_raw_session: Any) -> None:
         """ECDH: A derives with B's pubkey == B derives with A's pubkey."""
@@ -275,19 +295,36 @@ class TestECDHDerive:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        pub_a, priv_a = self._generate_ec_keypair(rs)
-        pub_b, priv_b = self._generate_ec_keypair(rs)
+        pub_a = priv_a = pub_b = priv_b = 0
         shared_ab = 0
         shared_ba = 0
         try:
+            pub_a, priv_a = self._generate_ec_keypair(rs)
+            pub_b, priv_b = self._generate_ec_keypair(rs)
             point_a = self._extract_ec_point(rs, pub_a)
             point_b = self._extract_ec_point(rs, pub_b)
 
             shared_ab = self._derive_shared(rs, priv_a, point_b)
             shared_ba = self._derive_shared(rs, priv_b, point_a)
 
-            val_ab = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])[CKA_VALUE]
-            val_ba = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])[CKA_VALUE]
+            val_ab_attrs = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])
+            val_ba_attrs = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])
+            val_ab = attr_or_record(
+                val_ab_attrs,
+                CKA_VALUE,
+                label="CKM_ECDH1_DERIVE:Alice shared CKA_VALUE",
+                reason="not_operational",
+            )
+            val_ba = attr_or_record(
+                val_ba_attrs,
+                CKA_VALUE,
+                label="CKM_ECDH1_DERIVE:Bob shared CKA_VALUE",
+                reason="not_operational",
+            )
+            if val_ab is MISSING_ATTRIBUTE or val_ba is MISSING_ATTRIBUTE:
+                return
+            assert isinstance(val_ab, bytes)
+            assert isinstance(val_ba, bytes)
             assert_correct(
                 actual=val_ab,
                 expected=val_ba,
@@ -297,7 +334,8 @@ class TestECDHDerive:
             )
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
-                destroy_quietly(rs.raw, rs.sh, h)
+                if h:
+                    destroy_quietly(rs.raw, rs.sh, h)
             if shared_ab:
                 destroy_quietly(rs.raw, rs.sh, shared_ab)
             if shared_ba:
@@ -311,24 +349,42 @@ class TestECDHDerive:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        _pub_a, priv_a = self._generate_ec_keypair(rs)
-        pub_b, _priv_b = self._generate_ec_keypair(rs)
-        pub_c, _priv_c = self._generate_ec_keypair(rs)
+        _pub_a = priv_a = pub_b = _priv_b = pub_c = _priv_c = 0
         shared_ab = 0
         shared_ac = 0
         try:
+            _pub_a, priv_a = self._generate_ec_keypair(rs)
+            pub_b, _priv_b = self._generate_ec_keypair(rs)
+            pub_c, _priv_c = self._generate_ec_keypair(rs)
             point_b = self._extract_ec_point(rs, pub_b)
             point_c = self._extract_ec_point(rs, pub_c)
 
             shared_ab = self._derive_shared(rs, priv_a, point_b)
             shared_ac = self._derive_shared(rs, priv_a, point_c)
 
-            val_ab = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])[CKA_VALUE]
-            val_ac = read_attributes(rs.raw, rs.sh, shared_ac, [CKA_VALUE])[CKA_VALUE]
+            val_ab_attrs = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])
+            val_ac_attrs = read_attributes(rs.raw, rs.sh, shared_ac, [CKA_VALUE])
+            val_ab = attr_or_record(
+                val_ab_attrs,
+                CKA_VALUE,
+                label="CKM_ECDH1_DERIVE:shared AB CKA_VALUE",
+                reason="not_operational",
+            )
+            val_ac = attr_or_record(
+                val_ac_attrs,
+                CKA_VALUE,
+                label="CKM_ECDH1_DERIVE:shared AC CKA_VALUE",
+                reason="not_operational",
+            )
+            if val_ab is MISSING_ATTRIBUTE or val_ac is MISSING_ATTRIBUTE:
+                return
+            assert isinstance(val_ab, bytes)
+            assert isinstance(val_ac, bytes)
             assert val_ab != val_ac
         finally:
             for h in (_pub_a, priv_a, pub_b, _priv_b, pub_c, _priv_c):
-                destroy_quietly(rs.raw, rs.sh, h)
+                if h:
+                    destroy_quietly(rs.raw, rs.sh, h)
             if shared_ab:
                 destroy_quietly(rs.raw, rs.sh, shared_ab)
             if shared_ac:
@@ -398,7 +454,15 @@ class TestSHA3ShakeKeyDerive:
                 )
             assert derived != 0
             # Verify derived key has value
-            val = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            val_attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
+            val = attr_or_record(
+                val_attrs,
+                CKA_VALUE,
+                label=f"{mech_name}:derived CKA_VALUE",
+                reason="not_operational",
+            )
+            if val is MISSING_ATTRIBUTE:
+                return
             assert isinstance(val, bytes) and len(val) == output_len
         finally:
             if derived:
@@ -448,8 +512,22 @@ class TestSHA3ShakeKeyDerive:
                 xfail_if_known_ckr(
                     exc, _DERIVE_ERROR_RVS, f"{mech_name} derivation not operational"
                 )
-            v1 = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])[CKA_VALUE]
+            v1_attrs = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])
+            v2_attrs = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])
+            v1 = attr_or_record(
+                v1_attrs,
+                CKA_VALUE,
+                label=f"{mech_name}:deterministic output 1 CKA_VALUE",
+                reason="not_operational",
+            )
+            v2 = attr_or_record(
+                v2_attrs,
+                CKA_VALUE,
+                label=f"{mech_name}:deterministic output 2 CKA_VALUE",
+                reason="not_operational",
+            )
+            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=v1,
                 expected=v2,

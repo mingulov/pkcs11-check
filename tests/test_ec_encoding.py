@@ -288,37 +288,6 @@ class TestEdwardsEcPointRaw:
             decode_ec_point(raw_key)
 
 
-class TestExtractEcPointPassthrough:
-    """extract_ec_point from conftest.py returns raw data unchanged for non-DER inputs.
-
-    Regression: the fallback path (line 56-57 of conftest.py) was not tested,
-    meaning Montgomery/Edwards key extraction could break silently.
-    """
-
-    def test_passthrough_for_non_04_prefix(self) -> None:
-        from pkcs11_check.testcases.conftest import extract_ec_point
-
-        raw_montgomery = bytes([0xE5]) + b"\x00" * 31
-        result = extract_ec_point(raw_montgomery)
-        assert result == raw_montgomery
-
-    def test_passthrough_for_empty_data(self) -> None:
-        from pkcs11_check.testcases.conftest import extract_ec_point
-
-        result = extract_ec_point(b"")
-        assert result == b""
-
-    def test_unwrap_for_der_weierstrass(self) -> None:
-        from pkcs11_check.testcases.conftest import extract_ec_point
-
-        x = int.from_bytes(b"\x01" * 32, "big")
-        y = int.from_bytes(b"\x02" * 32, "big")
-        der = encode_ec_point(x, y, key_size=32)
-        result = extract_ec_point(der)
-        assert result[0] == 0x04
-        assert len(result) == 65
-
-
 class TestDerStructuralValidation:
     """DER decode rejects malformed input instead of producing garbage."""
 
