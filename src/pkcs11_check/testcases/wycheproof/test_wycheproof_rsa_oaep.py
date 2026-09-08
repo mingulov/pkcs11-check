@@ -248,6 +248,16 @@ _HASHLIB_NAMES = {
 }
 
 
+def _host_hash_available(name: str) -> bool:
+    import hashlib
+
+    try:
+        hashlib.new(name)
+    except ValueError:
+        return False
+    return True
+
+
 def _mgf1(seed: bytes, length: int, hash_name: str) -> bytes:
     import hashlib
 
@@ -297,6 +307,13 @@ def _oaep_combo_probe(
     mgf: int,
 ) -> OperabilityResult:
     """Decrypt a spec-truth (RFC 8017 hashlib-made) OAEP ciphertext for this combo."""
+    for display_name in (sha, mgf_sha):
+        hash_name = _HASHLIB_NAMES.get(display_name)
+        if hash_name is None or not _host_hash_available(hash_name):
+            return OperabilityResult(
+                Operability.INCONCLUSIVE,
+                f"host Python hashlib lacks {display_name}; provider was not probed",
+            )
     canonical_ct = _oaep_encrypt_rfc8017(modulus, pub_exponent, _PROBE_OAEP_MSG, sha, mgf_sha)
     if canonical_ct is None:
         return OperabilityResult(

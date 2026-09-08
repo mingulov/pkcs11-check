@@ -174,6 +174,20 @@ class TestEcPointEncoding:
         assert x_recovered == self.X
         assert y_recovered == self.Y
 
+    @pytest.mark.parametrize(
+        "point",
+        [
+            b"\x04" + b"\x01" * 64,
+            b"\x02" + b"\x01" * 32,
+            b"\x03" + b"\x01" * 32,
+        ],
+        ids=["uncompressed", "compressed-even", "compressed-odd"],
+    )
+    def test_decode_preserves_wrapped_sec1_point(self, point: bytes) -> None:
+        der = b"\x04" + bytes([len(point)]) + point
+
+        assert decode_ec_point(der) == point
+
     def test_decode_p384(self) -> None:
         x = int.from_bytes(b"\xab" * 48, "big")
         y = int.from_bytes(b"\xcd" * 48, "big")
@@ -202,6 +216,33 @@ class TestEcPointEncoding:
         assert der[2] == 133
         point = decode_ec_point(der)
         assert len(point) == 133
+
+    def test_decode_rejects_trailing_bytes(self) -> None:
+        der = encode_ec_point(self.X, self.Y, self.KEY_SIZE)
+
+        with pytest.raises(ValueError, match="Trailing"):
+            decode_ec_point(der + b"\x00")
+
+    def test_decode_rejects_truncated_point_body(self) -> None:
+        point = b"\x02" + b"\x01" * 32
+        der = b"\x04" + bytes([len(point)]) + point[:-1]
+
+        with pytest.raises(ValueError, match="Truncated"):
+            decode_ec_point(der)
+
+    @pytest.mark.parametrize(
+        "length_encoding",
+        [b"\x81\x21", b"\x82\x00\x21", b"\x83\x00\x00\x21"],
+        ids=["long-form-short-value", "leading-zero", "overpadded"],
+    )
+    def test_decode_rejects_noncanonical_length_encoding(
+        self, length_encoding: bytes
+    ) -> None:
+        point = b"\x02" + b"\x01" * 32
+        der = b"\x04" + length_encoding + point
+
+        with pytest.raises(ValueError, match="canonical"):
+            decode_ec_point(der)
 
 
 # ---------------------------------------------------------------------------

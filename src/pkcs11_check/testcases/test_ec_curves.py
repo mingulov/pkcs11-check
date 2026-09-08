@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-from pkcs11_check.raw.der import decode_ec_point
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -24,7 +24,6 @@ from pkcs11_check.raw.recipes import (
 )
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
-    CKA_EC_POINT,
     CKA_KEY_TYPE,
     CKF_SIGN,
     CKK_EC,
@@ -32,6 +31,8 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -113,8 +114,28 @@ class TestECKeygen:
         try:
             attrs_pub = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
             attrs_priv = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])
-            assert attrs_pub[CKA_KEY_TYPE] == CKK_EC
-            assert attrs_priv[CKA_KEY_TYPE] == CKK_EC
+            pub_type = attr_or_record(
+                attrs_pub,
+                CKA_KEY_TYPE,
+                label=f"CKA_KEY_TYPE:{curve_name}-public-key",
+            )
+            priv_type = attr_or_record(
+                attrs_priv,
+                CKA_KEY_TYPE,
+                label=f"CKA_KEY_TYPE:{curve_name}-private-key",
+            )
+            for label, value in (
+                (f"CKA_KEY_TYPE:{curve_name}-public-key", pub_type),
+                (f"CKA_KEY_TYPE:{curve_name}-private-key", priv_type),
+            ):
+                if value is not MISSING_ATTRIBUTE and value != CKK_EC:
+                    fail_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_GetAttributeValue",
+                        summary=f"{label}: expected CKK_EC, got {value!r}",
+                    )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -166,9 +187,12 @@ class TestECDSACrossVerify:
                 xfail_if_known_ckr(exc, _ECDSA_SIGN_REJECT_RVS, "ECDSA sign not operational")
                 raise
 
-            ec_point_der = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
-            point_bytes = decode_ec_point(ec_point_der)
-            pub_crypto = ec.EllipticCurvePublicKey.from_encoded_point(crypto_curve, point_bytes)
+            pub_crypto = read_ec_public_key_or_xfail(
+                rs,
+                pub,
+                crypto_curve,
+                label=f"ECDSA {curve_name} public key",
+            )
 
             half = len(sig) // 2
             r = int.from_bytes(sig[:half], "big")

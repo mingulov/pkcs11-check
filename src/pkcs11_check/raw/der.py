@@ -28,7 +28,11 @@ def _der_decode_length(data: bytes, offset: int) -> tuple[int, int]:
     end = offset + 1 + num_bytes
     if end > len(data):
         raise ValueError(f"Truncated DER: need {num_bytes} length bytes")
+    if data[offset + 1] == 0:
+        raise ValueError("Non-canonical DER length: leading zero")
     length = int.from_bytes(data[offset + 1 : end], "big")
+    if length < 128:
+        raise ValueError("Non-canonical DER length: short value uses long form")
     return length, end
 
 
@@ -144,11 +148,14 @@ def decode_ec_point(der: bytes) -> bytes:
     if der[0] != 0x04:
         raise ValueError(f"Expected DER OCTET STRING tag 0x04, got 0x{der[0]:02x}")
     length, offset = _der_decode_length(der, 1)
-    if offset + length > len(der):
+    end = offset + length
+    if end > len(der):
         raise ValueError(
             f"Truncated DER OCTET STRING: need {length} bytes, have {len(der) - offset}"
         )
-    return der[offset : offset + length]
+    if end != len(der):
+        raise ValueError(f"Trailing data after DER OCTET STRING: {len(der) - end} bytes")
+    return der[offset:end]
 
 
 # ---------------------------------------------------------------------------

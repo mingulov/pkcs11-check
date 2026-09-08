@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB_ENCRYPT_DATA,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import import_secret_key_negotiated
 
 pytestmark = pytest.mark.keymgmt
@@ -133,7 +134,14 @@ class TestAESECBEncryptData:
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             try:
-                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                okm = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_ECB_ENCRYPT_DATA:derived CKA_VALUE",
+                    reason="not_operational",
+                )
+                if okm is MISSING_ATTRIBUTE:
+                    return
                 assert isinstance(okm, bytes)
                 assert len(okm) == 16, f"Expected 16-byte derived key, got {len(okm)}"
                 assert okm != b"\x00" * 16, "Derived key is all zeros"
@@ -167,8 +175,20 @@ class TestAESECBEncryptData:
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
+                v1 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_ECB_ENCRYPT_DATA:deterministic output 1 CKA_VALUE",
+                    reason="not_operational",
+                )
+                v2 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_ECB_ENCRYPT_DATA:deterministic output 2 CKA_VALUE",
+                    reason="not_operational",
+                )
+                if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                    return
                 assert v1 == v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -201,8 +221,20 @@ class TestAESECBEncryptData:
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _ALT_DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
+                v1 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_ECB_ENCRYPT_DATA:different-data output 1 CKA_VALUE",
+                    reason="not_operational",
+                )
+                v2 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_ECB_ENCRYPT_DATA:different-data output 2 CKA_VALUE",
+                    reason="not_operational",
+                )
+                if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                    return
                 assert v1 != v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -227,7 +259,14 @@ class TestAESECBEncryptData:
                 mech_param=mech_string_data(CKM_AES_ECB_ENCRYPT_DATA, _DATA_32),
             )
             try:
-                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                okm = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_ECB_ENCRYPT_DATA:32-byte derived CKA_VALUE",
+                    reason="not_operational",
+                )
+                if okm is MISSING_ATTRIBUTE:
+                    return
                 assert isinstance(okm, bytes)
                 assert len(okm) == 32, f"Expected 32-byte derived key, got {len(okm)}"
             finally:
@@ -256,7 +295,14 @@ class TestAESCBCEncryptData:
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             try:
-                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                okm = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:derived CKA_VALUE",
+                    reason="not_operational",
+                )
+                if okm is MISSING_ATTRIBUTE:
+                    return
                 assert isinstance(okm, bytes)
                 assert len(okm) == 16, f"Expected 16-byte derived key, got {len(okm)}"
                 assert okm != b"\x00" * 16, "Derived key is all zeros"
@@ -290,8 +336,20 @@ class TestAESCBCEncryptData:
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
+                v1 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:deterministic output 1 CKA_VALUE",
+                    reason="not_operational",
+                )
+                v2 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:deterministic output 2 CKA_VALUE",
+                    reason="not_operational",
+                )
+                if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                    return
                 assert v1 == v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -324,8 +382,20 @@ class TestAESCBCEncryptData:
                 mech_param=_mech_cbc_encrypt_data(_IV, _ALT_DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
+                v1 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:different-data output 1 CKA_VALUE",
+                    reason="not_operational",
+                )
+                v2 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:different-data output 2 CKA_VALUE",
+                    reason="not_operational",
+                )
+                if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                    return
                 assert v1 != v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -360,8 +430,20 @@ class TestAESCBCEncryptData:
                 mech_param=_mech_cbc_encrypt_data(alt_iv, _DATA_16),
             )
             try:
-                v1 = read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE])[CKA_VALUE]
-                v2 = read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE])[CKA_VALUE]
+                v1 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived1, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:different-IV output 1 CKA_VALUE",
+                    reason="not_operational",
+                )
+                v2 = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived2, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:different-IV output 2 CKA_VALUE",
+                    reason="not_operational",
+                )
+                if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                    return
                 assert v1 != v2
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived2)
@@ -386,7 +468,14 @@ class TestAESCBCEncryptData:
                 mech_param=_mech_cbc_encrypt_data(_IV, _DATA_32),
             )
             try:
-                okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+                okm = attr_or_record(
+                    read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
+                    CKA_VALUE,
+                    label="CKM_AES_CBC_ENCRYPT_DATA:32-byte derived CKA_VALUE",
+                    reason="not_operational",
+                )
+                if okm is MISSING_ATTRIBUTE:
+                    return
                 assert isinstance(okm, bytes)
                 assert len(okm) == 32, f"Expected 32-byte derived key, got {len(okm)}"
             finally:

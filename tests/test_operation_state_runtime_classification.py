@@ -49,6 +49,46 @@ def test_garbage_accepted_fails() -> None:
     assert not isinstance(ei.value, XFailed)
 
 
+def test_get_only_operation_state_test_skips_when_get_pointer_is_missing() -> None:
+    raw = SimpleNamespace(available_function_names=lambda: {"C_SetOperationState"})
+    session = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
+        tos.TestGetOperationStateAPI().test_no_active_operation(session)
+
+
+def test_get_operation_state_function_not_supported_is_capability_skip() -> None:
+    raw = SimpleNamespace(
+        available_function_names=lambda: {"C_GetOperationState"},
+        C_GetOperationState=lambda *_a, **_k: int(CKR_FUNCTION_NOT_SUPPORTED),
+    )
+    session = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
+        tos.TestGetOperationStateAPI().test_no_active_operation(session)
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records() == []
+
+
+def test_set_only_operation_state_test_skips_when_set_pointer_is_missing() -> None:
+    raw = SimpleNamespace(available_function_names=lambda: {"C_GetOperationState"})
+    session = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(pytest.skip.Exception, match="C_SetOperationState"):
+        tos.TestGetOperationStateAPI().test_garbage_state_raises_saved_state_invalid(session)
+
+
+def test_set_operation_state_function_not_supported_is_capability_skip() -> None:
+    with pytest.raises(pytest.skip.Exception, match="C_SetOperationState"):
+        _run(int(CKR_FUNCTION_NOT_SUPPORTED))
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records() == []
+
+
 def test_spec_reject_passes() -> None:
     _run(int(CKR_SAVED_STATE_INVALID))
 
@@ -133,7 +173,7 @@ def test_cross_session_unexpected_clean_reject_is_structured_xfail(
 def test_cross_session_rejection_is_recorded_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Provider rejection evidence survives when cleanup subsequently crashes."""
+    """A state-capability skip cannot hide a later cleanup crash."""
     monkeypatch.setattr(
         tos,
         "run_probe",
@@ -148,12 +188,8 @@ def test_cross_session_rejection_is_recorded_before_signal(
         tos.TestDigestStateRoundTrip().test_digest_state_cross_session(config, None)
 
     from pkcs11_check.classification import get_records
-    from pkcs11_check.raw.rv import ckr_name
-
     records = get_records()
-    assert [record.reason for record in records] == ["not_operational", "crash"]
-    assert records[0].operation == "C_SetOperationState"
-    assert records[0].actual_ckr == ckr_name(0x54)
+    assert [record.reason for record in records] == ["crash"]
 
 
 def test_cross_session_wrong_restored_digest_is_recorded_before_signal(
@@ -274,13 +310,13 @@ def test_cross_session_duplicate_or_conflicting_result_is_harness_error(
 
 @pytest.mark.parametrize(
     "rejected_code",
-    [CKR_SAVED_STATE_INVALID, CKR_STATE_UNSAVEABLE, CKR_FUNCTION_NOT_SUPPORTED],
+    [CKR_SAVED_STATE_INVALID, CKR_STATE_UNSAVEABLE],
 )
 def test_cross_session_defined_reject_is_not_operational(
     monkeypatch: pytest.MonkeyPatch,
     rejected_code: int,
 ) -> None:
-    """A clean cross-session refusal is an xfail, including the standard codes."""
+    """A clean cross-session refusal is an xfail for defined non-FNS codes."""
     monkeypatch.setattr(
         tos,
         "run_probe",
@@ -305,6 +341,152 @@ def test_cross_session_defined_reject_is_not_operational(
     assert classification.reason == "not_operational"
     assert classification.operation == "C_SetOperationState"
     assert classification.actual_ckr == ckr_name(int(rejected_code))
+
+
+def test_cross_session_function_not_supported_is_capability_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_SetOperationState FNS is an unavailable capability, not provider xfail."""
+    monkeypatch.setattr(
+        tos,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(
+            returncode=0,
+            stdout=(
+                f"REFERENCE:{_CROSS_DIGEST}\n"
+                f"CROSS_SESSION_REJECTED:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+            ),
+            stderr="",
+        ),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+
+    with pytest.raises(pytest.skip.Exception, match="C_SetOperationState"):
+        tos.TestDigestStateRoundTrip().test_digest_state_cross_session(config, None)
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records() == []
+
+
+def test_same_session_function_not_supported_is_capability_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A state-save FNS marker skips the dependent round-trip without a record."""
+    monkeypatch.setattr(
+        tos,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(
+            returncode=0,
+            stdout=(
+                f"REFERENCE:{_SAME_DIGEST}\n"
+                f"SINGLESHOT_OK:{_SAME_DIGEST}\n"
+                f"CKR:GetState_len:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+            ),
+            stderr="",
+        ),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+    session = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
+        tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records() == []
+
+
+def test_state_function_not_supported_does_not_hide_outer_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tos,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(
+            returncode=-11,
+            stdout=(
+                f"REFERENCE:{_SAME_DIGEST}\n"
+                f"SINGLESHOT_OK:{_SAME_DIGEST}\n"
+                f"CKR:GetState_len:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+            ),
+            stderr="",
+        ),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+    session = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
+
+    from pkcs11_check.classification import get_records
+
+    records = get_records()
+    assert [record.reason for record in records] == ["crash"]
+
+
+def test_earlier_hard_semantic_record_controls_before_state_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tos,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(
+            returncode=0,
+            stdout=(
+                "BREAK:provider accepted an impossible transition\n"
+                f"CKR:GetState_len:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+            ),
+            stderr="",
+        ),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+    session = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="impossible transition"):
+        tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
+
+    from pkcs11_check.classification import get_records
+
+    records = get_records()
+    assert [record.reason for record in records] == ["self_contradiction"]
+
+
+def test_unrelated_digest_init_function_not_supported_stays_provider_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only operation-state FNS markers are capability skips."""
+    monkeypatch.setattr(
+        tos,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(
+            returncode=0,
+            stdout=(
+                f"CKR:DigestInit:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+                f"CKR:GetState_len:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+            ),
+            stderr="",
+        ),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+    session = SimpleNamespace(
+        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
+    )
+
+    with pytest.raises(pytest.xfail.Exception, match="not operational"):
+        tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
+
+    from pkcs11_check.classification import get_records
+
+    records = get_records()
+    assert [record.reason for record in records] == ["not_operational"]
+    assert records[0].operation == "DigestInit"
 
 
 def test_cross_session_undefined_reject_is_structured_failure(
@@ -1057,7 +1239,7 @@ def test_cross_session_real_rejection_output_is_not_operational(
 def test_cross_session_wrong_reference_and_rejection_accumulate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A child-oracle mismatch does not erase an independently valid rejection."""
+    """A child-oracle mismatch remains evidence when state support is absent."""
     monkeypatch.setattr(
         tos,
         "run_probe",
@@ -1078,9 +1260,8 @@ def test_cross_session_wrong_reference_and_rejection_accumulate(
     from pkcs11_check.classification import get_records
 
     records = get_records()
-    assert [record.reason for record in records] == ["harness_error", "not_operational"]
+    assert [record.reason for record in records] == ["harness_error"]
     assert records[0].operation is None
-    assert records[1].operation == "C_SetOperationState"
 
 
 @pytest.mark.parametrize(

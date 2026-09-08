@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import record_as, xfail_as
 from pkcs11_check.raw.pack import mech_hkdf, mech_simple
 from pkcs11_check.raw.recipes import (
     derive_key,
@@ -52,6 +52,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     import_secret_key_negotiated,
@@ -228,33 +229,73 @@ class TestHKDFKeyGen:
                     _KEYGEN_VALUE_READ_ERROR_RVS,
                     "CKM_HKDF_KEY_GEN generated key CKA_VALUE readback rejected",
                 )
-            actual_key_type = attrs[CKA_KEY_TYPE]
-            if key_type == CKK_GENERIC_SECRET and actual_key_type == CKK_HKDF:
-                # The module ignored the requested CKK_GENERIC_SECRET and produced
-                # the spec-mandated CKK_HKDF: a clean, noted deviation from the
-                # requested type, recorded via classify() rather than a bare
-                # declarative xfail (which would emit no classification record).
-                xfail_as(
-                    "honest_deviation",
-                    label="CKM_HKDF_KEY_GEN:key_type",
-                    operation="C_GenerateKey",
-                    mechanism="CKM_HKDF_KEY_GEN",
-                    summary=(
-                        "CKM_HKDF_KEY_GEN produced CKK_HKDF (the spec-mandated type) "
-                        "for a CKK_GENERIC_SECRET request"
-                    ),
-                )
-            assert_correct(
-                actual=actual_key_type,
-                expected=key_type,
+            actual_key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
                 label="CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
-                operation="C_GenerateKey",
-                mechanism="CKM_HKDF_KEY_GEN",
-                kind="metadata",
+                reason="honest_deviation",
             )
-            value = attrs[CKA_VALUE]
-            assert len(value) == 32  # 256 bits = 32 bytes
-            assert attrs[CKA_DERIVE] is True
+            derive = attr_or_record(
+                attrs,
+                CKA_DERIVE,
+                label="CKM_HKDF_KEY_GEN:CKA_DERIVE readback",
+                reason="honest_deviation",
+            )
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="CKM_HKDF_KEY_GEN:CKA_VALUE readback",
+                reason="not_operational",
+            )
+            if actual_key_type is not MISSING_ATTRIBUTE:
+                if key_type == CKK_GENERIC_SECRET and actual_key_type == CKK_HKDF:
+                    # The module ignored the requested CKK_GENERIC_SECRET and produced
+                    # the spec-mandated CKK_HKDF: a clean, noted deviation from the
+                    # requested type, recorded via classify() rather than a bare
+                    # declarative xfail (which would emit no classification record).
+                    record_as(
+                        "honest_deviation",
+                        label="CKM_HKDF_KEY_GEN:key_type",
+                        operation="C_GenerateKey",
+                        mechanism="CKM_HKDF_KEY_GEN",
+                        summary=(
+                            "CKM_HKDF_KEY_GEN produced CKK_HKDF (the spec-mandated type) "
+                            "for a CKK_GENERIC_SECRET request"
+                        ),
+                    )
+                else:
+                    assert_correct(
+                        actual=actual_key_type,
+                        expected=key_type,
+                        label="CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
+                        operation="C_GenerateKey",
+                        mechanism="CKM_HKDF_KEY_GEN",
+                        kind="metadata",
+                    )
+            if value is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=len(value),
+                    expected=32,
+                    label="CKM_HKDF_KEY_GEN:CKA_VALUE length",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_HKDF_KEY_GEN",
+                    kind="metadata",
+                )
+            if derive is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=derive,
+                    expected=True,
+                    label="CKM_HKDF_KEY_GEN:CKA_DERIVE readback",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_HKDF_KEY_GEN",
+                    kind="metadata",
+                )
+            if (
+                actual_key_type is MISSING_ATTRIBUTE
+                or value is MISSING_ATTRIBUTE
+                or derive is MISSING_ATTRIBUTE
+            ):
+                return
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
 
@@ -292,7 +333,14 @@ class TestHKDFKeyGen:
         derived = 0
         try:
             derived = _hkdf_derive(rs, base_key, b"salt-value", b"info-value")
-            okm = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            okm = attr_or_record(
+                read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
+                CKA_VALUE,
+                label="CKM_HKDF_DERIVE:CKA_VALUE readback",
+                reason="not_operational",
+            )
+            if okm is MISSING_ATTRIBUTE:
+                return
             assert len(okm) == 32
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DERIVE with HKDF_KEY_GEN key failed")
@@ -315,7 +363,14 @@ class TestHKDFData:
         derived = 0
         try:
             derived = _hkdf_data_derive(rs, base_key, b"salt", b"info")
-            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            value = attr_or_record(
+                read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE]),
+                CKA_VALUE,
+                label="CKM_HKDF_DATA:CKA_VALUE readback",
+                reason="not_operational",
+            )
+            if value is MISSING_ATTRIBUTE:
+                return
             assert len(value) == 32  # 256 bits = 32 bytes
             assert value != bytes(32), "Derived value should not be all zeros"
         except AssertionError as exc:
@@ -337,8 +392,20 @@ class TestHKDFData:
         try:
             derived_1 = _hkdf_data_derive(rs, base_key, b"det-salt", b"det-info")
             derived_2 = _hkdf_data_derive(rs, base_key, b"det-salt", b"det-info")
-            val_1 = read_attributes(rs.raw, rs.sh, derived_1, [CKA_VALUE])[CKA_VALUE]
-            val_2 = read_attributes(rs.raw, rs.sh, derived_2, [CKA_VALUE])[CKA_VALUE]
+            val_1 = attr_or_record(
+                read_attributes(rs.raw, rs.sh, derived_1, [CKA_VALUE]),
+                CKA_VALUE,
+                label="CKM_HKDF_DATA deterministic output 1 CKA_VALUE readback",
+                reason="not_operational",
+            )
+            val_2 = attr_or_record(
+                read_attributes(rs.raw, rs.sh, derived_2, [CKA_VALUE]),
+                CKA_VALUE,
+                label="CKM_HKDF_DATA deterministic output 2 CKA_VALUE readback",
+                reason="not_operational",
+            )
+            if val_1 is MISSING_ATTRIBUTE or val_2 is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=val_1,
                 expected=val_2,
@@ -370,8 +437,20 @@ class TestHKDFData:
         try:
             derived_a = _hkdf_data_derive(rs, base_key, b"salt", b"info-alpha")
             derived_b = _hkdf_data_derive(rs, base_key, b"salt", b"info-bravo")
-            val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
-            val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
+            val_a = attr_or_record(
+                read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE]),
+                CKA_VALUE,
+                label="CKM_HKDF_DATA different-info output 1 CKA_VALUE readback",
+                reason="not_operational",
+            )
+            val_b = attr_or_record(
+                read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE]),
+                CKA_VALUE,
+                label="CKM_HKDF_DATA different-info output 2 CKA_VALUE readback",
+                reason="not_operational",
+            )
+            if val_a is MISSING_ATTRIBUTE or val_b is MISSING_ATTRIBUTE:
+                return
             assert val_a != val_b, "Different info strings must produce different output"
         except AssertionError as exc:
             xfail_if_known_ckr(exc, _DERIVE_ERROR_RVS, "HKDF_DATA derive failed")
