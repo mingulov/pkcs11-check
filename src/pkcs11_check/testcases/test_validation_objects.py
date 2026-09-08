@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKV_TYPE_SOFTWARE,
     CKV_TYPE_UNSPECIFIED,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = [pytest.mark.object]
@@ -84,7 +85,6 @@ class TestValidationObjects:
         for h in validations:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALIDATION_TYPE])
-                vtype = attrs[CKA_VALIDATION_TYPE]
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
@@ -93,6 +93,13 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
+            vtype = attr_or_record(
+                attrs,
+                CKA_VALIDATION_TYPE,
+                label="CKA_VALIDATION_TYPE:validation-object",
+            )
+            if vtype is MISSING_ATTRIBUTE:
+                continue
             if vtype < vendor_base:
                 assert vtype in _KNOWN_VALIDATION_TYPES, (
                     f"Unknown non-vendor validation type 0x{vtype:08X}"
@@ -115,7 +122,13 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            level = attrs[CKA_VALIDATION_LEVEL]
+            level = attr_or_record(
+                attrs,
+                CKA_VALIDATION_LEVEL,
+                label="CKA_VALIDATION_LEVEL:validation-object",
+            )
+            if level is MISSING_ATTRIBUTE:
+                continue
             assert isinstance(level, int), f"Expected int VALIDATION_LEVEL, got {type(level)}"
 
     def test_validation_authority_type_is_known(self, p11_raw_session: Any) -> None:

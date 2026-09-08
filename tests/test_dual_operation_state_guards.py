@@ -87,6 +87,28 @@ def test_operation_state_encrypt_skips_before_child_when_aes_keygen_missing(
         )
 
 
+def test_operation_state_api_get_guard_does_not_require_set() -> None:
+    raw = SimpleNamespace(
+        available_function_names=lambda: {"C_GetOperationState"},
+        C_GetOperationState=lambda *_args: 0,
+    )
+
+    test_operation_state.TestGetOperationStateAPI().test_api_exists(
+        _raw_session(raw=raw)
+    )
+
+
+def test_operation_state_api_set_guard_does_not_require_get() -> None:
+    raw = SimpleNamespace(
+        available_function_names=lambda: {"C_SetOperationState"},
+        C_SetOperationState=lambda *_args: 0,
+    )
+
+    test_operation_state.TestGetOperationStateAPI().test_api_exists(
+        _raw_session(raw=raw)
+    )
+
+
 def test_operation_state_garbage_arguments_bad_xfails_with_note() -> None:
     """CKR_ARGUMENTS_BAD is a non-spec reject for a garbage state blob.
 

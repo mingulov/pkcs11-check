@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
@@ -28,7 +28,6 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
-    CKA_EC_POINT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_SENSITIVE,
@@ -40,6 +39,8 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     EC_CURVE_UNSUPPORTED_RVS,
@@ -66,9 +67,27 @@ _DERIVE_ATTRS: dict[int, Any] = {
 
 
 def _ec_point_from_handle(rs: Any, handle: int) -> bytes:
-    """Read and decode EC_POINT from a public key handle."""
-    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
-    return decode_ec_point(attrs[CKA_EC_POINT])
+    """Read and normalize a provider-returned P-256 public point."""
+    public_key = read_ec_public_key_or_xfail(
+        rs,
+        handle,
+        ec.SECP256R1(),
+        label="ECDH P-256 public key",
+    )
+    return public_key.public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+
+
+def _read_value_or_record(rs: Any, handle: int, *, label: str) -> Any:
+    """Read CKA_VALUE while preserving an unavailable-value observation."""
+    return attr_or_record(
+        read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE]),
+        CKA_VALUE,
+        label=label,
+        reason="not_operational",
+    )
 
 
 def _gen_p256_or_skip(rs: Any) -> tuple[int, int]:
@@ -138,7 +157,13 @@ class TestECDHKnownAnswer:
                 )
                 raise
 
-            p11_secret = read_attributes(rs.raw, rs.sh, derived_h, [CKA_VALUE])[CKA_VALUE]
+            p11_secret = _read_value_or_record(
+                rs,
+                derived_h,
+                label="CKM_ECDH1_DERIVE:known-answer derived CKA_VALUE",
+            )
+            if p11_secret is MISSING_ATTRIBUTE:
+                return
 
             # cryptography: crypto_priv x p11_pub
             p11_x = int.from_bytes(p11_point[1:33], "big")
@@ -212,8 +237,18 @@ class TestECDHKnownAnswer:
                 )
                 raise
 
-            secret_ab = read_attributes(rs.raw, rs.sh, key_ab, [CKA_VALUE])[CKA_VALUE]
-            secret_ba = read_attributes(rs.raw, rs.sh, key_ba, [CKA_VALUE])[CKA_VALUE]
+            secret_ab = _read_value_or_record(
+                rs,
+                key_ab,
+                label="CKM_ECDH1_DERIVE:A-to-B derived CKA_VALUE",
+            )
+            secret_ba = _read_value_or_record(
+                rs,
+                key_ba,
+                label="CKM_ECDH1_DERIVE:B-to-A derived CKA_VALUE",
+            )
+            if secret_ab is MISSING_ATTRIBUTE or secret_ba is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=secret_ab,
                 expected=secret_ba,

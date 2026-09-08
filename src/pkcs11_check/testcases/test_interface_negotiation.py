@@ -10,11 +10,28 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
+from pkcs11_check.raw import metadata_std
+from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import CKR_CRYPTOKI_ALREADY_INITIALIZED, CKR_OK
 
 pytestmark = pytest.mark.smoke
+
+
+def _load_only_raw(p11_config: Any) -> RawPKCS11:
+    """Load the selected function table without initializing or opening a session."""
+    module_path = p11_config.module
+    if hasattr(module_path, "get_secret_value"):
+        module_path = module_path.get_secret_value()
+    return RawPKCS11.from_lib(str(module_path))
+
+
+@pytest.fixture(scope="session")
+def load_only_raw(p11_config: Any) -> RawPKCS11:
+    """Raw API loaded from the module, intentionally without session bootstrap."""
+    return _load_only_raw(p11_config)
 
 
 class TestInterfaceVersion:
@@ -29,6 +46,19 @@ class TestInterfaceVersion:
             "3.1",
             "3.2",
         ), f"Unexpected version: {p11_interface_version}"
+
+    @pytest.mark.parametrize("name", tuple(metadata_std.FUNCTION_INDICES))
+    def test_selected_function_table_entry(self, load_only_raw: RawPKCS11, name: str) -> None:
+        """Selected function-table entries must not contain NULL pointers."""
+        missing = load_only_raw.missing_function_list_names()
+        if name not in missing:
+            return
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label="selected function table",
+            summary=f"selected function table contains NULL {name}",
+        )
 
     @pytest.mark.destructive  # loads module independently
     def test_auto_negotiation(self, p11_config: Any) -> None:

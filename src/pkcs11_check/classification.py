@@ -338,6 +338,42 @@ def classify(
     or strings (passed through unchanged).  A ``fail`` raises ``pytest.fail`` and an
     ``xfail`` raises ``pytest.xfail``; ``pass`` returns normally.
     """
+    rec = record_as(
+        reason,
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=expected,
+        actual=actual,
+        spec_ref=spec_ref,
+        source=source,
+        vector_id=vector_id,
+        params=params,
+        summary=summary,
+        detail=detail,
+    )
+    if rec.outcome in {"fail", "xfail"}:
+        raise_for_record(rec)
+
+
+def record_as(
+    reason: str,
+    *,
+    kind: str | None = None,
+    label: str = "",
+    operation: str | None = None,
+    mechanism: str | None = None,
+    expected: object = None,
+    actual: object = None,
+    spec_ref: str | None = None,
+    source: str | None = None,
+    vector_id: str | None = None,
+    params: dict[str, str] | None = None,
+    summary: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> Classification:
+    """Record a classification without raising its pytest outcome."""
     if params is None and _active_params is not None:
         params = dict(_active_params)
     if source is None:
@@ -357,27 +393,25 @@ def classify(
         from pkcs11_check.spec_refs import lookup
 
         spec_ref = lookup(operation, mechanism, expected)
-    record(
-        Classification(
-            reason=reason,
-            outcome=outcome,
-            severity=severity,
-            kind=kind,
-            label=label,
-            summary=summary,
-            operation=operation,
-            mechanism=mechanism,
-            expected_ckr=expected_names,
-            actual_ckr=actual_name,
-            spec_ref=spec_ref or "",
-            source=source,
-            vector_id=vector_id,
-            params=params,
-            detail=detail,
-        )
+    rec = Classification(
+        reason=reason,
+        outcome=outcome,
+        severity=severity,
+        kind=kind,
+        label=label,
+        summary=summary,
+        operation=operation,
+        mechanism=mechanism,
+        expected_ckr=expected_names,
+        actual_ckr=actual_name,
+        spec_ref=spec_ref or "",
+        source=source,
+        vector_id=vector_id,
+        params=params,
+        detail=detail,
     )
-    if outcome in {"fail", "xfail"}:
-        raise_for_record(_records[-1])
+    record(rec)
+    return rec
 
 
 def fail_as(reason: str, **kw: Any) -> NoReturn:
