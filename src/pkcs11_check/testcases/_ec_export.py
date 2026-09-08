@@ -6,7 +6,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError
@@ -22,9 +22,57 @@ class MalformedSignature(ValueError):  # noqa: N818
     """Raw ECDSA signature whose length does not equal 2 * coord_len."""
 
 
+class ProviderECPointEncodingError(ValueError):
+    """Provider CKA_EC_POINT is not a supported conventional encoding."""
+
+
+class InvalidProviderECPointError(ValueError):
+    """Provider CKA_EC_POINT does not identify a point on the expected curve."""
+
+
 def coord_len_for_curve(curve: ec.EllipticCurve) -> int:
     """Return the byte length of one coordinate for *curve*."""
     return (curve.key_size + 7) // 8
+
+
+def decode_provider_ec_point(
+    data: bytes,
+    curve: ec.EllipticCurve,
+    *,
+    label: str,
+) -> bytes:
+    """Decode a provider-returned conventional EC point for operational use.
+
+    Exact-length uncompressed SEC1 is recognized before DER because a valid raw
+    coordinate may also look like a DER length. Other inputs must be a strict DER
+    OCTET STRING containing compressed or uncompressed SEC1. This helper does not
+    classify the provider's representation; its caller owns that policy decision.
+    """
+    expected_raw_len = 1 + 2 * coord_len_for_curve(curve)
+    if len(data) == expected_raw_len and data.startswith(b"\x04"):
+        try:
+            ec.EllipticCurvePublicKey.from_encoded_point(curve, data)
+        except ValueError as exc:
+            raise InvalidProviderECPointError(
+                f"{label}: raw CKA_EC_POINT is not on {curve.name}: {exc}"
+            ) from exc
+        return data
+
+    try:
+        point = decode_ec_point(data)
+    except ValueError as exc:
+        raise ProviderECPointEncodingError(
+            f"{label}: CKA_EC_POINT is neither exact raw uncompressed SEC1 "
+            f"nor canonical DER: {exc}"
+        ) from exc
+
+    try:
+        ec.EllipticCurvePublicKey.from_encoded_point(curve, point)
+    except ValueError as exc:
+        raise InvalidProviderECPointError(
+            f"{label}: wrapped CKA_EC_POINT is not on {curve.name}: {exc}"
+        ) from exc
+    return point
 
 
 def split_raw_ecdsa(sig: bytes, coord_len: int) -> tuple[int, int]:
@@ -61,6 +109,18 @@ def read_ec_public_key_or_xfail(
             f"{label}: cannot read CKA_EC_POINT",
         )
 
+    if CKA_EC_POINT not in attrs:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=f"{label}: CKA_EC_POINT attribute unavailable",
+            detail={
+                "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+            },
+        )
+
     ec_point = attrs[CKA_EC_POINT]
     if not isinstance(ec_point, bytes) or not ec_point:
         xfail_as(
@@ -71,21 +131,20 @@ def read_ec_public_key_or_xfail(
         )
 
     try:
-        point_bytes = decode_ec_point(ec_point)
-    except ValueError as exc:
+        point_bytes = decode_provider_ec_point(ec_point, curve, label=label)
+    except ProviderECPointEncodingError as exc:
         xfail_as(
             "not_operational",
             kind="metadata",
             label=label,
-            summary=f"{label}: cannot decode CKA_EC_POINT DER: {exc}",
+            summary=f"{label}: cannot decode CKA_EC_POINT: {exc}",
+        )
+    except InvalidProviderECPointError as exc:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            summary=f"{label}: provider returned an off-curve CKA_EC_POINT: {exc}",
         )
 
-    try:
-        return ec.EllipticCurvePublicKey.from_encoded_point(curve, point_bytes)
-    except ValueError as exc:
-        xfail_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: cannot construct EC public key from point: {exc}",
-        )
+    return ec.EllipticCurvePublicKey.from_encoded_point(curve, point_bytes)

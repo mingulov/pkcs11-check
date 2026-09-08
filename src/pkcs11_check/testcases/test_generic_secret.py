@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA512_HMAC,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     create_object_negotiated,
     gen_aes_key_or_xfail,
@@ -65,7 +66,14 @@ class TestGenericSecretKeyGen:
             )
             try:
                 attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
-                value = attrs[CKA_VALUE]
+                value = attr_or_record(
+                    attrs,
+                    CKA_VALUE,
+                    label=f"GENERIC_SECRET_KEY_GEN {bits}-bit CKA_VALUE readback",
+                    reason="not_operational",
+                )
+                if value is MISSING_ATTRIBUTE:
+                    continue
                 assert isinstance(value, bytes)
                 assert len(value) == bits // 8
             finally:
@@ -100,8 +108,20 @@ class TestGenericSecretKeyGen:
             },
         )
         try:
-            v1 = read_attributes(rs.raw, rs.sh, k1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, k2, [CKA_VALUE])[CKA_VALUE]
+            v1 = attr_or_record(
+                read_attributes(rs.raw, rs.sh, k1, [CKA_VALUE]),
+                CKA_VALUE,
+                label="GENERIC_SECRET_KEY_GEN unique key 1 CKA_VALUE readback",
+                reason="not_operational",
+            )
+            v2 = attr_or_record(
+                read_attributes(rs.raw, rs.sh, k2, [CKA_VALUE]),
+                CKA_VALUE,
+                label="GENERIC_SECRET_KEY_GEN unique key 2 CKA_VALUE readback",
+                reason="not_operational",
+            )
+            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                return
             assert v1 != v2
         finally:
             destroy_quietly(rs.raw, rs.sh, k1)

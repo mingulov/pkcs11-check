@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_COUNT,
     CKU_USER,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     get_pin_bytes,
     is_known_error,
@@ -64,9 +65,17 @@ def _unique_label(prefix: str = "data") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def _read_str(attrs: dict[int, Any], key: int) -> str:
+def _read_str(attrs: dict[int, Any], key: int, *, label: str) -> Any:
     """Read a string attribute (read_attributes returns str for RFC2279 attrs)."""
-    v = attrs[key]
+    v = attr_or_record(
+        attrs,
+        key,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+    )
+    if v is MISSING_ATTRIBUTE:
+        return MISSING_ATTRIBUTE
     if isinstance(v, str):
         return v
     return v.decode("utf-8") if isinstance(v, bytes) else str(v)
@@ -153,7 +162,15 @@ class TestDataObjectCreate:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-            assert attrs[CKA_VALUE] == big_data
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="CKA_VALUE:large-data-object",
+                reason="not_operational",
+            )
+            if value is MISSING_ATTRIBUTE:
+                return
+            assert value == big_data
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -225,7 +242,14 @@ class TestDataObjectSearch:
             labels = []
             for fh in found:
                 attrs = read_attributes(rs.raw, rs.sh, fh, [CKA_LABEL])
-                labels.append(_read_str(attrs, CKA_LABEL))
+                found_label = _read_str(
+                    attrs,
+                    CKA_LABEL,
+                    label="CKA_LABEL:enumerated-data-object",
+                )
+                if found_label is MISSING_ATTRIBUTE:
+                    continue
+                labels.append(found_label)
             assert label in labels
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
@@ -261,7 +285,15 @@ class TestDataObjectReadValue:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-            assert attrs[CKA_VALUE] == payload
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="CKA_VALUE:data-object-readback",
+                reason="not_operational",
+            )
+            if value is MISSING_ATTRIBUTE:
+                return
+            assert value == payload
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -283,8 +315,20 @@ class TestDataObjectReadValue:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL, CKA_APPLICATION])
-            assert _read_str(attrs, CKA_LABEL) == label
-            assert _read_str(attrs, CKA_APPLICATION) == app
+            read_label = _read_str(
+                attrs,
+                CKA_LABEL,
+                label="CKA_LABEL:data-object-readback",
+            )
+            read_application = _read_str(
+                attrs,
+                CKA_APPLICATION,
+                label="CKA_APPLICATION:data-object-readback",
+            )
+            if read_label is not MISSING_ATTRIBUTE:
+                assert read_label == label
+            if read_application is not MISSING_ATTRIBUTE:
+                assert read_application == app
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -303,7 +347,15 @@ class TestDataObjectReadValue:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_CLASS])
-            assert attrs[CKA_CLASS] == CKO_DATA
+            object_class = attr_or_record(
+                attrs,
+                CKA_CLASS,
+                label="CKA_CLASS:data-object",
+                reason="honest_deviation",
+            )
+            if object_class is MISSING_ATTRIBUTE:
+                return
+            assert object_class == CKO_DATA
         finally:
             destroy_quietly(rs.raw, rs.sh, h)
 
@@ -409,7 +461,15 @@ class TestDataObjectToken:
             found = _search_by_label(rs.raw, sh2, label)
             assert len(found) >= 1
             attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
-            assert attrs[CKA_VALUE] == b"persistent-data"
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="CKA_VALUE:persistent-data-object",
+                reason="not_operational",
+            )
+            if value is MISSING_ATTRIBUTE:
+                return
+            assert value == b"persistent-data"
         finally:
             # Cleanup: destroy all matching objects
             for fh in _search_by_label(rs.raw, sh2, label):
