@@ -32,7 +32,7 @@ from pkcs11_check.classification import (
     record,
 )
 from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
-from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED, CKR_OK
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._raw_subprocess import parse_output as _parse_output
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
@@ -46,6 +46,11 @@ _CROSS_SESSION_PART2 = b"cross-session continuation"
 _SAME_SESSION_PART1 = b"Hello, "
 _SAME_SESSION_PART2 = b"PKCS#11 state!"
 _CROSS_FOLLOWUP_OPERATIONS = ("DigestUpdate_cross", "DigestFinal_cross")
+_STATE_FUNCTION_MARKERS = {
+    "GetState_len": "C_GetOperationState",
+    "GetState_data": "C_GetOperationState",
+    "SetOperationState": "C_SetOperationState",
+}
 
 
 def _is_digest(value: str) -> bool:
@@ -107,6 +112,11 @@ def _ckr_measurements(stdout: str, context: str) -> tuple[list[Classification], 
             malformed = True
             continue
         if rv == CKR_OK:
+            continue
+        if rv == CKR_FUNCTION_NOT_SUPPORTED and parts[1].strip() in _STATE_FUNCTION_MARKERS:
+            # A callable operation-state function explicitly refusing support is a
+            # capability skip, not a provider xfail.  Keep ``found`` true so the
+            # caller can decide after process-disposition inspection.
             continue
         outcome, severity = derive_verdict("not_operational", "crypto")
         records.append(
@@ -438,6 +448,8 @@ def _cross_session_records(
 
     if protocol.rejected is not None:
         rejected_code = int(protocol.rejected, 0)
+        if rejected_code == CKR_FUNCTION_NOT_SUPPORTED:
+            return records
         if rejected_code == CKR_OK:
             reason, kind = "self_contradiction", "lifecycle"
             summary = f"{context}: rejection marker returned CKR_OK"
@@ -744,6 +756,36 @@ def _raise_provider_disposition(
         raise_for_record(semantic[0])
 
 
+def _state_function_not_supported(stdout: str) -> str | None:
+    """Return the operation-state function named by a valid FNS CKR marker."""
+    for line in stdout.splitlines():
+        if not line.startswith("CKR:"):
+            continue
+        parts = line.split(":")
+        if len(parts) != 3:
+            continue
+        operation = parts[1].strip()
+        function_name = _STATE_FUNCTION_MARKERS.get(operation)
+        if function_name is None:
+            continue
+        try:
+            rv = int(parts[2].strip(), 0)
+        except ValueError:
+            continue
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
+            return function_name
+    return None
+
+
+def _cross_session_function_not_supported(
+    protocol: _CrossSessionProtocol | None,
+) -> bool:
+    """Whether cross-session restore cleanly reported C_SetOperationState FNS."""
+    if protocol is None or protocol.rejected is None:
+        return False
+    return int(protocol.rejected, 0) == CKR_FUNCTION_NOT_SUPPORTED
+
+
 # ---------------------------------------------------------------------------
 # Tests: high-level API availability
 # ---------------------------------------------------------------------------
@@ -755,8 +797,17 @@ class TestGetOperationStateAPI:
     def test_api_exists(self, p11_raw_session: Any) -> None:
         """Raw session exposes C_GetOperationState and C_SetOperationState."""
         rs = p11_raw_session
-        assert hasattr(rs.raw, "C_GetOperationState")
-        assert hasattr(rs.raw, "C_SetOperationState")
+        available_fn = getattr(rs.raw, "available_function_names", None)
+        if callable(available_fn):
+            available = set(available_fn())
+            if not available.intersection({"C_GetOperationState", "C_SetOperationState"}):
+                pytest.skip("C_GetOperationState and C_SetOperationState are not available")
+            if "C_GetOperationState" in available:
+                assert hasattr(rs.raw, "C_GetOperationState")
+            if "C_SetOperationState" in available:
+                assert hasattr(rs.raw, "C_SetOperationState")
+            return
+        assert hasattr(rs.raw, "C_GetOperationState") or hasattr(rs.raw, "C_SetOperationState")
 
     def test_no_active_operation(self, p11_raw_session: Any) -> None:
         """C_GetOperationState with no active operation returns known CKR.
@@ -778,8 +829,11 @@ class TestGetOperationStateAPI:
         )
 
         rs = p11_raw_session
+        _skip_missing_functions(rs, ("C_GetOperationState",))
         state_len = ctypes.c_ulong(0)
         rv = rs.raw.C_GetOperationState(rs.sh, None, ctypes.byref(state_len))
+        if rv == CKR_FUNCTION_NOT_SUPPORTED:
+            pytest.skip("C_GetOperationState is not supported")
         acceptable = {
             _CKR_OK,
             CKR_OPERATION_NOT_INITIALIZED,
@@ -807,6 +861,7 @@ class TestGetOperationStateAPI:
         )
 
         rs = p11_raw_session
+        _skip_missing_functions(rs, ("C_SetOperationState",))
         garbage = b"\xde\xad\xbe\xef" * 16
         buf = (ctypes.c_ubyte * len(garbage))(*garbage)
         rv = rs.raw.C_SetOperationState(rs.sh, buf, len(garbage), 0, 0)
@@ -927,6 +982,9 @@ class TestDigestStateRoundTrip:
             _raise_provider_disposition(semantic, measurements)
         if semantic:
             _raise_provider_disposition(semantic, measurements)
+        state_function = _state_function_not_supported(stdout)
+        if state_function is not None:
+            pytest.skip(f"{state_function} is not supported")
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped state test: {lines_map['SKIP']}")
         if same_protocol.singleshot is not None:
@@ -1024,6 +1082,8 @@ class TestDigestStateRoundTrip:
             _raise_provider_disposition(semantic, measurements)
         if semantic:
             _raise_provider_disposition(semantic, measurements)
+        if _cross_session_function_not_supported(cross_protocol):
+            pytest.skip("C_SetOperationState is not supported")
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped cross-session test: {lines_map['SKIP']}")
         if cross_protocol is None:
@@ -1124,6 +1184,9 @@ class TestEncryptStateRoundTrip:
             _raise_provider_disposition(semantic, measurements)
         if semantic:
             _raise_provider_disposition(semantic, measurements)
+        state_function = _state_function_not_supported(stdout)
+        if state_function is not None:
+            pytest.skip(f"{state_function} is not supported")
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped encrypt state test: {lines_map['SKIP']}")
         _require_complete(

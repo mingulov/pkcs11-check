@@ -17,9 +17,11 @@ Mechanisms with param_required=True and no factory (SHA-512/t) are skipped.
 from __future__ import annotations
 
 import hashlib
+from typing import NoReturn
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import digest_single
 from pkcs11_check.raw.types_std import (
@@ -119,6 +121,24 @@ def _check_not_parameterised(entry: MechEntry, config: MechConfig) -> None:
         )
 
 
+def _decode_digest_hex(value: object) -> bytes:
+    if not isinstance(value, str) or len(value) % 2:
+        raise ValueError("digest vector field is not even-length hex")
+    if any(char not in "0123456789abcdefABCDEF" for char in value):
+        raise ValueError("digest vector field is not hexadecimal")
+    return bytes.fromhex(value)
+
+
+def _fail_invalid_digest_vector(vec: dict[str, object], config: MechConfig) -> NoReturn:
+    fail_as(
+        "harness_error",
+        label="digest vector schema",
+        source=config.vector_file,
+        vector_id=str(vec.get("id", "unknown")),
+        summary="selected digest vector has invalid input_hex/digest_hex",
+    )
+
+
 class TestMechDigest:
     """Digest tests for every advertised digest mechanism with a registry config."""
 
@@ -214,25 +234,35 @@ class TestMechDigestKAT:
         config = entry.config
         if config is None or not config.vector_file:
             pytest.skip("No KAT vectors for this mechanism")
-
-        from pkcs11_check.testcases.mechanism_vectors import load_positive_vectors
-
-        vectors = load_positive_vectors(config.vector_file)
-        if not vectors:
-            pytest.skip(f"No positive vectors in {config.vector_file}")
+        if config.input_constraint != "digest_only":
+            pytest.skip(f"{entry.mech_name}: KAT vectors are not digest vectors")
 
         _check_not_xof(entry)
         _check_not_parameterised(entry, config)
 
-        for vec in vectors:
-            # SHA vector files may contain multiple mechanisms; filter to this one
-            vec_mech = vec.get("mechanism_name")
-            if vec_mech and vec_mech != f"CKM_{entry.mech_name}" and vec_mech != entry.mech_name:
-                continue
-            digest = _digest_or_xfail(rs, entry, bytes.fromhex(vec["input_hex"]))
+        from pkcs11_check.testcases.mechanism_vectors import load_positive_vectors
+
+        vectors = load_positive_vectors(config.vector_file)
+        short_mech_name = entry.mech_name.removeprefix("CKM_")
+        digest_mech_names = (f"CKM_{short_mech_name}", short_mech_name)
+        selected_vectors = [
+            vec
+            for vec in vectors
+            if not vec.get("mechanism_name")
+            or vec.get("mechanism_name") in digest_mech_names
+        ]
+        if not selected_vectors:
+            pytest.skip(f"No compatible digest vectors in {config.vector_file}")
+
+        for vec in selected_vectors:
+            try:
+                input_bytes = _decode_digest_hex(vec.get("input_hex"))
+                expected = _decode_digest_hex(vec.get("digest_hex"))
+            except ValueError:
+                _fail_invalid_digest_vector(vec, config)
+            digest = _digest_or_xfail(rs, entry, input_bytes)
             if digest is None:
                 return
-            expected = bytes.fromhex(vec["digest_hex"])
             assert digest == expected, (
                 f"KAT digest mismatch for {vec.get('id', '?')}: "
                 f"got {digest.hex()!r}, expected {expected.hex()!r}"
