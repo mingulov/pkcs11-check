@@ -6,9 +6,9 @@ python-pkcs11 high-level API, so each probe drives the raw C-level calls directl
 generate an RSA-2048 recovery keypair, then run sign-recover / verify-recover.
 
 Output protocol lines (``KEYGEN_OK:...``, ``SIG_LEN:...``, ``SIG:...``, ``ORIGINAL:...``,
-``RECOVERED:...``, ``RESULT:...``, ``NOTE:...``, ``SKIP:...``, ``FATAL:...``) are
-byte-identical to the original generated scripts so the parent (parse_output +
-_handle_subprocess_failure + assert_correct / classify) requires no changes.
+``RECOVERED:...``, ``RESULT:...``, ``NOTE:...``, ``CKR:...``, and ``OK:...``) are
+parsed by the parent after the child has completed.  Clean provider rejections
+are measurements, not child process failures.
 
 All probes run at Level.LOGIN; the parent forwards the PIN via
 ``run_probe(pin=pin_from_config(...))`` -> ``_P11CHECK_PIN`` (Invariant I3).  The PIN is
@@ -17,14 +17,13 @@ never embedded in the probe source or params.
 Dispatch on ``params.extra["probe"]``:
   ``"sign_recover_produces_output"``   -- C_SignRecover produces a 256-byte signature.
   ``"verify_recover_round_trip"``      -- C_SignRecover then C_VerifyRecover recovers data.
-  ``"sign_recover_wrong_data_length"`` -- C_SignRecover with short data must be rejected.
+  ``"sign_recover_wrong_data_length"`` -- C_SignRecover with oversize data must be rejected.
 """
 
 from __future__ import annotations
 
 import binascii
 import ctypes
-import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -43,13 +42,8 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_X_509,
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
-    CKR_ARGUMENTS_BAD,
-    CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_MECHANISM_INVALID,
     CKR_OK,
-    CKR_OPERATION_NOT_INITIALIZED,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
@@ -62,8 +56,8 @@ def _byte_array(data: bytes) -> Any:
     return (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
 
 
-def _generate_keypair(raw: Any, sh: int) -> tuple[Any, Any]:
-    """Generate an RSA-2048 recovery keypair; SKIP/FATAL + exit on the legacy child paths."""
+def _generate_keypair(raw: Any, sh: int) -> tuple[Any, Any] | None:
+    """Generate an RSA-2048 recovery keypair and report clean provider refusals."""
     byref = ctypes.byref
 
     pub_template = template(
@@ -94,12 +88,9 @@ def _generate_keypair(raw: Any, sh: int) -> tuple[Any, Any]:
         byref(h_pub),
         byref(h_prv),
     )
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:GenerateKeyPairUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:GenerateKeyPair:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:GenerateKeyPair:0x{rv:08x}")
+        return None
     print(f"KEYGEN_OK:{h_pub.value}:{h_prv.value}")
     return h_pub, h_prv
 
@@ -113,11 +104,14 @@ def _run_sign_recover_produces_output(ctx: ProbeContext, _extra: dict[str, Any])
     byref = ctypes.byref
     c_ubyte = ctypes.c_ubyte
 
-    _h_pub, h_prv = _generate_keypair(raw, sh)
+    generated = _generate_keypair(raw, sh)
+    if generated is None:
+        return
+    _h_pub, h_prv = generated
 
     sr_mech = mech_simple(CKM_RSA_X_509)
 
-    # Input must be exactly 256 bytes (RSA-2048 modulus size)
+    # Use a representative full-length RSA-2048 modulus input (256 bytes).
     # Use PKCS#1 v1.5-style padding: 0x00 0x01 0xFF...FF 0x00 <data>
     data = b"Hello sign-recover"
     pad_len = 256 - 3 - len(data)
@@ -125,32 +119,27 @@ def _run_sign_recover_produces_output(ctx: ProbeContext, _extra: dict[str, Any])
     padded_buf = _byte_array(padded)
 
     rv = raw.C_SignRecoverInit(sh, sr_mech.byref(), h_prv)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:SignRecoverInit:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecoverInit:0x{rv:08x}")
+        return
 
     # Length query
     sig_len = ctypes.c_ulong(0)
     rv = raw.C_SignRecover(sh, padded_buf, len(padded), None, byref(sig_len))
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:SignRecoverUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:SignRecoverLen:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecoverLen:0x{rv:08x}")
+        return
 
     sig_buf = (c_ubyte * sig_len.value)()
     rv = raw.C_SignRecover(sh, padded_buf, len(padded), sig_buf, byref(sig_len))
     if rv != CKR_OK:
-        print(f"FATAL:SignRecover:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecover:0x{rv:08x}")
+        return
 
     sig_hex = binascii.hexlify(bytes(sig_buf[: sig_len.value])).decode()
     print(f"SIG_LEN:{sig_len.value}")
     print(f"SIG:{sig_hex}")
+    print("OK:sign_recover_produces_output")
 
 
 def _run_verify_recover_round_trip(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
@@ -162,11 +151,14 @@ def _run_verify_recover_round_trip(ctx: ProbeContext, _extra: dict[str, Any]) ->
     byref = ctypes.byref
     c_ubyte = ctypes.c_ubyte
 
-    h_pub, h_prv = _generate_keypair(raw, sh)
+    generated = _generate_keypair(raw, sh)
+    if generated is None:
+        return
+    h_pub, h_prv = generated
 
     sr_mech = mech_simple(CKM_RSA_X_509)
 
-    # Input: exactly 256 bytes with PKCS#1 type-1 padding
+    # Use a representative full-length RSA-2048 modulus input with PKCS#1 type-1 padding.
     data = b"Round-trip test data"
     pad_len = 256 - 3 - len(data)
     padded = b"\x00\x01" + b"\xff" * pad_len + b"\x00" + data
@@ -176,63 +168,52 @@ def _run_verify_recover_round_trip(ctx: ProbeContext, _extra: dict[str, Any]) ->
 
     # --- Sign-recover ---
     rv = raw.C_SignRecoverInit(sh, sr_mech.byref(), h_prv)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:SignRecoverInit:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecoverInit:0x{rv:08x}")
+        return
 
     # Length query
     sig_len = ctypes.c_ulong(0)
     rv = raw.C_SignRecover(sh, padded_buf, len(padded), None, byref(sig_len))
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:SignRecoverUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:SignRecoverLen:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecoverLen:0x{rv:08x}")
+        return
 
     sig_buf = (c_ubyte * sig_len.value)()
     rv = raw.C_SignRecover(sh, padded_buf, len(padded), sig_buf, byref(sig_len))
     if rv != CKR_OK:
-        print(f"FATAL:SignRecover:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecover:0x{rv:08x}")
+        return
     sig_bytes = bytes(sig_buf[: sig_len.value])
     sig_in = _byte_array(sig_bytes)
     print(f"SIG_LEN:{sig_len.value}")
 
     # --- Verify-recover ---
     rv = raw.C_VerifyRecoverInit(sh, sr_mech.byref(), h_pub)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:VerifyRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:VerifyRecoverInit:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:VerifyRecoverInit:0x{rv:08x}")
+        return
 
     # Length query
     rec_len = ctypes.c_ulong(0)
     rv = raw.C_VerifyRecover(sh, sig_in, len(sig_bytes), None, byref(rec_len))
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
-        print(f"SKIP:VerifyRecoverUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:VerifyRecoverLen:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:VerifyRecoverLen:0x{rv:08x}")
+        return
 
     rec_buf = (c_ubyte * rec_len.value)()
     rv = raw.C_VerifyRecover(sh, sig_in, len(sig_bytes), rec_buf, byref(rec_len))
     if rv != CKR_OK:
-        print(f"FATAL:VerifyRecover:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:VerifyRecover:0x{rv:08x}")
+        return
 
     recovered_hex = binascii.hexlify(bytes(rec_buf[: rec_len.value])).decode()
     print(f"RECOVERED:{recovered_hex}")
+    print("OK:verify_recover_round_trip")
 
 
 def _run_sign_recover_wrong_data_length(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
-    """C_SignRecover with wrong-length data returns a PKCS#11 error (not crash)."""
+    """C_SignRecover with k+1-byte data returns a PKCS#11 error (not a crash)."""
     raw = ctx.raw
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh = ctx.sh
@@ -240,40 +221,36 @@ def _run_sign_recover_wrong_data_length(ctx: ProbeContext, _extra: dict[str, Any
     byref = ctypes.byref
     c_ubyte = ctypes.c_ubyte
 
-    _h_pub, h_prv = _generate_keypair(raw, sh)
+    generated = _generate_keypair(raw, sh)
+    if generated is None:
+        return
+    _h_pub, h_prv = generated
 
     sr_mech = mech_simple(CKM_RSA_X_509)
 
     rv = raw.C_SignRecoverInit(sh, sr_mech.byref(), h_prv)
-    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID, CKR_OPERATION_NOT_INITIALIZED):
-        print(f"SKIP:SignRecoverInitUnsupported:0x{rv:08x}")
-        sys.exit(0)
     if rv != CKR_OK:
-        print(f"FATAL:SignRecoverInit:0x{rv:08x}")
-        sys.exit(1)
+        print(f"CKR:SignRecoverInit:0x{rv:08x}")
+        return
 
-    # Data shorter than modulus - must be rejected
-    short_data = b"too short"
-    short_data_buf = _byte_array(short_data)
-    sig_len = ctypes.c_ulong(256)
-    sig_buf = (c_ubyte * 256)()
-    rv = raw.C_SignRecover(sh, short_data_buf, len(short_data), sig_buf, byref(sig_len))
+    # CKM_RSA_X_509 accepts input of length <= k bytes.  A genuine negative
+    # vector must therefore exceed the generated RSA-2048 modulus.
+    modulus_bytes = 2048 // 8
+    oversize_data = b"\xA5" * (modulus_bytes + 1)
+    oversize_data_buf = _byte_array(oversize_data)
+    sig_len = ctypes.c_ulong(modulus_bytes)
+    sig_buf = (c_ubyte * modulus_bytes)()
+    rv = raw.C_SignRecover(
+        sh, oversize_data_buf, len(oversize_data), sig_buf, byref(sig_len)
+    )
 
     if rv == CKR_OK:
-        print("RESULT:ACCEPTED_SHORT_DATA")
+        print("RESULT:ACCEPTED_OVERSIZE_DATA")
     else:
         print(f"RESULT:REJECTED:0x{rv:08x}")
-        # Any non-OK return is acceptable - the module correctly rejected it
-        acceptable = {
-            CKR_DATA_LEN_RANGE,
-            CKR_ARGUMENTS_BAD,
-            CKR_BUFFER_TOO_SMALL,
-            CKR_FUNCTION_NOT_SUPPORTED,
-            CKR_MECHANISM_INVALID,
-        }
-        if rv not in acceptable:
-            # Non-standard CKR - still a valid rejection; note it
-            print(f"NOTE:NonStandardRejection:0x{rv:08x}")
+        if rv != CKR_DATA_LEN_RANGE:
+            print(f"NOTE:NonStandardOversizeRejection:0x{rv:08x}")
+    print("OK:sign_recover_wrong_data_length")
 
 
 _DISPATCH: dict[str, Callable[[ProbeContext, dict[str, Any]], None]] = {

@@ -80,6 +80,14 @@ _P11_MODULE: pytest.StashKey[Any] = pytest.StashKey()
 # normal-teardown C_Finalize must run at most once per process.
 _TEARDOWN_FINALIZED: pytest.StashKey[bool] = pytest.StashKey()
 
+# Per-item cursor/pending state for phase-exact classification transport. The global
+# collector is intentionally shared with testcase helpers, while these keys preserve
+# which observations belong to setup/call/teardown and carry setup observations to
+# the final call outcome without reattaching them there.
+_CLASSIFICATION_CURSOR: pytest.StashKey[int] = pytest.StashKey()
+
+_PENDING_CLASSIFICATIONS: pytest.StashKey[list[Any]] = pytest.StashKey()
+
 
 def _is_testcase_item(item: pytest.Item) -> bool:
     item_path = getattr(item, "path", None)

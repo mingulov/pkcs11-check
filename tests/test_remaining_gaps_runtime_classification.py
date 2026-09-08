@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check.classification import get_records
 from pkcs11_check.compliance import clear_notes, get_notes
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases import test_remaining_gaps
@@ -88,3 +89,49 @@ def test_dual_function_probe_accepts_defined_ckr() -> None:
         "SEU",
         "C_SignEncryptUpdate",
     ) == int(CKR_FUNCTION_NOT_SUPPORTED)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "marker"),
+    [
+        ("test_sign_encrypt_update_callable", "SEU"),
+        ("test_decrypt_verify_update_callable", "DVU"),
+    ],
+)
+def test_dual_function_ckr_is_recorded_before_cleanup_crash(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    marker: str,
+) -> None:
+    """A complete provider CKR remains visible when cleanup later crashes."""
+    monkeypatch.setattr(
+        test_remaining_gaps,
+        "_run_gap_probe",
+        lambda *_args, **_kwargs: (-11, f"{marker}:0x00000054\n", "segmentation fault"),
+    )
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name)(_config())
+
+    records = get_records()
+    assert [record.reason for record in records] == ["not_operational", "crash"]
+    assert records[0].actual_ckr == "CKR_FUNCTION_NOT_SUPPORTED"
+    assert records[1].detail is not None
+    assert records[1].detail["termination"]["kind"] == "signal"
+
+
+@pytest.mark.parametrize("stdout", ["", "SEU:not-a-ckr\n"])
+def test_dual_function_missing_or_malformed_ckr_is_harness_error(
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+) -> None:
+    monkeypatch.setattr(
+        test_remaining_gaps,
+        "_run_gap_probe",
+        lambda *_args, **_kwargs: (0, stdout, ""),
+    )
+    with pytest.raises(pytest.fail.Exception, match="protocol marker"):
+        test_remaining_gaps.TestDualFunctionRemaining().test_sign_encrypt_update_callable(
+            _config()
+        )
+
+    assert get_records()[-1].reason == "harness_error"

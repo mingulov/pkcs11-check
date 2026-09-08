@@ -21,6 +21,12 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
+from pkcs11_check.testcases._probes import raw_session
 
 
 def _write_raw_probe(tmp_path: Path) -> Path:
@@ -135,3 +141,71 @@ def test_raw_session_probe_emits_rv_trace(tmp_path: Path, mock_module_path: str)
     assert isinstance(trace, list), f"rv_trace payload must be a list; got: {trace!r}"
     # Note: trace IS empty for the raw CDLL path — this is correct behaviour.
     # Probes that need RV recording must implement their own interceptor.
+
+
+def _raw_params() -> SimpleNamespace:
+    return SimpleNamespace(module_path="provider.so", extra={})
+
+
+def test_raw_session_clean_function_list_reject_preserves_exact_ckr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A clean bootstrap CKR is terminal provider evidence, not a child error."""
+    monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
+    monkeypatch.setattr(raw_session, "_load_cdll", lambda _path: object())
+    monkeypatch.setattr(
+        raw_session,
+        "_get_function_list",
+        lambda _lib: (None, int(CKR_GENERAL_ERROR)),
+    )
+
+    raw_session.probe_main_raw(lambda _ctx, _extra: pytest.fail("probe must not run"))
+
+    assert (
+        "SETUP_XFAIL:C_GetFunctionList rejected with CKR_GENERAL_ERROR"
+        in capsys.readouterr().out
+    )
+
+
+def test_raw_session_python_bootstrap_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Python/bootstrap defect must remain available for harness attribution."""
+    monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
+    monkeypatch.setattr(raw_session, "_load_cdll", lambda _path: object())
+
+    def broken_get_function_list(_lib: object) -> tuple[None, int]:
+        raise RuntimeError("bootstrap bug")
+
+    monkeypatch.setattr(raw_session, "_get_function_list", broken_get_function_list)
+    with pytest.raises(RuntimeError, match="bootstrap bug"):
+        raw_session.probe_main_raw(lambda _ctx, _extra: None)
+
+
+def test_raw_session_access_violation_is_not_setup_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ctypes-translated SEH must escape so the parent records a crash."""
+    monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
+
+    def access_violation(_path: str) -> object:
+        raise OSError("Exception: access violation reading 0x00000000")
+
+    monkeypatch.setattr(raw_session, "_load_cdll", access_violation)
+    with pytest.raises(OSError, match="access violation"):
+        raw_session.probe_main_raw(lambda _ctx, _extra: None)
+
+
+def test_raw_session_ordinary_load_error_is_harness_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A normal CDLL load error is a harness defect, not an SEH crash."""
+    monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
+
+    def missing_library(_path: str) -> object:
+        raise OSError("No such file or directory")
+
+    monkeypatch.setattr(raw_session, "_load_cdll", missing_library)
+    raw_session.probe_main_raw(lambda _ctx, _extra: pytest.fail("probe must not run"))
+
+    assert "HARNESS_ERROR:CDLL load" in capsys.readouterr().out

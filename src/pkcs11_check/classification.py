@@ -227,6 +227,26 @@ def record(rec: Classification) -> None:
     _records.append(rec)
 
 
+def raise_for_record(rec: Classification) -> NoReturn:
+    """Raise the pytest outcome represented by an already-recorded classification.
+
+    The record is deliberately not added to the collector here.  This is useful for
+    wrappers that collect several semantic observations before choosing the strongest
+    terminal outcome; tagging the exact exception lets the report hook distinguish that
+    originating classification from an unrelated raw failure.
+    """
+    summary = rec.summary or rec.label or rec.reason
+    try:
+        if rec.outcome == "fail":
+            pytest.fail(summary)
+        if rec.outcome == "xfail":
+            pytest.xfail(summary)
+    except BaseException as exc:
+        setattr(exc, "_pkcs11_check_classification", rec)
+        raise
+    raise ValueError(f"record is not terminating: {rec.outcome!r}")
+
+
 def get_records() -> list[Classification]:
     """Return all classification records collected so far."""
     return list(_records)
@@ -356,10 +376,8 @@ def classify(
             detail=detail,
         )
     )
-    if outcome == "fail":
-        pytest.fail(summary)
-    if outcome == "xfail":
-        pytest.xfail(summary)
+    if outcome in {"fail", "xfail"}:
+        raise_for_record(_records[-1])
 
 
 def fail_as(reason: str, **kw: Any) -> NoReturn:

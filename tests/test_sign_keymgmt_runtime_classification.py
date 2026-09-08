@@ -11,9 +11,13 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKM_SHA384_RSA_PKCS,
+    CKR_ARGUMENTS_BAD,
+    CKR_DATA_LEN_RANGE,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
 )
-from pkcs11_check.testcases import test_keymgmt, test_sign
+from pkcs11_check.testcases import test_keymgmt, test_sign, test_sign_recover
+from pkcs11_check.testcases._probes.runner import ProbeResult
 
 
 def _session(*mechanisms: str) -> SimpleNamespace:
@@ -132,3 +136,97 @@ def test_keymgmt_wrong_exported_value_remains_hard_failure(
 
     with pytest.raises(AssertionError):
         test_keymgmt.TestKeyImport().test_extractable_key_export(_session())
+
+
+def test_sign_recover_missing_result_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
+    monkeypatch.setattr(
+        test_sign_recover,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(
+            returncode=0,
+            stdout="KEYGEN_OK:1:2\nOK\n",
+            stderr="",
+        ),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+    with pytest.raises(pytest.fail.Exception, match="SIG_LEN"):
+        test_sign_recover.TestSignRecover().test_sign_recover_produces_output(
+            config,
+            SimpleNamespace(get_slots=lambda **_k: []),
+        )
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records()[-1].reason == "harness_error"
+
+
+def _run_sign_recover_length_probe(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
+    monkeypatch.setattr(
+        test_sign_recover,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(returncode=0, stdout=stdout, stderr=""),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+    test_sign_recover.TestSignRecover().test_sign_recover_wrong_data_length(
+        config,
+        SimpleNamespace(get_slots=lambda **_k: []),
+    )
+
+
+def test_sign_recover_oversize_acceptance_is_crypto_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A k+1-byte RSA-X.509 input must not be accepted as a valid operation."""
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+        _run_sign_recover_length_probe(
+            monkeypatch,
+            "RESULT:ACCEPTED_OVERSIZE_DATA\nOK:sign_recover_wrong_data_length\n",
+        )
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records()[-1].reason == "accepted_invalid"
+    assert get_records()[-1].kind == "crypto"
+
+
+def test_sign_recover_oversize_expected_reject_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _run_sign_recover_length_probe(
+        monkeypatch,
+        f"RESULT:REJECTED:0x{int(CKR_DATA_LEN_RANGE):08x}\n"
+        "OK:sign_recover_wrong_data_length\n",
+    )
+
+
+def test_sign_recover_oversize_arguments_bad_is_nonspec_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only CKR_DATA_LEN_RANGE is normative for the oversize vector."""
+    with pytest.raises(pytest.xfail.Exception, match="CKR_DATA_LEN_RANGE"):
+        _run_sign_recover_length_probe(
+            monkeypatch,
+            f"RESULT:REJECTED:0x{int(CKR_ARGUMENTS_BAD):08x}\n"
+            "OK:sign_recover_wrong_data_length\n",
+        )
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records()[-1].reason == "nonspec_reject"
+
+
+def test_sign_recover_oversize_nonstandard_reject_is_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_sign_recover_length_probe(
+            monkeypatch,
+            f"RESULT:REJECTED:0x{int(CKR_FUNCTION_NOT_SUPPORTED):08x}\n"
+            "OK:sign_recover_wrong_data_length\n",
+        )
