@@ -9,12 +9,15 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import get_records
 from pkcs11_check.core.subprocess_trace import (
     drain_subprocess_rv_trace,
 )
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.testcases._probes import ckr_v30_raw, ckr_v32_raw
+from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases.ckr import (
     test_ckr_dual,
     test_ckr_fault_inject,
@@ -47,13 +50,45 @@ def _raise_function_not_supported(*_args: Any, **_kwargs: Any) -> int:
     )
 
 
+def test_v30_probe_returns_normally_after_unexpected_ckr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = SimpleNamespace(
+        raw=SimpleNamespace(C_MessageEncryptInit=lambda *_args: 0x00000007),
+        sh=1,
+    )
+
+    ckr_v30_raw._message_encrypt_mech_invalid(ctx)
+
+    assert capsys.readouterr().out == (
+        "RESULT:C_MessageEncryptInit:CKR:0x00000007\n"
+        "OK:C_MessageEncryptInit\n"
+    )
+
+
+def test_v32_probe_returns_normally_after_unexpected_ckr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = SimpleNamespace(
+        raw=SimpleNamespace(C_VerifySignatureInit=lambda *_args: 0x00000000),
+        sh=1,
+    )
+
+    ckr_v32_raw._verify_signature_mech_invalid(ctx)
+
+    assert capsys.readouterr().out == (
+        "RESULT:C_VerifySignatureInit:CKR:0x00000000\n"
+        "OK:C_VerifySignatureInit\n"
+    )
+
+
 @pytest.mark.parametrize(
     "check",
     [test_ckr_v30_raw._check, test_ckr_v32_raw._check],
 )
 def test_raw_check_reports_signal_as_crash(check: RawCheck) -> None:
     """Negative subprocess return codes are crash findings."""
-    with pytest.raises(pytest.fail.Exception, match="subprocess crashed with signal 11"):
+    with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
         check(-11, "", "segmentation fault", "C_Test")
 
 
@@ -80,7 +115,12 @@ def test_v30_raw_message_encrypt_dispatches_probe(
 
     def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
         calls.append((probe, params))
-        return SimpleNamespace(returncode=0, stdout="CKR:0x00000070\nOK\n", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="RESULT:C_MessageEncryptInit:CKR:0x00000070\n"
+            "OK:C_MessageEncryptInit\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ckr_v30_raw, "run_probe", fake_run_probe)
 
@@ -109,7 +149,12 @@ def test_v32_raw_verify_signature_dispatches_probe(
 
     def fake_run_probe(probe: str, params: dict[str, Any], **_kwargs: Any) -> SimpleNamespace:
         calls.append((probe, params))
-        return SimpleNamespace(returncode=0, stdout="CKR:0x00000070\nOK\n", stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout="RESULT:C_VerifySignatureInit:CKR:0x00000070\n"
+            "OK:C_VerifySignatureInit\n",
+            stderr="",
+        )
 
     monkeypatch.setattr(test_ckr_v32_raw, "run_probe", fake_run_probe)
 
@@ -141,6 +186,790 @@ def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
             "",
             context="CKR setup probe",
         )
+
+
+def test_clean_positive_exit_is_not_crash() -> None:
+    """A complete CKR protocol on a positive exit is harness evidence, not a crash."""
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+        assert_ckr_subprocess_ok(
+            1,
+            "CKR:0x00000007\nOK:C_Test rejected the mechanism\n",
+            "",
+            context="C_Test CKR probe",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["probe_incomplete"] is True
+    assert records[0].detail["termination"]["kind"] == "exit"
+
+
+def test_v3_result_protocol_classifies_clean_wrong_ckr_as_provider_xfail() -> None:
+    with pytest.raises(pytest.xfail.Exception, match="non-spec rejection"):
+        test_ckr_v30_raw._check(
+            0,
+            "RESULT:C_MessageEncryptInit:CKR:0x00000007\n"
+            "OK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["nonspec_reject"]
+    assert records[0].actual_ckr == "CKR_ARGUMENTS_BAD"
+    assert records[0].expected_ckr == ["CKR_MECHANISM_INVALID"]
+
+
+def test_v3_result_protocol_classifies_ckr_ok_as_provider_failure() -> None:
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+        test_ckr_v30_raw._check(
+            0,
+            "RESULT:C_MessageEncryptInit:CKR:0x00000000\n"
+            "OK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["accepted_invalid"]
+    assert records[0].actual_ckr == "CKR_OK"
+
+
+def test_v3_hollow_ok_without_result_is_harness_error() -> None:
+    with pytest.raises(pytest.fail.Exception, match="missing_result"):
+        test_ckr_v30_raw._check(0, "OK:C_MessageEncryptInit\n", "", "C_MessageEncryptInit")
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "missing_result"
+
+
+def test_v3_duplicate_result_is_harness_only_and_not_provider_evidence() -> None:
+    with pytest.raises(pytest.fail.Exception, match="duplicate_result"):
+        test_ckr_v30_raw._check(
+            0,
+            "RESULT:C_MessageEncryptInit:CKR:0x00000070\n"
+            "RESULT:C_MessageEncryptInit:CKR:0x00000007\n"
+            "OK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "duplicate_result"
+
+
+def test_v3_mixed_result_phases_are_harness_only() -> None:
+    with pytest.raises(pytest.fail.Exception, match="unexpected_result_phase"):
+        test_ckr_v32_raw._check(
+            0,
+            "RESULT:C_VerifySignature:CKR:0x00000091\n"
+            "OK:C_VerifySignatureInit\n",
+            "",
+            "C_VerifySignatureInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "unexpected_result_phase"
+
+
+def test_v32_null_probe_requires_each_distinct_phase() -> None:
+    with pytest.raises(pytest.fail.Exception, match="wrong_result_cardinality"):
+        test_ckr_v32_raw._check(
+            0,
+            "RESULT:C_EncapsulateKey.pMechanism:CKR:0x00000070\n"
+            "OK:C_EncapsulateKey_NULLs\n",
+            "",
+            "C_EncapsulateKey_NULLs",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+
+
+def test_v32_null_probe_accepts_all_expected_negative_results() -> None:
+    test_ckr_v32_raw._check(
+        0,
+        "RESULT:C_EncapsulateKey.pMechanism:CKR:0x00000007\n"
+        "RESULT:C_EncapsulateKey.pulCiphertextLen:CKR:0x00000007\n"
+        "OK:C_EncapsulateKey_NULLs\n",
+        "",
+        "C_EncapsulateKey_NULLs",
+    )
+
+    assert get_records() == []
+
+
+def test_v32_null_probe_acceptance_failure_dominates_clean_deviation() -> None:
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+        test_ckr_v32_raw._check(
+            0,
+            "RESULT:C_EncapsulateKey.pMechanism:CKR:0x00000070\n"
+            "RESULT:C_EncapsulateKey.pulCiphertextLen:CKR:0x00000000\n"
+            "OK:C_EncapsulateKey_NULLs\n",
+            "",
+            "C_EncapsulateKey_NULLs",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["nonspec_reject", "accepted_invalid"]
+
+
+def test_v3_setup_and_result_are_mixed_harness_evidence() -> None:
+    with pytest.raises(pytest.fail.Exception, match="mixed_terminal_markers"):
+        test_ckr_v30_raw._check(
+            0,
+            "SETUP_XFAIL:C_Login rejected with CKR_GENERAL_ERROR\n"
+            "RESULT:C_MessageEncryptInit:CKR:0x00000070\n"
+            "OK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+
+
+@pytest.mark.parametrize(
+    ("rc", "err", "failure"),
+    [
+        (-11, "segmentation fault", "module crashed with signal 11"),
+        (124, f"{SUBPROCESS_TIMEOUT_MARKER}:30s", "timed out"),
+        (
+            1,
+            "OSError: exception: access violation reading 0xFFFFFFFFFFFFFFFF",
+            "module crashed",
+        ),
+    ],
+)
+def test_v32_partial_prefix_survives_crash_without_cardinality_record(
+    rc: int,
+    err: str,
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if rc == 1:
+        monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
+    with pytest.raises(pytest.fail.Exception, match=failure):
+        test_ckr_v32_raw._check(
+            rc,
+            "RESULT:C_EncapsulateKey.pMechanism:CKR:0x00000000\n",
+            err,
+            "C_EncapsulateKey_NULLs",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["accepted_invalid", "crash"]
+    assert all(
+        record.detail is None or record.detail.get("protocol") != "wrong_result_cardinality"
+        for record in records
+    )
+
+
+def test_v3_wrong_terminal_phase_is_harness_only() -> None:
+    with pytest.raises(pytest.fail.Exception, match="unexpected_terminal_phase"):
+        test_ckr_v30_raw._check(
+            0,
+            "RESULT:C_MessageEncryptInit:CKR:0x00000000\n"
+            "OK:C_EncryptMessage\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+
+
+def test_v3_distinct_setup_markers_are_harness_only() -> None:
+    with pytest.raises(pytest.fail.Exception, match="duplicate_marker"):
+        test_ckr_v30_raw._check(
+            0,
+            "SETUP_XFAIL:first setup refusal\nSETUP_XFAIL:second setup refusal\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+def test_v3_distinct_skip_markers_are_harness_only() -> None:
+    with pytest.raises(pytest.fail.Exception, match="duplicate_marker"):
+        test_ckr_v30_raw._check(
+            0,
+            "SKIP:v2.40_only\nSKIP:no_v3_funcs\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+def test_v3_skip_token_must_be_possible_for_the_checked_function() -> None:
+    with pytest.raises(pytest.fail.Exception, match="invalid_skip_token"):
+        test_ckr_v30_raw._check(
+            0,
+            "SKIP:no_SessionCancel\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+def test_v3_bare_ok_is_not_a_terminal_marker() -> None:
+    with pytest.raises(pytest.fail.Exception, match="malformed_terminal_marker"):
+        test_ckr_v30_raw._check(
+            0,
+            "RESULT:C_MessageEncryptInit:CKR:0x00000070\nOK\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+def test_v3_measurement_marker_is_not_a_provider_result() -> None:
+    with pytest.raises(pytest.fail.Exception, match="unexpected_result_marker"):
+        test_ckr_v30_raw._check(
+            0,
+            "MEASUREMENT:C_MessageEncryptInit:CKR:0x00000000\n"
+            "OK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+@pytest.mark.parametrize(
+    "result_marker",
+    [
+        "RESULT:C_MessageEncryptInit:0x00000070",
+        "RESULT:C_MessageEncryptInit:0x00000000",
+    ],
+)
+def test_v3_result_requires_literal_ckr_field(result_marker: str) -> None:
+    try:
+        test_ckr_v30_raw._check(
+            0,
+            f"{result_marker}\nOK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "malformed_result"
+
+
+def test_v3_arbitrary_setup_payload_is_harness_only() -> None:
+    try:
+        test_ckr_v30_raw._check(
+            0,
+            "SETUP_XFAIL:key setup rejected\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "invalid_setup_marker"
+
+
+@pytest.mark.parametrize(
+    "setup_marker",
+    [
+        "SETUP_XFAIL:C_Initialize rejected with CKR_GENERAL_ERROR",
+        "SETUP_XFAIL:C_GetSlotList rejected with 0x00000007",
+        "SETUP_XFAIL:C_GetSlotList rejected with 0x80000001",
+        "SETUP_XFAIL:no slot with a present token",
+        "SETUP_XFAIL:C_OpenSession rejected with CKR_DEVICE_ERROR",
+        "SETUP_XFAIL:C_Login rejected with 0x00000007",
+    ],
+)
+def test_v3_level_login_setup_markers_are_provider_refusals(setup_marker: str) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        test_ckr_v30_raw._check(
+            0,
+            f"{setup_marker}\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["not_operational"]
+    assert records[0].expected_ckr == ["CKR_OK"]
+
+
+@pytest.mark.parametrize(
+    ("check", "setup_marker"),
+    [
+        (
+            test_ckr_v30_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with CKR_OK",
+        ),
+        (
+            test_ckr_v30_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with 0x00000000",
+        ),
+        (
+            test_ckr_v30_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with CKR_CRYPTOKI_ALREADY_INITIALIZED",
+        ),
+        (
+            test_ckr_v30_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with 0x00000191",
+        ),
+        (
+            test_ckr_v32_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with CKR_OK",
+        ),
+        (
+            test_ckr_v32_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with 0x00000000",
+        ),
+        (
+            test_ckr_v32_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with CKR_CRYPTOKI_ALREADY_INITIALIZED",
+        ),
+        (
+            test_ckr_v32_raw._check,
+            "SETUP_XFAIL:C_Initialize rejected with 0x00000191",
+        ),
+        (
+            test_ckr_v30_raw._check,
+            "SETUP_XFAIL:C_Login rejected with CKR_USER_ALREADY_LOGGED_IN",
+        ),
+        (
+            test_ckr_v30_raw._check,
+            "SETUP_XFAIL:C_Login rejected with 0x00000100",
+        ),
+        (
+            test_ckr_v32_raw._check,
+            "SETUP_XFAIL:C_Login rejected with CKR_USER_ALREADY_LOGGED_IN",
+        ),
+        (
+            test_ckr_v32_raw._check,
+            "SETUP_XFAIL:C_Login rejected with 0x00000100",
+        ),
+    ],
+)
+def test_v3_setup_success_states_are_harness_only(
+    check: RawCheck, setup_marker: str
+) -> None:
+    try:
+        check(1, f"{setup_marker}\n", "setup child failed", "C_Test")
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert records
+    assert all(record.reason == "harness_error" for record in records)
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "impossible_setup_result"
+
+
+def test_v3_unknown_symbolic_setup_ckr_is_harness_only() -> None:
+    try:
+        test_ckr_v30_raw._check(
+            1,
+            "SETUP_XFAIL:C_Login rejected with CKR_NOT_A_REAL_RV\n",
+            "setup child failed",
+            "C_Test",
+        )
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert records
+    assert all(record.reason == "harness_error" for record in records)
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "invalid_setup_marker"
+
+
+@pytest.mark.parametrize(
+    "setup_marker",
+    [
+        "SETUP_XFAIL: C_Login rejected with CKR_GENERAL_ERROR",
+        "SETUP_XFAIL:C_Login rejected with CKR_GENERAL_ERROR ",
+    ],
+)
+def test_v3_setup_whitespace_is_harness_only(setup_marker: str) -> None:
+    try:
+        test_ckr_v30_raw._check(1, f"{setup_marker}\n", "setup child failed", "C_Test")
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert records
+    assert all(record.reason == "harness_error" for record in records)
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "invalid_setup_marker"
+
+
+def test_v3_skip_whitespace_is_harness_only() -> None:
+    try:
+        test_ckr_v30_raw._check(
+            1,
+            "SKIP:no_v3_funcs \n",
+            "setup child failed",
+            "C_MessageEncryptInit",
+        )
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert records
+    assert all(record.reason == "harness_error" for record in records)
+    assert records[0].detail is not None
+    assert records[0].detail["protocol"] == "invalid_skip_token"
+
+
+def test_v3_undefined_numeric_setup_ckr_is_self_contradiction() -> None:
+    try:
+        test_ckr_v30_raw._check(
+            0,
+            "SETUP_XFAIL:C_Login rejected with 0x100000007\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+    except BaseException:
+        pass
+
+    records = get_records()
+    assert [record.reason for record in records] == ["self_contradiction"]
+    assert records[0].actual_ckr == "0x100000007"
+    assert records[0].expected_ckr == ["CKR_OK"]
+    assert records[0].kind == "metadata"
+
+
+def test_v3_high_width_undefined_ckr_is_provider_self_contradiction() -> None:
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        test_ckr_v30_raw._check(
+            0,
+            "RESULT:C_MessageEncryptInit:CKR:0x100000007\n"
+            "OK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["self_contradiction"]
+    assert records[0].actual_ckr == "0x100000007"
+    assert records[0].expected_ckr == ["CKR_MECHANISM_INVALID"]
+    assert records[0].kind == "metadata"
+
+
+@pytest.mark.parametrize(
+    "result_marker",
+    [
+        "RESULT:C_MessageEncryptInit:CKR:0x0000000A",
+        "RESULT:C_MessageEncryptInit:CKR:0x10000000000000000",
+    ],
+)
+def test_v3_ckr_hex_shape_rejects_uppercase_and_overwidth(
+    result_marker: str,
+) -> None:
+    with pytest.raises(pytest.fail.Exception, match="malformed_result"):
+        test_ckr_v30_raw._check(
+            0,
+            f"{result_marker}\nOK:C_MessageEncryptInit\n",
+            "",
+            "C_MessageEncryptInit",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+def test_zero_exit_missing_terminal_marker_is_incomplete() -> None:
+    with pytest.raises(pytest.fail.Exception, match="terminal marker"):
+        assert_ckr_subprocess_ok(0, "CKR:0x00000007\n", "", context="C_Test CKR probe")
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["probe_incomplete"] is True
+    assert records[0].detail["termination"]["kind"] == "exit"
+    assert records[0].detail["termination"]["raw_code"] == 0
+
+
+def test_incidental_ok_substring_is_not_completion() -> None:
+    with pytest.raises(pytest.fail.Exception, match="terminal marker"):
+        assert_ckr_subprocess_ok(
+            0,
+            "NOT_OK: provider said OK in prose\noperation was not OK\n",
+            "",
+            context="C_Test CKR probe",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+
+def test_break_survives_earlier_setup_xfail() -> None:
+    with pytest.raises(pytest.fail.Exception, match="forbidden operation"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_XFAIL:key setup rejected\n"
+            "BREAK:forbidden operation produced output\n",
+            "",
+            context="C_Test CKR probe",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == [
+        "not_operational",
+        "self_contradiction",
+    ]
+    assert records[0].outcome == "xfail"
+    assert records[1].outcome == "fail"
+
+
+def test_crash_survives_earlier_skip_marker() -> None:
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        assert_ckr_subprocess_ok(
+            -11,
+            "SETUP_XFAIL:key setup rejected\n",
+            "segmentation fault",
+            context="C_Test CKR probe",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["not_operational", "crash"]
+    assert records[1].detail is not None
+    assert records[1].detail["termination"]["kind"] == "signal"
+
+
+def test_windows_seh_positive_exit_is_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
+    with pytest.raises(pytest.fail.Exception, match="module crashed"):
+        assert_ckr_subprocess_ok(
+            1,
+            "SETUP_XFAIL:key setup rejected\n",
+            "OSError: exception: access violation reading 0xFFFFFFFFFFFFFFFF",
+            context="C_Test CKR probe",
+        )
+
+    records = get_records()
+    assert [record.reason for record in records] == ["not_operational", "crash"]
+    record = records[-1]
+    assert record.detail is not None
+    assert record.detail["termination"]["kind"] == "exception"
+    assert record.detail["termination"]["raw_code"] == 1
+
+
+@pytest.mark.parametrize(
+    ("check", "func", "skip"),
+    [
+        (test_ckr_v30_raw._check, "C_MessageEncryptInit", "no_v3_funcs"),
+        (test_ckr_v32_raw._check, "C_VerifySignatureInit", "no_v32_funcs"),
+    ],
+)
+def test_v3_skip_marker_does_not_hide_signal_crash(
+    check: RawCheck, func: str, skip: str
+) -> None:
+    """A capability skip is provisional until the child process disposition is known."""
+    with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
+        check(-11, f"SKIP:{skip}\n", "segmentation fault", func)
+
+    records = get_records()
+    assert [item.reason for item in records] == ["crash"]
+
+
+@pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
+def test_v3_break_evidence_survives_signal_crash(check: RawCheck) -> None:
+    """A semantic provider finding remains visible when the child later crashes."""
+    with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
+        check(
+            -11,
+            "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\n",
+            "segmentation fault",
+            "C_Test",
+        )
+
+    records = get_records()
+    assert [item.reason for item in records] == ["accepted_invalid", "crash"]
+
+
+@pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
+def test_v3_result_survives_signal_before_completion_marker(check: RawCheck) -> None:
+    with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
+        check(
+            -11,
+            "RESULT:C_Test:CKR:0x00000000\n",
+            "segmentation fault",
+            "C_Test",
+        )
+
+    records = get_records()
+    assert [item.reason for item in records] == ["accepted_invalid", "crash"]
+
+
+@pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
+def test_v3_semantic_evidence_survives_cleanup_failure(check: RawCheck) -> None:
+    check(
+        0,
+        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\n"
+        "HARNESS_ERROR:cleanup failed after measurement\n",
+        "",
+        "C_Test",
+    )
+
+    assert [item.reason for item in get_records()] == ["accepted_invalid", "harness_error"]
+
+
+@pytest.mark.parametrize(
+    ("check", "func", "skip"),
+    [
+        (test_ckr_v30_raw._check, "C_MessageEncryptInit", "no_v3_funcs"),
+        (test_ckr_v32_raw._check, "C_VerifySignatureInit", "no_v32_funcs"),
+    ],
+)
+def test_v3_skip_marker_does_not_hide_windows_seh(
+    check: RawCheck, func: str, skip: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A positive Windows exit carrying an access violation remains a crash."""
+    monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
+    with pytest.raises(pytest.fail.Exception, match="module crashed"):
+        check(
+            1,
+            f"SKIP:{skip}\n",
+            "OSError: exception: access violation reading 0xFFFFFFFFFFFFFFFF",
+            func,
+        )
+
+    records = get_records()
+    assert [item.reason for item in records] == ["crash"]
+
+
+@pytest.mark.parametrize(
+    ("check", "func", "skip"),
+    [
+        (test_ckr_v30_raw._check, "C_MessageEncryptInit", "no_v3_funcs"),
+        (test_ckr_v32_raw._check, "C_VerifySignatureInit", "no_v32_funcs"),
+    ],
+)
+def test_v3_skip_marker_does_not_hide_timeout(
+    check: RawCheck, func: str, skip: str
+) -> None:
+    """A timeout is a crash-class finding even if setup emitted a skip marker."""
+    with pytest.raises(pytest.fail.Exception, match="timed out"):
+        check(
+            124,
+            f"SKIP:{skip}\n",
+            f"{SUBPROCESS_TIMEOUT_MARKER}:15s\n",
+            func,
+        )
+
+    records = get_records()
+    assert [item.reason for item in records] == ["crash"]
+
+
+@pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
+def test_v3_complete_semantic_evidence_survives_cleanup_failure(check: RawCheck) -> None:
+    """A provider semantic finding and a later harness cleanup defect are additive."""
+    check(
+        0,
+        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\n"
+        "HARNESS_ERROR:cleanup failed after measurement\n",
+        "",
+        "C_Test",
+    )
+
+    records = get_records()
+    assert [item.reason for item in records] == ["accepted_invalid", "harness_error"]
+
+
+@pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
+def test_v3_duplicate_semantic_marker_is_one_harness_record(check: RawCheck) -> None:
+    with pytest.raises(pytest.fail.Exception, match="duplicate_result"):
+        check(
+            0,
+            "RESULT:C_Test:CKR:0x00000000\n"
+            "RESULT:C_Test:CKR:0x00000000\n"
+            "OK:C_Test\n",
+            "",
+            "C_Test",
+        )
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
+
+def test_malformed_terminal_marker_is_harness_evidence() -> None:
+    with pytest.raises(pytest.fail.Exception, match="terminal marker"):
+        assert_ckr_subprocess_ok(0, "OKAY:almost complete\n", "", context="C_Test CKR probe")
+
+    record = get_records()[-1]
+    assert record.reason == "harness_error"
+    assert record.detail is not None
+    assert record.detail["protocol"] == "missing_terminal_marker"
+    assert record.detail["termination"]["kind"] == "exit"
+    assert record.detail["termination"]["raw_code"] == 0
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["SETUP_XFAIL:", "BREAK:", "DEVIATION_XFAIL:"],
+)
+def test_empty_semantic_marker_is_harness_evidence(marker: str) -> None:
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        assert_ckr_subprocess_ok(0, f"{marker}   \n", "", context="C_Test CKR probe")
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    record = records[0]
+    assert record.summary
+    assert record.detail is not None
+    assert record.detail["protocol"] == "malformed_marker"
+    assert record.detail["termination"]["kind"] == "exit"
+    assert record.detail["termination"]["raw_code"] == 0
+
+
+def test_explicit_harness_marker_is_terminal_for_ckr_measurement() -> None:
+    stdout = "CKR:0x00000007\nHARNESS_ERROR:cleanup failed after measurement\n"
+    assert_ckr_subprocess_ok(0, stdout, "", context="C_Test CKR probe")
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["termination"]["kind"] == "exit"
+
+
+def test_malformed_marker_and_cleanup_keep_distinct_harness_records() -> None:
+    stdout = "SETUP_XFAIL:   \nHARNESS_ERROR:cleanup failed after measurement\n"
+    assert_ckr_subprocess_ok(0, stdout, "", context="C_Test CKR probe")
+
+    records = get_records()
+    assert [record.reason for record in records] == ["harness_error", "harness_error"]
+    assert records[0].detail is not None
+    assert records[1].detail is not None
+    assert records[0].detail != records[1].detail
+    assert "protocol" not in records[0].detail
+    assert records[1].detail["protocol"] == "malformed_marker"
+
+
+def test_cleanup_harness_keeps_valid_semantic_failure() -> None:
+    stdout = (
+        "RESULT:C_Test:CKR:0x00000000\n"
+        "OK:C_Test\n"
+        "HARNESS_ERROR:cleanup failed after measurement\n"
+    )
+    test_ckr_v30_raw._check(0, stdout, "", "C_Test")
+
+    records = get_records()
+    assert [record.reason for record in records] == ["accepted_invalid", "harness_error"]
+    assert records.count(records[-1]) == 1
+    assert records[-1].reason == "harness_error"
 
 
 def test_fault_proxy_dispatches_probe(

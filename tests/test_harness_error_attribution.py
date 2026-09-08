@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from pkcs11_check.classification import clear, derive_verdict, get_records
+from pkcs11_check.classification import Classification, clear, derive_verdict, get_records, record
 from pkcs11_check.testcases._probes._emit import (
     HARNESS_ERROR_MARKER,
     cleanup_guard,
@@ -67,12 +67,12 @@ def test_cleanup_failure_after_a_measurement_keeps_the_verdict() -> None:
     clear()
 
 
-def test_unmarked_positive_exit_is_still_a_provider_crash() -> None:
-    """Windows SEH: a real module fault arrives as OSError + rc=1, never a signal.
-
-    It carries no marker, so it must keep classifying as a provider crash finding.
-    """
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+def test_windows_seh_positive_exit_is_still_a_provider_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows SEH: a real module fault arrives as OSError + rc=1, never a signal."""
+    monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
+    with pytest.raises(pytest.fail.Exception, match="module crashed"):
         assert_subprocess_completed(
             1,
             "",
@@ -81,6 +81,57 @@ def test_unmarked_positive_exit_is_still_a_provider_crash() -> None:
         )
 
     assert [r.reason for r in get_records()] == ["crash"]
+
+
+def test_ordinary_oserror_is_not_windows_crash() -> None:
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+        assert_subprocess_completed(
+            1,
+            "",
+            "OSError: ordinary cleanup failure",
+            context="C_Sign boundary probe",
+        )
+
+    records = get_records()
+    assert [r.reason for r in records] == ["harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail["termination"]["kind"] == "exit"
+
+
+def test_unknown_positive_exit_remains_visible() -> None:
+    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 7"):
+        assert_subprocess_completed(7, "", "", context="C_Test probe")
+
+    record = get_records()[-1]
+    assert record.reason == "harness_error"
+    assert record.detail is not None
+    assert record.detail["probe_incomplete"] is True
+    assert record.detail["termination"] == {
+        "kind": "exit",
+        "raw_code": 7,
+        "signal_name": None,
+        "windows_status": None,
+    }
+
+
+def test_provider_measurement_survives_cleanup_error() -> None:
+    record(
+        Classification(
+            reason="oracle",
+            outcome="fail",
+            severity="HIGH",
+            label="C_Test measurement",
+            summary="provider returned a measured result",
+        )
+    )
+    assert_subprocess_completed(
+        0,
+        f"TARGET_RV:0x00000021\n{HARNESS_ERROR_MARKER}BufferError: cannot close",
+        "",
+        context="C_Test probe",
+    )
+
+    assert [r.reason for r in get_records()] == ["oracle", "harness_error"]
 
 
 def test_signal_crash_is_never_reattributed() -> None:
@@ -95,7 +146,8 @@ def test_signal_crash_is_never_reattributed() -> None:
     assert [r.reason for r in get_records()] == ["crash"]
 
 
-def test_windows_crash_is_never_reattributed() -> None:
+def test_windows_crash_is_never_reattributed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
     with pytest.raises(pytest.fail.Exception, match="module crashed"):
         assert_subprocess_completed(
             0xC0000005,
@@ -116,7 +168,11 @@ def test_timeout_is_never_reattributed() -> None:
             context="C_Sign boundary probe",
         )
 
-    assert [r.reason for r in get_records()] == ["crash"]
+    records = get_records()
+    assert [r.reason for r in records] == ["crash"]
+    assert records[0].detail is not None
+    assert records[0].detail["termination"]["kind"] == "timeout"
+    assert records[0].detail["termination"]["raw_code"] == 124
 
 
 def test_emit_harness_error_prints_the_marker(capsys: pytest.CaptureFixture[str]) -> None:

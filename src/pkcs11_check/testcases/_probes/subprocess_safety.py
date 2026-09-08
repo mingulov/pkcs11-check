@@ -45,6 +45,7 @@ from pkcs11_check.raw.bootstrap import (
 )
 from pkcs11_check.raw.pack import attr_bool, attr_bytes, attr_ulong, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -57,6 +58,8 @@ from pkcs11_check.raw.types_std import (
     CKF_SERIAL_SESSION,
     CKO_DATA,
     CKR_OK,
+    CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
@@ -95,14 +98,24 @@ def _reinitialize_after_finalize(ctx: ProbeContext, _extra: dict[str, Any]) -> N
 def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     """Fork after C_Initialize - child reinitializes (POSIX-only; parent test @requires_fork)."""
     raw = ctx.raw
-    raw.C_Initialize(None)
+    rv = raw.C_Initialize(None)
+    if rv != CKR_OK:
+        print(f"SETUP_XFAIL:Parent_Init:0x{rv:08x}")
+        return
     pid = os.fork()
     if pid == 0:
         # Grandchild: os._exit so probe_main's atexit handlers do NOT run a second time.
         try:
             raw.C_Finalize(None)
-            raw.C_Initialize(None)
-            get_slot_ids(raw)
+            rv = raw.C_Initialize(None)
+            if rv != CKR_OK:
+                print(f"CHILD_FATAL:Init:0x{rv:08x}", flush=True)
+                os._exit(2)
+            try:
+                get_slot_ids(raw)
+            except CkrAssertionError as exc:
+                print(f"CHILD_FATAL:Slot:0x{exc.rv:08x}", flush=True)
+                os._exit(7)
             raw.C_Finalize(None)
             os._exit(0)
         except Exception as exc:  # noqa: BLE001 - crash-safety: report child exception, never swallow
@@ -110,28 +123,26 @@ def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
             os._exit(1)
     else:
         _, status = os.waitpid(pid, 0)
-        raw.C_Finalize(None)
         if os.WIFSIGNALED(status):
             child_signal = os.WTERMSIG(status)
-            print(f"CHILD_SIGNAL:{child_signal}")
-            child_exit = -child_signal
+            print(f"CHILD_SIGNAL:{child_signal}", flush=True)
         else:
             child_exit = os.WEXITSTATUS(status)
-        print(f"CHILD_EXIT:{child_exit}")
+            print(f"CHILD_EXIT:{child_exit}", flush=True)
+        raw.C_Finalize(None)
 
 
 # Login error swallow rule: catch only the two documented "already logged in / wrong user
 # type" cases per the project login policy / PIN handling section. Other login failures
 # must surface.
-_LOGIN_OK_TO_IGNORE = ("CKR_USER_ALREADY_LOGGED_IN", "CKR_USER_TYPE_INVALID")
+_LOGIN_OK_TO_IGNORE = (CKR_USER_ALREADY_LOGGED_IN, CKR_USER_TYPE_INVALID)
 
 
 def _safe_login(raw_obj: RawPKCS11, sess_h: int, user_type: int, pin_bytes: bytes) -> None:
     try:
         login_user(raw_obj, sess_h, user_type, pin_bytes)
-    except AssertionError as e:
-        msg = str(e)
-        if not any(code in msg for code in _LOGIN_OK_TO_IGNORE):
+    except CkrAssertionError as exc:
+        if exc.rv not in _LOGIN_OK_TO_IGNORE:
             raise
 
 
@@ -149,23 +160,33 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
     raw = ctx.raw
     rv = raw.C_Initialize(None)
     if rv != CKR_OK:
-        print(f"FATAL:Parent_Init:0x{rv:08x}")
-        sys.exit(1)
-    slot_list = get_slot_ids(raw)
-    if slot >= len(slot_list):
-        print(f"FATAL:Slot:{slot}>={len(slot_list)}")
+        print(f"SETUP_XFAIL:Parent_Init:0x{rv:08x}")
+        return
+    try:
+        slot_list = get_slot_ids(raw)
+    except CkrAssertionError as exc:
+        print(f"SETUP_XFAIL:Parent_GetSlotList:0x{exc.rv:08x}")
         raw.C_Finalize(None)
-        sys.exit(1)
+        return
+    if slot >= len(slot_list):
+        print(f"SETUP_EXC:Parent_Slot:{slot}>={len(slot_list)}", flush=True)
+        raw.C_Finalize(None)
+        return
     slot_id = slot_list[slot]
-    sh = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+    try:
+        sh = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+    except CkrAssertionError as exc:
+        print(f"SETUP_XFAIL:Parent_OpenSession:0x{exc.rv:08x}")
+        raw.C_Finalize(None)
+        return
     if pin is not None:
         try:
             _safe_login(raw, sh, 1, pin)
-        except AssertionError as e:
-            print(f"FATAL:Parent_Login:{e}")
+        except CkrAssertionError as exc:
+            print(f"SETUP_XFAIL:Parent_Login:0x{exc.rv:08x}")
             close_session_quietly(raw, sh)
             raw.C_Finalize(None)
-            sys.exit(1)
+            return
     tmpl = template(
         attr_ulong(CKA_CLASS, CKO_DATA),
         attr_bool(CKA_TOKEN, False),
@@ -176,10 +197,10 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
     h = CK_OBJECT_HANDLE(0)
     rv = raw.C_CreateObject(sh, tmpl.ptr, tmpl.count, byref(h))
     if rv != CKR_OK:
-        print(f"FATAL:Parent_CreateObject:0x{rv:08x}")
+        print(f"SETUP_XFAIL:Parent_CreateObject:0x{rv:08x}")
         close_session_quietly(raw, sh)
         raw.C_Finalize(None)
-        sys.exit(1)
+        return
     print(f"PARENT_LABEL:{label.decode()}")
 
     # --- Fork a child that re-Initializes (different application) ---
@@ -196,14 +217,28 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
                 print(f"CHILD_FATAL:Init:0x{rv:08x}")
                 sys.stdout.flush()
                 os._exit(2)
-            slot_list2 = get_slot_ids(raw2)
+            try:
+                slot_list2 = get_slot_ids(raw2)
+            except CkrAssertionError as exc:
+                print(f"CHILD_FATAL:Slot:0x{exc.rv:08x}")
+                sys.stdout.flush()
+                os._exit(7)
+            if slot >= len(slot_list2):
+                print(f"CHILD_EXC:SlotRange:{slot}>={len(slot_list2)}")
+                sys.stdout.flush()
+                os._exit(5)
             slot_id2 = slot_list2[slot]
-            sh2 = open_session(raw2, slot_id2, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+            try:
+                sh2 = open_session(raw2, slot_id2, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+            except CkrAssertionError as exc:
+                print(f"CHILD_FATAL:Open:0x{exc.rv:08x}")
+                sys.stdout.flush()
+                os._exit(8)
             if pin is not None:
                 try:
                     _safe_login(raw2, sh2, 1, pin)
-                except AssertionError as e:
-                    print(f"CHILD_FATAL:Login:{e}")
+                except CkrAssertionError as exc:
+                    print(f"CHILD_FATAL:Login:0x{exc.rv:08x}")
                     sys.stdout.flush()
                     os._exit(6)
             # Find-objects by the parent's label.
@@ -219,12 +254,16 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
             handles = (CK_OBJECT_HANDLE * 8)()
             count = CK_ULONG(0)
             rv = raw2.C_FindObjects(sh2, handles, 8, byref(count))
-            raw2.C_FindObjectsFinal(sh2)
             if rv != CKR_OK:
                 print(f"CHILD_FATAL:Find:0x{rv:08x}")
                 sys.stdout.flush()
                 os._exit(4)
-            print(f"CHILD_FOUND:{count.value}")
+            rv = raw2.C_FindObjectsFinal(sh2)
+            if rv != CKR_OK:
+                print(f"CHILD_FATAL:FindFinal:0x{rv:08x}")
+                sys.stdout.flush()
+                os._exit(9)
+            print(f"CHILD_FOUND:{count.value}", flush=True)
             close_session_quietly(raw2, sh2)
             raw2.C_Finalize(None)
             sys.stdout.flush()
@@ -243,11 +282,10 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
         _, status = os.waitpid(pid, 0)
         if os.WIFSIGNALED(status):
             child_signal = os.WTERMSIG(status)
-            print(f"CHILD_SIGNAL:{child_signal}")
-            child_exit = -child_signal
+            print(f"CHILD_SIGNAL:{child_signal}", flush=True)
         else:
             child_exit = os.WEXITSTATUS(status)
-        print(f"CHILD_EXIT:{child_exit}")
+            print(f"CHILD_EXIT:{child_exit}", flush=True)
         # Parent cleanup
         raw.C_DestroyObject(sh, h)
         close_session_quietly(raw, sh)

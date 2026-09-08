@@ -17,6 +17,12 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
+from pkcs11_check.testcases._probes import session
 
 
 def _write_probe(tmp_path: Path) -> Path:
@@ -153,3 +159,56 @@ def test_probe_teardown_runs_at_most_once(monkeypatch: object) -> None:
     teardown()  # second invocation must be a no-op
 
     assert calls == {"coverage": 1, "close": 1, "finalize": 1}
+
+
+class _NoopTeardown:
+    def __init__(self, _raw: object) -> None:
+        self.sh: int | None = None
+        self.initialized = False
+
+    def __call__(self) -> None:
+        return
+
+
+def _session_params() -> SimpleNamespace:
+    return SimpleNamespace(module_path="provider.so", slot_id=None, extra={})
+
+
+def test_session_clean_initialize_reject_is_terminal_setup_evidence(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A clean C_Initialize CKR is preserved and the target probe is not run."""
+
+    class _Raw:
+        def C_Initialize(self, _reserved: object) -> int:  # noqa: N802
+            return int(CKR_GENERAL_ERROR)
+
+    monkeypatch.setattr(session.ProbeParams, "load", lambda _path: _session_params())
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path: _Raw())
+    monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
+    monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
+    monkeypatch.setattr(session, "rv_trace_enabled", lambda: False)
+
+    session.probe_main(
+        lambda _ctx, _extra: pytest.fail("probe must not run"),
+        level=session.Level.INIT,
+    )
+
+    assert "SETUP_XFAIL:C_Initialize rejected with CKR_GENERAL_ERROR" in capsys.readouterr().out
+
+
+def test_session_python_initialize_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only provider CKR assertions are converted to setup evidence."""
+
+    class _Raw:
+        def C_Initialize(self, _reserved: object) -> int:  # noqa: N802
+            raise RuntimeError("bootstrap bug")
+
+    monkeypatch.setattr(session.ProbeParams, "load", lambda _path: _session_params())
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path: _Raw())
+    monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
+    monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
+    monkeypatch.setattr(session, "rv_trace_enabled", lambda: False)
+
+    with pytest.raises(RuntimeError, match="bootstrap bug"):
+        session.probe_main(lambda _ctx, _extra: None, level=session.Level.INIT)

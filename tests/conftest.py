@@ -11,7 +11,38 @@ import pytest
 from pkcs11_check.testcases.data import ACVP_DIR, CCTV_DIR, WYCHEPROOF_DIR
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
+
+
+@pytest.fixture
+def classification_report_plugin_enabled() -> None:
+    """Opt a meta-test into exercising the live classification report hook."""
+
+
+@pytest.fixture(autouse=True)
+def _isolate_meta_test_classifications(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Keep helper-unit classifications from rewriting their outer meta-test result.
+
+    Most tests in this directory call product helpers directly and assert the
+    terminating exception and recorded classification.  Those records describe the
+    simulated provider action, not the surrounding meta-test.  Integration tests opt
+    into the live hook with ``classification_report_plugin_enabled``.
+    """
+    import pkcs11_check.plugin as plugin_mod
+    from pkcs11_check import classification
+
+    classification.clear()
+    if "classification_report_plugin_enabled" not in request.fixturenames:
+        monkeypatch.setattr(
+            plugin_mod,
+            "_attach_classification_to_report",
+            lambda *args, **kwargs: None,
+        )
+    yield
+    classification.clear()
 
 # Meta-tests that load downloaded Wycheproof/ACVP/CCTV vectors. When fetch-data
 # has not populated the vendor data dir (e.g. CI), these have no vectors to read

@@ -334,8 +334,10 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
     ],
 )
 def test_unbackable_length_setup_marker_never_hides_crash_or_timeout(
-    rc: int, stderr: str, expected: str
+    rc: int, stderr: str, expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if rc >= 0:
+        monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
     try:
         with pytest.raises(pytest.fail.Exception, match=expected):
             test_ffi_length_boundary._classify_unhonorable_length_outcome(

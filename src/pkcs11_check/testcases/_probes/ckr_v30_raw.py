@@ -1,11 +1,11 @@
 """Probe: PKCS#11 v3.0 message-op / session-cancel error conditions via a raw session.
 
-Six child bodies ported verbatim from the legacy ``ckr/test_ckr_v30_raw.py`` scripts,
+Six child bodies ported from the legacy ``ckr/test_ckr_v30_raw.py`` scripts,
 dispatched on ``extra["probe"]``.  Each drives a v3.0 function
 (``C_MessageEncryptInit`` / ``C_MessageDecryptInit`` / ``C_MessageSignInit`` /
 ``C_MessageVerifyInit`` / ``C_EncryptMessage`` / ``C_SessionCancel``) through a
-logged-in ``RawPKCS11`` session and prints the resulting ``CKR:0x...`` line for the
-parent-side ``_check`` classifier.
+logged-in ``RawPKCS11`` session and emits a phase-labelled result for the parent-side
+``_check`` classifier.
 
 Runs through ``probe_main`` at ``Level.LOGIN``: the infra does C_Initialize + slot
 discovery + ``C_OpenSession`` + (only when ``_P11CHECK_PIN`` is set) ``C_Login`` before
@@ -22,16 +22,17 @@ top of ``_run`` before dispatching, exactly as the legacy template did before th
 the output, and the parent gates every method with ``@pytest.mark.needs_function`` so a v2.40
 module never reaches the probe).
 
-Output protocol (byte-identical to the legacy child, for ``_check``):
+Output protocol:
   ``SKIP:v2.40_only``          -- module advertises only the v2.40 interface
   ``SKIP:no_v3_funcs``         -- module lacks ``C_MessageEncryptInit``
   ``SKIP:no_EncryptMessage``   -- module lacks ``C_EncryptMessage``
   ``SKIP:no_SessionCancel``    -- module lacks ``C_SessionCancel``
-  ``CKR:0x{rv:08x}``           -- return value of the tested v3.0 call
-  ``OK``                       -- probe reached its expected point
+  ``RESULT:<phase>:CKR:0x{rv:08x}`` -- return value of the tested v3.0 call
+  ``OK:<phase>``                    -- probe reached its expected point
 
-A wrong CK_RV trips the child ``assert`` (non-zero exit) -> the parent reports a child
-failure; a crash (returncode < 0) is a provider crash finding.
+Provider CKRs, including unexpected clean codes, are emitted and returned normally so
+the parent can distinguish provider deviations from harness failures. A crash
+(returncode < 0) remains a provider crash finding.
 
 Required ``extra`` keys:
   ``"probe"`` -- one of the dispatch keys below.
@@ -48,22 +49,25 @@ from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
-    CKR_ARGUMENTS_BAD,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_OK,
-    CKR_OPERATION_NOT_INITIALIZED,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
+
+
+def _emit_result(phase: str, rv: int) -> None:
+    """Emit one provider measurement without making a child assertion."""
+    print(f"RESULT:{phase}:CKR:0x{rv:08x}", flush=True)
+
+
+def _emit_complete(probe: str) -> None:
+    print(f"OK:{probe}", flush=True)
 
 
 def _message_encrypt_mech_invalid(ctx: ProbeContext) -> None:
     """C_MessageEncryptInit with a digest mechanism -> must reject (not CKR_OK)."""
     mech = mech_simple(CKM_SHA256)  # CKM_SHA256 - not an encrypt mechanism
     rv = ctx.raw.C_MessageEncryptInit(ctx.sh, mech.byref(), 0)
-    print(f"CKR:0x{rv:08x}")
-    # MECHANISM_INVALID, KEY_HANDLE_INVALID, FUNCTION_NOT_SUPPORTED - all acceptable
-    assert rv != CKR_OK, "Should have rejected SHA256 for message encrypt"
-    print("OK")
+    _emit_result("C_MessageEncryptInit", rv)
+    _emit_complete("C_MessageEncryptInit")
 
 
 def _encrypt_message_no_init(ctx: ProbeContext) -> None:
@@ -75,51 +79,42 @@ def _encrypt_message_no_init(ctx: ProbeContext) -> None:
         rv = ctx.raw.C_EncryptMessage(
             ctx.sh, None, 0, data, 16, None, 0, out, ctypes.byref(out_len)
         )
-        print(f"CKR:0x{rv:08x}")
-        assert rv in (
-            CKR_OPERATION_NOT_INITIALIZED,
-            CKR_FUNCTION_NOT_SUPPORTED,
-            CKR_ARGUMENTS_BAD,
-        ), f"Got 0x{rv:08x}"
+        _emit_result("C_EncryptMessage", rv)
+        _emit_complete("C_EncryptMessage")
     else:
         print("SKIP:no_EncryptMessage")
-    print("OK")
 
 
 def _message_decrypt_mech_invalid(ctx: ProbeContext) -> None:
     """C_MessageDecryptInit with a digest mechanism -> must reject (not CKR_OK)."""
     mech = mech_simple(CKM_SHA256)  # SHA256
     rv = ctx.raw.C_MessageDecryptInit(ctx.sh, mech.byref(), 0)
-    print(f"CKR:0x{rv:08x}")
-    assert rv != CKR_OK
-    print("OK")
+    _emit_result("C_MessageDecryptInit", rv)
+    _emit_complete("C_MessageDecryptInit")
 
 
 def _message_sign_mech_invalid(ctx: ProbeContext) -> None:
     """C_MessageSignInit with an encrypt mechanism -> must reject (not CKR_OK)."""
     mech = mech_simple(CKM_AES_ECB)  # AES_ECB - not a sign mechanism
     rv = ctx.raw.C_MessageSignInit(ctx.sh, mech.byref(), 0)
-    print(f"CKR:0x{rv:08x}")
-    assert rv != CKR_OK
-    print("OK")
+    _emit_result("C_MessageSignInit", rv)
+    _emit_complete("C_MessageSignInit")
 
 
 def _message_verify_mech_invalid(ctx: ProbeContext) -> None:
     """C_MessageVerifyInit with an encrypt mechanism -> must reject (not CKR_OK)."""
     mech = mech_simple(CKM_AES_ECB)  # AES_ECB
     rv = ctx.raw.C_MessageVerifyInit(ctx.sh, mech.byref(), 0)
-    print(f"CKR:0x{rv:08x}")
-    assert rv != CKR_OK
-    print("OK")
+    _emit_result("C_MessageVerifyInit", rv)
+    _emit_complete("C_MessageVerifyInit")
 
 
 def _session_cancel_no_operation(ctx: ProbeContext) -> None:
     """C_SessionCancel with no active operation -> OK or OPERATION_ACTIVE (both accepted)."""
     if "C_SessionCancel" in ctx.raw._funcs:
         rv = ctx.raw.C_SessionCancel(ctx.sh, 0)
-        print(f"CKR:0x{rv:08x}")
-        # OK or OPERATION_ACTIVE - both acceptable
-        print("OK")
+        _emit_result("C_SessionCancel", rv)
+        _emit_complete("C_SessionCancel")
     else:
         print("SKIP:no_SessionCancel")
 

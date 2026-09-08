@@ -64,6 +64,9 @@ from pkcs11_check._plugin_state import (
     _BOOTSTRAP_FUNCTION_COUNTS as _BOOTSTRAP_FUNCTION_COUNTS,
 )
 from pkcs11_check._plugin_state import (
+    _CLASSIFICATION_CURSOR as _CLASSIFICATION_CURSOR,
+)
+from pkcs11_check._plugin_state import (
     _COVERAGE_DATA as _COVERAGE_DATA,
 )
 from pkcs11_check._plugin_state import (
@@ -104,6 +107,9 @@ from pkcs11_check._plugin_state import (
 )
 from pkcs11_check._plugin_state import (
     _P11_MODULE as _P11_MODULE,
+)
+from pkcs11_check._plugin_state import (
+    _PENDING_CLASSIFICATIONS as _PENDING_CLASSIFICATIONS,
 )
 from pkcs11_check._plugin_state import (
     _PROVISIONING_COUNTS as _PROVISIONING_COUNTS,
@@ -371,7 +377,7 @@ def _attach_compliance_notes_to_report(item: pytest.Item, report: Any) -> None:
 
 
 def _report_is_fail_or_xfail(report: Any) -> bool:
-    """True when a call report represents a hard fail or an imperative xfail.
+    """True when a phase report represents a hard fail or an imperative xfail.
 
     ``pytest.fail()`` yields ``outcome == "failed"``; ``pytest.xfail()`` yields a
     ``skipped`` report carrying a ``wasxfail`` attribute. Both are the un-migrated
@@ -424,6 +430,40 @@ def _synthetic_unclassified_record(
     )
 
 
+def _apply_recorded_outcome(report: Any, records: list[Any]) -> None:
+    """Apply the strongest at-source outcome without attaching records again."""
+    failure = next((record for record in records if record.outcome == "fail"), None)
+    deviation = next((record for record in records if record.outcome == "xfail"), None)
+    if failure is not None and getattr(report, "outcome", None) != "failed":
+        report.outcome = "failed"
+        report.longrepr = failure.summary or failure.label or "recorded pkcs11-check failure"
+        report.__dict__.pop("wasxfail", None)
+    elif deviation is not None and getattr(report, "outcome", None) == "passed":
+        report.outcome = "skipped"
+        report.wasxfail = deviation.summary or deviation.label or "recorded provider deviation"
+    elif (
+        deviation is not None
+        and getattr(report, "outcome", None) == "skipped"
+        and not hasattr(report, "wasxfail")
+    ):
+        report.wasxfail = deviation.summary or deviation.label or "recorded provider deviation"
+
+
+def _terminating_classification_for_call(
+    call: pytest.CallInfo[Any] | None,
+    records: list[Any],
+) -> Any | None:
+    """Return the exact emitted record responsible for a pytest exception, if any."""
+    if call is None:
+        return None
+    excinfo = getattr(call, "excinfo", None)
+    exception = getattr(excinfo, "value", None)
+    linked = getattr(exception, "_pkcs11_check_classification", None)
+    if linked is None:
+        return None
+    return next((record for record in records if record is linked), None)
+
+
 def _attach_classification_to_report(
     item: pytest.Item,
     report: Any,
@@ -441,34 +481,35 @@ def _attach_classification_to_report(
         return
     from pkcs11_check.classification import get_records, serialize
 
-    if when == "call":
-        collected = list(get_records())
-    else:
-        collected = []
+    cursor = item.stash.get(_CLASSIFICATION_CURSOR, 0)
+    all_records = list(get_records())
+    collected = all_records[cursor:]
+    item.stash[_CLASSIFICATION_CURSOR] = len(all_records)
+
     if _is_testcase_item(item) and _report_is_fail_or_xfail(report):
+        linked = _terminating_classification_for_call(call, collected)
         direct = _synthetic_unclassified_record(item, report, call=call)
         if direct.reason == "crash":
             if not any(
                 record.reason == "crash" and record.detail == direct.detail for record in collected
             ):
                 collected.append(direct)
-        elif when == "call" and not collected and _report_is_fail_or_xfail(report):
+        elif linked is None:
             collected.append(direct)
-    if getattr(report, "outcome", None) != "failed":
-        harness_failure = next(
-            (
-                record
-                for record in collected
-                if record.reason == "harness_error" and record.outcome == "fail"
-            ),
-            None,
-        )
-        if harness_failure is not None:
-            report.outcome = "failed"
-            report.longrepr = (
-                "pkcs11-check harness failure: "
-                f"{harness_failure.summary or harness_failure.label or 'unspecified error'}"
-            )
+
+    pending = item.stash.get(_PENDING_CLASSIFICATIONS, [])
+    if when == "setup":
+        if getattr(report, "outcome", None) == "passed":
+            pending.extend(collected)
+            item.stash[_PENDING_CLASSIFICATIONS] = pending
+        else:
+            _apply_recorded_outcome(report, collected)
+    elif when == "call":
+        _apply_recorded_outcome(report, [*pending, *collected])
+        item.stash[_PENDING_CLASSIFICATIONS] = []
+    else:
+        _apply_recorded_outcome(report, collected)
+
     records = serialize(collected)
     if not records:
         return

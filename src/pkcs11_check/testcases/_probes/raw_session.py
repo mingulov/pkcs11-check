@@ -7,8 +7,10 @@ test_initialize_args, ckr/test_ckr_null_params, etc.).
 Invariants honoured:
 
 I3  — PIN is never read or embedded here (no C_Login; the raw CDLL path is pre-auth).
-I4  — a clean setup failure (CDLL load, C_GetFunctionList) prints SETUP_XFAIL:<reason>
-      to stdout and exits 0; the child never raises or calls classify/fail_as/xfail_as.
+I4  — a clean C_GetFunctionList setup refusal prints SETUP_XFAIL:<reason> to stdout
+      and returns 0.  A non-SEH CDLL-load OSError emits HARNESS_ERROR instead; an
+      access violation propagates for crash attribution.  The child never calls
+      classify/fail_as/xfail_as.
 I6  — atexit writes {"call_log": {}, "mechanism_counts": {}} to
       _P11CHECK_SUBPROCESS_COVERAGE.  The raw CDLL path has no RawPKCS11 wrapper so
       call_log is always empty; the parent's get_raw_subprocess_coverage() still
@@ -35,8 +37,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw._platform import windows_dll_directory
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.testcases._probes._emit import (
+    emit_harness_error,
     emit_rv_trace,
     rv_trace_enabled,
     write_coverage,
@@ -81,8 +86,8 @@ def _load_cdll(lib_path: str) -> ctypes.CDLL:
     return ctypes.CDLL(lib_path)
 
 
-def _get_function_list(lib: ctypes.CDLL) -> ctypes.c_void_p | None:
-    """Call C_GetFunctionList and return the opaque funclist pointer, or None on failure.
+def _get_function_list(lib: ctypes.CDLL) -> tuple[ctypes.c_void_p | None, int]:
+    """Return the opaque function-list pointer and exact provider CKR.
 
     Mirrors the ctypes boilerplate in ckr/_ctypes_raw.py and test_operation_state.py:
       C_GetFunctionList.restype  = CK_RV (c_ulong)
@@ -95,8 +100,8 @@ def _get_function_list(lib: ctypes.CDLL) -> ctypes.c_void_p | None:
     funclist_ptr = ctypes.c_void_p()
     rv = get_fn_list(ctypes.byref(funclist_ptr))
     if rv != 0:  # CKR_OK = 0
-        return None
-    return funclist_ptr
+        return None, int(rv)
+    return funclist_ptr, int(rv)
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +138,18 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
     try:
         lib = _load_cdll(params.module_path)
     except OSError as exc:
-        print(f"SETUP_XFAIL:cannot load CDLL {params.module_path!r}: {exc}")
-        sys.exit(0)
+        if ctypes_access_violation_code(exc) is not None:
+            raise
+        emit_harness_error(exc, phase=f"CDLL load {params.module_path!r}")
+        return
 
-    func_list = _get_function_list(lib)
+    func_list, get_function_list_rv = _get_function_list(lib)
     if func_list is None:
-        print("SETUP_XFAIL:C_GetFunctionList failed (non-zero CK_RV)")
-        sys.exit(0)
+        print(
+            "SETUP_XFAIL:C_GetFunctionList rejected with "
+            f"{ckr_name(get_function_list_rv)}"
+        )
+        return
 
     _done: list[bool] = [False]
 
