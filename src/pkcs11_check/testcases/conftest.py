@@ -880,20 +880,6 @@ def get_pin_bytes(p11_config: Any) -> bytes | None:
     return pin_str.encode("utf-8")
 
 
-def extract_ec_point(ec_point_der: Any) -> Any:
-    """Extract raw uncompressed EC point from DER OCTET STRING wrapper.
-
-    PKCS#11 EC_POINT attribute is DER-encoded: 0x04 <length> <point_bytes>.
-    Returns the raw point bytes (starting with 0x04 uncompressed prefix).
-    """
-    from pkcs11_check.raw.der import decode_ec_point
-
-    data = bytes(ec_point_der)
-    if not data or data[0] != 0x04:
-        return ec_point_der
-    return decode_ec_point(data)
-
-
 def skip_if_token_write_protected(raw: Any, slot_id: int) -> None:
     """Skip test if the token is write-protected (cannot create token objects)."""
     from ctypes import byref

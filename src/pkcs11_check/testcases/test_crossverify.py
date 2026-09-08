@@ -11,7 +11,6 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     decrypt_single,
@@ -20,13 +19,11 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     gen_ec_keypair,
     import_secret_key,
-    read_attributes,
     sign_single,
 )
 from pkcs11_check.raw.types_std import (
     CKA_ALLOWED_MECHANISMS,
     CKA_DECRYPT,
-    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_SENSITIVE,
@@ -58,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
 from pkcs11_check.testcases._rsa_export import read_rsa_public_key_or_xfail
 from pkcs11_check.testcases.conftest import (
@@ -263,17 +261,7 @@ class TestECDSACrossVerify:
         curve: ec.EllipticCurve,
     ) -> ec.EllipticCurvePublicKey:
         """Export EC public key from PKCS#11 point encoding."""
-        attrs = read_attributes(
-            rs.raw,
-            rs.sh,
-            pub_h,
-            [CKA_EC_POINT],
-        )
-        ec_point = attrs[CKA_EC_POINT]
-        assert isinstance(ec_point, bytes)
-        # Unwrap DER OCTET STRING to raw point (0x04||x||y)
-        point_bytes = decode_ec_point(ec_point)
-        return ec.EllipticCurvePublicKey.from_encoded_point(curve, point_bytes)
+        return read_ec_public_key_or_xfail(rs, pub_h, curve, label="ECDSA public key")
 
     def test_ecdsa_p256(self, p11_raw_session: Any) -> None:
         """ECDSA P-256: sign with PKCS#11, verify with cryptography."""
