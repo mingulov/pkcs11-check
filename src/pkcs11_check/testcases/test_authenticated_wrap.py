@@ -6,10 +6,12 @@ AES-GCM AEAD. Requires PKCS#11 v3.2 interface (C_WrapKeyAuthenticated).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, NamedTuple, NoReturn
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
@@ -28,6 +30,7 @@ from pkcs11_check.raw.recipes import (
     wrap_key,
     wrap_key_authenticated,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -60,12 +63,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
-    assert_correct,
-    classify_discrimination,
     gen_ec_keypair_or_xfail,
     is_known_error,
     require_operational_aes_keygen,
@@ -92,6 +94,154 @@ _WRAP_RUNTIME_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 ) + TEMPLATE_SHAPE_REJECTS
+
+_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
+_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def _read_attr_or_record(
+    raw: Any,
+    sh: int,
+    handle: int,
+    attr: Any,
+    *,
+    label: str,
+    mechanism: str,
+    attrs: Mapping[Any, Any] | None = None,
+) -> Any:
+    """Read one provider attribute while retaining structured absence evidence."""
+    values = attrs if attrs is not None else read_attributes(raw, sh, handle, [attr])
+    return attr_or_record(
+        values,
+        attr,
+        label=label,
+        reason="not_operational",
+        mechanism=mechanism,
+    )
+
+
+def _record_attribute_mismatch(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    kind: str = "crypto",
+    mechanism: str,
+    operation: str = "C_GetAttributeValue",
+) -> C.Classification:
+    """Record a provider output mismatch without raising before cleanup."""
+    return C.record_as(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual}; expected {expected}",
+        detail={"attribute": {"expected": expected, "actual": actual}},
+    )
+
+
+def _record_output_mismatch(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    operation: str,
+    mechanism: str,
+) -> C.Classification:
+    """Record malformed non-attribute provider output for deferred reporting."""
+    return C.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual}; expected {expected}",
+        detail={"output": {"expected": expected, "actual": actual}},
+    )
+
+
+def _check_aes128_value(
+    value: Any,
+    *,
+    label: str,
+    mechanism: str,
+) -> C.Classification | None:
+    """Return a hard readback finding for a malformed requested AES-128 value."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if isinstance(value, bytes) and len(value) == 16:
+        return None
+    return _record_attribute_mismatch(
+        label=label,
+        expected="16-byte bytes",
+        actual=repr(value),
+        kind="crypto",
+        mechanism=mechanism,
+    )
+
+
+def _has_nonzero_bytes(value: Any) -> bool:
+    """Return whether a provider output is a non-empty, non-zero byte string."""
+    return isinstance(value, bytes) and bool(value) and any(value)
+
+
+def _raise_strongest(records: list[C.Classification]) -> None:
+    """Raise the strongest hard result once all returned objects are destroyed."""
+    if records:
+        strongest = max(
+            records,
+            key=lambda record: (
+                _KIND_PRIORITY.get(record.kind or "", 0),
+                _SEVERITY_PRIORITY.get(record.severity, 0),
+            ),
+        )
+        C.raise_for_record(strongest)
+
+
+def _record_discrimination(
+    *,
+    valid_accepted: bool,
+    valid_value: Any,
+    invalid_outcome: Any,
+    label: str,
+    operation: str,
+    mechanism: str,
+    hard_results: list[C.Classification],
+) -> None:
+    """Record integrity evidence without letting a missing valid output mask tampering."""
+    if isinstance(invalid_outcome, CkrAssertionError):
+        invalid_rejected = True
+    elif isinstance(invalid_outcome, BaseException):
+        raise invalid_outcome
+    else:
+        invalid_rejected = False
+
+    if valid_value is not MISSING_ATTRIBUTE and not valid_accepted:
+        hard_results.append(
+            C.record_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation=operation,
+                mechanism=mechanism,
+                summary=(
+                    f"{label}: the valid/un-tampered operation did not verify -- cannot "
+                    "distinguish tampering from an inoperable valid leg"
+                ),
+            )
+        )
+    if not invalid_rejected:
+        hard_results.append(
+            C.record_as(
+                "accepted_invalid",
+                kind="crypto",
+                label=label,
+                operation=operation,
+                mechanism=mechanism,
+                summary=f"{label}: accepted the tampered/forged input (security break)",
+            )
+        )
 
 
 def _xfail_if_wrap_runtime_reject(exc: AssertionError, msg: str) -> NoReturn:
@@ -216,29 +366,52 @@ class TestAuthenticatedWrap:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
-        # Generate wrapping key
-        wrap_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
-            },
-        )
-
-        # Generate target key
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        wrap_h = 0
+        target = 0
+        hard_results: list[C.Classification] = []
         try:
-            original_value = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
-
+            # Generate wrapping key before the target, so the first acquisition
+            # is immediately covered by the cleanup below if target creation fails.
+            wrap_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                },
+            )
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label="CKM_AES_GCM:target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            mismatch = _check_aes128_value(
+                original_value,
+                label="CKM_AES_GCM:target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original_value is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original_value)
+                    if isinstance(original_value, bytes) and len(original_value) == 16
+                    else None
+                )
             # Wrap with authentication.  Tag lives in CK_GCM_MESSAGE_PARAMS.pTag.
             iv = generate_random(rs.raw, rs.sh, 12)
             wrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
@@ -257,50 +430,83 @@ class TestAuthenticatedWrap:
             except AssertionError as exc:
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
-            if wrapped == original_value:
-                classify(
-                    "wrong_result",
-                    kind="crypto",
-                    label="CKM_AES_GCM:authenticated wrap output equals key value",
-                    operation="C_WrapKeyAuthenticated",
-                    mechanism="CKM_AES_GCM",
-                    summary=(
-                        "AES-GCM authenticated wrap produced output identical to the "
-                        "plaintext key value -- wrapping was a no-op (crypto break)"
-                    ),
+            if original_bytes is not None and wrapped == original_bytes:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_GCM:authenticated wrap output equals key value",
+                        expected="ciphertext distinct from plaintext key value",
+                        actual=repr(wrapped),
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                    )
                 )
-            assert any(wrap_mech.buffer_bytes("tag")), (
-                "C_WrapKeyAuthenticated returned CKR_OK but left the auth tag buffer zeroed"
-            )
+            tag = wrap_mech.buffer_bytes("tag")
+            if not _has_nonzero_bytes(tag):
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_GCM:C_WrapKeyAuthenticated authentication tag",
+                        expected="non-zero tag bytes",
+                        actual=repr(tag),
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                    )
+                )
 
             # Unwrap: share the wrap-side pTag so the module sees the auth tag.
-            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            unwrapped = unwrap_key_authenticated(
-                rs.raw,
-                rs.sh,
-                wrap_h,
-                wrapped,
-                CKM_AES_GCM,
-                attrs={
-                    CKA_EXTRACTABLE: True,
-                    CKA_SENSITIVE: False,
-                },
-                mech_param=unwrap_mech,
-            )
-            try:
-                unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert_correct(
-                    actual=unwrapped_value,
-                    expected=original_value,
-                    label="CKM_AES_GCM:authenticated wrap/unwrap preserves key material",
-                    operation="C_UnwrapKeyAuthenticated",
-                    mechanism="CKM_AES_GCM",
+            if _has_nonzero_bytes(tag):
+                unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+                unwrapped = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    CKM_AES_GCM,
+                    attrs={
+                        CKA_EXTRACTABLE: True,
+                        CKA_SENSITIVE: False,
+                    },
+                    mech_param=unwrap_mech,
                 )
-            finally:
-                destroy_quietly(rs.raw, rs.sh, unwrapped)
+                try:
+                    unwrapped_value = _read_attr_or_record(
+                        rs.raw,
+                        rs.sh,
+                        unwrapped,
+                        CKA_VALUE,
+                        label="CKM_AES_GCM:unwrapped CKA_VALUE readback",
+                        mechanism="CKM_AES_GCM",
+                    )
+                    mismatch = _check_aes128_value(
+                        unwrapped_value,
+                        label="CKM_AES_GCM:unwrapped CKA_VALUE readback",
+                        mechanism="CKM_AES_GCM",
+                    )
+                    if mismatch is not None:
+                        hard_results.append(mismatch)
+                    if (
+                        original_bytes is not None
+                        and unwrapped_value is not MISSING_ATTRIBUTE
+                        and unwrapped_value != original_bytes
+                    ):
+                        hard_results.append(
+                            _record_attribute_mismatch(
+                                label=(
+                                    "CKM_AES_GCM:authenticated wrap/unwrap preserves key material"
+                                ),
+                                expected=repr(original_bytes),
+                                actual=repr(unwrapped_value),
+                                mechanism="CKM_AES_GCM",
+                                operation="C_UnwrapKeyAuthenticated",
+                            )
+                        )
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
-            destroy_quietly(rs.raw, rs.sh, wrap_h)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)
 
     @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_aes_gcm_authenticated_wrap_generated_iv_and_tag(
@@ -316,21 +522,44 @@ class TestAuthenticatedWrap:
         from pkcs11_check.raw.pack import mech_gcm_message_generated_iv
         from pkcs11_check.raw.types_std import CKG_GENERATE
 
-        wrap_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
-        )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        wrap_h = 0
+        target = 0
         unwrapped = 0
+        hard_results: list[C.Classification] = []
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            wrap_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
+            )
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label="CKM_AES_GCM:generated-IV target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label="CKM_AES_GCM:generated-IV target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             aad = b"authenticated generated gcm wrap"
             wrap_mech = mech_gcm_message_generated_iv(
                 CKM_AES_GCM,
@@ -370,32 +599,76 @@ class TestAuthenticatedWrap:
                 raise
             iv = wrap_mech.buffer_bytes("iv")
             tag = wrap_mech.buffer_bytes("tag")
-            assert any(iv)
-            assert any(tag)
+            if not _has_nonzero_bytes(iv):
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_GCM:C_WrapKeyAuthenticated generated IV",
+                        expected="non-zero IV bytes",
+                        actual=repr(iv),
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                    )
+                )
+            if not _has_nonzero_bytes(tag):
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_GCM:C_WrapKeyAuthenticated generated tag",
+                        expected="non-zero tag bytes",
+                        actual=repr(tag),
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                    )
+                )
 
-            unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            unwrapped = unwrap_key_authenticated(
-                rs.raw,
-                rs.sh,
-                wrap_h,
-                wrapped,
-                CKM_AES_GCM,
-                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                aad=aad,
-                mech_param=unwrap_mech,
-            )
-            value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-            assert_correct(
-                actual=value,
-                expected=original,
-                label="CKM_AES_GCM:generated-IV wrap/unwrap preserves key material",
-                operation="C_UnwrapKeyAuthenticated",
-                mechanism="CKM_AES_GCM",
-            )
+            if _has_nonzero_bytes(iv) and _has_nonzero_bytes(tag):
+                unwrap_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+                unwrapped = unwrap_key_authenticated(
+                    rs.raw,
+                    rs.sh,
+                    wrap_h,
+                    wrapped,
+                    CKM_AES_GCM,
+                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                    aad=aad,
+                    mech_param=unwrap_mech,
+                )
+                value = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    unwrapped,
+                    CKA_VALUE,
+                    label="CKM_AES_GCM:generated-IV unwrapped CKA_VALUE readback",
+                    mechanism="CKM_AES_GCM",
+                )
+                mismatch = _check_aes128_value(
+                    value,
+                    label="CKM_AES_GCM:generated-IV unwrapped CKA_VALUE readback",
+                    mechanism="CKM_AES_GCM",
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+                if (
+                    original_bytes is not None
+                    and value is not MISSING_ATTRIBUTE
+                    and value != original_bytes
+                ):
+                    hard_results.append(
+                        _record_attribute_mismatch(
+                            label="CKM_AES_GCM:generated-IV wrap/unwrap preserves key material",
+                            expected=repr(original_bytes),
+                            actual=repr(value),
+                            mechanism="CKM_AES_GCM",
+                            operation="C_UnwrapKeyAuthenticated",
+                        )
+                    )
         finally:
-            destroy_quietly(rs.raw, rs.sh, unwrapped)
-            destroy_quietly(rs.raw, rs.sh, wrap_h)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if unwrapped:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)
 
     @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_tampered_tag_rejected(
@@ -417,20 +690,43 @@ class TestAuthenticatedWrap:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
-        wrap_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
-        )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        wrap_h = 0
+        target = 0
+        hard_results: list[C.Classification] = []
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            wrap_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_WRAP: True, CKA_UNWRAP: True, CKA_ENCRYPT: True, CKA_DECRYPT: True},
+            )
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label="CKM_AES_GCM:tampered-tag target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label="CKM_AES_GCM:tampered-tag target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             iv = generate_random(rs.raw, rs.sh, 12)
             wrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
             try:
@@ -449,57 +745,104 @@ class TestAuthenticatedWrap:
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             tag = wrap_mech.buffer_bytes("tag")
-            if not any(tag):
-                pytest.skip("Module did not write an authentication tag to pTag")
-                return
+            if not _has_nonzero_bytes(tag):
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_GCM:C_WrapKeyAuthenticated authentication tag",
+                        expected="non-zero tag bytes",
+                        actual=repr(tag),
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                    )
+                )
+            else:
+                # Valid leg (D4/D5): unwrap the UN-tampered blob and recover original.
+                good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+                good = 0
+                try:
+                    good = unwrap_key_authenticated(
+                        rs.raw,
+                        rs.sh,
+                        wrap_h,
+                        wrapped,
+                        CKM_AES_GCM,
+                        attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                        mech_param=good_mech,
+                    )
+                except AssertionError as exc:
+                    _xfail_if_wrap_runtime_reject(
+                        exc, "AES-GCM authenticated unwrap (valid leg) not operational"
+                    )
+                try:
+                    good_value = _read_attr_or_record(
+                        rs.raw,
+                        rs.sh,
+                        good,
+                        CKA_VALUE,
+                        label="CKM_AES_GCM:tampered-tag valid-leg CKA_VALUE readback",
+                        mechanism="CKM_AES_GCM",
+                    )
+                    mismatch = _check_aes128_value(
+                        good_value,
+                        label="CKM_AES_GCM:tampered-tag valid-leg CKA_VALUE readback",
+                        mechanism="CKM_AES_GCM",
+                    )
+                    if mismatch is not None:
+                        hard_results.append(mismatch)
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, good)
+                if good_value is MISSING_ATTRIBUTE:
+                    good_bytes: bytes | None = None
+                else:
+                    good_bytes = (
+                        bytes(good_value)
+                        if isinstance(good_value, bytes) and len(good_value) == 16
+                        else None
+                    )
+                valid_accepted = (
+                    original_bytes is not None
+                    and good_bytes is not None
+                    and good_bytes == original_bytes
+                )
 
-            # Valid leg (D4/D5): unwrap the UN-tampered blob and recover original.
-            good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            try:
-                good = unwrap_key_authenticated(
-                    rs.raw,
-                    rs.sh,
-                    wrap_h,
-                    wrapped,
-                    CKM_AES_GCM,
-                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                    mech_param=good_mech,
+                # Invalid leg (D3): tamper the tag in-place via a shared pTag buffer.
+                bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+                tag_storage, _ = bad_mech.buffer_storage("tag")
+                tag_storage[0] ^= 0xFF
+                invalid_outcome: Any
+                try:
+                    h = unwrap_key_authenticated(
+                        rs.raw,
+                        rs.sh,
+                        wrap_h,
+                        wrapped,
+                        CKM_AES_GCM,
+                        attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                        mech_param=bad_mech,
+                    )
+                    invalid_outcome = h
+                    destroy_quietly(rs.raw, rs.sh, h)
+                except AssertionError as exc:
+                    invalid_outcome = exc
+                _record_discrimination(
+                    valid_accepted=valid_accepted,
+                    valid_value=(
+                        good_bytes
+                        if original_bytes is not None and good_bytes is not None
+                        else MISSING_ATTRIBUTE
+                    ),
+                    invalid_outcome=invalid_outcome,
+                    label="AES-GCM authenticated unwrap of tag-tampered blob",
+                    operation="C_UnwrapKeyAuthenticated",
+                    mechanism="CKM_AES_GCM",
+                    hard_results=hard_results,
                 )
-            except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, "AES-GCM authenticated unwrap (valid leg) not operational"
-                )
-            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
-            destroy_quietly(rs.raw, rs.sh, good)
-            valid_accepted = good_value is not None and good_value == original
-
-            # Invalid leg (D3): tamper the tag in-place via a shared pTag buffer.
-            bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            tag_storage, _ = bad_mech.buffer_storage("tag")
-            tag_storage[0] ^= 0xFF
-            invalid_outcome: Any
-            try:
-                h = unwrap_key_authenticated(
-                    rs.raw,
-                    rs.sh,
-                    wrap_h,
-                    wrapped,
-                    CKM_AES_GCM,
-                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                    mech_param=bad_mech,
-                )
-                invalid_outcome = h
-                destroy_quietly(rs.raw, rs.sh, h)
-            except AssertionError as exc:
-                invalid_outcome = exc
-            classify_discrimination(
-                valid_accepted=valid_accepted,
-                invalid_outcome=invalid_outcome,
-                label="AES-GCM authenticated unwrap of tag-tampered blob",
-            )
         finally:
-            destroy_quietly(rs.raw, rs.sh, wrap_h)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)
 
     def test_authenticated_wrap_requires_v32(
         self, p11_raw_session: Any, p11_interface_version: str
@@ -510,15 +853,17 @@ class TestAuthenticatedWrap:
             pytest.skip("Only relevant for v2.40 modules")
 
         require_operational_aes_keygen(rs)
-        key = gen_aes_key(rs.raw, rs.sh, 128)
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True},
-        )
+        key = 0
+        target = 0
 
         try:
+            key = gen_aes_key(rs.raw, rs.sh, 128)
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True},
+            )
             # v2.40 raw API should not have C_WrapKeyAuthenticated
             has_fn = hasattr(rs.raw, "C_WrapKeyAuthenticated")
             if has_fn:
@@ -537,8 +882,10 @@ class TestAuthenticatedWrap:
                     pass  # audit-ok: capability gap; GCM authenticated wrap absent on v2.40 modules
             # If no C_WrapKeyAuthenticated method, test passes
         finally:
-            destroy_quietly(rs.raw, rs.sh, key)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if key:
+                destroy_quietly(rs.raw, rs.sh, key)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
 
 
 class TestAuthenticatedWrapAAD:
@@ -568,25 +915,48 @@ class TestAuthenticatedWrapAAD:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
-        wrap_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
-            },
-        )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        wrap_h = 0
+        target = 0
+        hard_results: list[C.Classification] = []
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            wrap_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                },
+            )
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label="CKM_AES_GCM:AAD target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label="CKM_AES_GCM:AAD target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             iv = generate_random(rs.raw, rs.sh, 12)
             aad_x = b"context-X-" + b"\xaa" * 16
             aad_y = b"context-Y-" + b"\xbb" * 16
@@ -629,6 +999,7 @@ class TestAuthenticatedWrapAAD:
 
             # Valid leg (D4/D5): unwrap with the SAME AAD and recover original.
             good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+            good = 0
             try:
                 good = unwrap_key_authenticated(
                     rs.raw,
@@ -644,9 +1015,38 @@ class TestAuthenticatedWrapAAD:
                 _xfail_if_wrap_runtime_reject(
                     exc, "AES-GCM authenticated unwrap (valid AAD leg) not operational"
                 )
-            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
-            destroy_quietly(rs.raw, rs.sh, good)
-            valid_accepted = good_value is not None and good_value == original
+            good_value: Any = MISSING_ATTRIBUTE
+            try:
+                good_value = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    good,
+                    CKA_VALUE,
+                    label="CKM_AES_GCM:AAD valid-leg CKA_VALUE readback",
+                    mechanism="CKM_AES_GCM",
+                )
+                mismatch = _check_aes128_value(
+                    good_value,
+                    label="CKM_AES_GCM:AAD valid-leg CKA_VALUE readback",
+                    mechanism="CKM_AES_GCM",
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, good)
+                if good_value is MISSING_ATTRIBUTE:
+                    good_bytes: bytes | None = None
+                else:
+                    good_bytes = (
+                        bytes(good_value)
+                        if isinstance(good_value, bytes) and len(good_value) == 16
+                        else None
+                    )
+                valid_accepted = (
+                    original_bytes is not None
+                    and good_bytes is not None
+                    and good_bytes == original_bytes
+                )
 
             # Invalid leg (D3): unwrap with a DIFFERENT AAD — AEAD must reject.
             bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
@@ -666,14 +1066,25 @@ class TestAuthenticatedWrapAAD:
                 destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
                 invalid_outcome = exc
-            classify_discrimination(
+            _record_discrimination(
                 valid_accepted=valid_accepted,
+                valid_value=(
+                    good_bytes
+                    if original_bytes is not None and good_bytes is not None
+                    else MISSING_ATTRIBUTE
+                ),
                 invalid_outcome=invalid_outcome,
                 label="AES-GCM authenticated unwrap under a different AAD (CWE-354)",
+                operation="C_UnwrapKeyAuthenticated",
+                mechanism="CKM_AES_GCM",
+                hard_results=hard_results,
             )
         finally:
-            destroy_quietly(rs.raw, rs.sh, wrap_h)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)
 
 
 class TestWrapIntegrity:
@@ -701,20 +1112,43 @@ class TestWrapIntegrity:
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("AES_KEY_WRAP not supported")
 
-        wrap_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
-        )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        wrap_h = 0
+        target = 0
+        hard_results: list[C.Classification] = []
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            wrap_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={CKA_WRAP: True, CKA_UNWRAP: True},
+            )
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label="CKM_AES_KEY_WRAP:target CKA_VALUE readback",
+                mechanism="CKM_AES_KEY_WRAP",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label="CKM_AES_KEY_WRAP:target CKA_VALUE readback",
+                mechanism="CKM_AES_KEY_WRAP",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
             except AssertionError as exc:
@@ -723,68 +1157,118 @@ class TestWrapIntegrity:
                     "AES_KEY_WRAP advertised but wrap operation is not operational",
                 )
 
-            assert len(wrapped) >= 16, "Unexpectedly short wrap output"
-
-            unwrap_attrs = {
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_AES,
-                CKA_EXTRACTABLE: True,
-                CKA_SENSITIVE: False,
-            }
-
-            # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
-            # accepted template) and recover the original key bytes.
-            try:
-                good = unwrap_key_for_mechanism_roundtrip(
-                    rs,
-                    p11_config,
-                    unwrapping_key=wrap_h,
-                    wrapped_key=wrapped,
-                    mechanism=CKM_AES_KEY_WRAP,
-                    attrs=unwrap_attrs,
-                    value_len=len(original),
-                    purpose="AES-KEY-WRAP unwrap (valid leg)",
+            wrapped_usable = isinstance(wrapped, bytes) and len(wrapped) >= 16
+            if not wrapped_usable:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_KEY_WRAP:C_WrapKey output",
+                        expected="at least 16 ciphertext bytes",
+                        actual=repr(wrapped),
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                    )
                 )
-            except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, "AES_KEY_WRAP unwrap (valid leg) not operational"
-                )
-            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
-            destroy_quietly(rs.raw, rs.sh, good)
-            valid_accepted = good_value is not None and good_value == original
 
-            # Invalid leg (D3): flip a bit in a middle byte (avoiding the first
-            # 8 bytes which carry the integrity ICV — flipping there is a
-            # different test) and attempt the same unwrap.
-            mid = len(wrapped) // 2
-            tampered = bytearray(wrapped)
-            tampered[mid] ^= 0xFF
-            tampered_bytes = bytes(tampered)
+            if wrapped_usable:
+                unwrap_attrs = {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                }
 
-            invalid_outcome: Any
-            try:
-                h = unwrap_key_for_mechanism_roundtrip(
-                    rs,
-                    p11_config,
-                    unwrapping_key=wrap_h,
-                    wrapped_key=tampered_bytes,
-                    mechanism=CKM_AES_KEY_WRAP,
-                    attrs=unwrap_attrs,
-                    value_len=len(original),
-                    purpose="AES-KEY-WRAP unwrap of bit-flipped ciphertext",
+                # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
+                # accepted template) and recover the original key bytes.
+                try:
+                    good = unwrap_key_for_mechanism_roundtrip(
+                        rs,
+                        p11_config,
+                        unwrapping_key=wrap_h,
+                        wrapped_key=wrapped,
+                        mechanism=CKM_AES_KEY_WRAP,
+                        attrs=unwrap_attrs,
+                        value_len=len(original_bytes) if original_bytes is not None else 16,
+                        purpose="AES-KEY-WRAP unwrap (valid leg)",
+                    )
+                except AssertionError as exc:
+                    _xfail_if_wrap_runtime_reject(
+                        exc, "AES_KEY_WRAP unwrap (valid leg) not operational"
+                    )
+                try:
+                    good_value = _read_attr_or_record(
+                        rs.raw,
+                        rs.sh,
+                        good,
+                        CKA_VALUE,
+                        label="CKM_AES_KEY_WRAP:valid-leg CKA_VALUE readback",
+                        mechanism="CKM_AES_KEY_WRAP",
+                    )
+                    mismatch = _check_aes128_value(
+                        good_value,
+                        label="CKM_AES_KEY_WRAP:valid-leg CKA_VALUE readback",
+                        mechanism="CKM_AES_KEY_WRAP",
+                    )
+                    if mismatch is not None:
+                        hard_results.append(mismatch)
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, good)
+                if good_value is MISSING_ATTRIBUTE:
+                    good_bytes: bytes | None = None
+                else:
+                    good_bytes = (
+                        bytes(good_value)
+                        if isinstance(good_value, bytes) and len(good_value) == 16
+                        else None
+                    )
+                valid_accepted = (
+                    original_bytes is not None
+                    and good_bytes is not None
+                    and good_bytes == original_bytes
                 )
-                invalid_outcome = h
-                destroy_quietly(rs.raw, rs.sh, h)
-            except AssertionError as exc:
-                invalid_outcome = exc
-            classify_discrimination(
-                valid_accepted=valid_accepted,
-                invalid_outcome=invalid_outcome,
-                label="AES-KEY-WRAP unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
-            )
+
+                # Invalid leg (D3): flip a bit in a middle byte (avoiding the first
+                # 8 bytes which carry the integrity ICV — flipping there is a
+                # different test) and attempt the same unwrap.
+                mid = len(wrapped) // 2
+                tampered = bytearray(wrapped)
+                tampered[mid] ^= 0xFF
+                tampered_bytes = bytes(tampered)
+
+                invalid_outcome: Any
+                try:
+                    h = unwrap_key_for_mechanism_roundtrip(
+                        rs,
+                        p11_config,
+                        unwrapping_key=wrap_h,
+                        wrapped_key=tampered_bytes,
+                        mechanism=CKM_AES_KEY_WRAP,
+                        attrs=unwrap_attrs,
+                        value_len=len(original_bytes) if original_bytes is not None else 16,
+                        purpose="AES-KEY-WRAP unwrap of bit-flipped ciphertext",
+                    )
+                    invalid_outcome = h
+                    destroy_quietly(rs.raw, rs.sh, h)
+                except AssertionError as exc:
+                    invalid_outcome = exc
+                _record_discrimination(
+                    valid_accepted=valid_accepted,
+                    valid_value=(
+                        good_bytes
+                        if original_bytes is not None and good_bytes is not None
+                        else MISSING_ATTRIBUTE
+                    ),
+                    invalid_outcome=invalid_outcome,
+                    label="AES-KEY-WRAP unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    hard_results=hard_results,
+                )
         finally:
-            destroy_quietly(rs.raw, rs.sh, wrap_h)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if wrap_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_h)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)
 
     @pytest.mark.needs_function("C_WrapKeyAuthenticated")
     def test_aes_gcm_wrap_bit_flip_detected(
@@ -806,25 +1290,48 @@ class TestWrapIntegrity:
         if not rs.has_mechanism("AES_GCM"):
             pytest.skip("CKM_AES_GCM not supported")
 
-        wrap_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_ENCRYPT: True,
-                CKA_DECRYPT: True,
-            },
-        )
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        wrap_h = 0
+        target = 0
+        hard_results: list[C.Classification] = []
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            wrap_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_ENCRYPT: True,
+                    CKA_DECRYPT: True,
+                },
+            )
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label="CKM_AES_GCM:ciphertext-tamper target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label="CKM_AES_GCM:ciphertext-tamper target CKA_VALUE readback",
+                mechanism="CKM_AES_GCM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             iv = generate_random(rs.raw, rs.sh, 12)
             wrap_mech = mech_gcm_message(CKM_AES_GCM, iv, tag_bits=128)
             try:
@@ -842,57 +1349,105 @@ class TestWrapIntegrity:
             except AssertionError as exc:
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
-            assert len(wrapped) >= 1, "Unexpectedly empty wrap ciphertext"
-
-            # Valid leg (D4/D5): unwrap the UN-tampered ciphertext, recover original.
-            good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            try:
-                good = unwrap_key_authenticated(
-                    rs.raw,
-                    rs.sh,
-                    wrap_h,
-                    wrapped,
-                    CKM_AES_GCM,
-                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                    mech_param=good_mech,
+            wrapped_usable = isinstance(wrapped, bytes) and bool(wrapped)
+            if not wrapped_usable:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_AES_GCM:C_WrapKeyAuthenticated ciphertext output",
+                        expected="non-empty ciphertext",
+                        actual=repr(wrapped),
+                        operation="C_WrapKeyAuthenticated",
+                        mechanism="CKM_AES_GCM",
+                    )
                 )
-            except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, "AES-GCM authenticated unwrap (valid leg) not operational"
-                )
-            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
-            destroy_quietly(rs.raw, rs.sh, good)
-            valid_accepted = good_value is not None and good_value == original
 
-            # Invalid leg (D3): flip a bit in the ciphertext, NOT the tag.
-            tampered_ct = bytearray(wrapped)
-            tampered_ct[0] ^= 0x01
-            tampered_bytes = bytes(tampered_ct)
-
-            bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
-            invalid_outcome: Any
-            try:
-                h = unwrap_key_authenticated(
-                    rs.raw,
-                    rs.sh,
-                    wrap_h,
-                    tampered_bytes,
-                    CKM_AES_GCM,
-                    attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-                    mech_param=bad_mech,
+            if wrapped_usable:
+                # Valid leg (D4/D5): unwrap the UN-tampered ciphertext, recover original.
+                good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+                try:
+                    good = unwrap_key_authenticated(
+                        rs.raw,
+                        rs.sh,
+                        wrap_h,
+                        wrapped,
+                        CKM_AES_GCM,
+                        attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                        mech_param=good_mech,
+                    )
+                except AssertionError as exc:
+                    _xfail_if_wrap_runtime_reject(
+                        exc, "AES-GCM authenticated unwrap (valid leg) not operational"
+                    )
+                try:
+                    good_value = _read_attr_or_record(
+                        rs.raw,
+                        rs.sh,
+                        good,
+                        CKA_VALUE,
+                        label="CKM_AES_GCM:ciphertext-tamper valid-leg CKA_VALUE readback",
+                        mechanism="CKM_AES_GCM",
+                    )
+                    mismatch = _check_aes128_value(
+                        good_value,
+                        label="CKM_AES_GCM:ciphertext-tamper valid-leg CKA_VALUE readback",
+                        mechanism="CKM_AES_GCM",
+                    )
+                    if mismatch is not None:
+                        hard_results.append(mismatch)
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, good)
+                if good_value is MISSING_ATTRIBUTE:
+                    good_bytes: bytes | None = None
+                else:
+                    good_bytes = (
+                        bytes(good_value)
+                        if isinstance(good_value, bytes) and len(good_value) == 16
+                        else None
+                    )
+                valid_accepted = (
+                    original_bytes is not None
+                    and good_bytes is not None
+                    and good_bytes == original_bytes
                 )
-                invalid_outcome = h
-                destroy_quietly(rs.raw, rs.sh, h)
-            except AssertionError as exc:
-                invalid_outcome = exc
-            classify_discrimination(
-                valid_accepted=valid_accepted,
-                invalid_outcome=invalid_outcome,
-                label="AES-GCM authenticated unwrap of bit-flipped ciphertext",
-            )
+
+                # Invalid leg (D3): flip a bit in the ciphertext, NOT the tag.
+                tampered_ct = bytearray(wrapped)
+                tampered_ct[0] ^= 0x01
+                tampered_bytes = bytes(tampered_ct)
+
+                bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
+                invalid_outcome: Any
+                try:
+                    h = unwrap_key_authenticated(
+                        rs.raw,
+                        rs.sh,
+                        wrap_h,
+                        tampered_bytes,
+                        CKM_AES_GCM,
+                        attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+                        mech_param=bad_mech,
+                    )
+                    invalid_outcome = h
+                    destroy_quietly(rs.raw, rs.sh, h)
+                except AssertionError as exc:
+                    invalid_outcome = exc
+                _record_discrimination(
+                    valid_accepted=valid_accepted,
+                    valid_value=(
+                        good_bytes
+                        if original_bytes is not None and good_bytes is not None
+                        else MISSING_ATTRIBUTE
+                    ),
+                    invalid_outcome=invalid_outcome,
+                    label="AES-GCM authenticated unwrap of bit-flipped ciphertext",
+                    operation="C_UnwrapKeyAuthenticated",
+                    mechanism="CKM_AES_GCM",
+                    hard_results=hard_results,
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)
 
 
 class TestEcdhAesKeyWrap:
@@ -931,17 +1486,38 @@ class TestEcdhAesKeyWrap:
         if not rs.has_mechanism(case.short_name):
             pytest.skip(f"CKM_{case.short_name} not supported")
 
-        pub, priv = _ecdh_aes_kw_recipient_keypair(rs, case)
-
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        pub = priv = target = 0
+        hard_results: list[C.Classification] = []
+        unwrapped = 0
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
-
+            pub, priv = _ecdh_aes_kw_recipient_keypair(rs, case)
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label=f"CKM_{case.short_name}:target CKA_VALUE readback",
+                mechanism=f"CKM_{case.short_name}",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label=f"CKM_{case.short_name}:target CKA_VALUE readback",
+                mechanism=f"CKM_{case.short_name}",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             # --- Roundtrip ---
             wrapped = _wrap_ecdh_aes_kw_or_xfail(
                 rs,
@@ -950,42 +1526,79 @@ class TestEcdhAesKeyWrap:
                 case=case,
             )
 
-            assert len(wrapped) > 16, f"CKM_{case.short_name} output unexpectedly short"
+            wrapped_usable = isinstance(wrapped, bytes) and len(wrapped) > 16
+            if not wrapped_usable:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label=f"CKM_{case.short_name}:C_WrapKey output",
+                        expected="more than 16 ciphertext bytes",
+                        actual=repr(wrapped),
+                        operation="C_WrapKey",
+                        mechanism=f"CKM_{case.short_name}",
+                    )
+                )
 
-            try:
-                unwrapped = unwrap_key_for_mechanism_roundtrip(
-                    rs,
-                    p11_config,
-                    unwrapping_key=priv,
-                    wrapped_key=wrapped,
-                    mechanism=case.mechanism,
-                    attrs={
-                        CKA_CLASS: CKO_SECRET_KEY,
-                        CKA_KEY_TYPE: CKK_AES,
-                        CKA_EXTRACTABLE: True,
-                        CKA_SENSITIVE: False,
-                    },
-                    mech_param=_ecdh_aes_kw_mech(case),
-                    purpose=f"CKM_{case.short_name} unwrap roundtrip",
+            if wrapped_usable:
+                try:
+                    unwrapped = unwrap_key_for_mechanism_roundtrip(
+                        rs,
+                        p11_config,
+                        unwrapping_key=priv,
+                        wrapped_key=wrapped,
+                        mechanism=case.mechanism,
+                        attrs={
+                            CKA_CLASS: CKO_SECRET_KEY,
+                            CKA_KEY_TYPE: CKK_AES,
+                            CKA_EXTRACTABLE: True,
+                            CKA_SENSITIVE: False,
+                        },
+                        mech_param=_ecdh_aes_kw_mech(case),
+                        purpose=f"CKM_{case.short_name} unwrap roundtrip",
+                    )
+                except AssertionError as exc:
+                    _xfail_if_wrap_runtime_reject(
+                        exc, f"CKM_{case.short_name} unwrap (roundtrip) not operational"
+                    )
+                # Round-trip succeeded — verify it recovered the original key.
+                unwrapped_value = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    unwrapped,
+                    CKA_VALUE,
+                    label=f"CKM_{case.short_name}:unwrapped CKA_VALUE readback",
+                    mechanism=f"CKM_{case.short_name}",
                 )
-            except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, f"CKM_{case.short_name} unwrap (roundtrip) not operational"
+                mismatch = _check_aes128_value(
+                    unwrapped_value,
+                    label=f"CKM_{case.short_name}:unwrapped CKA_VALUE readback",
+                    mechanism=f"CKM_{case.short_name}",
                 )
-            # Round-trip succeeded — verify it recovered the original key.
-            unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE]).get(CKA_VALUE)
-            destroy_quietly(rs.raw, rs.sh, unwrapped)
-            assert_correct(
-                actual=unwrapped_value,
-                expected=original,
-                label=f"CKM_{case.short_name}:ECDH wrap/unwrap preserves key material",
-                operation="C_UnwrapKey",
-                mechanism=f"CKM_{case.short_name}",
-            )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+                if (
+                    original_bytes is not None
+                    and unwrapped_value is not MISSING_ATTRIBUTE
+                    and unwrapped_value != original_bytes
+                ):
+                    hard_results.append(
+                        _record_attribute_mismatch(
+                            label=f"CKM_{case.short_name}:ECDH wrap/unwrap preserves key material",
+                            expected=repr(original_bytes),
+                            actual=repr(unwrapped_value),
+                            mechanism=f"CKM_{case.short_name}",
+                            operation="C_UnwrapKey",
+                        )
+                    )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+            if unwrapped:
+                destroy_quietly(rs.raw, rs.sh, unwrapped)
+        _raise_strongest(hard_results)
 
     @pytest.mark.parametrize(
         "case",
@@ -1012,76 +1625,150 @@ class TestEcdhAesKeyWrap:
         if not rs.has_mechanism(case.short_name):
             pytest.skip(f"CKM_{case.short_name} not supported")
 
-        pub, priv = _ecdh_aes_kw_recipient_keypair(rs, case)
-
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
+        pub = priv = target = 0
+        hard_results: list[C.Classification] = []
         try:
-            original = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            pub, priv = _ecdh_aes_kw_recipient_keypair(rs, case)
+            target = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            original = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                target,
+                CKA_VALUE,
+                label=f"CKM_{case.short_name}:target CKA_VALUE readback",
+                mechanism=f"CKM_{case.short_name}",
+            )
+            mismatch = _check_aes128_value(
+                original,
+                label=f"CKM_{case.short_name}:target CKA_VALUE readback",
+                mechanism=f"CKM_{case.short_name}",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if original is MISSING_ATTRIBUTE:
+                original_bytes: bytes | None = None
+            else:
+                original_bytes = (
+                    bytes(original) if isinstance(original, bytes) and len(original) == 16 else None
+                )
             wrapped = _wrap_ecdh_aes_kw_or_xfail(
                 rs,
                 recipient_public=pub,
                 target=target,
                 case=case,
             )
-
-            unwrap_attrs = {
-                CKA_CLASS: CKO_SECRET_KEY,
-                CKA_KEY_TYPE: CKK_AES,
-                CKA_EXTRACTABLE: True,
-                CKA_SENSITIVE: False,
-            }
-
-            # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
-            # accepted template) and recover the original key.
-            try:
-                good = unwrap_key_for_mechanism_roundtrip(
-                    rs,
-                    p11_config,
-                    unwrapping_key=priv,
-                    wrapped_key=wrapped,
-                    mechanism=case.mechanism,
-                    attrs=unwrap_attrs,
-                    mech_param=_ecdh_aes_kw_mech(case),
-                    purpose=f"CKM_{case.short_name} unwrap (valid leg)",
+            wrapped_usable = isinstance(wrapped, bytes) and len(wrapped) > 16
+            if not wrapped_usable:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label=f"CKM_{case.short_name}:C_WrapKey output",
+                        expected="more than 16 ciphertext bytes",
+                        actual=repr(wrapped),
+                        operation="C_WrapKey",
+                        mechanism=f"CKM_{case.short_name}",
+                    )
                 )
-            except AssertionError as exc:
-                _xfail_if_wrap_runtime_reject(
-                    exc, f"CKM_{case.short_name} unwrap (valid leg) not operational"
-                )
-            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
-            destroy_quietly(rs.raw, rs.sh, good)
-            valid_accepted = good_value is not None and good_value == original
 
-            # Invalid leg (D3): flip a byte in the AES-KW ciphertext region.
-            tampered = bytearray(wrapped)
-            tampered[-2] ^= 0xFF
-            invalid_outcome: Any
-            try:
-                h = unwrap_key_for_mechanism_roundtrip(
-                    rs,
-                    p11_config,
-                    unwrapping_key=priv,
-                    wrapped_key=bytes(tampered),
-                    mechanism=case.mechanism,
-                    attrs=unwrap_attrs,
-                    mech_param=_ecdh_aes_kw_mech(case),
-                    purpose=f"CKM_{case.short_name} unwrap of bit-flipped ciphertext",
+            if wrapped_usable:
+                unwrap_attrs = {
+                    CKA_CLASS: CKO_SECRET_KEY,
+                    CKA_KEY_TYPE: CKK_AES,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                }
+
+                # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
+                # accepted template) and recover the original key.
+                good = 0
+                try:
+                    good = unwrap_key_for_mechanism_roundtrip(
+                        rs,
+                        p11_config,
+                        unwrapping_key=priv,
+                        wrapped_key=wrapped,
+                        mechanism=case.mechanism,
+                        attrs=unwrap_attrs,
+                        mech_param=_ecdh_aes_kw_mech(case),
+                        purpose=f"CKM_{case.short_name} unwrap (valid leg)",
+                    )
+                except AssertionError as exc:
+                    _xfail_if_wrap_runtime_reject(
+                        exc, f"CKM_{case.short_name} unwrap (valid leg) not operational"
+                    )
+                try:
+                    good_value = _read_attr_or_record(
+                        rs.raw,
+                        rs.sh,
+                        good,
+                        CKA_VALUE,
+                        label=f"CKM_{case.short_name}:valid-leg CKA_VALUE readback",
+                        mechanism=f"CKM_{case.short_name}",
+                    )
+                    mismatch = _check_aes128_value(
+                        good_value,
+                        label=f"CKM_{case.short_name}:valid-leg CKA_VALUE readback",
+                        mechanism=f"CKM_{case.short_name}",
+                    )
+                    if mismatch is not None:
+                        hard_results.append(mismatch)
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, good)
+                if good_value is MISSING_ATTRIBUTE:
+                    good_bytes: bytes | None = None
+                else:
+                    good_bytes = (
+                        bytes(good_value)
+                        if isinstance(good_value, bytes) and len(good_value) == 16
+                        else None
+                    )
+                valid_accepted = (
+                    original_bytes is not None
+                    and good_bytes is not None
+                    and good_bytes == original_bytes
                 )
-                invalid_outcome = h
-                destroy_quietly(rs.raw, rs.sh, h)
-            except AssertionError as exc:
-                invalid_outcome = exc
-            classify_discrimination(
-                valid_accepted=valid_accepted,
-                invalid_outcome=invalid_outcome,
-                label=f"CKM_{case.short_name} unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
-            )
+
+                # Invalid leg (D3): flip a byte in the AES-KW ciphertext region.
+                tampered = bytearray(wrapped)
+                tampered[-2] ^= 0xFF
+                invalid_outcome: Any
+                try:
+                    h = unwrap_key_for_mechanism_roundtrip(
+                        rs,
+                        p11_config,
+                        unwrapping_key=priv,
+                        wrapped_key=bytes(tampered),
+                        mechanism=case.mechanism,
+                        attrs=unwrap_attrs,
+                        mech_param=_ecdh_aes_kw_mech(case),
+                        purpose=f"CKM_{case.short_name} unwrap of bit-flipped ciphertext",
+                    )
+                    invalid_outcome = h
+                    destroy_quietly(rs.raw, rs.sh, h)
+                except AssertionError as exc:
+                    invalid_outcome = exc
+                _record_discrimination(
+                    valid_accepted=valid_accepted,
+                    valid_value=(
+                        good_bytes
+                        if original_bytes is not None and good_bytes is not None
+                        else MISSING_ATTRIBUTE
+                    ),
+                    invalid_outcome=invalid_outcome,
+                    label=f"CKM_{case.short_name} unwrap of bit-flipped ciphertext (RFC 3394 ICV)",
+                    operation="C_UnwrapKey",
+                    mechanism=f"CKM_{case.short_name}",
+                    hard_results=hard_results,
+                )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
-            destroy_quietly(rs.raw, rs.sh, target)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+        _raise_strongest(hard_results)

@@ -13,10 +13,13 @@ provider identity is consulted, and non-shape rejects propagate immediately.
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
@@ -32,6 +35,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import conftest as tc
 from pkcs11_check.testcases._negotiation import negotiate_request
+from tests._attribute_access_guard import analyze_paths
 
 
 class _Session:
@@ -40,8 +44,11 @@ class _Session:
 
 
 @pytest.fixture(autouse=True)
-def _fresh_negotiation_cache() -> None:
+def _fresh_negotiation_cache() -> Generator[None, None, None]:
+    C.clear()
     tc.reset_import_negotiation_cache()
+    yield
+    C.clear()
 
 
 def _raise(rv: int) -> None:
@@ -307,6 +314,112 @@ def test_binding_defect_reports_unavailable_params(monkeypatch: pytest.MonkeyPat
     assert defect is not None and "unavailable" in defect
 
 
+def test_binding_defect_missing_params_records_exact_read_omission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing readback key is evidence, not an optional default."""
+    C.set_params({"curve": "P-256"})
+    C.set_vector("ec-import.json", "curve=secp256r1")
+    C.set_mechanism("CKM_ECDSA", operation="C_CreateObject", expect_success=True)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.read_attributes",
+        lambda _raw, _sh, _h, _types: {},
+    )
+
+    defect = tc.ec_public_key_binding_defect(_Session(), 5, b"\x06\x05requested")
+
+    assert defect == "CKA_EC_PARAMS unavailable after CKR_OK create"
+    records = C.get_records()
+    assert len(records) == 1
+    record = records[0]
+    assert record.reason == "honest_deviation"
+    assert record.outcome == "xfail"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism == "CKM_ECDSA"
+    assert record.source == "ec-import.json"
+    assert record.vector_id == "curve=secp256r1"
+    assert record.actual_ckr is None
+    assert record.detail == {
+        "attribute": {"name": "CKA_EC_PARAMS", "id": int(CKA_EC_PARAMS)},
+        "producer_operation": "C_CreateObject",
+    }
+
+
+@pytest.mark.parametrize("value", [None, b"", object()])
+def test_binding_defect_present_malformed_params_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+    value: Any,
+) -> None:
+    """Present malformed values are hard binding defects, never omissions."""
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.read_attributes",
+        lambda _raw, _sh, _h, _types: {int(CKA_EC_PARAMS): value},
+    )
+
+    defect = tc.ec_public_key_binding_defect(_Session(), 5, b"\x06\x05requested")
+
+    assert defect is not None
+    assert "malformed CKA_EC_PARAMS" in defect
+    assert C.get_records() == []
+
+
+def test_binding_defect_missing_omission_survives_hard_caller_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nonterminating read record remains before the caller's hard finding."""
+    from pkcs11_check.testcases import test_ec_import_coherence as coherence
+
+    class _Rs:
+        raw = object()
+        sh = 1
+
+        @staticmethod
+        def has_mechanism(_name: str) -> bool:
+            return True
+
+    monkeypatch.setattr(coherence, "import_ec_public_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(coherence, "destroy_quietly", lambda *_a: None)
+    monkeypatch.setattr(coherence, "skip_unless_create_object_supported", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.read_attributes",
+        lambda _raw, _sh, _h, _types: {},
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
+        coherence.test_ec_public_key_import_is_coherent(_Rs(), "secp256k1")
+
+    records = C.get_records()
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].actual_ckr is None
+    assert records[0].detail == {
+        "attribute": {"name": "CKA_EC_PARAMS", "id": int(CKA_EC_PARAMS)},
+        "producer_operation": "C_CreateObject",
+    }
+    assert records[-1].reason == "self_contradiction"
+
+
+def test_binding_defect_plain_reader_exception_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _read(_raw: Any, _sh: int, _h: int, _types: Any) -> dict[int, Any]:
+        raise RuntimeError("reader bug")
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.read_attributes", _read)
+
+    with pytest.raises(RuntimeError, match="reader bug"):
+        tc.ec_public_key_binding_defect(_Session(), 5, b"\x06\x05requested")
+
+    assert C.get_records() == []
+
+
+def test_ec_binding_attribute_access_is_analyzer_clean() -> None:
+    """Keep the EC binding reader covered by the permanent F7 analyzer gate."""
+    repo_root = Path(__file__).resolve().parents[1]
+    source = repo_root / "src" / "pkcs11_check" / "testcases" / "conftest.py"
+
+    assert analyze_paths([source]) == []
+
+
 def test_ec_import_coherence_defect_is_fail_not_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -476,4 +589,4 @@ def test_ro_session_object_readonly_reject_is_xfail() -> None:
         ro._xfail_if_session_object_rejected_readonly(exc)
 
     other = CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR))
-    assert ro._xfail_if_session_object_rejected_readonly(other) is None
+    ro._xfail_if_session_object_rejected_readonly(other)

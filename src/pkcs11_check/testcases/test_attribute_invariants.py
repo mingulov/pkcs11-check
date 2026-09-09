@@ -22,6 +22,8 @@ Classification (metadata, derived-invariant contradiction):
   non-support, provider-dependent),
 - the base attribute itself did not take effect (an isolated wrong value, not
   the derived-invariant contradiction under test) -> ``xfail``,
+- a present derived/origin value has an invalid ABI shape or contradicts the
+  key's known history -> ``fail``,
 - precondition holds and the derived attribute agrees -> ``pass``.
 """
 
@@ -32,7 +34,15 @@ from typing import Any, Literal
 
 import pytest
 
-from pkcs11_check.classification import fail_as, record_as, xfail_as
+from pkcs11_check.classification import (
+    Classification,
+    fail_as,
+    raise_for_record,
+    record_as,
+    set_mechanism,
+    xfail_as,
+)
+from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
@@ -61,11 +71,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_OK,
 )
-from pkcs11_check.testcases._attribute_values import (
-    MISSING_ATTRIBUTE,
-    attr_or_record,
-    require_ulong_attr,
-)
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
@@ -81,8 +87,12 @@ _UlongAttrState = Literal["present", "unavailable", "unsupported"]
 def _classify_derived_invariant(
     *,
     base_holds: bool,
+    base_value: Any,
+    base_attr: int,
+    base_expected: bool,
     derived_present: bool,
     derived_value: Any,
+    derived_attr: int,
     label: str,
 ) -> None:
     """Derived-attribute invariant classifier (metadata).
@@ -91,10 +101,15 @@ def _classify_derived_invariant(
         base_holds: the base attribute (e.g. ``CKA_EXTRACTABLE=False``) actually
             took effect on the suite-generated, never-modified key. If it did
             not, the invariant under test cannot be evaluated.
+        base_value: the raw decoded base attribute, retained for ABI validation
+            and exact deviation evidence.
+        base_attr: the base attribute identifier for structured evidence.
+        base_expected: the protective value requested for the base attribute.
         derived_present: the module reported the derived attribute at all.
         derived_value: the value the module reported for the derived attribute;
             for a key whose base attribute held the whole lifetime this MUST be
             ``True``.
+        derived_attr: the derived attribute identifier for structured evidence.
         label: provider-neutral description of the invariant.
 
     - not ``base_holds`` -> ``xfail`` (isolated wrong value elsewhere; the
@@ -102,20 +117,84 @@ def _classify_derived_invariant(
       deviation, not the derived-invariant contradiction under test).
     - not ``derived_present`` -> ``xfail`` (the module does not support the
       derived attribute -- honest non-support).
+    - a present base or derived value that is not a strict ``CK_BBOOL`` ->
+      ``fail`` (malformed provider output takes precedence over an oracle).
     - ``derived_value is not True`` -> ``fail`` (the module reported the base
       attribute held the entire lifetime, then denied the derived invariant --
       a self-contradiction).
     - otherwise -> ``pass``.
     """
+    # Callers record this omission before invoking the classifier.  Keep an
+    # explicit identity guard here as a defense-in-depth boundary for future
+    # callers: the sentinel must never be interpreted as a provider value.
+    hard_results: list[Classification] = []
+    if base_value is not MISSING_ATTRIBUTE and type(base_value) is not bool:
+        hard_results.append(
+            record_as(
+                "wrong_result",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                mechanism="CKM_AES_KEY_GEN",
+                summary=f"{label}: base attribute has malformed CK_BBOOL value",
+                detail={
+                    "attribute": {
+                        "name": ATTR_NAMES.get(int(base_attr), f"0x{int(base_attr):08x}"),
+                        "id": int(base_attr),
+                    },
+                    "expected": "CK_BBOOL boolean",
+                    "actual": repr(base_value),
+                    "producer_operation": "C_GenerateKey",
+                    "producer_mechanism": "CKM_AES_KEY_GEN",
+                },
+            )
+        )
+    if derived_value is not MISSING_ATTRIBUTE and type(derived_value) is not bool:
+        hard_results.append(
+            record_as(
+                "wrong_result",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                mechanism="CKM_AES_KEY_GEN",
+                summary=f"{label}: derived attribute has malformed CK_BBOOL value",
+                detail={
+                    "attribute": {
+                        "name": ATTR_NAMES.get(int(derived_attr), f"0x{int(derived_attr):08x}"),
+                        "id": int(derived_attr),
+                    },
+                    "expected": "CK_BBOOL boolean",
+                    "actual": repr(derived_value),
+                    "producer_operation": "C_GenerateKey",
+                    "producer_mechanism": "CKM_AES_KEY_GEN",
+                },
+            )
+        )
+    if hard_results:
+        raise_for_record(hard_results[-1])
+    if derived_value is MISSING_ATTRIBUTE or base_value is MISSING_ATTRIBUTE:
+        return
     if not base_holds:
         xfail_as(
             "honest_deviation",
             kind="metadata",
             label=label,
+            operation="C_GetAttributeValue",
+            mechanism="CKM_AES_KEY_GEN",
             summary=(
                 f"{label}: base attribute did not take effect "
                 "(isolated deviation, not the invariant)"
             ),
+            detail={
+                "attribute": {
+                    "name": ATTR_NAMES.get(int(base_attr), f"0x{int(base_attr):08x}"),
+                    "id": int(base_attr),
+                },
+                "expected": base_expected,
+                "actual": base_value,
+                "producer_operation": "C_GenerateKey",
+                "producer_mechanism": "CKM_AES_KEY_GEN",
+            },
         )
     if not derived_present:
         xfail_as(
@@ -132,8 +211,20 @@ def _classify_derived_invariant(
             spec_ref="PKCS#11 v3.2",
             summary=(
                 f"{label}: base attribute held the whole lifetime but derived attribute "
-                f"is {derived_value!r}, must be True (self-contradiction)"
+                "is not True (self-contradiction)"
             ),
+            operation="C_GetAttributeValue",
+            mechanism="CKM_AES_KEY_GEN",
+            detail={
+                "attribute": {
+                    "name": ATTR_NAMES.get(int(derived_attr), f"0x{int(derived_attr):08x}"),
+                    "id": int(derived_attr),
+                },
+                "expected": True,
+                "actual": derived_value,
+                "producer_operation": "C_GenerateKey",
+                "producer_mechanism": "CKM_AES_KEY_GEN",
+            },
         )
 
 
@@ -150,51 +241,148 @@ def _classify_generated_key_origin_invariant(
 
     A generated key should report ``CKA_LOCAL=True`` and identify the mechanism
     that created it. If the module honestly omits either attribute, or reports
-    only the isolated ``CKA_LOCAL`` value wrong, this test cannot evaluate the
-    linked-origin contradiction and records xfail. Once the module claims the
+    only the isolated, ABI-valid ``CKA_LOCAL`` value wrong, this test cannot
+    evaluate the linked-origin contradiction and records xfail. A malformed
+    present Boolean is a hard wrong-result finding. Once the module claims the
     key is local, a wrong ``CKA_KEY_GEN_MECHANISM`` contradicts the generated
-    key's known origin and is a failure.
+    key's known origin and is a failure. Each present field is evaluated
+    independently so one omitted field cannot hide a contradiction in the other.
     """
-    if not local_present:
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
-        )
-    if local_value is not True:
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)",
-        )
-    if not mechanism_present:
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
-        )
+    # The caller records every missing attribute first.  Keep evaluating the
+    # other linked field: a missing CKA_LOCAL must not hide an independently
+    # contradictory CKA_KEY_GEN_MECHANISM (and vice versa).
+    deviations: list[Classification] = []
+    hard_results: list[Classification] = []
+    if local_value is not MISSING_ATTRIBUTE:
+        if not local_present:
+            deviations.append(
+                record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_AES_KEY_GEN",
+                    summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
+                    detail={
+                        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                        "producer_operation": "C_GenerateKey",
+                        "producer_mechanism": "CKM_AES_KEY_GEN",
+                    },
+                )
+            )
+        elif type(local_value) is not bool:
+            hard_results.append(
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_AES_KEY_GEN",
+                    summary=f"{label}: CKA_LOCAL has malformed CK_BBOOL value",
+                    detail={
+                        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                        "expected": "CK_BBOOL boolean",
+                        "actual": repr(local_value),
+                        "producer_operation": "C_GenerateKey",
+                        "producer_mechanism": "CKM_AES_KEY_GEN",
+                    },
+                )
+            )
+        elif local_value is not True:
+            deviations.append(
+                record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_AES_KEY_GEN",
+                    summary=f"{label}: CKA_LOCAL is not True (isolated wrong value)",
+                    detail={
+                        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                        "expected": True,
+                        "actual": local_value,
+                        "producer_operation": "C_GenerateKey",
+                        "producer_mechanism": "CKM_AES_KEY_GEN",
+                    },
+                )
+            )
 
-    actual_mechanism = require_ulong_attr(mechanism_value, "CKA_KEY_GEN_MECHANISM")
-    if actual_mechanism != expected_mechanism:
-        fail_as(
-            "self_contradiction",
-            kind="metadata",
-            label=label,
-            summary=(
-                f"{label}: CKA_LOCAL=True but CKA_KEY_GEN_MECHANISM is "
-                f"{actual_mechanism:#x}, expected {expected_mechanism:#x} "
-                "(linked-origin self-contradiction)"
-            ),
-        )
+    if mechanism_value is not MISSING_ATTRIBUTE:
+        if not mechanism_present:
+            deviations.append(
+                record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_AES_KEY_GEN",
+                    summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
+                    detail={
+                        "attribute": {
+                            "name": "CKA_KEY_GEN_MECHANISM",
+                            "id": int(CKA_KEY_GEN_MECHANISM),
+                        },
+                        "producer_operation": "C_GenerateKey",
+                        "producer_mechanism": "CKM_AES_KEY_GEN",
+                    },
+                )
+            )
+        elif not isinstance(mechanism_value, int) or isinstance(mechanism_value, bool):
+            hard_results.append(
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_AES_KEY_GEN",
+                    summary=f"{label}: CKA_KEY_GEN_MECHANISM has malformed CK_ULONG value",
+                    detail={
+                        "attribute": {
+                            "name": "CKA_KEY_GEN_MECHANISM",
+                            "id": int(CKA_KEY_GEN_MECHANISM),
+                        },
+                        "expected": "CK_ULONG integer",
+                        "actual": repr(mechanism_value),
+                        "producer_operation": "C_GenerateKey",
+                        "producer_mechanism": "CKM_AES_KEY_GEN",
+                    },
+                )
+            )
+        elif mechanism_value != expected_mechanism:
+            hard_results.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_AES_KEY_GEN",
+                    summary=(
+                        f"{label}: CKA_KEY_GEN_MECHANISM disagrees with the known "
+                        f"CKM_AES_KEY_GEN origin (expected {expected_mechanism:#x})"
+                    ),
+                    detail={
+                        "attribute": {
+                            "name": "CKA_KEY_GEN_MECHANISM",
+                            "id": int(CKA_KEY_GEN_MECHANISM),
+                        },
+                        "expected": expected_mechanism,
+                        "actual": mechanism_value,
+                        "producer_operation": "C_GenerateKey",
+                        "producer_mechanism": "CKM_AES_KEY_GEN",
+                    },
+                )
+            )
+
+    if hard_results:
+        raise_for_record(hard_results[-1])
+    if deviations:
+        raise_for_record(deviations[-1])
 
 
 def _read_ulong_attr_state(
     raw: Any, session: int, handle: int, attr_type: int
 ) -> tuple[_UlongAttrState, int | None]:
-    """Read a CK_ULONG-like attribute while preserving unavailable state."""
+    """Read a CK_ULONG-like attribute while preserving unsupported/unavailable states."""
     query = CK_ATTRIBUTE()
     query.type = attr_type
     query.pValue = None
@@ -204,22 +392,38 @@ def _read_ulong_attr_state(
     if rv == CKR_ATTRIBUTE_TYPE_INVALID:
         return "unsupported", None
     if rv != CKR_OK:
-        fail_as(
-            "self_contradiction",
+        xfail_as(
+            "not_operational",
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
             operation="C_GetAttributeValue",
+            expected=CKR_OK,
             actual=rv,
             summary=f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}",
+            detail={
+                "attribute": {
+                    "name": ATTR_NAMES.get(int(attr_type), f"0x{int(attr_type):08x}"),
+                    "id": int(attr_type),
+                },
+            },
         )
     if query.ulValueLen == CK_UNAVAILABLE_INFORMATION:
         return "unavailable", None
     if query.ulValueLen != ctypes.sizeof(CK_ULONG):
-        xfail_as(
-            "honest_deviation",
+        fail_as(
+            "wrong_result",
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
+            operation="C_GetAttributeValue",
             summary=f"attribute {attr_type:#x}: malformed CK_ULONG length {query.ulValueLen}",
+            detail={
+                "attribute": {
+                    "name": ATTR_NAMES.get(int(attr_type), f"0x{int(attr_type):08x}"),
+                    "id": int(attr_type),
+                },
+                "expected": ctypes.sizeof(CK_ULONG),
+                "actual": query.ulValueLen,
+            },
         )
 
     value = CK_ULONG(0)
@@ -232,13 +436,36 @@ def _read_ulong_attr_state(
     if rv == CKR_ATTRIBUTE_TYPE_INVALID:
         return "unsupported", None
     if rv != CKR_OK:
-        fail_as(
-            "self_contradiction",
+        xfail_as(
+            "not_operational",
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
             operation="C_GetAttributeValue",
+            expected=CKR_OK,
             actual=rv,
             summary=f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}",
+            detail={
+                "attribute": {
+                    "name": ATTR_NAMES.get(int(attr_type), f"0x{int(attr_type):08x}"),
+                    "id": int(attr_type),
+                },
+            },
+        )
+    if attr.ulValueLen not in (ctypes.sizeof(CK_ULONG), CK_UNAVAILABLE_INFORMATION):
+        fail_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
+            operation="C_GetAttributeValue",
+            summary=f"attribute {attr_type:#x}: malformed CK_ULONG length {attr.ulValueLen}",
+            detail={
+                "attribute": {
+                    "name": ATTR_NAMES.get(int(attr_type), f"0x{int(attr_type):08x}"),
+                    "id": int(attr_type),
+                },
+                "expected": ctypes.sizeof(CK_ULONG),
+                "actual": attr.ulValueLen,
+            },
         )
     if attr.ulValueLen == CK_UNAVAILABLE_INFORMATION or value.value == CK_UNAVAILABLE_INFORMATION:
         return "unavailable", None
@@ -252,47 +479,155 @@ def _classify_imported_key_origin_invariant(
     mechanism_state: _UlongAttrState,
     mechanism_value: int | None,
     label: str,
+    local_shape_record: Classification | None = None,
 ) -> None:
-    """Classify linked origin attributes on an imported key."""
-    if not local_present:
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
-        )
-    if local_value is not False:
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: CKA_LOCAL is {local_value!r} (isolated wrong value)",
-        )
+    """Classify linked origin attributes, retaining independent field evidence."""
+    deviations: list[Classification] = []
+    hard_results: list[Classification] = []
+    # ``CKA_LOCAL`` is read through ``attr_or_record``.  Its omission has
+    # already been recorded by the caller, so only classify a present value;
+    # the mechanism state remains independently testable.
+    if local_value is not MISSING_ATTRIBUTE:
+        if not local_present:
+            deviations.append(
+                record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
+                    detail={
+                        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                        "producer_operation": "C_CreateObject",
+                        "producer_mechanism": None,
+                    },
+                )
+            )
+        elif type(local_value) is not bool:
+            if local_shape_record is not None:
+                hard_results.append(local_shape_record)
+            else:
+                hard_results.append(
+                    record_as(
+                        "wrong_result",
+                        kind="metadata",
+                        label=label,
+                        operation="C_GetAttributeValue",
+                        summary=f"{label}: CKA_LOCAL has malformed CK_BBOOL value",
+                        detail={
+                            "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                            "expected": "CK_BBOOL boolean",
+                            "actual": repr(local_value),
+                            "producer_operation": "C_CreateObject",
+                            "producer_mechanism": None,
+                        },
+                    )
+                )
+        elif local_value is not False:
+            deviations.append(
+                record_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    summary=f"{label}: CKA_LOCAL is not False (isolated wrong value)",
+                    detail={
+                        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                        "expected": False,
+                        "actual": local_value,
+                        "producer_operation": "C_CreateObject",
+                        "producer_mechanism": None,
+                    },
+                )
+            )
+
     if mechanism_state == "unsupported":
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
+        deviations.append(
+            record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                actual=CKR_ATTRIBUTE_TYPE_INVALID,
+                summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
+                detail={
+                    "attribute": {
+                        "name": "CKA_KEY_GEN_MECHANISM",
+                        "id": int(CKA_KEY_GEN_MECHANISM),
+                    },
+                    "producer_operation": "C_CreateObject",
+                    "producer_mechanism": None,
+                },
+            )
         )
-    if mechanism_state == "unavailable":
-        return
-    if mechanism_state == "present":
-        fail_as(
-            "self_contradiction",
-            kind="metadata",
-            label=label,
-            summary=(
-                f"{label}: CKA_LOCAL=False but CKA_KEY_GEN_MECHANISM is "
-                f"{mechanism_value!r}, expected unavailable (linked-origin self-contradiction)"
-            ),
+    elif mechanism_state == "present":
+        if not isinstance(mechanism_value, int) or isinstance(mechanism_value, bool):
+            hard_results.append(
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    summary=f"{label}: CKA_KEY_GEN_MECHANISM has malformed CK_ULONG value",
+                    detail={
+                        "attribute": {
+                            "name": "CKA_KEY_GEN_MECHANISM",
+                            "id": int(CKA_KEY_GEN_MECHANISM),
+                        },
+                        "expected": "CK_ULONG integer",
+                        "actual": repr(mechanism_value),
+                        "producer_operation": "C_CreateObject",
+                        "producer_mechanism": None,
+                    },
+                )
+            )
+        else:
+            hard_results.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    summary=(
+                        f"{label}: imported CKA_LOCAL=False has a present "
+                        "CKA_KEY_GEN_MECHANISM (expected unavailable)"
+                    ),
+                    detail={
+                        "attribute": {
+                            "name": "CKA_KEY_GEN_MECHANISM",
+                            "id": int(CKA_KEY_GEN_MECHANISM),
+                        },
+                        "expected": "CK_UNAVAILABLE_INFORMATION",
+                        "actual": mechanism_value,
+                        "producer_operation": "C_CreateObject",
+                        "producer_mechanism": None,
+                    },
+                )
+            )
+    elif mechanism_state != "unavailable":
+        hard_results.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                summary=f"{label}: unexpected CKA_KEY_GEN_MECHANISM state",
+                detail={
+                    "attribute": {
+                        "name": "CKA_KEY_GEN_MECHANISM",
+                        "id": int(CKA_KEY_GEN_MECHANISM),
+                    },
+                    "producer_operation": "C_CreateObject",
+                    "producer_mechanism": None,
+                    "actual": mechanism_state,
+                },
+            )
         )
-    fail_as(
-        "self_contradiction",
-        kind="metadata",
-        label=label,
-        summary=f"{label}: unexpected CKA_KEY_GEN_MECHANISM state {mechanism_state!r}",
-    )
+
+    if hard_results:
+        raise_for_record(hard_results[-1])
+    if deviations:
+        raise_for_record(deviations[-1])
 
 
 class TestDerivedAttributeInvariants:
@@ -309,18 +644,53 @@ class TestDerivedAttributeInvariants:
                 attrs,
                 CKA_EXTRACTABLE,
                 label="CKA_EXTRACTABLE:never-extractable-invariant",
+                mechanism="CKM_AES_KEY_GEN",
             )
             never_extractable = attr_or_record(
                 attrs,
                 CKA_NEVER_EXTRACTABLE,
                 label="CKA_NEVER_EXTRACTABLE:never-extractable-invariant",
+                mechanism="CKM_AES_KEY_GEN",
             )
-            if extractable is MISSING_ATTRIBUTE or never_extractable is MISSING_ATTRIBUTE:
+            if extractable is MISSING_ATTRIBUTE:
+                if never_extractable is not MISSING_ATTRIBUTE:
+                    _classify_derived_invariant(
+                        base_holds=False,
+                        base_value=MISSING_ATTRIBUTE,
+                        base_attr=CKA_EXTRACTABLE,
+                        base_expected=False,
+                        derived_present=True,
+                        derived_value=never_extractable,
+                        derived_attr=CKA_NEVER_EXTRACTABLE,
+                        label=(
+                            "CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False "
+                            "and never changed (PKCS#11 v3.2)"
+                        ),
+                    )
+                return
+            if never_extractable is MISSING_ATTRIBUTE:
+                _classify_derived_invariant(
+                    base_holds=extractable is False,
+                    base_value=extractable,
+                    base_attr=CKA_EXTRACTABLE,
+                    base_expected=False,
+                    derived_present=True,
+                    derived_value=MISSING_ATTRIBUTE,
+                    derived_attr=CKA_NEVER_EXTRACTABLE,
+                    label=(
+                        "CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False "
+                        "and never changed (PKCS#11 v3.2)"
+                    ),
+                )
                 return
             _classify_derived_invariant(
                 base_holds=extractable is False,
+                base_value=extractable,
+                base_attr=CKA_EXTRACTABLE,
+                base_expected=False,
                 derived_present=True,
                 derived_value=never_extractable,
+                derived_attr=CKA_NEVER_EXTRACTABLE,
                 label="CKA_NEVER_EXTRACTABLE on a key created EXTRACTABLE=False and never changed "
                 "(PKCS#11 v3.2)",
             )
@@ -342,22 +712,39 @@ class TestDerivedAttributeInvariants:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
-            mechanism_state, mechanism_value = _read_ulong_attr_state(
-                rs.raw, rs.sh, key, CKA_KEY_GEN_MECHANISM
-            )
             local = attr_or_record(
                 attrs,
                 CKA_LOCAL,
                 label="CKA_LOCAL:imported-key-origin",
             )
-            if local is MISSING_ATTRIBUTE:
-                return
+            local_shape_record: Classification | None = None
+            if local is not MISSING_ATTRIBUTE and type(local) is not bool:
+                local_shape_record = record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=(
+                        "CKA_LOCAL/CKA_KEY_GEN_MECHANISM on an AES key imported by C_CreateObject"
+                    ),
+                    operation="C_GetAttributeValue",
+                    summary="CKA_LOCAL: imported key has malformed CK_BBOOL value",
+                    detail={
+                        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
+                        "expected": "CK_BBOOL boolean",
+                        "actual": repr(local),
+                        "producer_operation": "C_CreateObject",
+                        "producer_mechanism": None,
+                    },
+                )
+            mechanism_state, mechanism_value = _read_ulong_attr_state(
+                rs.raw, rs.sh, key, CKA_KEY_GEN_MECHANISM
+            )
             _classify_imported_key_origin_invariant(
-                local_present=True,
+                local_present=local is not MISSING_ATTRIBUTE,
                 local_value=local,
                 mechanism_state=mechanism_state,
                 mechanism_value=mechanism_value,
                 label="CKA_LOCAL/CKA_KEY_GEN_MECHANISM on an AES key imported by C_CreateObject",
+                local_shape_record=local_shape_record,
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -373,18 +760,18 @@ class TestDerivedAttributeInvariants:
                 attrs,
                 CKA_LOCAL,
                 label="CKA_LOCAL:generated-key-origin",
+                mechanism="CKM_AES_KEY_GEN",
             )
             mechanism = attr_or_record(
                 attrs,
                 CKA_KEY_GEN_MECHANISM,
                 label="CKA_KEY_GEN_MECHANISM:generated-key-origin",
+                mechanism="CKM_AES_KEY_GEN",
             )
-            if local is MISSING_ATTRIBUTE or mechanism is MISSING_ATTRIBUTE:
-                return
             _classify_generated_key_origin_invariant(
-                local_present=True,
+                local_present=local is not MISSING_ATTRIBUTE,
                 local_value=local,
-                mechanism_present=True,
+                mechanism_present=mechanism is not MISSING_ATTRIBUTE,
                 mechanism_value=mechanism,
                 expected_mechanism=int(CKM_AES_KEY_GEN),
                 label="CKA_LOCAL/CKA_KEY_GEN_MECHANISM on an AES key generated by CKM_AES_KEY_GEN",
@@ -403,18 +790,53 @@ class TestDerivedAttributeInvariants:
                 attrs,
                 CKA_SENSITIVE,
                 label="CKA_SENSITIVE:always-sensitive-invariant",
+                mechanism="CKM_AES_KEY_GEN",
             )
             always_sensitive = attr_or_record(
                 attrs,
                 CKA_ALWAYS_SENSITIVE,
                 label="CKA_ALWAYS_SENSITIVE:always-sensitive-invariant",
+                mechanism="CKM_AES_KEY_GEN",
             )
-            if sensitive is MISSING_ATTRIBUTE or always_sensitive is MISSING_ATTRIBUTE:
+            if sensitive is MISSING_ATTRIBUTE:
+                if always_sensitive is not MISSING_ATTRIBUTE:
+                    _classify_derived_invariant(
+                        base_holds=False,
+                        base_value=MISSING_ATTRIBUTE,
+                        base_attr=CKA_SENSITIVE,
+                        base_expected=True,
+                        derived_present=True,
+                        derived_value=always_sensitive,
+                        derived_attr=CKA_ALWAYS_SENSITIVE,
+                        label=(
+                            "CKA_ALWAYS_SENSITIVE on a key created SENSITIVE=True and "
+                            "never changed (PKCS#11 v3.2)"
+                        ),
+                    )
+                return
+            if always_sensitive is MISSING_ATTRIBUTE:
+                _classify_derived_invariant(
+                    base_holds=sensitive is True,
+                    base_value=sensitive,
+                    base_attr=CKA_SENSITIVE,
+                    base_expected=True,
+                    derived_present=True,
+                    derived_value=MISSING_ATTRIBUTE,
+                    derived_attr=CKA_ALWAYS_SENSITIVE,
+                    label=(
+                        "CKA_ALWAYS_SENSITIVE on a key created SENSITIVE=True and "
+                        "never changed (PKCS#11 v3.2)"
+                    ),
+                )
                 return
             _classify_derived_invariant(
                 base_holds=sensitive is True,
+                base_value=sensitive,
+                base_attr=CKA_SENSITIVE,
+                base_expected=True,
                 derived_present=True,
                 derived_value=always_sensitive,
+                derived_attr=CKA_ALWAYS_SENSITIVE,
                 label="CKA_ALWAYS_SENSITIVE on a key created SENSITIVE=True and never changed "
                 "(PKCS#11 v3.2)",
             )
@@ -472,6 +894,7 @@ class TestContradictoryCreationFaithfulness:
             if reject_exc is not None:
                 # Route every clean rejection through the 3-way classifier:
                 # spec-listed code → pass; other clean code → xfail nonspec_reject.
+                set_mechanism("CKM_AES_KEY_GEN", "C_GenerateKey")
                 classify_negative_rv(
                     reject_exc.rv,
                     _CREATION_REJECT_RVS,
@@ -482,53 +905,64 @@ class TestContradictoryCreationFaithfulness:
 
             # Module accepted the creation.  Verify faithful readback.
             readback = read_attributes(rs.raw, rs.sh, key, check_attrs)
-            actual_values = {
-                attr: attr_or_record(
+            actual_values: list[tuple[Any, Any]] = []
+            for attr in check_attrs:
+                actual = attr_or_record(
                     readback,
                     attr,
                     label=f"{label}:attribute {attr!r}",
+                    mechanism="CKM_AES_KEY_GEN",
                 )
-                for attr in check_attrs
-            }
-            contradictions = [
-                (attr, attrs[attr], actual_values[attr])
-                for attr in check_attrs
-                if actual_values[attr] is not MISSING_ATTRIBUTE
-                and actual_values[attr] != attrs[attr]
-            ]
-            for attr, requested, actual in contradictions[:-1]:
-                record_as(
-                    "self_contradiction",
-                    kind="metadata",
-                    label=label,
-                    operation="C_GenerateKey",
-                    summary=(
-                        f"{label}: C_GenerateKey silently altered a requested attribute "
-                        f"(requested {attr!r}={requested!r}, object reports {actual!r})"
-                    ),
-                    detail={
-                        "attribute": {"name": str(attr), "id": int(attr)},
-                        "expected": requested,
-                        "actual": actual,
-                    },
+                if actual is MISSING_ATTRIBUTE:
+                    continue
+                actual_values.append((attr, actual))
+            hard_results: list[Classification] = []
+            contradictions: list[tuple[Any, Any, Any]] = []
+            for attr, actual in actual_values:
+                if type(actual) is not bool:
+                    hard_results.append(
+                        record_as(
+                            "wrong_result",
+                            kind="metadata",
+                            label=label,
+                            operation="C_GenerateKey",
+                            mechanism="CKM_AES_KEY_GEN",
+                            summary=(
+                                f"{label}: C_GenerateKey returned a malformed CK_BBOOL readback"
+                            ),
+                            detail={
+                                "attribute": {"name": str(attr), "id": int(attr)},
+                                "expected": "CK_BBOOL boolean",
+                                "actual": repr(actual),
+                            },
+                        )
+                    )
+                elif actual != attrs[attr]:
+                    contradictions.append((attr, attrs[attr], actual))
+            contradiction_records: list[Classification] = []
+            for attr, requested, actual in contradictions:
+                contradiction_records.append(
+                    record_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_GenerateKey",
+                        mechanism="CKM_AES_KEY_GEN",
+                        summary=(
+                            f"{label}: C_GenerateKey silently altered a requested attribute "
+                            f"(requested {attr!r}={requested!r}, object reports {actual!r})"
+                        ),
+                        detail={
+                            "attribute": {"name": str(attr), "id": int(attr)},
+                            "expected": requested,
+                            "actual": actual,
+                        },
+                    )
                 )
+            if hard_results:
+                raise_for_record(hard_results[-1])
             if contradictions:
-                attr, requested, actual = contradictions[-1]
-                fail_as(
-                    "self_contradiction",
-                    kind="metadata",
-                    label=label,
-                    operation="C_GenerateKey",
-                    summary=(
-                        f"{label}: C_GenerateKey silently altered a requested attribute "
-                        f"(requested {attr!r}={requested!r}, object reports {actual!r})"
-                    ),
-                    detail={
-                        "attribute": {"name": str(attr), "id": int(attr)},
-                        "expected": requested,
-                        "actual": actual,
-                    },
-                )
+                raise_for_record(contradiction_records[-1])
         finally:
             if key:
                 destroy_quietly(rs.raw, rs.sh, key)

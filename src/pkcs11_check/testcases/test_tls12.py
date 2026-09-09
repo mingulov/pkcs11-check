@@ -23,7 +23,9 @@ from ctypes import byref
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_ulong,
@@ -87,10 +89,10 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
-    assert_correct,
     destroy_returned_handles,
     is_known_error,
     reject_or_classify,
@@ -121,6 +123,269 @@ _TLS_TEMPLATE_CONFLICT_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
+
+_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
+_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+class _ClassificationFailureError(Failed, AssertionError):
+    """Keep migrated failures compatible with callers expecting AssertionError."""
+
+
+def _read_attribute(attrs: Mapping[Any, Any], attr: Any, *, label: str, mechanism: str) -> Any:
+    """Read an attribute while retaining a structured unavailable-value observation."""
+    return attr_or_record(
+        attrs,
+        attr,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        mechanism=mechanism,
+    )
+
+
+def _read_provider_attribute(
+    raw: Any,
+    session: int,
+    handle: int,
+    attr: Any,
+    *,
+    label: str,
+    mechanism: str,
+    error_rvs: set[Any] | frozenset[Any] | tuple[Any, ...],
+) -> Any:
+    """Read one provider attribute and classify typed readback errors accurately."""
+    try:
+        return _read_attribute(
+            read_attributes(raw, session, handle, [attr]),
+            attr,
+            label=label,
+            mechanism=mechanism,
+        )
+    except AssertionError as exc:
+        if is_known_error(exc, error_rvs):
+            C.record_as(
+                "not_operational",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                mechanism=mechanism,
+                actual=getattr(exc, "rv", None),
+                summary=f"{label}: C_GetAttributeValue not operational: {exc}",
+            )
+            return MISSING_ATTRIBUTE
+        raise
+
+
+def _record_wrong_attribute(
+    *,
+    label: str,
+    expected: Any,
+    actual: Any,
+    kind: str,
+    mechanism: str,
+    operation: str,
+) -> C.Classification:
+    # Keep this helper safe even when a caller accidentally passes the explicit
+    # missing-attribute sentinel instead of a present provider value.  Missing
+    # output is an operability finding, never a false-like wrong-result finding.
+    if actual is MISSING_ATTRIBUTE:
+        return C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            summary=f"{label}: provider did not return the requested attribute",
+            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
+        )
+    summary_prefix = (
+        f"{label} does not match known answer" if isinstance(expected, bytes) else label
+    )
+    return C.record_as(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        summary=f"{summary_prefix}: provider returned {actual!r}; expected {expected!r}",
+        detail={
+            "attribute": {
+                "name": "CKA_VALUE",
+                "id": int(CKA_VALUE),
+                "expected": repr(expected),
+                "actual": repr(actual),
+            }
+        },
+    )
+
+
+def _record_parameter_mismatch(
+    *, label: str, parameter: str, expected: Any, actual: Any, mechanism: str
+) -> C.Classification:
+    """Record provider-written mechanism output without inventing CKR data."""
+    return C.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation="C_DeriveKey",
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
+        detail={
+            "parameter": {
+                "name": parameter,
+                "expected": repr(expected),
+                "actual": repr(actual),
+            }
+        },
+    )
+
+
+def _record_relation_mismatch(
+    *,
+    label: str,
+    expected: str,
+    left: Any,
+    left_label: str,
+    left_mechanism: str,
+    right: Any,
+    right_label: str,
+    right_mechanism: str,
+) -> C.Classification:
+    """Record a relation over both extended-master derive legs."""
+    if left is MISSING_ATTRIBUTE:
+        return C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=f"{label}:{left_label}",
+            operation="C_GetAttributeValue",
+            mechanism=left_mechanism,
+            summary=f"{label}: {left_label} attribute was not returned",
+            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
+        )
+    if right is MISSING_ATTRIBUTE:
+        return C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=f"{label}:{right_label}",
+            operation="C_GetAttributeValue",
+            mechanism=right_mechanism,
+            summary=f"{label}: {right_label} attribute was not returned",
+            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
+        )
+    return C.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation="C_DeriveKey",
+        # The finding concerns the relation, so retain both mechanisms in
+        # detail rather than assigning it to one side.
+        mechanism=None,
+        summary=f"{label}: provider outputs violate the required relation",
+        detail={
+            "relation": {
+                "operator": "must_differ",
+                "expected": expected,
+                "left": {
+                    "label": left_label,
+                    "mechanism": left_mechanism,
+                    "actual": repr(left),
+                },
+                "right": {
+                    "label": right_label,
+                    "mechanism": right_mechanism,
+                    "actual": repr(right),
+                },
+            }
+        },
+    )
+
+
+def _validate_output(
+    value: Any,
+    *,
+    label: str,
+    mechanism: str,
+    operation: str,
+    expected_len: int | None = None,
+    expected: bytes | None = None,
+) -> C.Classification | None:
+    """Validate a present CKA_VALUE without terminating independent checks early."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if not isinstance(value, bytes):
+        return _record_wrong_attribute(
+            label=label,
+            expected="bytes",
+            actual=value,
+            kind="crypto",
+            mechanism=mechanism,
+            operation=operation,
+        )
+    if expected_len is not None and len(value) != expected_len:
+        return _record_wrong_attribute(
+            label=label,
+            expected=f"{expected_len}-byte bytes",
+            actual=value,
+            kind="crypto",
+            mechanism=mechanism,
+            operation=operation,
+        )
+    if expected is not None and value != expected:
+        return _record_wrong_attribute(
+            label=label,
+            expected=expected,
+            actual=value,
+            kind="crypto",
+            mechanism=mechanism,
+            operation=operation,
+        )
+    return None
+
+
+def _raise_strongest(records: list[C.Classification]) -> None:
+    """Raise the strongest hard output finding after all cleanup has completed."""
+    if not records:
+        return
+    strongest = max(
+        records,
+        key=lambda record: (
+            _KIND_PRIORITY.get(record.kind or "", 0),
+            _SEVERITY_PRIORITY.get(record.severity, 0),
+        ),
+    )
+    try:
+        C.raise_for_record(strongest)
+    except Failed as exc:
+        failure = _ClassificationFailureError(str(exc))
+        setattr(failure, "_pkcs11_check_classification", strongest)
+        raise failure from exc
+
+
+def _guard_producer_handle(
+    handle: Any,
+    *,
+    label: str,
+    operation: str,
+    mechanism: str,
+    records: list[C.Classification],
+) -> bool:
+    """Reject CKR_OK producer success that returned the null object handle."""
+    if handle != 0:
+        return True
+    records.append(
+        C.record_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            actual=CKR_OK,
+            summary=f"{label}: {operation} returned CKR_OK with handle 0",
+            detail={"handle": {"actual": 0, "expected": "non-zero"}},
+        )
+    )
+    return False
 
 
 def _tls12_prf_sha256(
@@ -335,6 +600,7 @@ class TestTLS10PreMasterKeyGen:
             attr_ulong(CKA_TOKEN, 0),
         )
         key = CK_OBJECT_HANDLE(0)
+        hard_results: list[C.Classification] = []
         try:
             from pkcs11_check.raw.rv import expect_rv
 
@@ -347,14 +613,60 @@ class TestTLS10PreMasterKeyGen:
             )
             expect_rv(rv, CKR_OK)
             try:
-                value = read_attributes(rs.raw, rs.sh, key.value, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48, f"Expected 48-byte pre-master secret, got {len(value)}"
-                # First two bytes must match the requested TLS version
-                assert value[0] == 3, f"Expected major version 3, got {value[0]}"
-                assert value[1] == 1, f"Expected minor version 1, got {value[1]}"
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    key.value,
+                    label="CKM_TLS_PRE_MASTER_KEY_GEN:C_GenerateKey output handle",
+                    operation="C_GenerateKey",
+                    mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        key.value,
+                        CKA_VALUE,
+                        label="CKM_TLS_PRE_MASTER_KEY_GEN:CKA_VALUE readback",
+                        mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS_PRE_MASTER_KEY_GEN:CKA_VALUE readback",
+                    mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                    operation="C_GenerateKey",
+                    expected_len=48,
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+                elif value is not MISSING_ATTRIBUTE and isinstance(value, bytes):
+                    # First two bytes must match the requested TLS version.
+                    if value[0] != 3:
+                        hard_results.append(
+                            _record_wrong_attribute(
+                                label="CKM_TLS_PRE_MASTER_KEY_GEN:version major",
+                                expected=3,
+                                actual=value[0],
+                                kind="crypto",
+                                mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                                operation="C_GenerateKey",
+                            )
+                        )
+                    if value[1] != 1:
+                        hard_results.append(
+                            _record_wrong_attribute(
+                                label="CKM_TLS_PRE_MASTER_KEY_GEN:version minor",
+                                expected=1,
+                                actual=value[1],
+                                kind="crypto",
+                                mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                                operation="C_GenerateKey",
+                            )
+                        )
             finally:
-                destroy_quietly(rs.raw, rs.sh, key.value)
+                if key.value != 0:
+                    destroy_quietly(rs.raw, rs.sh, key.value)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -363,6 +675,7 @@ class TestTLS10PreMasterKeyGen:
                     label="CKM_TLS_PRE_MASTER_KEY_GEN:C_GenerateKey",
                     operation="C_GenerateKey",
                     mechanism="CKM_TLS_PRE_MASTER_KEY_GEN",
+                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_TLS_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
@@ -379,6 +692,7 @@ class TestTLS10PreMasterKeyGen:
             pytest.skip("CKM_TLS_MASTER_KEY_DERIVE not supported")
 
         pms = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_ssl3_master_key_derive(
                 CKM_TLS_MASTER_KEY_DERIVE,
@@ -402,9 +716,6 @@ class TestTLS10PreMasterKeyGen:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
                 expected = _tls_prf_legacy_md5_sha1(
                     _PRE_MASTER_SECRET,
                     b"master secret",
@@ -412,15 +723,37 @@ class TestTLS10PreMasterKeyGen:
                     _SERVER_RANDOM,
                     48,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
-                    label="CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.0/1.1 master secret)",
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey output handle",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS_MASTER_KEY_DERIVE",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS_MASTER_KEY_DERIVE:CKA_VALUE readback",
+                        mechanism="CKM_TLS_MASTER_KEY_DERIVE",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.0/1.1 master secret)",
+                    mechanism="CKM_TLS_MASTER_KEY_DERIVE",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -447,6 +780,7 @@ class TestTLS10PreMasterKeyGen:
             pytest.skip("CKM_TLS_KEY_AND_MAC_DERIVE not supported")
 
         master_secret = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_ssl3_key_mat(
                 CKM_TLS_KEY_AND_MAC_DERIVE,
@@ -469,10 +803,39 @@ class TestTLS10PreMasterKeyGen:
             )
             try:
                 out = mech.key_mat_out
-                assert out.hClientKey != 0
-                assert out.hServerKey != 0
-                assert any(mech.buffer_bytes("iv_client"))
-                assert any(mech.buffer_bytes("iv_server"))
+                for handle, label in (
+                    (out.hClientKey, "client key"),
+                    (out.hServerKey, "server key"),
+                ):
+                    _guard_producer_handle(
+                        handle,
+                        label=f"CKM_TLS_KEY_AND_MAC_DERIVE:{label} output handle",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_TLS_KEY_AND_MAC_DERIVE",
+                        records=hard_results,
+                    )
+                iv_client = mech.buffer_bytes("iv_client")
+                if not iv_client:
+                    hard_results.append(
+                        _record_parameter_mismatch(
+                            label="CKM_TLS_KEY_AND_MAC_DERIVE:client IV output",
+                            parameter="pIVClient",
+                            expected="non-empty bytes",
+                            actual=iv_client,
+                            mechanism="CKM_TLS_KEY_AND_MAC_DERIVE",
+                        )
+                    )
+                iv_server = mech.buffer_bytes("iv_server")
+                if not iv_server:
+                    hard_results.append(
+                        _record_parameter_mismatch(
+                            label="CKM_TLS_KEY_AND_MAC_DERIVE:server IV output",
+                            parameter="pIVServer",
+                            expected="non-empty bytes",
+                            actual=iv_server,
+                            mechanism="CKM_TLS_KEY_AND_MAC_DERIVE",
+                        )
+                    )
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -482,6 +845,7 @@ class TestTLS10PreMasterKeyGen:
                     out.hClientKey,
                     out.hServerKey,
                 )
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -539,6 +903,7 @@ class TestTLS10PreMasterKeyGen:
             pytest.skip("CKM_TLS_PRF not supported")
 
         pms = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls_prf(
                 CKM_TLS_PRF,
@@ -563,9 +928,6 @@ class TestTLS10PreMasterKeyGen:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48
                 expected = _tls_prf_legacy_md5_sha1(
                     _PRE_MASTER_SECRET,
                     b"master secret",
@@ -573,15 +935,37 @@ class TestTLS10PreMasterKeyGen:
                     _SERVER_RANDOM,
                     48,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
-                    label="CKM_TLS_PRF:C_DeriveKey KAT",
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS_PRF:C_DeriveKey output handle",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS_PRF",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS_PRF:CKA_VALUE readback",
+                        mechanism="CKM_TLS_PRF",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS_PRF:C_DeriveKey KAT",
+                    mechanism="CKM_TLS_PRF",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -612,6 +996,7 @@ class TestTLS12MasterKeyDerive:
             pytest.skip("CKM_TLS12_MASTER_KEY_DERIVE not supported")
 
         pms = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls12_master_key_derive(
                 CKM_TLS12_MASTER_KEY_DERIVE,
@@ -636,24 +1021,43 @@ class TestTLS12MasterKeyDerive:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
                 expected = _tls12_master_secret_reference(
                     _PRE_MASTER_SECRET,
                     _CLIENT_RANDOM,
                     _SERVER_RANDOM,
                     48,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
-                    label="CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.2 master secret)",
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey output handle",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS12_MASTER_KEY_DERIVE",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS12_MASTER_KEY_DERIVE:CKA_VALUE readback",
+                        mechanism="CKM_TLS12_MASTER_KEY_DERIVE",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS12_MASTER_KEY_DERIVE:C_DeriveKey KAT (TLS 1.2 master secret)",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -680,6 +1084,7 @@ class TestTLS12MasterKeyDerive:
             pytest.skip("CKM_TLS12_MASTER_KEY_DERIVE_DH not supported")
 
         dh_pms = _create_generic_secret(rs, bytes(range(32)))
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls12_master_key_derive(
                 CKM_TLS12_MASTER_KEY_DERIVE_DH,
@@ -705,26 +1110,45 @@ class TestTLS12MasterKeyDerive:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
                 expected = _tls12_master_secret_reference(
                     bytes(range(32)),
                     _CLIENT_RANDOM,
                     _SERVER_RANDOM,
                     48,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS12_MASTER_KEY_DERIVE_DH:C_DeriveKey output handle",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_MASTER_KEY_DERIVE_DH",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS12_MASTER_KEY_DERIVE_DH:CKA_VALUE readback",
+                        mechanism="CKM_TLS12_MASTER_KEY_DERIVE_DH",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
                     label=(
                         "CKM_TLS12_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT (TLS 1.2 master secret DH)"
                     ),
-                    operation="C_DeriveKey",
                     mechanism="CKM_TLS12_MASTER_KEY_DERIVE_DH",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -755,6 +1179,7 @@ class TestTLS12KeyAndMacDerive:
             pytest.skip("CKM_TLS12_KEY_AND_MAC_DERIVE not supported")
 
         master_secret = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls12_key_mat(
                 CKM_TLS12_KEY_AND_MAC_DERIVE,
@@ -778,10 +1203,39 @@ class TestTLS12KeyAndMacDerive:
             )
             try:
                 out = mech.key_mat_out
-                assert out.hClientKey != 0
-                assert out.hServerKey != 0
-                assert any(mech.buffer_bytes("iv_client"))
-                assert any(mech.buffer_bytes("iv_server"))
+                for handle, label in (
+                    (out.hClientKey, "client key"),
+                    (out.hServerKey, "server key"),
+                ):
+                    _guard_producer_handle(
+                        handle,
+                        label=f"CKM_TLS12_KEY_AND_MAC_DERIVE:{label} output handle",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_TLS12_KEY_AND_MAC_DERIVE",
+                        records=hard_results,
+                    )
+                iv_client = mech.buffer_bytes("iv_client")
+                if not iv_client:
+                    hard_results.append(
+                        _record_parameter_mismatch(
+                            label="CKM_TLS12_KEY_AND_MAC_DERIVE:client IV output",
+                            parameter="pIVClient",
+                            expected="non-empty bytes",
+                            actual=iv_client,
+                            mechanism="CKM_TLS12_KEY_AND_MAC_DERIVE",
+                        )
+                    )
+                iv_server = mech.buffer_bytes("iv_server")
+                if not iv_server:
+                    hard_results.append(
+                        _record_parameter_mismatch(
+                            label="CKM_TLS12_KEY_AND_MAC_DERIVE:server IV output",
+                            parameter="pIVServer",
+                            expected="non-empty bytes",
+                            actual=iv_server,
+                            mechanism="CKM_TLS12_KEY_AND_MAC_DERIVE",
+                        )
+                    )
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -791,6 +1245,7 @@ class TestTLS12KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -844,6 +1299,7 @@ class TestTLS12KeyAndMacDerive:
             pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
 
         master_secret = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls12_key_mat(
                 CKM_TLS12_KEY_SAFE_DERIVE,
@@ -868,8 +1324,17 @@ class TestTLS12KeyAndMacDerive:
             )
             try:
                 out = mech.key_mat_out
-                assert out.hClientKey != 0
-                assert out.hServerKey != 0
+                for handle, label in (
+                    (out.hClientKey, "client key"),
+                    (out.hServerKey, "server key"),
+                ):
+                    _guard_producer_handle(
+                        handle,
+                        label=f"CKM_TLS12_KEY_SAFE_DERIVE:{label} output handle",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_TLS12_KEY_SAFE_DERIVE",
+                        records=hard_results,
+                    )
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -879,6 +1344,7 @@ class TestTLS12KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -900,6 +1366,7 @@ class TestTLS12KeyAndMacDerive:
             pytest.skip("CKM_TLS12_KEY_SAFE_DERIVE not supported")
 
         master_secret = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls12_key_mat(
                 CKM_TLS12_KEY_SAFE_DERIVE,
@@ -935,12 +1402,32 @@ class TestTLS12KeyAndMacDerive:
                     mech=mech,
                 )
                 out = mech.key_mat_out
-                assert out.hClientKey != 0
-                assert out.hServerKey != 0
-                assert (
-                    mech.buffer_bytes("iv_client") == client_sentinel
-                    and mech.buffer_bytes("iv_server") == server_sentinel
-                ), "CKM_TLS12_KEY_SAFE_DERIVE wrote IV material despite key-safe semantics"
+                for handle, label in (
+                    (out.hClientKey, "client key"),
+                    (out.hServerKey, "server key"),
+                ):
+                    _guard_producer_handle(
+                        handle,
+                        label=f"CKM_TLS12_KEY_SAFE_DERIVE:{label} output handle",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_TLS12_KEY_SAFE_DERIVE",
+                        records=hard_results,
+                    )
+                actual_ivs = {
+                    "client": mech.buffer_bytes("iv_client"),
+                    "server": mech.buffer_bytes("iv_server"),
+                }
+                expected_ivs = {"client": client_sentinel, "server": server_sentinel}
+                if actual_ivs != expected_ivs:
+                    hard_results.append(
+                        _record_parameter_mismatch(
+                            label="CKM_TLS12_KEY_SAFE_DERIVE wrote IV material",
+                            parameter="pIVClient/pIVServer",
+                            expected=expected_ivs,
+                            actual=actual_ivs,
+                            mechanism="CKM_TLS12_KEY_SAFE_DERIVE",
+                        )
+                    )
             finally:
                 out = mech.key_mat_out
                 destroy_returned_handles(
@@ -950,6 +1437,7 @@ class TestTLS12KeyAndMacDerive:
                     out.hClientKey,
                     out.hServerKey,
                 )
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1086,6 +1574,7 @@ class TestTLS12KDF:
             pytest.skip("CKM_TLS12_KDF not supported")
 
         base_key = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls_kdf(
                 CKM_TLS12_KDF,
@@ -1111,8 +1600,6 @@ class TestTLS12KDF:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
                 expected = _tls12_prf_sha256(
                     _PRE_MASTER_SECRET,
                     b"key expansion",
@@ -1120,15 +1607,36 @@ class TestTLS12KDF:
                     _SERVER_RANDOM,
                     32,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
-                    label="CKM_TLS12_KDF:C_DeriveKey KAT",
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS12_KDF:C_DeriveKey output handle",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS12_KDF",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS12_KDF:CKA_VALUE readback",
+                        mechanism="CKM_TLS12_KDF",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS12_KDF:C_DeriveKey KAT",
+                    mechanism="CKM_TLS12_KDF",
+                    operation="C_DeriveKey",
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1150,6 +1658,7 @@ class TestTLS12KDF:
             pytest.skip("CKM_TLS12_KDF not supported")
 
         base_key = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls_kdf(
                 CKM_TLS12_KDF,
@@ -1176,8 +1685,6 @@ class TestTLS12KDF:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
                 expected = _tls12_prf_sha256(
                     _PRE_MASTER_SECRET,
                     b"key expansion",
@@ -1186,15 +1693,36 @@ class TestTLS12KDF:
                     32,
                     context_data=b"context-info",
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
-                    label="CKM_TLS12_KDF:C_DeriveKey KAT (context-data exact vector)",
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS12_KDF:C_DeriveKey output handle",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS12_KDF",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS12_KDF:CKA_VALUE context-data readback",
+                        mechanism="CKM_TLS12_KDF",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS12_KDF:C_DeriveKey KAT (context-data exact vector)",
+                    mechanism="CKM_TLS12_KDF",
+                    operation="C_DeriveKey",
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1221,6 +1749,7 @@ class TestTLS12KDF:
             pytest.skip("CKM_TLS_KDF not supported")
 
         base_key = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls_kdf(
                 CKM_TLS_KDF,
@@ -1246,11 +1775,36 @@ class TestTLS12KDF:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 32
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS_KDF:C_DeriveKey output handle",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS_KDF",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS_KDF:CKA_VALUE readback",
+                        mechanism="CKM_TLS_KDF",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS_KDF:CKA_VALUE readback",
+                    mechanism="CKM_TLS_KDF",
+                    operation="C_DeriveKey",
+                    expected_len=32,
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1272,6 +1826,7 @@ class TestTLS12KDF:
             pytest.skip("CKM_TLS_KDF not supported")
 
         base_key = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_tls_kdf(
                 CKM_TLS_KDF,
@@ -1297,8 +1852,6 @@ class TestTLS12KDF:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
                 expected = _tls_prf_legacy_md5_sha1(
                     _PRE_MASTER_SECRET,
                     b"key expansion",
@@ -1306,15 +1859,36 @@ class TestTLS12KDF:
                     _SERVER_RANDOM,
                     32,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
-                    label="CKM_TLS_KDF:C_DeriveKey KAT (TLS 1.0/1.1 PRF exact vector)",
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS_KDF:C_DeriveKey output handle",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS_KDF",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS_KDF:CKA_VALUE TLS1.0/1.1 readback",
+                        mechanism="CKM_TLS_KDF",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
+                    label="CKM_TLS_KDF:C_DeriveKey KAT (TLS 1.0/1.1 PRF exact vector)",
+                    mechanism="CKM_TLS_KDF",
+                    operation="C_DeriveKey",
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1349,6 +1923,7 @@ class TestTLS12Extended:
             pytest.skip("CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not supported")
 
         pms = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             session_hash = bytes(range(32))  # simulated SHA-256 handshake hash
             mech = mech_tls12_extended_master_key_derive(
@@ -1373,26 +1948,45 @@ class TestTLS12Extended:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
                 expected = _tls12_extended_master_secret_reference(
                     _PRE_MASTER_SECRET,
                     session_hash,
                     48,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey output handle",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:CKA_VALUE readback",
+                        mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
                     label=(
                         "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey KAT "
                         "(extended master secret)"
                     ),
-                    operation="C_DeriveKey",
                     mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1401,6 +1995,7 @@ class TestTLS12Extended:
                     label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}",
                 )
             raise
@@ -1419,6 +2014,7 @@ class TestTLS12Extended:
             pytest.skip("CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH not supported")
 
         dh_pms = _create_generic_secret(rs, bytes(range(32)))
+        hard_results: list[C.Classification] = []
         try:
             session_hash = bytes(range(32))
             mech = mech_tls12_extended_master_key_derive(
@@ -1444,26 +2040,45 @@ class TestTLS12Extended:
                 mech_param=mech,
             )
             try:
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == 48, f"Expected 48-byte master secret, got {len(value)}"
                 expected = _tls12_extended_master_secret_reference(
                     bytes(range(32)),
                     session_hash,
                     48,
                 )
-                assert_correct(
-                    actual=value,
-                    expected=expected,
+                value = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived,
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:C_DeriveKey output handle",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
+                    records=hard_results,
+                ):
+                    value = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived,
+                        CKA_VALUE,
+                        label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:CKA_VALUE readback",
+                        mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    value,
                     label=(
                         "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH:C_DeriveKey KAT "
                         "(extended master secret DH)"
                     ),
-                    operation="C_DeriveKey",
                     mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                    expected=expected,
                 )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1488,6 +2103,7 @@ class TestTLS12Extended:
             pytest.skip("CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not supported")
 
         pms = _create_tls_pms(rs)
+        hard_results: list[C.Classification] = []
         try:
             hash_a = bytes(range(32))
             hash_b = bytes(range(32, 64))
@@ -1513,6 +2129,33 @@ class TestTLS12Extended:
                 mech_param=mech_a,
             )
             try:
+                val_a = MISSING_ATTRIBUTE
+                if _guard_producer_handle(
+                    derived_a,
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash-A output handle",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    records=hard_results,
+                ):
+                    val_a = _read_provider_attribute(
+                        rs.raw,
+                        rs.sh,
+                        derived_a,
+                        CKA_VALUE,
+                        label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash-A CKA_VALUE readback",
+                        mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                        error_rvs=_TLS_ERROR_RVS,
+                    )
+                mismatch = _validate_output(
+                    val_a,
+                    label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash-A CKA_VALUE readback",
+                    mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    operation="C_DeriveKey",
+                    expected_len=48,
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+
                 mech_b = mech_tls12_extended_master_key_derive(
                     CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
                     hash_mech=CKM_SHA256,
@@ -1527,13 +2170,58 @@ class TestTLS12Extended:
                     mech_param=mech_b,
                 )
                 try:
-                    val_a = read_attributes(rs.raw, rs.sh, derived_a, [CKA_VALUE])[CKA_VALUE]
-                    val_b = read_attributes(rs.raw, rs.sh, derived_b, [CKA_VALUE])[CKA_VALUE]
-                    assert val_a != val_b, "Different session hashes must produce different secrets"
+                    val_b = MISSING_ATTRIBUTE
+                    if _guard_producer_handle(
+                        derived_b,
+                        label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash-B output handle",
+                        operation="C_DeriveKey",
+                        mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                        records=hard_results,
+                    ):
+                        val_b = _read_provider_attribute(
+                            rs.raw,
+                            rs.sh,
+                            derived_b,
+                            CKA_VALUE,
+                            label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash-B CKA_VALUE readback",
+                            mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                            error_rvs=_TLS_ERROR_RVS,
+                        )
+                    mismatch = _validate_output(
+                        val_b,
+                        label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash-B CKA_VALUE readback",
+                        mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                        operation="C_DeriveKey",
+                        expected_len=48,
+                    )
+                    if mismatch is not None:
+                        hard_results.append(mismatch)
+                    if (
+                        val_a is not MISSING_ATTRIBUTE
+                        and val_b is not MISSING_ATTRIBUTE
+                        and isinstance(val_a, bytes)
+                        and isinstance(val_b, bytes)
+                        and val_a == val_b
+                    ):
+                        hard_results.append(
+                            _record_relation_mismatch(
+                                label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:hash dependence",
+                                expected="different outputs for different session hashes",
+                                left=val_a,
+                                left_label="hash-A",
+                                left_mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                                right=val_b,
+                                right_label="hash-B",
+                                right_mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                            )
+                        )
                 finally:
-                    destroy_quietly(rs.raw, rs.sh, derived_b)
+                    if derived_b != 0:
+                        destroy_quietly(rs.raw, rs.sh, derived_b)
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived_a)
+                if derived_a != 0:
+                    destroy_quietly(rs.raw, rs.sh, derived_a)
+            _raise_strongest(hard_results)
         except AssertionError as exc:
             if is_known_error(exc, _TLS_ERROR_RVS):
                 classify(
@@ -1542,6 +2230,7 @@ class TestTLS12Extended:
                     label="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:C_DeriveKey",
                     operation="C_DeriveKey",
                     mechanism="CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
+                    actual=getattr(exc, "rv", None),
                     summary=f"CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE not operational: {exc}",
                 )
             raise

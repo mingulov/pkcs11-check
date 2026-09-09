@@ -18,6 +18,7 @@ def attr_or_record(
     label: str,
     reason: Literal["honest_deviation", "not_operational"] = "honest_deviation",
     kind: str = "metadata",
+    mechanism: str | None = None,
 ) -> Any:
     """Return an attribute or record its absence without terminating the test."""
     if reason not in ("honest_deviation", "not_operational"):
@@ -35,6 +36,7 @@ def attr_or_record(
         kind=kind,
         label=label,
         operation="C_GetAttributeValue",
+        mechanism=mechanism,
         summary=f"{label}: attribute unavailable",
         detail={"attribute": {"name": attr_name, "id": attr_id}},
     )

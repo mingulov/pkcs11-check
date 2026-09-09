@@ -134,7 +134,10 @@ class TestHwFeatureClock:
         features = _hw_features(rs)
         clocks = []
         for feat in features:
-            if _hw_type(rs, feat) == CKH_CLOCK:
+            hw_type = _hw_type(rs, feat)
+            if hw_type is MISSING_ATTRIBUTE:
+                continue
+            if hw_type == CKH_CLOCK:
                 clocks.append(feat)
         return clocks
 
@@ -173,7 +176,10 @@ class TestHwFeatureCounter:
         features = _hw_features(rs)
         counters = []
         for feat in features:
-            if _hw_type(rs, feat) == CKH_MONOTONIC_COUNTER:
+            hw_type = _hw_type(rs, feat)
+            if hw_type is MISSING_ATTRIBUTE:
+                continue
+            if hw_type == CKH_MONOTONIC_COUNTER:
                 counters.append(feat)
         return counters
 
