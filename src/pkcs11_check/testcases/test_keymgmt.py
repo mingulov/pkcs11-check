@@ -5,11 +5,13 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.raw.der import decode_ec_point
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh
 from pkcs11_check.raw.recipes import (
@@ -26,7 +28,6 @@ from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
-    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -56,6 +57,8 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
@@ -105,6 +108,23 @@ def _decrypt_or_xfail(rs: Any, key: int, data: bytes) -> bytes:
     raise
 
 
+def _wrong_attribute(*, label: str, expected: Any, actual: str, kind: str = "metadata") -> NoReturn:
+    record = C.record_as(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation="C_GetAttributeValue",
+        summary=f"{label}: provider returned {actual}; expected {expected!r}",
+        detail={
+            "attribute": {
+                "expected": repr(expected),
+                "actual": actual,
+            }
+        },
+    )
+    C.raise_for_record(record)
+
+
 class TestKeyImport:
     @pytest.fixture(autouse=True)
     def _skip_if_no_create_object(self, p11_raw_session: Any) -> None:
@@ -128,7 +148,21 @@ class TestKeyImport:
         try:
             assert key != 0
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
+                label="CKA_KEY_TYPE:imported-AES",
+                reason="not_operational",
+                kind="metadata",
+            )
+            if key_type is MISSING_ATTRIBUTE:
+                return
+            if key_type != CKK_AES:
+                _wrong_attribute(
+                    label="CKA_KEY_TYPE:imported-AES",
+                    expected=CKK_AES,
+                    actual=f"{key_type!r}",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -173,14 +207,30 @@ class TestKeyImport:
             },
         )
         try:
-            exported = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
-            assert exported == key_bytes
+            attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+            exported = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="CKA_VALUE:extractable-AES",
+                reason="not_operational",
+                kind="metadata",
+            )
+            if exported is MISSING_ATTRIBUTE:
+                return
+            if exported != key_bytes:
+                _wrong_attribute(
+                    label="CKA_VALUE:extractable-AES",
+                    expected=key_bytes,
+                    actual=f"{exported!r}",
+                    kind="crypto",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_import_multiple_sizes(self, p11_raw_session: Any) -> None:
         """Import AES keys at 128, 192, 256 bit sizes."""
         rs = p11_raw_session
+        mismatch: tuple[str, bytes, Any] | None = None
         for size_bytes in [16, 24, 32]:
             key_bytes = bytes(size_bytes)
             key = import_secret_key(
@@ -195,10 +245,27 @@ class TestKeyImport:
                 },
             )
             try:
-                exported = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])[CKA_VALUE]
-                assert exported == key_bytes
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+                exported = attr_or_record(
+                    attrs,
+                    CKA_VALUE,
+                    label=f"CKA_VALUE:imported-AES-{size_bytes * 8}",
+                    reason="not_operational",
+                    kind="metadata",
+                )
+                if exported is MISSING_ATTRIBUTE:
+                    continue
+                if exported != key_bytes and mismatch is None:
+                    mismatch = (
+                        f"CKA_VALUE:imported-AES-{size_bytes * 8}",
+                        key_bytes,
+                        f"{exported!r}",
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
+        if mismatch is not None:
+            label, expected, actual = mismatch
+            _wrong_attribute(label=label, expected=expected, actual=actual, kind="crypto")
 
 
 class TestKeyExport:
@@ -210,10 +277,38 @@ class TestKeyExport:
         pub, priv = gen_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = attrs[CKA_MODULUS]
-            assert len(modulus) == 256
-            exponent = attrs[CKA_PUBLIC_EXPONENT]
-            assert len(exponent) >= 1
+            modulus = attr_or_record(
+                attrs,
+                CKA_MODULUS,
+                label="CKA_MODULUS:RSA-public",
+                reason="not_operational",
+                kind="metadata",
+            )
+            exponent = attr_or_record(
+                attrs,
+                CKA_PUBLIC_EXPONENT,
+                label="CKA_PUBLIC_EXPONENT:RSA-public",
+                reason="not_operational",
+                kind="metadata",
+            )
+            if modulus is not MISSING_ATTRIBUTE and (
+                modulus.__class__ is not bytes or modulus.__len__() != 256
+            ):
+                _wrong_attribute(
+                    label="CKA_MODULUS:RSA-public",
+                    expected="256-byte bytes",
+                    actual=f"{modulus!r}",
+                    kind="crypto",
+                )
+            if exponent is not MISSING_ATTRIBUTE and (
+                exponent.__class__ is not bytes or not exponent
+            ):
+                _wrong_attribute(
+                    label="CKA_PUBLIC_EXPONENT:RSA-public",
+                    expected="non-empty bytes",
+                    actual=f"{exponent!r}",
+                    kind="crypto",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -226,9 +321,12 @@ class TestKeyExport:
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair_or_xfail(rs, curve_oid)
         try:
-            attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])
-            ec_point = attrs[CKA_EC_POINT]
-            assert len(ec_point) > 0
+            read_ec_public_key_or_xfail(
+                rs,
+                pub,
+                ec.SECP256R1(),
+                label="CKA_EC_POINT:P-256-public",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -248,8 +346,28 @@ class TestKeyCopy:
                 {CKA_LABEL: b"copy"},
             )
             attrs = read_attributes(rs.raw, rs.sh, copy, [CKA_LABEL, CKA_KEY_TYPE])
-            assert attrs[CKA_LABEL] in (b"copy", "copy")
-            assert attrs[CKA_KEY_TYPE] == CKK_AES
+            label_value = attr_or_record(
+                attrs,
+                CKA_LABEL,
+                label="CKA_LABEL:copied-AES",
+                reason="not_operational",
+                kind="metadata",
+            )
+            key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
+                label="CKA_KEY_TYPE:copied-AES",
+                reason="not_operational",
+                kind="metadata",
+            )
+            mismatch: tuple[str, Any, Any] | None = None
+            if label_value is not MISSING_ATTRIBUTE and label_value not in (b"copy", "copy"):
+                mismatch = ("CKA_LABEL:copied-AES", (b"copy", "copy"), f"{label_value!r}")
+            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_AES and mismatch is None:
+                mismatch = ("CKA_KEY_TYPE:copied-AES", CKK_AES, f"{key_type!r}")
+            if mismatch is not None:
+                label, expected, actual = mismatch
+                _wrong_attribute(label=label, expected=expected, actual=actual)
         finally:
             destroy_quietly(rs.raw, rs.sh, original)
             if copy:
@@ -312,8 +430,23 @@ class TestKeyWrapUnwrap:
                 },
                 purpose="AES-KEY-WRAP keymgmt roundtrip",
             )
-            exported = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-            assert exported == key_bytes
+            attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
+            exported = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="CKA_VALUE:unwrapped-AES",
+                reason="not_operational",
+                kind="metadata",
+            )
+            if exported is MISSING_ATTRIBUTE:
+                return
+            if exported != key_bytes:
+                _wrong_attribute(
+                    label="CKA_VALUE:unwrapped-AES",
+                    expected=key_bytes,
+                    actual=f"{exported!r}",
+                    kind="crypto",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
             destroy_quietly(rs.raw, rs.sh, target)
@@ -335,9 +468,16 @@ class TestKeyDerive:
         pub_b, _priv_b = gen_ec_keypair_or_xfail(rs, curve_oid)
         derived = 0
         try:
-            # Read pub_b's EC_POINT and unwrap from DER
-            ec_point_raw = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])[CKA_EC_POINT]
-            point_b = decode_ec_point(bytes(ec_point_raw))
+            peer_key = read_ec_public_key_or_xfail(
+                rs,
+                pub_b,
+                ec.SECP256R1(),
+                label="CKA_EC_POINT:ECDH-peer-P-256",
+            )
+            point_b = peer_key.public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint,
+            )
 
             derived = derive_key(
                 rs.raw,

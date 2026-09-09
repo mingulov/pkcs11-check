@@ -986,3 +986,1116 @@ def check(raw, session, handle):
     assert len(violations) == 1
     assert violations[0].kind == "unsafe_subscript"
     assert violations[0].provenance.startswith("provider-call:")
+
+
+def test_finally_preserves_tainted_return_path_with_conditional_fallthrough() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    try:
+        if condition:
+            attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+            return None
+    finally:
+        return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_finally_pass_keeps_unconditional_return_terminal() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    try:
+        return None
+    finally:
+        pass
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return attrs[CKA_VALUE]
+"""
+
+    assert _violations(source) == []
+
+
+def test_loop_widening_reports_reverse_propagation_beyond_iteration_cap() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    tenth = {}
+    for _ in range(20):
+        tenth = ninth
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return tenth[CKA_VALUE]
+"""
+
+    first = _violations(source)
+    second = _violations(source)
+
+    assert first == second
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_loop_widening_rechecks_body_after_dependency_closed_state() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        ninth[CKA_VALUE]
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return None
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_loop_widening_excludes_else_assignments_from_carried_dependencies() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check(raw, session, handle):
+    x = b""
+    y = b""
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        x = y
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    else:
+        y = attr_or_record({}, CKA_VALUE, label="value")
+    return x + b"!"
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("terminal", ["break", "continue", "return"])
+def test_loop_widening_ignores_assignment_after_terminal_flow(terminal: str) -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, stop):
+    value = {}
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        if stop:
+            TERMINAL
+            value = first
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return value[CKA_VALUE]
+""".replace("TERMINAL", terminal)
+
+    assert _violations(source) == []
+
+
+def test_loop_widening_ignores_unreachable_try_else_assignment() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, stop):
+    value = {}
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        value[CKA_VALUE]
+        if stop:
+            try:
+                break
+            except Exception:
+                break
+            else:
+                value = first
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_loop_widening_composes_try_else_terminal_paths() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, stop):
+    value = {}
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        value[CKA_VALUE]
+        if stop:
+            try:
+                pass
+            except Exception:
+                break
+            else:
+                break
+            value = first
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_loop_widening_keeps_with_suppressed_flow_reachable() -> None:
+    source = """
+from contextlib import suppress
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, stop):
+    value = {}
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        value[CKA_VALUE]
+        if stop:
+            with suppress(RuntimeError):
+                raise RuntimeError
+            value = ninth
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return None
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_loop_widening_keeps_with_break_terminal() -> None:
+    source = """
+from contextlib import nullcontext
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, stop):
+    value = {}
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in range(20):
+        value[CKA_VALUE]
+        if stop:
+            with nullcontext():
+                break
+            value = first
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_loop_widening_does_not_recheck_one_shot_for_iterable() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    iterable = {}
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    for _ in iterable[CKA_VALUE]:
+        iterable = ninth
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_guarded_optional_value_can_be_passed_to_unknown_callable() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    if value is MISSING_ATTRIBUTE:
+        return
+    consume(value, checked=value)
+"""
+
+    assert _violations(source) == []
+
+
+def test_unguarded_optional_value_passed_to_unknown_callable_is_reported() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    consume(value)
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_optional_name_rebinding_invalidates_presence_refinement() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE, CKA_LABEL])
+    value = attr_or_record(attrs, CKA_VALUE, label="first")
+    if value is MISSING_ATTRIBUTE:
+        return
+    consume(((value := attr_or_record(attrs, CKA_LABEL, label="second")), None)[1], value)
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_later_argument_rebinding_does_not_invalidate_earlier_argument() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    if value is MISSING_ATTRIBUTE:
+        return
+    consume(value, (value := None))
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "value = value",
+        "alias = value\n    value = alias",
+        "(value,) = (value,)",
+    ],
+)
+def test_optional_identity_preserving_assignment_keeps_presence(assignment: str) -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    if value is MISSING_ATTRIBUTE:
+        return
+    ASSIGNMENT
+    consume(value)
+""".replace("ASSIGNMENT", assignment)
+
+    assert _violations(source) == []
+
+
+def test_optional_tuple_swap_uses_pre_assignment_presence_snapshot() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    first = attr_or_record(attrs, CKA_VALUE, label="value")
+    if first is MISSING_ATTRIBUTE:
+        return
+    second = None
+    first, second = second, first
+    consume(second)
+"""
+
+    assert _violations(source) == []
+
+
+def test_optional_tuple_rhs_keeps_proof_captured_before_later_walrus() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    if value is MISSING_ATTRIBUTE:
+        return
+    first, value = value, (value := None)
+    consume(first)
+"""
+
+    assert _violations(source) == []
+
+
+def test_distinct_local_wrapper_calls_get_distinct_optional_identities() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def load(attrs):
+    return attr_or_record(attrs, CKA_VALUE, label="value")
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    first = load(attrs)
+    if first is MISSING_ATTRIBUTE:
+        return
+    second = load(attrs)
+    consume(second)
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_distinct_tuple_wrapper_calls_rebase_nested_optional_identities() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def load(attrs):
+    return (attr_or_record(attrs, CKA_VALUE, label="value"),)
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    (first,) = load(attrs)
+    if first is MISSING_ATTRIBUTE:
+        return
+    (second,) = load(attrs)
+    consume(second)
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_local_identity_wrapper_preserves_guarded_optional_identity() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def identity(value):
+    return value
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    if value is MISSING_ATTRIBUTE:
+        return
+    same = identity(value)
+    consume(same)
+"""
+
+    assert _violations(source) == []
+
+
+def test_tuple_argument_identity_wrapper_preserves_guarded_optional_identity() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def head(values):
+    return values[0]
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    if value is MISSING_ATTRIBUTE:
+        return
+    same = head((value,))
+    consume(same)
+"""
+
+    assert _violations(source) == []
+
+
+def test_nested_conditional_terminal_does_not_prove_positive_membership_total() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE in attrs:
+        if condition:
+            return attrs[CKA_VALUE]
+    return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_nested_optional_helper_cannot_prove_outer_required_attribute() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def trust_or_default(attrs):
+    def fake(attrs):
+        if CKA_TRUST_XXX not in attrs:
+            return CKT_TRUST_UNKNOWN
+        return attrs[CKA_TRUST_XXX]
+    if CKA_TRUST_XXX not in attrs:
+        return None
+    return attrs[CKA_TRUST_XXX]
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_TRUST_XXX])
+    return trust_or_default(attrs)
+"""
+
+    assert _kinds(
+        source,
+        reviewed_optional_helpers={"trust_or_default", "trust_or_default.fake"},
+        optional_defaults={"CKA_TRUST_XXX": "CKT_TRUST_UNKNOWN"},
+    ) == ["unstructured_absence"]
+
+
+def test_nested_negative_oracle_cannot_prove_outer_helper_summary() -> None:
+    source = """
+from pkcs11_check.classification import record_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def absent_is_ok(attrs):
+    def fake(attrs):
+        if CKA_VALUE in attrs:
+            record_as("self_contradiction", kind="metadata", detail="CKA_VALUE was present")
+            return False
+        return True
+    if CKA_VALUE in attrs:
+        return False
+    return False
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return absent_is_ok(attrs)
+"""
+
+    assert _kinds(source, reviewed_negative_oracles={"absent_is_ok"}) == ["unstructured_absence"]
+
+
+def test_conditional_optional_default_does_not_prove_absence_path() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def trust_or_default(attrs, condition):
+    if CKA_TRUST_XXX not in attrs:
+        if condition:
+            return CKT_TRUST_UNKNOWN
+        return None
+    return attrs[CKA_TRUST_XXX]
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_TRUST_XXX])
+    return trust_or_default(attrs, condition)
+"""
+
+    assert _kinds(
+        source,
+        reviewed_optional_helpers={"trust_or_default"},
+        optional_defaults={"CKA_TRUST_XXX": "CKT_TRUST_UNKNOWN"},
+    ) == ["unstructured_absence"]
+
+
+def test_conditional_negative_oracle_does_not_prove_present_path_terminal() -> None:
+    source = """
+from pkcs11_check.classification import record_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def absent_is_ok(attrs, condition):
+    if CKA_VALUE in attrs:
+        if condition:
+            record_as("self_contradiction", kind="metadata", detail="CKA_VALUE was present")
+            return False
+    return True
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return absent_is_ok(attrs, condition)
+"""
+
+    assert _kinds(source, reviewed_negative_oracles={"absent_is_ok"}) == [
+        "unstructured_absence",
+        "unstructured_absence",
+    ]
+
+
+def test_presence_or_short_circuit_refines_rhs_only() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs or attrs[CKA_VALUE]:
+        return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_presence_or_short_circuit_reports_unsafe_rhs_variant() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs or condition:
+        return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
+
+
+def test_finally_return_override_discards_tainted_try_return() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    try:
+        attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+        return attrs
+    finally:
+        return {}
+"""
+
+    assert _violations(source) == []
+
+
+def test_finally_normal_path_preserves_only_reachable_tainted_return() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition, override):
+    try:
+        if condition:
+            attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+            return attrs
+    finally:
+        if override:
+            return {}
+    return None
+"""
+
+    assert _kinds(source) == ["taint_escape"]
+
+
+def test_finally_mixed_override_keeps_tainted_and_clean_return_summaries() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def wrapper(raw, session, handle, override):
+    try:
+        attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+        return attrs
+    finally:
+        if override:
+            return {}
+
+def check(raw, session, handle, override):
+    attrs = wrapper(raw, session, handle, override)
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_loop_widening_preserves_optional_values_across_more_than_eight_shifts() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check(raw, session, handle):
+    value = attr_or_record({}, CKA_VALUE, label="value")
+    first = value
+    second = {}
+    third = {}
+    fourth = {}
+    fifth = {}
+    sixth = {}
+    seventh = {}
+    eighth = {}
+    ninth = {}
+    tenth = {}
+    for _ in range(20):
+        tenth = ninth
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    return tenth
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_loop_widening_preserves_callable_mapping_and_elements() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def consume(attrs):
+    return attrs[CKA_VALUE]
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    callback = consume
+    first = (attrs, callback)
+    second = ()
+    for _ in range(20):
+        second = first
+        first = second
+    current_attrs, current_callback = second
+    current_callback(current_attrs)
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_non_exhaustive_match_has_an_implicit_fallthrough_path() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, selector):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE in attrs:
+        match selector:
+            case 1:
+                return attrs[CKA_VALUE]
+    return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_nested_optional_definition_is_not_evidence_for_outer_helper() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def trust_or_default(attrs):
+    if CKA_TRUST_XXX not in attrs:
+        return CKT_TRUST_UNKNOWN
+    def decoy():
+        return attrs[CKA_TRUST_XXX]
+    return None
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_TRUST_XXX])
+    return trust_or_default(attrs)
+"""
+
+    assert _kinds(
+        source,
+        reviewed_optional_helpers={"trust_or_default"},
+        optional_defaults={"CKA_TRUST_XXX": "CKT_TRUST_UNKNOWN"},
+    ) == ["unstructured_absence"]
+
+
+def test_nested_negative_definition_is_not_evidence_for_outer_oracle() -> None:
+    source = """
+from pkcs11_check.classification import record_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def emit(*args, **kwargs):
+    return None
+
+def absent_is_ok(attrs):
+    if CKA_VALUE in attrs:
+        emit("self_contradiction", kind="metadata", detail="CKA_VALUE was present")
+        def decoy():
+            record_as("self_contradiction", kind="metadata", detail="CKA_VALUE was present")
+            return False
+        return False
+    return True
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return absent_is_ok(attrs)
+"""
+
+    assert _kinds(source, reviewed_negative_oracles={"absent_is_ok"}) == ["unstructured_absence"]
+
+
+def test_finally_override_does_not_prove_reviewed_optional_default() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def trust_or_default(attrs):
+    if CKA_TRUST_XXX not in attrs:
+        try:
+            return CKT_TRUST_UNKNOWN
+        finally:
+            return None
+    return attrs[CKA_TRUST_XXX]
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_TRUST_XXX])
+    return trust_or_default(attrs)
+"""
+
+    assert _kinds(
+        source,
+        reviewed_optional_helpers={"trust_or_default"},
+        optional_defaults={"CKA_TRUST_XXX": "CKT_TRUST_UNKNOWN"},
+    ) == ["unstructured_absence"]
+
+
+def test_presence_or_requires_same_evaluated_mapping_object() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def get_attrs(raw, session, handle):
+    return read_attributes(raw, session, handle, [CKA_VALUE])
+
+def check(raw, session, handle):
+    if CKA_VALUE not in get_attrs(raw, session, handle) or get_attrs(
+        raw, session, handle
+    )[CKA_VALUE]:
+        return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
+
+
+def test_presence_or_requires_same_stable_key_expression() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def key_factory():
+    return CKA_VALUE
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if key_factory() not in attrs or attrs[key_factory()]:
+        return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
+
+
+def test_loop_widening_keeps_optional_tuple_elements_with_unrelated_tuple_width() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    first = ((value, b""), b"")
+    second = ()
+    third = ()
+    fourth = ()
+    fifth = ()
+    sixth = ()
+    seventh = ()
+    eighth = ()
+    ninth = ()
+    tenth = ()
+    unrelated = (None,)
+    for _ in range(20):
+        tenth = ninth
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+        unused, = unrelated
+    (current, _), _ = tenth
+    return current + b"x"
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_loop_widening_does_not_pollute_unknown_callback_with_unrelated_callable() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def safe(attrs):
+    return None
+
+def check(raw, session, handle, callback):
+    known = safe
+    cb1 = callback
+    cb2 = None
+    first = attr_or_record({}, CKA_VALUE, label="value")
+    second = None
+    third = None
+    fourth = None
+    fifth = None
+    sixth = None
+    seventh = None
+    eighth = None
+    ninth = None
+    tenth = None
+    for _ in range(20):
+        tenth = ninth
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+        cb2 = cb1
+    current = cb2
+    current(read_attributes(raw, session, handle, [CKA_VALUE]))
+"""
+
+    assert _kinds(source) == ["taint_escape"]
+
+
+def test_loop_widening_applies_tuple_construction_to_delayed_optional_input() -> None:
+    source = """
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check():
+    first = attr_or_record({}, CKA_VALUE, label="value")
+    second = None
+    third = None
+    fourth = None
+    fifth = None
+    sixth = None
+    seventh = None
+    eighth = None
+    ninth = None
+    tenth = ()
+    for _ in range(20):
+        tenth = (ninth,)
+        ninth = eighth
+        eighth = seventh
+        seventh = sixth
+        sixth = fifth
+        fifth = fourth
+        fourth = third
+        third = second
+        second = first
+    current, = tenth
+    return current + b"x"
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_mixed_tuple_widths_preserve_nested_optional_elements() -> None:
+    source = """
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check(condition):
+    value = attr_or_record({}, CKA_VALUE, label="value")
+    selected = (b"", (b"", value)) if condition else (b"", (b"",))
+    _, (_, current) = selected
+    return current + b"x"
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+@pytest.mark.parametrize(
+    "absence_body",
+    [
+        "match selector:\n    case 1:\n        return None\nreturn CKT_TRUST_UNKNOWN",
+        "try:\n    return CKT_TRUST_UNKNOWN\nfinally:\n"
+        "    match selector:\n        case 1:\n            return None",
+        "for item in selector:\n    return None\nreturn CKT_TRUST_UNKNOWN",
+        "try:\n    return CKT_TRUST_UNKNOWN\nfinally:\n"
+        "    for item in selector:\n        return None",
+        "for item in selector:\n    match item:\n        case 1:\n"
+        "            return None\nreturn CKT_TRUST_UNKNOWN",
+    ],
+    ids=["match", "finally-match", "loop", "finally-loop", "loop-match"],
+)
+@pytest.mark.parametrize(
+    ("branch_value", "expected_kinds"),
+    [("None", ["unstructured_absence"]), ("CKT_TRUST_UNKNOWN", [])],
+    ids=["wrong-return", "reviewed-return"],
+)
+def test_optional_default_proof_checks_explicit_match_and_loop_returns(
+    absence_body: str, branch_value: str, expected_kinds: list[str]
+) -> None:
+    absence_body = absence_body.replace("return None", f"return {branch_value}")
+    indented_body = "\n".join(f"        {line}" for line in absence_body.splitlines())
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+
+def trust_or_default(attrs, selector):
+    if CKA_TRUST_XXX not in attrs:
+{indented_body}
+    return attrs[CKA_TRUST_XXX]
+
+def check(raw, session, handle, selector):
+    attrs = read_attributes(raw, session, handle, [CKA_TRUST_XXX])
+    return trust_or_default(attrs, selector)
+"""
+
+    assert (
+        _kinds(
+            source,
+            reviewed_optional_helpers={"trust_or_default"},
+            optional_defaults={"CKA_TRUST_XXX": "CKT_TRUST_UNKNOWN"},
+        )
+        == expected_kinds
+    )
+
+
+def test_nested_mapping_union_does_not_recover_one_alternative_identity() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, choose_first, choose_selected):
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = read_attributes(raw, session, handle, [CKA_VALUE])
+    selected = first if choose_first else second
+    combined = selected if choose_selected else first
+    if CKA_VALUE not in combined or first[CKA_VALUE]:
+        return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
+
+
+def test_mapping_union_membership_does_not_prove_each_origin_present() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, choose_first):
+    first = read_attributes(raw, session, handle, [CKA_VALUE])
+    second = read_attributes(raw, session, handle, [CKA_VALUE])
+    selected = first if choose_first else second
+    if CKA_VALUE not in selected or first[CKA_VALUE]:
+        return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]

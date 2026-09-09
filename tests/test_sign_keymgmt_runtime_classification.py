@@ -134,7 +134,7 @@ def test_keymgmt_wrong_exported_value_remains_hard_failure(
     )
     monkeypatch.setattr(test_keymgmt, "destroy_quietly", lambda *_a: None)
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(pytest.fail.Exception):
         test_keymgmt.TestKeyImport().test_extractable_key_export(_session())
 
 
