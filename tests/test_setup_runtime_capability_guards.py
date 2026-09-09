@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -257,7 +258,10 @@ def test_rsa_oaep_xfail_when_advertised_rsa_keypair_rejects_runtime(
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
     rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "RSA_PKCS_OAEP")
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_rsa_oaep.TestRSAOAEPRoundtrip().test_oaep_encrypt_decrypt(rs)
 
 
@@ -267,7 +271,10 @@ def test_nonce_quality_xfail_when_advertised_ec_keypair_rejects_runtime(
     monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_attribute_value_invalid)
     rs = _session_with_mechanisms("ECDSA", "EC_KEY_PAIR_GEN")
 
-    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised EC keypair generation rejected setup",
+    ):
         test_nonce_quality.TestECDSANonceReuse().test_nonce_reuse_p256(rs)
 
 
@@ -285,7 +292,7 @@ def test_generic_secret_hmac_runtime_general_error_is_xfail(
         test_generic_secret.TestGenericSecretHMAC().test_hmac_with_imported_generic_secret(rs)
 
 
-def test_sign_recover_subprocess_keygen_reject_is_xfail(
+def test_sign_recover_subprocess_keygen_fatal_is_harness_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
@@ -298,8 +305,13 @@ def test_sign_recover_subprocess_keygen_reject_is_xfail(
     )
     config = SimpleNamespace(module="/tmp/mock-pkcs11.so", slot=0, pin=None)
 
-    with pytest.raises(pytest.xfail.Exception, match="keypair setup rejected"):
+    with pytest.raises(pytest.fail.Exception, match="pkcs11-check itself failed"):
         test_sign_recover.TestSignRecover().test_sign_recover_produces_output(config, object())
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "harness_error"
+    assert records[0].outcome == "fail"
 
 
 def test_sign_recover_probe_returns_false_for_empty_token_slots() -> None:
@@ -534,7 +546,10 @@ def test_authenticated_wrap_ecdh_roundtrip_ec_keygen_reject_is_xfail(
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised EC keypair generation rejected setup",
+    ):
         test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_roundtrip(
             rs,
             p11_config,
@@ -554,7 +569,10 @@ def test_authenticated_wrap_ecdh_integrity_ec_keygen_reject_is_xfail(
         lambda message: pytest.fail(f"unexpected skip: {message}"),
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised EC keypair generation rejected setup",
+    ):
         test_authenticated_wrap.TestEcdhAesKeyWrap().test_ecdh_aes_kw_bit_flip_integrity(
             rs,
             p11_config,
@@ -1683,7 +1701,10 @@ def test_mech_lifecycle_rsa_oaep_keygen_reject_is_xfail(
     rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "RSA_PKCS_OAEP", "AES_ECB")
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_mech_lifecycle.TestRSAOAEPWrapLifecycle().test_rsa_oaep_wrap_aes_roundtrip(rs)
 
 
@@ -1693,7 +1714,10 @@ def test_mech_lifecycle_ecdh_keygen_reject_is_xfail(
     rs = _session_with_mechanisms("EC_KEY_PAIR_GEN", "ECDH1_DERIVE", "AES_CBC")
     monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_attribute_value_invalid)
 
-    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised EC keypair generation rejected setup",
+    ):
         test_mech_lifecycle.TestECDHDerivedKeyUse().test_ecdh_derive_and_use(rs)
 
 
@@ -2011,7 +2035,10 @@ def test_attribute_defaults_rsa_keygen_reject_is_xfail(
     )
 
     fixture = test_attribute_defaults.TestKeyPairDefaults().rsa_keypair.__wrapped__
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         next(fixture(test_attribute_defaults.TestKeyPairDefaults(), rs))
 
 
@@ -2166,7 +2193,10 @@ def test_crossverify_rsa_keygen_reject_is_xfail(
 
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_crossverify.TestRSACrossVerify().test_rsa_4096_sign(rs)
 
 
@@ -2531,7 +2561,10 @@ def test_encrypt_rsa_pkcs_xfail_when_advertised_rsa_keypair_rejects_runtime(
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
     rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "RSA_PKCS")
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip(rs)
 
 
@@ -2541,7 +2574,10 @@ def test_encrypt_rsa_oaep_xfail_when_advertised_rsa_keypair_rejects_runtime(
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _raise_attribute_value_invalid)
     rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN", "RSA_PKCS_OAEP")
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_encrypt.TestRSAEncryption().test_rsa_oaep_roundtrip(rs)
 
 
@@ -2561,7 +2597,10 @@ def test_mech_sign_recover_xfail_when_advertised_rsa_keypair_rejects_runtime(
         has_mechanism=_Mod.has_mechanism,
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_mech_sign_recover.TestSignRecover().test_rsa_x509_sign_recover_roundtrip(session)
 
 
@@ -2574,7 +2613,10 @@ def test_kdf_ecdh_xfail_when_advertised_ec_keypair_rejects_runtime(
     monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _raise_attribute_value_invalid)
     rs = _session_with_mechanisms("EC_KEY_PAIR_GEN", "ECDH1_DERIVE")
 
-    with pytest.raises(pytest.xfail.Exception, match="EC_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised EC keypair generation rejected setup",
+    ):
         test_kdf.TestECDHDerive().test_ecdh_keypair_independence(rs)
 
 

@@ -162,8 +162,7 @@ def test_raw_session_clean_function_list_reject_preserves_exact_ckr(
     raw_session.probe_main_raw(lambda _ctx, _extra: pytest.fail("probe must not run"))
 
     assert (
-        "SETUP_XFAIL:C_GetFunctionList rejected with CKR_GENERAL_ERROR"
-        in capsys.readouterr().out
+        "SETUP_XFAIL:C_GetFunctionList rejected with CKR_GENERAL_ERROR" in capsys.readouterr().out
     )
 
 

@@ -26,9 +26,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import test_operation_state as tos
 from pkcs11_check.testcases._probes.runner import ProbeResult
 
-_CROSS_DIGEST = hashlib.sha256(
-    b"cross-session data" + b"cross-session continuation"
-).hexdigest()
+_CROSS_DIGEST = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
 _SAME_DIGEST = hashlib.sha256(b"Hello, " + b"PKCS#11 state!").hexdigest()
 
 
@@ -116,9 +114,7 @@ def test_operation_state_restored_mismatch_is_wrong_result(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="mismatch"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -142,9 +138,7 @@ def test_operation_state_clean_setup_reject_is_not_operational(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.xfail.Exception, match="not operational"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -188,6 +182,7 @@ def test_cross_session_rejection_is_recorded_before_signal(
         tos.TestDigestStateRoundTrip().test_digest_state_cross_session(config, None)
 
     from pkcs11_check.classification import get_records
+
     records = get_records()
     assert [record.reason for record in records] == ["crash"]
 
@@ -196,19 +191,13 @@ def test_cross_session_wrong_restored_digest_is_recorded_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Wrong accepted-path output survives when cleanup subsequently crashes."""
-    expected = hashlib.sha256(
-        b"cross-session data" + b"cross-session continuation"
-    ).hexdigest()
+    expected = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
     monkeypatch.setattr(
         tos,
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=-11,
-            stdout=(
-                f"REFERENCE:{expected}\n"
-                "CROSS_SESSION_ACCEPTED:1\n"
-                f"RESTORED:{'00' * 32}\n"
-            ),
+            stdout=(f"REFERENCE:{expected}\nCROSS_SESSION_ACCEPTED:1\nRESTORED:{'00' * 32}\n"),
             stderr="",
         ),
     )
@@ -249,19 +238,13 @@ def test_cross_session_valid_output_needs_no_terminal_ok(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Complete cross-session fields are sufficient raw protocol evidence."""
-    digest = hashlib.sha256(
-        b"cross-session data" + b"cross-session continuation"
-    ).hexdigest()
+    digest = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
     monkeypatch.setattr(
         tos,
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{digest}\n"
-                "CROSS_SESSION_ACCEPTED:1\n"
-                f"RESTORED:{digest}\n"
-            ),
+            stdout=(f"REFERENCE:{digest}\nCROSS_SESSION_ACCEPTED:1\nRESTORED:{digest}\n"),
             stderr="",
         ),
     )
@@ -387,9 +370,7 @@ def test_same_session_function_not_supported_is_capability_skip(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
 
     with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
@@ -416,9 +397,7 @@ def test_state_function_not_supported_does_not_hide_outer_signal(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
 
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
@@ -445,9 +424,7 @@ def test_earlier_hard_semantic_record_controls_before_state_skip(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
 
     with pytest.raises(pytest.fail.Exception, match="impossible transition"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
@@ -475,9 +452,7 @@ def test_unrelated_digest_init_function_not_supported_stays_provider_evidence(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
 
     with pytest.raises(pytest.xfail.Exception, match="not operational"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
@@ -520,19 +495,13 @@ def test_cross_session_acceptance_followup_reject_is_self_contradiction(
     operation: str,
 ) -> None:
     """Accepted restore followed by a cross-session CKR contradicts the claim."""
-    digest = hashlib.sha256(
-        b"cross-session data" + b"cross-session continuation"
-    ).hexdigest()
+    digest = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
     monkeypatch.setattr(
         tos,
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{digest}\n"
-                "CROSS_SESSION_ACCEPTED:1\n"
-                f"CKR:{operation}:0x00000054\n"
-            ),
+            stdout=(f"REFERENCE:{digest}\nCROSS_SESSION_ACCEPTED:1\nCKR:{operation}:0x00000054\n"),
             stderr="",
         ),
     )
@@ -600,9 +569,7 @@ def test_cross_session_acceptance_compares_restored_digest(
 def test_cross_session_acceptance_wrong_digest_is_wrong_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = hashlib.sha256(
-        b"cross-session data" + b"cross-session continuation"
-    ).hexdigest()
+    expected = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
     monkeypatch.setattr(
         tos,
         "run_probe",
@@ -646,9 +613,7 @@ def test_cross_session_acceptance_missing_digest_is_harness_error(
 def test_cross_session_acceptance_malformed_digest_is_harness_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = hashlib.sha256(
-        b"cross-session data" + b"cross-session continuation"
-    ).hexdigest()
+    expected = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
     monkeypatch.setattr(
         tos,
         "run_probe",
@@ -677,11 +642,7 @@ def test_cross_session_wrong_reference_is_harness_error(
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{'00' * 32}\n"
-                "CROSS_SESSION_ACCEPTED:1\n"
-                f"RESTORED:{_CROSS_DIGEST}\n"
-            ),
+            stdout=(f"REFERENCE:{'00' * 32}\nCROSS_SESSION_ACCEPTED:1\nRESTORED:{_CROSS_DIGEST}\n"),
             stderr="",
         ),
     )
@@ -707,11 +668,7 @@ def test_cross_session_wrong_reference_and_restored_accumulate_in_protocol_order
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{'00' * 32}\n"
-                "CROSS_SESSION_ACCEPTED:1\n"
-                f"RESTORED:{'11' * 32}\n"
-            ),
+            stdout=(f"REFERENCE:{'00' * 32}\nCROSS_SESSION_ACCEPTED:1\nRESTORED:{'11' * 32}\n"),
             stderr="",
         ),
     )
@@ -858,9 +815,7 @@ def test_same_session_wrong_reference_is_harness_error(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="REFERENCE"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -890,9 +845,7 @@ def test_same_session_wrong_restored_is_provider_wrong_result(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="RESTORED"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -914,17 +867,13 @@ def test_same_session_wrong_reference_and_restored_accumulate(
         lambda *_a, **_k: ProbeResult(
             returncode=0,
             stdout=(
-                f"REFERENCE:{'00' * 32}\n"
-                f"SINGLESHOT_OK:{_SAME_DIGEST}\n"
-                f"RESTORED:{'11' * 32}\nOK\n"
+                f"REFERENCE:{'00' * 32}\nSINGLESHOT_OK:{_SAME_DIGEST}\nRESTORED:{'11' * 32}\nOK\n"
             ),
             stderr="",
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -944,17 +893,13 @@ def test_same_session_wrong_restored_before_signal(
         lambda *_a, **_k: ProbeResult(
             returncode=-11,
             stdout=(
-                f"REFERENCE:{_SAME_DIGEST}\n"
-                f"SINGLESHOT_OK:{_SAME_DIGEST}\n"
-                f"RESTORED:{'00' * 32}\n"
+                f"REFERENCE:{_SAME_DIGEST}\nSINGLESHOT_OK:{_SAME_DIGEST}\nRESTORED:{'00' * 32}\n"
             ),
             stderr="",
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -978,9 +923,7 @@ def test_same_session_singleshot_wrong_digest_is_provider_wrong_result(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="SINGLESHOT"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1000,17 +943,12 @@ def test_same_session_wrong_reference_and_singleshot_ok_accumulate(
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{'00' * 32}\n"
-                f"SINGLESHOT_OK:{'00' * 32}\n"
-            ),
+            stdout=(f"REFERENCE:{'00' * 32}\nSINGLESHOT_OK:{'00' * 32}\n"),
             stderr="",
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="REFERENCE"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1034,17 +972,12 @@ def test_same_session_correct_singleshot_is_harness_error_with_wrong_reference(
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{'00' * 32}\n"
-                f"SINGLESHOT:{_SAME_DIGEST}\n"
-            ),
+            stdout=(f"REFERENCE:{'00' * 32}\nSINGLESHOT:{_SAME_DIGEST}\n"),
             stderr="",
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="REFERENCE"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1077,9 +1010,7 @@ def test_same_session_restored_success_requires_one_singleshot_ok(
         lambda *_a, **_k: ProbeResult(returncode=0, stdout=stdout, stderr=""),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="Malformed"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1102,9 +1033,7 @@ def test_same_session_valid_ckr_survives_malformed_ckr_sibling(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="Malformed"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1134,9 +1063,7 @@ def test_same_session_duplicate_singleshot_ok_preserves_unique_wrong_restored(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="Malformed"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1164,9 +1091,7 @@ def test_same_session_missing_singleshot_ok_correct_restored_before_signal(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1191,9 +1116,7 @@ def test_same_session_missing_singleshot_ok_wrong_restored_preserves_all_evidenc
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     expected_match = "signal 11" if returncode < 0 else "Malformed"
     with pytest.raises(pytest.fail.Exception, match=expected_match):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
@@ -1268,10 +1191,7 @@ def test_cross_session_wrong_reference_and_rejection_accumulate(
     "followup",
     [
         "CKR:DigestUpdate_cross:0x00000000\n",
-        (
-            "CKR:DigestUpdate_cross:0x00000000\n"
-            "CKR:DigestFinal_cross:0x00000054\n"
-        ),
+        ("CKR:DigestUpdate_cross:0x00000000\nCKR:DigestFinal_cross:0x00000054\n"),
     ],
 )
 def test_cross_session_non_failure_followup_is_harness_error(
@@ -1284,11 +1204,7 @@ def test_cross_session_non_failure_followup_is_harness_error(
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                f"REFERENCE:{_CROSS_DIGEST}\n"
-                "CROSS_SESSION_ACCEPTED:1\n"
-                f"{followup}"
-            ),
+            stdout=(f"REFERENCE:{_CROSS_DIGEST}\nCROSS_SESSION_ACCEPTED:1\n{followup}"),
             stderr="",
         ),
     )
@@ -1338,9 +1254,7 @@ def test_cross_session_failure_and_restored_is_harness_error(
         ),
         (
             "invalid",
-            "REFERENCE:not-a-digest\n"
-            "CROSS_SESSION_ACCEPTED:1\n"
-            "CKR:DigestUpdate_cross:0x00000054\n",
+            "REFERENCE:not-a-digest\nCROSS_SESSION_ACCEPTED:1\nCKR:DigestUpdate_cross:0x00000054\n",
         ),
         (
             "duplicate",
@@ -1509,10 +1423,7 @@ def test_cross_session_ambiguous_partial_reference_preserves_unique_early_ckr(
 ) -> None:
     """Invalid/duplicate references yield one harness record plus provider evidence."""
     if reference == _CROSS_DIGEST + "0":
-        stdout = (
-            f"REFERENCE:{_CROSS_DIGEST}\nREFERENCE:{reference}\n"
-            "CKR:DigestInit:0x00000054\n"
-        )
+        stdout = f"REFERENCE:{_CROSS_DIGEST}\nREFERENCE:{reference}\nCKR:DigestInit:0x00000054\n"
     else:
         stdout = f"REFERENCE:{reference}\nCKR:DigestInit:0x00000054\n"
     monkeypatch.setattr(
@@ -1613,9 +1524,7 @@ def test_same_session_correct_singleshot_is_harness_error(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception, match="SINGLESHOT"):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 
@@ -1642,9 +1551,7 @@ def test_same_session_terminal_marker_requires_reference(
         ),
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
-    session = SimpleNamespace(
-        raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256"
-    )
+    session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
     with pytest.raises(pytest.fail.Exception):
         tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
 

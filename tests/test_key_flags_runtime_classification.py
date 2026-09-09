@@ -69,9 +69,7 @@ def test_imported_key_missing_local_readback_records_exact_ckr(
     record = C.get_records()[0]
     assert record.operation == "C_GetAttributeValue"
     assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
-    assert record.detail == {
-        "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)}
-    }
+    assert record.detail == {"attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)}}
 
 
 def test_missing_required_flag_records_and_cleans_up(

@@ -394,11 +394,7 @@ def test_fork_duplicate_child_fatal_is_harness(
         "run_probe",
         lambda *_args, **_kwargs: ProbeResult(
             returncode=0,
-            stdout=(
-                "CHILD_FATAL:Init:0x00000005\n"
-                "CHILD_FATAL:Init:0x00000005\n"
-                "CHILD_EXIT:0\n"
-            ),
+            stdout=("CHILD_FATAL:Init:0x00000005\nCHILD_FATAL:Init:0x00000005\nCHILD_EXIT:0\n"),
             stderr="",
         ),
     )
@@ -417,11 +413,7 @@ def test_fork_duplicate_child_exception_is_harness(
         "run_probe",
         lambda *_args, **_kwargs: ProbeResult(
             returncode=0,
-            stdout=(
-                "CHILD_EXC:RuntimeError:broken\n"
-                "CHILD_EXC:RuntimeError:broken\n"
-                "CHILD_EXIT:0\n"
-            ),
+            stdout=("CHILD_EXC:RuntimeError:broken\nCHILD_EXC:RuntimeError:broken\nCHILD_EXIT:0\n"),
             stderr="",
         ),
     )
@@ -717,10 +709,7 @@ def test_session_found_then_cleanup_exception_preserves_policy_and_harness(
         lambda *_args, **_kwargs: ProbeResult(
             returncode=0,
             stdout=(
-                "PARENT_LABEL:parent\n"
-                "CHILD_FOUND:1\n"
-                "CHILD_EXC:BufferError:cleanup\n"
-                "CHILD_EXIT:5\n"
+                "PARENT_LABEL:parent\nCHILD_FOUND:1\nCHILD_EXC:BufferError:cleanup\nCHILD_EXIT:5\n"
             ),
             stderr="",
         ),
@@ -736,12 +725,7 @@ def test_session_found_then_cleanup_exception_preserves_policy_and_harness(
     "stdout",
     [
         "PARENT_LABEL:parent\nCHILD_FOUND:1\nCHILD_EXC:RuntimeError:cleanup\n",
-        (
-            "PARENT_LABEL:parent\n"
-            "CHILD_FOUND:1\n"
-            "CHILD_EXC:RuntimeError:cleanup\n"
-            "CHILD_EXIT:4\n"
-        ),
+        ("PARENT_LABEL:parent\nCHILD_FOUND:1\nCHILD_EXC:RuntimeError:cleanup\nCHILD_EXIT:4\n"),
         "PARENT_LABEL:parent\nCHILD_FOUND:1\nCHILD_EXC:broken\nCHILD_EXIT:5\n",
         "PARENT_LABEL:parent\nCHILD_FOUND:1\nCHILD_EXIT:4\n",
     ],
@@ -792,10 +776,7 @@ def test_session_found_zero_then_cleanup_exception_is_harness_only(
         lambda *_args, **_kwargs: ProbeResult(
             returncode=0,
             stdout=(
-                "PARENT_LABEL:parent\n"
-                "CHILD_FOUND:0\n"
-                "CHILD_EXC:BufferError:cleanup\n"
-                "CHILD_EXIT:5\n"
+                "PARENT_LABEL:parent\nCHILD_FOUND:0\nCHILD_EXC:BufferError:cleanup\nCHILD_EXIT:5\n"
             ),
             stderr="",
         ),

@@ -60,7 +60,10 @@ def test_key_size_rsa_keypair_runtime_reject_is_xfail(
     monkeypatch.setattr(recipes, "gen_rsa_keypair", _keypair_reject)
     monkeypatch.setattr(test_key_sizes, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.xfail.Exception, match="RSA_PKCS_KEY_PAIR_GEN advertised"):
+    with pytest.raises(
+        pytest.xfail.Exception,
+        match="advertised RSA keypair generation rejected setup",
+    ):
         test_key_sizes.TestRSAKeySizes().test_rsa_generate(
             _session("RSA_PKCS_KEY_PAIR_GEN"),
             2048,

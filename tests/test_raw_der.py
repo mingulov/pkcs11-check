@@ -235,9 +235,7 @@ class TestEcPointEncoding:
         [b"\x81\x21", b"\x82\x00\x21", b"\x83\x00\x00\x21"],
         ids=["long-form-short-value", "leading-zero", "overpadded"],
     )
-    def test_decode_rejects_noncanonical_length_encoding(
-        self, length_encoding: bytes
-    ) -> None:
+    def test_decode_rejects_noncanonical_length_encoding(self, length_encoding: bytes) -> None:
         point = b"\x02" + b"\x01" * 32
         der = b"\x04" + length_encoding + point
 

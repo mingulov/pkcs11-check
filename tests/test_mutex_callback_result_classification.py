@@ -196,10 +196,7 @@ def test_mutex_64bit_shaped_undefined_lock_rv_is_provider_failure(
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                "INIT_RV=0x00000000\n"
-                "CALL_RV=0x1000000000000000\n"
-            ),
+            stdout=("INIT_RV=0x00000000\nCALL_RV=0x1000000000000000\n"),
             stderr="",
         ),
     )
@@ -314,10 +311,7 @@ def test_mutex_lock_defined_nonzero_call_result_is_clean(
         "run_probe",
         lambda *_a, **_k: ProbeResult(
             returncode=0,
-            stdout=(
-                "INIT_RV=0x00000000\n"
-                f"CALL_RV=0x{int(CKR_FUNCTION_FAILED):08x}\n"
-            ),
+            stdout=(f"INIT_RV=0x00000000\nCALL_RV=0x{int(CKR_FUNCTION_FAILED):08x}\n"),
             stderr="",
         ),
     )

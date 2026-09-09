@@ -429,11 +429,7 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
         payload = fatal_lines[0].removeprefix("CHILD_FATAL:")
         match = _FATAL_MARKER.fullmatch(payload)
         rv = _parse_ckr_marker(f"0x{match.group('rv')}") if match is not None else None
-        if (
-            match is None
-            or match.group("phase") not in _FORK_REFUSAL_EXITS
-            or rv is None
-        ):
+        if match is None or match.group("phase") not in _FORK_REFUSAL_EXITS or rv is None:
             result.harness.append(
                 _protocol_error(
                     context,
@@ -542,8 +538,10 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
         )
 
     marker_order = _marker_order(lines)
-    if not result.harness and marker_order and not _is_order_prefix(
-        marker_order, _FORK_MARKER_ORDERS
+    if (
+        not result.harness
+        and marker_order
+        and not _is_order_prefix(marker_order, _FORK_MARKER_ORDERS)
     ):
         result.harness.append(
             _protocol_error(
@@ -584,9 +582,7 @@ def _parse_isolation_protocol(
     order_valid = _is_order_prefix(marker_order, _SESSION_MARKER_ORDERS)
 
     result.label_count = len(label_lines)
-    label_payload = (
-        label_lines[0].removeprefix("PARENT_LABEL:") if len(label_lines) == 1 else ""
-    )
+    label_payload = label_lines[0].removeprefix("PARENT_LABEL:") if len(label_lines) == 1 else ""
     label_valid = bool(label_payload) and label_payload == label_payload.strip()
     setup_markers = setup_lines + setup_exc_lines
     if len(setup_markers) > 1:
@@ -696,14 +692,10 @@ def _parse_isolation_protocol(
         bool(group) for group in (fatal_lines, exception_lines, found_lines, signal_lines)
     )
     found_signal_transition = (
-        len(found_lines) == 1
-        and len(signal_lines) == 1
-        and not (fatal_lines or exception_lines)
+        len(found_lines) == 1 and len(signal_lines) == 1 and not (fatal_lines or exception_lines)
     )
     found_exception_transition = (
-        len(found_lines) == 1
-        and len(exception_lines) == 1
-        and not (fatal_lines or signal_lines)
+        len(found_lines) == 1 and len(exception_lines) == 1 and not (fatal_lines or signal_lines)
     )
     if (
         not setup_markers
@@ -757,11 +749,7 @@ def _parse_isolation_protocol(
         match = _FATAL_MARKER.fullmatch(payload)
         phase: str | None = match.group("phase") if match is not None else None
         rv = _parse_ckr_marker(f"0x{match.group('rv')}") if match is not None else None
-        if (
-            match is None
-            or phase not in _SESSION_REFUSAL_EXITS
-            or rv is None
-        ):
+        if match is None or phase not in _SESSION_REFUSAL_EXITS or rv is None:
             result.harness.append(
                 _protocol_error(
                     context,
@@ -833,9 +821,8 @@ def _parse_isolation_protocol(
                     )
                 )
 
-    if (
-        len(found_lines) == 1
-        and (outcome_groups == 1 or found_signal_transition or found_exception_transition)
+    if len(found_lines) == 1 and (
+        outcome_groups == 1 or found_signal_transition or found_exception_transition
     ):
         found = _parse_decimal_marker(found_lines[0].removeprefix("CHILD_FOUND:"))
         if found is None:
@@ -891,12 +878,7 @@ def _parse_isolation_protocol(
             result.child_signal = None
         else:
             result.outcome = "signal"
-    elif (
-        signal_lines
-        and outcome_groups == 1
-        and result.child_signal is None
-        and not setup_markers
-    ):
+    elif signal_lines and outcome_groups == 1 and result.child_signal is None and not setup_markers:
         # malformed signal was already recorded; keep it from becoming a crash.
         result.outcome = "signal"
 
@@ -928,10 +910,7 @@ def _parse_isolation_protocol(
     # contributes an independent harness result.  Reversed/conflicting/duplicate
     # marker order, malformed FOUND text, and invalid parent labels do not qualify.
     found_policy_valid = (
-        result.found is not None
-        and result.found > 0
-        and label_valid
-        and order_valid
+        result.found is not None and result.found > 0 and label_valid and order_valid
     )
     if result.provider and (
         (result.harness and not found_policy_valid)

@@ -61,8 +61,7 @@ def test_v30_probe_returns_normally_after_unexpected_ckr(
     ckr_v30_raw._message_encrypt_mech_invalid(ctx)
 
     assert capsys.readouterr().out == (
-        "RESULT:C_MessageEncryptInit:CKR:0x00000007\n"
-        "OK:C_MessageEncryptInit\n"
+        "RESULT:C_MessageEncryptInit:CKR:0x00000007\nOK:C_MessageEncryptInit\n"
     )
 
 
@@ -77,8 +76,7 @@ def test_v32_probe_returns_normally_after_unexpected_ckr(
     ckr_v32_raw._verify_signature_mech_invalid(ctx)
 
     assert capsys.readouterr().out == (
-        "RESULT:C_VerifySignatureInit:CKR:0x00000000\n"
-        "OK:C_VerifySignatureInit\n"
+        "RESULT:C_VerifySignatureInit:CKR:0x00000000\nOK:C_VerifySignatureInit\n"
     )
 
 
@@ -117,8 +115,7 @@ def test_v30_raw_message_encrypt_dispatches_probe(
         calls.append((probe, params))
         return SimpleNamespace(
             returncode=0,
-            stdout="RESULT:C_MessageEncryptInit:CKR:0x00000070\n"
-            "OK:C_MessageEncryptInit\n",
+            stdout="RESULT:C_MessageEncryptInit:CKR:0x00000070\nOK:C_MessageEncryptInit\n",
             stderr="",
         )
 
@@ -151,8 +148,7 @@ def test_v32_raw_verify_signature_dispatches_probe(
         calls.append((probe, params))
         return SimpleNamespace(
             returncode=0,
-            stdout="RESULT:C_VerifySignatureInit:CKR:0x00000070\n"
-            "OK:C_VerifySignatureInit\n",
+            stdout="RESULT:C_VerifySignatureInit:CKR:0x00000070\nOK:C_VerifySignatureInit\n",
             stderr="",
         )
 
@@ -209,8 +205,7 @@ def test_v3_result_protocol_classifies_clean_wrong_ckr_as_provider_xfail() -> No
     with pytest.raises(pytest.xfail.Exception, match="non-spec rejection"):
         test_ckr_v30_raw._check(
             0,
-            "RESULT:C_MessageEncryptInit:CKR:0x00000007\n"
-            "OK:C_MessageEncryptInit\n",
+            "RESULT:C_MessageEncryptInit:CKR:0x00000007\nOK:C_MessageEncryptInit\n",
             "",
             "C_MessageEncryptInit",
         )
@@ -225,8 +220,7 @@ def test_v3_result_protocol_classifies_ckr_ok_as_provider_failure() -> None:
     with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
         test_ckr_v30_raw._check(
             0,
-            "RESULT:C_MessageEncryptInit:CKR:0x00000000\n"
-            "OK:C_MessageEncryptInit\n",
+            "RESULT:C_MessageEncryptInit:CKR:0x00000000\nOK:C_MessageEncryptInit\n",
             "",
             "C_MessageEncryptInit",
         )
@@ -267,8 +261,7 @@ def test_v3_mixed_result_phases_are_harness_only() -> None:
     with pytest.raises(pytest.fail.Exception, match="unexpected_result_phase"):
         test_ckr_v32_raw._check(
             0,
-            "RESULT:C_VerifySignature:CKR:0x00000091\n"
-            "OK:C_VerifySignatureInit\n",
+            "RESULT:C_VerifySignature:CKR:0x00000091\nOK:C_VerifySignatureInit\n",
             "",
             "C_VerifySignatureInit",
         )
@@ -283,8 +276,7 @@ def test_v32_null_probe_requires_each_distinct_phase() -> None:
     with pytest.raises(pytest.fail.Exception, match="wrong_result_cardinality"):
         test_ckr_v32_raw._check(
             0,
-            "RESULT:C_EncapsulateKey.pMechanism:CKR:0x00000070\n"
-            "OK:C_EncapsulateKey_NULLs\n",
+            "RESULT:C_EncapsulateKey.pMechanism:CKR:0x00000070\nOK:C_EncapsulateKey_NULLs\n",
             "",
             "C_EncapsulateKey_NULLs",
         )
@@ -376,8 +368,7 @@ def test_v3_wrong_terminal_phase_is_harness_only() -> None:
     with pytest.raises(pytest.fail.Exception, match="unexpected_terminal_phase"):
         test_ckr_v30_raw._check(
             0,
-            "RESULT:C_MessageEncryptInit:CKR:0x00000000\n"
-            "OK:C_EncryptMessage\n",
+            "RESULT:C_MessageEncryptInit:CKR:0x00000000\nOK:C_EncryptMessage\n",
             "",
             "C_MessageEncryptInit",
         )
@@ -438,8 +429,7 @@ def test_v3_measurement_marker_is_not_a_provider_result() -> None:
     with pytest.raises(pytest.fail.Exception, match="unexpected_result_marker"):
         test_ckr_v30_raw._check(
             0,
-            "MEASUREMENT:C_MessageEncryptInit:CKR:0x00000000\n"
-            "OK:C_MessageEncryptInit\n",
+            "MEASUREMENT:C_MessageEncryptInit:CKR:0x00000000\nOK:C_MessageEncryptInit\n",
             "",
             "C_MessageEncryptInit",
         )
@@ -566,9 +556,7 @@ def test_v3_level_login_setup_markers_are_provider_refusals(setup_marker: str) -
         ),
     ],
 )
-def test_v3_setup_success_states_are_harness_only(
-    check: RawCheck, setup_marker: str
-) -> None:
+def test_v3_setup_success_states_are_harness_only(check: RawCheck, setup_marker: str) -> None:
     try:
         check(1, f"{setup_marker}\n", "setup child failed", "C_Test")
     except BaseException:
@@ -659,8 +647,7 @@ def test_v3_high_width_undefined_ckr_is_provider_self_contradiction() -> None:
     with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
         test_ckr_v30_raw._check(
             0,
-            "RESULT:C_MessageEncryptInit:CKR:0x100000007\n"
-            "OK:C_MessageEncryptInit\n",
+            "RESULT:C_MessageEncryptInit:CKR:0x100000007\nOK:C_MessageEncryptInit\n",
             "",
             "C_MessageEncryptInit",
         )
@@ -721,8 +708,7 @@ def test_break_survives_earlier_setup_xfail() -> None:
     with pytest.raises(pytest.fail.Exception, match="forbidden operation"):
         assert_ckr_subprocess_ok(
             0,
-            "SETUP_XFAIL:key setup rejected\n"
-            "BREAK:forbidden operation produced output\n",
+            "SETUP_XFAIL:key setup rejected\nBREAK:forbidden operation produced output\n",
             "",
             context="C_Test CKR probe",
         )
@@ -776,9 +762,7 @@ def test_windows_seh_positive_exit_is_crash(monkeypatch: pytest.MonkeyPatch) -> 
         (test_ckr_v32_raw._check, "C_VerifySignatureInit", "no_v32_funcs"),
     ],
 )
-def test_v3_skip_marker_does_not_hide_signal_crash(
-    check: RawCheck, func: str, skip: str
-) -> None:
+def test_v3_skip_marker_does_not_hide_signal_crash(check: RawCheck, func: str, skip: str) -> None:
     """A capability skip is provisional until the child process disposition is known."""
     with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
         check(-11, f"SKIP:{skip}\n", "segmentation fault", func)
@@ -820,8 +804,7 @@ def test_v3_result_survives_signal_before_completion_marker(check: RawCheck) -> 
 def test_v3_semantic_evidence_survives_cleanup_failure(check: RawCheck) -> None:
     check(
         0,
-        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\n"
-        "HARNESS_ERROR:cleanup failed after measurement\n",
+        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\nHARNESS_ERROR:cleanup failed after measurement\n",
         "",
         "C_Test",
     )
@@ -860,9 +843,7 @@ def test_v3_skip_marker_does_not_hide_windows_seh(
         (test_ckr_v32_raw._check, "C_VerifySignatureInit", "no_v32_funcs"),
     ],
 )
-def test_v3_skip_marker_does_not_hide_timeout(
-    check: RawCheck, func: str, skip: str
-) -> None:
+def test_v3_skip_marker_does_not_hide_timeout(check: RawCheck, func: str, skip: str) -> None:
     """A timeout is a crash-class finding even if setup emitted a skip marker."""
     with pytest.raises(pytest.fail.Exception, match="timed out"):
         check(
@@ -881,8 +862,7 @@ def test_v3_complete_semantic_evidence_survives_cleanup_failure(check: RawCheck)
     """A provider semantic finding and a later harness cleanup defect are additive."""
     check(
         0,
-        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\n"
-        "HARNESS_ERROR:cleanup failed after measurement\n",
+        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\nHARNESS_ERROR:cleanup failed after measurement\n",
         "",
         "C_Test",
     )
@@ -896,14 +876,13 @@ def test_v3_duplicate_semantic_marker_is_one_harness_record(check: RawCheck) -> 
     with pytest.raises(pytest.fail.Exception, match="duplicate_result"):
         check(
             0,
-            "RESULT:C_Test:CKR:0x00000000\n"
-            "RESULT:C_Test:CKR:0x00000000\n"
-            "OK:C_Test\n",
+            "RESULT:C_Test:CKR:0x00000000\nRESULT:C_Test:CKR:0x00000000\nOK:C_Test\n",
             "",
             "C_Test",
         )
 
     assert [record.reason for record in get_records()] == ["harness_error"]
+
 
 def test_malformed_terminal_marker_is_harness_evidence() -> None:
     with pytest.raises(pytest.fail.Exception, match="terminal marker"):
@@ -960,9 +939,7 @@ def test_malformed_marker_and_cleanup_keep_distinct_harness_records() -> None:
 
 def test_cleanup_harness_keeps_valid_semantic_failure() -> None:
     stdout = (
-        "RESULT:C_Test:CKR:0x00000000\n"
-        "OK:C_Test\n"
-        "HARNESS_ERROR:cleanup failed after measurement\n"
+        "RESULT:C_Test:CKR:0x00000000\nOK:C_Test\nHARNESS_ERROR:cleanup failed after measurement\n"
     )
     test_ckr_v30_raw._check(0, stdout, "", "C_Test")
 

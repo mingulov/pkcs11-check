@@ -193,12 +193,14 @@ class TestECDHKnownAnswer:
         if not rs.has_mechanism("ECDH1_DERIVE"):
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
-        pub_a, priv_a = _gen_p256_or_skip(rs)
-        pub_b, priv_b = _gen_p256_or_skip(rs)
-
+        pub_a = priv_a = 0
+        pub_b = priv_b = 0
         key_ab = 0
         key_ba = 0
         try:
+            pub_a, priv_a = _gen_p256_or_skip(rs)
+            pub_b, priv_b = _gen_p256_or_skip(rs)
+
             point_a = _ec_point_from_handle(rs, pub_a)
             point_b = _ec_point_from_handle(rs, pub_b)
 
@@ -261,7 +263,11 @@ class TestECDHKnownAnswer:
                 destroy_quietly(rs.raw, rs.sh, key_ab)
             if key_ba:
                 destroy_quietly(rs.raw, rs.sh, key_ba)
-            destroy_quietly(rs.raw, rs.sh, pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_a)
-            destroy_quietly(rs.raw, rs.sh, pub_b)
-            destroy_quietly(rs.raw, rs.sh, priv_b)
+            if pub_a:
+                destroy_quietly(rs.raw, rs.sh, pub_a)
+            if priv_a:
+                destroy_quietly(rs.raw, rs.sh, priv_a)
+            if pub_b:
+                destroy_quietly(rs.raw, rs.sh, pub_b)
+            if priv_b:
+                destroy_quietly(rs.raw, rs.sh, priv_b)
