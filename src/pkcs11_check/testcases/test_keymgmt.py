@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Any, NoReturn
 
 import pytest
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check import classification as C  # noqa: N812
@@ -40,6 +39,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_WRAP,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKM_AES_ECB,
@@ -58,7 +59,12 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
+from pkcs11_check.testcases._ec_export import (
+    ConventionalECPoint,
+    read_conventional_ec_point_or_xfail,
+    read_ec_public_key_or_xfail,
+    select_ecdh_point_form,
+)
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
@@ -84,6 +90,15 @@ _KEYMGMT_OPERATION_REJECT_RVS = (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+
+
+def _select_ecdh_point_for_target(rs: Any, point: ConventionalECPoint) -> bytes:
+    """Select the peer representation supported by the target ECDH mechanism."""
+    return select_ecdh_point_form(
+        point,
+        supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
+        supports_uncompressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)),
+    )
 
 
 def _aes_keymgmt_key(rs: Any, *, attrs: dict[Any, Any] | None = None) -> int:
@@ -487,20 +502,21 @@ class TestKeyDerive:
             pytest.skip("CKM_ECDH1_DERIVE not supported")
 
         curve_oid = encode_named_curve_parameters("secp256r1")
-        _pub_a, priv_a = gen_ec_keypair_or_xfail(rs, curve_oid, private_attrs={CKA_DERIVE: True})
-        pub_b, _priv_b = gen_ec_keypair_or_xfail(rs, curve_oid)
+        _pub_a = priv_a = pub_b = _priv_b = 0
         derived = 0
         try:
-            peer_key = read_ec_public_key_or_xfail(
+            _pub_a, priv_a = gen_ec_keypair_or_xfail(
+                rs, curve_oid, private_attrs={CKA_DERIVE: True}
+            )
+            pub_b, _priv_b = gen_ec_keypair_or_xfail(rs, curve_oid)
+            peer_point = read_conventional_ec_point_or_xfail(
                 rs,
                 pub_b,
                 ec.SECP256R1(),
                 label="CKA_EC_POINT:ECDH-peer-P-256",
             )
-            point_b = peer_key.public_bytes(
-                serialization.Encoding.X962,
-                serialization.PublicFormat.UncompressedPoint,
-            )
+            point_b = _select_ecdh_point_for_target(rs, peer_point)
+            ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=point_b)
 
             derived = derive_key(
                 rs.raw,
@@ -514,17 +530,17 @@ class TestKeyDerive:
                     CKA_EXTRACTABLE: True,
                     CKA_TOKEN: False,
                 },
-                mech_param=mech_ecdh(
-                    CKM_ECDH1_DERIVE,
-                    kdf=CKD_NULL,
-                    public_data=point_b,
-                ),
+                mech_param=ecdh_param,
             )
             assert derived != 0
         finally:
-            destroy_quietly(rs.raw, rs.sh, _pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_a)
-            destroy_quietly(rs.raw, rs.sh, pub_b)
-            destroy_quietly(rs.raw, rs.sh, _priv_b)
+            if _pub_a:
+                destroy_quietly(rs.raw, rs.sh, _pub_a)
+            if priv_a:
+                destroy_quietly(rs.raw, rs.sh, priv_a)
+            if pub_b:
+                destroy_quietly(rs.raw, rs.sh, pub_b)
+            if _priv_b:
+                destroy_quietly(rs.raw, rs.sh, _priv_b)
             if derived:
                 destroy_quietly(rs.raw, rs.sh, derived)

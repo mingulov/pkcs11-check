@@ -25,7 +25,9 @@ from ctypes import byref
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import attr_ulong, mech_simple, template
 from pkcs11_check.raw.pack_mechanisms import mech_ecdh, mech_gcm, mech_hkdf, mech_oaep
@@ -42,13 +44,18 @@ from pkcs11_check.raw.recipes import (
     verify_single,
     wrap_key,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
-    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -59,6 +66,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE_LEN,
     CKA_WRAP,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKG_MGF1_SHA256,
     CKK_AES,
     CKK_HKDF,
@@ -78,7 +87,12 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases._ec_export import (
+    read_conventional_ec_point_or_xfail,
+    select_ecdh_point_form,
+)
 from pkcs11_check.testcases.conftest import (
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
@@ -221,10 +235,19 @@ class TestECDHDerivedKeyUse:
             )
             pub_b, priv_b = gen_ec_keypair_or_xfail(rs, p256_oid)
 
-            peer_attrs = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
-            peer_point = peer_attrs.get(CKA_EC_POINT)
-            if not peer_point or not isinstance(peer_point, bytes):
-                pytest.skip("Cannot read CKA_EC_POINT from peer public key")
+            peer = read_conventional_ec_point_or_xfail(
+                rs,
+                pub_b,
+                ec.SECP256R1(),
+                label="CKM_ECDH1_DERIVE: lifecycle peer public key",
+            )
+            peer_point = select_ecdh_point_form(
+                peer,
+                supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
+                supports_uncompressed=rs.has_mechanism_flag(
+                    CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)
+                ),
+            )
 
             ecdh_param = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
 
@@ -501,6 +524,85 @@ class TestDigestThenEncrypt:
                 destroy_quietly(rs.raw, rs.sh, key)
 
 
+def _aes_export_detail(**extra: Any) -> dict[str, Any]:
+    """Return non-secret readback identity plus the key-generation provenance."""
+    detail: dict[str, Any] = {
+        "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
+        "producer_operation": "C_GenerateKey",
+        "producer_mechanism": "CKM_AES_KEY_GEN",
+    }
+    detail.update(extra)
+    return detail
+
+
+def _read_exported_aes_value(rs: RawSession, key: int) -> tuple[Any, C.Classification | None]:
+    """Read generated AES material, retaining evidence without exposing secret bytes."""
+    label = "export/reimport lifecycle CKA_VALUE"
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        reason = (
+            "not_operational"
+            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)
+            else "self_contradiction"
+        )
+        record = C.record_as(
+            reason,
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            expected=CKR_OK,
+            actual=exc.rv,
+            detail=_aes_export_detail(),
+            summary=(
+                f"{label}: attribute read was rejected with {ckr_name(exc.rv)}"
+                if reason == "not_operational"
+                else f"{label}: attribute read returned undefined CK_RV {exc.rv:#x}"
+            ),
+        )
+        return MISSING_ATTRIBUTE, record
+
+    before = len(C.get_records())
+    value = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    if value is MISSING_ATTRIBUTE:
+        records = C.get_records()[before:]
+        if not records:
+            raise AssertionError(f"{label}: missing attribute did not produce evidence")
+        record = records[-1]
+        record.detail = {**(record.detail or {}), **_aes_export_detail()}
+        return value, record
+
+    if type(value) is not bytes or len(value) != 32:
+        record = C.record_as(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            detail=_aes_export_detail(
+                expected_length=32,
+                actual_type=type(value).__name__,
+                actual_length=len(value) if isinstance(value, bytes) else None,
+            ),
+            summary=(
+                f"{label}: present value is malformed; expected 32-byte bytes, "
+                f"got {type(value).__name__} of length "
+                f"{len(value) if isinstance(value, bytes) else 'n/a'}"
+            ),
+        )
+        return value, record
+
+    return value, None
+
+
 class TestExportReimportAES:
     """Export AES key value, re-import, verify encrypt compatibility."""
 
@@ -511,8 +613,6 @@ class TestExportReimportAES:
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):
             pytest.skip("CKM_AES_KEY_GEN not supported")
-        if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
-            pytest.skip("CKM_GENERIC_SECRET_KEY_GEN not supported")
 
         key1: int = 0
         key2: int = 0
@@ -530,17 +630,21 @@ class TestExportReimportAES:
                 purpose="export/reimport lifecycle setup",
             )
 
-            # Read the raw key value
-            attrs = read_attributes(rs.raw, rs.sh, key1, [CKA_VALUE])
-            key_bytes = attrs.get(CKA_VALUE)
-            if not key_bytes or not isinstance(key_bytes, bytes):
-                pytest.skip(
-                    "Module does not allow CKA_VALUE export (CKA_EXTRACTABLE may be ignored)"
-                )
+            # Read the raw key value, retaining an observation for after the
+            # independent original-key operation has completed.
+            key_bytes, export_record = _read_exported_aes_value(rs, key1)
 
             # Encrypt with original key
             plaintext = b"\xfe\xed\xfa\xce" * 8
             ct = encrypt_single(rs.raw, rs.sh, key1, CKM_AES_ECB, plaintext)
+
+            # Missing/refused/malformed export disables only the dependent
+            # import/reimport oracle.  It must not suppress this independent
+            # operation or its failure/crash.
+            if export_record is not None:
+                C.raise_for_record(export_record)
+            if key_bytes is MISSING_ATTRIBUTE:
+                return
 
             # Re-import the raw bytes
             key2 = import_secret_key_negotiated(

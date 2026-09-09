@@ -12,13 +12,18 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import pytest
+from asn1crypto.core import ObjectIdentifier as _Asn1OID  # type: ignore[import-untyped]
+from cryptography.exceptions import UnsupportedAlgorithm as _UnsupportedAlgorithm
+from cryptography.hazmat.primitives.asymmetric import ec as _crypto_ec
 from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 from cryptography.hazmat.primitives.serialization import Encoding as _Encoding
 from cryptography.hazmat.primitives.serialization import PublicFormat as _PublicFormat
+from cryptography.x509 import ObjectIdentifier as _CryptoObjectIdentifier
 
 from pkcs11_check.classification import classify, raise_for_record, record_as
 from pkcs11_check.raw import sw_wrap
 from pkcs11_check.raw.api import ckm_name
+from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.pack_mechanisms import mech_oaep, mech_rsa_aes_key_wrap
 from pkcs11_check.raw.rv import (
@@ -2133,6 +2138,39 @@ def _external_or_skip(
 # ---------------------------------------------------------------------------
 
 
+def _ec_public_spki_or_none(ec_params: bytes, ec_point: bytes) -> bytes | None:
+    """Convert strict conventional EC parameters/point bytes to a DER SPKI.
+
+    The external-provision command expects loadable public-key material when the
+    supplied key is a conventional named-curve EC key.  PKCS#11 represents the
+    curve as a DER OBJECT IDENTIFIER and the point as a DER OCTET STRING.  Both
+    wrappers are required to be canonical and fully consumed here; raw
+    non-conventional material is deliberately left to the exact-byte fallback at
+    the caller.
+
+    ``None`` means that local conversion could not establish a supported,
+    loadable conventional key.  It is not a provider verdict and callers retain
+    the original bytes for external provisioning.
+    """
+    try:
+        oid = _Asn1OID.load(ec_params)
+        oid_text = oid.native
+        if not isinstance(oid_text, str) or oid.dump() != ec_params:
+            return None
+        # asn1crypto preserves some non-canonical base-128 encodings in ``dump``;
+        # constructing the OID from its native value gives us the canonical form
+        # to compare against the supplied bytes.
+        if _Asn1OID(oid_text).dump() != ec_params:
+            return None
+        curve_oid = _CryptoObjectIdentifier(oid_text)
+        curve = _crypto_ec.get_curve_for_oid(curve_oid)()
+        sec1_point = decode_ec_point(ec_point)
+        public_key = _crypto_ec.EllipticCurvePublicKey.from_encoded_point(curve, sec1_point)
+        return public_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+    except (LookupError, TypeError, ValueError, _UnsupportedAlgorithm):
+        return None
+
+
 def provision_public_key(
     rs: Any,
     cfg: Any,
@@ -2195,50 +2233,25 @@ def provision_public_key(
             rs, ec_params=ec_params or b"", ec_point=ec_point or b"", key_type=key_type, attrs=attrs
         )
 
-    # Build SPKI DER for the external tier (best-effort; encoding failure → raw fallback).
-    try:
-        if rsa_n is not None and rsa_e is not None:
-            from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
-
-            material: bytes = (
-                _rsa.RSAPublicNumbers(int.from_bytes(rsa_e, "big"), int.from_bytes(rsa_n, "big"))
+    # Build external material while preserving the supplied bytes whenever local
+    # conversion cannot establish a supported key.  The conversion helpers catch
+    # only expected encoding/value/backend failures; programming errors propagate.
+    if rsa_n is not None and rsa_e is not None:
+        try:
+            material = (
+                _crypto_rsa.RSAPublicNumbers(
+                    int.from_bytes(rsa_e, "big"), int.from_bytes(rsa_n, "big")
+                )
                 .public_key()
                 .public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
             )
-        elif ec_params is not None and ec_point is not None:
-            from cryptography.hazmat.primitives.asymmetric import ec as _ec
-
-            # Decode OID from DER: skip tag(0x06)+length bytes → OID value bytes
-            oid_der = ec_params
-            if len(oid_der) >= 2 and oid_der[0] == 0x06:
-                from cryptography.hazmat.primitives.asymmetric.ec import (
-                    get_curve_for_oid,
-                )
-                from cryptography.x509 import ObjectIdentifier
-
-                oid_len = oid_der[1]
-                oid_bytes = oid_der[2 : 2 + oid_len]
-                curve_oid = ObjectIdentifier(".".join(str(x) for x in _decode_oid_value(oid_bytes)))
-                curve = get_curve_for_oid(curve_oid)()
-                # Strip DER OCTET STRING wrapper from ec_point if present (tag 0x04 + len)
-                raw_point: bytes
-                if len(ec_point) >= 2 and ec_point[0] == 0x04 and ec_point[1] == len(ec_point) - 2:
-                    raw_point = ec_point[2:]
-                else:
-                    raw_point = ec_point
-                from cryptography.hazmat.primitives.serialization import (
-                    Encoding as _CryptoEnc,
-                )
-                from cryptography.hazmat.primitives.serialization import PublicFormat
-
-                ec_pub = _ec.EllipticCurvePublicKey.from_encoded_point(curve, raw_point)
-                material = ec_pub.public_bytes(_CryptoEnc.DER, PublicFormat.SubjectPublicKeyInfo)
-            else:
-                material = ec_point if ec_point is not None else b""
-        else:
-            material = b""
-    except Exception:  # noqa: BLE001
-        # Best-effort: encoding failure must not block the external command attempt.
+        except (TypeError, ValueError, _UnsupportedAlgorithm):
+            material = ec_point if ec_point is not None else b""
+    elif key_type == CKK_EC and ec_params is not None and ec_point is not None:
+        material = _ec_public_spki_or_none(ec_params, ec_point) or ec_point
+    else:
+        # Edwards/Montgomery and other raw/unsupported public-key material must
+        # reach the operator command unchanged.
         material = ec_point if ec_point is not None else b""
 
     return _external_or_skip(
@@ -2253,30 +2266,6 @@ def provision_public_key(
             " (no C_CreateObject; external not configured/failed)"
         ),
     )
-
-
-def _decode_oid_value(oid_bytes: bytes) -> list[int]:
-    """Decode the value bytes of a DER OID into a list of integer arcs.
-
-    The first byte encodes the first two arcs as ``40 * arc0 + arc1``.
-    Subsequent arcs are base-128 big-endian encoded (high bit = continuation).
-    """
-    arcs: list[int] = []
-    # First byte encodes arc0 and arc1
-    first = oid_bytes[0]
-    arcs.append(first // 40)
-    arcs.append(first % 40)
-    i = 1
-    while i < len(oid_bytes):
-        val = 0
-        while i < len(oid_bytes):
-            b = oid_bytes[i]
-            i += 1
-            val = (val << 7) | (b & 0x7F)
-            if not (b & 0x80):
-                break
-        arcs.append(val)
-    return arcs
 
 
 # ---------------------------------------------------------------------------

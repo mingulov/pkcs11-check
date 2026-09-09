@@ -24,6 +24,7 @@ from ctypes import byref, sizeof
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
@@ -40,7 +41,6 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_aes_key,
     gen_ec_keypair,
-    read_attributes,
     wrap_key,
 )
 from pkcs11_check.raw.rv import ckr_name
@@ -52,7 +52,6 @@ from pkcs11_check.raw.types_std import (
     CKA_COEFFICIENT,
     CKA_DECRYPT,
     CKA_DERIVE,
-    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXPONENT_1,
     CKA_EXPONENT_2,
@@ -76,6 +75,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKA_WRAP,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKK_RSA,
@@ -90,6 +91,10 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_OK,
+)
+from pkcs11_check.testcases._ec_export import (
+    read_conventional_ec_point_or_xfail,
+    select_ecdh_point_form,
 )
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.ckr._malformed_attrs import (
@@ -663,32 +668,35 @@ class TestBoolOverlongInGenerateDerive:
         if not (rs.has_mechanism("EC_KEY_PAIR_GEN") or rs.has_mechanism("ECDSA_KEY_PAIR_GEN")):
             pytest.skip("EC_KEY_PAIR_GEN not advertised — cannot set up ECDH base key")
         curve_oid = encode_named_curve_parameters("secp256r1")
-        pub_a, priv_a = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
-            curve_oid,
-            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-            public_attrs={CKA_TOKEN: False},
-        )
-        pub_b, priv_b = gen_ec_keypair(
-            rs.raw,
-            rs.sh,
-            curve_oid,
-            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
-            public_attrs={CKA_TOKEN: False},
-        )
+        pub_a = priv_a = pub_b = priv_b = 0
         try:
-            # Read peer public point (raw bytes from DER OCTET STRING).
-            from pkcs11_check.raw.der import decode_ec_point
-
-            attrs_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
-            raw_point = attrs_b[CKA_EC_POINT]
-            assert isinstance(raw_point, bytes)
-            # Unwrap DER OCTET STRING wrapper if present (Weierstrass curve).
-            if raw_point and raw_point[0] == 0x04:
-                peer_point = decode_ec_point(raw_point)
-            else:
-                peer_point = raw_point
+            pub_a, priv_a = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid,
+                private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+                public_attrs={CKA_TOKEN: False},
+            )
+            pub_b, priv_b = gen_ec_keypair(
+                rs.raw,
+                rs.sh,
+                curve_oid,
+                private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+                public_attrs={CKA_TOKEN: False},
+            )
+            peer = read_conventional_ec_point_or_xfail(
+                rs,
+                pub_b,
+                ec.SECP256R1(),
+                label="C_DeriveKey(ECDH1): malformed-template peer public key",
+            )
+            peer_point = select_ecdh_point_form(
+                peer,
+                supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
+                supports_uncompressed=rs.has_mechanism_flag(
+                    CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)
+                ),
+            )
             ecdh_mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
             out_tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
@@ -718,10 +726,14 @@ class TestBoolOverlongInGenerateDerive:
                 ),
             )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_a)
-            destroy_quietly(rs.raw, rs.sh, pub_b)
-            destroy_quietly(rs.raw, rs.sh, priv_b)
+            if pub_a:
+                destroy_quietly(rs.raw, rs.sh, pub_a)
+            if priv_a:
+                destroy_quietly(rs.raw, rs.sh, priv_a)
+            if pub_b:
+                destroy_quietly(rs.raw, rs.sh, pub_b)
+            if priv_b:
+                destroy_quietly(rs.raw, rs.sh, priv_b)
 
 
 # ---------------------------------------------------------------------------

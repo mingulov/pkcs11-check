@@ -23,7 +23,9 @@ from ctypes import byref, c_ubyte, c_ulong, sizeof
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import (
@@ -38,7 +40,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
@@ -47,7 +49,6 @@ from pkcs11_check.raw.types_std import (
     CKA_DERIVE,
     CKA_DERIVE_TEMPLATE,
     CKA_EC_PARAMS,
-    CKA_EC_POINT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -62,6 +63,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKA_WRAP,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKG_MGF1_SHA1,
     CKK_AES,
     CKK_EC,
@@ -79,6 +82,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
@@ -98,6 +102,11 @@ from pkcs11_check.raw.types_std import (
     CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT,
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
+)
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import (
+    read_conventional_ec_point_or_xfail,
+    select_ecdh_point_form,
 )
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
@@ -148,6 +157,107 @@ _DERIVE_TEMPLATE_ENFORCEMENT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+_CLAIMED_TEMPLATE_READ_REFUSAL_RVS = (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
+_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
+_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def _read_claimed_template(
+    rs: Any,
+    handle: int,
+    attr: int,
+    *,
+    label: str,
+    mechanism: str,
+) -> tuple[bool, C.Classification | None]:
+    """Read a nested-template claim without hiding provider metadata failures."""
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [attr])
+    except CkrAssertionError as exc:
+        # CkrAssertionError is an AssertionError subclass.  Catch it explicitly
+        # so an expected read refusal remains evidence, while an unexpected CKR
+        # retains its exact provider error and traceback.
+        if exc.rv not in _CLAIMED_TEMPLATE_READ_REFUSAL_RVS:
+            raise
+        record = C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            expected=CKR_OK,
+            actual=exc.rv,
+            detail={"attribute": int(attr)},
+            summary=f"{label}: attribute read was rejected with {ckr_name(exc.rv)}",
+        )
+        return False, record
+
+    before = len(C.get_records())
+    raw_template = attr_or_record(
+        attrs,
+        attr,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        mechanism=mechanism,
+    )
+    if raw_template is MISSING_ATTRIBUTE:
+        records = C.get_records()
+        return False, records[-1] if len(records) > before else None
+
+    if (
+        type(raw_template) is bytes
+        and len(raw_template) >= sizeof(CK_ATTRIBUTE)
+        and len(raw_template) % sizeof(CK_ATTRIBUTE) == 0
+    ):
+        return True, None
+
+    record = C.record_as(
+        "wrong_result",
+        kind="metadata",
+        label=label,
+        operation="C_GetAttributeValue",
+        mechanism=mechanism,
+        detail={
+            "attribute": int(attr),
+            "expected_shape": "bytes containing complete CK_ATTRIBUTE records",
+            "actual_type": type(raw_template).__name__,
+            "actual_length": len(raw_template) if isinstance(raw_template, bytes) else None,
+            "actual": repr(raw_template),
+        },
+        summary=(
+            f"{label}: present value has invalid nested-template shape; "
+            f"expected bytes containing complete CK_ATTRIBUTE records, got {raw_template!r}"
+        ),
+    )
+    return False, record
+
+
+def _raise_strongest(records: list[C.Classification]) -> None:
+    """Raise the strongest deferred finding after all sibling paths and cleanup."""
+    if not records:
+        return
+    strongest = max(
+        records,
+        key=lambda record: (
+            1 if record.outcome == "fail" else 0,
+            _SEVERITY_PRIORITY.get(record.severity, 0),
+            _KIND_PRIORITY.get(record.kind or "", 0),
+        ),
+    )
+    C.raise_for_record(strongest)
+
+
+def _defer_policy_result(records: list[C.Classification], *, claimed: bool, label: str) -> None:
+    """Run the later policy oracle while deferring its terminal pytest outcome."""
+    try:
+        classify_policy_enforcement(claimed=claimed, violated=True, label=label)
+    except BaseException as exc:
+        policy_record = getattr(exc, "_pkcs11_check_classification", None)
+        if policy_record is None:
+            raise
+        records.append(policy_record)
 
 
 class TestOaepUnwrapTemplateEnforcement:
@@ -222,15 +332,16 @@ class TestOaepUnwrapTemplateEnforcement:
                     summary=f"setup rejected with unexpected {ckr_name(rv)}",
                 )
 
-            claimed = False
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, priv_rsa.value, [CKA_UNWRAP_TEMPLATE])
-                raw_template = attrs.get(CKA_UNWRAP_TEMPLATE)
-                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                    CK_ATTRIBUTE
-                )
-            except (AssertionError, KeyError):
-                claimed = False
+            claimed, template_read = _read_claimed_template(
+                rs,
+                priv_rsa.value,
+                CKA_UNWRAP_TEMPLATE,
+                label="CKA_UNWRAP_TEMPLATE readback",
+                mechanism="CKM_RSA_PKCS_OAEP",
+            )
+            deferred_records: list[C.Classification] = []
+            if template_read is not None:
+                deferred_records.append(template_read)
 
             source_key = gen_aes_key_or_xfail(
                 rs,
@@ -336,9 +447,9 @@ class TestOaepUnwrapTemplateEnforcement:
                 byref(violating_unwrapped),
             )
             if rv == CKR_OK:
-                classify_policy_enforcement(
+                _defer_policy_result(
+                    deferred_records,
                     claimed=claimed,
-                    violated=True,
                     label="CKA_UNWRAP_TEMPLATE OAEP created-object enforcement",
                 )
             else:
@@ -357,6 +468,7 @@ class TestOaepUnwrapTemplateEnforcement:
             ):
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(deferred_records)
 
 
 class TestEcdhDeriveTemplateEnforcement:
@@ -430,17 +542,18 @@ class TestEcdhDeriveTemplateEnforcement:
                     summary=f"setup rejected with unexpected {ckr_name(rv)}",
                 )
 
-            claimed = False
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, priv_base.value, [CKA_DERIVE_TEMPLATE])
-                raw_template = attrs.get(CKA_DERIVE_TEMPLATE)
-                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                    CK_ATTRIBUTE
-                )
-            except (AssertionError, KeyError):
-                claimed = False
+            claimed, template_read = _read_claimed_template(
+                rs,
+                priv_base.value,
+                CKA_DERIVE_TEMPLATE,
+                label="CKA_DERIVE_TEMPLATE ECDH readback",
+                mechanism="CKM_ECDH1_DERIVE",
+            )
+            deferred_records: list[C.Classification] = []
+            if template_read is not None:
+                deferred_records.append(template_read)
 
-            # Peer keypair: only the public EC_POINT is needed for mech_ecdh.
+            # Peer keypair: only the validated public point is needed for mech_ecdh.
             pub_peer_tmpl = template(
                 attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
                 attr_ulong(CKA_KEY_TYPE, CKK_EC),
@@ -475,18 +588,19 @@ class TestEcdhDeriveTemplateEnforcement:
                     summary=f"EC peer-keypair generation failed: {ckr_name(rv)}",
                 )
 
-            peer_point = b""
-            try:
-                peer_attrs = read_attributes(rs.raw, rs.sh, pub_peer.value, [CKA_EC_POINT])
-                peer_point = peer_attrs.get(CKA_EC_POINT, b"")
-            except (AssertionError, KeyError):
-                pass  # audit-ok: CKA_EC_POINT read fails → not_operational classified below
-            if not peer_point:
-                classify(
-                    "not_operational",
-                    label="CKA_EC_POINT readback (peer public)",
-                    summary="Could not read CKA_EC_POINT from peer public key",
-                )
+            peer = read_conventional_ec_point_or_xfail(
+                rs,
+                pub_peer.value,
+                ec.SECP256R1(),
+                label="CKM_ECDH1_DERIVE: nested-template peer public key",
+            )
+            peer_point = select_ecdh_point_form(
+                peer,
+                supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
+                supports_uncompressed=rs.has_mechanism_flag(
+                    CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)
+                ),
+            )
 
             derive_mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
             matching_tmpl = template(
@@ -537,9 +651,9 @@ class TestEcdhDeriveTemplateEnforcement:
                 byref(violating_derived),
             )
             if rv == CKR_OK:
-                classify_policy_enforcement(
+                _defer_policy_result(
+                    deferred_records,
                     claimed=claimed,
-                    violated=True,
                     label="CKA_DERIVE_TEMPLATE ECDH created-object enforcement",
                 )
             else:
@@ -559,6 +673,7 @@ class TestEcdhDeriveTemplateEnforcement:
             ):
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(deferred_records)
 
 
 class TestHkdfDeriveTemplateEnforcement:
@@ -616,15 +731,16 @@ class TestHkdfDeriveTemplateEnforcement:
                     summary=f"setup rejected with unexpected {ckr_name(rv)}",
                 )
 
-            claimed = False
-            try:
-                attrs = read_attributes(rs.raw, rs.sh, base_key.value, [CKA_DERIVE_TEMPLATE])
-                raw_template = attrs.get(CKA_DERIVE_TEMPLATE)
-                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                    CK_ATTRIBUTE
-                )
-            except (AssertionError, KeyError):
-                claimed = False
+            claimed, template_read = _read_claimed_template(
+                rs,
+                base_key.value,
+                CKA_DERIVE_TEMPLATE,
+                label="CKA_DERIVE_TEMPLATE HKDF readback",
+                mechanism="CKM_HKDF_DERIVE",
+            )
+            deferred_records: list[C.Classification] = []
+            if template_read is not None:
+                deferred_records.append(template_read)
 
             derive_mech = mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256)
             matching_tmpl = template(
@@ -675,9 +791,9 @@ class TestHkdfDeriveTemplateEnforcement:
                 byref(violating_derived),
             )
             if rv == CKR_OK:
-                classify_policy_enforcement(
+                _defer_policy_result(
+                    deferred_records,
                     claimed=claimed,
-                    violated=True,
                     label="CKA_DERIVE_TEMPLATE HKDF created-object enforcement",
                 )
             else:
@@ -694,3 +810,4 @@ class TestHkdfDeriveTemplateEnforcement:
             ):
                 if handle:
                     destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(deferred_records)

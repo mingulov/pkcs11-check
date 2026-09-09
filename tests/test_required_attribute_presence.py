@@ -69,6 +69,22 @@ def test_missing_attribute_inherits_context_and_spec_lookup() -> None:
     assert rec.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue · CKM_ECDSA"
 
 
+def test_missing_attribute_can_leave_stale_mechanism_unset() -> None:
+    C.set_mechanism("CKM_ECDSA", operation="C_Verify")
+
+    attr_or_record(
+        {},
+        CKA_LABEL,
+        label="required label",
+        inherit_mechanism=False,
+    )
+
+    rec = C.get_records()[0]
+    assert rec.mechanism is None
+    assert rec.operation == "C_GetAttributeValue"
+    assert rec.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
 def test_missing_attribute_serializes_stably_without_actual_ckr() -> None:
     attr_or_record({}, CKA_LABEL, label="required label")
 
