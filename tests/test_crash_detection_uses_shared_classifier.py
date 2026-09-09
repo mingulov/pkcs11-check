@@ -11,10 +11,10 @@ from pathlib import Path
 _GUARDED = {
     "src/pkcs11_check/core/preflight.py": "is_crash_returncode",
     "src/pkcs11_check/core/doctor_probe.py": "is_crash_returncode",
-    "src/pkcs11_check/testcases/test_dual_function.py": "is_crash_returncode",
-    "src/pkcs11_check/testcases/test_initialize_args.py": "is_crash_returncode",
+    "src/pkcs11_check/testcases/test_dual_function.py": "assert_subprocess_completed",
+    "src/pkcs11_check/testcases/test_initialize_args.py": "assert_subprocess_completed",
     "src/pkcs11_check/testcases/test_threading.py": "is_crash_returncode",
-    "src/pkcs11_check/testcases/test_subprocess_safety.py": "is_crash_returncode",
+    "src/pkcs11_check/testcases/test_subprocess_safety.py": "assert_subprocess_completed",
     "src/pkcs11_check/testcases/security/test_ffi_length_boundary.py": (
         "assert_subprocess_completed"
     ),

@@ -150,13 +150,26 @@ def test_testpypi_stages_the_candidate_before_its_only_build(tmp_path: Path) -> 
     output = tmp_path / "github-output"
     environment = {**os.environ, "CANDIDATE": "0.1.9", "GITHUB_OUTPUT": str(output)}
     invalid = subprocess.run(
-        ["bash", "-e", "-c", candidate["run"]], cwd=repository, env=environment, check=False
+        ["bash", "-e", "-c", candidate["run"]],
+        cwd=repository,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     assert invalid.returncode != 0
+    assert "candidate must be canonical X.Y.ZrcN" in invalid.stdout
 
     environment["CANDIDATE"] = "0.1.9rc1"
     subprocess.run(
-        ["bash", "-e", "-c", candidate["run"]], cwd=repository, env=environment, check=True
+        ["bash", "-e", "-c", candidate["run"]],
+        cwd=repository,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     assert output.read_text(encoding="utf-8") == "version=0.1.9rc1\nbase_version=0.1.9\n"
 

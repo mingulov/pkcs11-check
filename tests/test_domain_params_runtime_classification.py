@@ -109,9 +109,7 @@ def test_missing_domain_params_suppresses_only_dependent_parse(
         lambda *_a: pytest.fail("dependent parse must not run"),
     )
 
-    test_domain_params.TestEcDomainParameters().test_ec_domain_params_ec_params_readable(
-        _session()
-    )
+    test_domain_params.TestEcDomainParameters().test_ec_domain_params_ec_params_readable(_session())
 
     assert [rec.label for rec in C.get_records()] == ["CKA_EC_PARAMS:domain-parameters"]
 

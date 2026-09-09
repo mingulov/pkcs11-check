@@ -172,9 +172,7 @@ def _collect_buffer_measurement(
         return parsed
 
     ckr = parse("CKR", required="CKR" in schema.required_fields)
-    overwritten = parse(
-        "GUARD_OVERWRITTEN", required="GUARD_OVERWRITTEN" in schema.required_fields
-    )
+    overwritten = parse("GUARD_OVERWRITTEN", required="GUARD_OVERWRITTEN" in schema.required_fields)
     for name in schema.required_fields:
         if name not in {"CKR", "GUARD_OVERWRITTEN"}:
             parse(name, required=True)
@@ -238,8 +236,7 @@ def _collect_buffer_measurement(
                 "self_contradiction",
                 kind="metadata",
                 summary=(
-                    f"{context}: returned count {returned} is below the permitted minimum "
-                    f"{lower}"
+                    f"{context}: returned count {returned} is below the permitted minimum {lower}"
                 ),
             )
         if upper is not None and returned > upper:
@@ -247,8 +244,7 @@ def _collect_buffer_measurement(
                 "self_contradiction",
                 kind="metadata",
                 summary=(
-                    f"{context}: returned count {returned} exceeds the permitted maximum "
-                    f"{upper}"
+                    f"{context}: returned count {returned} exceeds the permitted maximum {upper}"
                 ),
             )
     if schema.max_count is not None and returned is not None and returned > schema.max_count:
@@ -256,8 +252,7 @@ def _collect_buffer_measurement(
             "self_contradiction",
             kind="metadata",
             summary=(
-                f"{context}: returned count {returned} exceeds declared maximum "
-                f"{schema.max_count}"
+                f"{context}: returned count {returned} exceeds declared maximum {schema.max_count}"
             ),
         )
 
@@ -269,9 +264,14 @@ def _collect_buffer_measurement(
                 f"CKR 0x{schema.expected_ckr:08x}"
             ),
         )
-    elif ckr is not None and schema.expected_ckr is None and ckr not in (
-        int(CKR_BUFFER_TOO_SMALL),
-        int(CKR_OK),
+    elif (
+        ckr is not None
+        and schema.expected_ckr is None
+        and ckr
+        not in (
+            int(CKR_BUFFER_TOO_SMALL),
+            int(CKR_OK),
+        )
     ):
         if not is_standard_ckr(ckr) and not is_vendor_defined_ckr(ckr):
             add(
@@ -336,9 +336,7 @@ def _collect_buffer_measurement(
             summary=f"{context}: retry returned CKR 0x{retry_ckr:08x} instead of CKR_OK",
         )
     retry_reference = (
-        values.get(schema.retry_length_reference)
-        if schema.retry_length_reference
-        else initial
+        values.get(schema.retry_length_reference) if schema.retry_length_reference else initial
     )
     if retry_length is not None and (
         retry_length <= 0 or retry_reference is not None and retry_length != retry_reference
@@ -348,7 +346,7 @@ def _collect_buffer_measurement(
             kind="lifecycle",
             summary=(
                 f"{context}: retry length {retry_length} is unusable; expected "
-                    f"{retry_reference if retry_reference is not None else 'a positive length'}"
+                f"{retry_reference if retry_reference is not None else 'a positive length'}"
             ),
         )
 
@@ -591,9 +589,7 @@ def _check_buffer_probe(
     )
     for item in failures:
         record(item)
-    termination, explicit_harness = assert_subprocess_completed(
-        rc, output, stderr, context=context
-    )
+    termination, explicit_harness = assert_subprocess_completed(rc, output, stderr, context=context)
     if explicit_harness:
         return
     # A provider observation without the terminal OK marker is incomplete protocol.

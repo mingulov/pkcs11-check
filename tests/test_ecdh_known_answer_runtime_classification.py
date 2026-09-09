@@ -29,16 +29,24 @@ def _wrap_octet_string(value: bytes) -> bytes:
 
 
 def _p256_point() -> bytes:
-    return ec.derive_private_key(17, ec.SECP256R1()).public_key().public_bytes(
-        serialization.Encoding.X962,
-        serialization.PublicFormat.UncompressedPoint,
+    return (
+        ec.derive_private_key(17, ec.SECP256R1())
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
     )
 
 
 def _p384_point() -> bytes:
-    return ec.derive_private_key(19, ec.SECP384R1()).public_key().public_bytes(
-        serialization.Encoding.X962,
-        serialization.PublicFormat.UncompressedPoint,
+    return (
+        ec.derive_private_key(19, ec.SECP384R1())
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
     )
 
 
@@ -149,3 +157,30 @@ def test_symmetric_agreement_reads_both_missing_secrets_and_cleans_up(
         "not_operational",
     ]
     assert destroyed == [21, 22, 11, 12, 13, 14]
+
+
+def test_symmetric_agreement_cleans_first_pair_when_second_generation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    destroyed: list[int] = []
+
+    def generate(_rs: Any) -> tuple[int, int]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 11, 12
+        raise RuntimeError("second keypair failed")
+
+    monkeypatch.setattr(test_ecdh_known_answer, "_gen_p256_or_skip", generate)
+    monkeypatch.setattr(
+        test_ecdh_known_answer,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
+
+    with pytest.raises(RuntimeError, match="second keypair failed"):
+        test_ecdh_known_answer.TestECDHKnownAnswer().test_ecdh_symmetric_agreement(rs)
+
+    assert destroyed == [11, 12]

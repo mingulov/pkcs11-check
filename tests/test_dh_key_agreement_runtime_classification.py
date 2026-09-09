@@ -150,9 +150,7 @@ def test_wrong_32_byte_kat_fails_even_when_16_byte_value_is_missing(
     monkeypatch.setattr(dh, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
 
     with pytest.raises(pytest.fail.Exception):
-        dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_value_len_truncation(
-            _session()
-        )
+        dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_value_len_truncation(_session())
 
     assert destroyed == [501, 502, 301]
     assert [record.reason for record in C.get_records()] == ["not_operational", "wrong_result"]
@@ -444,9 +442,7 @@ def test_generated_params_missing_prime_and_base_blocks_keygen_and_cleans_up(
     monkeypatch.setattr(dh, "_gen_dh_keypair", _gen)
     monkeypatch.setattr(dh, "destroy_quietly", lambda _raw, _sh, h: destroyed.append(h))
 
-    dh.TestDHParameterGeneration().test_generated_params_produce_valid_keypair(
-        _parameter_session()
-    )
+    dh.TestDHParameterGeneration().test_generated_params_produce_valid_keypair(_parameter_session())
 
     assert keygen_calls == []
     assert destroyed == [77]

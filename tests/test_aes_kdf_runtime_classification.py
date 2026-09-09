@@ -44,9 +44,7 @@ def test_ecb_missing_derived_value_records_and_cleans_up(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].detail == {
-        "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}
-    }
+    assert records[0].detail == {"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}}
 
 
 def test_cbc_missing_derived_value_records_and_cleans_up(

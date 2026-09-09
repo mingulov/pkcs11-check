@@ -248,8 +248,7 @@ class TestMechDigestKAT:
         selected_vectors = [
             vec
             for vec in vectors
-            if not vec.get("mechanism_name")
-            or vec.get("mechanism_name") in digest_mech_names
+            if not vec.get("mechanism_name") or vec.get("mechanism_name") in digest_mech_names
         ]
         if not selected_vectors:
             pytest.skip(f"No compatible digest vectors in {config.vector_file}")

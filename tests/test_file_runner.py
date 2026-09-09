@@ -8532,7 +8532,7 @@ def test_retry_pass_keeps_real_setup_finding_and_conservative_outcome(
     target = tmp_path / "test_retry_provider.py"
     marker = tmp_path / "crasher-ran"
     target.write_text(
-        f'''
+        f"""
 import ctypes
 import os
 import signal
@@ -8568,7 +8568,7 @@ def test_crasher():
 
 def test_remaining():
     pass
-''',
+""",
         encoding="utf-8",
     )
     state_file = tmp_path / "state.json"

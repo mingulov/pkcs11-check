@@ -145,10 +145,7 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
 
     func_list, get_function_list_rv = _get_function_list(lib)
     if func_list is None:
-        print(
-            "SETUP_XFAIL:C_GetFunctionList rejected with "
-            f"{ckr_name(get_function_list_rv)}"
-        )
+        print(f"SETUP_XFAIL:C_GetFunctionList rejected with {ckr_name(get_function_list_rv)}")
         return
 
     _done: list[bool] = [False]

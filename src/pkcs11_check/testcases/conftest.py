@@ -771,10 +771,7 @@ def gen_rsa_keypair_or_xfail(
             mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
             expected=CKR_OK,
             actual=exc.rv,
-            summary=(
-                "advertised RSA keypair generation rejected setup: "
-                f"{ckr_name(exc.rv)}"
-            ),
+            summary=(f"advertised RSA keypair generation rejected setup: {ckr_name(exc.rv)}"),
         )
     except AssertionError as exc:
         xfail_if_known_ckr(
@@ -813,10 +810,7 @@ def gen_ec_keypair_or_xfail(
             mechanism="CKM_EC_KEY_PAIR_GEN",
             expected=CKR_OK,
             actual=exc.rv,
-            summary=(
-                "advertised EC keypair generation rejected setup: "
-                f"{ckr_name(exc.rv)}"
-            ),
+            summary=(f"advertised EC keypair generation rejected setup: {ckr_name(exc.rv)}"),
         )
     except AssertionError as exc:
         xfail_if_known_ckr(
