@@ -47,9 +47,7 @@ def test_ec_key_type_collects_both_missing_fields_and_cleans_up(
     destroyed: list[int] = []
     monkeypatch.setattr(mod, "_try_gen_ec", lambda *_a: (11, 12))
     monkeypatch.setattr(mod, "read_attributes", lambda *_a, **_k: {})
-    monkeypatch.setattr(
-        mod, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle)
-    )
+    monkeypatch.setattr(mod, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
 
     mod.TestECKeygen().test_ec_key_type(
         SimpleNamespace(raw=object(), sh=1), "secp256r1", 32, None, None

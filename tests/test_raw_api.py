@@ -348,9 +348,7 @@ def _synthetic_function_table(
     from pkcs11_check.raw import api, metadata_std
     from pkcs11_check.raw.types_std import CK_VERSION, CKR_FUNCTION_NOT_SUPPORTED
 
-    size = api._VERSION_SIZE + (
-        max(metadata_std.FUNCTION_INDICES.values()) + 1
-    ) * api._PTR_SIZE
+    size = api._VERSION_SIZE + (max(metadata_std.FUNCTION_INDICES.values()) + 1) * api._PTR_SIZE
     table = (ctypes.c_ubyte * size)()
     version = ctypes.cast(ctypes.addressof(table), ctypes.POINTER(CK_VERSION)).contents
     version.major = major

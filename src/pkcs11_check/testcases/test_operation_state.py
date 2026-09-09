@@ -152,9 +152,7 @@ class _CrossSessionProtocol:
     malformed: bool
 
 
-def _cross_session_protocol(
-    stdout: str, *, partial: bool = False
-) -> _CrossSessionProtocol | None:
+def _cross_session_protocol(stdout: str, *, partial: bool = False) -> _CrossSessionProtocol | None:
     """Parse cross-session markers without raising on malformed output.
 
     ``partial`` is enabled only by the cross-session caller so a child REFERENCE
@@ -190,16 +188,11 @@ def _cross_session_protocol(
                 break
 
     has_terminal_or_followup = (
-        bool(values["accepted"])
-        or bool(values["rejected"])
-        or any(followup_values.values())
+        bool(values["accepted"]) or bool(values["rejected"]) or any(followup_values.values())
     )
     if not has_terminal_or_followup and not values["reference"]:
         if not partial or not any(
-            line == "OK"
-            or line.startswith(
-                ("CKR:", "BREAK:", "DEVIATION_XFAIL:")
-            )
+            line == "OK" or line.startswith(("CKR:", "BREAK:", "DEVIATION_XFAIL:"))
             for line in stdout.splitlines()
         ):
             return None
@@ -218,9 +211,7 @@ def _cross_session_protocol(
         )
 
     malformed = any(len(items) > 1 for items in values.values())
-    terminal_malformed = any(
-        len(values[name]) > 1 for name in ("accepted", "rejected")
-    )
+    terminal_malformed = any(len(values[name]) > 1 for name in ("accepted", "rejected"))
 
     def _one(name: str) -> str | None:
         items = values[name]
@@ -540,9 +531,7 @@ def _cross_session_records(
     return records
 
 
-def _same_session_records(
-    protocol: _SameSessionProtocol, context: str
-) -> list[Classification]:
+def _same_session_records(protocol: _SameSessionProtocol, context: str) -> list[Classification]:
     """Build same-session harness/provider records against a parent-owned oracle."""
     expected = hashlib.sha256(_SAME_SESSION_PART1 + _SAME_SESSION_PART2).hexdigest()
     records: list[Classification] = []
@@ -685,14 +674,10 @@ def _inspect_probe(
         summary = (
             f"{context}: Malformed cross-session CKR result"
             if cross_protocol is not None
-            and (
-                cross_protocol.rejected is not None
-                or any(cross_protocol.followup_failures)
-            )
+            and (cross_protocol.rejected is not None or any(cross_protocol.followup_failures))
             else (
                 f"{context}: Malformed cross-session REFERENCE/RESTORED result"
-                if cross_protocol is not None
-                and cross_protocol.accepted == "1"
+                if cross_protocol is not None and cross_protocol.accepted == "1"
                 else f"{context}: Malformed CKR or semantic protocol marker"
             )
         )

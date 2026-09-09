@@ -130,8 +130,6 @@ def test_dual_function_missing_or_malformed_ckr_is_harness_error(
         lambda *_args, **_kwargs: (0, stdout, ""),
     )
     with pytest.raises(pytest.fail.Exception, match="protocol marker"):
-        test_remaining_gaps.TestDualFunctionRemaining().test_sign_encrypt_update_callable(
-            _config()
-        )
+        test_remaining_gaps.TestDualFunctionRemaining().test_sign_encrypt_update_callable(_config())
 
     assert get_records()[-1].reason == "harness_error"

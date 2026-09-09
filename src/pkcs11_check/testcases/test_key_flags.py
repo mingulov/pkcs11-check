@@ -365,9 +365,9 @@ class TestLocalFlag:
         try:
             pub_local = _read_bool_attr_safe(rs, pub, CKA_LOCAL)
             priv_local = _read_bool_attr_safe(rs, priv, CKA_LOCAL)
-            present_wrong = (
-                pub_local is not MISSING_ATTRIBUTE and pub_local is not True
-            ) or (priv_local is not MISSING_ATTRIBUTE and priv_local is not True)
+            present_wrong = (pub_local is not MISSING_ATTRIBUTE and pub_local is not True) or (
+                priv_local is not MISSING_ATTRIBUTE and priv_local is not True
+            )
             if present_wrong:
                 from pkcs11_check.compliance import ComplianceLevel, note
 

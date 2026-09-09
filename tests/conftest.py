@@ -44,6 +44,7 @@ def _isolate_meta_test_classifications(
     yield
     classification.clear()
 
+
 # Meta-tests that load downloaded Wycheproof/ACVP/CCTV vectors. When fetch-data
 # has not populated the vendor data dir (e.g. CI), these have no vectors to read
 # and would raise FileNotFoundError/StopIteration/IndexError or assert on empty

@@ -74,9 +74,7 @@ def assert_ckr_subprocess_ok(
         record(classification)
 
     complete = any(line == "OK" or line.startswith("OK:") for line in lines)
-    termination, explicit_harness = assert_subprocess_completed(
-        rc, stdout, stderr, context=context
-    )
+    termination, explicit_harness = assert_subprocess_completed(rc, stdout, stderr, context=context)
     malformed: Classification | None = None
     if malformed_marker is not None:
         malformed = Classification(

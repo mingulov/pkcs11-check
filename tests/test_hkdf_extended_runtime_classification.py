@@ -108,9 +108,7 @@ def test_present_metadata_contradiction_dominates_missing_value(
         "not_operational",
         "wrong_result",
     ]
-    assert C.get_records()[0].detail == {
-        "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}
-    }
+    assert C.get_records()[0].detail == {"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}}
 
 
 def test_keygen_derived_value_missing_is_non_operational_and_cleans_up(

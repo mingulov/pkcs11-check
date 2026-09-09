@@ -236,13 +236,11 @@ def _run_sign_recover_wrong_data_length(ctx: ProbeContext, _extra: dict[str, Any
     # CKM_RSA_X_509 accepts input of length <= k bytes.  A genuine negative
     # vector must therefore exceed the generated RSA-2048 modulus.
     modulus_bytes = 2048 // 8
-    oversize_data = b"\xA5" * (modulus_bytes + 1)
+    oversize_data = b"\xa5" * (modulus_bytes + 1)
     oversize_data_buf = _byte_array(oversize_data)
     sig_len = ctypes.c_ulong(modulus_bytes)
     sig_buf = (c_ubyte * modulus_bytes)()
-    rv = raw.C_SignRecover(
-        sh, oversize_data_buf, len(oversize_data), sig_buf, byref(sig_len)
-    )
+    rv = raw.C_SignRecover(sh, oversize_data_buf, len(oversize_data), sig_buf, byref(sig_len))
 
     if rv == CKR_OK:
         print("RESULT:ACCEPTED_OVERSIZE_DATA")

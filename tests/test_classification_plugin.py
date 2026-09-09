@@ -285,7 +285,7 @@ def test_call_access_violation_survives_an_earlier_classification(
 
 def test_setup_xfail_classification_is_serialized_once(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_setup_xfail='''
+        test_setup_xfail="""
 import pytest
 from pkcs11_check import classification as C
 
@@ -295,7 +295,7 @@ def setup_finding():
 
 def test_body():
     raise AssertionError("setup xfail must prevent the call")
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -310,7 +310,7 @@ def test_body():
 def test_setup_xfail_does_not_leak_to_independent_next_test(pytester: pytest.Pytester) -> None:
     """A setup refusal belongs only to its item; the next item runs independently."""
     pytester.makepyfile(
-        test_setup_xfail_leak='''
+        test_setup_xfail_leak="""
 import pytest
 from pkcs11_check import classification as C
 
@@ -324,7 +324,7 @@ def test_first(setup_finding):
 
 def test_second():
     pass
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -345,14 +345,12 @@ def test_second():
         and report.get("nodeid", "").endswith("test_first")
         and report.get("when") == "setup"
     )
-    assert [entry["reason"] for entry in _phase_classifications(setup)] == [
-        "not_operational"
-    ]
+    assert [entry["reason"] for entry in _phase_classifications(setup)] == ["not_operational"]
 
 
 def test_setup_observation_does_not_prevent_call(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_setup_observation='''
+        test_setup_observation="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -365,7 +363,7 @@ def setup_finding():
 
 def test_body():
     assert True
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -381,7 +379,7 @@ def test_body():
 
 def test_teardown_classification_is_serialized_once(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_teardown_finding='''
+        test_teardown_finding="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -395,7 +393,7 @@ def teardown_finding():
 
 def test_body():
     assert True
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -410,7 +408,7 @@ def test_body():
 
 def test_setup_call_teardown_occurrences_are_not_duplicated(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_all_phases='''
+        test_all_phases="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -428,7 +426,7 @@ def setup_and_teardown():
 
 def test_body():
     finding("call")
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -437,14 +435,12 @@ def test_body():
     reports = _phase_reports(pytester)
     assert [entry["label"] for entry in _phase_classifications(reports["setup"])] == ["setup"]
     assert [entry["label"] for entry in _phase_classifications(reports["call"])] == ["call"]
-    assert [entry["label"] for entry in _phase_classifications(reports["teardown"])] == [
-        "teardown"
-    ]
+    assert [entry["label"] for entry in _phase_classifications(reports["teardown"])] == ["teardown"]
 
 
 def test_teardown_observation_does_not_leak_to_next_item(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_teardown_leak='''
+        test_teardown_leak="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -461,7 +457,7 @@ def test_first(teardown_finding):
 
 def test_second():
     pass
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -486,7 +482,7 @@ def test_raw_failure_after_recorded_xfail_is_retained(pytester: pytest.Pytester)
         """
     )
     pytester.makepyfile(
-        test_raw_failure='''
+        test_raw_failure="""
 from pkcs11_check.classification import Classification, record
 
 def test_body():
@@ -495,7 +491,7 @@ def test_body():
         label="provider deviation", summary="provider deviation",
     ))
     assert False, "raw failure"
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -510,12 +506,12 @@ def test_body():
 
 def test_classified_failure_does_not_gain_duplicate_unclassified(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_classified_failure='''
+        test_classified_failure="""
 from pkcs11_check import classification as C
 
 def test_body():
     C.fail_as("accepted_invalid", kind="crypto", label="provider failure")
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -529,7 +525,7 @@ def test_caught_terminating_classification_still_controls_public_result(
     pytester: pytest.Pytester,
 ) -> None:
     pytester.makepyfile(
-        test_caught_classification='''
+        test_caught_classification="""
 from pkcs11_check import classification as C
 
 def test_body():
@@ -537,7 +533,7 @@ def test_body():
         C.fail_as("accepted_invalid", kind="crypto", label="caught provider failure")
     except BaseException:
         pass
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -550,7 +546,7 @@ def test_body():
 
 def test_call_failure_and_cleanup_failure_both_survive(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_call_cleanup='''
+        test_call_cleanup="""
 import pytest
 from pkcs11_check import classification as C
 from pkcs11_check.classification import Classification, record
@@ -565,7 +561,7 @@ def cleanup_failure():
 
 def test_body(cleanup_failure):
     C.fail_as("accepted_invalid", kind="crypto", label="provider failure")
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -582,7 +578,7 @@ def test_body(cleanup_failure):
 
 def test_setup_only_recorded_xfail_controls_passing_call(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_setup_xfail_public='''
+        test_setup_xfail_public="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -595,7 +591,7 @@ def setup_finding():
 
 def test_body():
     assert True
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -612,7 +608,7 @@ def test_recorded_fail_then_xfail_or_skip_stays_failed(
     pytester: pytest.Pytester, terminal: str
 ) -> None:
     pytester.makepyfile(
-        test_recorded_fail='''
+        test_recorded_fail="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -626,7 +622,7 @@ def setup_finding():
 
 def test_body():
     pass
-'''.replace("{terminal}", terminal)
+""".replace("{terminal}", terminal)
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
@@ -640,7 +636,7 @@ def test_body():
 
 def test_nonterminating_teardown_fail_is_public_failure(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
-        test_teardown_failure='''
+        test_teardown_failure="""
 import pytest
 from pkcs11_check.classification import Classification, record
 
@@ -654,7 +650,7 @@ def teardown_finding():
 
 def test_body():
     assert True
-'''
+"""
     )
 
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")

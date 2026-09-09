@@ -313,9 +313,13 @@ def test_ecdh_extract_accepts_raw_and_wrapped_p256_points(
     wrapped: bool,
 ) -> None:
     curve = ec.SECP256R1()
-    raw = ec.derive_private_key(7, curve).public_key().public_bytes(
-        serialization.Encoding.X962,
-        serialization.PublicFormat.UncompressedPoint,
+    raw = (
+        ec.derive_private_key(7, curve)
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
     )
     data = b"\x04" + bytes([len(raw)]) + raw if wrapped else raw
 
@@ -348,7 +352,9 @@ def test_ecdh_extract_off_curve_point_is_hard_failure(
 ) -> None:
     curve = ec.SECP256R1()
     raw = bytearray(
-        ec.derive_private_key(8, curve).public_key().public_bytes(
+        ec.derive_private_key(8, curve)
+        .public_key()
+        .public_bytes(
             serialization.Encoding.X962,
             serialization.PublicFormat.UncompressedPoint,
         )
