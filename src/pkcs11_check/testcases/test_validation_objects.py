@@ -149,14 +149,18 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            if CKA_VALIDATION_AUTHORITY_TYPE not in attrs:
-                continue  # audit-ok: optional attribute is absent
-            auth = attrs[CKA_VALIDATION_AUTHORITY_TYPE]
+            auth = attr_or_record(
+                attrs,
+                CKA_VALIDATION_AUTHORITY_TYPE,
+                label="CKA_VALIDATION_AUTHORITY_TYPE:validation-object",
+            )
+            if auth is MISSING_ATTRIBUTE:
+                continue  # required metadata was recorded; continue to later objects
             if auth < vendor_base:
                 assert auth in _KNOWN_AUTHORITY_TYPES, f"Unknown authority type 0x{auth:08X}"
 
     def test_validation_module_id_is_string(self, p11_raw_session: Any) -> None:
-        """CKA_VALIDATION_MODULE_ID is a readable UTF-8 string if present."""
+        """CKA_VALIDATION_MODULE_ID is a readable UTF-8 string."""
         rs = p11_raw_session
         validations = _find_validation_objects(rs.raw, rs.sh)
         if not validations:
@@ -172,9 +176,13 @@ class TestValidationObjects:
                     kind="metadata",
                 )
                 raise
-            if CKA_VALIDATION_MODULE_ID not in attrs:
-                continue  # audit-ok: optional attribute is absent
-            mod_id = attrs[CKA_VALIDATION_MODULE_ID]
+            mod_id = attr_or_record(
+                attrs,
+                CKA_VALIDATION_MODULE_ID,
+                label="CKA_VALIDATION_MODULE_ID:validation-object",
+            )
+            if mod_id is MISSING_ATTRIBUTE:
+                continue  # required metadata was recorded; continue to later objects
             assert isinstance(mod_id, (str, bytes)), (
                 f"Expected str/bytes MODULE_ID, got {type(mod_id)}"
             )

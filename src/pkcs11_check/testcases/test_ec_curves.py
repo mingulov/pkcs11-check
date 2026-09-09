@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
-from pkcs11_check.classification import fail_as
+from pkcs11_check.classification import fail_as, record_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -124,18 +124,31 @@ class TestECKeygen:
                 CKA_KEY_TYPE,
                 label=f"CKA_KEY_TYPE:{curve_name}-private-key",
             )
-            for label, value in (
-                (f"CKA_KEY_TYPE:{curve_name}-public-key", pub_type),
-                (f"CKA_KEY_TYPE:{curve_name}-private-key", priv_type),
-            ):
-                if value is not MISSING_ATTRIBUTE and value != CKK_EC:
-                    fail_as(
-                        "self_contradiction",
-                        kind="metadata",
-                        label=label,
-                        operation="C_GetAttributeValue",
-                        summary=f"{label}: expected CKK_EC, got {value!r}",
-                    )
+            contradictions = [
+                (label, value)
+                for label, value in (
+                    (f"CKA_KEY_TYPE:{curve_name}-public-key", pub_type),
+                    (f"CKA_KEY_TYPE:{curve_name}-private-key", priv_type),
+                )
+                if value is not MISSING_ATTRIBUTE and value != CKK_EC
+            ]
+            for label, value in contradictions[:-1]:
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    summary=f"{label}: expected CKK_EC, got {value!r}",
+                )
+            if contradictions:
+                label, value = contradictions[-1]
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_GetAttributeValue",
+                    summary=f"{label}: expected CKK_EC, got {value!r}",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
