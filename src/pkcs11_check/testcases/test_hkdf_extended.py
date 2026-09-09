@@ -247,6 +247,7 @@ class TestHKDFKeyGen:
                 label="CKM_HKDF_KEY_GEN:CKA_VALUE readback",
                 reason="not_operational",
             )
+            checks: list[tuple[Any, Any, str, str]] = []
             if actual_key_type is not MISSING_ATTRIBUTE:
                 if key_type == CKK_GENERIC_SECRET and actual_key_type == CKK_HKDF:
                     # The module ignored the requested CKK_GENERIC_SECRET and produced
@@ -264,29 +265,50 @@ class TestHKDFKeyGen:
                         ),
                     )
                 else:
-                    assert_correct(
-                        actual=actual_key_type,
-                        expected=key_type,
-                        label="CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
-                        operation="C_GenerateKey",
-                        mechanism="CKM_HKDF_KEY_GEN",
-                        kind="metadata",
+                    checks.append(
+                        (
+                            actual_key_type,
+                            key_type,
+                            "CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
+                            "C_GenerateKey",
+                        )
                     )
             if value is not MISSING_ATTRIBUTE:
-                assert_correct(
-                    actual=len(value),
-                    expected=32,
-                    label="CKM_HKDF_KEY_GEN:CKA_VALUE length",
-                    operation="C_GetAttributeValue",
-                    mechanism="CKM_HKDF_KEY_GEN",
-                    kind="metadata",
+                checks.append(
+                    (
+                        len(value),
+                        32,
+                        "CKM_HKDF_KEY_GEN:CKA_VALUE length",
+                        "C_GetAttributeValue",
+                    )
                 )
             if derive is not MISSING_ATTRIBUTE:
+                checks.append(
+                    (
+                        derive,
+                        True,
+                        "CKM_HKDF_KEY_GEN:CKA_DERIVE readback",
+                        "C_GetAttributeValue",
+                    )
+                )
+
+            mismatches = [check for check in checks if check[0] != check[1]]
+            for _actual, _expected, label, operation in mismatches[:-1]:
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=label,
+                    operation=operation,
+                    mechanism="CKM_HKDF_KEY_GEN",
+                    summary=f"{label}: output does not match known answer",
+                )
+            if mismatches:
+                actual, expected, label, operation = mismatches[-1]
                 assert_correct(
-                    actual=derive,
-                    expected=True,
-                    label="CKM_HKDF_KEY_GEN:CKA_DERIVE readback",
-                    operation="C_GetAttributeValue",
+                    actual=actual,
+                    expected=expected,
+                    label=label,
+                    operation=operation,
                     mechanism="CKM_HKDF_KEY_GEN",
                     kind="metadata",
                 )

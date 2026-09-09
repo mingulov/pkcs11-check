@@ -7,10 +7,18 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.raw.types_std import CKA_COPYABLE, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases import test_access_control
+
+
+@pytest.fixture(autouse=True)
+def _clear_classifications() -> None:
+    C.clear()
+    yield
+    C.clear()
 
 
 def test_secret_key_access_control_skips_when_aes_keygen_is_absent(
@@ -100,3 +108,30 @@ def test_copy_access_control_does_not_swallow_harness_assertion(
 
     with pytest.raises(AssertionError, match="harness bug"):
         test_access_control.TestCopyableAttribute().test_copyable_key_can_be_copied(rs)
+
+
+def test_missing_copyable_attribute_records_and_cleans_up_instead_of_skipping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_access_control, "_gen_access_control_aes_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(test_access_control, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        test_access_control,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+
+    test_access_control.TestCopyableAttribute().test_copyable_key_can_be_copied(
+        SimpleNamespace(raw=object(), sh=1)
+    )
+
+    assert destroyed == [7]
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "honest_deviation"
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].actual_ckr is None
+    assert records[0].detail == {
+        "attribute": {"name": "CKA_COPYABLE", "id": int(CKA_COPYABLE)},
+    }

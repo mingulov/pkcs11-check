@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKA_DERIVE,
     CKA_KEY_TYPE,
     CKA_VALUE,
+    CKK_GENERIC_SECRET,
     CKK_HKDF,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
@@ -20,7 +22,7 @@ from pkcs11_check.testcases import test_hkdf_extended
 
 
 @pytest.fixture(autouse=True)
-def _clear_classifications() -> None:
+def _clear_classifications() -> Generator[None, None, None]:
     C.clear()
     yield
     C.clear()
@@ -213,10 +215,47 @@ def test_allowed_key_type_deviation_does_not_hide_derive_contradiction(
     with pytest.raises(pytest.fail.Exception):
         test_hkdf_extended.TestHKDFKeyGen().test_hkdf_key_gen_basic(
             _session(),
-            test_hkdf_extended.CKK_GENERIC_SECRET,
+            CKK_GENERIC_SECRET,
         )
 
     assert [record.reason for record in C.get_records()] == [
         "honest_deviation",
         "wrong_result",
+    ]
+
+
+def test_all_present_keygen_contradictions_are_preserved_before_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_hkdf_extended, "_gen_hkdf_key", lambda *_a, **_k: 71)
+    monkeypatch.setattr(
+        test_hkdf_extended,
+        "read_attributes",
+        lambda *_a, **_k: {
+            CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+            CKA_VALUE: b"",
+            CKA_DERIVE: False,
+        },
+    )
+    monkeypatch.setattr(
+        test_hkdf_extended,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="CKA_DERIVE"):
+        test_hkdf_extended.TestHKDFKeyGen().test_hkdf_key_gen_basic(_session(), CKK_HKDF)
+
+    assert destroyed == [71]
+    records = C.get_records()
+    assert [record.reason for record in records] == [
+        "wrong_result",
+        "wrong_result",
+        "wrong_result",
+    ]
+    assert [record.label for record in records] == [
+        "CKM_HKDF_KEY_GEN:CKA_KEY_TYPE readback",
+        "CKM_HKDF_KEY_GEN:CKA_VALUE length",
+        "CKM_HKDF_KEY_GEN:CKA_DERIVE readback",
     ]

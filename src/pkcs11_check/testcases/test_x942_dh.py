@@ -14,7 +14,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any, NoReturn
 
@@ -94,6 +94,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
@@ -103,6 +104,20 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.keymgmt
+
+
+def _read_attr_or_record(
+    raw: Any,
+    sh: int,
+    handle: int,
+    attr: Any,
+    *,
+    label: str,
+    attrs: Mapping[Any, Any] | None = None,
+) -> Any:
+    """Read one provider attribute while preserving an unavailable-value record."""
+    values = attrs if attrs is not None else read_attributes(raw, sh, handle, [attr])
+    return attr_or_record(values, attr, label=label, reason="not_operational")
 
 
 # ---------------------------------------------------------------------------
@@ -322,42 +337,181 @@ def _read_x942_params(
     *,
     expected_prime_bits: int = _X942_PARAM_PRIME_BITS,
     expected_subprime_bits: int = _X942_PARAM_SUBPRIME_BITS,
-) -> tuple[bytes, bytes, bytes]:
+) -> tuple[Any, Any, Any, Any, Any]:
     attrs = read_attributes(
         raw,
         sh,
         dp_handle,
         [CKA_PRIME, CKA_BASE, CKA_SUBPRIME, CKA_PRIME_BITS, CKA_SUBPRIME_BITS],
     )
-    prime = attrs[CKA_PRIME]
-    base = attrs[CKA_BASE]
-    subprime = attrs[CKA_SUBPRIME]
-    prime_bits = attrs[CKA_PRIME_BITS]
-    subprime_bits = attrs[CKA_SUBPRIME_BITS]
-
-    assert isinstance(prime, bytes)
-    assert isinstance(base, bytes)
-    assert isinstance(subprime, bytes)
-    assert_correct(
-        actual=prime_bits,
-        expected=expected_prime_bits,
+    prime = _read_attr_or_record(
+        raw,
+        sh,
+        dp_handle,
+        CKA_PRIME,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME readback",
+        attrs=attrs,
+    )
+    base = _read_attr_or_record(
+        raw,
+        sh,
+        dp_handle,
+        CKA_BASE,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_BASE readback",
+        attrs=attrs,
+    )
+    subprime = _read_attr_or_record(
+        raw,
+        sh,
+        dp_handle,
+        CKA_SUBPRIME,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME readback",
+        attrs=attrs,
+    )
+    prime_bits = _read_attr_or_record(
+        raw,
+        sh,
+        dp_handle,
+        CKA_PRIME_BITS,
         label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME_BITS readback",
-        operation="C_GenerateKey",
-        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
-        kind="metadata",
+        attrs=attrs,
     )
-    assert_correct(
-        actual=subprime_bits,
-        expected=expected_subprime_bits,
+    subprime_bits = _read_attr_or_record(
+        raw,
+        sh,
+        dp_handle,
+        CKA_SUBPRIME_BITS,
         label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME_BITS readback",
-        operation="C_GenerateKey",
-        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
-        kind="metadata",
+        attrs=attrs,
     )
-    assert len(prime) * 8 >= expected_prime_bits
-    assert len(base) > 0
-    assert len(subprime) * 8 >= expected_subprime_bits
-    return prime, base, subprime
+
+    return prime, base, subprime, prime_bits, subprime_bits
+
+
+def _assert_x942_params(
+    prime: Any,
+    base: Any,
+    subprime: Any,
+    prime_bits: Any,
+    subprime_bits: Any,
+    *,
+    expected_prime_bits: int,
+    expected_subprime_bits: int,
+) -> None:
+    """Validate each available X9.42 parameter independently."""
+    _assert_x942_bytes(
+        prime,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME readback",
+        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+        min_len=(expected_prime_bits + 7) // 8,
+    )
+    _assert_x942_bytes(
+        base,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_BASE readback",
+        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+        min_len=1,
+    )
+    _assert_x942_bytes(
+        subprime,
+        label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME readback",
+        mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+        min_len=(expected_subprime_bits + 7) // 8,
+    )
+    if prime_bits is not MISSING_ATTRIBUTE:
+        assert_correct(
+            actual=prime_bits,
+            expected=expected_prime_bits,
+            label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME_BITS readback",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+            kind="metadata",
+        )
+    if subprime_bits is not MISSING_ATTRIBUTE:
+        assert_correct(
+            actual=subprime_bits,
+            expected=expected_subprime_bits,
+            label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME_BITS readback",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_X9_42_DH_PARAMETER_GEN",
+            kind="metadata",
+        )
+
+
+def _assert_x942_bytes(
+    value: Any,
+    *,
+    label: str,
+    mechanism: str,
+    expected_len: int | None = None,
+    min_len: int | None = None,
+    require_nonzero: bool = False,
+) -> None:
+    """Classify malformed provider byte readbacks without harness assertions."""
+    if value is MISSING_ATTRIBUTE:
+        return
+    if not isinstance(value, bytes):
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            expected="bytes",
+            actual=type(value).__name__,
+            summary=f"{label}: provider returned a non-byte value",
+        )
+    if expected_len is not None and len(value) != expected_len:
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            expected=expected_len,
+            actual=len(value),
+            summary=f"{label}: provider returned an unexpected byte length",
+        )
+    if min_len is not None and len(value) < min_len:
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            expected=f">={min_len}",
+            actual=len(value),
+            summary=f"{label}: provider returned too few bytes",
+        )
+    if require_nonzero and value == b"\x00" * len(value):
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            summary=f"{label}: provider returned an all-zero secret",
+        )
+
+
+def _assert_x942_different(
+    first: Any,
+    second: Any,
+    *,
+    label: str,
+    mechanism: str,
+) -> None:
+    """Classify equal provider outputs where the test requires diversity."""
+    if first is MISSING_ATTRIBUTE or second is MISSING_ATTRIBUTE:
+        return
+    if first == second:
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            summary=f"{label}: independent provider outputs were equal",
+        )
 
 
 def _x942_param_size_candidates(rs: Any) -> tuple[tuple[int, int], ...]:
@@ -824,9 +978,21 @@ class TestX942DHKeyPairGen:
         try:
             assert pub != 0
             assert priv != 0
-            pub_value = read_attributes(rs.raw, rs.sh, pub, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(pub_value, bytes)
-            assert len(pub_value) > 0
+            pub_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_VALUE readback",
+            )
+            if pub_value is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                pub_value,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                min_len=1,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -836,24 +1002,38 @@ class TestX942DHKeyPairGen:
         _skip_no_x942_keygen(rs)
         pub, priv = _generate_x942_keypair(rs)
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert_correct(
-                actual=pub_kt,
-                expected=CKK_X9_42_DH,
+            pub_kt = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_KEY_TYPE,
                 label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
-                kind="metadata",
             )
-            assert_correct(
-                actual=priv_kt,
-                expected=CKK_X9_42_DH,
+            priv_kt = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKA_KEY_TYPE,
                 label="CKM_X9_42_DH_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
-                operation="C_GenerateKeyPair",
-                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
-                kind="metadata",
             )
+            if pub_kt is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=pub_kt,
+                    expected=CKK_X9_42_DH,
+                    label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                    kind="metadata",
+                )
+            if priv_kt is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=priv_kt,
+                    expected=CKK_X9_42_DH,
+                    label="CKM_X9_42_DH_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                    kind="metadata",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -863,7 +1043,15 @@ class TestX942DHKeyPairGen:
         _skip_no_x942_keygen(rs)
         pub, priv = _generate_x942_keypair(rs)
         try:
-            pub_prime = read_attributes(rs.raw, rs.sh, pub, [CKA_PRIME])[CKA_PRIME]
+            pub_prime = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_PRIME,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_PRIME readback",
+            )
+            if pub_prime is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=pub_prime,
                 expected=X942_PRIME_2048,
@@ -881,7 +1069,15 @@ class TestX942DHKeyPairGen:
         _skip_no_x942_keygen(rs)
         pub, priv = _generate_x942_keypair(rs)
         try:
-            pub_subprime = read_attributes(rs.raw, rs.sh, pub, [CKA_SUBPRIME])[CKA_SUBPRIME]
+            pub_subprime = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_SUBPRIME,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_SUBPRIME readback",
+            )
+            if pub_subprime is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=pub_subprime,
                 expected=X942_SUBPRIME,
@@ -900,9 +1096,40 @@ class TestX942DHKeyPairGen:
         pub1, priv1 = _generate_x942_keypair(rs)
         pub2, priv2 = _generate_x942_keypair(rs)
         try:
-            val1 = read_attributes(rs.raw, rs.sh, pub1, [CKA_VALUE])[CKA_VALUE]
-            val2 = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
-            assert val1 != val2
+            val1 = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub1,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:first public-key CKA_VALUE readback",
+            )
+            val2 = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub2,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:second public-key CKA_VALUE readback",
+            )
+            if val1 is MISSING_ATTRIBUTE or val2 is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                val1,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:first public-key CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                min_len=1,
+            )
+            _assert_x942_bytes(
+                val2,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:second public-key CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                min_len=1,
+            )
+            _assert_x942_different(
+                val1,
+                val2,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:independent public values",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+            )
         finally:
             for h in (pub1, priv1, pub2, priv2):
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -921,15 +1148,77 @@ class TestX942DHDerive:
         alice_shared = 0
         bob_shared = 0
         try:
-            alice_value = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
-            assert alice_value != bob_value
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Alice public CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
+            )
+            if alice_value is MISSING_ATTRIBUTE and bob_value is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_DH_DERIVE:Alice public CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            if alice_value is not MISSING_ATTRIBUTE and bob_value is not MISSING_ATTRIBUTE:
+                _assert_x942_different(
+                    alice_value,
+                    bob_value,
+                    label="CKM_X9_42_DH_DERIVE:independent public values",
+                    mechanism="CKM_X9_42_DH_DERIVE",
+                )
 
-            alice_shared = _x942_derive_aes(rs, alice_priv, bob_value)
-            bob_shared = _x942_derive_aes(rs, bob_priv, alice_value)
+            if bob_value is not MISSING_ATTRIBUTE:
+                alice_shared = _x942_derive_aes(rs, alice_priv, bob_value)
+            if alice_value is not MISSING_ATTRIBUTE:
+                bob_shared = _x942_derive_aes(rs, bob_priv, alice_value)
 
-            va = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])[CKA_VALUE]
+            if not alice_shared or not bob_shared:
+                return
+            va = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_shared,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Alice shared CKA_VALUE readback",
+            )
+            vb = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_shared,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Bob shared CKA_VALUE readback",
+            )
+            if va is MISSING_ATTRIBUTE or vb is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                va,
+                label="CKM_X9_42_DH_DERIVE:Alice shared CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            _assert_x942_bytes(
+                vb,
+                label="CKM_X9_42_DH_DERIVE:Bob shared CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
             assert_correct(
                 actual=va,
                 expected=vb,
@@ -955,17 +1244,39 @@ class TestX942DHDerive:
         shared_key = 0
         bob_key = 0
         try:
-            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
-            alice_value = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])[CKA_VALUE]
-
-            shared_key = _x942_derive_aes(
-                rs,
-                alice_priv,
-                bob_value,
-                extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
+            plaintext = b"X9.42 DH test!!" + b"\x00"  # 16 bytes for AES-ECB
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
+            )
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Alice public CKA_VALUE readback",
             )
 
-            plaintext = b"X9.42 DH test!!" + b"\x00"  # 16 bytes for AES-ECB
+            if bob_value is not MISSING_ATTRIBUTE:
+                shared_key = _x942_derive_aes(
+                    rs,
+                    alice_priv,
+                    bob_value,
+                    extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
+                )
+            if alice_value is not MISSING_ATTRIBUTE:
+                bob_key = _x942_derive_aes(
+                    rs,
+                    bob_priv,
+                    alice_value,
+                    extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
+                )
+            if not shared_key or not bob_key:
+                return
+
             ct = encrypt_single(rs.raw, rs.sh, shared_key, CKM_AES_ECB, plaintext)
             if ct == plaintext:
                 classify(
@@ -980,12 +1291,6 @@ class TestX942DHDerive:
                     ),
                 )
 
-            bob_key = _x942_derive_aes(
-                rs,
-                bob_priv,
-                alice_value,
-                extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
-            )
             pt = decrypt_single(rs.raw, rs.sh, bob_key, CKM_AES_ECB, ct)
             assert_correct(
                 actual=pt,
@@ -1096,7 +1401,15 @@ class TestX942DHDerive:
             attr_bool(CKA_TOKEN, False),
         )
         try:
-            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
+            )
+            if bob_value is MISSING_ATTRIBUTE:
+                return
             mech = _build_x942_derive_mech(
                 bob_value,
                 CKD_NULL,
@@ -1144,7 +1457,15 @@ class TestX942DHDerive:
             attr_bool(CKA_TOKEN, False),
         )
         try:
-            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
+            )
+            if bob_value is MISSING_ATTRIBUTE:
+                return
             mech = _build_x942_derive_mech(bob_value, CKD_SHA1_KDF_ASN1)
             rv = rs.raw.C_DeriveKey(
                 rs.sh,
@@ -1185,7 +1506,15 @@ class TestX942DHDerive:
             attr_bool(CKA_TOKEN, False),
         )
         try:
-            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
+            )
+            if bob_value is MISSING_ATTRIBUTE:
+                return
             mech = _build_x942_derive_mech(bob_value, _X942_INVALID_KDF)
             rv = rs.raw.C_DeriveKey(
                 rs.sh,
@@ -1242,7 +1571,15 @@ class TestX942DHDerive:
                 ),
                 "CKM_X9_42_DH_DERIVE RFC 5114 exact vector",
             )
-            value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
+            value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                derived,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:RFC 5114 CKA_VALUE readback",
+            )
+            if value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=value,
                 expected=_X942_RFC5114_EXPECTED_SECRET_32,
@@ -1276,7 +1613,7 @@ class TestX942DHDerive:
                 ),
                 "CKM_X9_42_DH_DERIVE RFC 5114 truncation vector",
             )
-            derived_values: dict[int, bytes] = {}
+            derived_values: dict[int, Any] = {}
             for requested_len in (32, 16):
 
                 def derive_requested_len(requested_len: int = requested_len) -> int:
@@ -1301,13 +1638,30 @@ class TestX942DHDerive:
                     f"CKM_X9_42_DH_DERIVE RFC 5114 CKA_VALUE_LEN={requested_len}",
                 )
                 derived_keys.append(derived)
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == requested_len, (
-                    "X9.42 DH derived key reported "
-                    f"{len(value)} bytes for CKA_VALUE_LEN={requested_len}"
+                value = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    derived,
+                    CKA_VALUE,
+                    label=(
+                        "CKM_X9_42_DH_DERIVE:RFC 5114 truncation "
+                        f"CKA_VALUE readback len={requested_len}"
+                    ),
                 )
                 derived_values[requested_len] = value
+
+            for requested_len, value in derived_values.items():
+                _assert_x942_bytes(
+                    value,
+                    label=(
+                        "CKM_X9_42_DH_DERIVE:RFC 5114 truncation "
+                        f"CKA_VALUE readback len={requested_len}"
+                    ),
+                    mechanism="CKM_X9_42_DH_DERIVE",
+                    expected_len=requested_len,
+                )
+            if any(value is MISSING_ATTRIBUTE for value in derived_values.values()):
+                return
 
             assert_correct(
                 actual=derived_values[32],
@@ -1508,15 +1862,61 @@ class TestX942DHDerive:
         key1 = 0
         key2 = 0
         try:
-            val2 = read_attributes(rs.raw, rs.sh, pub2, [CKA_VALUE])[CKA_VALUE]
-            key1 = _x942_derive_aes(rs, priv1, val2)
+            val2 = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub2,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:first peer CKA_VALUE readback",
+            )
+            val4 = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub4,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:second peer CKA_VALUE readback",
+            )
+            if val2 is not MISSING_ATTRIBUTE:
+                key1 = _x942_derive_aes(rs, priv1, val2)
+            if val4 is not MISSING_ATTRIBUTE:
+                key2 = _x942_derive_aes(rs, priv3, val4)
+            if not key1 or not key2:
+                return
 
-            val4 = read_attributes(rs.raw, rs.sh, pub4, [CKA_VALUE])[CKA_VALUE]
-            key2 = _x942_derive_aes(rs, priv3, val4)
-
-            v1 = read_attributes(rs.raw, rs.sh, key1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, key2, [CKA_VALUE])[CKA_VALUE]
-            assert v1 != v2
+            v1 = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                key1,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:first derived CKA_VALUE readback",
+            )
+            v2 = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                key2,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:second derived CKA_VALUE readback",
+            )
+            if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                v1,
+                label="CKM_X9_42_DH_DERIVE:first derived CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            _assert_x942_bytes(
+                v2,
+                label="CKM_X9_42_DH_DERIVE:second derived CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            _assert_x942_different(
+                v1,
+                v2,
+                label="CKM_X9_42_DH_DERIVE:distinct exchanges produce distinct secrets",
+                mechanism="CKM_X9_42_DH_DERIVE",
+            )
         finally:
             for h in (_pub1, priv1, pub2, _priv2, _pub3, priv3, pub4, _priv4):
                 destroy_quietly(rs.raw, rs.sh, h)
@@ -1567,13 +1967,28 @@ class TestX942DHParameterGen:
         dp, prime_bits, subprime_bits = _generate_x942_params_for_session(rs)
         try:
             assert dp != 0
-            _read_x942_params(
+            prime, base, subprime, actual_prime_bits, actual_subprime_bits = _read_x942_params(
                 rs.raw,
                 rs.sh,
                 dp,
                 expected_prime_bits=prime_bits,
                 expected_subprime_bits=subprime_bits,
             )
+            _assert_x942_params(
+                prime,
+                base,
+                subprime,
+                actual_prime_bits,
+                actual_subprime_bits,
+                expected_prime_bits=prime_bits,
+                expected_subprime_bits=subprime_bits,
+            )
+            if (
+                prime is MISSING_ATTRIBUTE
+                or base is MISSING_ATTRIBUTE
+                or subprime is MISSING_ATTRIBUTE
+            ):
+                return
         finally:
             destroy_quietly(rs.raw, rs.sh, dp)
 
@@ -1595,13 +2010,28 @@ class TestX942DHParameterGen:
         alice_shared = 0
         bob_shared = 0
         try:
-            prime, base, subprime = _read_x942_params(
+            prime, base, subprime, actual_prime_bits, actual_subprime_bits = _read_x942_params(
                 rs.raw,
                 rs.sh,
                 dp,
                 expected_prime_bits=prime_bits,
                 expected_subprime_bits=subprime_bits,
             )
+            _assert_x942_params(
+                prime,
+                base,
+                subprime,
+                actual_prime_bits,
+                actual_subprime_bits,
+                expected_prime_bits=prime_bits,
+                expected_subprime_bits=subprime_bits,
+            )
+            if (
+                prime is MISSING_ATTRIBUTE
+                or base is MISSING_ATTRIBUTE
+                or subprime is MISSING_ATTRIBUTE
+            ):
+                return
             try:
                 alice_pub, alice_priv = _generate_x942_keypair(
                     rs,
@@ -1618,20 +2048,80 @@ class TestX942DHParameterGen:
             except AssertionError as e:
                 _xfail_if_x942_keypair_reject(e)
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_pub, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_VALUE])[CKA_VALUE]
-            assert alice_value != bob_value
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:generated Alice public CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:generated Bob public CKA_VALUE readback",
+            )
+            if alice_value is MISSING_ATTRIBUTE and bob_value is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_DH_DERIVE:generated Alice public CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_DH_DERIVE:generated Bob public CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            if alice_value is not MISSING_ATTRIBUTE and bob_value is not MISSING_ATTRIBUTE:
+                _assert_x942_different(
+                    alice_value,
+                    bob_value,
+                    label="CKM_X9_42_DH_DERIVE:generated independent public values",
+                    mechanism="CKM_X9_42_DH_DERIVE",
+                )
 
             try:
-                alice_shared = _x942_derive_aes(rs, alice_priv, bob_value)
-                bob_shared = _x942_derive_aes(rs, bob_priv, alice_value)
+                if bob_value is not MISSING_ATTRIBUTE:
+                    alice_shared = _x942_derive_aes(rs, alice_priv, bob_value)
+                if alice_value is not MISSING_ATTRIBUTE:
+                    bob_shared = _x942_derive_aes(rs, bob_priv, alice_value)
             except AssertionError as e:
                 _xfail_if_x942_derive_reject(e)
 
-            va = read_attributes(rs.raw, rs.sh, alice_shared, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, bob_shared, [CKA_VALUE])[CKA_VALUE]
+            if not alice_shared or not bob_shared:
+                return
+            va = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_shared,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:generated Alice shared CKA_VALUE readback",
+            )
+            vb = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_shared,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:generated Bob shared CKA_VALUE readback",
+            )
+            if va is MISSING_ATTRIBUTE or vb is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                va,
+                label="CKM_X9_42_DH_DERIVE:generated Alice shared CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
+            _assert_x942_bytes(
+                vb,
+                label="CKM_X9_42_DH_DERIVE:generated Bob shared CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                min_len=1,
+            )
             assert_correct(
                 actual=va,
                 expected=vb,
@@ -1723,11 +2213,36 @@ class TestX942DHHybridDerive:
                 "CKM_X9_42_DH_HYBRID_DERIVE Bob side",
             )
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
-            assert len(alice_value) == _X942_EXTENDED_SECRET_LEN
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:Alice secret CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:Bob secret CKA_VALUE readback",
+            )
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:Alice secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:Bob secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            if alice_value is MISSING_ATTRIBUTE or bob_value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=alice_value,
                 expected=bob_value,
@@ -1735,7 +2250,6 @@ class TestX942DHHybridDerive:
                 operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
             )
-            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:
@@ -1777,7 +2291,7 @@ class TestX942DHHybridDerive:
             ) = alice
             _bob_pub1, _bob_priv1, _bob_pub2, _bob_priv2, bob_pub1_value, bob_pub2_value = bob
 
-            derived_values: dict[int, bytes] = {}
+            derived_values: dict[int, Any] = {}
             for requested_len in (_X942_EXTENDED_SECRET_LEN, 16):
                 derived = _x942_derive_generic_secret_len(
                     rs,
@@ -1793,10 +2307,24 @@ class TestX942DHHybridDerive:
                     f"CKM_X9_42_DH_HYBRID_DERIVE CKA_VALUE_LEN={requested_len}",
                 )
                 derived_keys.append(derived)
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == requested_len
+                value = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    derived,
+                    CKA_VALUE,
+                    label=(f"CKM_X9_42_DH_HYBRID_DERIVE:CKA_VALUE readback len={requested_len}"),
+                )
                 derived_values[requested_len] = value
+
+            for requested_len, value in derived_values.items():
+                _assert_x942_bytes(
+                    value,
+                    label=f"CKM_X9_42_DH_HYBRID_DERIVE:CKA_VALUE readback len={requested_len}",
+                    mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                    expected_len=requested_len,
+                )
+            if any(value is MISSING_ATTRIBUTE for value in derived_values.values()):
+                return
 
             assert_correct(
                 actual=derived_values[16],
@@ -1877,10 +2405,36 @@ class TestX942DHHybridDerive:
                 "CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_CONCATENATE Bob side",
             )
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:concat Alice secret CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:concat Bob secret CKA_VALUE readback",
+            )
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:concat Alice secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:concat Bob secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            if alice_value is MISSING_ATTRIBUTE or bob_value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=alice_value,
                 expected=bob_value,
@@ -1888,7 +2442,6 @@ class TestX942DHHybridDerive:
                 operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
             )
-            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:
@@ -1961,10 +2514,36 @@ class TestX942DHHybridDerive:
                 "CKM_X9_42_DH_HYBRID_DERIVE CKD_SHA1_KDF_ASN1 DER OtherInfo Bob side",
             )
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:ASN.1 Alice secret CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:ASN.1 Bob secret CKA_VALUE readback",
+            )
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:ASN.1 Alice secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_DH_HYBRID_DERIVE:ASN.1 Bob secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            if alice_value is MISSING_ATTRIBUTE or bob_value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=alice_value,
                 expected=bob_value,
@@ -1972,7 +2551,6 @@ class TestX942DHHybridDerive:
                 operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
             )
-            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:
@@ -2129,11 +2707,36 @@ class TestX942MQVDerive:
                 "CKM_X9_42_MQV_DERIVE Bob side",
             )
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
-            assert len(alice_value) == _X942_EXTENDED_SECRET_LEN
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_MQV_DERIVE:Alice secret CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_MQV_DERIVE:Bob secret CKA_VALUE readback",
+            )
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_MQV_DERIVE:Alice secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_MQV_DERIVE:Bob secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            if alice_value is MISSING_ATTRIBUTE or bob_value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=alice_value,
                 expected=bob_value,
@@ -2141,7 +2744,6 @@ class TestX942MQVDerive:
                 operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
             )
-            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:
@@ -2183,7 +2785,7 @@ class TestX942MQVDerive:
             ) = alice
             _bob_pub1, _bob_priv1, _bob_pub2, _bob_priv2, bob_pub1_value, bob_pub2_value = bob
 
-            derived_values: dict[int, bytes] = {}
+            derived_values: dict[int, Any] = {}
             for requested_len in (_X942_EXTENDED_SECRET_LEN, 16):
                 derived = _x942_derive_generic_secret_len(
                     rs,
@@ -2200,10 +2802,24 @@ class TestX942MQVDerive:
                     f"CKM_X9_42_MQV_DERIVE CKA_VALUE_LEN={requested_len}",
                 )
                 derived_keys.append(derived)
-                value = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])[CKA_VALUE]
-                assert isinstance(value, bytes)
-                assert len(value) == requested_len
+                value = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    derived,
+                    CKA_VALUE,
+                    label=(f"CKM_X9_42_MQV_DERIVE:CKA_VALUE readback len={requested_len}"),
+                )
                 derived_values[requested_len] = value
+
+            for requested_len, value in derived_values.items():
+                _assert_x942_bytes(
+                    value,
+                    label=f"CKM_X9_42_MQV_DERIVE:CKA_VALUE readback len={requested_len}",
+                    mechanism="CKM_X9_42_MQV_DERIVE",
+                    expected_len=requested_len,
+                )
+            if any(value is MISSING_ATTRIBUTE for value in derived_values.values()):
+                return
 
             assert_correct(
                 actual=derived_values[16],
@@ -2286,10 +2902,36 @@ class TestX942MQVDerive:
                 "CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_CONCATENATE Bob side",
             )
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_MQV_DERIVE:concat Alice secret CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_MQV_DERIVE:concat Bob secret CKA_VALUE readback",
+            )
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_MQV_DERIVE:concat Alice secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_MQV_DERIVE:concat Bob secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            if alice_value is MISSING_ATTRIBUTE or bob_value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=alice_value,
                 expected=bob_value,
@@ -2297,7 +2939,6 @@ class TestX942MQVDerive:
                 operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
             )
-            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:
@@ -2372,10 +3013,36 @@ class TestX942MQVDerive:
                 "CKM_X9_42_MQV_DERIVE CKD_SHA1_KDF_ASN1 DER OtherInfo Bob side",
             )
 
-            alice_value = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])[CKA_VALUE]
-            bob_value = read_attributes(rs.raw, rs.sh, bob_secret, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(alice_value, bytes)
-            assert isinstance(bob_value, bytes)
+            alice_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                alice_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_MQV_DERIVE:ASN.1 Alice secret CKA_VALUE readback",
+            )
+            bob_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                bob_secret,
+                CKA_VALUE,
+                label="CKM_X9_42_MQV_DERIVE:ASN.1 Bob secret CKA_VALUE readback",
+            )
+            _assert_x942_bytes(
+                alice_value,
+                label="CKM_X9_42_MQV_DERIVE:ASN.1 Alice secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            _assert_x942_bytes(
+                bob_value,
+                label="CKM_X9_42_MQV_DERIVE:ASN.1 Bob secret CKA_VALUE readback",
+                mechanism="CKM_X9_42_MQV_DERIVE",
+                expected_len=_X942_EXTENDED_SECRET_LEN,
+                require_nonzero=True,
+            )
+            if alice_value is MISSING_ATTRIBUTE or bob_value is MISSING_ATTRIBUTE:
+                return
             assert_correct(
                 actual=alice_value,
                 expected=bob_value,
@@ -2383,7 +3050,6 @@ class TestX942MQVDerive:
                 operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
             )
-            assert alice_value != b"\x00" * _X942_EXTENDED_SECRET_LEN
         finally:
             for handle in (*alice[:4], *bob[:4], alice_secret, bob_secret):
                 if handle:

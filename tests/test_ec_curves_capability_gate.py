@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,7 +17,7 @@ from pkcs11_check.testcases import test_ec_curves as mod
 
 
 @pytest.fixture(autouse=True)
-def _clear_classifications() -> None:
+def _clear_classifications() -> Generator[None, None, None]:
     C.clear()
     yield
     C.clear()
@@ -82,6 +83,33 @@ def test_missing_public_key_type_does_not_hide_private_contradiction(
     ]
 
 
+def test_both_wrong_key_types_preserve_both_contradictions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mod, "_try_gen_ec", lambda *_a: (17, 18))
+    monkeypatch.setattr(
+        mod,
+        "read_attributes",
+        lambda _raw, _sh, handle, _attrs: {CKA_KEY_TYPE: handle},
+    )
+    monkeypatch.setattr(mod, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(pytest.fail.Exception, match="private-key"):
+        mod.TestECKeygen().test_ec_key_type(
+            SimpleNamespace(raw=object(), sh=1), "secp256r1", 32, None, None
+        )
+
+    records = C.get_records()
+    assert [record.reason for record in records] == [
+        "self_contradiction",
+        "self_contradiction",
+    ]
+    assert [record.label for record in records] == [
+        "CKA_KEY_TYPE:secp256r1-public-key",
+        "CKA_KEY_TYPE:secp256r1-private-key",
+    ]
+
+
 def test_crossverify_reads_provider_point_with_explicit_curve(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -89,7 +117,9 @@ def test_crossverify_reads_provider_point_with_explicit_curve(
     private_key = ec.generate_private_key(curve)
     calls: list[ec.EllipticCurve] = []
 
-    def _read_key(_rs: Any, _handle: int, selected: ec.EllipticCurve, **_kw: Any):
+    def _read_key(
+        _rs: Any, _handle: int, selected: ec.EllipticCurve, **_kw: Any
+    ) -> ec.EllipticCurvePublicKey:
         calls.append(selected)
         return private_key.public_key()
 
