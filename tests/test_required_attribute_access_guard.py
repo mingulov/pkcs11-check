@@ -1704,6 +1704,203 @@ def check(raw, session, handle, condition, override):
     assert _kinds(source) == ["taint_escape"]
 
 
+@pytest.mark.parametrize(
+    "imports, call",
+    [
+        (
+            "from pkcs11_check.classification import fail_as",
+            'fail_as("accepted_invalid", label="missing")',
+        ),
+        (
+            "import pkcs11_check.classification as classification",
+            'classification.xfail_as("not_operational", label="missing")',
+        ),
+        (
+            "from pkcs11_check.classification import xfail_as as stop",
+            'stop("not_operational", label="missing")',
+        ),
+    ],
+)
+def test_resolved_terminal_classification_helpers_make_missing_branch_structured(
+    imports: str, call: str
+) -> None:
+    source = f"""
+{imports}
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        {call}
+    return attrs[CKA_VALUE]
+"""
+
+    assert _violations(source) == []
+
+
+def test_both_terminal_classification_branches_make_join_unreachable() -> None:
+    source = """
+from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        fail_as("accepted_invalid", label="missing")
+    else:
+        xfail_as("not_operational", label="present")
+    return attrs[CKA_VALUE]
+"""
+
+    assert _violations(source) == []
+
+
+def test_shadowed_fail_as_returning_function_is_not_terminal() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def fail_as(*args, **kwargs):
+    return None
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        fail_as("accepted_invalid", label="missing")
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_assert_correct_is_not_a_terminal_summary() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        assert_correct(actual=None, expected=b"value", label="missing")
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+@pytest.mark.parametrize(
+    "guarded, expected",
+    [
+        (True, []),
+        (False, ["unstructured_absence"]),
+    ],
+)
+def test_optional_value_materializes_through_local_helper(
+    guarded: bool, expected: list[str]
+) -> None:
+    guard = (
+        "if value is not MISSING_ATTRIBUTE:\n        consume(value)"
+        if guarded
+        else "consume(value)"
+    )
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def consume(value):
+    unknown(value)
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    {guard}
+"""
+
+    assert _kinds(source) == expected
+
+
+@pytest.mark.parametrize(
+    "guarded, expected",
+    [
+        (True, []),
+        (False, ["unstructured_absence"]),
+    ],
+)
+def test_optional_value_materializes_through_formatted_expression(
+    guarded: bool, expected: list[str]
+) -> None:
+    guard = (
+        'if value is not MISSING_ATTRIBUTE:\n        consume(f"value={value!r}")'
+        if guarded
+        else 'consume(f"value={value!r}")'
+    )
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="value")
+    {guard}
+"""
+
+    assert _kinds(source) == expected
+
+
+def test_closure_captured_reader_is_provider_tainted() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as outer_reader
+
+def outer(raw, session, handle):
+    read_attributes = outer_reader
+
+    def inner():
+        attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner()
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_closure_shadowed_reader_stays_clean() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as outer_reader
+
+def outer(raw, session, handle):
+    read_attributes = outer_reader
+
+    def inner():
+        def read_attributes(raw, session, handle, names):
+            return {name: None for name in names}
+
+        attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner()
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("guarded_alias", ["a", "b"])
+def test_optional_presence_proof_isolated_between_aliases(guarded_alias: str) -> None:
+    other = "b" if guarded_alias == "a" else "a"
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE, CKA_LABEL])
+    a = attr_or_record(attrs, CKA_VALUE, label="value")
+    b = attr_or_record(attrs, CKA_LABEL, label="label")
+    if {guarded_alias} is not MISSING_ATTRIBUTE:
+        consume({guarded_alias}, {other})
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
 def test_finally_mixed_override_keeps_tainted_and_clean_return_summaries() -> None:
     source = """
 from pkcs11_check.raw.recipes import read_attributes
@@ -2099,3 +2296,425 @@ def check(raw, session, handle, choose_first):
 """
 
     assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
+
+
+def test_conditional_boolean_terminal_call_keeps_fallthrough_live() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    condition and fail_as("accepted_invalid", label="conditional")
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'result = fail_as("accepted_invalid", label="assignment")',
+        'result: object = fail_as("accepted_invalid", label="annotation")',
+    ],
+)
+def test_definitely_terminal_assignment_stops_following_flow(assignment: str) -> None:
+    source = f"""
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    {assignment}
+    return attrs[CKA_VALUE]
+"""
+
+    assert _violations(source) == []
+
+
+def test_conditional_only_terminal_with_silent_return_is_unstructured() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        if condition:
+            fail_as("accepted_invalid", label="conditional")
+        return None
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_local_returning_helper_does_not_count_as_terminal_absence_evidence() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def benign(*args, **kwargs):
+    return None
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        benign("accepted_invalid", label="missing")
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_shadowed_terminal_name_with_silent_return_is_unstructured() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def fail_as(*args, **kwargs):
+    return None
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        fail_as("accepted_invalid", label="shadowed")
+        return None
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_terminal_assignment_does_not_use_boolean_or_taint() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    result = condition and fail_as("accepted_invalid", label="conditional")
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_terminal_wrapper_summary_requires_every_path_to_terminate() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def maybe_stop(condition):
+    if condition:
+        fail_as("accepted_invalid", label="conditional")
+    return None
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        maybe_stop(condition)
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_recursive_terminal_wrapper_does_not_gain_terminal_summary() -> None:
+    source = """
+from pkcs11_check.classification import fail_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def recursive(condition):
+    if condition:
+        fail_as("accepted_invalid", label="terminal")
+    return recursive(condition)
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        recursive(condition)
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+@pytest.mark.parametrize(
+    "rebinding",
+    [
+        "reader = benign\n    reader = provider_reader",
+        "reader = provider_reader\n    reader = benign",
+    ],
+    ids=["benign-then-provider", "provider-then-benign"],
+)
+def test_returned_closure_uses_lexical_cell_rebinding(rebinding: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {{name: None for name in names}}
+
+def factory(raw, session, handle):
+    reader = benign
+
+    def inner():
+        attrs = reader(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    {rebinding}
+    return inner
+
+def check(raw, session, handle):
+    helper = factory(raw, session, handle)
+    return helper()
+"""
+
+    expected = ["unsafe_subscript"] if "provider_reader" in rebinding.splitlines()[-1] else []
+    assert _kinds(source) == expected
+
+
+def test_joined_same_nested_provider_closures_keep_provider_state() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def factory(raw, session, handle):
+    reader = provider_reader
+
+    def inner():
+        attrs = reader(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner
+
+def check(raw, session, handle, condition):
+    first = factory(raw, session, handle)
+    second = factory(raw, session, handle)
+    helper = first if condition else second
+    return helper()
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_joined_same_nested_benign_closures_ignore_caller_shadow() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {name: None for name in names}
+
+def factory(raw, session, handle):
+    read_attributes = benign
+
+    def inner():
+        attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner
+
+def check(raw, session, handle, condition):
+    read_attributes = provider_reader
+    first = factory(raw, session, handle)
+    second = factory(raw, session, handle)
+    helper = first if condition else second
+    return helper()
+"""
+
+    assert _violations(source) == []
+
+
+def test_distinct_benign_closures_do_not_cross_pair_callable_state() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {name: None for name in names}
+
+def factory_a(raw, session, handle):
+    reader_a = benign
+    reader_b = provider_reader
+
+    def inner_a():
+        attrs = reader_a(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner_a
+
+def factory_b(raw, session, handle):
+    reader_a = provider_reader
+    reader_b = benign
+
+    def inner_b():
+        attrs = reader_b(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner_b
+
+def check(raw, session, handle, condition):
+    first = factory_a(raw, session, handle)
+    second = factory_b(raw, session, handle)
+    helper = first if condition else second
+    return helper()
+"""
+
+    assert _violations(source) == []
+
+
+def test_distinct_callable_closure_pairing_keeps_only_correct_unsafe_path() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {name: None for name in names}
+
+def factory_a(raw, session, handle):
+    reader_a = benign
+    reader_b = provider_reader
+
+    def inner_a():
+        attrs = reader_a(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner_a
+
+def factory_b(raw, session, handle):
+    reader_a = provider_reader
+    reader_b = provider_reader
+
+    def inner_b():
+        attrs = reader_b(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner_b
+
+def check(raw, session, handle, condition):
+    first = factory_a(raw, session, handle)
+    second = factory_b(raw, session, handle)
+    helper = first if condition else second
+    return helper()
+"""
+
+    violations = _violations(source)
+    assert [violation.kind for violation in violations] == ["unsafe_subscript"]
+    assert violations[0].line == 23
+
+
+def test_same_name_branch_closures_keep_benign_reader_pairing() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {name: None for name in names}
+
+def factory(raw, session, handle, condition):
+    if condition:
+        reader_a = benign
+        reader_b = provider_reader
+        def inner():
+            attrs = reader_a(raw, session, handle, [CKA_VALUE])
+            return attrs[CKA_VALUE]
+        return inner
+    else:
+        reader_a = provider_reader
+        reader_b = benign
+        def inner():
+            attrs = reader_b(raw, session, handle, [CKA_VALUE])
+            return attrs[CKA_VALUE]
+        return inner
+
+def check(raw, session, handle, condition):
+    helper = factory(raw, session, handle, condition)
+    return helper()
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize("provider_first", [True, False], ids=["first", "last"])
+def test_same_name_branch_closures_retain_the_provider_definition(provider_first: bool) -> None:
+    first_reader, second_reader = (
+        ("provider_reader", "benign") if provider_first else ("benign", "provider_reader")
+    )
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {{name: None for name in names}}
+
+def factory(raw, session, handle, condition):
+    if condition:
+        reader_a = {first_reader}
+        reader_b = benign
+        def inner():
+            attrs = reader_a(raw, session, handle, [CKA_VALUE])
+            return attrs[CKA_VALUE]
+        return inner
+    else:
+        reader_a = benign
+        reader_b = {second_reader}
+        def inner():
+            attrs = reader_b(raw, session, handle, [CKA_VALUE])
+            return attrs[CKA_VALUE]
+        return inner
+
+def check(raw, session, handle, condition):
+    helper = factory(raw, session, handle, condition)
+    return helper()
+"""
+
+    violations = _violations(source)
+    assert [violation.kind for violation in violations] == ["unsafe_subscript"]
+    assert violations[0].line == (13 if provider_first else 20)
+
+
+def test_unknown_callable_join_does_not_fall_back_to_one_known_closure() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {name: None for name in names}
+
+def check(raw, session, handle, condition):
+    helper = benign if condition else None
+    attrs = helper(raw, session, handle, [CKA_VALUE])
+    return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+@pytest.mark.parametrize("provider_last", [True, False], ids=["last", "first"])
+def test_same_function_closure_join_widens_past_eight_alternatives(
+    provider_last: bool,
+) -> None:
+    readers = [
+        "provider_reader" if (index == 8) == provider_last else "benign" for index in range(9)
+    ]
+    assignments = [
+        f"    closure_{index} = factory({reader})" for index, reader in enumerate(readers)
+    ]
+    helper = "closure_0"
+    for index in range(1, 9):
+        helper = f"{helper} if condition_{index} else closure_{index}"
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes as provider_reader
+
+def benign(raw, session, handle, names):
+    return {{name: None for name in names}}
+
+def factory(reader):
+    def inner():
+        attrs = reader(raw, session, handle, [CKA_VALUE])
+        return attrs[CKA_VALUE]
+
+    return inner
+
+def check(raw, session, handle, {", ".join(f"condition_{index}" for index in range(1, 9))}):
+{chr(10).join(assignments)}
+    helper = {helper}
+    return helper()
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]

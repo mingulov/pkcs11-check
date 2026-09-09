@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,8 +14,10 @@ from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
+    CKA_VALUE,
     CKK_AES,
 )
 from pkcs11_check.testcases import _ec_export
@@ -286,3 +288,95 @@ def test_rsa_attribute_shape_mismatch_is_hard_crypto_failure(
     actual = record.detail["attribute"]["actual"]
     assert actual in {repr(modulus), repr(exponent)}
     assert all(item.reason != "unclassified" for item in C.get_records())
+
+
+def test_rsa_records_both_independent_attribute_mismatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tkm, "gen_rsa_keypair_or_xfail", lambda *_args, **_kwargs: (11, 12))
+    monkeypatch.setattr(
+        tkm,
+        "read_attributes",
+        lambda *_args, **_kwargs: {
+            CKA_MODULUS: b"short",
+            CKA_PUBLIC_EXPONENT: b"",
+        },
+    )
+    destroyed: list[int] = []
+    monkeypatch.setattr(tkm, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
+
+    with pytest.raises(pytest.fail.Exception):
+        tkm.TestKeyExport().test_rsa_modulus_export(_rs("RSA_PKCS_KEY_PAIR_GEN"))
+
+    assert destroyed == [11, 12]
+    assert [record.reason for record in C.get_records()] == ["wrong_result", "wrong_result"]
+
+
+def test_copy_records_both_independent_attribute_mismatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tkm, "_aes_keymgmt_key", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(tkm, "copy_object", lambda *_args, **_kwargs: 2)
+    monkeypatch.setattr(
+        tkm,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_LABEL: b"wrong", CKA_KEY_TYPE: 999},
+    )
+    destroyed: list[int] = []
+    monkeypatch.setattr(tkm, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
+
+    with pytest.raises(pytest.fail.Exception):
+        tkm.TestKeyCopy().test_copy_preserves_attributes(_rs())
+
+    assert destroyed == [1, 2]
+    assert [record.reason for record in C.get_records()] == ["wrong_result", "wrong_result"]
+
+
+def test_import_multiple_sizes_records_every_mismatch_and_cleans_all_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter([11, 12, 13])
+    monkeypatch.setattr(tkm, "import_secret_key", lambda *_args, **_kwargs: next(handles))
+    monkeypatch.setattr(
+        tkm,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_VALUE: b"wrong"},
+    )
+    destroyed: list[int] = []
+    monkeypatch.setattr(tkm, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
+
+    with pytest.raises(pytest.fail.Exception):
+        tkm.TestKeyImport().test_import_multiple_sizes(_rs())
+
+    assert destroyed == [11, 12, 13]
+    assert [record.reason for record in C.get_records()] == [
+        "wrong_result",
+        "wrong_result",
+        "wrong_result",
+    ]
+
+
+def test_import_multiple_sizes_retains_mismatch_before_later_reader_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handles = iter([11, 12, 13])
+    reads: Iterator[dict[int, Any] | BaseException] = iter(
+        [{CKA_VALUE: b"wrong"}, RuntimeError("reader failed")]
+    )
+    monkeypatch.setattr(tkm, "import_secret_key", lambda *_args, **_kwargs: next(handles))
+
+    def _read(*_args: Any, **_kwargs: Any) -> dict[int, Any]:
+        result: dict[int, Any] | BaseException = next(reads)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(tkm, "read_attributes", _read)
+    destroyed: list[int] = []
+    monkeypatch.setattr(tkm, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
+
+    with pytest.raises(RuntimeError, match="reader failed"):
+        tkm.TestKeyImport().test_import_multiple_sizes(_rs())
+
+    assert destroyed == [11, 12]
+    assert [record.reason for record in C.get_records()] == ["wrong_result"]

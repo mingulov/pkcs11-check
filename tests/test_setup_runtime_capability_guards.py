@@ -11,6 +11,8 @@ from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_ALWAYS_AUTHENTICATE,
+    CKA_KEY_GEN_MECHANISM,
     CKF_DECRYPT,
     CKF_ENCRYPT,
     CKK_AES,
@@ -1827,7 +1829,7 @@ def test_mechanism_attribute_malformed_ulong_is_xfail(
         test_mech_attribute.TestKeyAttributes().test_key_type_matches_template(rs, entry)
 
 
-def test_key_gen_mechanism_malformed_ulong_is_xfail(
+def test_key_gen_mechanism_malformed_ulong_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rs = SimpleNamespace(raw=object(), sh=1)
@@ -1840,7 +1842,7 @@ def test_key_gen_mechanism_malformed_ulong_is_xfail(
     monkeypatch.setattr(
         test_attribute_enforcement,
         "read_attributes",
-        lambda *_args, **_kwargs: {test_attribute_enforcement.CKA_KEY_GEN_MECHANISM: b""},
+        lambda *_args, **_kwargs: {CKA_KEY_GEN_MECHANISM: b""},
     )
     monkeypatch.setattr(
         test_attribute_enforcement,
@@ -1848,8 +1850,23 @@ def test_key_gen_mechanism_malformed_ulong_is_xfail(
         lambda *_args, **_kwargs: None,
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_ULONG"):
+    with pytest.raises(pytest.fail.Exception, match="invalid CK_ULONG"):
         test_attribute_enforcement.TestKeyGenMechanism().test_imported_key_has_unavailable(rs)
+
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+    assert record.expected_ckr is None
+    assert record.detail == {
+        "attribute": CKA_KEY_GEN_MECHANISM,
+        "expected_shape": "CK_ULONG",
+        "producer_operation": "C_CreateObject",
+        "producer_mechanism": None,
+        "actual_type": "bytes",
+    }
 
 
 def test_attribute_enforcement_aes_keygen_reject_is_xfail(
@@ -1955,7 +1972,7 @@ def test_attribute_enforcement_date_read_python_bug_propagates(
     assert destroyed == [7]
 
 
-def test_attribute_enforcement_always_auth_malformed_bool_is_xfail(
+def test_attribute_enforcement_always_auth_malformed_bool_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
@@ -1968,7 +1985,7 @@ def test_attribute_enforcement_always_auth_malformed_bool_is_xfail(
     monkeypatch.setattr(
         test_attribute_enforcement,
         "read_attributes",
-        lambda *_args, **_kwargs: {test_attribute_enforcement.CKA_ALWAYS_AUTHENTICATE: b""},
+        lambda *_args, **_kwargs: {CKA_ALWAYS_AUTHENTICATE: b""},
     )
     monkeypatch.setattr(
         test_attribute_enforcement,
@@ -1976,8 +1993,23 @@ def test_attribute_enforcement_always_auth_malformed_bool_is_xfail(
         lambda *_args, **_kwargs: None,
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+    with pytest.raises(pytest.fail.Exception, match="invalid CK_BBOOL"):
         test_attribute_enforcement.TestAlwaysAuthenticate().test_always_authenticate_readable(rs)
+
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+    assert record.expected_ckr is None
+    assert record.detail == {
+        "attribute": CKA_ALWAYS_AUTHENTICATE,
+        "expected_shape": "CK_BBOOL",
+        "producer_operation": "C_GenerateKeyPair",
+        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+        "actual_type": "bytes",
+    }
 
 
 def test_attribute_defaults_malformed_read_bool_is_xfail(

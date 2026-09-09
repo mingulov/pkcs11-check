@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 from cryptography.hazmat.primitives.serialization import Encoding as _Encoding
 from cryptography.hazmat.primitives.serialization import PublicFormat as _PublicFormat
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, raise_for_record, record_as
 from pkcs11_check.raw import sw_wrap
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.pack import PackedMechanism
@@ -68,15 +68,163 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_UNEXTRACTABLE,
+    CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_UNWRAPPING_KEY_HANDLE_INVALID,
     CKR_USER_TYPE_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+
+_ATTRIBUTE_REFUSALS = (
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
+)
+
+
+def _attribute_refusal(exc: CkrAssertionError, label: str, *, fresh: bool = False) -> None:
+    if fresh and exc.rv == CKR_OBJECT_HANDLE_INVALID:
+        classify(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_GetAttributeValue",
+            actual=exc.rv,
+            summary=f"{label}: newly acquired object handle is invalid",
+        )
+    if exc.rv not in _ATTRIBUTE_REFUSALS:
+        raise exc
+    record_as(
+        "not_operational",
+        kind="metadata",
+        label=label,
+        operation="C_GetAttributeValue",
+        actual=exc.rv,
+    )
+
+
+def _destroy_handles(rs: Any, handles: list[int]) -> None:
+    """Attempt every cleanup, retaining cleanup faults alongside provider evidence."""
+    from pkcs11_check.core.crash_codes import crash_detail_name, ctypes_access_violation_code
+    from pkcs11_check.raw.recipes import destroy_quietly
+
+    # Nested cleanup must keep an already classified crash as the terminating
+    # outcome even when another handle's destruction raises an ordinary error.
+    crash_record = getattr(sys.exception(), "_pkcs11_check_classification", None)
+    if getattr(crash_record, "reason", None) != "crash":
+        crash_record = None
+    errors: list[BaseException] = []
+    for handle in handles:
+        try:
+            destroy_quietly(rs.raw, rs.sh, handle)
+        except BaseException as exc:
+            windows_status = ctypes_access_violation_code(exc)
+            if windows_status is not None:
+                crash_record = record_as(
+                    "crash",
+                    kind="lifecycle",
+                    label="provisioning cleanup",
+                    operation="C_DestroyObject",
+                    summary="Provisioning cleanup: ctypes access violation",
+                    detail={
+                        "windows_status": windows_status,
+                        "signal": crash_detail_name(windows_status),
+                    },
+                )
+            else:
+                record_as(
+                    "oracle",
+                    kind="lifecycle",
+                    label="provisioning cleanup",
+                    operation="C_DestroyObject",
+                    actual=exc.rv if isinstance(exc, CkrAssertionError) else None,
+                    summary=f"Provisioning cleanup raised {type(exc).__name__}",
+                )
+            errors.append(exc)
+    if errors:
+        error = (
+            errors[0]
+            if len(errors) == 1
+            else BaseExceptionGroup("Provisioning cleanup failures", errors)
+        )
+        try:
+            raise error
+        except BaseException:
+            if crash_record is not None:
+                raise_for_record(crash_record)
+            raise
+
+
+def _rsa_public_der(n_bytes: Any, e_bytes: Any) -> bytes | None:
+    """Validate both available RSA operands before deciding whether DER is possible."""
+    failures = []
+    for name, value in (("CKA_MODULUS", n_bytes), ("CKA_PUBLIC_EXPONENT", e_bytes)):
+        if value is MISSING_ATTRIBUTE:
+            continue
+        if not isinstance(value, bytes) or not value or int.from_bytes(value, "big") < 3:
+            failures.append(
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=name,
+                    operation="C_GetAttributeValue",
+                    summary=f"{name}: malformed RSA component",
+                )
+            )
+        elif int.from_bytes(value, "big") % 2 == 0:
+            failures.append(
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=name,
+                    operation="C_GetAttributeValue",
+                    summary=f"{name}: RSA component must be odd",
+                )
+            )
+    if failures:
+        raise_for_record(failures[-1])
+    if n_bytes is MISSING_ATTRIBUTE or e_bytes is MISSING_ATTRIBUTE:
+        return None
+    try:
+        pub = _crypto_rsa.RSAPublicNumbers(
+            int.from_bytes(e_bytes, "big"), int.from_bytes(n_bytes, "big")
+        ).public_key()
+    except ValueError:
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label="RSA public components",
+            operation="C_GetAttributeValue",
+            summary="Invalid RSA modulus/exponent relationship",
+        )
+        raise AssertionError("classification must terminate")
+    return pub.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+
+
+def _readable_kek(value: Any, *, bootstrap: bool = False) -> bytes | None:
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if not isinstance(value, bytes) or len(value) not in ((32,) if bootstrap else (16, 24, 32)):
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label="CKA_VALUE wrapping key",
+            operation="C_GetAttributeValue",
+            summary="Malformed AES wrapping key value",
+        )
+    assert isinstance(value, bytes)
+    return value
 
 
 def _split_provision_cmd(cmd_str: str) -> list[str]:
@@ -671,13 +819,15 @@ def _trial_round_trip(
     strategy: WrapStrategy,
     ctx: WrapContext,
     refusals: list[tuple[str, int, str, int]] | None = None,
+    *,
+    fresh: bool = False,
 ) -> bool:
     """Trial round-trip: wrap a 16-byte probe, confirm C_UnwrapKey accepts it.
 
-    The unwrapped probe handle is destroyed. Optional ``refusals`` lets the
-    bootstrap caller defer a finding until all advertised fallbacks are tried.
+    The unwrapped probe handle is destroyed. Every refusal is recorded immediately;
+    optional ``refusals`` also collects the bootstrap caller's terminal summary.
     """
-    from pkcs11_check.raw.recipes import destroy_quietly, unwrap_key
+    from pkcs11_check.raw.recipes import unwrap_key
 
     unwrap_handle = strategy.unwrapping_key_handle(ctx)
     if unwrap_handle is None:
@@ -694,21 +844,40 @@ def _trial_round_trip(
             mech_param=strategy.unwrap_mech_param(ctx),
         )
     except CkrAssertionError as exc:
+        if fresh and exc.rv in (CKR_OBJECT_HANDLE_INVALID, CKR_UNWRAPPING_KEY_HANDLE_INVALID):
+            classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label="provisioning unwrap trial",
+                operation="C_UnwrapKey",
+                mechanism=ckm_name(int(strategy.unwrap_mech)),
+                actual=exc.rv,
+                summary="Newly generated unwrapping key handle is invalid",
+            )
         if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
             raise
+        record_as(
+            "not_operational",
+            kind="metadata",
+            label="provisioning unwrap trial",
+            operation="C_UnwrapKey",
+            mechanism=ckm_name(int(strategy.unwrap_mech)),
+            actual=exc.rv,
+            detail={"strategy": strategy.name, "oaep_hash": ctx.oaep_hash},
+        )
         if refusals is not None:
             refusals.append((strategy.name, int(strategy.unwrap_mech), ctx.oaep_hash, exc.rv))
         return False
-    destroy_quietly(rs.raw, rs.sh, handle)
+    _destroy_handles(rs, [handle])
     return True
 
 
 def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     """Resolve an operator-configured KEK into a trial-verified WrapContext.
 
-    Every failure emits a compliance note naming the reason and returns None
-    (-> the callers' existing "no wrapping path" skip). The configured key is
-    NEVER destroyed. No bootstrap fallback: explicit config is explicit intent.
+    Unavailable material records its evidence and returns None with a compliance
+    note. Malformed evidence is hard; unexpected errors propagate. The configured
+    key is never destroyed. Explicit configuration does not fall back to bootstrap.
     """
     from pkcs11_check.compliance import ComplianceLevel, note
     from pkcs11_check.raw.pack import template_from_dict
@@ -721,23 +890,11 @@ def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     label = getattr(cfg, "wrap_key_label", None)
 
     if cfg_handle is not None:
-        try:
-            probe = read_attributes(rs.raw, rs.sh, cfg_handle, (CKA_CLASS,))
-        except CkrAssertionError as exc:
-            _fail(f"wrap_key_handle not usable: {exc}")
-            return None
-        if CKA_CLASS not in probe:
-            _fail("wrap_key_handle: CKA_CLASS unreadable")
-            return None
         handle = cfg_handle
     elif label is not None:
-        try:
-            matches = find_objects(
-                rs.raw, rs.sh, template_from_dict({CKA_LABEL: label, CKA_TOKEN: True})
-            )
-        except CkrAssertionError as exc:
-            _fail(f"C_FindObjects for wrap_key_label failed: {exc}")
-            return None
+        matches = find_objects(
+            rs.raw, rs.sh, template_from_dict({CKA_LABEL: label, CKA_TOKEN: True})
+        )
         if len(matches) != 1:
             hint = ""
             if not matches and getattr(cfg, "pin", None) is None:
@@ -745,22 +902,60 @@ def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
             _fail(f"wrap_key_label matched {len(matches)} token objects; expected exactly 1{hint}")
             return None
         handle = matches[0]
-        try:
-            probe = read_attributes(rs.raw, rs.sh, handle, (CKA_CLASS,))
-        except CkrAssertionError as exc:
-            _fail(f"resolved wrap key not readable: {exc}")
-            return None
     else:
         _fail("wrap_key_source=configured but neither wrap_key_label nor wrap_key_handle given")
         return None
 
-    try:
-        kt_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_KEY_TYPE,))
-    except CkrAssertionError as exc:
-        _fail(f"CKA_KEY_TYPE unreadable: {exc}")
+    observations: list[Any] = []
+    failures = []
+    refusal: CkrAssertionError | None = None
+    for attr, name in ((CKA_CLASS, "CKA_CLASS"), (CKA_KEY_TYPE, "CKA_KEY_TYPE")):
+        try:
+            attributes = read_attributes(rs.raw, rs.sh, handle, (attr,))
+        except CkrAssertionError as exc:
+            _attribute_refusal(exc, f"configured wrap key {name}")
+            refusal = exc
+            value = MISSING_ATTRIBUTE
+        else:
+            value = attr_or_record(
+                attributes, attr, label=f"configured wrap key {name}", reason="not_operational"
+            )
+        if value is MISSING_ATTRIBUTE:
+            observations.append(MISSING_ATTRIBUTE)
+            continue
+        observations.append(value)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            failures.append(
+                record_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label=name,
+                    operation="C_GetAttributeValue",
+                    summary=f"{name}: malformed integer attribute",
+                )
+            )
+    if failures:
+        raise_for_record(failures[-1])
+    obj_class, key_type = observations
+    if obj_class is MISSING_ATTRIBUTE or key_type is MISSING_ATTRIBUTE:
+        _fail(
+            f"wrap_key_handle not usable: {refusal}"
+            if refusal is not None
+            else "wrap_key_handle: CKA_CLASS unreadable"
+            if obj_class is MISSING_ATTRIBUTE
+            else "CKA_KEY_TYPE unreadable"
+        )
         return None
-    obj_class = probe.get(CKA_CLASS)
-    key_type = kt_attrs.get(CKA_KEY_TYPE)
+    if (obj_class == CKO_SECRET_KEY and key_type in (CKK_RSA, CKK_EC)) or (
+        obj_class in (CKO_PRIVATE_KEY, CKO_PUBLIC_KEY) and key_type in (CKK_AES, CKK_GENERIC_SECRET)
+    ):
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label="configured wrap key class/type",
+            operation="C_GetAttributeValue",
+            summary="CKA_CLASS contradicts CKA_KEY_TYPE",
+        )
 
     if obj_class == CKO_PRIVATE_KEY:
         if key_type != CKK_RSA:
@@ -781,59 +976,59 @@ def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> byt
     from pkcs11_check.raw.pack import template_from_dict
     from pkcs11_check.raw.recipes import find_objects, read_attributes
 
-    n_bytes: bytes | None = None
-    e_bytes: bytes | None = None
-
-    def _pub_from(handle: int) -> tuple[bytes | None, bytes | None]:
+    def _pub_from(handle: int) -> bytes | None:
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT))
-        except CkrAssertionError:
-            return None, None
-        return attrs.get(CKA_MODULUS), attrs.get(CKA_PUBLIC_EXPONENT)
+        except CkrAssertionError as exc:
+            _attribute_refusal(exc, "configured RSA public components")
+            return None
+        n_bytes = attr_or_record(
+            attrs, CKA_MODULUS, label="configured RSA CKA_MODULUS", reason="not_operational"
+        )
+        e_bytes = attr_or_record(
+            attrs,
+            CKA_PUBLIC_EXPONENT,
+            label="configured RSA CKA_PUBLIC_EXPONENT",
+            reason="not_operational",
+        )
+        return _rsa_public_der(n_bytes, e_bytes)
 
     # 1) CKA_ID-matched public object (spec-correct pair convention)
     try:
         id_attrs = read_attributes(rs.raw, rs.sh, priv_handle, (CKA_ID,))
-        key_id = id_attrs.get(CKA_ID)
-    except CkrAssertionError:
-        key_id = None
-    if key_id:
-        try:
-            pubs = find_objects(
-                rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_ID: key_id})
-            )
-        except CkrAssertionError:
-            pubs = []
+        key_id = attr_or_record(
+            id_attrs, CKA_ID, label="configured RSA CKA_ID", reason="not_operational"
+        )
+    except CkrAssertionError as exc:
+        _attribute_refusal(exc, "configured RSA CKA_ID")
+        key_id = MISSING_ATTRIBUTE
+    if key_id is not MISSING_ATTRIBUTE and not isinstance(key_id, bytes):
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label="configured RSA CKA_ID",
+            operation="C_GetAttributeValue",
+            summary="Malformed CKA_ID value",
+        )
+    if key_id is not MISSING_ATTRIBUTE and key_id != b"":
+        pubs = find_objects(
+            rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_ID: key_id})
+        )
         if len(pubs) == 1:
-            n_bytes, e_bytes = _pub_from(pubs[0])
+            der = _pub_from(pubs[0])
+            if der is not None:
+                return der
     # 2) label-matched public object
-    if (n_bytes is None or e_bytes is None) and label is not None:
-        try:
-            pubs = find_objects(
-                rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_LABEL: label})
-            )
-        except CkrAssertionError:
-            pubs = []
+    if label is not None:
+        pubs = find_objects(
+            rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PUBLIC_KEY, CKA_LABEL: label})
+        )
         if len(pubs) == 1:
-            n_bytes, e_bytes = _pub_from(pubs[0])
+            der = _pub_from(pubs[0])
+            if der is not None:
+                return der
     # 3) direct read off the private object (CKA_MODULUS/EXPONENT are non-sensitive per spec)
-    if n_bytes is None or e_bytes is None:
-        n_bytes, e_bytes = _pub_from(priv_handle)
-    if not n_bytes or not e_bytes:
-        # Absent OR present-but-degenerate (e.g. a zero-length CKA_MODULUS/
-        # CKA_PUBLIC_EXPONENT -> b""): both are falsy, so this catches both.
-        return None
-    n = int.from_bytes(n_bytes, "big")
-    e = int.from_bytes(e_bytes, "big")
-    try:
-        pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
-    except ValueError:
-        # cryptography rejected the numbers (e.g. an absurd/degenerate modulus
-        # that survived the not-empty check above) -- never let this escape as
-        # a raw exception; the caller emits the standard "cannot recover the
-        # RSA public half" note on None.
-        return None
-    return pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
+    return _pub_from(priv_handle)
 
 
 def _configured_strategy_trial(
@@ -902,8 +1097,15 @@ def _configured_secret_material(rs: Any, cfg: Any, handle: int, _fail: Any) -> W
     else:
         try:
             val_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
-            sym_kek = val_attrs.get(CKA_VALUE)
-        except CkrAssertionError:
+            value = attr_or_record(
+                val_attrs,
+                CKA_VALUE,
+                label="configured wrapping key CKA_VALUE",
+                reason="not_operational",
+            )
+            sym_kek = _readable_kek(value)
+        except CkrAssertionError as exc:
+            _attribute_refusal(exc, "configured wrapping key CKA_VALUE")
             sym_kek = None
     # Non-extractable KEK without wrap_key_value: sym_kek stays None -> AesKwp
     # has_material() fails in the trial (documented limitation; software-side wrap).
@@ -944,6 +1146,20 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     if wrap_key_source != "bootstrap":
         raise ValueError(f"unknown wrap_key_source {wrap_key_source!r}")
 
+    owned: list[int] = []
+    try:
+        result = _build_bootstrap_wrap_context(rs, cfg, owned)
+        if result is not None:
+            for handle in (result.rsa_unwrap_handle, result.aes_kek_handle):
+                if handle is not None and handle in owned:
+                    owned.remove(handle)
+        return result
+    finally:
+        _destroy_handles(rs, owned)
+
+
+def _build_bootstrap_wrap_context(rs: Any, cfg: Any, owned: list[int]) -> WrapContext | None:
+    """Build bootstrap material while the caller owns every unreturned handle."""
     start_bits: int = getattr(cfg, "wrap_rsa_bits", 2048)
     oaep_hash_cfg: str = getattr(cfg, "wrap_oaep_hash", "auto")
 
@@ -959,8 +1175,6 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
     trial_refusals: list[tuple[str, int, str, int]] = []
     bootstrap_refusals: list[tuple[str, str | None, int, str]] = []
 
-    from pkcs11_check.raw.recipes import destroy_quietly
-
     for strategy in DEFAULT_STRATEGIES:
         if not strategy.usable(profile_for(rs)):
             continue
@@ -975,19 +1189,46 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                 from pkcs11_check.raw.recipes import read_attributes
 
                 pub_handle, priv_handle, _bits = result
-                attrs = read_attributes(
-                    rs.raw, rs.sh, pub_handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT)
-                )
-                n = int.from_bytes(attrs[CKA_MODULUS], "big")
-                e = int.from_bytes(attrs[CKA_PUBLIC_EXPONENT], "big")
-                pub_key = _crypto_rsa.RSAPublicNumbers(e, n).public_key()
-                der = pub_key.public_bytes(_Encoding.DER, _PublicFormat.SubjectPublicKeyInfo)
-                rsa_pub_der = der
-                rsa_unwrap_handle = priv_handle
-                profile_for(rs).rsa_pub_der_probe = der
+                owned.append(priv_handle)
+                try:
+                    try:
+                        attrs = read_attributes(
+                            rs.raw, rs.sh, pub_handle, (CKA_MODULUS, CKA_PUBLIC_EXPONENT)
+                        )
+                    except CkrAssertionError as exc:
+                        _attribute_refusal(exc, "bootstrap RSA public components", fresh=True)
+                        der = None
+                    else:
+                        n_bytes = attr_or_record(
+                            attrs,
+                            CKA_MODULUS,
+                            label="bootstrap RSA CKA_MODULUS",
+                            reason="not_operational",
+                        )
+                        e_bytes = attr_or_record(
+                            attrs,
+                            CKA_PUBLIC_EXPONENT,
+                            label="bootstrap RSA CKA_PUBLIC_EXPONENT",
+                            reason="not_operational",
+                        )
+                        der = _rsa_public_der(n_bytes, e_bytes)
+                finally:
+                    _destroy_handles(rs, [pub_handle])
+                if der is None:
+                    owned.remove(priv_handle)
+                    _destroy_handles(rs, [priv_handle])
+                else:
+                    rsa_pub_der = der
+                    rsa_unwrap_handle = priv_handle
+                    profile_for(rs).rsa_pub_der_probe = der
 
         if strategy.name == "aes_kwp" and not aes_bootstrapped:
             aes_bootstrapped = True
+            if rsa_unwrap_handle is not None:
+                owned.remove(rsa_unwrap_handle)
+                _destroy_handles(rs, [rsa_unwrap_handle])
+                rsa_unwrap_handle = None
+                rsa_pub_der = None
             try:
                 from pkcs11_check.raw.recipes import gen_aes_key, read_attributes
 
@@ -1004,7 +1245,17 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                     },
                 )
             except CkrAssertionError as exc:
-                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                if exc.rv not in (
+                    CKR_MECHANISM_INVALID,
+                    CKR_MECHANISM_PARAM_INVALID,
+                    CKR_KEY_SIZE_RANGE,
+                    CKR_TEMPLATE_INCOMPLETE,
+                    CKR_TEMPLATE_INCONSISTENT,
+                    CKR_ATTRIBUTE_VALUE_INVALID,
+                    CKR_ATTRIBUTE_READ_ONLY,
+                    CKR_FUNCTION_NOT_SUPPORTED,
+                    CKR_KEY_FUNCTION_NOT_PERMITTED,
+                ):
                     raise
                 bootstrap_refusals.append(
                     (
@@ -1015,13 +1266,17 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                     )
                 )
                 continue
+            owned.append(kek_handle)
             try:
                 kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
-                kek_val = kek_attrs.get(CKA_VALUE)
+                kek_value = attr_or_record(
+                    kek_attrs, CKA_VALUE, label="bootstrap AES CKA_VALUE", reason="not_operational"
+                )
+                kek_val = _readable_kek(kek_value, bootstrap=True)
             except CkrAssertionError as exc:
-                destroy_quietly(rs.raw, rs.sh, kek_handle)
-                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
-                    raise
+                _attribute_refusal(exc, "AES-KWP bootstrap CKA_VALUE readback", fresh=True)
+                owned.remove(kek_handle)
+                _destroy_handles(rs, [kek_handle])
                 bootstrap_refusals.append(
                     (
                         "C_GetAttributeValue",
@@ -1031,14 +1286,12 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                     )
                 )
                 continue
-            except Exception:
-                destroy_quietly(rs.raw, rs.sh, kek_handle)
-                raise
             if kek_val is not None:
                 aes_kek_handle = kek_handle
                 sym_kek = kek_val
             else:
-                destroy_quietly(rs.raw, rs.sh, kek_handle)  # readable-KEK path unavailable
+                owned.remove(kek_handle)
+                _destroy_handles(rs, [kek_handle])  # readable-KEK path unavailable
 
         # Build a probe context with all material gathered so far
         probe_ctx = WrapContext(
@@ -1077,7 +1330,7 @@ def build_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                 oaep_hash=cand if cand is not None else "sha1",
                 strategy_name=strategy.name,
             )
-            if _trial_round_trip(rs, strategy, trial_ctx, trial_refusals):
+            if _trial_round_trip(rs, strategy, trial_ctx, trial_refusals, fresh=True):
                 return trial_ctx
 
     if trial_refusals or bootstrap_refusals:
@@ -1197,7 +1450,6 @@ def provision_secret_key(
             wrap-context / strategy is unavailable.
     """
     from pkcs11_check.raw.recipes import (
-        destroy_quietly,
         import_secret_key,
         read_attributes,
         unwrap_key,
@@ -1291,32 +1543,33 @@ def provision_secret_key(
         mech_param=strategy.unwrap_mech_param(ctx),
     )
 
-    # Value-integrity readback for non-sensitive keys
-    is_sensitive = attrs.get(CKA_SENSITIVE)
-    if not is_sensitive:
-        read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
-        actual = read_back.get(CKA_VALUE)
-        if actual is not None and actual != value:
-            destroy_quietly(rs.raw, rs.sh, handle)
-            classify(
-                "wrong_result",
-                kind="crypto",
-                label=f"{label}: provisioned key value",
-                operation="C_UnwrapKey",
-                mechanism=ckm_name(int(strategy.unwrap_mech)),
-                summary=(
-                    f"{label}: provisioned key value mismatch "
-                    f"(expected {value.hex()!r}, got {actual!r})"
-                ),
-            )
-        if actual is None:
-            from pkcs11_check.compliance import ComplianceLevel, note
-
-            note(
-                f"{label}: unwrapped key value not exposed (CKA_VALUE unreadable); "
-                "trusting wrap/unwrap roundtrip",
-                ComplianceLevel.STANDARD,
-            )
+    # Record the readback observation before cleanup can raise independently.
+    try:
+        if not attrs.get(CKA_SENSITIVE):
+            try:
+                read_back = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))
+            except CkrAssertionError as exc:
+                _attribute_refusal(exc, f"{label}: equality oracle unavailable", fresh=True)
+                actual = MISSING_ATTRIBUTE
+            else:
+                actual = attr_or_record(
+                    read_back,
+                    CKA_VALUE,
+                    label=f"{label}: equality oracle unavailable",
+                    reason="not_operational",
+                )
+            if actual is not MISSING_ATTRIBUTE and actual != value:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"{label}: provisioned key value",
+                    operation="C_UnwrapKey",
+                    mechanism=ckm_name(int(strategy.unwrap_mech)),
+                    summary=f"{label}: provisioned key value mismatch",
+                )
+    except BaseException:
+        _destroy_handles(rs, [handle])
+        raise
 
     record_provisioning_event("secret", "ran_via_unwrap")
     return handle

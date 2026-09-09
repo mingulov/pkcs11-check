@@ -903,14 +903,15 @@ def test_readback_correct_value_returns_handle(monkeypatch: pytest.MonkeyPatch) 
     )
 
 
-def test_readback_none_value_returns_handle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """(n) Readback returns None (value unreadable) -> handle returned, NO skip.
+def test_readback_present_none_value_is_wrong_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A present None is wrong output, distinct from an omitted CKA_VALUE."""
+    from pkcs11_check import classification
 
-    This is the bug-fix case: softhsm2 returns CKA_VALUE=None for non-extractable keys even
-    when CKA_SENSITIVE=False.  The old code treated None as mismatch and skipped; the fix
-    trusts the wrap/unwrap roundtrip instead and lets the downstream KAT catch corruption.
-    """
     _make_force_unwrap_fixtures(monkeypatch, sh=310, unwrap_handle=311, read_value=None)
+    destroyed: list[int] = []
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.destroy_quietly", lambda _r, _s, h: destroyed.append(h)
+    )
     _reset_cache()
 
     from pkcs11_check.testcases._provisioning import (
@@ -922,16 +923,17 @@ def test_readback_none_value_returns_handle(monkeypatch: pytest.MonkeyPatch) -> 
     clear_provisioning_events()
     rs = _make_rs(sh=310, has_mech=True)
     cfg = _make_cfg("force-unwrap")
-    h = provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-n")
-
-    assert h == 311, "must return the unwrapped key handle even when CKA_VALUE is unreadable"
-    events = get_provisioning_events()
-    assert any(e.method == "ran_via_unwrap" for e in events), (
-        "ran_via_unwrap event must be recorded"
-    )
-    assert not any(e.method == "skipped_no_path" for e in events), (
-        "skipped_no_path must NOT be recorded when value is merely unreadable"
-    )
+    _prov.wrap_context_for(rs, cfg)
+    destroyed.clear()
+    classification.clear()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="value mismatch"):
+            provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-n")
+        assert destroyed == [311]
+        assert get_provisioning_events() == []
+        assert classification.get_records()[-1].reason == "wrong_result"
+    finally:
+        classification.clear()
 
 
 def test_readback_wrong_value_fails(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,11 +8,13 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Mapping
 from ctypes import byref
 from typing import Any, NoReturn
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
     attr_bytes,
@@ -72,11 +74,10 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     KEYPAIR_RUNTIME_REJECT_RVS,
-    assert_correct,
     classify_negative_rv,
-    classify_policy_enforcement,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -117,6 +118,189 @@ _KEM_OPERATION_REJECT_RVS = (
 
 _KEM_WRONG_KEY_CLEAN_REJECT_RVS = (CKR_ENCRYPTED_DATA_INVALID, CKR_ENCRYPTED_DATA_LEN_RANGE)
 _ML_KEM_PUBLIC_VALUE_UNAVAILABLE_RVS = (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
+
+_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
+_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def _read_attr_or_record(
+    raw: Any,
+    sh: int,
+    handle: int,
+    attr: Any,
+    *,
+    label: str,
+    mechanism: str,
+    attrs: Mapping[Any, Any] | None = None,
+) -> Any:
+    """Read one provider attribute while preserving unavailable-value evidence."""
+    values = attrs if attrs is not None else read_attributes(raw, sh, handle, [attr])
+    return attr_or_record(
+        values,
+        attr,
+        label=label,
+        reason="not_operational",
+        mechanism=mechanism,
+    )
+
+
+def _record_attribute_mismatch(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    kind: str,
+    mechanism: str,
+    operation: str = "C_GetAttributeValue",
+) -> C.Classification:
+    """Record a provider readback mismatch without raising before cleanup."""
+    return C.record_as(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual}; expected {expected}",
+        detail={"attribute": {"expected": expected, "actual": actual}},
+    )
+
+
+def _record_output_mismatch(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    operation: str,
+    mechanism: str,
+    kind: str = "crypto",
+) -> C.Classification:
+    """Record malformed non-attribute provider output for deferred reporting."""
+    return C.record_as(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual}; expected {expected}",
+        detail={"output": {"expected": expected, "actual": actual}},
+    )
+
+
+def _record_policy_enforcement(
+    *,
+    claimed: bool,
+    label: str,
+    operation: str,
+    mechanism: str,
+    hard_results: list[C.Classification],
+) -> None:
+    """Record a policy result with operation identity, deferring behind hard findings."""
+    if claimed:
+        record = C.record_as(
+            "accepted_invalid",
+            kind="policy",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=(CKR_KEY_FUNCTION_NOT_PERMITTED,),
+            actual=CKR_OK,
+            summary=f"{label}: claimed the protection then returned CKR_OK",
+        )
+    else:
+        record = C.record_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            summary=f"{label}: module does not claim the requested protection",
+        )
+    if record.outcome == "pass":
+        return
+    if hard_results:
+        hard_results.append(record)
+    else:
+        C.raise_for_record(record)
+
+
+def _raise_strongest(records: list[C.Classification]) -> None:
+    """Raise the strongest hard result after all provider objects are cleaned up."""
+    if records:
+        strongest = max(
+            records,
+            key=lambda record: (
+                _KIND_PRIORITY.get(record.kind or "", 0),
+                _SEVERITY_PRIORITY.get(record.severity, 0),
+            ),
+        )
+        C.raise_for_record(strongest)
+
+
+def _check_equal_attribute(
+    value: Any,
+    *,
+    expected: str,
+    label: str,
+    mechanism: str,
+    kind: str = "metadata",
+) -> C.Classification | None:
+    """Return a structured mismatch for a present provider attribute."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if repr(value) == expected:
+        return None
+    return _record_attribute_mismatch(
+        label=label,
+        expected=expected,
+        actual=repr(value),
+        kind=kind,
+        mechanism=mechanism,
+    )
+
+
+def _check_bytes_attribute(
+    value: Any,
+    *,
+    expected_len: int,
+    label: str,
+    mechanism: str,
+    kind: str = "crypto",
+    allowed_lengths: tuple[int, ...] = (),
+) -> C.Classification | None:
+    """Return one structured mismatch for a present byte-valued output."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if not isinstance(value, bytes):
+        return _record_attribute_mismatch(
+            label=label,
+            expected=repr(f"{expected_len}-byte bytes"),
+            actual=repr(value),
+            kind=kind,
+            mechanism=mechanism,
+        )
+    if len(value) == expected_len:
+        return None
+    if len(value) in allowed_lengths:
+        return C.record_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            summary=(
+                f"{label}: requested {expected_len} bytes, got {len(value)} bytes; "
+                f"permitted lengths are {expected_len} and {allowed_lengths}"
+            ),
+            detail={"attribute": {"expected": repr(expected_len), "actual": repr(len(value))}},
+        )
+        return None
+    return _record_attribute_mismatch(
+        label=label,
+        expected=repr(f"{expected_len}-byte bytes"),
+        actual=repr(value),
+        kind=kind,
+        mechanism=mechanism,
+    )
 
 
 def _skip_if_no_ml_kem(rs: Any) -> None:
@@ -231,113 +415,199 @@ class TestMLKEMKeyGeneration:
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
+        hard_results: list[C.Classification] = []
         try:
-            assert pub != 0
-            assert priv != 0
+            if not pub:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM_KEY_PAIR_GEN:public-key handle",
+                        expected="non-zero object handle",
+                        actual=repr(pub),
+                        operation="C_GenerateKeyPair",
+                        mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                        kind="lifecycle",
+                    )
+                )
+            if not priv:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM_KEY_PAIR_GEN:private-key handle",
+                        expected="non-zero object handle",
+                        actual=repr(priv),
+                        operation="C_GenerateKeyPair",
+                        mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                        kind="lifecycle",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+        _raise_strongest(hard_results)
 
     def test_ml_kem_keypair_classes(self, p11_module_session: Any) -> None:
         """ML-KEM public key is PublicKey, private is PrivateKey."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
+        hard_results: list[C.Classification] = []
         try:
-            pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
-            priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
-            assert_correct(
-                actual=pub_cls,
-                expected=CKO_PUBLIC_KEY,
+            pub_cls = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_CLASS,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_CLASS readback",
-                operation="C_GenerateKeyPair",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
-                kind="metadata",
             )
-            assert_correct(
-                actual=priv_cls,
-                expected=CKO_PRIVATE_KEY,
+            priv_cls = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKA_CLASS,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_CLASS readback",
-                operation="C_GenerateKeyPair",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
-                kind="metadata",
             )
+            mismatch = _check_equal_attribute(
+                pub_cls,
+                expected=repr(CKO_PUBLIC_KEY),
+                label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_CLASS readback",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            mismatch = _check_equal_attribute(
+                priv_cls,
+                expected=repr(CKO_PRIVATE_KEY),
+                label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_CLASS readback",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+        _raise_strongest(hard_results)
 
     def test_ml_kem_keypair_key_type(self, p11_module_session: Any) -> None:
         """ML-KEM keys report correct key type."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
+        hard_results: list[C.Classification] = []
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert_correct(
-                actual=pub_kt,
-                expected=CKK_ML_KEM,
+            pub_kt = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_KEY_TYPE,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
-                operation="C_GenerateKeyPair",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
-                kind="metadata",
             )
-            assert_correct(
-                actual=priv_kt,
-                expected=CKK_ML_KEM,
+            priv_kt = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKA_KEY_TYPE,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
-                operation="C_GenerateKeyPair",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
-                kind="metadata",
             )
+            mismatch = _check_equal_attribute(
+                pub_kt,
+                expected=repr(CKK_ML_KEM),
+                label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            mismatch = _check_equal_attribute(
+                priv_kt,
+                expected=repr(CKK_ML_KEM),
+                label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+        _raise_strongest(hard_results)
 
     def test_ml_kem_private_key_derive_false(self, p11_module_session: Any) -> None:
         """Generated ML-KEM private keys must not claim CKA_DERIVE=True."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
+        hard_results: list[C.Classification] = []
         try:
-            attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DERIVE])
-            if CKA_DERIVE not in attrs:
-                classify(
-                    "honest_deviation",
-                    kind="metadata",
-                    label="ML-KEM private key CKA_DERIVE",
-                    mechanism="CKM_ML_KEM",
-                    summary="ML-KEM private key does not expose CKA_DERIVE",
-                )
-            assert attrs[CKA_DERIVE] is False, (
-                "ML-KEM private key reported CKA_DERIVE=True; ML-KEM keys "
-                "encapsulate/decapsulate and must not be usable as derive keys"
+            derive = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKA_DERIVE,
+                label="ML-KEM private key CKA_DERIVE",
+                mechanism="CKM_ML_KEM",
             )
+            if derive is not MISSING_ATTRIBUTE and derive is not False:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="ML-KEM private key CKA_DERIVE",
+                        expected=repr(False),
+                        actual=repr(derive),
+                        kind="metadata",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+        _raise_strongest(hard_results)
 
     def test_ml_kem_two_keypairs_distinct(self, p11_module_session: Any) -> None:
         """Two ML-KEM key pair generations produce distinct keys."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
-        pub_a, priv_a = _generate_ml_kem_keypair(rs)
-        pub_b, priv_b = _generate_ml_kem_keypair(rs)
+        pub_a = priv_a = pub_b = priv_b = 0
+        hard_results: list[C.Classification] = []
         try:
+            pub_a, priv_a = _generate_ml_kem_keypair(rs)
+            pub_b, priv_b = _generate_ml_kem_keypair(rs)
             # Public keys must differ (overwhelming probability)
-            try:
-                val_a = read_attributes(rs.raw, rs.sh, pub_a, [CKA_VALUE])[CKA_VALUE]
-                val_b = read_attributes(rs.raw, rs.sh, pub_b, [CKA_VALUE])[CKA_VALUE]
-                assert val_a != val_b
-            except CkrAssertionError as exc:
-                if not is_known_error(exc, _ML_KEM_PUBLIC_VALUE_UNAVAILABLE_RVS):
-                    raise
-                pytest.skip("Module does not expose ML-KEM public key value")
+            val_a = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub_a,
+                CKA_VALUE,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:first public-key CKA_VALUE readback",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+            )
+            val_b = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub_b,
+                CKA_VALUE,
+                label="CKM_ML_KEM_KEY_PAIR_GEN:second public-key CKA_VALUE readback",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+            )
+            if val_a is not MISSING_ATTRIBUTE and val_b is not MISSING_ATTRIBUTE and val_a == val_b:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_ML_KEM_KEY_PAIR_GEN:independent public-key values",
+                        expected="different values",
+                        actual=repr(val_a),
+                        kind="crypto",
+                        mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                    )
+                )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_a)
-            destroy_quietly(rs.raw, rs.sh, pub_b)
-            destroy_quietly(rs.raw, rs.sh, priv_b)
+            if pub_a:
+                destroy_quietly(rs.raw, rs.sh, pub_a)
+            if priv_a:
+                destroy_quietly(rs.raw, rs.sh, priv_a)
+            if pub_b:
+                destroy_quietly(rs.raw, rs.sh, pub_b)
+            if priv_b:
+                destroy_quietly(rs.raw, rs.sh, priv_b)
+        _raise_strongest(hard_results)
 
 
 @pytest.mark.v32
@@ -351,6 +621,7 @@ class TestMLKEMEncapsulateDecapsulate:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
+        hard_results: list[C.Classification] = []
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
@@ -358,14 +629,43 @@ class TestMLKEMEncapsulateDecapsulate:
                 _encap_attrs(),
                 "encapsulate",
             )
-            assert isinstance(ct, bytes)
-            assert len(ct) > 0
-            assert shared != 0
+            if not isinstance(ct, bytes):
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM:C_EncapsulateKey ciphertext",
+                        expected="non-empty bytes",
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
+            elif not ct:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM:C_EncapsulateKey ciphertext",
+                        expected="non-empty bytes",
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
+            if not shared:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM:C_EncapsulateKey shared-secret handle",
+                        expected="non-zero object handle",
+                        actual=repr(shared),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        kind="lifecycle",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
+        _raise_strongest(hard_results)
 
     def test_encapsulate_ciphertext_nonzero(self, p11_module_session: Any) -> None:
         """Ciphertext from encapsulate_key is non-trivially non-zero."""
@@ -373,6 +673,7 @@ class TestMLKEMEncapsulateDecapsulate:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
+        hard_results: list[C.Classification] = []
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
@@ -380,12 +681,22 @@ class TestMLKEMEncapsulateDecapsulate:
                 _encap_attrs(),
                 "encapsulate",
             )
-            assert ct != bytes(len(ct))  # not all zeros
+            if not isinstance(ct, bytes) or not ct or ct == bytes(len(ct)):
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM:C_EncapsulateKey ciphertext",
+                        expected="non-empty, non-zero ciphertext bytes",
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
+        _raise_strongest(hard_results)
 
     def test_encapsulate_decapsulate_shared_secret_matches(self, p11_module_session: Any) -> None:
         """Encapsulated and decapsulated shared secrets match."""
@@ -394,6 +705,7 @@ class TestMLKEMEncapsulateDecapsulate:
         pub, priv = _generate_ml_kem_keypair(rs)
         encap_handle = 0
         decap_handle = 0
+        hard_results: list[C.Classification] = []
         try:
             encap_handle, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
@@ -409,15 +721,53 @@ class TestMLKEMEncapsulateDecapsulate:
                 "decapsulate",
             )
             # Both sides must produce the same shared secret
-            encap_value = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
-            decap_value = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
-            assert_correct(
-                actual=decap_value,
-                expected=encap_value,
-                label="CKM_ML_KEM:encapsulate/decapsulate shared-secret match",
-                operation="C_DecapsulateKey",
+            encap_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                encap_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:encapsulated shared-secret CKA_VALUE readback",
                 mechanism="CKM_ML_KEM",
             )
+            decap_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                decap_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:decapsulated shared-secret CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            mismatch = _check_bytes_attribute(
+                encap_value,
+                expected_len=_ML_KEM_SHARED_SECRET_BYTES,
+                label="CKM_ML_KEM:encapsulated shared-secret CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            mismatch = _check_bytes_attribute(
+                decap_value,
+                expected_len=_ML_KEM_SHARED_SECRET_BYTES,
+                label="CKM_ML_KEM:decapsulated shared-secret CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if (
+                encap_value is not MISSING_ATTRIBUTE
+                and decap_value is not MISSING_ATTRIBUTE
+                and encap_value != decap_value
+            ):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_ML_KEM:encapsulate/decapsulate shared-secret match",
+                        expected=repr(encap_value),
+                        actual=repr(decap_value),
+                        kind="crypto",
+                        mechanism="CKM_ML_KEM",
+                        operation="C_DecapsulateKey",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -425,6 +775,7 @@ class TestMLKEMEncapsulateDecapsulate:
                 destroy_quietly(rs.raw, rs.sh, encap_handle)
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
+        _raise_strongest(hard_results)
 
     def test_two_encapsulations_produce_different_ciphertexts(
         self, p11_module_session: Any
@@ -471,11 +822,13 @@ class TestMLKEMEncapsulateDecapsulate:
         """Decapsulating with a different private key produces a different (or no) secret."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
-        pub_a, priv_a = _generate_ml_kem_keypair(rs)
-        pub_b, priv_b = _generate_ml_kem_keypair(rs)
+        pub_a = priv_a = pub_b = priv_b = 0
         encap_handle = 0
         wrong_handle = 0
+        hard_results: list[C.Classification] = []
         try:
+            pub_a, priv_a = _generate_ml_kem_keypair(rs)
+            pub_b, priv_b = _generate_ml_kem_keypair(rs)
             encap_handle, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
                 pub_a,
@@ -493,11 +846,57 @@ class TestMLKEMEncapsulateDecapsulate:
                     attrs=_encap_attrs(),
                 )
                 # If it succeeds, the secrets must differ (ML-KEM implicit rejection)
-                encap_val = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
-                wrong_val = read_attributes(rs.raw, rs.sh, wrong_handle, [CKA_VALUE])[CKA_VALUE]
-                assert encap_val != wrong_val, (
-                    "Decapsulation with wrong key produced same secret as correct decapsulation"
+                encap_val = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    encap_handle,
+                    CKA_VALUE,
+                    label="CKM_ML_KEM:correct shared-secret CKA_VALUE readback",
+                    mechanism="CKM_ML_KEM",
                 )
+                wrong_val = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    wrong_handle,
+                    CKA_VALUE,
+                    label="CKM_ML_KEM:wrong-key shared-secret CKA_VALUE readback",
+                    mechanism="CKM_ML_KEM",
+                )
+                mismatch = _check_bytes_attribute(
+                    encap_val,
+                    expected_len=_ML_KEM_SHARED_SECRET_BYTES,
+                    label="CKM_ML_KEM:correct shared-secret CKA_VALUE readback",
+                    mechanism="CKM_ML_KEM",
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+                mismatch = _check_bytes_attribute(
+                    wrong_val,
+                    expected_len=_ML_KEM_SHARED_SECRET_BYTES,
+                    label="CKM_ML_KEM:wrong-key shared-secret CKA_VALUE readback",
+                    mechanism="CKM_ML_KEM",
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
+                if (
+                    encap_val is not MISSING_ATTRIBUTE
+                    and wrong_val is not MISSING_ATTRIBUTE
+                    and isinstance(encap_val, bytes)
+                    and len(encap_val) == _ML_KEM_SHARED_SECRET_BYTES
+                    and isinstance(wrong_val, bytes)
+                    and len(wrong_val) == _ML_KEM_SHARED_SECRET_BYTES
+                    and encap_val == wrong_val
+                ):
+                    hard_results.append(
+                        _record_attribute_mismatch(
+                            label="CKM_ML_KEM:wrong-key decapsulation must differ",
+                            expected="different shared secret",
+                            actual=repr(wrong_val),
+                            kind="crypto",
+                            mechanism="CKM_ML_KEM",
+                            operation="C_DecapsulateKey",
+                        )
+                    )
             except CkrAssertionError as exc:
                 # An explicit rejection is also acceptable for this behavioral check.
                 if is_known_error(exc, _KEM_WRONG_KEY_CLEAN_REJECT_RVS):
@@ -508,14 +907,19 @@ class TestMLKEMEncapsulateDecapsulate:
                     "ML-KEM wrong-key decapsulate rejected with non-specific CKR",
                 )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub_a)
-            destroy_quietly(rs.raw, rs.sh, priv_a)
-            destroy_quietly(rs.raw, rs.sh, pub_b)
-            destroy_quietly(rs.raw, rs.sh, priv_b)
+            if pub_a:
+                destroy_quietly(rs.raw, rs.sh, pub_a)
+            if priv_a:
+                destroy_quietly(rs.raw, rs.sh, priv_a)
+            if pub_b:
+                destroy_quietly(rs.raw, rs.sh, pub_b)
+            if priv_b:
+                destroy_quietly(rs.raw, rs.sh, priv_b)
             if encap_handle:
                 destroy_quietly(rs.raw, rs.sh, encap_handle)
             if wrong_handle:
                 destroy_quietly(rs.raw, rs.sh, wrong_handle)
+        _raise_strongest(hard_results)
 
 
 @pytest.mark.v32
@@ -543,6 +947,7 @@ class TestMLKEMCiphertextSize:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         shared = 0
+        hard_results: list[C.Classification] = []
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
@@ -551,26 +956,36 @@ class TestMLKEMCiphertextSize:
                 "encapsulate",
             )
 
-            # We can only check size if the module uses the expected parameter set
-            if len(ct) not in _ML_KEM_CIPHERTEXT_SIZES.values():
-                classify(
-                    "honest_deviation",
-                    kind="crypto",
-                    label="ML-KEM ciphertext size",
-                    operation="C_EncapsulateKey",
-                    mechanism="CKM_ML_KEM",
-                    summary=f"Unexpected ciphertext size {len(ct)} - may be non-standard",
+            if not isinstance(ct, bytes) or not ct:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="ML-KEM ciphertext size",
+                        expected="non-empty bytes",
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
                 )
-            # If size matches this parameter set, check it
-            if len(ct) == expected_ct_len:
-                assert len(ct) == expected_ct_len
-            else:
+            elif len(ct) not in _ML_KEM_CIPHERTEXT_SIZES.values():
+                hard_results.append(
+                    C.record_as(
+                        "honest_deviation",
+                        kind="crypto",
+                        label="ML-KEM ciphertext size",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        summary=f"Unexpected ciphertext size {len(ct)} - may be non-standard",
+                        detail={"output": {"expected": "FIPS 203 size", "actual": repr(len(ct))}},
+                    )
+                )
+            elif len(ct) != expected_ct_len:
                 pytest.skip(f"Module uses different ML-KEM parameter set (ct_len={len(ct)})")
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
+        _raise_strongest(hard_results)
 
 
 @pytest.mark.v32
@@ -584,6 +999,7 @@ class TestMLKEMKeyDerivation:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         aes_handle = 0
+        hard_results: list[C.Classification] = []
         try:
             aes_attrs: dict[int, Any] = {
                 CKA_KEY_TYPE: CKK_AES,
@@ -598,19 +1014,50 @@ class TestMLKEMKeyDerivation:
                 aes_attrs,
                 "AES-128 encapsulate",
             )
-            assert isinstance(ct, bytes) and len(ct) > 0
-            kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert_correct(
-                actual=kt,
-                expected=CKK_AES,
+            if not isinstance(ct, bytes) or not ct:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM:C_EncapsulateKey AES-128 ciphertext",
+                        expected="non-empty bytes",
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
+            kt = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                aes_handle,
+                CKA_KEY_TYPE,
                 label="CKM_ML_KEM:encapsulated AES-128 key CKA_KEY_TYPE readback",
-                operation="C_EncapsulateKey",
                 mechanism="CKM_ML_KEM",
-                kind="metadata",
             )
-            value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(value, bytes)
-            if len(value) != 16:
+            mismatch = _check_equal_attribute(
+                kt,
+                expected=repr(CKK_AES),
+                label="CKM_ML_KEM:encapsulated AES-128 key CKA_KEY_TYPE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                aes_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:encapsulated AES-128 key CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            mismatch = _check_bytes_attribute(
+                value,
+                expected_len=16,
+                label="CKM_ML_KEM:encapsulated AES-128 key CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+                allowed_lengths=(32,),
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if value is not MISSING_ATTRIBUTE and isinstance(value, bytes) and len(value) != 16:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -621,25 +1068,12 @@ class TestMLKEMKeyDerivation:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
                 )
-                classify(
-                    "honest_deviation",
-                    kind="metadata",
-                    label="ML-KEM encapsulate CKA_VALUE_LEN",
-                    operation="C_EncapsulateKey",
-                    mechanism="CKM_ML_KEM",
-                    spec_ref="PKCS#11 v3.2 Sec.5.14.8; FIPS 203",
-                    summary=(
-                        "Module ignores CKA_VALUE_LEN for ML-KEM KEM-derived keys: "
-                        f"requested 16 bytes, got {len(value)} bytes "
-                        "(ML-KEM shared secret is always 32 bytes per FIPS 203)"
-                    ),
-                )
-            assert len(value) == 16, f"Expected 16-byte AES-128 key, got {len(value)} bytes"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             if aes_handle:
                 destroy_quietly(rs.raw, rs.sh, aes_handle)
+        _raise_strongest(hard_results)
 
     def test_encapsulate_produces_aes256_key(self, p11_module_session: Any) -> None:
         """encapsulate_key with key_type=AES and VALUE_LEN=32 produces AES-256."""
@@ -647,6 +1081,7 @@ class TestMLKEMKeyDerivation:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs)
         aes_handle = 0
+        hard_results: list[C.Classification] = []
         try:
             aes_attrs: dict[int, Any] = {
                 CKA_KEY_TYPE: CKK_AES,
@@ -661,24 +1096,54 @@ class TestMLKEMKeyDerivation:
                 aes_attrs,
                 "AES-256 encapsulate",
             )
-            assert isinstance(ct, bytes) and len(ct) > 0
-            kt = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert_correct(
-                actual=kt,
-                expected=CKK_AES,
+            if not isinstance(ct, bytes) or not ct:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label="CKM_ML_KEM:C_EncapsulateKey AES-256 ciphertext",
+                        expected="non-empty bytes",
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
+            kt = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                aes_handle,
+                CKA_KEY_TYPE,
                 label="CKM_ML_KEM:encapsulated AES-256 key CKA_KEY_TYPE readback",
-                operation="C_EncapsulateKey",
                 mechanism="CKM_ML_KEM",
-                kind="metadata",
             )
-            value = read_attributes(rs.raw, rs.sh, aes_handle, [CKA_VALUE])[CKA_VALUE]
-            assert isinstance(value, bytes)
-            assert len(value) == 32, f"Expected 32-byte AES-256 key, got {len(value)} bytes"
+            mismatch = _check_equal_attribute(
+                kt,
+                expected=repr(CKK_AES),
+                label="CKM_ML_KEM:encapsulated AES-256 key CKA_KEY_TYPE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                aes_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:encapsulated AES-256 key CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            mismatch = _check_bytes_attribute(
+                value,
+                expected_len=32,
+                label="CKM_ML_KEM:encapsulated AES-256 key CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             if aes_handle:
                 destroy_quietly(rs.raw, rs.sh, aes_handle)
+        _raise_strongest(hard_results)
 
     @pytest.mark.parametrize(
         "param_set_name,expected_ct_len",
@@ -708,6 +1173,7 @@ class TestMLKEMKeyDerivation:
             )
             raise
         shared = 0
+        hard_results: list[C.Classification] = []
         try:
             shared, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
@@ -715,14 +1181,22 @@ class TestMLKEMKeyDerivation:
                 _encap_attrs(),
                 "encapsulate",
             )
-            assert len(ct) == expected_ct_len, (
-                f"Expected {expected_ct_len}-byte ciphertext for {param_set_name}, got {len(ct)}"
-            )
+            if not isinstance(ct, bytes) or len(ct) != expected_ct_len:
+                hard_results.append(
+                    _record_output_mismatch(
+                        label=f"CKM_ML_KEM:{param_set_name} ciphertext",
+                        expected=repr(f"{expected_ct_len}-byte bytes"),
+                        actual=repr(ct),
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
             if shared:
                 destroy_quietly(rs.raw, rs.sh, shared)
+        _raise_strongest(hard_results)
 
 
 @pytest.mark.v32
@@ -757,17 +1231,56 @@ class TestMLKEMDecapsulation:
             )
 
             # Verification
-            enc_val = read_attributes(rs.raw, rs.sh, encap_handle, [CKA_VALUE])[CKA_VALUE]
-            dec_val = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
-            # Some modules may always produce the full 32-byte shared secret
-            assert len(dec_val) in (aes_len, 32)
-            if len(dec_val) == aes_len:
-                assert_correct(
-                    actual=dec_val,
-                    expected=enc_val,
-                    label="CKM_ML_KEM:encapsulate/decapsulate AES-key match",
-                    operation="C_DecapsulateKey",
-                    mechanism="CKM_ML_KEM",
+            hard_results: list[C.Classification] = []
+            enc_val = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                encap_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:encapsulated AES CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            dec_val = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                decap_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:decapsulated AES CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            allowed_lengths = (32,) if aes_len != 32 else ()
+            mismatch = _check_bytes_attribute(
+                enc_val,
+                expected_len=aes_len,
+                label="CKM_ML_KEM:encapsulated AES CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+                allowed_lengths=allowed_lengths,
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            mismatch = _check_bytes_attribute(
+                dec_val,
+                expected_len=aes_len,
+                label="CKM_ML_KEM:decapsulated AES CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+                allowed_lengths=allowed_lengths,
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            if (
+                enc_val is not MISSING_ATTRIBUTE
+                and dec_val is not MISSING_ATTRIBUTE
+                and enc_val != dec_val
+            ):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_ML_KEM:encapsulate/decapsulate AES-key match",
+                        expected=repr(enc_val),
+                        actual=repr(dec_val),
+                        kind="crypto",
+                        mechanism="CKM_ML_KEM",
+                        operation="C_DecapsulateKey",
+                    )
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -776,6 +1289,7 @@ class TestMLKEMDecapsulation:
                 destroy_quietly(rs.raw, rs.sh, encap_handle)
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
+        _raise_strongest(hard_results)
 
     def test_decapsulate_generic_secret(self, p11_module_session: Any) -> None:
         """Decapsulate to CKK_GENERIC_SECRET (default 32 bytes for ML-KEM)."""
@@ -799,8 +1313,23 @@ class TestMLKEMDecapsulation:
                 "generic-secret decapsulate",
             )
 
-            dec_val = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])[CKA_VALUE]
-            assert len(dec_val) == 32
+            hard_results: list[C.Classification] = []
+            dec_val = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                decap_handle,
+                CKA_VALUE,
+                label="CKM_ML_KEM:decapsulated generic-secret CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            mismatch = _check_bytes_attribute(
+                dec_val,
+                expected_len=32,
+                label="CKM_ML_KEM:decapsulated generic-secret CKA_VALUE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -808,6 +1337,7 @@ class TestMLKEMDecapsulation:
                 destroy_quietly(rs.raw, rs.sh, encap_handle)
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
+        _raise_strongest(hard_results)
 
     def test_decapsulate_extractability_flags(self, p11_module_session: Any) -> None:
         """Decapsulate with specific security flags (if supported by provider)."""
@@ -836,8 +1366,41 @@ class TestMLKEMDecapsulation:
                 "security-flag decapsulate",
             )
             attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_EXTRACTABLE, CKA_SENSITIVE])
-            assert attrs[CKA_EXTRACTABLE] is False
-            assert attrs[CKA_SENSITIVE] is True
+            hard_results: list[C.Classification] = []
+            extractable = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                decap_handle,
+                CKA_EXTRACTABLE,
+                label="CKM_ML_KEM:decapsulated CKA_EXTRACTABLE readback",
+                mechanism="CKM_ML_KEM",
+                attrs=attrs,
+            )
+            sensitive = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                decap_handle,
+                CKA_SENSITIVE,
+                label="CKM_ML_KEM:decapsulated CKA_SENSITIVE readback",
+                mechanism="CKM_ML_KEM",
+                attrs=attrs,
+            )
+            mismatch = _check_equal_attribute(
+                extractable,
+                expected=repr(False),
+                label="CKM_ML_KEM:decapsulated CKA_EXTRACTABLE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
+            mismatch = _check_equal_attribute(
+                sensitive,
+                expected=repr(True),
+                label="CKM_ML_KEM:decapsulated CKA_SENSITIVE readback",
+                mechanism="CKM_ML_KEM",
+            )
+            if mismatch is not None:
+                hard_results.append(mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -845,6 +1408,7 @@ class TestMLKEMDecapsulation:
                 destroy_quietly(rs.raw, rs.sh, encap_handle)
             if decap_handle:
                 destroy_quietly(rs.raw, rs.sh, decap_handle)
+        _raise_strongest(hard_results)
 
 
 @pytest.mark.v32
@@ -856,14 +1420,15 @@ class TestMLKEMNegative:
         """Injecting prohibited attributes (like CKA_VALUE) should fail."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
-        pub, priv = _generate_ml_kem_keypair(rs)
-        encap_handle, ct = _encapsulate_ml_kem_or_xfail(
-            rs,
-            pub,
-            _encap_attrs(),
-            "negative-test setup encapsulate",
-        )
+        pub = priv = encap_handle = 0
         try:
+            pub, priv = _generate_ml_kem_keypair(rs)
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "negative-test setup encapsulate",
+            )
             handle = CK_OBJECT_HANDLE(0)
             mech = mech_simple(CKM_ML_KEM)
             tmpl = template(
@@ -897,21 +1462,26 @@ class TestMLKEMNegative:
                 label="inject CKA_VALUE into ML-KEM decapsulation template",
             )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if encap_handle:
+                destroy_quietly(rs.raw, rs.sh, encap_handle)
 
     def test_decapsulate_invalid_ciphertext_length(self, p11_module_session: Any) -> None:
         """Off-by-one ciphertext length should fail."""
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
-        pub, priv = _generate_ml_kem_keypair(rs)
-        encap_handle, ct = _encapsulate_ml_kem_or_xfail(
-            rs,
-            pub,
-            _encap_attrs(),
-            "negative-test setup encapsulate",
-        )
+        pub = priv = encap_handle = 0
         try:
+            pub, priv = _generate_ml_kem_keypair(rs)
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
+                rs,
+                pub,
+                _encap_attrs(),
+                "negative-test setup encapsulate",
+            )
             short_ct = ct[:-1]
             handle = CK_OBJECT_HANDLE(0)
             mech = mech_simple(CKM_ML_KEM)
@@ -928,14 +1498,20 @@ class TestMLKEMNegative:
                 len(short_ct),
                 byref(handle),
             )
+            if rv == CKR_OK and handle.value:
+                destroy_quietly(rs.raw, rs.sh, handle.value)
             classify_negative_rv(
                 rv,
                 (CKR_ENCRYPTED_DATA_LEN_RANGE, CKR_ENCRYPTED_DATA_INVALID),
                 label="ML-KEM invalid ciphertext length",
             )
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+            if encap_handle:
+                destroy_quietly(rs.raw, rs.sh, encap_handle)
 
     def test_decapsulate_missing_permission_flag(self, p11_module_session: Any) -> None:
         """Decapsulate fails if CKA_DECAPSULATE is False on private key.
@@ -947,8 +1523,10 @@ class TestMLKEMNegative:
         rs = p11_module_session
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_DECAPSULATE_OVERRIDE=False)
+        encap_handle = 0
+        hard_results: list[C.Classification] = []
         try:
-            _, ct = _encapsulate_ml_kem_or_xfail(
+            encap_handle, ct = _encapsulate_ml_kem_or_xfail(
                 rs,
                 pub,
                 _encap_attrs(),
@@ -988,17 +1566,39 @@ class TestMLKEMNegative:
             # (a module that did not honor the flag at create has not claimed the
             # protection -> honest non-support -> xfail). If it was claimed and
             # decapsulation still succeeded, the module contradicted itself.
-            decap_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DECAPSULATE])
-            claimed = decap_attrs.get(CKA_DECAPSULATE) is False
-            classify_policy_enforcement(
-                claimed=claimed,
-                violated=True,
-                label="decapsulate with CKA_DECAPSULATE=False on private key "
-                "(PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            decap_flag = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKA_DECAPSULATE,
+                label="decapsulate with CKA_DECAPSULATE=False on private key",
+                mechanism="CKM_ML_KEM",
             )
+            if decap_flag is not MISSING_ATTRIBUTE and not isinstance(decap_flag, bool):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="decapsulate with CKA_DECAPSULATE=False on private key",
+                        expected=repr(False),
+                        actual=repr(decap_flag),
+                        kind="metadata",
+                        mechanism="CKM_ML_KEM",
+                    )
+                )
+            elif decap_flag is not MISSING_ATTRIBUTE:
+                _record_policy_enforcement(
+                    claimed=decap_flag is False,
+                    label="decapsulate with CKA_DECAPSULATE=False on private key "
+                    "(PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                    operation="C_DecapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    hard_results=hard_results,
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+            if encap_handle:
+                destroy_quietly(rs.raw, rs.sh, encap_handle)
+        _raise_strongest(hard_results)
 
     def test_encapsulate_missing_permission_flag(self, p11_module_session: Any) -> None:
         """Encapsulate fails if CKA_ENCAPSULATE is False on public key.
@@ -1017,6 +1617,9 @@ class TestMLKEMNegative:
         _skip_if_no_ml_kem(rs)
         pub, priv = _generate_ml_kem_keypair(rs, CKA_ENCAPSULATE_OVERRIDE=False)
         handle = CK_OBJECT_HANDLE(0)
+        size_query_handle = 0
+        full_call_handle = 0
+        hard_results: list[C.Classification] = []
         try:
             mech = mech_simple(CKM_ML_KEM)
             tmpl = template(
@@ -1040,6 +1643,7 @@ class TestMLKEMNegative:
                 byref(ct_len),
                 byref(handle),
             )
+            size_query_handle = int(handle.value)
             if size_rv == CKR_KEY_FUNCTION_NOT_PERMITTED:
                 # Permission enforced already at the size query: spec-correct.
                 classify_negative_rv(
@@ -1049,47 +1653,98 @@ class TestMLKEMNegative:
                     "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
                 )
                 return
-            buf_len = ct_len.value if (size_rv == CKR_OK and ct_len.value) else 4096
+            size_query_succeeded = size_rv == CKR_OK
+            buf_len = ct_len.value if (size_query_succeeded and ct_len.value) else 4096
             ct_buf = (ctypes.c_ubyte * buf_len)()
             ct_len = CK_ULONG(buf_len)
-            rv = rs.raw.C_EncapsulateKey(
-                rs.sh,
-                mech.byref(),
-                pub,
-                *template_ptr_count(tmpl),
-                ct_buf,
-                byref(ct_len),
-                byref(handle),
-            )
-            if rv == CKR_OK and handle.value:
-                destroy_quietly(rs.raw, rs.sh, handle.value)
-
-            if rv != CKR_OK:
-                # A rejection: the spec code passes, another clean code xfails.
-                classify_negative_rv(
-                    rv,
-                    (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL),
-                    label="encapsulate with CKA_ENCAPSULATE=False on public key "
-                    "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            try:
+                rv = rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    pub,
+                    *template_ptr_count(tmpl),
+                    ct_buf,
+                    byref(ct_len),
+                    byref(handle),
                 )
-                return
+            finally:
+                full_call_handle = int(handle.value)
 
-            # rv == CKR_OK -- policy claim/effect-check. The protection is only
-            # claimed if the public key actually reads back CKA_ENCAPSULATE=False
-            # (a module that did not honor the flag at create has not claimed the
-            # protection -> honest non-support -> xfail). If it was claimed and
-            # encapsulation still succeeded, the module contradicted itself.
-            encap_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCAPSULATE])
-            claimed = encap_attrs.get(CKA_ENCAPSULATE) is False
-            classify_policy_enforcement(
-                claimed=claimed,
-                violated=True,
-                label="encapsulate with CKA_ENCAPSULATE=False on public key "
-                "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            expected_rvs = (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_BUFFER_TOO_SMALL)
+            actual_success = bool(
+                (size_rv == CKR_OK and size_query_handle) or (rv == CKR_OK and full_call_handle)
             )
+            if rv != CKR_OK:
+                if not actual_success:
+                    # A rejection without any successful-effect handle: the spec
+                    # code passes, another clean code xfails.
+                    classify_negative_rv(
+                        rv,
+                        expected_rvs,
+                        label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                        "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                    )
+                    return
+
+                if rv not in expected_rvs:
+                    hard_results.append(
+                        C.record_as(
+                            "not_operational",
+                            kind="policy",
+                            label=(
+                                "encapsulate with CKA_ENCAPSULATE=False on public key (full call)"
+                            ),
+                            operation="C_EncapsulateKey",
+                            mechanism="CKM_ML_KEM",
+                            expected=expected_rvs,
+                            actual=rv,
+                            summary=(
+                                "encapsulate with CKA_ENCAPSULATE=False on public key "
+                                f"rejected with {rv!r} after a successful-effect call"
+                            ),
+                        )
+                    )
+
+            if actual_success:
+                # Only an operation that returned CKR_OK and a non-zero object
+                # handle establishes a successful effect.  A size-query CKR_OK
+                # with no handle is not evidence of accepted encapsulation.
+                encap_flag = _read_attr_or_record(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    CKA_ENCAPSULATE,
+                    label="encapsulate with CKA_ENCAPSULATE=False on public key",
+                    mechanism="CKM_ML_KEM",
+                )
+                if encap_flag is not MISSING_ATTRIBUTE and not isinstance(encap_flag, bool):
+                    hard_results.append(
+                        _record_attribute_mismatch(
+                            label="encapsulate with CKA_ENCAPSULATE=False on public key",
+                            expected=repr(False),
+                            actual=repr(encap_flag),
+                            kind="metadata",
+                            mechanism="CKM_ML_KEM",
+                        )
+                    )
+                elif encap_flag is not MISSING_ATTRIBUTE:
+                    _record_policy_enforcement(
+                        claimed=encap_flag is False,
+                        label="encapsulate with CKA_ENCAPSULATE=False on public key "
+                        "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        hard_results=hard_results,
+                    )
         finally:
+            cleaned_handles: set[int] = set()
+            for returned_handle in (size_query_handle, full_call_handle):
+                if returned_handle and returned_handle not in cleaned_handles:
+                    destroy_quietly(rs.raw, rs.sh, returned_handle)
+                    cleaned_handles.add(returned_handle)
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+        _raise_strongest(hard_results)
 
     def test_kem_mechanisms_with_wrong_key_type(self, p11_module_session: Any) -> None:
         """ML-KEM mechanisms should reject RSA/other keys."""
