@@ -47,7 +47,7 @@ def test_negative_rsa_setup_runtime_reject_is_xfail() -> None:
 
     with pytest.raises(
         pytest.xfail.Exception,
-        match="RSA_PKCS_KEY_PAIR_GEN advertised but keypair generation is not operational",
+        match="advertised RSA keypair generation rejected setup",
     ):
         test_mech_negative.TestWrongKeyType().test_aes_ecb_with_rsa_key_rejected(
             cast(RawSession, rs)

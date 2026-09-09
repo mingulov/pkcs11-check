@@ -51,23 +51,17 @@ pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
 _SKIP_TOKENS_BY_FUNCTION: dict[str, frozenset[str]] = {
     "C_MessageEncryptInit": frozenset({"v2.40_only", "no_v3_funcs"}),
-    "C_EncryptMessage": frozenset(
-        {"v2.40_only", "no_v3_funcs", "no_EncryptMessage"}
-    ),
+    "C_EncryptMessage": frozenset({"v2.40_only", "no_v3_funcs", "no_EncryptMessage"}),
     "C_MessageDecryptInit": frozenset({"v2.40_only", "no_v3_funcs"}),
     "C_MessageSignInit": frozenset({"v2.40_only", "no_v3_funcs"}),
     "C_MessageVerifyInit": frozenset({"v2.40_only", "no_v3_funcs"}),
-    "C_SessionCancel": frozenset(
-        {"v2.40_only", "no_v3_funcs", "no_SessionCancel"}
-    ),
+    "C_SessionCancel": frozenset({"v2.40_only", "no_v3_funcs", "no_SessionCancel"}),
 }
 _SETUP_RE = re.compile(
     r"^(C_Initialize|C_GetSlotList|C_OpenSession|C_Login) rejected with "
     r"(CKR_[A-Z0-9_]+|0x[0-9a-f]{8,16})$"
 )
-_STANDARD_RVS_BY_NAME: dict[str, int] = {
-    name: rv for rv, name in RV_NAMES.items()
-}
+_STANDARD_RVS_BY_NAME: dict[str, int] = {name: rv for rv, name in RV_NAMES.items()}
 _SETUP_SUCCESS_RVS: dict[str, frozenset[int]] = {
     "C_Initialize": frozenset({int(CKR_OK), int(CKR_CRYPTOKI_ALREADY_INITIALIZED)}),
     "C_Login": frozenset({int(CKR_OK), int(CKR_USER_ALREADY_LOGGED_IN)}),
@@ -80,9 +74,7 @@ def _is_defined_ckr(rv: int) -> bool:
     return is_standard_ckr(rv) or (is_vendor_defined_ckr(rv) and rv <= 0xFFFFFFFF)
 
 
-def _is_impossible_setup_result(
-    operation: str, rv: int | None
-) -> bool:
+def _is_impossible_setup_result(operation: str, rv: int | None) -> bool:
     """Return whether a setup marker claims that bootstrap accepted its state."""
     return rv is not None and rv in _SETUP_SUCCESS_RVS.get(operation, _DEFAULT_SETUP_SUCCESS_RVS)
 
@@ -135,9 +127,7 @@ def _check_protocol(
     terminal: str | None = None
     terminal_seen = False
     explicit_harness = any(
-        line.startswith("HARNESS_ERROR:")
-        for stream in (out, err)
-        for line in stream.splitlines()
+        line.startswith("HARNESS_ERROR:") for stream in (out, err) for line in stream.splitlines()
     )
     termination_hint = termination_from_returncode(
         rc,
@@ -222,10 +212,7 @@ def _check_protocol(
                 setup_rv,
             )
         )
-    if any(
-        _is_impossible_setup_result(operation, rv)
-        for operation, token, rv in setup_facts
-    ):
+    if any(_is_impossible_setup_result(operation, rv) for operation, token, rv in setup_facts):
         protocol_error = protocol_error or "impossible_setup_result"
     phases = [phase for phase, _ in results]
     if len(phases) != len(set(phases)):
@@ -279,9 +266,7 @@ def _check_protocol(
                 summary = f"{func}: undefined CK_RV {rv:#x}; expected {expected_names}"
             else:
                 reason, kind = "nonspec_reject", None
-                summary = (
-                    f"{func}: non-spec rejection {actual_name}; expected {expected_names}"
-                )
+                summary = f"{func}: non-spec rejection {actual_name}; expected {expected_names}"
             outcome, severity = derive_verdict(reason, kind)
             semantic.append(
                 Classification(

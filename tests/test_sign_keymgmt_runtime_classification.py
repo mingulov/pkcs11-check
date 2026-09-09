@@ -163,9 +163,7 @@ def test_sign_recover_missing_result_is_incomplete(
     assert get_records()[-1].reason == "harness_error"
 
 
-def _run_sign_recover_length_probe(
-    monkeypatch: pytest.MonkeyPatch, stdout: str
-) -> None:
+def _run_sign_recover_length_probe(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
     monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
     monkeypatch.setattr(
         test_sign_recover,
@@ -200,8 +198,7 @@ def test_sign_recover_oversize_expected_reject_passes(
 ) -> None:
     _run_sign_recover_length_probe(
         monkeypatch,
-        f"RESULT:REJECTED:0x{int(CKR_DATA_LEN_RANGE):08x}\n"
-        "OK:sign_recover_wrong_data_length\n",
+        f"RESULT:REJECTED:0x{int(CKR_DATA_LEN_RANGE):08x}\nOK:sign_recover_wrong_data_length\n",
     )
 
 
@@ -212,8 +209,7 @@ def test_sign_recover_oversize_arguments_bad_is_nonspec_xfail(
     with pytest.raises(pytest.xfail.Exception, match="CKR_DATA_LEN_RANGE"):
         _run_sign_recover_length_probe(
             monkeypatch,
-            f"RESULT:REJECTED:0x{int(CKR_ARGUMENTS_BAD):08x}\n"
-            "OK:sign_recover_wrong_data_length\n",
+            f"RESULT:REJECTED:0x{int(CKR_ARGUMENTS_BAD):08x}\nOK:sign_recover_wrong_data_length\n",
         )
 
     from pkcs11_check.classification import get_records

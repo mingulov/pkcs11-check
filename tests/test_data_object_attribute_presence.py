@@ -57,11 +57,7 @@ def test_missing_label_does_not_hide_present_application_mismatch(
     with pytest.raises(AssertionError):
         data_objects.TestDataObjectReadValue().test_read_label_and_application(_session())
 
-    missing = [
-        (rec.reason, rec.detail["attribute"]["id"])
-        for rec in C.get_records()
-        if rec.detail
-    ]
+    missing = [(rec.reason, rec.detail["attribute"]["id"]) for rec in C.get_records() if rec.detail]
     assert missing == [("not_operational", int(CKA_LABEL))]
 
 

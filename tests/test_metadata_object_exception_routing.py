@@ -81,9 +81,7 @@ def test_missing_counter_reset_fields_record_both_and_continue(
     monkeypatch.setattr(hw.TestHwFeatureCounter, "_get_counter_features", lambda _self, _rs: [3, 4])
     monkeypatch.setattr(hw, "read_attributes", _read)
 
-    hw.TestHwFeatureCounter().test_counter_reset_attributes(
-        SimpleNamespace(raw=object(), sh=1)
-    )
+    hw.TestHwFeatureCounter().test_counter_reset_attributes(SimpleNamespace(raw=object(), sh=1))
 
     assert reads == [3, 4]
     assert [rec.detail["attribute"]["id"] for rec in C.get_records() if rec.detail] == [
@@ -149,9 +147,7 @@ def test_absent_optional_validation_attributes_remain_silent(
     monkeypatch.setattr(validation, "_find_validation_objects", lambda *_a: [9])
     monkeypatch.setattr(validation, "read_attributes", lambda *_a, **_k: {})
 
-    getattr(validation.TestValidationObjects(), method_name)(
-        SimpleNamespace(raw=object(), sh=1)
-    )
+    getattr(validation.TestValidationObjects(), method_name)(SimpleNamespace(raw=object(), sh=1))
 
     assert C.get_records() == []
 

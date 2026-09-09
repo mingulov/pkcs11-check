@@ -225,9 +225,7 @@ def _assert_normal_probe(
     protocol_errors: list[Classification] = []
     lines = stdout.splitlines()
     setup_lines = [line for line in lines if line.startswith("SETUP_XFAIL:")]
-    all_result_lines = [
-        line for line in lines if line.startswith(("RV=", "INIT_RV=", "CALL_RV="))
-    ]
+    all_result_lines = [line for line in lines if line.startswith(("RV=", "INIT_RV=", "CALL_RV="))]
     setup_conflict = bool(setup_lines and all_result_lines)
     if setup_conflict:
         protocol_errors.append(
@@ -295,10 +293,7 @@ def _assert_normal_probe(
                 _protocol_error(
                     context,
                     "invalid_marker_order",
-                    (
-                        f"{context}: invalid lock result marker order; INIT_RV must "
-                        "precede CALL_RV"
-                    ),
+                    (f"{context}: invalid lock result marker order; INIT_RV must precede CALL_RV"),
                 )
             )
         values = _ProbeValues(init_rv=init_rv, call_rv=call_rv)

@@ -222,9 +222,7 @@ def _normal_probe_rv(
             )
         )
     for line in (
-        setup_lines
-        if len(setup_lines) == 1 and allow_setup_refusal and not setup_conflict
-        else []
+        setup_lines if len(setup_lines) == 1 and allow_setup_refusal and not setup_conflict else []
     ):
         payload = line.removeprefix("SETUP_XFAIL:").strip()
         match = _SETUP_REFUSAL_RE.fullmatch(line)
@@ -387,9 +385,7 @@ _accepted_finalize_reserved = _honest_deviation(
     ),
 )
 
-_init_null_result = _positive_init_result_factory(
-    expected=(CKR_OK,), label="C_Initialize(NULL)"
-)
+_init_null_result = _positive_init_result_factory(expected=(CKR_OK,), label="C_Initialize(NULL)")
 _init_empty_result = _positive_init_result_factory(
     expected=(CKR_OK, CKR_CANT_LOCK), label="C_Initialize(empty struct)"
 )
