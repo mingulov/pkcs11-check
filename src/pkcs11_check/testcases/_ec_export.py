@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from enum import StrEnum
 from typing import Any
 
 from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, x448, x25519
 
 from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.der import decode_ec_point
@@ -28,6 +30,30 @@ class ProviderECPointEncodingError(ValueError):
 
 class InvalidProviderECPointError(ValueError):
     """Provider CKA_EC_POINT does not identify a point on the expected curve."""
+
+
+class RawECPointFamily(StrEnum):
+    """Raw public-key family carried by CKA_EC_POINT."""
+
+    X25519 = "x25519"
+    X448 = "x448"
+    ED25519 = "ed25519"
+    ED448 = "ed448"
+
+
+_RAW_EC_POINT_LENGTHS: dict[RawECPointFamily, int] = {
+    RawECPointFamily.X25519: 32,
+    RawECPointFamily.X448: 56,
+    RawECPointFamily.ED25519: 32,
+    RawECPointFamily.ED448: 57,
+}
+
+_RAW_EC_POINT_CONSTRUCTORS: dict[RawECPointFamily, Callable[[bytes], Any]] = {
+    RawECPointFamily.X25519: x25519.X25519PublicKey.from_public_bytes,
+    RawECPointFamily.X448: x448.X448PublicKey.from_public_bytes,
+    RawECPointFamily.ED25519: ed25519.Ed25519PublicKey.from_public_bytes,
+    RawECPointFamily.ED448: ed448.Ed448PublicKey.from_public_bytes,
+}
 
 
 _VALIDATABLE_CONVENTIONAL_CURVES: tuple[ec.EllipticCurve, ...] = (
@@ -165,7 +191,9 @@ def read_ec_public_key_or_xfail(
             )
         raise
 
-    if CKA_EC_POINT not in attrs:
+    if CKA_EC_POINT in attrs:
+        ec_point = attrs[CKA_EC_POINT]
+    else:
         xfail_as(
             "not_operational",
             kind="metadata",
@@ -178,7 +206,6 @@ def read_ec_public_key_or_xfail(
             },
         )
 
-    ec_point = attrs[CKA_EC_POINT]
     if not isinstance(ec_point, bytes) or not ec_point:
         xfail_as(
             "not_operational",
@@ -220,3 +247,99 @@ def read_ec_public_key_or_xfail(
         )
 
     return ec.EllipticCurvePublicKey.from_encoded_point(curve, point_bytes)
+
+
+def read_raw_ec_point_or_xfail(
+    rs: Any,
+    handle: int,
+    family: RawECPointFamily,
+    *,
+    label: str,
+) -> bytes:
+    """Read and validate a raw Montgomery or Edwards public key.
+
+    Raw-family public keys are not SEC1 points and must not be passed through the
+    conventional EC point decoder. The original provider bytes are returned after
+    validation so representation-sensitive callers can inspect them separately.
+    """
+    expected_length = _RAW_EC_POINT_LENGTHS[family]
+    detail: dict[str, Any] = {
+        "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+        "family": family.value,
+        "length": {"expected": expected_length, "actual": None},
+    }
+
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_POINT])
+    except CkrAssertionError as exc:
+        if exc.rv in (int(CKR_ATTRIBUTE_SENSITIVE), int(CKR_ATTRIBUTE_TYPE_INVALID)):
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                actual=exc.rv,
+                summary=f"{label}: cannot read CKA_EC_POINT: {exc}",
+                detail=detail,
+            )
+        raise
+
+    if CKA_EC_POINT in attrs:
+        ec_point = attrs[CKA_EC_POINT]
+    else:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=f"{label}: CKA_EC_POINT attribute unavailable",
+            detail=detail,
+        )
+
+    if not isinstance(ec_point, bytes):
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=f"{label}: CKA_EC_POINT is not bytes: {ec_point!r}",
+            detail=detail,
+        )
+
+    actual_length = len(ec_point)
+    detail["length"] = {"expected": expected_length, "actual": actual_length}
+    if not ec_point:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=f"{label}: CKA_EC_POINT is empty",
+            detail=detail,
+        )
+    if actual_length != expected_length:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=(
+                f"{label}: CKA_EC_POINT length {actual_length} does not match "
+                f"{family.value} length {expected_length}"
+            ),
+            detail=detail,
+        )
+
+    try:
+        _RAW_EC_POINT_CONSTRUCTORS[family](ec_point)
+    except ValueError as exc:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation="C_GetAttributeValue",
+            summary=f"{label}: invalid raw {family.value} public key: {exc}",
+            detail=detail,
+        )
+
+    return ec_point
