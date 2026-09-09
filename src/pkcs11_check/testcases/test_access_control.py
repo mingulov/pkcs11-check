@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     assert_correct,
@@ -108,7 +109,14 @@ class TestPrivateAttribute:
         key_h = _gen_access_control_aes_key(rs)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_PRIVATE])
-            if attrs[CKA_PRIVATE] is not True:
+            private = attr_or_record(
+                attrs,
+                CKA_PRIVATE,
+                label="CKA_PRIVATE default (secret key)",
+            )
+            if private is MISSING_ATTRIBUTE:
+                return
+            if private is not True:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -185,7 +193,14 @@ class TestModifiableAttribute:
         key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "mod-test"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
-            assert attrs[CKA_MODIFIABLE] is True
+            modifiable = attr_or_record(
+                attrs,
+                CKA_MODIFIABLE,
+                label="CKA_MODIFIABLE default (secret key)",
+            )
+            if modifiable is MISSING_ATTRIBUTE:
+                return
+            assert modifiable is True
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -195,7 +210,14 @@ class TestModifiableAttribute:
         key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "mod-before"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_MODIFIABLE])
-            assert attrs[CKA_MODIFIABLE] is True
+            modifiable = attr_or_record(
+                attrs,
+                CKA_MODIFIABLE,
+                label="CKA_MODIFIABLE label mutation",
+            )
+            if modifiable is MISSING_ATTRIBUTE:
+                return
+            assert modifiable is True
             set_attributes(rs.raw, rs.sh, key_h, {CKA_LABEL: "mod-after"})
             tmpl = template_from_dict({CKA_LABEL: "mod-after"})
             found = find_objects(rs.raw, rs.sh, tmpl)
@@ -241,7 +263,14 @@ class TestModifiableAttribute:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     pytest.skip(f"Module does not expose CKA_MODIFIABLE: {e}")
                 raise
-            if attrs.get(CKA_MODIFIABLE) is not False:
+            modifiable = attr_or_record(
+                attrs,
+                CKA_MODIFIABLE,
+                label="CKA_MODIFIABLE=False enforcement (create-time)",
+            )
+            if modifiable is MISSING_ATTRIBUTE:
+                return
+            if modifiable is not False:
                 # The module accepted CKA_MODIFIABLE=False at create-time
                 # without raising, but the readback shows it didn't take
                 # effect. This is the worst-case "lying module" pattern:
@@ -254,7 +283,7 @@ class TestModifiableAttribute:
 
                 note(
                     f"Module accepted CKA_MODIFIABLE=False at C_CreateObject "
-                    f"but readback returns {attrs.get(CKA_MODIFIABLE)!r} — "
+                    f"but readback returns {modifiable!r} — "
                     f"the attribute was silently ignored at create time, "
                     f"making downstream MODIFIABLE enforcement untestable.",
                     ComplianceLevel.CRITICAL,
@@ -323,9 +352,13 @@ class TestCopyableAttribute:
         key_h = _gen_access_control_aes_key(rs)
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
-            if CKA_COPYABLE not in attrs:
-                pytest.skip("CKA_COPYABLE not supported by module")
-            copyable = attrs[CKA_COPYABLE]
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:generated-key",
+            )
+            if copyable is MISSING_ATTRIBUTE:
+                return
             assert isinstance(copyable, bool)
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
@@ -336,7 +369,14 @@ class TestCopyableAttribute:
         key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "copy-src"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
-            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:copyable-key",
+            )
+            if copyable is MISSING_ATTRIBUTE:
+                return
+            if copyable is not True:
                 pytest.skip("Key not copyable by default")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copy-dst"})
@@ -345,8 +385,15 @@ class TestCopyableAttribute:
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_LABEL])
+                label = attr_or_record(
+                    copy_attrs,
+                    CKA_LABEL,
+                    label="C_CopyObject:CKA_LABEL on copy",
+                )
+                if label is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=copy_attrs[CKA_LABEL],
+                    actual=label,
                     expected="copy-dst",
                     label="C_CopyObject:CKA_LABEL on copy",
                     operation="C_CopyObject",
@@ -367,7 +414,14 @@ class TestCopyObject:
         key_h = _gen_access_control_aes_key(rs, attrs={CKA_LABEL: "orig-label"})
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
-            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:copy-with-modified-label",
+            )
+            if copyable is MISSING_ATTRIBUTE:
+                return
+            if copyable is not True:
                 pytest.skip("Key not copyable by default")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "copied-label"})
@@ -390,23 +444,53 @@ class TestCopyObject:
                     key_h,
                     [CKA_KEY_TYPE, CKA_VALUE_LEN],
                 )
+                copy_label = attr_or_record(
+                    copy_attrs,
+                    CKA_LABEL,
+                    label="C_CopyObject:CKA_LABEL on copy",
+                )
+                copy_type = attr_or_record(
+                    copy_attrs,
+                    CKA_KEY_TYPE,
+                    label="C_CopyObject:CKA_KEY_TYPE on copy",
+                )
+                copy_len = attr_or_record(
+                    copy_attrs,
+                    CKA_VALUE_LEN,
+                    label="C_CopyObject:CKA_VALUE_LEN on copy",
+                )
+                orig_type = attr_or_record(
+                    orig_attrs,
+                    CKA_KEY_TYPE,
+                    label="C_CopyObject:CKA_KEY_TYPE on source",
+                )
+                orig_len = attr_or_record(
+                    orig_attrs,
+                    CKA_VALUE_LEN,
+                    label="C_CopyObject:CKA_VALUE_LEN on source",
+                )
+                if any(
+                    value is MISSING_ATTRIBUTE
+                    for value in (copy_label, copy_type, copy_len, orig_type, orig_len)
+                ):
+                    return
                 assert_correct(
-                    actual=copy_attrs[CKA_LABEL],
+                    actual=copy_label,
                     expected="copied-label",
                     label="C_CopyObject:CKA_LABEL on copy",
                     operation="C_CopyObject",
                     kind="metadata",
                 )
                 assert_correct(
-                    actual=copy_attrs[CKA_KEY_TYPE],
-                    expected=orig_attrs[CKA_KEY_TYPE],
+                    actual=copy_type,
+                    expected=orig_type,
                     label="C_CopyObject:CKA_KEY_TYPE preserved on copy",
                     operation="C_CopyObject",
                     kind="metadata",
                 )
                 assert_correct(
-                    actual=copy_attrs[CKA_VALUE_LEN],
-                    expected=orig_attrs[CKA_VALUE_LEN],
+                    actual=copy_len,
+                    expected=orig_len,
                     label="C_CopyObject:CKA_VALUE_LEN preserved on copy",
                     operation="C_CopyObject",
                     kind="metadata",
@@ -429,9 +513,21 @@ class TestCopyObject:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_EXTRACTABLE])
-            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:copy-extractable-key",
+            )
+            extractable = attr_or_record(
+                attrs,
+                CKA_EXTRACTABLE,
+                label="CKA_EXTRACTABLE:copy-extractable-key",
+            )
+            if copyable is MISSING_ATTRIBUTE or extractable is MISSING_ATTRIBUTE:
+                return
+            if copyable is not True:
                 pytest.skip("Key not copyable")
-            assert attrs[CKA_EXTRACTABLE] is True
+            assert extractable is True
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_EXTRACTABLE: False})
             except CkrAssertionError as exc:
@@ -442,7 +538,14 @@ class TestCopyObject:
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_EXTRACTABLE])
-                assert copy_attrs[CKA_EXTRACTABLE] is False
+                copied_extractable = attr_or_record(
+                    copy_attrs,
+                    CKA_EXTRACTABLE,
+                    label="C_CopyObject:CKA_EXTRACTABLE on copy",
+                )
+                if copied_extractable is MISSING_ATTRIBUTE:
+                    return
+                assert copied_extractable is False
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -468,9 +571,14 @@ class TestCopyObject:
             return
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE])
-            if CKA_COPYABLE not in attrs:
-                pytest.skip("CKA_COPYABLE not supported by module")
-            if attrs[CKA_COPYABLE] is not False:
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:non-copyable-key",
+            )
+            if copyable is MISSING_ATTRIBUTE:
+                return
+            if copyable is not False:
                 pytest.skip("Module did not honour CKA_COPYABLE=False in template")
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "should-fail"})
@@ -522,9 +630,21 @@ class TestCopyObject:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_TOKEN])
-            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:session-object-copy",
+            )
+            token = attr_or_record(
+                attrs,
+                CKA_TOKEN,
+                label="CKA_TOKEN:session-object-copy",
+            )
+            if copyable is MISSING_ATTRIBUTE or token is MISSING_ATTRIBUTE:
+                return
+            if copyable is not True:
                 pytest.skip("Key not copyable")
-            assert attrs[CKA_TOKEN] is False
+            assert token is False
             try:
                 copied_h = copy_object(rs.raw, rs.sh, key_h, {CKA_LABEL: "session-copy"})
             except CkrAssertionError as exc:
@@ -535,7 +655,14 @@ class TestCopyObject:
                 return
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_TOKEN])
-                assert copy_attrs[CKA_TOKEN] is False
+                copied_token = attr_or_record(
+                    copy_attrs,
+                    CKA_TOKEN,
+                    label="C_CopyObject:CKA_TOKEN on session copy",
+                )
+                if copied_token is MISSING_ATTRIBUTE:
+                    return
+                assert copied_token is False
             finally:
                 destroy_quietly(rs.raw, rs.sh, copied_h)
         finally:
@@ -551,10 +678,21 @@ class TestCopyObject:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_COPYABLE, CKA_TOKEN])
-            if CKA_COPYABLE not in attrs or not attrs[CKA_COPYABLE]:
-                destroy_quietly(rs.raw, rs.sh, key_h)
+            copyable = attr_or_record(
+                attrs,
+                CKA_COPYABLE,
+                label="CKA_COPYABLE:token-object-copy",
+            )
+            token = attr_or_record(
+                attrs,
+                CKA_TOKEN,
+                label="CKA_TOKEN:token-object-copy",
+            )
+            if copyable is MISSING_ATTRIBUTE or token is MISSING_ATTRIBUTE:
+                return
+            if copyable is not True:
                 pytest.skip("Key not copyable")
-            assert attrs[CKA_TOKEN] is True
+            assert token is True
             copied_h = None
             try:
                 try:
@@ -566,7 +704,14 @@ class TestCopyObject:
                     )
                     return
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied_h, [CKA_TOKEN])
-                assert copy_attrs[CKA_TOKEN] is True
+                copied_token = attr_or_record(
+                    copy_attrs,
+                    CKA_TOKEN,
+                    label="C_CopyObject:CKA_TOKEN on token copy",
+                )
+                if copied_token is MISSING_ATTRIBUTE:
+                    return
+                assert copied_token is True
             finally:
                 if copied_h is not None:
                     destroy_quietly(rs.raw, rs.sh, copied_h)

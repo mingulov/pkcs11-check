@@ -7,6 +7,7 @@ have any trust objects present.  Tests skip gracefully when none are found.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -29,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKT_TRUST_UNKNOWN,
     CKT_TRUSTED,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 pytestmark = [pytest.mark.object]
@@ -41,6 +43,18 @@ _KNOWN_TRUST_VALUES = {
     CKT_NOT_TRUSTED,
     CKT_TRUST_MUST_VERIFY_TRUST,
 }
+
+
+def _trust_usage_value_or_unknown(attrs: Mapping[int, Any], attr_id: int) -> tuple[bool, Any]:
+    """Return an optional trust usage value with Table 25's absent default.
+
+    PKCS#11 v3.2 Table 25 footnote 3 treats an absent ``CKA_TRUST_XXX`` as
+    ``CKT_TRUST_UNKNOWN``.  Preserve the presence bit so an actual unknown
+    value remains distinct from the spec-defined absent case.
+    """
+    if attr_id not in attrs:
+        return False, CKT_TRUST_UNKNOWN
+    return True, attrs[attr_id]
 
 
 def _find_trust_objects(raw: Any, sh: int) -> list[int]:
@@ -71,8 +85,6 @@ class TestTrustObjects:
         for h in trusts:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_ISSUER])
-                issuer = attrs[CKA_ISSUER]
-                assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
@@ -81,6 +93,14 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
+            issuer = attr_or_record(
+                attrs,
+                CKA_ISSUER,
+                label="CKO_TRUST CKA_ISSUER",
+            )
+            if issuer is MISSING_ATTRIBUTE:
+                continue
+            assert isinstance(issuer, bytes), f"Expected bytes ISSUER, got {type(issuer)}"
 
     def test_trust_objects_have_serial_number(self, p11_raw_session: Any) -> None:
         """Each CKO_TRUST object has a readable CKA_SERIAL_NUMBER."""
@@ -91,10 +111,6 @@ class TestTrustObjects:
         for h in trusts:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, h, [CKA_SERIAL_NUMBER])
-                serial = attrs[CKA_SERIAL_NUMBER]
-                assert isinstance(serial, bytes), (
-                    f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
-                )
             except CkrAssertionError as exc:
                 reject_or_classify(
                     exc,
@@ -103,6 +119,14 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
+            serial = attr_or_record(
+                attrs,
+                CKA_SERIAL_NUMBER,
+                label="CKO_TRUST CKA_SERIAL_NUMBER",
+            )
+            if serial is MISSING_ATTRIBUTE:
+                continue
+            assert isinstance(serial, bytes), f"Expected bytes SERIAL_NUMBER, got {type(serial)}"
 
     def test_trust_server_auth_is_known_value(self, p11_raw_session: Any) -> None:
         """CKA_TRUST_SERVER_AUTH is a known CK_TRUST value if present."""
@@ -121,9 +145,9 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
-            if CKA_TRUST_SERVER_AUTH not in attrs:
-                continue  # audit-ok: optional attribute is absent
-            val = attrs[CKA_TRUST_SERVER_AUTH]
+            present, val = _trust_usage_value_or_unknown(attrs, CKA_TRUST_SERVER_AUTH)
+            if not present:
+                continue  # Table 25 footnote 3: absent means CKT_TRUST_UNKNOWN
             assert val in _KNOWN_TRUST_VALUES, f"Unknown TRUST_SERVER_AUTH value 0x{val:08X}"
 
     def test_trust_usage_attributes_readable(self, p11_raw_session: Any) -> None:
@@ -151,9 +175,9 @@ class TestTrustObjects:
                     kind="metadata",
                 )
                 raise
-            if attr_id not in attrs:
-                continue  # audit-ok: optional attribute is absent
-            val = attrs[attr_id]
+            present, val = _trust_usage_value_or_unknown(attrs, attr_id)
+            if not present:
+                continue  # Table 25 footnote 3: absent means CKT_TRUST_UNKNOWN
             assert val in _KNOWN_TRUST_VALUES, (
                 f"Unknown trust value 0x{val:08X} for attr 0x{attr_id:08X}"
             )

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_X9_42_DH1_DERIVE_PARAMS,
@@ -39,6 +41,14 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_x942_dh
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+
+
+@pytest.fixture(autouse=True)
+def _clear_classifications() -> Generator[None, None, None]:
+    C.clear()
+    yield
+    C.clear()
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -58,6 +68,347 @@ def _generated_param_attrs() -> dict[int, Any]:
         CKA_PRIME_BITS: 2048,
         CKA_SUBPRIME_BITS: 256,
     }
+
+
+def test_x942_shared_secret_records_both_missing_public_values_before_gating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated = iter([(11, 21), (12, 22)])
+    derive_calls: list[tuple[int, bytes]] = []
+    destroyed: list[int] = []
+
+    monkeypatch.setattr(test_x942_dh, "_generate_x942_keypair", lambda *_args: next(generated))
+    monkeypatch.setattr(
+        test_x942_dh,
+        "read_attributes",
+        lambda *_args: {},
+    )
+
+    def _derive(_rs: Any, private: int, peer_value: bytes, **_kwargs: Any) -> int:
+        derive_calls.append((private, peer_value))
+        return 100 + len(derive_calls)
+
+    monkeypatch.setattr(test_x942_dh, "_x942_derive_aes", _derive)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+
+    rs = _session_with_mechanisms("X9_42_DH_KEY_PAIR_GEN", "X9_42_DH_DERIVE")
+    test_x942_dh.TestX942DHDerive().test_derive_shared_secret(rs)
+
+    assert derive_calls == []
+    assert destroyed == [11, 21, 12, 22]
+    records = C.get_records()
+    assert len(records) == 2
+    assert [record.operation for record in records] == [
+        "C_GetAttributeValue",
+        "C_GetAttributeValue",
+    ]
+    assert [record.detail["attribute"]["id"] for record in records if record.detail] == [
+        int(CKA_VALUE),
+        int(CKA_VALUE),
+    ]
+
+
+def test_x942_shared_secret_derives_independent_available_side_when_peer_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated = iter([(11, 21), (12, 22)])
+    derive_calls: list[tuple[int, bytes]] = []
+    destroyed: list[int] = []
+
+    monkeypatch.setattr(test_x942_dh, "_generate_x942_keypair", lambda *_args: next(generated))
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        return {} if handle == 11 else {CKA_VALUE: b"bob-public"}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read)
+
+    def _derive(_rs: Any, private: int, peer_value: bytes, **_kwargs: Any) -> int:
+        derive_calls.append((private, peer_value))
+        return 100
+
+    monkeypatch.setattr(test_x942_dh, "_x942_derive_aes", _derive)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+
+    rs = _session_with_mechanisms("X9_42_DH_KEY_PAIR_GEN", "X9_42_DH_DERIVE")
+    test_x942_dh.TestX942DHDerive().test_derive_shared_secret(rs)
+
+    assert derive_calls == [(21, b"bob-public")]
+    assert destroyed == [11, 21, 12, 22, 100]
+    assert [record.detail["attribute"]["id"] for record in C.get_records() if record.detail] == [
+        int(CKA_VALUE),
+    ]
+
+
+def test_x942_parameter_read_preserves_independent_presence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_x942_dh,
+        "read_attributes",
+        lambda *_args: {
+            CKA_PRIME: b"prime",
+            CKA_SUBPRIME: b"subprime",
+            CKA_PRIME_BITS: 2048,
+            CKA_SUBPRIME_BITS: 256,
+        },
+    )
+
+    result = test_x942_dh._read_x942_params(object(), 1, 77)
+
+    assert result == (b"prime", MISSING_ATTRIBUTE, b"subprime", 2048, 256)
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].detail is not None
+    assert records[0].detail["attribute"]["id"] == int(CKA_BASE)
+
+
+def test_x942_generated_params_keep_metadata_contradiction_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attrs = _generated_param_attrs()
+    attrs.pop(CKA_BASE)
+    attrs[CKA_PRIME_BITS] = 1024
+    destroyed: list[int] = []
+
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_generate_x942_params_for_session",
+        lambda _rs: (77, 2048, 256),
+    )
+    monkeypatch.setattr(test_x942_dh, "read_attributes", lambda *_args: attrs)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = _session_with_mechanisms(
+        "X9_42_DH_PARAMETER_GEN",
+        "X9_42_DH_KEY_PAIR_GEN",
+        "X9_42_DH_DERIVE",
+    )
+
+    with pytest.raises(pytest.fail.Exception):
+        test_x942_dh.TestX942DHParameterGen().test_generated_params_produce_valid_derive(rs)
+
+    records = C.get_records()
+    assert destroyed == [77]
+    assert {record.reason for record in records} == {"not_operational", "wrong_result"}
+    missing = [record for record in records if record.reason == "not_operational"]
+    assert len(missing) == 1
+    assert missing[0].detail is not None
+    assert missing[0].detail["attribute"]["id"] == int(CKA_BASE)
+    assert missing[0].operation == "C_GetAttributeValue"
+    wrong = [record for record in records if record.reason == "wrong_result"]
+    assert len(wrong) == 1
+    assert wrong[0].kind == "metadata"
+    assert wrong[0].operation == "C_GetAttributeValue"
+
+
+def test_x942_keypair_validates_private_type_when_public_type_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destroyed: list[int] = []
+
+    monkeypatch.setattr(test_x942_dh, "_generate_x942_keypair", lambda *_args: (11, 12))
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        return {} if handle == 11 else {CKA_KEY_TYPE: 999}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = _session_with_mechanisms("X9_42_DH_KEY_PAIR_GEN")
+
+    with pytest.raises(pytest.fail.Exception):
+        test_x942_dh.TestX942DHKeyPairGen().test_keypair_has_correct_key_type(rs)
+
+    records = C.get_records()
+    assert destroyed == [11, 12]
+    assert {record.reason for record in records} == {"not_operational", "wrong_result"}
+    assert any(
+        record.detail and record.detail["attribute"]["id"] == int(CKA_KEY_TYPE)
+        for record in records
+        if record.reason == "not_operational"
+    )
+    wrong = [record for record in records if record.reason == "wrong_result"]
+    assert len(wrong) == 1
+    assert wrong[0].kind == "metadata"
+    assert wrong[0].operation == "C_GetAttributeValue"
+
+
+def test_x942_hybrid_reads_peer_secret_after_missing_first_and_classifies_malformed_second(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    party_calls = 0
+    read_handles: list[int] = []
+    destroyed: list[int] = []
+    derived = iter([203, 204])
+
+    def _import_party(
+        _rs: Any, _first: bytes, _second: bytes
+    ) -> tuple[int, int, int, int, bytes, bytes]:
+        nonlocal party_calls
+        party_calls += 1
+        base = 10 if party_calls == 1 else 20
+        prefix = b"alice" if party_calls == 1 else b"bob"
+        return base + 1, base + 2, base + 3, base + 4, prefix + b"-one", prefix + b"-two"
+
+    monkeypatch.setattr(test_x942_dh, "_import_x942_party_keys", _import_party)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_x942_derive_generic_secret",
+        lambda *_args, **_kwargs: next(derived),
+    )
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        read_handles.append(handle)
+        return {} if handle == 203 else {CKA_VALUE: b""}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = _session_with_mechanisms("X9_42_DH_HYBRID_DERIVE")
+
+    with pytest.raises(pytest.fail.Exception):
+        test_x942_dh.TestX942DHHybridDerive().test_hybrid_derive_matches_between_parties(rs)
+
+    assert read_handles == [203, 204]
+    assert destroyed == [11, 12, 13, 14, 21, 22, 23, 24, 203, 204]
+    assert any(record.reason == "wrong_result" for record in C.get_records())
+
+
+def test_x942_dh_truncation_reads_later_output_after_missing_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[int] = []
+    destroyed: list[int] = []
+    derived = iter([601, 602])
+    monkeypatch.setattr(test_x942_dh, "_import_x942_private_key", lambda *_args: 501)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "derive_key",
+        lambda *_args, **_kwargs: next(derived),
+    )
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        reads.append(handle)
+        return {} if handle == 601 else {CKA_VALUE: b"bad"}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = _session_with_mechanisms("X9_42_DH_DERIVE")
+
+    with pytest.raises(pytest.fail.Exception):
+        test_x942_dh.TestX942DHDerive().test_x942_dh_derive_rfc5114_value_len_truncation(rs)
+
+    assert reads == [601, 602]
+    assert destroyed == [601, 602, 501]
+    assert {record.reason for record in C.get_records()} == {"not_operational", "wrong_result"}
+
+
+def test_x942_hybrid_truncation_reads_later_output_after_missing_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    party_calls = 0
+    reads: list[int] = []
+    destroyed: list[int] = []
+    derived = iter([603, 604])
+
+    def _import_party(
+        _rs: Any, _first: bytes, _second: bytes
+    ) -> tuple[int, int, int, int, bytes, bytes]:
+        nonlocal party_calls
+        party_calls += 1
+        base = 10 if party_calls == 1 else 20
+        return base + 1, base + 2, base + 3, base + 4, b"public-1", b"public-2"
+
+    monkeypatch.setattr(test_x942_dh, "_import_x942_party_keys", _import_party)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_x942_derive_generic_secret_len",
+        lambda *_args, **_kwargs: next(derived),
+    )
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        reads.append(handle)
+        return {} if handle == 603 else {CKA_VALUE: b"bad"}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = _session_with_mechanisms("X9_42_DH_HYBRID_DERIVE")
+
+    with pytest.raises(pytest.fail.Exception):
+        test_x942_dh.TestX942DHHybridDerive().test_hybrid_derive_value_len_truncation(rs)
+
+    assert reads == [603, 604]
+    assert destroyed == [11, 12, 13, 14, 21, 22, 23, 24, 603, 604]
+    assert {record.reason for record in C.get_records()} == {"not_operational", "wrong_result"}
+
+
+def test_x942_mqv_truncation_reads_later_output_after_missing_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    party_calls = 0
+    reads: list[int] = []
+    destroyed: list[int] = []
+    derived = iter([605, 606])
+
+    def _import_party(
+        _rs: Any, _first: bytes, _second: bytes
+    ) -> tuple[int, int, int, int, bytes, bytes]:
+        nonlocal party_calls
+        party_calls += 1
+        base = 30 if party_calls == 1 else 40
+        return base + 1, base + 2, base + 3, base + 4, b"public-1", b"public-2"
+
+    monkeypatch.setattr(test_x942_dh, "_import_x942_party_keys", _import_party)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_x942_derive_generic_secret_len",
+        lambda *_args, **_kwargs: next(derived),
+    )
+
+    def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        reads.append(handle)
+        return {} if handle == 605 else {CKA_VALUE: b"bad"}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+    rs = _session_with_mechanisms("X9_42_MQV_DERIVE")
+
+    with pytest.raises(pytest.fail.Exception):
+        test_x942_dh.TestX942MQVDerive().test_mqv_derive_value_len_truncation(rs)
+
+    assert reads == [605, 606]
+    assert destroyed == [31, 32, 33, 34, 41, 42, 43, 44, 605, 606]
+    assert {record.reason for record in C.get_records()} == {"not_operational", "wrong_result"}
 
 
 def test_x942_parameter_gen_exercises_advertised_mechanism(
