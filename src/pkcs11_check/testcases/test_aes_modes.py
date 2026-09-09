@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import mech_bytes, mech_ctr, mech_ulong
 from pkcs11_check.raw.recipes import (
@@ -57,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     CIPHER_OP_RUNTIME_REJECT_RVS,
@@ -98,6 +100,108 @@ def gen_aes_key(
             "is not operational",
         )
         raise
+
+
+_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
+_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def _read_attribute(
+    attrs: Mapping[Any, Any],
+    attr: Any,
+    *,
+    label: str,
+    mechanism: str,
+) -> Any:
+    """Read one provider attribute while retaining unavailable-value evidence."""
+    return attr_or_record(
+        attrs,
+        attr,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        mechanism=mechanism,
+    )
+
+
+def _record_attribute_mismatch(
+    *,
+    label: str,
+    expected: Any,
+    actual: Any,
+    mechanism: str,
+    operation: str = "C_GetAttributeValue",
+) -> C.Classification:
+    """Record a malformed or incorrect CKA_VALUE without raising before cleanup."""
+    if actual is MISSING_ATTRIBUTE:
+        return C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            summary=f"{label}: provider did not return the requested attribute",
+            detail={"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}},
+        )
+    return C.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual!r}; expected {expected!r}",
+        detail={
+            "attribute": {
+                "name": "CKA_VALUE",
+                "id": int(CKA_VALUE),
+                "expected": repr(expected),
+                "actual": repr(actual),
+            }
+        },
+    )
+
+
+def _validate_value(
+    value: Any,
+    *,
+    expected: bytes,
+    expected_len: int,
+    label: str,
+    mechanism: str,
+) -> C.Classification | None:
+    """Return a hard finding for a present malformed or mismatched CKA_VALUE."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if not isinstance(value, bytes) or len(value) != expected_len:
+        return _record_attribute_mismatch(
+            label=label,
+            expected=f"{expected_len}-byte bytes",
+            actual=value,
+            mechanism=mechanism,
+        )
+    if value != expected:
+        return _record_attribute_mismatch(
+            label=label,
+            expected=expected,
+            actual=value,
+            mechanism=mechanism,
+            operation="C_UnwrapKey",
+        )
+    return None
+
+
+def _raise_strongest(records: list[C.Classification]) -> None:
+    """Raise the strongest hard output finding after all key handles are destroyed."""
+    if not records:
+        return
+    strongest = max(
+        records,
+        key=lambda record: (
+            _KIND_PRIORITY.get(record.kind or "", 0),
+            _SEVERITY_PRIORITY.get(record.severity, 0),
+        ),
+    )
+    C.raise_for_record(strongest)
 
 
 @pytest.fixture(autouse=True)
@@ -929,34 +1033,34 @@ class TestAESKeyWrapPKCS7:
         if not rs.has_mechanism("AES_KEY_WRAP_PKCS7"):
             pytest.skip("CKM_AES_KEY_WRAP_PKCS7 not supported")
 
-        wrap_key_h = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            256,
-            attrs={
-                CKA_WRAP: True,
-                CKA_UNWRAP: True,
-                CKA_EXTRACTABLE: True,
-                CKA_SENSITIVE: False,
-            },
-        )
-
         # Create a target key with known material (non-block-aligned size to test PKCS7 padding)
         import os
 
         key_bytes = os.urandom(24)  # 192-bit key
-        target = import_secret_key_negotiated(
-            rs,
-            CKK_AES,
-            key_bytes,
-            attrs={
-                CKA_TOKEN: False,
-                CKA_EXTRACTABLE: True,
-                CKA_SENSITIVE: False,
-            },
-        )
-
+        wrap_key_h = target = 0
+        hard_results: list[C.Classification] = []
         try:
+            wrap_key_h = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                256,
+                attrs={
+                    CKA_WRAP: True,
+                    CKA_UNWRAP: True,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                },
+            )
+            target = import_secret_key_negotiated(
+                rs,
+                CKK_AES,
+                key_bytes,
+                attrs={
+                    CKA_TOKEN: False,
+                    CKA_EXTRACTABLE: True,
+                    CKA_SENSITIVE: False,
+                },
+            )
             wrapped = wrap_key(
                 rs.raw,
                 rs.sh,
@@ -965,13 +1069,23 @@ class TestAESKeyWrapPKCS7:
                 CKM_AES_KEY_WRAP_PKCS7,
             )
             if wrapped == key_bytes:
-                classify(
-                    "wrong_result",
-                    kind="crypto",
-                    label="CKM_AES_KEY_WRAP_PKCS7:wrap confidentiality",
-                    operation="C_WrapKey",
-                    mechanism="CKM_AES_KEY_WRAP_PKCS7",
-                    summary="wrapped blob equals the raw key value -- key transport leaked the key",
+                hard_results.append(
+                    C.record_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="CKM_AES_KEY_WRAP_PKCS7:wrap confidentiality",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP_PKCS7",
+                        summary=(
+                            "wrapped blob equals the raw key value -- key transport leaked the key"
+                        ),
+                        detail={
+                            "output": {
+                                "expected": "wrapped blob differs from raw key value",
+                                "actual": repr(wrapped),
+                            }
+                        },
+                    )
                 )
 
             unwrapped = unwrap_key_for_mechanism_roundtrip(
@@ -989,19 +1103,29 @@ class TestAESKeyWrapPKCS7:
                 purpose="AES-KEY-WRAP-PKCS7 roundtrip",
             )
             try:
-                okm = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-                assert_correct(
-                    actual=okm,
-                    expected=key_bytes,
+                okm = _read_attribute(
+                    read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE]),
+                    CKA_VALUE,
                     label="CKM_AES_KEY_WRAP_PKCS7:unwrap roundtrip",
-                    operation="C_UnwrapKey",
                     mechanism="CKM_AES_KEY_WRAP_PKCS7",
                 )
+                mismatch = _validate_value(
+                    okm,
+                    expected=key_bytes,
+                    expected_len=len(key_bytes),
+                    label="CKM_AES_KEY_WRAP_PKCS7:unwrap roundtrip",
+                    mechanism="CKM_AES_KEY_WRAP_PKCS7",
+                )
+                if mismatch is not None:
+                    hard_results.append(mismatch)
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
-            destroy_quietly(rs.raw, rs.sh, target)
-            destroy_quietly(rs.raw, rs.sh, wrap_key_h)
+            if target:
+                destroy_quietly(rs.raw, rs.sh, target)
+            if wrap_key_h:
+                destroy_quietly(rs.raw, rs.sh, wrap_key_h)
+        _raise_strongest(hard_results)
 
     def test_aes_key_wrap_pkcs7_different_wrapping_keys(self, p11_module_session: Any) -> None:
         """Different wrapping keys produce different wrapped outputs."""

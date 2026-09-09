@@ -22,14 +22,20 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check import classification
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     gen_rsa_keypair,
     read_attributes,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CK_UTF8CHAR,
@@ -37,34 +43,16 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_VERIFY,
     CKM_SHA256_RSA_PKCS,
-    CKR_ARGUMENTS_BAD,
-    CKR_ATTRIBUTE_READ_ONLY,
-    CKR_ATTRIBUTE_TYPE_INVALID,
-    CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
-    CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
     CKU_CONTEXT_SPECIFIC,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 
 pytestmark = [pytest.mark.access]
-
-
-# CKR codes signaling "module doesn't support CKA_ALWAYS_AUTHENTICATE=True
-# at keygen" — skip gracefully rather than failing.
-_KEYGEN_ATTR_SKIP_RVS: frozenset[int] = frozenset(
-    {
-        CKR_TEMPLATE_INCONSISTENT,
-        CKR_ATTRIBUTE_TYPE_INVALID,
-        CKR_ATTRIBUTE_VALUE_INVALID,
-        CKR_ATTRIBUTE_READ_ONLY,
-        CKR_FUNCTION_NOT_SUPPORTED,
-        CKR_ARGUMENTS_BAD,
-    }
-)
 
 
 def _pin_bytes(p11_config: Any) -> bytes | None:
@@ -82,8 +70,9 @@ def _context_specific_login(raw: Any, sh: int, pin: bytes) -> int:
 def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
     """Generate an RSA-2048 keypair with CKA_ALWAYS_AUTHENTICATE=True.
 
-    Returns (pub, priv) on success, or None when the module rejects the
-    attribute at keygen time (in which case the caller should pytest.skip).
+    Returns (pub, priv) on success, or None when the module cleanly refuses
+    the advertised setup/readback.  The latter is recorded as a visible
+    provider deviation; callers may stop only the dependent enforcement path.
     """
     try:
         pub, priv = gen_rsa_keypair(
@@ -94,27 +83,158 @@ def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             private_attrs={CKA_SIGN: True, CKA_ALWAYS_AUTHENTICATE: True},
         )
     except CkrAssertionError as exc:
-        if exc.rv in _KEYGEN_ATTR_SKIP_RVS:
-            return None
-        raise
+        if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label="CKA_ALWAYS_AUTHENTICATE key generation",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=exc.rv,
+                detail={
+                    "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary=(
+                    "CKM_RSA_PKCS_KEY_PAIR_GEN is advertised, but the provider "
+                    "rejected CKA_ALWAYS_AUTHENTICATE=True at key generation"
+                ),
+            )
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label="CKA_ALWAYS_AUTHENTICATE key generation",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            expected=CKR_OK,
+            actual=exc.rv,
+            detail={
+                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "producer_operation": "C_GenerateKeyPair",
+                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            },
+            summary=(
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned an undefined CK_RV while "
+                "creating a CKA_ALWAYS_AUTHENTICATE=True key"
+            ),
+        )
 
     # Verify the module actually persisted the attribute.  Some modules
     # silently drop it; we want enforcement tests, not fake-pass tests.
+    retain_handles = False
     try:
-        attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
-    except CkrAssertionError as exc:
-        if exc.rv not in _KEYGEN_ATTR_SKIP_RVS:
-            raise
-        destroy_quietly(rs.raw, rs.sh, pub)
-        destroy_quietly(rs.raw, rs.sh, priv)
-        return None
+        try:
+            attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
+        except CkrAssertionError as exc:
+            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                classification.record_as(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKA_ALWAYS_AUTHENTICATE setup readback",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=CKR_OK,
+                    actual=exc.rv,
+                    detail={
+                        "attribute": {
+                            "name": "CKA_ALWAYS_AUTHENTICATE",
+                            "id": int(CKA_ALWAYS_AUTHENTICATE),
+                        },
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "CKA_ALWAYS_AUTHENTICATE readback was rejected after "
+                        "successful key generation"
+                    ),
+                )
+                return None
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label="CKA_ALWAYS_AUTHENTICATE setup readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=exc.rv,
+                detail={
+                    "attribute": {
+                        "name": "CKA_ALWAYS_AUTHENTICATE",
+                        "id": int(CKA_ALWAYS_AUTHENTICATE),
+                    },
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary="CKA_ALWAYS_AUTHENTICATE readback returned an undefined CK_RV",
+            )
 
-    if CKA_ALWAYS_AUTHENTICATE not in attrs or attrs[CKA_ALWAYS_AUTHENTICATE] is not True:
-        destroy_quietly(rs.raw, rs.sh, pub)
-        destroy_quietly(rs.raw, rs.sh, priv)
-        return None
+        value = attr_or_record(
+            attrs,
+            CKA_ALWAYS_AUTHENTICATE,
+            label="CKA_ALWAYS_AUTHENTICATE setup readback",
+            kind="metadata",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+        )
+        if value is MISSING_ATTRIBUTE:
+            missing_record = classification.get_records()[-1]
+            if missing_record.detail is not None:
+                missing_record.detail.update(
+                    {
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    }
+                )
+            return None
 
-    return pub, priv
+        if type(value) is not bool:
+            fail_as(
+                "wrong_result",
+                kind="policy",
+                label="CKA_ALWAYS_AUTHENTICATE setup readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=CKR_OK,
+                detail={
+                    "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                    "expected_shape": "CK_BBOOL",
+                    "expected_value": True,
+                    "actual_type": type(value).__name__,
+                    "actual_repr": repr(value),
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary=("C_GetAttributeValue returned a malformed CKA_ALWAYS_AUTHENTICATE value"),
+            )
+        if value is not True:
+            fail_as(
+                "wrong_result",
+                kind="policy",
+                label="CKA_ALWAYS_AUTHENTICATE setup readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=CKR_OK,
+                detail={
+                    "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                    "expected_value": True,
+                    "actual_value": value,
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary=(
+                    "C_GenerateKeyPair returned CKR_OK but did not preserve "
+                    "CKA_ALWAYS_AUTHENTICATE=True"
+                ),
+            )
+        retain_handles = True
+        return pub, priv
+    finally:
+        if not retain_handles:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestAlwaysAuthenticateEnforcement:

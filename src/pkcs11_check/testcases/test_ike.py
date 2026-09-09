@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.pack import (
     mech_bytes,
     mech_ike1_extended_derive,
@@ -31,6 +33,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     read_attributes,
 )
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DERIVE,
@@ -51,35 +54,26 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_HMAC,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
-    CKR_DEVICE_ERROR,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_KEY_SIZE_RANGE,
-    CKR_KEY_TYPE_INCONSISTENT,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
-    CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     reject_or_classify,
-    xfail_if_known_ckr,
 )
 
 pytestmark = pytest.mark.keymgmt
 
-_DERIVE_ERROR_CKRS = (
-    CKR_MECHANISM_INVALID,
-    CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_TEMPLATE_INCONSISTENT,
-    CKR_KEY_SIZE_RANGE,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_DEVICE_ERROR,
-    CKR_KEY_TYPE_INCONSISTENT,
-    CKR_ARGUMENTS_BAD,
-)
 _INVALID_PRF_REJECT_RVS = (CKR_MECHANISM_INVALID, CKR_MECHANISM_PARAM_INVALID)
 _INVALID_PRF_MECHANISM = int(CKM_AES_ECB)
 _IKE_PRF_REKEY_DATA_AS_KEY_REJECT_RVS = (CKR_ARGUMENTS_BAD,)
+_IKE_MECHANISM_NAMES = {
+    int(CKM_IKE2_PRF_PLUS_DERIVE): "CKM_IKE2_PRF_PLUS_DERIVE",
+    int(CKM_IKE_PRF_DERIVE): "CKM_IKE_PRF_DERIVE",
+    int(CKM_IKE1_PRF_DERIVE): "CKM_IKE1_PRF_DERIVE",
+    int(CKM_IKE1_EXTENDED_DERIVE): "CKM_IKE1_EXTENDED_DERIVE",
+}
 
 # 32-byte base key material (shared secret / SKEYSEED)
 _BASE_KEY_BYTES = bytes(range(32))
@@ -100,11 +94,163 @@ _DERIVE_ATTRS: dict[int, Any] = {
 }
 
 
+def _provider_rejection_record(
+    exc: BaseException,
+    *,
+    label: str,
+    operation: str,
+    mechanism: str | None,
+    kind: str,
+) -> C.Classification:
+    """Build exact evidence for a typed provider CK_RV rejection.
+
+    Standard and vendor-defined CK_RVs are clean provider deviations in a
+    positive operation.  Values outside both namespaces contradict the
+    return-value contract and therefore remain hard metadata failures.
+    """
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    rv = exc.rv
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        return C.record_as(
+            "not_operational",
+            kind=kind,
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            actual=rv,
+            summary=f"{label}: provider rejected operation with {ckr_name(rv)}",
+        )
+    return C.record_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        actual=rv,
+        summary=f"{label}: provider returned undefined CK_RV {ckr_name(rv)}",
+        detail={
+            "return_value": {
+                "expected": "standard or vendor-defined CK_RV",
+                "actual": ckr_name(rv),
+            }
+        },
+    )
+
+
+def _reject_or_classify_derive(
+    exc: AssertionError | None,
+    expected_rvs: tuple[int, ...],
+    *,
+    label: str,
+    mechanism: str,
+) -> None:
+    """Classify a negative C_DeriveKey result with exact operation metadata."""
+    if exc is None:
+        C.classify(
+            "accepted_invalid",
+            kind="crypto",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=mechanism,
+            actual="CKR_OK",
+            expected=expected_rvs,
+            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
+        )
+        return
+    if not isinstance(exc, CkrAssertionError):
+        raise exc
+    if exc.rv not in expected_rvs:
+        if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            C.classify(
+                "nonspec_reject",
+                kind="crypto",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=mechanism,
+                actual=exc.rv,
+                expected=expected_rvs,
+                summary=(
+                    f"{label}: rejected with non-specific CK_RV {ckr_name(exc.rv)}; "
+                    "expected a spec rejection"
+                ),
+            )
+            return
+        C.classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=mechanism,
+            actual=exc.rv,
+            expected=expected_rvs,
+            summary=f"{label}: provider returned undefined CK_RV {ckr_name(exc.rv)}",
+            detail={
+                "return_value": {
+                    "expected": "standard or vendor-defined CK_RV",
+                    "actual": ckr_name(exc.rv),
+                }
+            },
+        )
+        return
+    reject_or_classify(exc, expected_rvs, label=label)
+
+
+def _xfail_derive_if_known(exc: AssertionError, mechanism: str, label: str) -> None:
+    """Classify any typed advertised IKE derive rejection with exact provenance."""
+    if getattr(exc, "_pkcs11_check_attribute_read", False) or getattr(
+        exc, "_pkcs11_check_create_object", False
+    ):
+        raise exc
+    C.raise_for_record(
+        _provider_rejection_record(
+            exc,
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=mechanism,
+            kind="crypto",
+        )
+    )
+
+
+def _require_created_handle(handle: int, *, label: str) -> int:
+    """Classify a successful C_CreateObject call that returned handle zero."""
+    if handle:
+        return handle
+    C.fail_as(
+        "self_contradiction",
+        kind="lifecycle",
+        label=label,
+        operation="C_CreateObject",
+        summary=f"{label}: C_CreateObject returned CKR_OK with a zero handle",
+        detail={"handle": {"expected": "non-zero", "actual": 0}},
+    )
+
+
+def _create_object_checked(rs: Any, attrs: dict[int, Any], *, label: str) -> int:
+    """Create a setup object while preserving C_CreateObject error provenance."""
+    try:
+        handle = create_object(rs.raw, rs.sh, attrs)
+    except CkrAssertionError as exc:
+        C.raise_for_record(
+            _provider_rejection_record(
+                exc,
+                label=label,
+                operation="C_CreateObject",
+                mechanism=None,
+                kind="crypto",
+            )
+        )
+    except AssertionError as exc:
+        setattr(exc, "_pkcs11_check_create_object", True)
+        raise
+    return _require_created_handle(handle, label=label)
+
+
 def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create a GENERIC_SECRET base key suitable for IKE derivation."""
-    return create_object(
-        rs.raw,
-        rs.sh,
+    return _create_object_checked(
+        rs,
         {
             CKA_CLASS: CKO_SECRET_KEY,
             CKA_KEY_TYPE: CKK_GENERIC_SECRET,
@@ -113,14 +259,14 @@ def _create_base_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
             CKA_TOKEN: False,
             CKA_SENSITIVE: False,
         },
+        label="GENERIC_SECRET base key",
     )
 
 
 def _create_sha256_hmac_derive_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) -> int:
     """Create a SHA256-HMAC base key suitable for typed IKE2 PRF+ derivation."""
-    return create_object(
-        rs.raw,
-        rs.sh,
+    return _create_object_checked(
+        rs,
         {
             CKA_CLASS: CKO_SECRET_KEY,
             CKA_KEY_TYPE: CKK_SHA256_HMAC,
@@ -130,14 +276,14 @@ def _create_sha256_hmac_derive_key(rs: Any, key_bytes: bytes = _BASE_KEY_BYTES) 
             CKA_SENSITIVE: False,
             CKA_EXTRACTABLE: True,
         },
+        label="SHA256-HMAC derive key",
     )
 
 
 def _create_ike1_keygxy_key(rs: Any, key_bytes: bytes = _IKE1_KEYGXY_BYTES) -> int:
     """Create the generic-secret g^xy input key used by IKEv1 derivation."""
-    return create_object(
-        rs.raw,
-        rs.sh,
+    return _create_object_checked(
+        rs,
         {
             CKA_CLASS: CKO_SECRET_KEY,
             CKA_KEY_TYPE: CKK_GENERIC_SECRET,
@@ -147,6 +293,7 @@ def _create_ike1_keygxy_key(rs: Any, key_bytes: bytes = _IKE1_KEYGXY_BYTES) -> i
             CKA_SENSITIVE: False,
             CKA_EXTRACTABLE: True,
         },
+        label="IKE1 g^xy key",
     )
 
 
@@ -222,7 +369,22 @@ def _classify_invalid_prf_derive(
             )
         except AssertionError as caught:
             exc = caught
-        reject_or_classify(exc, _INVALID_PRF_REJECT_RVS, label=label)
+        if exc is None and not derived:
+            C.classify(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=_IKE_MECHANISM_NAMES[int(mech)],
+                summary=f"{label}: C_DeriveKey returned CKR_OK with a zero handle",
+                detail={"handle": {"expected": "non-zero", "actual": 0}},
+            )
+        _reject_or_classify_derive(
+            exc,
+            _INVALID_PRF_REJECT_RVS,
+            label=label,
+            mechanism=_IKE_MECHANISM_NAMES[int(mech)],
+        )
     finally:
         if derived:
             destroy_quietly(rs.raw, rs.sh, derived)
@@ -296,12 +458,353 @@ def _derive_ike1_extended(
     )
 
 
-def _get_value(rs: Any, handle: int) -> bytes:
-    """Read CKA_VALUE from a key handle."""
-    attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
-    value = attrs[CKA_VALUE]
-    assert isinstance(value, bytes)
+def _acquire_second_or_cleanup(
+    rs: Any,
+    first_handle: int,
+    acquire: Callable[[], int],
+) -> int:
+    """Acquire a paired handle without leaking the first on a provider rejection."""
+    try:
+        second_handle = acquire()
+        if not second_handle:
+            C.fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label="paired C_CreateObject",
+                operation="C_CreateObject",
+                summary="paired C_CreateObject returned CKR_OK with a zero handle",
+                detail={"handle": {"expected": "non-zero", "actual": 0}},
+            )
+        return second_handle
+    except BaseException as exc:
+        destroy_quietly(rs.raw, rs.sh, first_handle)
+        if isinstance(exc, CkrAssertionError):
+            C.raise_for_record(
+                _provider_rejection_record(
+                    exc,
+                    label="paired C_CreateObject",
+                    operation="C_CreateObject",
+                    mechanism=None,
+                    kind="crypto",
+                )
+            )
+        raise
+
+
+def _record_or_raise(record: C.Classification, hard_results: list[C.Classification] | None) -> None:
+    """Defer a hard result until sibling provider observations have completed."""
+    if hard_results is None:
+        C.raise_for_record(record)
+    hard_results.append(record)
+
+
+def _check_handle(
+    handle: int,
+    *,
+    mechanism: str,
+    label: str,
+    hard_results: list[C.Classification] | None = None,
+) -> bool:
+    """Record a CKR_OK/zero-handle lifecycle contradiction without reading handle zero."""
+    if handle:
+        return True
+    _record_or_raise(
+        C.record_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=mechanism,
+            summary=f"{label}: C_DeriveKey returned CKR_OK with a zero handle",
+            detail={"handle": {"expected": "non-zero", "actual": 0}},
+        ),
+        hard_results,
+    )
+    return False
+
+
+def _get_value(
+    rs: Any,
+    handle: int,
+    *,
+    mechanism: str,
+    label: str,
+    hard_results: list[C.Classification] | None = None,
+    soft_results: list[C.Classification] | None = None,
+) -> Any:
+    """Read CKA_VALUE while retaining missing and malformed provider evidence."""
+    if not _check_handle(
+        handle,
+        mechanism=mechanism,
+        label=label,
+        hard_results=hard_results,
+    ):
+        return MISSING_ATTRIBUTE
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+    except CkrAssertionError as exc:
+        record = _provider_rejection_record(
+            exc,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=mechanism,
+            kind="metadata",
+        )
+        if record.outcome == "fail":
+            _record_or_raise(record, hard_results)
+        elif soft_results is None:
+            C.raise_for_record(record)
+        else:
+            soft_results.append(record)
+        return MISSING_ATTRIBUTE
+    except AssertionError as exc:
+        # The outer derive guard must not misattribute a C_GetAttributeValue CKR
+        # that is actually a harness/test failure.
+        setattr(exc, "_pkcs11_check_attribute_read", True)
+        raise
+    value = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        mechanism=mechanism,
+    )
+    if value is MISSING_ATTRIBUTE:
+        return value
+    if not isinstance(value, bytes):
+        _record_or_raise(
+            C.record_as(
+                "wrong_result",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                mechanism=mechanism,
+                summary=f"{label}: provider returned malformed CKA_VALUE",
+                detail={
+                    "attribute": {
+                        "name": "CKA_VALUE",
+                        "id": int(CKA_VALUE),
+                        "expected": "bytes",
+                        "actual": repr(value),
+                    }
+                },
+            ),
+            hard_results,
+        )
+        return MISSING_ATTRIBUTE
     return value
+
+
+def _assert_value_length(
+    value: Any,
+    *,
+    expected: int,
+    mechanism: str,
+    label: str,
+    hard_results: list[C.Classification] | None = None,
+) -> None:
+    """Classify a present derived value with the producer's exact operation."""
+    if value is MISSING_ATTRIBUTE:
+        return
+    if len(value) != expected:
+        _record_or_raise(
+            C.record_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=mechanism,
+                summary=f"{label}: derived CKA_VALUE length differs from requested length",
+                detail={
+                    "attribute": {
+                        "name": "CKA_VALUE",
+                        "id": int(CKA_VALUE),
+                        "expected": f"{expected}-byte bytes",
+                        "actual": f"bytes[{len(value)}]",
+                    }
+                },
+            ),
+            hard_results,
+        )
+
+
+def _assert_values_differ(
+    left: Any,
+    right: Any,
+    *,
+    mechanism: str,
+    label: str,
+    hard_results: list[C.Classification] | None = None,
+) -> None:
+    """Check a differential IKE oracle only when both values are available."""
+    if left is MISSING_ATTRIBUTE or right is MISSING_ATTRIBUTE:
+        return
+    if left == right:
+        _record_or_raise(
+            C.record_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=mechanism,
+                summary=f"{label}: independent inputs produced identical derived values",
+                detail={
+                    "relation": {
+                        "type": "must_differ",
+                        "left": "first derivation",
+                        "right": "second derivation",
+                        "equal": True,
+                    }
+                },
+            ),
+            hard_results,
+        )
+
+
+def _raise_strongest(hard_results: list[C.Classification]) -> None:
+    """Raise the highest-severity deferred finding after sibling work completes."""
+    if hard_results:
+        rank = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+        C.raise_for_record(max(hard_results, key=lambda result: rank[result.severity]))
+
+
+def _record_derive_rejection(
+    exc: AssertionError,
+    *,
+    mechanism: str,
+    label: str,
+) -> C.Classification:
+    """Record a typed derive rejection without hiding deferred hard evidence."""
+    if getattr(exc, "_pkcs11_check_attribute_read", False) or getattr(
+        exc, "_pkcs11_check_create_object", False
+    ):
+        raise exc
+    return _provider_rejection_record(
+        exc,
+        label=label,
+        operation="C_DeriveKey",
+        mechanism=mechanism,
+        kind="crypto",
+    )
+
+
+def _assert_values_equal(
+    left: Any,
+    right: Any,
+    *,
+    mechanism: str,
+    label: str,
+    hard_results: list[C.Classification] | None = None,
+) -> None:
+    """Check a deterministic oracle only when both values are available."""
+    if left is MISSING_ATTRIBUTE or right is MISSING_ATTRIBUTE:
+        return
+    if left != right:
+        _record_or_raise(
+            C.record_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=mechanism,
+                summary=f"{label}: repeated derivations produced different values",
+                detail={
+                    "relation": {
+                        "type": "must_equal",
+                        "left": "first derivation",
+                        "right": "second derivation",
+                        "equal": False,
+                    }
+                },
+            ),
+            hard_results,
+        )
+
+
+def _run_pair_oracle(
+    rs: Any,
+    first: Callable[[], int],
+    second: Callable[[], int],
+    *,
+    mechanism: str,
+    first_label: str,
+    second_label: str,
+    relation_label: str,
+    expected_len: int = 32,
+    must_differ: bool,
+) -> None:
+    """Run both IKE legs, retaining every observation before choosing a verdict."""
+    hard_results: list[C.Classification] = []
+    derive_rejections: list[C.Classification] = []
+    read_rejections: list[C.Classification] = []
+    read_errors: list[AssertionError] = []
+    values: list[Any] = [MISSING_ATTRIBUTE, MISSING_ATTRIBUTE]
+    for index, acquire in enumerate((first, second)):
+        handle = 0
+        try:
+            handle = acquire()
+        except AssertionError as exc:
+            rejection = _record_derive_rejection(
+                exc,
+                mechanism=mechanism,
+                label=(first_label if index == 0 else second_label),
+            )
+            if rejection.outcome == "fail":
+                hard_results.append(rejection)
+            else:
+                derive_rejections.append(rejection)
+            continue
+        try:
+            try:
+                values[index] = _get_value(
+                    rs,
+                    handle,
+                    mechanism=mechanism,
+                    label=(first_label if index == 0 else second_label),
+                    hard_results=hard_results,
+                    soft_results=read_rejections,
+                )
+                _assert_value_length(
+                    values[index],
+                    expected=expected_len,
+                    mechanism=mechanism,
+                    label=(first_label if index == 0 else second_label),
+                    hard_results=hard_results,
+                )
+            except AssertionError as exc:
+                read_errors.append(exc)
+        finally:
+            if handle:
+                destroy_quietly(rs.raw, rs.sh, handle)
+
+    # A relation is meaningful only after every present output passed its
+    # independent shape check.  Keep malformed-output evidence focused on the
+    # producer result and avoid a secondary oracle verdict for the same defect.
+    if not hard_results:
+        if must_differ:
+            _assert_values_differ(
+                values[0],
+                values[1],
+                mechanism=mechanism,
+                label=relation_label,
+                hard_results=hard_results,
+            )
+        else:
+            _assert_values_equal(
+                values[0],
+                values[1],
+                mechanism=mechanism,
+                label=relation_label,
+                hard_results=hard_results,
+            )
+    _raise_strongest(hard_results)
+    if read_errors:
+        raise read_errors[0]
+    if read_rejections:
+        C.raise_for_record(read_rejections[0])
+    if derive_rejections:
+        C.raise_for_record(derive_rejections[0])
 
 
 def _ike_mech_param(mech: int, param: bytes) -> Any:
@@ -416,12 +919,23 @@ class TestIKE2PRFPlusDerive:
                 _NONCE_I + _NONCE_R,
             )
             try:
-                raw = _get_value(rs, derived)
-                assert len(raw) == 32
+                raw = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:derived CKA_VALUE",
+                )
+                _assert_value_length(
+                    raw,
+                    expected=32,
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:derived CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE2_PRF_PLUS_DERIVE", "CKM_IKE2_PRF_PLUS_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -445,20 +959,29 @@ class TestIKE2PRFPlusDerive:
                 _NONCE_I + _NONCE_R,
             )
             try:
+                actual = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                )
+                if actual is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=_get_value(rs, derived),
+                    actual=actual,
                     expected=expected,
                     label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
                     operation="C_DeriveKey",
                     mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
+            _xfail_derive_if_known(
                 exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 exact vector not operational",
+                "CKM_IKE2_PRF_PLUS_DERIVE",
+                "CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 exact vector",
             )
         finally:
             if base_key:
@@ -488,20 +1011,29 @@ class TestIKE2PRFPlusDerive:
                 bits=384,
             )
             try:
+                actual = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey KAT (HMAC-SHA256 multiblock)",
+                )
+                if actual is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=_get_value(rs, derived),
+                    actual=actual,
                     expected=expected,
                     label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey KAT (HMAC-SHA256 multiblock)",
                     operation="C_DeriveKey",
                     mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
+            _xfail_derive_if_known(
                 exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 multiblock exact vector not operational",
+                "CKM_IKE2_PRF_PLUS_DERIVE",
+                "CKM_IKE2_PRF_PLUS_DERIVE HMAC-SHA256 multiblock exact vector",
             )
         finally:
             if base_key:
@@ -520,13 +1052,24 @@ class TestIKE2PRFPlusDerive:
                 _NONCE_I + _NONCE_R,
             )
             try:
-                raw = _get_value(rs, derived)
-                assert len(raw) == 16
+                raw = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:AES-128 CKA_VALUE",
+                )
+                _assert_value_length(
+                    raw,
+                    expected=16,
+                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                    label="CKM_IKE2_PRF_PLUS_DERIVE:AES-128 CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE AES-128 not operational"
+            _xfail_derive_if_known(
+                exc, "CKM_IKE2_PRF_PLUS_DERIVE", "CKM_IKE2_PRF_PLUS_DERIVE AES-128"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -537,16 +1080,21 @@ class TestIKE2PRFPlusDerive:
             pytest.skip("CKM_IKE2_PRF_PLUS_DERIVE not supported")
         base_key = _create_base_key(rs)
         try:
-            da = _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R)
             nonce_b = b"\x03" * 16 + b"\x04" * 16
-            db = _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, nonce_b)
-            try:
-                assert _get_value(rs, da) != _get_value(rs, db)
-            finally:
-                destroy_quietly(rs.raw, rs.sh, db)
-                destroy_quietly(rs.raw, rs.sh, da)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_generic(
+                    rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R
+                ),
+                lambda: _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, nonce_b),
+                mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                first_label="CKM_IKE2_PRF_PLUS_DERIVE:first derived CKA_VALUE",
+                second_label="CKM_IKE2_PRF_PLUS_DERIVE:second derived CKA_VALUE",
+                relation_label="CKM_IKE2_PRF_PLUS_DERIVE:nonce separation",
+                must_differ=True,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE2_PRF_PLUS_DERIVE", "CKM_IKE2_PRF_PLUS_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -558,31 +1106,22 @@ class TestIKE2PRFPlusDerive:
         base_key_b: int | None = None
         try:
             base_key_b = _create_base_key(rs, bytes(reversed(_BASE_KEY_BYTES)))
-            derived_a: int | None = None
-            derived_b: int | None = None
-            try:
-                derived_a = _derive_generic(
-                    rs,
-                    base_key_a,
-                    CKM_IKE2_PRF_PLUS_DERIVE,
-                    _NONCE_I + _NONCE_R,
-                )
-                derived_b = _derive_generic(
-                    rs,
-                    base_key_b,
-                    CKM_IKE2_PRF_PLUS_DERIVE,
-                    _NONCE_I + _NONCE_R,
-                )
-                assert _get_value(rs, derived_a) != _get_value(rs, derived_b), (
-                    "IKE2 PRF+ base key change did not affect derived output"
-                )
-            finally:
-                if derived_b is not None:
-                    destroy_quietly(rs.raw, rs.sh, derived_b)
-                if derived_a is not None:
-                    destroy_quietly(rs.raw, rs.sh, derived_a)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_generic(
+                    rs, base_key_a, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R
+                ),
+                lambda: _derive_generic(
+                    rs, base_key_b, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R
+                ),
+                mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                first_label="CKM_IKE2_PRF_PLUS_DERIVE:first base-key output",
+                second_label="CKM_IKE2_PRF_PLUS_DERIVE:second base-key output",
+                relation_label="CKM_IKE2_PRF_PLUS_DERIVE:base-key separation",
+                must_differ=True,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE2_PRF_PLUS_DERIVE", "CKM_IKE2_PRF_PLUS_DERIVE")
         finally:
             if base_key_b is not None:
                 destroy_quietly(rs.raw, rs.sh, base_key_b)
@@ -608,10 +1147,8 @@ class TestIKE2PRFPlusDerive:
                 label="IKE2 PRF+ invalid PRF mechanism",
             )
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE2_PRF_PLUS_DERIVE invalid PRF setup not operational",
+            _xfail_derive_if_known(
+                exc, "CKM_IKE2_PRF_PLUS_DERIVE", "CKM_IKE2_PRF_PLUS_DERIVE invalid PRF setup"
             )
         finally:
             if base_key:
@@ -623,21 +1160,22 @@ class TestIKE2PRFPlusDerive:
             pytest.skip("CKM_IKE2_PRF_PLUS_DERIVE not supported")
         base_key = _create_base_key(rs)
         try:
-            d1 = _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R)
-            d2 = _derive_generic(rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R)
-            try:
-                assert_correct(
-                    actual=_get_value(rs, d1),
-                    expected=_get_value(rs, d2),
-                    label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey determinism",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
-                )
-            finally:
-                destroy_quietly(rs.raw, rs.sh, d2)
-                destroy_quietly(rs.raw, rs.sh, d1)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_generic(
+                    rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R
+                ),
+                lambda: _derive_generic(
+                    rs, base_key, CKM_IKE2_PRF_PLUS_DERIVE, _NONCE_I + _NONCE_R
+                ),
+                mechanism="CKM_IKE2_PRF_PLUS_DERIVE",
+                first_label="CKM_IKE2_PRF_PLUS_DERIVE:first deterministic output",
+                second_label="CKM_IKE2_PRF_PLUS_DERIVE:second deterministic output",
+                relation_label="CKM_IKE2_PRF_PLUS_DERIVE:C_DeriveKey determinism",
+                must_differ=False,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE2_PRF_PLUS_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE2_PRF_PLUS_DERIVE", "CKM_IKE2_PRF_PLUS_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -657,11 +1195,23 @@ class TestIKEPRFDerive:
         try:
             derived = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
             try:
-                assert len(_get_value(rs, derived)) == 32
+                value = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                    label="CKM_IKE_PRF_DERIVE:derived CKA_VALUE",
+                )
+                _assert_value_length(
+                    value,
+                    expected=32,
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                    label="CKM_IKE_PRF_DERIVE:derived CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -680,20 +1230,27 @@ class TestIKEPRFDerive:
         try:
             derived = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
             try:
+                actual = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                    label="CKM_IKE_PRF_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                )
+                if actual is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=_get_value(rs, derived),
+                    actual=actual,
                     expected=expected,
                     label="CKM_IKE_PRF_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
                     operation="C_DeriveKey",
                     mechanism="CKM_IKE_PRF_DERIVE",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE_PRF_DERIVE HMAC-SHA256 exact vector not operational",
+            _xfail_derive_if_known(
+                exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE HMAC-SHA256 exact vector"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -706,13 +1263,23 @@ class TestIKEPRFDerive:
         try:
             derived = _derive_aes128(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
             try:
-                assert len(_get_value(rs, derived)) == 16
+                value = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                    label="CKM_IKE_PRF_DERIVE:AES-128 CKA_VALUE",
+                )
+                _assert_value_length(
+                    value,
+                    expected=16,
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                    label="CKM_IKE_PRF_DERIVE:AES-128 CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE AES-128 not operational"
-            )
+            _xfail_derive_if_known(exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE AES-128")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -722,15 +1289,20 @@ class TestIKEPRFDerive:
             pytest.skip("CKM_IKE_PRF_DERIVE not supported")
         base_key = _create_base_key(rs)
         try:
-            da = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
-            db = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, b"\x05" * 16 + b"\x06" * 16)
-            try:
-                assert _get_value(rs, da) != _get_value(rs, db)
-            finally:
-                destroy_quietly(rs.raw, rs.sh, db)
-                destroy_quietly(rs.raw, rs.sh, da)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R),
+                lambda: _derive_generic(
+                    rs, base_key, CKM_IKE_PRF_DERIVE, b"\x05" * 16 + b"\x06" * 16
+                ),
+                mechanism="CKM_IKE_PRF_DERIVE",
+                first_label="CKM_IKE_PRF_DERIVE:first nonce output",
+                second_label="CKM_IKE_PRF_DERIVE:second nonce output",
+                relation_label="CKM_IKE_PRF_DERIVE:nonce separation",
+                must_differ=True,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -742,31 +1314,18 @@ class TestIKEPRFDerive:
         base_key_b: int | None = None
         try:
             base_key_b = _create_base_key(rs, bytes(reversed(_BASE_KEY_BYTES)))
-            derived_a: int | None = None
-            derived_b: int | None = None
-            try:
-                derived_a = _derive_generic(
-                    rs,
-                    base_key_a,
-                    CKM_IKE_PRF_DERIVE,
-                    _NONCE_I + _NONCE_R,
-                )
-                derived_b = _derive_generic(
-                    rs,
-                    base_key_b,
-                    CKM_IKE_PRF_DERIVE,
-                    _NONCE_I + _NONCE_R,
-                )
-                assert _get_value(rs, derived_a) != _get_value(rs, derived_b), (
-                    "IKE PRF base key change did not affect derived output"
-                )
-            finally:
-                if derived_b is not None:
-                    destroy_quietly(rs.raw, rs.sh, derived_b)
-                if derived_a is not None:
-                    destroy_quietly(rs.raw, rs.sh, derived_a)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_generic(rs, base_key_a, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R),
+                lambda: _derive_generic(rs, base_key_b, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R),
+                mechanism="CKM_IKE_PRF_DERIVE",
+                first_label="CKM_IKE_PRF_DERIVE:first base-key output",
+                second_label="CKM_IKE_PRF_DERIVE:second base-key output",
+                relation_label="CKM_IKE_PRF_DERIVE:base-key separation",
+                must_differ=True,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE")
         finally:
             if base_key_b is not None:
                 destroy_quietly(rs.raw, rs.sh, base_key_b)
@@ -794,10 +1353,8 @@ class TestIKEPRFDerive:
                 label="IKE PRF invalid PRF mechanism",
             )
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE_PRF_DERIVE invalid PRF setup not operational",
+            _xfail_derive_if_known(
+                exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE invalid PRF setup"
             )
         finally:
             if base_key:
@@ -811,9 +1368,13 @@ class TestIKEPRFDerive:
         base_key = 0
         rekey_key = 0
         derived = 0
+        base_key = _create_base_key(rs)
+        rekey_key = _acquire_second_or_cleanup(
+            rs,
+            base_key,
+            lambda: _create_base_key(rs, bytes(reversed(_BASE_KEY_BYTES))),
+        )
         try:
-            base_key = _create_base_key(rs)
-            rekey_key = _create_base_key(rs, bytes(reversed(_BASE_KEY_BYTES)))
             attrs: dict[int, Any] = {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
@@ -840,16 +1401,28 @@ class TestIKEPRFDerive:
                 )
             except AssertionError as caught:
                 exc = caught
-            reject_or_classify(
+            if exc is None and not derived:
+                C.classify(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="IKE PRF data-as-key rekey combination",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_IKE_PRF_DERIVE",
+                    summary=(
+                        "IKE PRF data-as-key rekey combination: "
+                        "C_DeriveKey returned CKR_OK with a zero handle"
+                    ),
+                    detail={"handle": {"expected": "non-zero", "actual": 0}},
+                )
+            _reject_or_classify_derive(
                 exc,
                 _IKE_PRF_REKEY_DATA_AS_KEY_REJECT_RVS,
                 label="IKE PRF data-as-key rekey combination",
+                mechanism="CKM_IKE_PRF_DERIVE",
             )
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE_PRF_DERIVE data-as-key rekey setup not operational",
+            _xfail_derive_if_known(
+                exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE data-as-key rekey setup"
             )
         finally:
             if derived:
@@ -865,21 +1438,18 @@ class TestIKEPRFDerive:
             pytest.skip("CKM_IKE_PRF_DERIVE not supported")
         base_key = _create_base_key(rs)
         try:
-            d1 = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
-            d2 = _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R)
-            try:
-                assert_correct(
-                    actual=_get_value(rs, d1),
-                    expected=_get_value(rs, d2),
-                    label="CKM_IKE_PRF_DERIVE:C_DeriveKey determinism",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_IKE_PRF_DERIVE",
-                )
-            finally:
-                destroy_quietly(rs.raw, rs.sh, d2)
-                destroy_quietly(rs.raw, rs.sh, d1)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R),
+                lambda: _derive_generic(rs, base_key, CKM_IKE_PRF_DERIVE, _NONCE_I + _NONCE_R),
+                mechanism="CKM_IKE_PRF_DERIVE",
+                first_label="CKM_IKE_PRF_DERIVE:first deterministic output",
+                second_label="CKM_IKE_PRF_DERIVE:second deterministic output",
+                relation_label="CKM_IKE_PRF_DERIVE:C_DeriveKey determinism",
+                must_differ=False,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE_PRF_DERIVE", "CKM_IKE_PRF_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
 
@@ -896,15 +1466,27 @@ class TestIKE1PRFDerive:
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
             derived = _derive_ike1_prf(rs, base_key, keygxy_key)
             try:
-                assert len(_get_value(rs, derived)) == 32
+                value = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                    label="CKM_IKE1_PRF_DERIVE:derived CKA_VALUE",
+                )
+                _assert_value_length(
+                    value,
+                    expected=32,
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                    label="CKM_IKE1_PRF_DERIVE:derived CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE1_PRF_DERIVE", "CKM_IKE1_PRF_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -915,7 +1497,7 @@ class TestIKE1PRFDerive:
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         expected = _ike1_prf_hmac_sha256_reference(
             _BASE_KEY_BYTES,
             _IKE1_KEYGXY_BYTES,
@@ -926,20 +1508,27 @@ class TestIKE1PRFDerive:
         try:
             derived = _derive_ike1_prf(rs, base_key, keygxy_key, key_number=0)
             try:
+                actual = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                    label="CKM_IKE1_PRF_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                )
+                if actual is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=_get_value(rs, derived),
+                    actual=actual,
                     expected=expected,
                     label="CKM_IKE1_PRF_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
                     operation="C_DeriveKey",
                     mechanism="CKM_IKE1_PRF_DERIVE",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE1_PRF_DERIVE HMAC-SHA256 exact vector not operational",
+            _xfail_derive_if_known(
+                exc, "CKM_IKE1_PRF_DERIVE", "CKM_IKE1_PRF_DERIVE HMAC-SHA256 exact vector"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
@@ -950,7 +1539,7 @@ class TestIKE1PRFDerive:
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
             derived = _derive_ike1_prf(
                 rs,
@@ -960,13 +1549,23 @@ class TestIKE1PRFDerive:
                 key_type=CKK_AES,
             )
             try:
-                assert len(_get_value(rs, derived)) == 16
+                value = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                    label="CKM_IKE1_PRF_DERIVE:AES-128 CKA_VALUE",
+                )
+                _assert_value_length(
+                    value,
+                    expected=16,
+                    mechanism="CKM_IKE1_PRF_DERIVE",
+                    label="CKM_IKE1_PRF_DERIVE:AES-128 CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE AES-128 not operational"
-            )
+            _xfail_derive_if_known(exc, "CKM_IKE1_PRF_DERIVE", "CKM_IKE1_PRF_DERIVE AES-128")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -976,23 +1575,26 @@ class TestIKE1PRFDerive:
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
-            da = _derive_ike1_prf(rs, base_key, keygxy_key)
-            db = _derive_ike1_prf(
+            _run_pair_oracle(
                 rs,
-                base_key,
-                keygxy_key,
-                initiator_cookie=b"\x07" * 16,
-                responder_cookie=b"\x08" * 16,
+                lambda: _derive_ike1_prf(rs, base_key, keygxy_key),
+                lambda: _derive_ike1_prf(
+                    rs,
+                    base_key,
+                    keygxy_key,
+                    initiator_cookie=b"\x07" * 16,
+                    responder_cookie=b"\x08" * 16,
+                ),
+                mechanism="CKM_IKE1_PRF_DERIVE",
+                first_label="CKM_IKE1_PRF_DERIVE:first nonce output",
+                second_label="CKM_IKE1_PRF_DERIVE:second nonce output",
+                relation_label="CKM_IKE1_PRF_DERIVE:nonce separation",
+                must_differ=True,
             )
-            try:
-                assert _get_value(rs, da) != _get_value(rs, db)
-            finally:
-                destroy_quietly(rs.raw, rs.sh, db)
-                destroy_quietly(rs.raw, rs.sh, da)
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE1_PRF_DERIVE", "CKM_IKE1_PRF_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -1004,9 +1606,9 @@ class TestIKE1PRFDerive:
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
         base_key = 0
         keygxy_key = 0
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
-            base_key = _create_sha256_hmac_derive_key(rs)
-            keygxy_key = _create_ike1_keygxy_key(rs)
             _classify_invalid_prf_derive(
                 rs,
                 base_key,
@@ -1022,10 +1624,8 @@ class TestIKE1PRFDerive:
                 label="IKE1 PRF invalid PRF mechanism",
             )
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE1_PRF_DERIVE invalid PRF setup not operational",
+            _xfail_derive_if_known(
+                exc, "CKM_IKE1_PRF_DERIVE", "CKM_IKE1_PRF_DERIVE invalid PRF setup"
             )
         finally:
             if keygxy_key:
@@ -1038,23 +1638,20 @@ class TestIKE1PRFDerive:
         if not rs.has_mechanism("IKE1_PRF_DERIVE"):
             pytest.skip("CKM_IKE1_PRF_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
-            d1 = _derive_ike1_prf(rs, base_key, keygxy_key)
-            d2 = _derive_ike1_prf(rs, base_key, keygxy_key)
-            try:
-                assert_correct(
-                    actual=_get_value(rs, d1),
-                    expected=_get_value(rs, d2),
-                    label="CKM_IKE1_PRF_DERIVE:C_DeriveKey determinism",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_IKE1_PRF_DERIVE",
-                )
-            finally:
-                destroy_quietly(rs.raw, rs.sh, d2)
-                destroy_quietly(rs.raw, rs.sh, d1)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_ike1_prf(rs, base_key, keygxy_key),
+                lambda: _derive_ike1_prf(rs, base_key, keygxy_key),
+                mechanism="CKM_IKE1_PRF_DERIVE",
+                first_label="CKM_IKE1_PRF_DERIVE:first deterministic output",
+                second_label="CKM_IKE1_PRF_DERIVE:second deterministic output",
+                relation_label="CKM_IKE1_PRF_DERIVE:C_DeriveKey determinism",
+                must_differ=False,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_PRF_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE1_PRF_DERIVE", "CKM_IKE1_PRF_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -1072,16 +1669,28 @@ class TestIKE1ExtendedDerive:
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         param = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         try:
             derived = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
             try:
-                assert len(_get_value(rs, derived)) == 32
+                value = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                    label="CKM_IKE1_EXTENDED_DERIVE:derived CKA_VALUE",
+                )
+                _assert_value_length(
+                    value,
+                    expected=32,
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                    label="CKM_IKE1_EXTENDED_DERIVE:derived CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE1_EXTENDED_DERIVE", "CKM_IKE1_EXTENDED_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -1092,7 +1701,7 @@ class TestIKE1ExtendedDerive:
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         extra_data = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         expected = _ike1_extended_hmac_sha256_reference(
             _BASE_KEY_BYTES,
@@ -1108,20 +1717,29 @@ class TestIKE1ExtendedDerive:
                 extra_data=extra_data,
             )
             try:
+                actual = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                    label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
+                )
+                if actual is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=_get_value(rs, derived),
+                    actual=actual,
                     expected=expected,
                     label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey KAT (HMAC-SHA256)",
                     operation="C_DeriveKey",
                     mechanism="CKM_IKE1_EXTENDED_DERIVE",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
+            _xfail_derive_if_known(
                 exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 exact vector not operational",
+                "CKM_IKE1_EXTENDED_DERIVE",
+                "CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 exact vector",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
@@ -1136,7 +1754,7 @@ class TestIKE1ExtendedDerive:
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         extra_data = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         expected = _ike1_extended_hmac_sha256_reference(
             _BASE_KEY_BYTES,
@@ -1153,20 +1771,29 @@ class TestIKE1ExtendedDerive:
                 value_len=48,
             )
             try:
+                actual = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                    label=("CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey KAT (HMAC-SHA256 multiblock)"),
+                )
+                if actual is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=_get_value(rs, derived),
+                    actual=actual,
                     expected=expected,
                     label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey KAT (HMAC-SHA256 multiblock)",
                     operation="C_DeriveKey",
                     mechanism="CKM_IKE1_EXTENDED_DERIVE",
                 )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
+            _xfail_derive_if_known(
                 exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 multiblock exact vector not operational",
+                "CKM_IKE1_EXTENDED_DERIVE",
+                "CKM_IKE1_EXTENDED_DERIVE HMAC-SHA256 multiblock exact vector",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
@@ -1177,7 +1804,7 @@ class TestIKE1ExtendedDerive:
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         param = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         try:
             derived = _derive_ike1_extended(
@@ -1189,12 +1816,24 @@ class TestIKE1ExtendedDerive:
                 key_type=CKK_AES,
             )
             try:
-                assert len(_get_value(rs, derived)) == 16
+                value = _get_value(
+                    rs,
+                    derived,
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                    label="CKM_IKE1_EXTENDED_DERIVE:AES-128 CKA_VALUE",
+                )
+                _assert_value_length(
+                    value,
+                    expected=16,
+                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                    label="CKM_IKE1_EXTENDED_DERIVE:AES-128 CKA_VALUE",
+                )
             finally:
-                destroy_quietly(rs.raw, rs.sh, derived)
+                if derived:
+                    destroy_quietly(rs.raw, rs.sh, derived)
         except AssertionError as exc:
-            xfail_if_known_ckr(
-                exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE AES-128 not operational"
+            _xfail_derive_if_known(
+                exc, "CKM_IKE1_EXTENDED_DERIVE", "CKM_IKE1_EXTENDED_DERIVE AES-128"
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
@@ -1205,19 +1844,22 @@ class TestIKE1ExtendedDerive:
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
             pa = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
             pb = _NONCE_I + _NONCE_R + b"\xcc" * 8 + b"\xdd" * 8
-            da = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=pa)
-            db = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=pb)
-            try:
-                assert _get_value(rs, da) != _get_value(rs, db)
-            finally:
-                destroy_quietly(rs.raw, rs.sh, db)
-                destroy_quietly(rs.raw, rs.sh, da)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=pa),
+                lambda: _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=pb),
+                mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                first_label="CKM_IKE1_EXTENDED_DERIVE:first SPI output",
+                second_label="CKM_IKE1_EXTENDED_DERIVE:second SPI output",
+                relation_label="CKM_IKE1_EXTENDED_DERIVE:SPI separation",
+                must_differ=True,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE1_EXTENDED_DERIVE", "CKM_IKE1_EXTENDED_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)
@@ -1229,9 +1871,9 @@ class TestIKE1ExtendedDerive:
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = 0
         keygxy_key = 0
+        base_key = _create_sha256_hmac_derive_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         try:
-            base_key = _create_sha256_hmac_derive_key(rs)
-            keygxy_key = _create_ike1_keygxy_key(rs)
             _classify_invalid_prf_derive(
                 rs,
                 base_key,
@@ -1245,10 +1887,10 @@ class TestIKE1ExtendedDerive:
                 label="IKE1 extended invalid PRF mechanism",
             )
         except AssertionError as exc:
-            xfail_if_known_ckr(
+            _xfail_derive_if_known(
                 exc,
-                _DERIVE_ERROR_CKRS,
-                "CKM_IKE1_EXTENDED_DERIVE invalid PRF setup not operational",
+                "CKM_IKE1_EXTENDED_DERIVE",
+                "CKM_IKE1_EXTENDED_DERIVE invalid PRF setup",
             )
         finally:
             if keygxy_key:
@@ -1261,24 +1903,25 @@ class TestIKE1ExtendedDerive:
         if not rs.has_mechanism("IKE1_EXTENDED_DERIVE"):
             pytest.skip("CKM_IKE1_EXTENDED_DERIVE not supported")
         base_key = _create_sha256_hmac_derive_key(rs)
-        keygxy_key = _create_ike1_keygxy_key(rs)
+        keygxy_key = _acquire_second_or_cleanup(rs, base_key, lambda: _create_ike1_keygxy_key(rs))
         param = _NONCE_I + _NONCE_R + _SPI_I + _SPI_R
         try:
-            d1 = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
-            d2 = _derive_ike1_extended(rs, base_key, keygxy_key=keygxy_key, extra_data=param)
-            try:
-                assert_correct(
-                    actual=_get_value(rs, d1),
-                    expected=_get_value(rs, d2),
-                    label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey determinism",
-                    operation="C_DeriveKey",
-                    mechanism="CKM_IKE1_EXTENDED_DERIVE",
-                )
-            finally:
-                destroy_quietly(rs.raw, rs.sh, d2)
-                destroy_quietly(rs.raw, rs.sh, d1)
+            _run_pair_oracle(
+                rs,
+                lambda: _derive_ike1_extended(
+                    rs, base_key, keygxy_key=keygxy_key, extra_data=param
+                ),
+                lambda: _derive_ike1_extended(
+                    rs, base_key, keygxy_key=keygxy_key, extra_data=param
+                ),
+                mechanism="CKM_IKE1_EXTENDED_DERIVE",
+                first_label="CKM_IKE1_EXTENDED_DERIVE:first deterministic output",
+                second_label="CKM_IKE1_EXTENDED_DERIVE:second deterministic output",
+                relation_label="CKM_IKE1_EXTENDED_DERIVE:C_DeriveKey determinism",
+                must_differ=False,
+            )
         except AssertionError as exc:
-            xfail_if_known_ckr(exc, _DERIVE_ERROR_CKRS, "CKM_IKE1_EXTENDED_DERIVE not operational")
+            _xfail_derive_if_known(exc, "CKM_IKE1_EXTENDED_DERIVE", "CKM_IKE1_EXTENDED_DERIVE")
         finally:
             destroy_quietly(rs.raw, rs.sh, keygxy_key)
             destroy_quietly(rs.raw, rs.sh, base_key)

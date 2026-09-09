@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
@@ -569,13 +570,28 @@ def test_blake2b_key_derive_value_injection_accepts_injected_value_fails(
     monkeypatch.setattr(test_blake2, "_import_blake2b_setup_key", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(test_blake2, "derive_key", _derive_key)
     monkeypatch.setattr(test_blake2, "read_attributes", _read_attributes)
-    monkeypatch.setattr(test_blake2, "destroy_quietly", lambda *_args, **_kwargs: None)
+    destroyed: list[int] = []
 
-    with pytest.raises(AssertionError, match="accepted caller-supplied CKA_VALUE"):
+    def _destroy(_raw: Any, _sh: int, handle: int) -> None:
+        destroyed.append(handle)
+
+    monkeypatch.setattr(test_blake2, "destroy_quietly", _destroy)
+
+    with pytest.raises(pytest.fail.Exception):
         test_blake2.TestBlake2bKeyed()._key_derive_rejects_value_injection(
             rs,
             case,
         )
+
+    records = C.get_records()
+    assert len(records) == 1
+    record = records[0]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
+    assert record.kind == "crypto"
+    assert record.operation == "C_DeriveKey"
+    assert record.mechanism == "CKM_BLAKE2B_256_KEY_DERIVE"
+    assert destroyed == [1, 79]
 
 
 def test_blake2b_key_derive_value_injection_accepts_but_ignores_value_xfails(
