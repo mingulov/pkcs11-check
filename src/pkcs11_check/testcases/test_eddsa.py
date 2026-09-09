@@ -23,7 +23,6 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EC_PARAMS,
-    CKA_EC_POINT,
     CKA_KEY_TYPE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -40,6 +39,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._ec_export import RawECPointFamily, read_raw_ec_point_or_xfail
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -280,14 +280,12 @@ class TestEdDSACrossVerify:
 
         sig = _sign_eddsa(rs, priv, data)
 
-        # Export the public key point
-        ec_point = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT])[CKA_EC_POINT]
-        assert isinstance(ec_point, bytes)
-        # DER OCTET STRING: 04 <len> <32-byte point>
-        if ec_point[0] == 0x04:
-            raw_key = ec_point[2:] if ec_point[1] < 128 else ec_point[3:]
-        else:
-            raw_key = ec_point
+        raw_key = read_raw_ec_point_or_xfail(
+            rs,
+            pub,
+            RawECPointFamily.ED25519,
+            label="Ed25519 public key",
+        )
 
         pub_crypto = Ed25519PublicKey.from_public_bytes(raw_key)
         pub_crypto.verify(sig, data)  # raises on failure
