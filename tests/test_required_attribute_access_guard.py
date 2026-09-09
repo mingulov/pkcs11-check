@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -247,6 +250,1150 @@ def check(raw, session, handle):
 """
 
     assert _kinds(source) == ["unstructured_absence"]
+
+
+@pytest.mark.parametrize(
+    ("key", "protocol", "context"),
+    [
+        ("CKA_MODULUS", "RSA_ATTRIBUTE", '"decrypt:pkcs:random"'),
+        ("CKA_EC_POINT", "UAF", '"derive"'),
+    ],
+    ids=["rsa", "uaf"],
+)
+def test_canonical_child_missing_attribute_evidence_certifies_site(
+    key: str,
+    protocol: str,
+    context: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import {key}
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [{key}])
+    if {key} not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute({key}, protocol="{protocol}", context={context})
+        return
+    return attrs[{key}]
+"""
+
+    assert _violations(source) == []
+
+
+def test_scalar_ec_child_evidence_is_rejected_even_in_else_branch() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_PARAMS
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_EC_PARAMS])
+    if CKA_EC_PARAMS in attrs:
+        return attrs[CKA_EC_PARAMS]
+    else:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(
+            CKA_EC_PARAMS,
+            protocol="EC_SETUP",
+            context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
+        )
+        available = False
+        return
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_canonical_child_evidence_keeps_unrelated_unsafe_access() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    first = attrs[CKA_MODULUS]
+    other = read_attributes(raw, session, handle, [CKA_VALUE])
+    return first, other[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unsafe_subscript"]
+
+
+@pytest.mark.parametrize(
+    ("import_line", "call"),
+    [
+        (
+            "from pkcs11_check.testcases._probes._attribute_facts import "
+            "emit_missing_attribute as emit",
+            'emit(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        ),
+        (
+            "import pkcs11_check.testcases._probes._attribute_facts as facts",
+            "facts.emit_missing_attribute(CKA_MODULUS, "
+            'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        ),
+        (
+            "import pkcs11_check.testcases._probes._attribute_facts",
+            "pkcs11_check.testcases._probes._attribute_facts.emit_missing_attribute("
+            'CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        ),
+        (
+            "from pkcs11_check.testcases._probes._attribute_facts import *",
+            "emit_missing_attribute(CKA_MODULUS, "
+            'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        ),
+    ],
+    ids=["local-alias", "module-alias", "qualified", "wildcard"],
+)
+def test_noncanonical_child_imports_emit_contract_diagnostics(
+    import_line: str,
+    call: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        {import_line}
+        {call}
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_top_level_child_import_is_not_a_local_canonical_pair() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'helper(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        "emit_missing_attribute(CKA_EC_POINT, "
+        'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        'emit_missing_attribute(CKA_MODULUS, protocol="dynamic", context="decrypt:pkcs:random")',
+        'emit_missing_attribute(CKA_MODULUS, protocol=protocol, context="decrypt:pkcs:random")',
+        "emit_missing_attribute(CKA_MODULUS, "
+        'context="decrypt:pkcs:random", protocol="RSA_ATTRIBUTE")',
+        'emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=make_context())',
+        "emit_missing_attribute(*[CKA_MODULUS], "
+        'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+    ],
+)
+def test_noncanonical_child_calls_retain_absence_and_emit_contract(call: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        {call}
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        "emit_missing_attribute(CKA_MODULUS, "
+        'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        "if condition:\n            emit_missing_attribute(CKA_MODULUS, "
+        'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        "value = [item for item in values]\n        emit_missing_attribute(CKA_MODULUS, "
+        'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")',
+        "emit_missing_attribute(CKA_MODULUS, "
+        'protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")\n'
+        "        if condition:\n            return",
+    ],
+    ids=["fallthrough", "nested-if", "comprehension", "nested-after-call"],
+)
+def test_nonflat_child_branches_retain_absence_and_emit_contract(branch: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        {branch}
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unsafe_subscript" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "emit_missing_attribute = fake",
+        "del emit_missing_attribute",
+        "saved = emit_missing_attribute",
+        "def emit_missing_attribute(*args, **kwargs):\n            return None",
+    ],
+    ids=["rebind", "delete", "escape", "shadow"],
+)
+def test_child_helper_rebinding_and_escape_retain_absence(mutation: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+
+def fake(*args, **kwargs):
+    return None
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        {mutation}
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_child_wrapper_and_callback_are_not_evidence_pairs() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        callback = lambda: emit_missing_attribute(
+            CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+        )
+        callback()
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "generated = (item for item in values)",
+        "type Alias = int",
+        "def wrapper(value=emit_missing_attribute):\n            return value",
+        "items = [item for item in values]",
+    ],
+    ids=["generator", "type-alias", "callable-default", "comprehension"],
+)
+def test_child_adversarial_proof_region_shapes_retain_absence(statement: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        {statement}
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_dynamic_context_name_and_rebinding_retain_absence() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    context = make_context()
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=context)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_probe_package_module_alias_activates_contract_inventory() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+from pkcs11_check.testcases._probes import _attribute_facts as facts
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    ("import_line", "reference"),
+    [
+        (
+            "from pkcs11_check.testcases import _probes as probes",
+            "probes._attribute_facts.emit_missing_attribute",
+        ),
+        (
+            "import pkcs11_check.testcases._probes as probes",
+            "probes._attribute_facts.emit_missing_attribute",
+        ),
+        (
+            "import pkcs11_check.testcases",
+            "pkcs11_check.testcases._probes._attribute_facts.emit_missing_attribute",
+        ),
+    ],
+    ids=["parent-from", "parent-module", "parent-qualified"],
+)
+def test_parent_probe_module_references_emit_contract_diagnostics(
+    import_line: str,
+    reference: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+{import_line}
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        {reference}(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_module_key_walrus_in_class_definition_expression_retain_absence() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+class Marker:
+    pass
+
+@((CKA_MODULUS := Marker))
+class Eager:
+    pass
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_rsa_context_walrus_in_nested_definition_decorator_retain_absence() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def decorator(value):
+    return value
+
+def check(raw, session, handle, case):
+    @decorator(case := "decrypt:pkcs:random")
+    def nested():
+        return None
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_nested_function_body_binding_does_not_invalidate_outer_context() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def nested():
+        case = "not-the-context"
+        return case
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize(
+    "preamble",
+    [
+        "from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_MODULUS",
+        "from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_MODULUS as MODULUS",
+        "from pkcs11_check.raw.types_std import *\n"
+        "from pkcs11_check.raw.types_std import CKA_MODULUS",
+    ],
+    ids=["duplicate", "competing-alias", "wildcard"],
+)
+def test_key_import_aliases_are_owned_individually(preamble: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+{preamble}
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(
+            CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+        )
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_nested_candidate_function_is_not_certified() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+class Wrapper:
+    def check(raw, session, handle):
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+        if CKA_MODULUS not in attrs:
+            from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+            emit_missing_attribute(
+                CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+            )
+            return
+        return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_generic_candidate_function_is_not_certified() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check[T](raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    ("preamble", "function"),
+    [
+        (
+            "",
+            """def check(raw, session, handle, attrs):
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "",
+            """def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_EC_POINT])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "from pkcs11_check.raw.recipes import read_attributes as read",
+            """def check(raw, session, handle):
+    attrs = read(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "import pkcs11_check.raw.recipes as recipes",
+            """def check(raw, session, handle):
+    attrs = recipes.read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "",
+            """def check(raw, session, handle):
+    requested = [CKA_MODULUS]
+    attrs = read_attributes(raw, session, handle, requested)
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "",
+            """def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    attrs = other
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "",
+            """def check(raw, session, handle):
+    if condition:
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+""",
+        ),
+        (
+            "",
+            """def check(raw, session, handle):
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    return attrs[CKA_MODULUS]
+""",
+        ),
+    ],
+    ids=[
+        "parameter",
+        "wrong-key",
+        "aliased-import",
+        "qualified-call",
+        "dynamic-list",
+        "rebound",
+        "conditional",
+        "after-guard",
+    ],
+)
+def test_guarded_map_requires_direct_canonical_provenance(
+    preamble: str,
+    function: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+{preamble}
+
+{function}
+"""
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_guarded_map_try_reader_is_not_an_admitted_proof() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    try:
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    except LookupError:
+        return None
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_map_name_cannot_be_read_attributes() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    read_attributes = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in read_attributes:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return read_attributes[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "eager",
+    [
+        "class Eager:\n        read_attributes = fake",
+        "class Eager:\n        nested = lambda read_attributes=fake: read_attributes",
+        "class Eager:\n        def nested(read_attributes=fake):\n"
+        "            return read_attributes",
+        "class Eager:\n        if condition:\n            read_attributes = fake",
+    ],
+    ids=["class-assignment", "lambda-default", "def-default", "class-conditional"],
+)
+def test_eager_read_attributes_rebinding_retain_absence(eager: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def fake(*args):
+    return {{}}
+
+def check(raw, session, handle):
+    {eager}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    if "lambda read_attributes" in eager or "def nested" in eager:
+        assert _violations(source) == []
+    else:
+        assert "child_evidence_contract" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        "marker = object()",
+        "class Eager:\n        pass",
+        "touch()",
+    ],
+    ids=["assignment", "class", "call"],
+)
+def test_guarded_map_must_be_immediately_before_guard(intervening: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    {intervening}
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "try_shape",
+    [
+        """try:
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+        pass
+    except LookupError:
+        return None""",
+        """try:
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    except LookupError:
+        pass""",
+        """try:
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    except LookupError:
+        if condition:
+            return None
+        return None""",
+    ],
+    ids=["body-extra", "handler-pass", "handler-conditional"],
+)
+def test_guarded_map_try_shape_is_structurally_terminal(try_shape: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    {try_shape}
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_guarded_map_try_must_be_immediately_before_guard() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    try:
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    except LookupError:
+        return None
+    marker = object()
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        "def writer():\n        global CKA_MODULUS\n        CKA_MODULUS = fake\n    writer()",
+        "def writer():\n        global read_attributes\n"
+        "        read_attributes = fake\n    writer()",
+    ],
+    ids=["global-key", "global-reader"],
+)
+def test_nested_outward_global_writer_retain_absence(nested: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def fake(*args):
+    return {{}}
+
+def check(raw, session, handle):
+    {nested}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_nested_nonlocal_context_and_map_retain_absence() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def outer():
+    case = "decrypt:pkcs:random"
+    attrs = None
+    def check(raw, session, handle, case):
+        def writer():
+            nonlocal case, attrs
+            case = "bad"
+            attrs = None
+        writer()
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+        if CKA_MODULUS not in attrs:
+            from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+            emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+            return
+        return attrs[CKA_MODULUS]
+    return check
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_nested_unrelated_local_writer_is_safe() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def writer(local):
+        local = None
+        return local
+    writer(object())
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize(
+    "access",
+    [
+        "p.testcases._probes._attribute_facts.emit_missing_attribute",
+    ],
+    ids=["package-alias"],
+)
+def test_noncanonical_parent_helper_paths_emit_contract(access: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+import pkcs11_check as p
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        {access}(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_unrelated_sibling_module_reference_is_baseline_clean() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+import pkcs11_check.testcases._probes.session as session
+
+def check(raw, session_handle, handle):
+    attrs = read_attributes(raw, session_handle, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_adapter_definition_without_module_ownership_is_not_a_contract_reference() -> None:
+    source = """
+def emit_missing_attribute(attribute, *, protocol, context):
+    return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_attribute_facts_adapter_implementation_has_no_contract_diagnostic() -> None:
+    path = (
+        Path(__file__).parents[1]
+        / "src"
+        / "pkcs11_check"
+        / "testcases"
+        / "_probes"
+        / "_attribute_facts.py"
+    )
+
+    assert "child_evidence_contract" not in {violation.kind for violation in analyze_file(path)}
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "def inner(emit_missing_attribute):\n        return emit_missing_attribute",
+        "def inner(*emit_missing_attribute):\n        return emit_missing_attribute",
+        "def inner(**emit_missing_attribute):\n        return emit_missing_attribute",
+        "emit_missing_attribute = value",
+        "del emit_missing_attribute",
+        "global emit_missing_attribute",
+        "def inner():\n        nonlocal emit_missing_attribute",
+        "try:\n    pass\nexcept Exception as emit_missing_attribute:\n    pass",
+        "match value:\n    case emit_missing_attribute:\n        pass",
+        "for emit_missing_attribute in values:\n    pass",
+        "with manager() as emit_missing_attribute:\n    pass",
+        "if (emit_missing_attribute := value):\n    pass",
+        "match value:\n    case [*emit_missing_attribute]:\n        pass",
+        "match value:\n    case {**emit_missing_attribute}:\n        pass",
+    ],
+)
+def test_owned_helper_binding_forms_are_rejected(binding: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+
+{binding}
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "preamble",
+    [
+        "",
+        "from pkcs11_check.raw.types_std import CKA_MODULUS as MODULUS",
+        "from another_module import CKA_MODULUS",
+        "CKA_MODULUS = 1",
+        "def CKA_MODULUS():\n    return None",
+    ],
+    ids=["missing", "aliased", "competing-import", "assignment", "definition"],
+)
+def test_key_spelling_without_module_owned_identity_retain_absence(preamble: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+{preamble}
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    "guard_control",
+    [
+        "def check(CKA_MODULUS, raw, session, handle):",
+        "for CKA_MODULUS in values:\n    pass",
+        "with manager() as CKA_MODULUS:\n    pass",
+        "try:\n    pass\nexcept Exception as CKA_MODULUS:\n    pass",
+        "match value:\n    case CKA_MODULUS:\n        pass",
+    ],
+)
+def test_key_scope_binders_retain_absence(guard_control: str) -> None:
+    if guard_control.startswith("def check(CKA_MODULUS"):
+        source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+{guard_control}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+    else:
+        source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+{guard_control}
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize("declaration", ["global CKA_MODULUS", "nonlocal CKA_MODULUS"])
+def test_key_global_and_nonlocal_declarations_retain_absence(declaration: str) -> None:
+    nesting = (
+        "def check(raw, session, handle):"
+        if declaration.startswith("global")
+        else "def outer():\n    CKA_MODULUS = 1\n\n    def check(raw, session, handle):"
+    )
+    indent = "    " if declaration.startswith("global") else "        "
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+{nesting}
+{indent}{declaration}
+{indent}attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+{indent}if CKA_MODULUS not in attrs:
+{indent}    from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+{indent}    emit_missing_attribute(
+{indent}        CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+{indent}    )
+{indent}    return
+{indent}return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+@pytest.mark.parametrize(
+    ("protocol", "context"),
+    [
+        ("RSA_ATTRIBUTE", '"decrypt:pkcs:other"'),
+        ("RSA_ATTRIBUTE", '"verify:pkcs:random"'),
+        ("EC_SETUP", '"other"'),
+        ("UAF", '"other"'),
+    ],
+)
+def test_child_context_literals_are_finite(protocol: str, context: str) -> None:
+    key = "CKA_MODULUS" if protocol == "RSA_ATTRIBUTE" else "CKA_EC_POINT"
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import {key}
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [{key}])
+    if {key} not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute({key}, protocol="{protocol}", context={context})
+        return
+    return attrs[{key}]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_dynamic_rsa_context_accepts_only_top_level_ordinary_parameter() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize(
+    "function_head",
+    [
+        "@decorator\ndef check(raw, session, handle, case):",
+        "def check(raw, session, handle, case='decrypt:pkcs:random'):",
+        "def check(raw, session, handle, *case):",
+        "def check(raw, session, handle, **case):",
+    ],
+)
+def test_dynamic_rsa_context_wrappers_defaults_and_decorators_retain_absence(
+    function_head: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+{function_head}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_dynamic_rsa_context_nested_wrapper_retain_absence() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def outer(raw, session, handle):
+    def check(raw, session, handle, case):
+        attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+        if CKA_MODULUS not in attrs:
+            from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+            emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+            return
+        return attrs[CKA_MODULUS]
+    return check
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
 
 
 def test_membership_facts_join_conservatively() -> None:
@@ -2718,3 +3865,1048 @@ def check(raw, session, handle, {", ".join(f"condition_{index}" for index in ran
 """
 
     assert _kinds(source) == ["unsafe_subscript"]
+
+
+def test_helper_alias_inventory_rejects_helper_reaching_nested_alternative() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+import pkcs11_check.testcases._probes._attribute_facts as facts
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+
+def unrelated_scope():
+    import json as facts
+    return facts._attribute_facts.emit_missing_attribute
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_nested_local_parameter_bindings_do_not_invalidate_outer_certificate() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    def unused(CKA_MODULUS, attrs, read_attributes):
+        return CKA_MODULUS, attrs, read_attributes
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_unrelated_module_alias_use_does_not_become_contract_reference() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+import json as j
+import pkcs11_check.testcases._probes.session as sibling
+
+def consume(value):
+    return value
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return consume(j), consume(sibling), attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_helper_free_reflection_remains_baseline_clean() -> None:
+    source = """
+def check(obj, name):
+    return getattr(obj, name, None), obj.__class__
+"""
+
+    assert _violations(source) == []
+
+
+def test_direct_module_helper_use_activates_without_candidate() -> None:
+    source = """
+import pkcs11_check.testcases._probes._attribute_facts as facts
+
+def check(attribute):
+    return facts.emit_missing_attribute(
+        attribute, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+    )
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_noncanonical_helper_import_activates_without_candidate() -> None:
+    source = """
+from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute as emit
+
+def check(attribute):
+    return emit(attribute, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_canonical_helper_import_without_candidate_activates_contract() -> None:
+    source = """
+from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+
+def check(attribute):
+    return attribute
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_canonical_reader_and_key_comparison_do_not_activate_contract() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, attrs):
+    if CKA_MODULUS in attrs:
+        read_attributes(raw, session, handle, [CKA_MODULUS])
+    return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_ordinary_reflection_keeps_canonical_certificate_behavior() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, obj):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    getattr(obj, "unrelated", None)
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_module_wide_global_binder_invalidates_key_ownership() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def writer():
+    global CKA_MODULUS
+    CKA_MODULUS = 1
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+    assert "unstructured_absence" in _kinds(source)
+
+
+def test_nested_local_binders_do_not_invalidate_outer_key_or_context() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def local(CKA_MODULUS, case):
+        return CKA_MODULUS, case
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_helper_free_self_alias_analysis_is_bounded() -> None:
+    """A helper-free self-alias must terminate without unbounded path growth."""
+    source = """
+import pkcs11_check.raw.recipes as reader
+reader = reader.read_attributes
+"""
+    code = (
+        "from tests._attribute_access_guard import analyze_source\n"
+        f"print(analyze_source({source!r}, path='synthetic.py'))\n"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert completed.stdout.strip() == "[]"
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        """if condition:
+    nonlocal case
+    case = 'mutated'""",
+        """try:
+    nonlocal case
+    case = 'mutated'
+except ValueError:
+    pass""",
+        """match condition:
+    case True:
+        nonlocal case
+        case = 'mutated'""",
+    ],
+    ids=["if", "try", "match"],
+)
+def test_nested_nonlocal_context_writer_in_compound_block_rejects_certificate(
+    branch: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case, condition):
+    def writer():
+{textwrap.indent(textwrap.dedent(branch), "        ")}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_nested_global_writer_does_not_invalidate_outer_context() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case, condition):
+    def writer():
+        if condition:
+            global case
+            case = 'mutated'
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+@pytest.mark.parametrize(
+    "binder",
+    [
+        "from another_module import CKA_MODULUS",
+        "def CKA_MODULUS():\n        return None",
+        "class CKA_MODULUS:\n        pass",
+        "try:\n        pass\n    except Exception as CKA_MODULUS:\n        pass",
+        "match object():\n        case CKA_MODULUS:\n            pass",
+        "CKA_MODULUS = object()",
+        "del CKA_MODULUS",
+        "global CKA_MODULUS\n    CKA_MODULUS = object()",
+    ],
+    ids=["import", "function", "class", "exception", "match", "assignment", "delete", "global"],
+)
+def test_rsa_candidate_key_binders_retain_diagnostics(binder: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    {binder}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+@pytest.mark.parametrize(
+    "binder",
+    [
+        "from another_module import case",
+        "def case():\n        return None",
+        "class case:\n        pass",
+        "try:\n        pass\n    except Exception as case:\n        pass",
+        "match object():\n        case case:\n            pass",
+        "case = 'bad'",
+        "del case",
+        "global case\n    case = 'bad'",
+    ],
+    ids=["import", "function", "class", "exception", "match", "assignment", "delete", "global"],
+)
+def test_rsa_candidate_context_binders_retain_diagnostics(binder: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    {binder}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_module_wide_nonlocal_binder_invalidates_key_ownership() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def outer():
+    CKA_MODULUS = 1
+    def writer():
+        nonlocal CKA_MODULUS
+        CKA_MODULUS = 2
+    return writer
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random")
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def _ec_pair_source(pair: str, *, read: str = "[CKA_EC_POINT, CKA_EC_PARAMS]") -> str:
+    return f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+def check(raw, sh, handle):
+    attrs = read_attributes(raw, sh, handle, {read})
+    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+    {pair}
+    return point_value, params_value
+"""
+
+
+def test_canonical_ec_observer_pair_filters_only_observer_taint() -> None:
+    source = _ec_pair_source(
+        'point_value = observe_ec_attribute(attrs, CKA_EC_POINT, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")\n'
+        '    params_value = observe_ec_attribute(attrs, CKA_EC_PARAMS, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")'
+    )
+
+    assert _violations(source) == []
+
+
+def test_canonical_ec_observer_pair_try_reader_is_not_an_admitted_proof() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+def check(raw, sh, handle):
+    try:
+        attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    except LookupError:
+        return None
+    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+    point = observe_ec_attribute(
+        attrs, CKA_EC_POINT, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    params = observe_ec_attribute(
+        attrs, CKA_EC_PARAMS, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    return point, params
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+
+
+@pytest.mark.parametrize(
+    "pair",
+    [
+        'params_value = observe_ec_attribute(attrs, CKA_EC_PARAMS, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")\n'
+        '    point_value = observe_ec_attribute(attrs, CKA_EC_POINT, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")',
+        'point_value = observe_ec_attribute(attrs, CKA_EC_POINT, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")\n'
+        "    marker = object()\n"
+        '    params_value = observe_ec_attribute(attrs, CKA_EC_PARAMS, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")',
+        "point_value = observe_ec_attribute(attrs, CKA_EC_POINT, context=case)\n"
+        '    params_value = observe_ec_attribute(attrs, CKA_EC_PARAMS, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")',
+        'point_value = observe_ec_attribute(attrs, CKA_EC_POINT, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '", extra=True)\n'
+        '    params_value = observe_ec_attribute(attrs, CKA_EC_PARAMS, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")',
+        'point_value = observe_ec_attribute(attrs, CKA_EC_POINT, context="'
+        + "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        + '")',
+    ],
+    ids=["reversed", "intervening", "dynamic-context", "extra-keyword", "partial"],
+)
+def test_malformed_ec_observer_pair_retains_taint_and_contract(pair: str) -> None:
+    source = _ec_pair_source(pair)
+    kinds = _kinds(source)
+
+    assert "child_evidence_contract" in kinds
+    assert "taint_escape" in kinds
+
+
+def test_scalar_ec_missing_evidence_is_not_a_pair_substitute() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT
+
+def check(raw, sh, handle):
+    attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    if CKA_EC_POINT not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(
+            CKA_EC_POINT,
+            protocol="EC_SETUP",
+            context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
+        )
+        return
+    return attrs[CKA_EC_POINT]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+@pytest.mark.parametrize(
+    "reader_defect",
+    [
+        "def check(raw, sh, handle, read_attributes):",
+        "    read_attributes = other_reader",
+        "    def read_attributes(*args):\n        return {}",
+        "    from another_module import read_attributes",
+        "    global read_attributes",
+        "        nonlocal read_attributes",
+    ],
+    ids=["parameter", "assignment", "definition", "import", "global", "nonlocal"],
+)
+def test_ec_observer_pair_reuses_scalar_reader_ownership_proof(reader_defect: str) -> None:
+    if reader_defect.startswith("def check"):
+        source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+{reader_defect}
+    attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+    point = observe_ec_attribute(
+        attrs, CKA_EC_POINT, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    params = observe_ec_attribute(
+        attrs, CKA_EC_PARAMS, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    return point, params
+"""
+    elif reader_defect.startswith("        nonlocal"):
+        source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+def outer():
+    read_attributes = other_reader
+    def check(raw, sh, handle):
+{reader_defect}
+        attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+        from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+        point = observe_ec_attribute(
+            attrs, CKA_EC_POINT, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        )
+        params = observe_ec_attribute(
+            attrs, CKA_EC_PARAMS, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+        )
+        return point, params
+    return check
+"""
+    else:
+        source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+def other_reader(*args):
+    return {{}}
+
+def check(raw, sh, handle):
+{reader_defect}
+    attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+    point = observe_ec_attribute(
+        attrs, CKA_EC_POINT, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    params = observe_ec_attribute(
+        attrs, CKA_EC_PARAMS, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    return point, params
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+
+
+def test_ec_observer_pair_map_name_cannot_conflict_with_reader() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+def check(raw, sh, handle):
+    read_attributes = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+    point = observe_ec_attribute(
+        read_attributes,
+        CKA_EC_POINT,
+        context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
+    )
+    params = observe_ec_attribute(
+        read_attributes,
+        CKA_EC_PARAMS,
+        context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
+    )
+    return point, params
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+
+
+def test_testcases_parent_alias_direct_helper_activates_contract() -> None:
+    source = """
+from pkcs11_check import testcases as tc
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        tc._probes._attribute_facts.emit_missing_attribute(
+            CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+        )
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_probe_alias_assignment_direct_helper_activates_contract() -> None:
+    source = """
+import pkcs11_check.testcases._probes as probes
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+facts = probes._attribute_facts
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        facts.emit_missing_attribute(
+            CKA_MODULUS, protocol="RSA_ATTRIBUTE", context="decrypt:pkcs:random"
+        )
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_probe_alias_assignment_module_reference_activates_contract() -> None:
+    source = """
+import pkcs11_check.testcases._probes as probes
+
+facts = probes._attribute_facts
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_testcases_parent_alias_direct_observer_activates_contract() -> None:
+    source = """
+from pkcs11_check import testcases as tc
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_EC_PARAMS
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    point = tc._probes._attribute_facts.observe_ec_attribute(
+        attrs, CKA_EC_POINT, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    params = tc._probes._attribute_facts.observe_ec_attribute(
+        attrs, CKA_EC_PARAMS, context="ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+    )
+    return point, params
+"""
+
+    assert "child_evidence_contract" in _kinds(source)
+
+
+def test_rsa_context_parameter_ignores_unrelated_module_case_binding() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+case = "module value"
+
+def check(raw, session, handle, case):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_rsa_context_parameter_ignores_unrelated_closure_nonlocal_case() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def unrelated():
+    case = "unrelated"
+    def writer():
+        nonlocal case
+        case = "changed"
+    return writer
+
+def check(raw, session, handle, case):
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_rsa_context_nested_nonlocal_targeting_candidate_remains_rejected() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def writer():
+        nonlocal case
+        case = "changed"
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+def test_rsa_context_nested_nonlocal_shadow_cell_does_not_reject_candidate() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        case = "shadow"
+        def writer():
+            nonlocal case
+            case = "changed"
+        return writer
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert _violations(source) == []
+
+
+def test_rsa_context_nested_class_shadow_cell_does_not_reject_candidate() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        case = "shadow"
+        class Nested:
+            nonlocal case
+            case = "changed"
+        return Nested
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert analyze_source(source) == []
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        "unused = (case for case in ())",
+        'unused = lambda: (case := "shadow")',
+    ],
+    ids=["generator", "lambda"],
+)
+def test_rsa_context_nested_nonlocal_ignores_inner_comprehension_and_lambda_binders(
+    intervening: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        {intervening}
+        def writer():
+            nonlocal case
+            case = "changed"
+        return writer
+    outer()()
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        'unused = lambda arg=(case := "shadow"): arg',
+        'unused = [(case := "shadow") for _ in ()]',
+        'unused = {(case := "shadow") for _ in ()}',
+        'unused = {_: (case := "shadow") for _ in ()}',
+        'unused = (case := "shadow" for _ in ())',
+        'unused = [(lambda arg=(case := "shadow"): arg) for _ in ()]',
+        'unused = (lambda arg=(case := "shadow"): arg for _ in ())',
+    ],
+    ids=[
+        "lambda-default",
+        "list-walrus",
+        "set-walrus",
+        "dict-walrus",
+        "generator-walrus",
+        "list-lambda-default-walrus",
+        "generator-lambda-default-walrus",
+    ],
+)
+def test_rsa_context_nested_nonlocal_respects_enclosing_walrus_binders(
+    intervening: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        {intervening}
+        def writer():
+            nonlocal case
+            case = "changed"
+        return writer
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert analyze_source(source) == []
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        'unused = [lambda: (case := "shadow") for _ in ()]',
+        'unused = lambda arg=(lambda: (case := "shadow")): arg',
+    ],
+    ids=["lambda-body-in-comprehension", "lambda-body-in-default"],
+)
+def test_rsa_context_nested_nonlocal_rejects_nested_lambda_binders(
+    intervening: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        {intervening}
+        def writer():
+            nonlocal case
+            case = "changed"
+        return writer
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        "unused = [case for case in ()]",
+        "unused = {case for case in ()}",
+        "unused = {case: case for case in ()}",
+    ],
+    ids=["list-target", "set-target", "dict-target"],
+)
+def test_rsa_context_nested_nonlocal_respects_inlined_comprehension_cell(
+    intervening: str,
+) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        {intervening}
+        def writer():
+            nonlocal case
+            case = "changed"
+        return writer
+    outer()()
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert analyze_source(source) == []
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        "unused = [case for case in ()]",
+        "unused = {case for case in ()}",
+        "unused = {case: case for case in ()}",
+        "unused = (case for case in ())",
+    ],
+    ids=["list-target", "set-target", "dict-target", "generator-target"],
+)
+def test_rsa_context_nested_nonlocal_with_load_targets_candidate(intervening: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    def outer():
+        before = case
+        {intervening}
+        def writer():
+            nonlocal case
+            case = "changed"
+        return writer
+    outer()()
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        "unused = [case for case in ()]",
+        "unused = {case for case in ()}",
+        "unused = {case: case for case in ()}",
+        "unused = (case for case in ())",
+        'class Nested:\n        case = "shadow"',
+        "unused = lambda case: case",
+        'unused = lambda: (case := "shadow")',
+    ],
+    ids=["list", "set", "dict", "generator", "class", "lambda-parameter", "lambda-body"],
+)
+def test_rsa_context_direct_nested_binders_do_not_mutate_parameter(intervening: str) -> None:
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def check(raw, session, handle, case):
+    {intervening}
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    assert analyze_source(source) == []
+
+
+def test_strict_compiler_syntax_error_preserves_baseline_findings() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+def unrelated():
+    nonlocal unresolved
+
+def check(raw, session, handle, case):
+    unsafe = read_attributes(raw, session, handle, [CKA_MODULUS]).get(CKA_MODULUS)
+    attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+    if CKA_MODULUS not in attrs:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+        return
+    return attrs[CKA_MODULUS]
+"""
+
+    violations = analyze_source(source)
+    kinds = [violation.code for violation in violations]
+    assert "unsafe_get" in kinds
+    assert "unstructured_absence" in kinds
+    assert "child_evidence_contract" in kinds
+    assert "syntax_error" not in kinds
+    assert any(
+        violation.code == "child_evidence_contract" and violation.line == 11
+        for violation in violations
+    )
+
+
+def test_helper_free_source_has_no_semantic_compiler_gate() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def unrelated():
+    nonlocal unresolved
+
+def check(raw, session, handle):
+    return read_attributes(raw, session, handle, [CKA_MODULUS]).get(CKA_MODULUS)
+"""
+
+    assert _kinds(source) == ["unsafe_get"]
+
+
+@pytest.mark.parametrize("declaration", ["global case", "nonlocal case"])
+def test_rsa_context_outward_declaration_in_candidate_retain_diagnostics(
+    declaration: str,
+) -> None:
+    prefix = "" if declaration.startswith("global") else "def outer():\n    case = 'outer'\n\n    "
+    indent = "    " if declaration.startswith("global") else "        "
+    source = f"""
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_MODULUS
+
+{prefix}def check(raw, session, handle, case):
+{indent}{declaration}
+{indent}attrs = read_attributes(raw, session, handle, [CKA_MODULUS])
+{indent}if CKA_MODULUS not in attrs:
+{indent}    from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+{indent}    emit_missing_attribute(CKA_MODULUS, protocol="RSA_ATTRIBUTE", context=case)
+{indent}    return
+{indent}return attrs[CKA_MODULUS]
+"""
+
+    kinds = _kinds(source)
+    assert "child_evidence_contract" in kinds
+    assert "unstructured_absence" in kinds

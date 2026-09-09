@@ -17,13 +17,30 @@ from __future__ import annotations
 
 import ast
 import re
+import symtable
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 from typing import Final
 
 _RECIPES_MODULE: Final = "pkcs11_check.raw.recipes"
 _ATTRIBUTE_HELPER_MODULE: Final = "pkcs11_check.testcases._attribute_values"
+_ATTRIBUTE_FACTS_MODULE: Final = "pkcs11_check.testcases._probes._attribute_facts"
+_ATTRIBUTE_PROBES_MODULE: Final = "pkcs11_check.testcases._probes"
+_STRICT_RELEVANT_MODULE_PATHS: Final = frozenset(
+    {
+        "pkcs11_check",
+        "pkcs11_check.testcases",
+        _ATTRIBUTE_PROBES_MODULE,
+        _ATTRIBUTE_FACTS_MODULE,
+        f"{_ATTRIBUTE_FACTS_MODULE}.emit_missing_attribute",
+        f"{_ATTRIBUTE_FACTS_MODULE}.observe_ec_attribute",
+    }
+)
+_ATTRIBUTE_FACT_HELPER: Final = "emit_missing_attribute"
+_ATTRIBUTE_OBSERVER_HELPER: Final = "observe_ec_attribute"
+_TYPES_MODULE: Final = "pkcs11_check.raw.types_std"
 _CLASSIFICATION_MODULE: Final = "pkcs11_check.classification"
 _KNOWN_MODULES: Final = frozenset(
     {_RECIPES_MODULE, _ATTRIBUTE_HELPER_MODULE, _CLASSIFICATION_MODULE}
@@ -332,6 +349,1095 @@ def _expr_text(node: ast.AST) -> str:
 
 def _key_text(node: ast.AST) -> str:
     return _expr_text(node).strip()
+
+
+_CHILD_KEYS: Final = frozenset({"CKA_MODULUS", "CKA_EC_POINT", "CKA_EC_PARAMS"})
+_RSA_CONTEXTS: Final = frozenset(
+    f"decrypt:{mechanism}:{variant}"
+    for mechanism in ("pkcs", "oaep")
+    for variant in ("random", "truncated", "extended", "all_zeros", "all_ff")
+)
+_EC_CONTEXT: Final = "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+_UAF_CONTEXT: Final = "derive"
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildEvidenceContract:
+    approved: frozenset[tuple[int, int]]
+    violations: tuple[Violation, ...]
+    observer_approved: frozenset[tuple[int, int, str]] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildCandidate:
+    node: ast.If
+    import_node: ast.ImportFrom
+    call_node: ast.Call
+
+
+@dataclass(frozen=True, slots=True)
+class _EcPairCandidate:
+    import_node: ast.ImportFrom
+    calls: tuple[ast.Call, ast.Call]
+    reader: ast.Call
+
+
+def _strict_top_level_function(
+    node: ast.AST, parents: Mapping[int, ast.AST]
+) -> ast.FunctionDef | None:
+    if not isinstance(node, ast.FunctionDef) or not isinstance(parents.get(id(node)), ast.Module):
+        return None
+    if (
+        node.decorator_list
+        or node.args.defaults
+        or any(default is not None for default in node.args.kw_defaults)
+        or node.args.vararg is not None
+        or node.args.kwarg is not None
+        or getattr(node, "type_params", [])
+    ):
+        return None
+    return node
+
+
+def _strict_is_canonical_reader_import(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.ImportFrom)
+        and node.module == _RECIPES_MODULE
+        and node.level == 0
+        and len(node.names) == 1
+        and node.names[0].name == "read_attributes"
+        and node.names[0].asname is None
+    )
+
+
+def _strict_scope_nodes(root: ast.AST) -> Iterable[ast.AST]:
+    """Walk ownership-relevant syntax without entering nested function bodies."""
+    stack: list[tuple[ast.AST, bool]] = [(root, True)]
+    while stack:
+        node, is_root = stack.pop()
+        yield node
+        if not is_root and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            children: list[ast.AST] = [*node.decorator_list, *node.args.defaults]
+            children.extend(default for default in node.args.kw_defaults if default is not None)
+            children.extend(
+                argument.annotation
+                for argument in (
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    *node.args.kwonlyargs,
+                )
+                if argument.annotation is not None
+            )
+            if node.args.vararg is not None and node.args.vararg.annotation is not None:
+                children.append(node.args.vararg.annotation)
+            if node.args.kwarg is not None and node.args.kwarg.annotation is not None:
+                children.append(node.args.kwarg.annotation)
+            if node.returns is not None:
+                children.append(node.returns)
+            children.extend(getattr(node, "type_params", ()))
+            stack.extend((child, False) for child in children)
+            continue
+        if not is_root and isinstance(node, ast.Lambda):
+            children = list(node.args.defaults)
+            children.extend(default for default in node.args.kw_defaults if default is not None)
+            stack.extend((child, False) for child in children)
+            continue
+        stack.extend((child, False) for child in ast.iter_child_nodes(node))
+
+
+def _strict_key_owned(tree: ast.Module, function: ast.FunctionDef, key: str) -> bool:
+    imports = [
+        alias
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module == _TYPES_MODULE and node.level == 0
+        for alias in node.names
+        if alias.name == key and alias.asname is None
+    ]
+    if len(imports) != 1:
+        return False
+    return _strict_name_owned(
+        tree,
+        function,
+        key,
+        canonical_aliases=frozenset({id(imports[0])}),
+    )
+
+
+def _strict_module_declares(tree: ast.Module, name: str) -> bool:
+    """Return whether any lexical scope declares an outward binding for ``name``."""
+    return any(
+        isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
+        for node in ast.walk(tree)
+    )
+
+
+class _StrictScopeFactsIndex:
+    """Index direct binder sites and declarations by AST scope identity."""
+
+    def __init__(self, root: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.declarations: dict[int, set[str]] = {}
+        self.node_scopes: dict[int, int | None] = {}
+        self.unsupported = False
+        self._dispatch(root, None, None, None, None)
+
+    def _new_scope(self, node: ast.AST) -> int:
+        scope = id(node)
+        self.declarations[scope] = set()
+        return scope
+
+    def _dispatch(
+        self,
+        node: ast.AST,
+        scope: int | None,
+        walrus_scope: int | None,
+        defining_scope: int | None,
+        eager_walrus_scope: int | None,
+    ) -> None:
+        """Dispatch every visited node with its lexical ownership context."""
+        self.node_scopes[id(node)] = scope
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self._dispatch_function(node, scope, walrus_scope)
+            return
+        if isinstance(node, ast.ClassDef):
+            self._dispatch_class(node, scope, walrus_scope)
+            return
+        if isinstance(node, ast.Lambda):
+            self._dispatch_lambda(node, scope, walrus_scope)
+            return
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            self._dispatch_comprehension(node, scope, walrus_scope)
+            return
+        if isinstance(node, ast.comprehension):
+            self._dispatch_comprehension_clause(node, scope, walrus_scope)
+            return
+        if isinstance(node, ast.arguments):
+            self._dispatch_arguments(node, scope, defining_scope, eager_walrus_scope)
+            return
+        if isinstance(node, ast.arg):
+            if node.annotation is not None:
+                self._dispatch(
+                    node.annotation,
+                    defining_scope,
+                    eager_walrus_scope,
+                    defining_scope,
+                    eager_walrus_scope,
+                )
+            return
+        if isinstance(node, ast.NamedExpr):
+            self._dispatch(node.value, scope, walrus_scope, scope, eager_walrus_scope)
+            self._dispatch(
+                node.target,
+                walrus_scope,
+                walrus_scope,
+                walrus_scope,
+                walrus_scope,
+            )
+            return
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            if scope is not None:
+                self.declarations[scope].update(node.names)
+            return
+        if isinstance(node, (ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple)):
+            for child in ast.iter_child_nodes(node):
+                self._dispatch(
+                    child,
+                    defining_scope,
+                    eager_walrus_scope,
+                    defining_scope,
+                    eager_walrus_scope,
+                )
+            return
+        elif isinstance(node, ast.TypeAlias) and node.type_params:
+            self.unsupported = True
+        for child in ast.iter_child_nodes(node):
+            self._dispatch(child, scope, walrus_scope, defining_scope, eager_walrus_scope)
+
+    def _dispatch_function(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        parent: int | None,
+        walrus_scope: int | None,
+    ) -> None:
+        scope = self._new_scope(node)
+        for decorator in node.decorator_list:
+            self._dispatch(decorator, parent, walrus_scope, parent, walrus_scope)
+        self._dispatch(node.args, scope, scope, parent, walrus_scope)
+        for type_param in getattr(node, "type_params", ()):
+            self._dispatch(type_param, scope, scope, parent, walrus_scope)
+        if node.returns is not None:
+            self._dispatch(node.returns, parent, walrus_scope, parent, walrus_scope)
+        for statement in node.body:
+            self._dispatch(statement, scope, scope, scope, scope)
+
+    def _dispatch_class(
+        self,
+        node: ast.ClassDef,
+        parent: int | None,
+        walrus_scope: int | None,
+    ) -> None:
+        scope = self._new_scope(node)
+        for eager_expression in (*node.decorator_list, *node.bases, *node.keywords):
+            self._dispatch(eager_expression, parent, walrus_scope, parent, walrus_scope)
+        for type_param in getattr(node, "type_params", ()):
+            self._dispatch(type_param, scope, scope, parent, walrus_scope)
+        for statement in node.body:
+            self._dispatch(statement, scope, scope, scope, scope)
+
+    def _dispatch_lambda(
+        self,
+        node: ast.Lambda,
+        parent: int | None,
+        walrus_scope: int | None,
+    ) -> None:
+        scope = self._new_scope(node)
+        self._dispatch(node.args, scope, scope, parent, walrus_scope)
+        self._dispatch(node.body, scope, scope, scope, scope)
+
+    def _dispatch_comprehension(
+        self,
+        node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+        parent: int | None,
+        walrus_scope: int | None,
+    ) -> None:
+        scope = self._new_scope(node)
+        if isinstance(node, ast.DictComp):
+            self._dispatch(node.key, scope, walrus_scope, scope, walrus_scope)
+            self._dispatch(node.value, scope, walrus_scope, scope, walrus_scope)
+        else:
+            self._dispatch(node.elt, scope, walrus_scope, scope, walrus_scope)
+        for child in node.generators:
+            self._dispatch(child, scope, walrus_scope, scope, walrus_scope)
+
+    def _dispatch_comprehension_clause(
+        self,
+        node: ast.comprehension,
+        scope: int | None,
+        walrus_scope: int | None,
+    ) -> None:
+        self._dispatch(node.target, scope, scope, scope, scope)
+        self._dispatch(node.iter, scope, walrus_scope, scope, walrus_scope)
+        for child in node.ifs:
+            self._dispatch(child, scope, walrus_scope, scope, walrus_scope)
+
+    def _dispatch_arguments(
+        self,
+        node: ast.arguments,
+        scope: int | None,
+        defining_scope: int | None,
+        eager_walrus_scope: int | None,
+    ) -> None:
+        arguments = (
+            *node.posonlyargs,
+            *node.args,
+            *node.kwonlyargs,
+        )
+        for argument in arguments:
+            self._dispatch(
+                argument,
+                scope,
+                scope,
+                defining_scope,
+                eager_walrus_scope,
+            )
+        if node.vararg is not None:
+            self._dispatch(
+                node.vararg,
+                scope,
+                scope,
+                defining_scope,
+                eager_walrus_scope,
+            )
+        if node.kwarg is not None:
+            self._dispatch(
+                node.kwarg,
+                scope,
+                scope,
+                defining_scope,
+                eager_walrus_scope,
+            )
+        for default in (*node.defaults, *(item for item in node.kw_defaults if item is not None)):
+            self._dispatch(
+                default,
+                defining_scope,
+                eager_walrus_scope,
+                defining_scope,
+                eager_walrus_scope,
+            )
+
+    def function_declarations(self, function: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+        return self.declarations[id(function)]
+
+
+class _StrictNonlocalOwnership(Enum):
+    CLEAN = "clean"
+    TARGETED = "targeted"
+    UNKNOWN = "unknown"
+
+
+def _strict_table_kind(table: symtable.SymbolTable) -> str:
+    """Normalize the public 3.12 string and 3.13 enum scope types."""
+    kind = table.get_type()
+    return str(kind.value) if isinstance(kind, Enum) else kind
+
+
+class _StrictCompilerScopes:
+    """Lazily resolve explicit nonlocals using full-source compiler ownership."""
+
+    def __init__(self, source: str, path: str) -> None:
+        self.source = source
+        self.path = path
+        self.loaded = False
+        self.module: symtable.SymbolTable | None = None
+
+    def match(self, function: ast.FunctionDef) -> symtable.SymbolTable | None:
+        if not self.loaded:
+            self.loaded = True
+            try:
+                self.module = symtable.symtable(self.source, self.path, "exec")
+            except SyntaxError:
+                # AST analysis still supplies the original unsafe/absence findings.
+                self.module = None
+        if self.module is None:
+            return None
+        matches = [
+            table
+            for table in self.module.get_children()
+            if _strict_table_kind(table) == "function"
+            and table.get_name() == function.name
+            and table.get_lineno() == function.lineno
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def nonlocal_ownership(self, function: ast.FunctionDef, name: str) -> _StrictNonlocalOwnership:
+        table = self.match(function)
+        if table is None:
+            return _StrictNonlocalOwnership.UNKNOWN
+
+        def relevant(scope: symtable.SymbolTable) -> bool:
+            return name in scope.get_identifiers() or any(
+                relevant(child) for child in scope.get_children()
+            )
+
+        def scan(scope: symtable.SymbolTable, candidate_owner: bool) -> _StrictNonlocalOwnership:
+            result = _StrictNonlocalOwnership.CLEAN
+            for child in scope.get_children():
+                kind = _strict_table_kind(child)
+                if kind not in {"function", "class"}:
+                    if relevant(child):
+                        result = _StrictNonlocalOwnership.UNKNOWN
+                    continue
+                child_owner = candidate_owner
+                if name in child.get_identifiers():
+                    symbol = child.lookup(name)
+                    if symbol.is_nonlocal() and candidate_owner:
+                        return _StrictNonlocalOwnership.TARGETED
+                    # Classes do not supply enclosing function cells, even when
+                    # their own namespace binds or declares the same spelling.
+                    if kind == "function":
+                        if symbol.is_global():
+                            child_owner = False
+                        elif symbol.is_free() or symbol.is_nonlocal():
+                            child_owner = candidate_owner
+                        elif symbol.is_local() or symbol.is_parameter() or symbol.is_imported():
+                            child_owner = False
+                        else:
+                            result = _StrictNonlocalOwnership.UNKNOWN
+                nested = scan(child, child_owner)
+                if nested == _StrictNonlocalOwnership.TARGETED:
+                    return nested
+                if nested == _StrictNonlocalOwnership.UNKNOWN:
+                    result = nested
+            return result
+
+        return scan(table, True)
+
+
+def _strict_name_owned(
+    tree: ast.Module,
+    function: ast.FunctionDef,
+    name: str,
+    *,
+    allowed_args: frozenset[int] = frozenset(),
+    canonical_aliases: frozenset[int] = frozenset(),
+    lexical_scope_only: bool = False,
+) -> bool:
+    """Check one protected simple name with bounded lexical binder coverage."""
+    scope_facts = _StrictScopeFactsIndex(function) if lexical_scope_only else None
+    if not lexical_scope_only and _strict_module_declares(tree, name):
+        return False
+    if scope_facts is not None and scope_facts.unsupported:
+        return False
+    if scope_facts is not None and name in scope_facts.function_declarations(function):
+        return False
+    scopes: tuple[Iterable[ast.AST], ...] = (
+        ast.walk(function) if lexical_scope_only else _strict_scope_nodes(function),
+    )
+    if not lexical_scope_only:
+        scopes = (*scopes, _strict_scope_nodes(tree))
+    for node in (item for scope in scopes for item in scope):
+        if scope_facts is not None and scope_facts.node_scopes.get(id(node)) != id(function):
+            continue
+        if isinstance(node, ast.arg) and node.arg == name:
+            if id(node) not in allowed_args:
+                return False
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if id(alias) in canonical_aliases:
+                    continue
+                bound = alias.asname or alias.name.split(".", 1)[0]
+                if alias.name == "*" or alias.name == name or bound == name:
+                    return False
+        elif (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return False
+        elif isinstance(node, ast.ExceptHandler) and node.name == name:
+            return False
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                return False
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar, ast.MatchMapping)) and (
+            getattr(node, "name", None) == name or getattr(node, "rest", None) == name
+        ):
+            return False
+    return True
+
+
+def _strict_reader_owned(
+    tree: ast.Module,
+    function: ast.FunctionDef,
+    parents: Mapping[int, ast.AST],
+) -> bool:
+    imports = [node for node in tree.body if _strict_is_canonical_reader_import(node)]
+    if len(imports) != 1:
+        return False
+    canonical_import = imports[0]
+    if not isinstance(canonical_import, ast.ImportFrom):
+        return False
+    if not _strict_name_owned(
+        tree,
+        function,
+        "read_attributes",
+        canonical_aliases=frozenset({id(canonical_import.names[0])}),
+    ):
+        return False
+    for node in (*_strict_scope_nodes(tree), *_strict_scope_nodes(function)):
+        if isinstance(node, ast.Name) and node.id == "read_attributes":
+            parent = parents.get(id(node))
+            if not (
+                isinstance(node.ctx, ast.Load)
+                and isinstance(parent, ast.Call)
+                and parent.func is node
+            ):
+                return False
+    return True
+
+
+def _strict_map_owned(function: ast.FunctionDef, map_name: str, assignment: ast.Assign) -> bool:
+    if map_name == "read_attributes":
+        return False
+    binding_count = 0
+    for node in _strict_scope_nodes(function):
+        if (
+            isinstance(node, ast.Name)
+            and node.id == map_name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            if id(node) != id(assignment.targets[0]):
+                binding_count += 1
+        elif isinstance(node, ast.arg) and node.arg == map_name:
+            return False
+        elif isinstance(node, (ast.Global, ast.Nonlocal)) and map_name in node.names:
+            return False
+        elif isinstance(node, ast.ExceptHandler) and node.name == map_name:
+            return False
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == map_name:
+                return False
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar, ast.MatchMapping)) and (
+            getattr(node, "name", None) == map_name or getattr(node, "rest", None) == map_name
+        ):
+            return False
+        elif isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+            alias.name == "*" or (alias.asname or alias.name.split(".", 1)[0]) == map_name
+            for alias in node.names
+        ):
+            return False
+    return binding_count == 0
+
+
+def _strict_read_assignment(
+    statement: ast.stmt,
+    *,
+    map_name: str,
+    requested: tuple[str, ...] | None = None,
+    required_key: str | None = None,
+) -> tuple[ast.Assign, ast.Call] | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    if not isinstance(target, ast.Name) or target.id != map_name:
+        return None
+    call = statement.value
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "read_attributes"
+        and not call.keywords
+        and len(call.args) == 4
+        and all(not isinstance(argument, ast.Starred) for argument in call.args)
+        and isinstance(call.args[3], ast.List)
+        and all(isinstance(element, ast.Name) for element in call.args[3].elts)
+    ):
+        return None
+    requested_list = call.args[3]
+    assert isinstance(requested_list, ast.List)
+    names = tuple(element.id for element in requested_list.elts if isinstance(element, ast.Name))
+    if requested is not None and names != requested:
+        return None
+    if required_key is not None and required_key not in names:
+        return None
+    return statement, call
+
+
+def _strict_nested(statement: ast.stmt) -> bool:
+    return any(
+        isinstance(
+            node,
+            (
+                ast.If,
+                ast.For,
+                ast.AsyncFor,
+                ast.While,
+                ast.Try,
+                ast.TryStar,
+                ast.With,
+                ast.AsyncWith,
+                ast.Match,
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+                ast.IfExp,
+                ast.BoolOp,
+                ast.NamedExpr,
+                ast.Await,
+                ast.Yield,
+                ast.YieldFrom,
+                ast.TypeAlias,
+            ),
+        )
+        for node in ast.walk(statement)
+    )
+
+
+def _strict_context_is_valid(
+    context: ast.expr,
+    *,
+    protocol: str,
+    function: ast.FunctionDef,
+    tree: ast.Module,
+    compiler: _StrictCompilerScopes,
+) -> bool:
+    if protocol == "RSA_ATTRIBUTE":
+        if isinstance(context, ast.Constant) and isinstance(context.value, str):
+            return context.value in _RSA_CONTEXTS
+        if not isinstance(context, ast.Name):
+            return False
+        ordinary = (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)
+        matching = tuple(argument for argument in ordinary if argument.arg == context.id)
+        if len(matching) != 1:
+            return False
+        return (
+            _strict_name_owned(
+                tree,
+                function,
+                context.id,
+                allowed_args=frozenset({id(matching[0])}),
+                lexical_scope_only=True,
+            )
+            and compiler.nonlocal_ownership(function, context.id) == _StrictNonlocalOwnership.CLEAN
+        )
+    expected = _UAF_CONTEXT if protocol == "UAF" else _EC_CONTEXT
+    return isinstance(context, ast.Constant) and context.value == expected
+
+
+def _strict_scalar_candidate(
+    tree: ast.Module,
+    node: ast.If,
+    parents: Mapping[int, ast.AST],
+    compiler: _StrictCompilerScopes,
+) -> tuple[_ChildCandidate | None, str | None]:
+    if not isinstance(node.test, ast.Compare) or len(node.test.ops) != 1:
+        return None, None
+    if not isinstance(node.test.left, ast.Name) or node.test.left.id not in _CHILD_KEYS:
+        return None, None
+    if len(node.test.comparators) != 1 or not isinstance(node.test.comparators[0], ast.Name):
+        return None, None
+    operator = node.test.ops[0]
+    if not isinstance(operator, (ast.In, ast.NotIn)):
+        return None, None
+    branch = node.body if isinstance(operator, ast.NotIn) else node.orelse
+    if not branch:
+        return None, "missing branch is empty"
+    key = node.test.left.id
+    import_node = branch[0]
+    if not (
+        isinstance(import_node, ast.ImportFrom)
+        and import_node.module == _ATTRIBUTE_FACTS_MODULE
+        and import_node.level == 0
+        and len(import_node.names) == 1
+        and import_node.names[0].name == _ATTRIBUTE_FACT_HELPER
+        and import_node.names[0].asname is None
+    ):
+        return None, None
+    if (
+        len(branch) < 3
+        or not isinstance(branch[1], ast.Expr)
+        or not isinstance(branch[1].value, ast.Call)
+    ):
+        return None, "missing branch does not start with a direct evidence call"
+    call = branch[1].value
+    if not (
+        isinstance(call.func, ast.Name)
+        and call.func.id == _ATTRIBUTE_FACT_HELPER
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == key
+        and len(call.keywords) == 2
+        and [keyword.arg for keyword in call.keywords] == ["protocol", "context"]
+        and all(keyword.arg is not None for keyword in call.keywords)
+    ):
+        return None, "missing branch evidence call is not canonical"
+    protocol_value = call.keywords[0].value
+    context_value = call.keywords[1].value
+    if not isinstance(protocol_value, ast.Constant) or not isinstance(protocol_value.value, str):
+        return None, "evidence protocol is not a literal"
+    protocol = protocol_value.value
+    if key == "CKA_MODULUS":
+        valid_protocol = protocol == "RSA_ATTRIBUTE"
+    elif key == "CKA_EC_POINT":
+        valid_protocol = protocol == "UAF"
+    else:
+        valid_protocol = False
+    if not valid_protocol:
+        return None, "evidence protocol does not match key"
+    scope = _strict_scope_for(node, parents)
+    function = _strict_top_level_function(scope, parents)
+    if function is None or not _strict_context_is_valid(
+        context_value, protocol=protocol, function=function, tree=tree, compiler=compiler
+    ):
+        return None, "evidence context is not canonical"
+    if any(
+        isinstance(statement, (ast.Return, ast.Continue, ast.Break, ast.Raise))
+        or _strict_nested(statement)
+        for statement in branch[2:-1]
+    ) or not isinstance(branch[-1], (ast.Return, ast.Continue)):
+        return None, "missing branch is not flat and terminal"
+    guard_index = next((index for index, item in enumerate(function.body) if item is node), None)
+    if guard_index is None or guard_index == 0:
+        return None, "reader assignment does not immediately precede guard"
+    map_name = node.test.comparators[0].id
+    reader = _strict_read_assignment(
+        function.body[guard_index - 1], map_name=map_name, required_key=key
+    )
+    if reader is None:
+        return None, "guarded map lacks direct reader assignment"
+    assignment, _reader_call = reader
+    if not _strict_reader_owned(tree, function, parents):
+        return None, "reader ownership is not canonical"
+    if not _strict_map_owned(function, map_name, assignment):
+        return None, "mapping ownership is not canonical"
+    if not _strict_key_owned(tree, function, key):
+        return None, "key ownership is not canonical"
+    if compiler.match(function) is None:
+        return None, "compiler scope ownership is unknown"
+    return _ChildCandidate(node, import_node, call), None
+
+
+def _strict_scope_for(node: ast.AST, parents: Mapping[int, ast.AST]) -> ast.AST:
+    current = node
+    while True:
+        parent = parents.get(id(current))
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.Module)):
+            return parent
+        if parent is None:
+            return current
+        current = parent
+
+
+def _strict_observer_call(
+    statement: ast.stmt,
+    *,
+    attrs_name: str,
+    key: str,
+    target_name: str | None,
+) -> ast.Call | None:
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    if not isinstance(target, ast.Name) or (target_name is not None and target.id != target_name):
+        return None
+    call = statement.value
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == _ATTRIBUTE_OBSERVER_HELPER
+        and len(call.args) == 2
+        and all(not isinstance(argument, ast.Starred) for argument in call.args)
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == attrs_name
+        and isinstance(call.args[1], ast.Name)
+        and call.args[1].id == key
+        and len(call.keywords) == 1
+        and call.keywords[0].arg == "context"
+        and isinstance(call.keywords[0].value, ast.Constant)
+        and call.keywords[0].value.value == _EC_CONTEXT
+    ):
+        return None
+    return call
+
+
+def _strict_pair_candidates(
+    tree: ast.Module,
+    parents: Mapping[int, ast.AST],
+    compiler: _StrictCompilerScopes,
+) -> tuple[list[_EcPairCandidate], list[tuple[ast.AST, str]]]:
+    candidates: list[_EcPairCandidate] = []
+    rejected: list[tuple[ast.AST, str]] = []
+    for node in ast.walk(tree):
+        function = _strict_top_level_function(node, parents)
+        if function is None:
+            continue
+        body = function.body
+        for index in range(len(body) - 3):
+            imported = body[index + 1]
+            if not (
+                isinstance(imported, ast.ImportFrom)
+                and imported.module == _ATTRIBUTE_FACTS_MODULE
+                and imported.level == 0
+                and len(imported.names) == 1
+                and imported.names[0].name == _ATTRIBUTE_OBSERVER_HELPER
+                and imported.names[0].asname is None
+            ):
+                continue
+            read_statement = body[index]
+            map_name = ""
+            if (
+                isinstance(read_statement, ast.Assign)
+                and len(read_statement.targets) == 1
+                and isinstance(read_statement.targets[0], ast.Name)
+            ):
+                map_name = read_statement.targets[0].id
+            read = _strict_read_assignment(
+                read_statement,
+                map_name=map_name,
+                requested=("CKA_EC_POINT", "CKA_EC_PARAMS"),
+            )
+            if read is None:
+                rejected.append((imported, "observer pair lacks a direct reader assignment"))
+                continue
+            assignment, reader_call = read
+            if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name):
+                rejected.append((imported, "observer mapping target is not a simple name"))
+                continue
+            attrs_name = assignment.targets[0].id
+            point = _strict_observer_call(
+                body[index + 2],
+                attrs_name=attrs_name,
+                key="CKA_EC_POINT",
+                target_name=None,
+            )
+            params = _strict_observer_call(
+                body[index + 3],
+                attrs_name=attrs_name,
+                key="CKA_EC_PARAMS",
+                target_name=None,
+            )
+            if point is None or params is None:
+                rejected.append(
+                    (imported, "observer pair is not an exact point-then-params envelope")
+                )
+                continue
+            point_statement = body[index + 2]
+            params_statement = body[index + 3]
+            if not isinstance(point_statement, ast.Assign) or not isinstance(
+                params_statement, ast.Assign
+            ):
+                rejected.append((imported, "observer targets are not assignments"))
+                continue
+            if len(point_statement.targets) != 1 or len(params_statement.targets) != 1:
+                rejected.append((imported, "observer targets are not distinct simple names"))
+                continue
+            point_target = point_statement.targets[0]
+            params_target = params_statement.targets[0]
+            if (
+                not isinstance(point_target, ast.Name)
+                or not isinstance(params_target, ast.Name)
+                or point_target.id == params_target.id
+                or point_target.id == attrs_name
+                or params_target.id == attrs_name
+            ):
+                rejected.append((imported, "observer targets are not distinct simple names"))
+                continue
+            if not _strict_reader_owned(tree, function, parents):
+                rejected.append((imported, "reader ownership is not canonical"))
+                continue
+            if not _strict_map_owned(function, attrs_name, assignment):
+                rejected.append((imported, "mapping ownership is not canonical"))
+                continue
+            if any(
+                not _strict_key_owned(tree, function, key) for key in _CHILD_KEYS - {"CKA_MODULUS"}
+            ):
+                rejected.append((imported, "key ownership is not canonical"))
+                continue
+            if compiler.match(function) is None:
+                rejected.append((imported, "compiler scope ownership is unknown"))
+                continue
+            candidates.append(_EcPairCandidate(imported, (point, params), reader_call))
+    return candidates, rejected
+
+
+def _strict_module_aliases(tree: ast.Module) -> dict[str, tuple[str, ...]]:
+    """Collect bounded package aliases without discarding same-spelling alternatives."""
+    aliases: dict[str, list[str]] = {}
+
+    def add_alias(bound: str, path: str) -> bool:
+        if path not in _STRICT_RELEVANT_MODULE_PATHS:
+            return False
+        paths = aliases.setdefault(bound, [])
+        if path in paths:
+            return False
+        paths.append(path)
+        return True
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if not (alias.name == "pkcs11_check" or alias.name.startswith("pkcs11_check.")):
+                    continue
+                bound = alias.asname or alias.name.split(".", 1)[0]
+                add_alias(bound, alias.name if alias.asname else bound)
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("pkcs11_check"):
+            module = node.module or ""
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                add_alias(alias.asname or alias.name, f"{module}.{alias.name}")
+
+    # A simple module assignment such as ``facts = probes._attribute_facts`` is
+    # part of the finite syntax inventory.  Iterate because aliases can be
+    # chained, while retaining every path for a spelling instead of letting an
+    # unrelated later binding replace an identifiable helper path.
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            chain = (
+                _strict_attribute_chain(node.value)
+                if isinstance(node.value, ast.Attribute)
+                else None
+            )
+            if chain is None:
+                continue
+            for root_path in aliases.get(chain[0], ()):
+                changed |= add_alias(target.id, ".".join((root_path, *chain[1:])))
+
+    return {bound: tuple(paths) for bound, paths in aliases.items()}
+
+
+def _strict_attribute_chain(node: ast.Attribute) -> tuple[str, ...] | None:
+    parts: list[str] = [node.attr]
+    current: ast.expr = node.value
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name):
+        return None
+    parts.append(current.id)
+    return tuple(reversed(parts))
+
+
+def _strict_helper_module_attribute(
+    node: ast.Attribute, aliases: Mapping[str, tuple[str, ...]]
+) -> bool:
+    chain = _strict_attribute_chain(node)
+    if chain is None:
+        return False
+    for root_path in aliases.get(chain[0], ()):
+        path = ".".join((root_path, *chain[1:]))
+        if path == _ATTRIBUTE_FACTS_MODULE:
+            return node.attr == "_attribute_facts"
+        if path in {
+            f"{_ATTRIBUTE_FACTS_MODULE}.{_ATTRIBUTE_FACT_HELPER}",
+            f"{_ATTRIBUTE_FACTS_MODULE}.{_ATTRIBUTE_OBSERVER_HELPER}",
+        }:
+            return True
+    return False
+
+
+def _strict_contract(path: str, tree: ast.Module, source: str) -> _ChildEvidenceContract:
+    compiler = _StrictCompilerScopes(source, path)
+    parents = {
+        id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+    }
+    candidates: list[_ChildCandidate] = []
+    structural_rejections: list[tuple[ast.AST, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        scalar_candidate, rejection = _strict_scalar_candidate(tree, node, parents, compiler)
+        if scalar_candidate is not None:
+            candidates.append(scalar_candidate)
+        elif rejection is not None:
+            structural_rejections.append((node, rejection))
+    pair_candidates, pair_rejections = _strict_pair_candidates(tree, parents, compiler)
+    structural_rejections.extend(pair_rejections)
+
+    approved_import_ids = {id(scalar.import_node) for scalar in candidates} | {
+        id(observer.import_node) for observer in pair_candidates
+    }
+    approved_call_ids = {id(scalar.call_node) for scalar in candidates} | {
+        id(call) for observer in pair_candidates for call in observer.calls
+    }
+
+    aliases = _strict_module_aliases(tree)
+    references: list[tuple[ast.AST, str]] = []
+    helper_seen = any(
+        (
+            isinstance(node, ast.Import)
+            and any(alias.name == _ATTRIBUTE_FACTS_MODULE for alias in node.names)
+        )
+        or (
+            isinstance(node, ast.ImportFrom)
+            and (
+                node.module == _ATTRIBUTE_FACTS_MODULE
+                or (
+                    node.module == _ATTRIBUTE_PROBES_MODULE
+                    and any(alias.name == "_attribute_facts" for alias in node.names)
+                )
+            )
+        )
+        or (isinstance(node, ast.Attribute) and _strict_helper_module_attribute(node, aliases))
+        for node in ast.walk(tree)
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _ATTRIBUTE_FACTS_MODULE:
+                    helper_seen = True
+                    references.append(
+                        (node, "helper module import is not owned by a canonical pair")
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == _ATTRIBUTE_FACTS_MODULE:
+                helper_seen = True
+                if id(node) not in approved_import_ids:
+                    references.append((node, "helper import is not owned by a canonical pair"))
+            elif node.module == _ATTRIBUTE_PROBES_MODULE and any(
+                alias.name == "_attribute_facts" for alias in node.names
+            ):
+                helper_seen = True
+                references.append((node, "noncanonical _attribute_facts module import"))
+        elif isinstance(node, (ast.Global, ast.Nonlocal)) and set(node.names) & {
+            _ATTRIBUTE_FACT_HELPER,
+            _ATTRIBUTE_OBSERVER_HELPER,
+        }:
+            if helper_seen:
+                references.append((node, "helper binding is not permitted"))
+        elif isinstance(node, ast.arg) and node.arg in {
+            _ATTRIBUTE_FACT_HELPER,
+            _ATTRIBUTE_OBSERVER_HELPER,
+        }:
+            if helper_seen:
+                references.append((node, "helper binding is not permitted"))
+        elif isinstance(node, ast.ExceptHandler) and node.name in {
+            _ATTRIBUTE_FACT_HELPER,
+            _ATTRIBUTE_OBSERVER_HELPER,
+        }:
+            if helper_seen:
+                references.append((node, "helper binding is not permitted"))
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar, ast.MatchMapping)) and (
+            getattr(node, "name", None) in {_ATTRIBUTE_FACT_HELPER, _ATTRIBUTE_OBSERVER_HELPER}
+            or getattr(node, "rest", None) in {_ATTRIBUTE_FACT_HELPER, _ATTRIBUTE_OBSERVER_HELPER}
+        ):
+            if helper_seen:
+                references.append((node, "helper binding is not permitted"))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and (
+            node.name in {_ATTRIBUTE_FACT_HELPER, _ATTRIBUTE_OBSERVER_HELPER}
+        ):
+            if helper_seen:
+                references.append((node, "helper binding is not permitted"))
+        elif isinstance(node, ast.Name) and node.id in {
+            _ATTRIBUTE_FACT_HELPER,
+            _ATTRIBUTE_OBSERVER_HELPER,
+        }:
+            if not helper_seen:
+                continue
+            helper_seen = True
+            parent = parents.get(id(node))
+            if id(parent) in approved_call_ids and isinstance(node.ctx, ast.Load):
+                continue
+            references.append((node, "helper name is not owned by a canonical pair"))
+        elif isinstance(node, ast.Attribute) and _strict_helper_module_attribute(node, aliases):
+            parent = parents.get(id(node))
+            if node.attr == "_attribute_facts" and isinstance(parent, ast.Attribute):
+                continue
+            helper_seen = True
+            references.append((node, "noncanonical module-qualified helper reference"))
+
+    if not helper_seen:
+        return _ChildEvidenceContract(frozenset(), ())
+
+    references.extend(structural_rejections)
+    approved: set[tuple[int, int]] = set()
+    for scalar in candidates:
+        approved.add((scalar.node.lineno, scalar.node.col_offset + 1))
+
+    observer_approved: set[tuple[int, int, str]] = set()
+    for observer in pair_candidates:
+        observer_approved.update(
+            (
+                call.lineno,
+                call.col_offset + 1,
+                (
+                    f"{_PROVIDER_CALL}:{path}:{observer.reader.lineno}:"
+                    f"{observer.reader.col_offset + 1}"
+                ),
+            )
+            for call in observer.calls
+        )
+
+    violations = tuple(
+        sorted(
+            {
+                Violation(
+                    path=path,
+                    line=getattr(node, "lineno", 1),
+                    column=getattr(node, "col_offset", 0) + 1,
+                    code="child_evidence_contract",
+                    message=f"{detail}; use the exact local evidence contract",
+                    expression=_expr_text(node),
+                )
+                for node, detail in references
+            }
+        )
+    )
+    return _ChildEvidenceContract(frozenset(approved), violations, frozenset(observer_approved))
+
+
+_child_evidence_contract = _strict_contract
 
 
 class _Analyzer:
@@ -2439,12 +3545,27 @@ def analyze_source(
                 message=str(exc),
             )
         ]
-    return _Analyzer(source, path).analyze(
+    contract = _child_evidence_contract(path, tree, source)
+    baseline = _Analyzer(source, path).analyze(
         tree,
         reviewed_optional_helpers=reviewed_optional_helpers,
         reviewed_negative_oracles=reviewed_negative_oracles,
         optional_defaults=optional_defaults,
     )
+    filtered = [
+        violation
+        for violation in baseline
+        if not (
+            violation.code == "unstructured_absence"
+            and (violation.line, violation.column) in contract.approved
+        )
+        and not (
+            violation.code == "taint_escape"
+            and (violation.line, violation.column, violation.provenance)
+            in contract.observer_approved
+        )
+    ]
+    return sorted({*filtered, *contract.violations})
 
 
 def analyze_file(
