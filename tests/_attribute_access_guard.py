@@ -76,9 +76,11 @@ class Violation:
 class _Value:
     taint: frozenset[str] = frozenset()
     optional: bool = False
+    optional_id: str | None = None
     callable_kind: str | None = None
     elements: tuple[_Value, ...] = ()
     mapping: bool = False
+    mapping_id: str | None = None
 
 
 @dataclass
@@ -102,8 +104,15 @@ class _State:
 @dataclass
 class _Flow:
     state: _State | None
-    returns: list[_Value] = field(default_factory=list)
-    terminal_states: list[_State] = field(default_factory=list)
+    exits: list[_Exit] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class _Exit:
+    kind: str
+    state: _State
+    value: _Value | None = None
+    node: ast.stmt | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,22 +128,72 @@ def _value_union(values: list[_Value]) -> _Value:
     optional = False
     callables = {value.callable_kind for value in values}
     elements: tuple[_Value, ...] = ()
-    if all(value.elements for value in values):
-        width = len(values[0].elements)
-        if all(len(value.elements) == width for value in values):
-            elements = tuple(
-                _value_union([value.elements[index] for value in values]) for index in range(width)
+    element_values = [value for value in values if value.elements]
+    if element_values:
+        width = max(len(value.elements) for value in element_values)
+        elements = tuple(
+            _value_union(
+                [
+                    value.elements[index] if index < len(value.elements) else _Value()
+                    for value in element_values
+                ]
             )
+            for index in range(width)
+        )
     for value in values:
         taint.update(value.taint)
         optional |= value.optional
     callable_kind = next(iter(callables)) if len(callables) == 1 else None
+    optional_ids = {value.optional_id for value in values}
+    optional_id = next(iter(optional_ids)) if len(optional_ids) == 1 else None
+    mapping_ids = {value.mapping_id for value in values}
+    mapping_id = next(iter(mapping_ids)) if len(mapping_ids) == 1 else None
     return _Value(
         taint=frozenset(taint),
         optional=optional,
+        optional_id=optional_id,
         callable_kind=callable_kind,
         elements=elements,
         mapping=any(value.mapping for value in values),
+        mapping_id=mapping_id,
+    )
+
+
+def _optional_ids(value: _Value) -> set[str]:
+    identities = {value.optional_id} if value.optional_id is not None else set()
+    for element in value.elements:
+        identities.update(_optional_ids(element))
+    return identities
+
+
+def _rebase_optional_ids(
+    value: _Value,
+    *,
+    input_ids: set[str],
+    call_token: str,
+    path: tuple[int, ...] = (),
+) -> _Value:
+    optional_id = value.optional_id
+    if value.optional and optional_id not in input_ids:
+        suffix = optional_id or ".".join(str(index) for index in path) or "value"
+        optional_id = f"{call_token}:{suffix}"
+    elements = tuple(
+        _rebase_optional_ids(
+            element,
+            input_ids=input_ids,
+            call_token=call_token,
+            path=(*path, index),
+        )
+        for index, element in enumerate(value.elements)
+    )
+    return _Value(
+        taint=value.taint,
+        optional=value.optional,
+        optional_id=optional_id,
+        callable_kind=value.callable_kind,
+        elements=elements,
+        mapping=value.mapping,
+        mapping_id=value.mapping_id,
     )
 
 
@@ -376,7 +435,23 @@ class _Analyzer:
             call_stack=(*call_stack, function.qualified_name),
             top_level=top_level,
         )
-        result = _value_union(flow.returns)
+        return_exits = [
+            exit for exit in flow.exits if exit.kind == "return" and exit.value is not None
+        ]
+        if top_level:
+            for exit in return_exits:
+                return_node = exit.node or function.node
+                assert exit.value is not None
+                optional_node: ast.AST = (
+                    return_node.value
+                    if isinstance(return_node, ast.Return) and return_node.value is not None
+                    else return_node
+                )
+                self._check_optional(optional_node, exit.value, exit.state)
+                self._check_taint_escape(
+                    return_node, exit.value, "returning provider-backed mapping"
+                )
+        result = _value_union([exit.value for exit in return_exits if exit.value is not None])
         if reviewed and result.taint:
             self._check_taint_escape(
                 function.node, result, "reviewed optional helper returned provider mapping"
@@ -392,16 +467,14 @@ class _Analyzer:
         top_level: bool,
     ) -> _Flow:
         current: _State | None = state
-        returns: list[_Value] = []
-        terminal_states: list[_State] = []
+        exits: list[_Exit] = []
         for statement in statements:
             if current is None:
                 break
             result = self._exec_stmt(statement, current, call_stack=call_stack, top_level=top_level)
             current = result.state
-            returns.extend(result.returns)
-            terminal_states.extend(result.terminal_states)
-        return _Flow(current, returns, terminal_states)
+            exits.extend(result.exits)
+        return _Flow(current, exits)
 
     def _exec_stmt(
         self,
@@ -413,21 +486,29 @@ class _Analyzer:
     ) -> _Flow:
         if isinstance(node, ast.Return):
             value = self._eval_expr(node.value, state, call_stack=call_stack)
-            if top_level:
-                if node.value is not None:
-                    self._check_optional(node.value, value, state)
-                self._check_taint_escape(node, value, "returning provider-backed mapping")
-            return _Flow(None, [value], [state.copy()])
+            return _Flow(None, [_Exit("return", state.copy(), value, node)])
         if isinstance(node, (ast.Raise, ast.Break, ast.Continue)):
             if isinstance(node, ast.Raise) and node.exc is not None:
                 self._eval_expr(node.exc, state, call_stack=call_stack)
-            return _Flow(None, terminal_states=[state.copy()])
+            return _Flow(None, exits=[_Exit(type(node).__name__.lower(), state.copy())])
         if isinstance(node, ast.Assign):
+            before_rhs = self._optional_proofs(state)
             value = self._eval_expr(node.value, state, call_stack=call_stack)
+            after_rhs = self._optional_proofs(state)
+            optional_proofs = (
+                before_rhs[0] | after_rhs[0],
+                before_rhs[1] | after_rhs[1],
+            )
             for target in node.targets:
                 if not isinstance(target, (ast.Name, ast.Tuple, ast.List, ast.Starred)):
                     self._check_taint_escape(target, value, "storing provider-backed mapping")
-                self._assign(target, value, state, call_stack=call_stack)
+                self._assign(
+                    target,
+                    value,
+                    state,
+                    call_stack=call_stack,
+                    optional_proofs=optional_proofs,
+                )
             return _Flow(state)
         if isinstance(node, ast.AnnAssign):
             value = (
@@ -483,11 +564,21 @@ class _Analyzer:
                 list(node.body), with_state, call_stack=call_stack, top_level=top_level
             )
         if isinstance(node, ast.Try):
-            flows: list[_Flow] = [
-                self._exec_block(
-                    list(node.body), state.copy(), call_stack=call_stack, top_level=top_level
+            body_flow = self._exec_block(
+                list(node.body), state.copy(), call_stack=call_stack, top_level=top_level
+            )
+            if node.orelse and body_flow.state is not None:
+                orelse_flow = self._exec_block(
+                    list(node.orelse),
+                    body_flow.state,
+                    call_stack=call_stack,
+                    top_level=top_level,
                 )
-            ]
+                body_flow = _Flow(
+                    orelse_flow.state,
+                    [*body_flow.exits, *orelse_flow.exits],
+                )
+            flows: list[_Flow] = [body_flow]
             for handler in node.handlers:
                 handler_state = state.copy()
                 if handler.name:
@@ -500,26 +591,35 @@ class _Analyzer:
                         top_level=top_level,
                     )
                 )
-            if node.orelse:
-                flows.append(
-                    self._exec_block(
-                        list(node.orelse), state.copy(), call_stack=call_stack, top_level=top_level
-                    )
-                )
             alive = _merge_states([flow.state for flow in flows if flow.state is not None])
-            returns = [value for flow in flows for value in flow.returns]
-            terminal_states = [state for flow in flows for state in flow.terminal_states]
-            if node.finalbody:
-                final_base = alive or _merge_states(terminal_states) or state.copy()
-                final = self._exec_block(
-                    list(node.finalbody), final_base, call_stack=call_stack, top_level=top_level
-                )
-                return _Flow(
-                    final.state,
-                    [*returns, *final.returns],
-                    [*terminal_states, *final.terminal_states],
-                )
-            return _Flow(alive, returns, terminal_states)
+            exits = [exit for flow in flows for exit in flow.exits]
+            if not node.finalbody:
+                return _Flow(alive, exits)
+
+            final_states: list[_State] = []
+            final_exits: list[_Exit] = []
+            for flow in flows:
+                if flow.state is not None:
+                    final = self._exec_block(
+                        list(node.finalbody),
+                        flow.state.copy(),
+                        call_stack=call_stack,
+                        top_level=top_level,
+                    )
+                    if final.state is not None:
+                        final_states.append(final.state)
+                    final_exits.extend(final.exits)
+                for exit in flow.exits:
+                    final = self._exec_block(
+                        list(node.finalbody),
+                        exit.state.copy(),
+                        call_stack=call_stack,
+                        top_level=top_level,
+                    )
+                    if final.state is not None:
+                        final_exits.append(_Exit(exit.kind, final.state, exit.value, exit.node))
+                    final_exits.extend(final.exits)
+            return _Flow(_merge_states(final_states), final_exits)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             state.bindings.pop(node.name, None)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -565,9 +665,8 @@ class _Analyzer:
         alive = _merge_states(
             [flow.state for flow in (true_flow, false_flow) if flow.state is not None]
         )
-        returns = [*true_flow.returns, *false_flow.returns]
-        terminal_states = [*true_flow.terminal_states, *false_flow.terminal_states]
-        return _Flow(alive, returns, terminal_states)
+        exits = [*true_flow.exits, *false_flow.exits]
+        return _Flow(alive, exits)
 
     def _check_absence_guard(
         self, node: ast.If, state: _State, *, call_stack: tuple[str, ...]
@@ -579,6 +678,8 @@ class _Analyzer:
             return
         key, mapping, operator = membership
         if isinstance(node.test, ast.BoolOp):
+            if self._safe_presence_or(node.test, state):
+                return
             self._emit(
                 node,
                 "unstructured_absence",
@@ -589,7 +690,7 @@ class _Analyzer:
         if (
             isinstance(operator, ast.In)
             and not node.orelse
-            and not self._contains_terminal(node.body)
+            and not self._all_paths_terminal(node.body)
         ):
             self._emit(
                 node,
@@ -601,7 +702,7 @@ class _Analyzer:
         missing_body = node.body if isinstance(operator, ast.NotIn) else node.orelse
         if not missing_body:
             return
-        if not self._contains_terminal(missing_body):
+        if not self._all_paths_terminal(missing_body):
             return
         if self._structured_absence(missing_body, key, state):
             return
@@ -622,12 +723,157 @@ class _Analyzer:
         return function is not None and self._is_reviewed_optional_helper(function)
 
     @staticmethod
-    def _contains_terminal(statements: list[ast.stmt]) -> bool:
+    def _scope_walk(
+        node: ast.AST, *, include_root: bool = True, root_scope: bool = False
+    ) -> Iterable[ast.AST]:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and not root_scope
+        ):
+            return
+        if include_root:
+            yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            yield from _Analyzer._scope_walk(child)
+
+    @classmethod
+    def _reachable_scope_walk(
+        cls, node: ast.AST, *, include_root: bool = True, root_scope: bool = False
+    ) -> Iterable[ast.AST]:
+        """Walk lexical children while excluding statements after terminal flow."""
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and not root_scope
+        ):
+            return
+        if include_root:
+            yield node
+        if isinstance(node, ast.If):
+            yield from cls._scope_walk(node.test)
+            yield from cls._reachable_block_walk(node.body)
+            yield from cls._reachable_block_walk(node.orelse)
+            return
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            yield from cls._reachable_block_walk(node.body)
+            for handler in node.handlers:
+                if handler.type is not None:
+                    yield from cls._scope_walk(handler.type)
+                yield from cls._reachable_block_walk(handler.body)
+            if not cls._all_paths_terminal(node.body):
+                yield from cls._reachable_block_walk(node.orelse)
+            yield from cls._reachable_block_walk(node.finalbody)
+            return
+        if isinstance(node, ast.Match):
+            yield from cls._scope_walk(node.subject)
+            for case in node.cases:
+                yield from cls._scope_walk(case.pattern)
+                if case.guard is not None:
+                    yield from cls._scope_walk(case.guard)
+                yield from cls._reachable_block_walk(case.body)
+            return
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                yield from cls._scope_walk(item.context_expr)
+            yield from cls._reachable_block_walk(node.body)
+            return
+        if isinstance(node, (ast.While, ast.For, ast.AsyncFor)):
+            condition = node.test if isinstance(node, ast.While) else node.iter
+            yield from cls._scope_walk(condition)
+            yield from cls._reachable_block_walk(node.body)
+            yield from cls._reachable_block_walk(node.orelse)
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            yield from cls._scope_walk(child)
+
+    @classmethod
+    def _reachable_block_walk(cls, statements: list[ast.stmt]) -> Iterable[ast.AST]:
+        for statement in statements:
+            yield from cls._reachable_scope_walk(statement)
+            if cls._all_paths_terminal([statement]):
+                break
+
+    @classmethod
+    def _all_paths_terminal(cls, statements: list[ast.stmt]) -> bool:
+        """Return whether every path through this scope exits the enclosing flow."""
+        return "fallthrough" not in cls._return_outcomes(statements, "<terminal-only>")
+
+    @staticmethod
+    def _match_is_exhaustive(statement: ast.Match) -> bool:
         return any(
-            isinstance(child, (ast.Return, ast.Continue, ast.Break, ast.Raise))
-            for statement in statements
-            for child in ast.walk(statement)
+            case.guard is None
+            and isinstance(case.pattern, ast.MatchAs)
+            and case.pattern.pattern is None
+            for case in statement.cases
         )
+
+    @classmethod
+    def _all_paths_return_or_fallthrough(cls, statements: list[ast.stmt], expected: str) -> bool:
+        """Return whether a scope only returns ``expected`` or falls through."""
+        return cls._return_outcomes(statements, expected) <= {"expected", "fallthrough"}
+
+    @classmethod
+    def _all_paths_return_value(cls, statements: list[ast.stmt], expected: str) -> bool:
+        """Return whether every path exits with the same explicit return expression."""
+        return cls._return_outcomes(statements, expected) == {"expected"}
+
+    @classmethod
+    def _return_outcomes(cls, statements: list[ast.stmt], expected: str) -> set[str]:
+        """Compose explicit exits and the implicit path that reaches the next statement."""
+        outcomes = {"fallthrough"}
+        for statement in statements:
+            if "fallthrough" not in outcomes:
+                break
+            outcomes.remove("fallthrough")
+            if isinstance(statement, ast.Return):
+                outcomes.add(
+                    "expected"
+                    if statement.value is not None and _key_text(statement.value) == expected
+                    else "other"
+                )
+            elif isinstance(statement, (ast.Raise, ast.Break, ast.Continue)):
+                outcomes.add(type(statement).__name__.lower())
+            elif isinstance(statement, ast.If):
+                outcomes.update(cls._return_outcomes(statement.body, expected))
+                outcomes.update(cls._return_outcomes(statement.orelse, expected))
+            elif isinstance(statement, ast.Try):
+                pending = cls._return_outcomes(statement.body, expected)
+                if "fallthrough" in pending:
+                    pending.remove("fallthrough")
+                    pending.update(cls._return_outcomes(statement.orelse, expected))
+                for handler in statement.handlers:
+                    pending.update(cls._return_outcomes(handler.body, expected))
+                if statement.finalbody:
+                    final = cls._return_outcomes(statement.finalbody, expected)
+                    if "fallthrough" not in final:
+                        pending.clear()
+                    pending.update(final - {"fallthrough"})
+                outcomes.update(pending)
+            elif isinstance(statement, ast.Match):
+                for case in statement.cases:
+                    outcomes.update(cls._return_outcomes(case.body, expected))
+                if not cls._match_is_exhaustive(statement):
+                    outcomes.add("fallthrough")
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                body_outcomes = cls._return_outcomes(statement.body, expected)
+                outcomes.update(body_outcomes)
+                # A context manager may suppress an exception, but it cannot suppress
+                # break, continue, or return control flow.
+                if "raise" in body_outcomes:
+                    outcomes.add("fallthrough")
+            elif isinstance(statement, (ast.While, ast.For, ast.AsyncFor)):
+                body = cls._return_outcomes(statement.body, expected)
+                outcomes.update(body - {"fallthrough", "break", "continue"})
+                # Zero iterations and normal termination reach else; break bypasses it.
+                outcomes.update(cls._return_outcomes(statement.orelse, expected))
+                if "break" in body:
+                    outcomes.add("fallthrough")
+            else:
+                outcomes.add("fallthrough")
+        return outcomes
 
     def _provider_membership(
         self, test: ast.expr, state: _State
@@ -657,6 +903,44 @@ class _Analyzer:
                     return membership
         return None
 
+    def _safe_presence_or(self, test: ast.BoolOp, state: _State) -> bool:
+        if not isinstance(test.op, ast.Or) or len(test.values) < 2:
+            return False
+        first = self._provider_membership(test.values[0], state)
+        if first is None or not isinstance(first[2], ast.NotIn):
+            return False
+        key = first[0]
+        first_test = test.values[0]
+        if not isinstance(first_test, ast.Compare) or not first_test.comparators:
+            return False
+        if not self._stable_key_expression(first_test.left):
+            return False
+        subscript_nodes = [
+            child
+            for part in test.values[1:]
+            for child in ast.walk(part)
+            if isinstance(child, ast.Subscript)
+        ]
+        if not subscript_nodes:
+            return False
+        mapping = first[1]
+        mapping_id = mapping.mapping_id
+        if mapping_id is None:
+            return False
+        for child in subscript_nodes:
+            child_mapping = self._eval_expr(child.value, state, call_stack=())
+            if (
+                not self._stable_key_expression(child.slice)
+                or _key_text(child.slice) != key
+                or child_mapping.mapping_id != mapping_id
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _stable_key_expression(node: ast.expr) -> bool:
+        return not any(isinstance(child, ast.Call) for child in ast.walk(node))
+
     def _structured_absence(self, statements: list[ast.stmt], key: str, state: _State) -> bool:
         for index, statement in enumerate(statements[:-1]):
             if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
@@ -680,10 +964,7 @@ class _Analyzer:
                 and not any(keyword.arg in {"actual", "actual_ckr"} for keyword in child.keywords)
             ):
                 continue
-            if any(
-                isinstance(next_statement, (ast.Return, ast.Continue, ast.Break, ast.Raise))
-                for next_statement in statements[index + 1 :]
-            ):
+            if self._all_paths_terminal(statements[index + 1 :]):
                 return True
         return False
 
@@ -696,7 +977,7 @@ class _Analyzer:
     def _is_reviewed_optional_helper(self, function: _Function) -> bool:
         if function.qualified_name not in self.reviewed_optional_helpers:
             return False
-        for child in ast.walk(function.node):
+        for child in self._scope_walk(function.node, root_scope=True):
             if not isinstance(child, ast.If) or not isinstance(child.test, ast.Compare):
                 continue
             if not (
@@ -710,19 +991,23 @@ class _Analyzer:
                 continue
             mapping = _key_text(child.test.comparators[0])
             absent_body = child.body if isinstance(child.test.ops[0], ast.NotIn) else child.orelse
-            absent_returns = [
-                node.value
-                for statement in absent_body
-                for node in ast.walk(statement)
-                if isinstance(node, ast.Return) and node.value is not None
-            ]
-            if not any(_key_text(value) == self.optional_defaults[key] for value in absent_returns):
+            if not self._all_paths_return_value(absent_body, self.optional_defaults[key]):
                 continue
+            if isinstance(child.test.ops[0], ast.NotIn):
+                try:
+                    membership_index = function.node.body.index(child)
+                except ValueError:
+                    present_body = []
+                else:
+                    present_body = function.node.body[membership_index + 1 :]
+            else:
+                present_body = child.body
             if any(
                 isinstance(node, ast.Subscript)
                 and _key_text(node.value) == mapping
                 and _key_text(node.slice) == key
-                for node in ast.walk(function.node)
+                for statement in present_body
+                for node in self._scope_walk(statement)
             ):
                 return True
         return False
@@ -752,7 +1037,7 @@ class _Analyzer:
         return detail is not None and _key_text(detail) == key
 
     def _negative_oracle_summary(self, function: _Function) -> tuple[str, ast.If] | None:
-        for child in ast.walk(function.node):
+        for child in self._scope_walk(function.node, root_scope=True):
             if not isinstance(child, ast.If) or not isinstance(child.test, ast.Compare):
                 continue
             if not (
@@ -763,6 +1048,17 @@ class _Analyzer:
                 continue
             key = _key_text(child.test.left)
             present_body = child.body if isinstance(child.test.ops[0], ast.In) else child.orelse
+            if not self._all_paths_terminal(present_body):
+                continue
+            if not any(
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Call)
+                and self._record_mentions_key(statement.value, key)
+                for statement in present_body
+            ):
+                continue
+            if not self._has_direct_boolean_return(present_body, False):
+                continue
             if not any(
                 isinstance(node, ast.Call)
                 and (
@@ -773,7 +1069,7 @@ class _Analyzer:
                 )
                 and self._record_mentions_key(node, key)
                 for statement in present_body
-                for node in ast.walk(statement)
+                for node in self._scope_walk(statement)
             ):
                 continue
             if not any(
@@ -781,7 +1077,7 @@ class _Analyzer:
                 and isinstance(node.value, ast.Constant)
                 and node.value.value is False
                 for statement in present_body
-                for node in ast.walk(statement)
+                for node in self._scope_walk(statement)
             ):
                 continue
             return key, child
@@ -802,7 +1098,7 @@ class _Analyzer:
         if not any(
             isinstance(descendant, ast.Call) and self._record_call_is_resolved(descendant, function)
             for statement in present_body
-            for descendant in ast.walk(statement)
+            for descendant in self._scope_walk(statement)
         ):
             return False
         if self._has_direct_boolean_return(membership.orelse, True):
@@ -831,29 +1127,59 @@ class _Analyzer:
         top_level: bool,
     ) -> _Flow:
         loop_state = state.copy()
-        returns: list[_Value] = []
-        terminal_states: list[_State] = []
+        exits: list[_Exit] = []
+        converged = False
+        last_body_state: _State | None = None
+        if not isinstance(node, ast.While):
+            iterable = self._eval_expr(node.iter, loop_state, call_stack=call_stack)
+            self._check_optional(node.iter, iterable, loop_state)
         for _ in range(_MAX_FLOW_ITERATIONS):
             body_state = loop_state.copy()
             if isinstance(node, ast.While):
                 self._eval_expr(node.test, body_state, call_stack=call_stack)
                 body_state = self._refine(body_state, node.test, truth=True)
             else:
-                iterable = self._eval_expr(node.iter, body_state, call_stack=call_stack)
-                self._check_optional(node.iter, iterable, body_state)
                 self._assign(node.target, _Value(), body_state, call_stack=call_stack)
             body_flow = self._exec_block(
                 list(node.body), body_state, call_stack=call_stack, top_level=top_level
             )
+            last_body_state = body_flow.state
             next_state = _merge_states(
                 [candidate for candidate in (state, body_flow.state) if candidate is not None]
             )
-            returns.extend(body_flow.returns)
-            terminal_states.extend(body_flow.terminal_states)
+            exits.extend(body_flow.exits)
             if next_state == loop_state:
                 loop_state = next_state
+                converged = True
                 break
             loop_state = next_state or state.copy()
+        if not converged:
+            loop_state = self._widen_loop_state(
+                node, state, loop_state, last_body_state, call_stack=call_stack
+            )
+            diagnostic_state = loop_state.copy()
+            if isinstance(node, ast.While):
+                self._eval_expr(node.test, diagnostic_state, call_stack=call_stack)
+                diagnostic_state = self._refine(diagnostic_state, node.test, truth=True)
+            else:
+                self._assign(node.target, _Value(), diagnostic_state, call_stack=call_stack)
+            diagnostic_flow = self._exec_block(
+                list(node.body),
+                diagnostic_state,
+                call_stack=call_stack,
+                top_level=top_level,
+            )
+            exits.extend(diagnostic_flow.exits)
+            loop_state = (
+                _merge_states(
+                    [
+                        candidate
+                        for candidate in (loop_state, diagnostic_flow.state)
+                        if candidate is not None
+                    ]
+                )
+                or loop_state
+            )
         alive: _State | None = loop_state
         if node.orelse:
             else_base = alive or state.copy()
@@ -863,9 +1189,71 @@ class _Analyzer:
             alive = _merge_states(
                 [candidate for candidate in (alive, else_flow.state) if candidate is not None]
             )
-            returns.extend(else_flow.returns)
-            terminal_states.extend(else_flow.terminal_states)
-        return _Flow(alive, returns, terminal_states)
+            exits.extend(else_flow.exits)
+        return _Flow(alive, exits)
+
+    def _widen_loop_state(
+        self,
+        node: ast.While | ast.For | ast.AsyncFor,
+        initial: _State,
+        loop_state: _State,
+        body_state: _State | None,
+        *,
+        call_stack: tuple[str, ...],
+    ) -> _State:
+        widened = (
+            _merge_states(
+                [
+                    candidate
+                    for candidate in (initial, loop_state, body_state)
+                    if candidate is not None
+                ]
+            )
+            or initial.copy()
+        )
+        assignments: dict[str, list[tuple[ast.expr, ast.expr, set[str]]]] = {}
+        for statement in node.body:
+            for child in self._reachable_scope_walk(statement):
+                targets: list[ast.expr]
+                expression: ast.expr | None
+                if isinstance(child, ast.Assign):
+                    targets, expression = child.targets, child.value
+                elif isinstance(child, (ast.AnnAssign, ast.NamedExpr)):
+                    targets, expression = [child.target], child.value
+                else:
+                    continue
+                if expression is None:
+                    continue
+                sources = {
+                    source.id
+                    for source in ast.walk(expression)
+                    if isinstance(source, ast.Name) and isinstance(source.ctx, ast.Load)
+                }
+                for target in targets:
+                    for name in self._assigned_names(target):
+                        assignments.setdefault(name, []).append((target, expression, sources))
+
+        def dependency_value(name: str, visiting: frozenset[str]) -> _Value:
+            observed = widened.env.get(name, _Value())
+            if name in visiting:
+                return observed
+            values = [observed]
+            for target, expression, sources in assignments.get(name, ()):
+                dependency_state = widened.copy()
+                for source in sorted(sources & assignments.keys()):
+                    dependency_state.env[source] = dependency_value(source, visiting | {name})
+                # Apply the actual transfer so tuple construction/destructuring and helper
+                # calls retain their dimensions instead of joining unrelated input shapes.
+                value = self._eval_expr(expression, dependency_state, call_stack=call_stack)
+                self._assign(target, value, dependency_state, call_stack=call_stack)
+                values.append(dependency_state.env[name])
+            # Unknown alternatives participate: callable/mapping identity is a must-property.
+            return _value_union(values)
+
+        # All roots see the same observations; sibling evaluation order cannot add identities.
+        replacements = {name: dependency_value(name, frozenset()) for name in sorted(assignments)}
+        widened.env.update(replacements)
+        return widened
 
     def _exec_match(
         self,
@@ -890,9 +1278,8 @@ class _Analyzer:
                 )
             )
         alive = _merge_states([flow.state for flow in flows if flow.state is not None])
-        returns = [value for flow in flows for value in flow.returns]
-        terminal_states = [candidate for flow in flows for candidate in flow.terminal_states]
-        return _Flow(alive, returns, terminal_states)
+        exits = [exit for flow in flows for exit in flow.exits]
+        return _Flow(alive, exits)
 
     @staticmethod
     def _bind_pattern(pattern: ast.pattern, state: _State) -> None:
@@ -939,22 +1326,65 @@ class _Analyzer:
                 else:
                     state.bindings[bound] = "unknown"
 
+    @staticmethod
+    def _optional_proofs(state: _State) -> tuple[frozenset[str], frozenset[str]]:
+        present = frozenset(
+            identity
+            for name in state.present_values
+            if (identity := state.env.get(name, _Value()).optional_id) is not None
+        )
+        missing = frozenset(
+            identity
+            for name in state.missing_values
+            if (identity := state.env.get(name, _Value()).optional_id) is not None
+        )
+        return present, missing
+
     def _assign(
-        self, target: ast.expr, value: _Value, state: _State, *, call_stack: tuple[str, ...]
+        self,
+        target: ast.expr,
+        value: _Value,
+        state: _State,
+        *,
+        call_stack: tuple[str, ...],
+        optional_proofs: tuple[frozenset[str], frozenset[str]] | None = None,
     ) -> None:
+        if optional_proofs is None:
+            optional_proofs = self._optional_proofs(state)
+        present_ids, missing_ids = optional_proofs
         if isinstance(target, ast.Name):
+            present = value.optional_id is not None and value.optional_id in present_ids
+            missing = value.optional_id is not None and value.optional_id in missing_ids
             state.env[target.id] = value
             state.bindings.pop(target.id, None)
+            state.present_values.discard(target.id)
+            state.missing_values.discard(target.id)
+            if present:
+                state.present_values.add(target.id)
+            if missing:
+                state.missing_values.add(target.id)
             return
         if isinstance(target, (ast.Tuple, ast.List)):
             if value.mapping:
                 self._check_taint_escape(target, value, "destructuring provider-backed mapping")
             for index, element in enumerate(target.elts):
                 item = value.elements[index] if index < len(value.elements) else _Value()
-                self._assign(element, item, state, call_stack=call_stack)
+                self._assign(
+                    element,
+                    item,
+                    state,
+                    call_stack=call_stack,
+                    optional_proofs=optional_proofs,
+                )
             return
         if isinstance(target, ast.Starred):
-            self._assign(target.value, value, state, call_stack=call_stack)
+            self._assign(
+                target.value,
+                value,
+                state,
+                call_stack=call_stack,
+                optional_proofs=optional_proofs,
+            )
             return
         if isinstance(target, (ast.Attribute, ast.Subscript)):
             base = self._eval_expr(target.value, state, call_stack=call_stack)
@@ -1017,7 +1447,9 @@ class _Analyzer:
             if base.callable_kind is not None and base.callable_kind.startswith("module:"):
                 return _Value(callable_kind=f"module:{module_name}.{node.attr}")
             if node.attr == "get" and base.taint:
-                return _Value(callable_kind="tainted-get", taint=base.taint)
+                return _Value(
+                    callable_kind="tainted-get", taint=base.taint, mapping_id=base.mapping_id
+                )
             if base.taint:
                 self._check_taint_escape(node, base, "accessing provider-backed mapping attribute")
             return _Value()
@@ -1035,8 +1467,7 @@ class _Analyzer:
                 if 0 <= index < len(base.elements):
                     return base.elements[index]
             if base.taint:
-                key = _key_text(key_node)
-                if not self._mapping_present(base, key, state):
+                if not self._mapping_present(base, key_node, state):
                     self._emit(
                         node,
                         "unsafe_subscript",
@@ -1094,10 +1525,12 @@ class _Analyzer:
             eval_state = state.copy()
             for part in node.values:
                 value = self._eval_expr(part, eval_state, call_stack=call_stack)
-                self._check_optional(part, value, state)
+                self._check_optional(part, value, eval_state)
                 bool_values.append(value)
                 if isinstance(node.op, ast.And):
                     eval_state = self._refine(eval_state, part, truth=True)
+                else:
+                    eval_state = self._refine(eval_state, part, truth=False)
             return _value_union(bool_values)
         if isinstance(node, ast.Compare):
             left = self._eval_expr(node.left, state, call_stack=call_stack)
@@ -1145,30 +1578,39 @@ class _Analyzer:
 
     def _eval_call(self, node: ast.Call, state: _State, *, call_stack: tuple[str, ...]) -> _Value:
         callable_value = self._eval_expr(node.func, state, call_stack=call_stack)
-        args = [self._eval_expr(argument, state, call_stack=call_stack) for argument in node.args]
-        kwargs = [
-            self._eval_expr(keyword.value, state, call_stack=call_stack)
-            for keyword in node.keywords
-        ]
+        evaluated_arguments: list[tuple[ast.expr, _Value, _State]] = []
+        args: list[_Value] = []
+        for argument in node.args:
+            value = self._eval_expr(argument, state, call_stack=call_stack)
+            args.append(value)
+            evaluated_arguments.append((argument, value, state.copy()))
+        kwargs: list[_Value] = []
+        for keyword in node.keywords:
+            value = self._eval_expr(keyword.value, state, call_stack=call_stack)
+            kwargs.append(value)
+            evaluated_arguments.append((keyword.value, value, state.copy()))
         values = [*args, *kwargs]
 
         if callable_value.callable_kind == "direct":
             token = f"{_PROVIDER_CALL}:{self.path}:{node.lineno}:{node.col_offset + 1}"
-            return _Value(taint=frozenset({token}), mapping=True)
+            return _Value(taint=frozenset({token}), mapping=True, mapping_id=token)
         if callable_value.callable_kind == "helper":
-            return _Value(optional=True)
+            token = f"optional:{self.path}:{node.lineno}:{node.col_offset + 1}"
+            return _Value(optional=True, optional_id=token)
         if callable_value.callable_kind == "record":
             return _Value()
         if callable_value.callable_kind == "tainted-copy":
-            return _Value(taint=callable_value.taint, mapping=True)
+            mapping_id = f"copy:{self.path}:{node.lineno}:{node.col_offset + 1}"
+            return _Value(taint=callable_value.taint, mapping=True, mapping_id=mapping_id)
         if callable_value.callable_kind == "tainted-get":
-            base_taint = callable_value.taint
             key = _key_text(node.args[0]) if node.args else "<unknown>"
             has_reviewed_default = len(node.args) >= 2 and self.optional_defaults.get(
                 key
             ) == _key_text(node.args[1])
             if not has_reviewed_default and not self._mapping_present(
-                _Value(taint=base_taint, mapping=True), key, state
+                callable_value,
+                node.args[0] if node.args else ast.Constant("<unknown>"),
+                state,
             ):
                 self._emit(
                     node,
@@ -1185,14 +1627,15 @@ class _Analyzer:
             and not node.keywords
             and args[0].taint
         ):
-            return _Value(taint=args[0].taint, mapping=True)
+            mapping_id = f"dict:{self.path}:{node.lineno}:{node.col_offset + 1}"
+            return _Value(taint=args[0].taint, mapping=True, mapping_id=mapping_id)
 
         function = self._resolve_called_function(node.func, callable_value, state, call_stack)
         if function is not None:
             self.called_functions.add(function.qualified_name)
-            if (
-                any(value.taint for value in values)
-                and self._negative_oracle_summary(function) is not None
+            if any(value.taint for value in values) and (
+                self._negative_oracle_summary(function) is not None
+                or function.qualified_name in self.reviewed_negative_oracles
             ):
                 if not self._is_reviewed_negative_oracle(function):
                     self._emit(
@@ -1220,39 +1663,68 @@ class _Analyzer:
                 if tainted.taint:
                     self._check_taint_escape(node, tainted, "unresolved recursive helper argument")
                 return _Value()
-            return self._analyze_function(
+            result = self._analyze_function(
                 function, argument_values, call_stack=call_stack, top_level=False
             )
+            input_optional_ids = set().union(*(_optional_ids(value) for value in values))
+            result = _rebase_optional_ids(
+                result,
+                input_ids=input_optional_ids,
+                call_token=f"optional-call:{self.path}:{node.lineno}:{node.col_offset + 1}",
+            )
+            if result.mapping and result.taint:
+                mapping_id = f"call:{self.path}:{node.lineno}:{node.col_offset + 1}"
+                return _Value(
+                    taint=result.taint,
+                    optional=result.optional,
+                    optional_id=result.optional_id,
+                    callable_kind=result.callable_kind,
+                    elements=result.elements,
+                    mapping=True,
+                    mapping_id=mapping_id,
+                )
+            return result
 
-        for value in values:
-            self._check_optional(node, value, state)
+        for argument, value, argument_state in evaluated_arguments:
+            optional_node = argument.value if isinstance(argument, ast.Starred) else argument
+            self._check_optional(optional_node, value, argument_state)
             if value.taint:
                 self._check_taint_escape(
                     node, value, "passing provider-backed mapping to unknown call"
                 )
         return _Value()
 
-    def _mapping_present(self, value: _Value, key: str, state: _State) -> bool:
-        return bool(value.taint) and all(
-            ("present", token, key) in state.facts for token in value.taint
-        )
+    def _mapping_present(self, value: _Value, key_node: ast.expr, state: _State) -> bool:
+        key = self._key_identity(key_node)
+        return value.mapping_id is not None and ("present", value.mapping_id, key) in state.facts
+
+    def _key_identity(self, node: ast.expr) -> str:
+        key = _key_text(node)
+        if self._stable_key_expression(node):
+            return key
+        return f"{key}@{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}"
 
     def _refine(self, state: _State, test: ast.expr, *, truth: bool) -> _State:
         refined = state.copy()
         if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
             return self._refine(refined, test.operand, truth=not truth)
-        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And) and truth:
-            for part in test.values:
-                refined = self._refine(refined, part, truth=True)
+        if isinstance(test, ast.BoolOp):
+            if isinstance(test.op, ast.And) and truth:
+                for part in test.values:
+                    refined = self._refine(refined, part, truth=True)
+            elif isinstance(test.op, ast.Or) and not truth:
+                for part in test.values:
+                    refined = self._refine(refined, part, truth=False)
             return refined
         if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
             op = test.ops[0]
             comparator = test.comparators[0]
             if isinstance(op, (ast.In, ast.NotIn)):
                 mapping = self._eval_expr(comparator, refined, call_stack=())
-                key = _key_text(test.left)
+                key = self._key_identity(test.left)
                 present = truth if isinstance(op, ast.In) else not truth
-                for token in mapping.taint:
+                if mapping.mapping_id is not None:
+                    token = mapping.mapping_id
                     refined.facts.discard(("present" if not present else "absent", token, key))
                     refined.facts.add(("present" if present else "absent", token, key))
             elif isinstance(op, (ast.Is, ast.IsNot)) and isinstance(test.left, ast.Name):
