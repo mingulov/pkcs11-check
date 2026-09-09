@@ -72,6 +72,38 @@ def test_explicit_mechanism_overrides_active() -> None:
     assert C.serialize(C.get_records())[0]["mechanism"] == "CKM_RSA_PKCS"
 
 
+def test_record_as_can_leave_mechanism_unset_for_mechanism_free_operation() -> None:
+    C.clear()
+    C.set_mechanism("CKM_ECDSA", operation="C_Verify")
+
+    rec = C.record_as(
+        "not_operational",
+        operation="C_GetAttributeValue",
+        inherit_mechanism=False,
+    )
+
+    assert rec.mechanism is None
+    assert rec.operation == "C_GetAttributeValue"
+    assert rec.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_classify_forwards_mechanism_inheritance_opt_out() -> None:
+    C.clear()
+    C.set_mechanism("CKM_ECDSA", operation="C_Verify")
+
+    with pytest.raises(BaseException):  # noqa: B017,PT011 - classify() raises pytest outcome
+        C.classify(
+            "not_operational",
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+        )
+
+    rec = C.serialize(C.get_records())[0]
+    assert rec["mechanism"] is None
+    assert rec["operation"] == "C_GetAttributeValue"
+    assert rec["spec_ref"] == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
 def test_clear_resets_active_mechanism() -> None:
     C.set_mechanism("CKM_X", operation="C_Sign")
     C.clear()

@@ -64,9 +64,12 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 from collections.abc import Callable
 from ctypes import byref, cast
 from typing import Any
+
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -81,7 +84,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import read_attributes
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_ATTRIBUTE_PTR,
@@ -126,11 +129,19 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKO_DATA,
     CKO_PUBLIC_KEY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_STATE_UNSAVEABLE,
+)
+from pkcs11_check.testcases._ec_export import (
+    InvalidProviderECPointError,
+    ProviderECPointEncodingError,
+    _alternate_curve_for_point,
+    decode_provider_ec_point,
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
@@ -146,14 +157,132 @@ def _der_octet_string(value: bytes) -> bytes:
     return bytes([0x04, 0x80 | len(length)]) + length + value
 
 
+def _ec_point_encoding_provenance(value: bytes) -> str:
+    if len(value) == 65 and value.startswith(b"\x04"):
+        return "raw_uncompressed"
+    if value.startswith(b"\x04") and _alternate_curve_for_point(value, ec.SECP256R1()) is not None:
+        return "raw_uncompressed"
+    try:
+        inner = decode_ec_point(value)
+    except ValueError:
+        return "unrecognized"
+    if inner.startswith((b"\x02", b"\x03")):
+        return "der_compressed"
+    if inner.startswith(b"\x04"):
+        return "der_uncompressed"
+    return "unrecognized"
+
+
+def _valid_raw_p256_compressed_point(value: bytes) -> bool:
+    if len(value) != 33 or value[0] not in (0x02, 0x03):
+        return False
+    try:
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), value)
+    except ValueError:
+        return False
+    return True
+
+
+def _alternate_curve_after_expected_rejection(value: bytes) -> ec.EllipticCurve | None:
+    # Raw compressed SEC1 is not one of the accepted import encodings.  It must
+    # nevertheless be checked against P-256 before considering another curve;
+    # otherwise a P-256 point can be falsely promoted through secp256k1.
+    if _valid_raw_p256_compressed_point(value):
+        return None
+    if value.startswith((b"\x02", b"\x03", b"\x04")):
+        return _alternate_curve_for_point(value, ec.SECP256R1())
+    return None
+
+
 def _compress_p256_ec_point(ec_point_der: bytes) -> bytes:
-    raw_point = decode_ec_point(bytes(ec_point_der))
+    value = bytes(ec_point_der)
+    try:
+        raw_point = decode_provider_ec_point(value, ec.SECP256R1(), label="EC raw buffer probe")
+    except ProviderECPointEncodingError:
+        alternate_curve = _alternate_curve_after_expected_rejection(value)
+        if alternate_curve is not None:
+            raise InvalidProviderECPointError(
+                "EC raw buffer probe: CKA_EC_POINT validates on "
+                f"{alternate_curve.name}, not expected secp256r1"
+            ) from None
+        raise
+    if len(raw_point) == 33 and raw_point[0] in (0x02, 0x03):
+        return _der_octet_string(raw_point)
     if len(raw_point) != 65 or raw_point[0] != 0x04:
         raise ValueError(f"expected uncompressed P-256 point, got {len(raw_point)} bytes")
     x = raw_point[1:33]
     y = raw_point[33:65]
     compressed = bytes([0x02 | (y[-1] & 1)]) + x
     return _der_octet_string(compressed)
+
+
+_EC_PROBE = "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+_EC_ATTRS = (
+    (CKA_EC_POINT, "CKA_EC_POINT"),
+    (CKA_EC_PARAMS, "CKA_EC_PARAMS"),
+)
+
+
+def _emit_ec_setup(event: str, **fields: object) -> None:
+    payload = {"schema": 1, "probe": _EC_PROBE, "event": event, **fields}
+    print(f"EC_SETUP:{json.dumps(payload, separators=(',', ':'))}", flush=True)
+
+
+def _emit_ec_cleanup(role: str, rv: int) -> None:
+    payload = {
+        "schema": 1,
+        "probe": _EC_PROBE,
+        "object": role,
+        "operation": "C_DestroyObject",
+        "rv": int(rv),
+    }
+    print(f"EC_CLEANUP:{json.dumps(payload, separators=(',', ':'))}", flush=True)
+
+
+def _emit_ec_done(status: str) -> None:
+    _emit_ec_setup("done", status=status)
+
+
+def _bounded_diagnostic(exc: BaseException) -> str:
+    return str(exc)[:256] or type(exc).__name__[:64]
+
+
+def _read_and_observe_ec_attributes(
+    raw: Any, sh: int, handle: int
+) -> tuple[bytes | None, bytes | None]:
+    attrs = read_attributes(raw, sh, handle, [CKA_EC_POINT, CKA_EC_PARAMS])
+    from pkcs11_check.testcases._probes._attribute_facts import observe_ec_attribute
+
+    point_value = observe_ec_attribute(
+        attrs,  # type: ignore[arg-type]
+        CKA_EC_POINT,
+        context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
+    )
+    params_value = observe_ec_attribute(
+        attrs,  # type: ignore[arg-type]
+        CKA_EC_PARAMS,
+        context="ecdh_aes_wrap_compressed_public_key_buffer_too_small",
+    )
+    return point_value, params_value
+
+
+def _destroy_ec_object(raw: Any, sh: int | None, handle: CK_OBJECT_HANDLE, role: str) -> None:
+    if not handle.value:
+        return
+    try:
+        rv = raw.C_DestroyObject(sh, handle.value)
+        if rv != CKR_OK:
+            _emit_ec_cleanup(role, rv)
+    except (OSError, MemoryError, SystemError):
+        raise
+    except CkrAssertionError as exc:
+        _emit_ec_cleanup(role, exc.rv)
+    except Exception as exc:
+        print(
+            f"HARNESS_ERROR:EC cleanup role={role} phase=C_DestroyObject "
+            f"type={type(exc).__name__[:64]}",
+            flush=True,
+        )
 
 
 def _digest_buffer_too_small(ctx: ProbeContext) -> None:
@@ -1251,131 +1380,210 @@ def _ecdh_aes_wrap_compressed_public_key_buffer_too_small(ctx: ProbeContext) -> 
             if sh is None:
                 print("SETUP_XFAIL:login session was not established")
                 return
-            attrs = read_attributes(raw, sh, pub.value, [CKA_EC_POINT, CKA_EC_PARAMS])
             try:
-                compressed_point = _compress_p256_ec_point(attrs[CKA_EC_POINT])
-            except ValueError as exc:
-                print(f"SETUP_XFAIL:cannot build compressed EC point: {exc}")
+                point_value, params_value = _read_and_observe_ec_attributes(raw, sh, pub.value)
+            except CkrAssertionError as exc:
+                _emit_ec_setup(
+                    "read_error",
+                    operation="C_GetAttributeValue",
+                    requested_attributes=[
+                        {"name": name, "id": int(attribute)} for attribute, name in _EC_ATTRS
+                    ],
+                    rv=int(exc.rv),
+                )
+                if exc.rv in (int(CKR_ATTRIBUTE_SENSITIVE), int(CKR_ATTRIBUTE_TYPE_INVALID)):
+                    _emit_ec_done("read_refused")
+                    return
+                raise
+
+            point_valid = False
+            if point_value is not None:
+                try:
+                    point_bytes = decode_provider_ec_point(
+                        point_value, ec.SECP256R1(), label="EC raw buffer probe"
+                    )
+                except ProviderECPointEncodingError as exc:
+                    alternate_curve = _alternate_curve_after_expected_rejection(point_value)
+                    if alternate_curve is not None:
+                        diagnostic = (
+                            "EC raw buffer probe: CKA_EC_POINT validates on "
+                            f"{alternate_curve.name}, not expected secp256r1"
+                        )
+                        _emit_ec_setup(
+                            "point",
+                            operation="C_GetAttributeValue",
+                            attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+                            curve="secp256r1",
+                            state="invalid_point",
+                            encoding=_ec_point_encoding_provenance(point_value),
+                            diagnostic=diagnostic,
+                        )
+                        _emit_ec_done("invalid_point")
+                        return
+                    else:
+                        _emit_ec_setup(
+                            "point",
+                            operation="C_GetAttributeValue",
+                            attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+                            curve="secp256r1",
+                            state="encoding_error",
+                            encoding=_ec_point_encoding_provenance(point_value),
+                            diagnostic=_bounded_diagnostic(exc),
+                        )
+                        point_bytes = None
+                except InvalidProviderECPointError as exc:
+                    _emit_ec_setup(
+                        "point",
+                        operation="C_GetAttributeValue",
+                        attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+                        curve="secp256r1",
+                        state="invalid_point",
+                        encoding=_ec_point_encoding_provenance(point_value),
+                        diagnostic=_bounded_diagnostic(exc),
+                    )
+                    _emit_ec_done("invalid_point")
+                    return
+                else:
+                    if len(point_value) == 65 and point_value.startswith(b"\x04"):
+                        encoding = "raw_uncompressed"
+                    elif point_bytes is not None and point_bytes.startswith((b"\x02", b"\x03")):
+                        encoding = "der_compressed"
+                    else:
+                        encoding = "der_uncompressed"
+                    _emit_ec_setup(
+                        "point",
+                        operation="C_GetAttributeValue",
+                        attribute={"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+                        curve="secp256r1",
+                        state="usable",
+                        encoding=encoding,
+                        diagnostic="",
+                    )
+                    point_valid = True
+            if point_value is None or not point_valid or params_value is None:
+                _emit_ec_done("unavailable")
+                return
+
+            _emit_ec_done("ready")
+            compressed_point = _compress_p256_ec_point(point_value)
+            imported_pub_attrs = template(
+                attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_EC),
+                attr_bytes(CKA_EC_PARAMS, params_value),
+                attr_bytes(CKA_EC_POINT, compressed_point),
+                attr_bool(CKA_WRAP, True),
+                attr_bool(CKA_DERIVE, True),
+                attr_bool(CKA_TOKEN, False),
+            )
+            rv = raw.C_CreateObject(
+                sh,
+                _template_ptr(imported_pub_attrs),
+                imported_pub_attrs.count,
+                byref(compressed_pub),
+            )
+            if rv != CKR_OK:
+                print(
+                    f"SETUP_XFAIL:compressed EC public-key import rejected: {ckr_name(rv)}",
+                    flush=True,
+                )
             else:
-                imported_pub_attrs = template(
-                    attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY),
-                    attr_ulong(CKA_KEY_TYPE, CKK_EC),
-                    attr_bytes(CKA_EC_PARAMS, attrs[CKA_EC_PARAMS]),
-                    attr_bytes(CKA_EC_POINT, compressed_point),
-                    attr_bool(CKA_WRAP, True),
-                    attr_bool(CKA_DERIVE, True),
+                target_attrs = template(
+                    attr_ulong(CKA_VALUE_LEN, 16),
+                    attr_bool(CKA_EXTRACTABLE, True),
                     attr_bool(CKA_TOKEN, False),
                 )
-                rv = raw.C_CreateObject(
+                aes_mech = mech_simple(CKM_AES_KEY_GEN)
+                rv = raw.C_GenerateKey(
                     sh,
-                    _template_ptr(imported_pub_attrs),
-                    imported_pub_attrs.count,
-                    byref(compressed_pub),
+                    aes_mech.byref(),
+                    _template_ptr(target_attrs),
+                    target_attrs.count,
+                    byref(target_key),
                 )
                 if rv != CKR_OK:
-                    print(f"SETUP_XFAIL:compressed EC public-key import rejected: {ckr_name(rv)}")
-                else:
-                    target_attrs = template(
-                        attr_ulong(CKA_VALUE_LEN, 16),
-                        attr_bool(CKA_EXTRACTABLE, True),
-                        attr_bool(CKA_TOKEN, False),
+                    print(
+                        f"SETUP_XFAIL:C_GenerateKey for ECDH-AES target key failed: {ckr_name(rv)}",
+                        flush=True,
                     )
-                    aes_mech = mech_simple(CKM_AES_KEY_GEN)
-                    rv = raw.C_GenerateKey(
+                else:
+                    mech = mech_ecdh_aes_kw(
+                        CKM_ECDH_AES_KEY_WRAP,
+                        aes_key_bits=256,
+                        kdf=CKD_SHA256_KDF,
+                    )
+                    needed = CK_ULONG(0)
+                    rv = raw.C_WrapKey(
                         sh,
-                        aes_mech.byref(),
-                        _template_ptr(target_attrs),
-                        target_attrs.count,
-                        byref(target_key),
+                        mech.byref(),
+                        compressed_pub.value,
+                        target_key.value,
+                        None,
+                        byref(needed),
                     )
                     if rv != CKR_OK:
                         print(
-                            "SETUP_XFAIL:C_GenerateKey for ECDH-AES target key failed: "
-                            f"{ckr_name(rv)}"
+                            f"SETUP_XFAIL:ECDH-AES C_WrapKey size query failed: {ckr_name(rv)}",
+                            flush=True,
+                        )
+                    elif needed.value <= 1:
+                        print(
+                            "SETUP_XFAIL:ECDH-AES C_WrapKey reported only "
+                            f"{needed.value} output byte(s)",
+                            flush=True,
                         )
                     else:
-                        mech = mech_ecdh_aes_kw(
-                            CKM_ECDH_AES_KEY_WRAP,
-                            aes_key_bits=256,
-                            kdf=CKD_SHA256_KDF,
-                        )
-                        needed = CK_ULONG(0)
+                        guard = 0xA7
+                        guard_size = 32
+
+                        class WrapProbe(ctypes.Structure):
+                            _fields_ = [
+                                ("data", ctypes.c_ubyte * 1),
+                                ("guard", ctypes.c_ubyte * guard_size),
+                            ]
+
+                        probe = WrapProbe()
+                        for idx in range(guard_size):
+                            probe.guard[idx] = guard
+
+                        out_len = CK_ULONG(1)
+                        print(f"NEEDED:{needed.value}", flush=True)
                         rv = raw.C_WrapKey(
                             sh,
                             mech.byref(),
                             compressed_pub.value,
                             target_key.value,
-                            None,
-                            byref(needed),
+                            cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
+                            byref(out_len),
                         )
-                        if rv != CKR_OK:
-                            print(
-                                f"SETUP_XFAIL:ECDH-AES C_WrapKey size query failed: {ckr_name(rv)}"
-                            )
-                        elif needed.value <= 1:
-                            print(
-                                "SETUP_XFAIL:ECDH-AES C_WrapKey reported only "
-                                f"{needed.value} output byte(s)"
-                            )
-                        else:
-                            guard = 0xA7
-                            guard_size = 32
-
-                            class WrapProbe(ctypes.Structure):
-                                _fields_ = [
-                                    ("data", ctypes.c_ubyte * 1),
-                                    ("guard", ctypes.c_ubyte * guard_size),
-                                ]
-
-                            probe = WrapProbe()
-                            for idx in range(guard_size):
-                                probe.guard[idx] = guard
-
-                            out_len = CK_ULONG(1)
-                            print(f"NEEDED:{needed.value}")
-                            rv = raw.C_WrapKey(
+                        print(f"CKR:0x{rv:08x}", flush=True)
+                        print(f"LEN:{out_len.value}", flush=True)
+                        overwritten = sum(1 for byte in probe.guard if byte != guard)
+                        print(f"OVERWRITTEN:{overwritten}", flush=True)
+                        print(f"GUARD_OVERWRITTEN:{overwritten}", flush=True)
+                        print(f"INITIAL_COUNT:{needed.value}", flush=True)
+                        print(f"RETURNED_COUNT:{out_len.value}", flush=True)
+                        if rv == CKR_BUFFER_TOO_SMALL:
+                            retry_len = CK_ULONG(needed.value)
+                            retry_buf = (ctypes.c_ubyte * needed.value)()
+                            retry_rv = raw.C_WrapKey(
                                 sh,
                                 mech.byref(),
                                 compressed_pub.value,
                                 target_key.value,
-                                cast(probe.data, ctypes.POINTER(ctypes.c_ubyte)),
-                                byref(out_len),
+                                cast(retry_buf, ctypes.POINTER(ctypes.c_ubyte)),
+                                byref(retry_len),
                             )
-                            print(f"CKR:0x{rv:08x}")
-                            print(f"LEN:{out_len.value}")
-                            overwritten = sum(1 for byte in probe.guard if byte != guard)
-                            print(f"OVERWRITTEN:{overwritten}")
-                            print(f"GUARD_OVERWRITTEN:{overwritten}")
-                            print(f"INITIAL_COUNT:{needed.value}")
-                            print(f"RETURNED_COUNT:{out_len.value}")
-                            if rv == CKR_BUFFER_TOO_SMALL:
-                                retry_len = CK_ULONG(needed.value)
-                                retry_buf = (ctypes.c_ubyte * needed.value)()
-                                retry_rv = raw.C_WrapKey(
-                                    sh,
-                                    mech.byref(),
-                                    compressed_pub.value,
-                                    target_key.value,
-                                    cast(retry_buf, ctypes.POINTER(ctypes.c_ubyte)),
-                                    byref(retry_len),
-                                )
-                                print(f"RETRY_CKR:0x{retry_rv:08x}")
-                                print(f"RETRY_LEN:{retry_len.value}")
-                                print(f"RETRY_LENGTH:{retry_len.value}")
-                                retry_correct = (
-                                    retry_rv == CKR_OK and retry_len.value == needed.value
-                                )
-                                print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
-                            print("OK")
+                            print(f"RETRY_CKR:0x{retry_rv:08x}", flush=True)
+                            print(f"RETRY_LEN:{retry_len.value}", flush=True)
+                            print(f"RETRY_LENGTH:{retry_len.value}", flush=True)
+                            retry_correct = retry_rv == CKR_OK and retry_len.value == needed.value
+                            print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}", flush=True)
+                        print("OK", flush=True)
     finally:
-        if target_key.value:
-            raw.C_DestroyObject(sh, target_key.value)
-        if compressed_pub.value:
-            raw.C_DestroyObject(sh, compressed_pub.value)
-        if priv.value:
-            raw.C_DestroyObject(sh, priv.value)
-        if pub.value:
-            raw.C_DestroyObject(sh, pub.value)
+        _destroy_ec_object(raw, sh, target_key, "target_key")
+        _destroy_ec_object(raw, sh, compressed_pub, "compressed_pub")
+        _destroy_ec_object(raw, sh, priv, "priv")
+        _destroy_ec_object(raw, sh, pub, "pub")
 
 
 def _get_operation_state_buffer_too_small(ctx: ProbeContext) -> None:

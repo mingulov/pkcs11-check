@@ -16,14 +16,18 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import _ec_export
 from pkcs11_check.testcases._ec_export import (
+    ConventionalECPoint,
     InvalidProviderECPointError,
     MalformedSignature,
     ProviderECPointEncodingError,
     RawECPointFamily,
     coord_len_for_curve,
     decode_provider_ec_point,
+    parse_provider_ec_point,
+    read_conventional_ec_point_or_xfail,
     read_ec_public_key_or_xfail,
     read_raw_ec_point_or_xfail,
+    select_ecdh_point_form,
     split_raw_ecdsa,
 )
 
@@ -97,6 +101,297 @@ def test_decode_provider_ec_point_accepts_exact_raw_uncompressed(
     raw = _encoded_point(curve, private_value)
 
     assert decode_provider_ec_point(raw, curve, label="generated key") == raw
+
+
+@pytest.mark.parametrize(
+    ("curve", "private_value"),
+    [(ec.SECP256R1(), 30), (ec.SECP384R1(), 2), (ec.SECP521R1(), 3)],
+    ids=["p256", "p384", "p521"],
+)
+def test_parse_provider_ec_point_preserves_exact_raw_provider_bytes(
+    curve: ec.EllipticCurve, private_value: int
+) -> None:
+    provider_bytes = _encoded_point(curve, private_value)
+
+    result = parse_provider_ec_point(provider_bytes, curve, label="generated key")
+
+    assert isinstance(result, ConventionalECPoint)
+    assert result.provider_bytes is provider_bytes
+    assert result.sec1_bytes == provider_bytes
+    assert result.public_key.public_numbers() == (
+        ec.EllipticCurvePublicKey.from_encoded_point(curve, provider_bytes).public_numbers()
+    )
+
+
+@pytest.mark.parametrize(
+    ("curve", "private_value", "form"),
+    [
+        (ec.SECP256R1(), 7, serialization.PublicFormat.CompressedPoint),
+        (ec.SECP256R1(), 8, serialization.PublicFormat.UncompressedPoint),
+        (ec.SECP384R1(), 9, serialization.PublicFormat.CompressedPoint),
+        (ec.SECP384R1(), 10, serialization.PublicFormat.UncompressedPoint),
+        (ec.SECP521R1(), 11, serialization.PublicFormat.CompressedPoint),
+        (ec.SECP521R1(), 12, serialization.PublicFormat.UncompressedPoint),
+    ],
+    ids=[
+        "p256-compressed",
+        "p256-uncompressed",
+        "p384-compressed",
+        "p384-uncompressed",
+        "p521-compressed",
+        "p521-uncompressed",
+    ],
+)
+def test_parse_provider_ec_point_preserves_wrapped_inner_form_and_provider_bytes(
+    curve: ec.EllipticCurve, private_value: int, form: serialization.PublicFormat
+) -> None:
+    sec1_bytes = _encoded_point(curve, private_value, form)
+    provider_bytes = _wrap_octet_string(sec1_bytes)
+
+    result = parse_provider_ec_point(provider_bytes, curve, label="generated key")
+
+    assert result.provider_bytes is provider_bytes
+    assert result.sec1_bytes == sec1_bytes
+    assert result.public_key.public_bytes(serialization.Encoding.X962, form) == sec1_bytes
+
+
+def test_parse_provider_ec_point_raw_first_accepts_der_looking_04_40_point() -> None:
+    provider_bytes = _encoded_point(ec.SECP256R1(), 30)
+    assert provider_bytes[:2] == b"\x04\x40"
+
+    result = parse_provider_ec_point(provider_bytes, ec.SECP256R1(), label="generated key")
+
+    assert result.provider_bytes is provider_bytes
+    assert result.sec1_bytes == provider_bytes
+
+
+def test_parse_provider_ec_point_rejects_raw_compressed_and_noncanonical_or_trailing_der() -> None:
+    curve = ec.SECP256R1()
+    compressed = _encoded_point(curve, 5, serialization.PublicFormat.CompressedPoint)
+
+    with pytest.raises(ProviderECPointEncodingError):
+        parse_provider_ec_point(compressed, curve, label="generated key")
+    with pytest.raises(ProviderECPointEncodingError):
+        parse_provider_ec_point(b"\x04\x81\x20" + compressed, curve, label="generated key")
+    with pytest.raises(ProviderECPointEncodingError):
+        parse_provider_ec_point(
+            _wrap_octet_string(compressed) + b"\x00", curve, label="generated key"
+        )
+
+
+def test_parse_provider_ec_point_rejects_off_curve_and_wrong_curve_as_invalid_points() -> None:
+    curve = ec.SECP256R1()
+    off_curve = bytearray(_encoded_point(curve, 19))
+    off_curve[-1] ^= 1
+
+    with pytest.raises(InvalidProviderECPointError):
+        parse_provider_ec_point(bytes(off_curve), curve, label="off-curve key")
+    with pytest.raises(InvalidProviderECPointError):
+        parse_provider_ec_point(
+            _wrap_octet_string(_encoded_point(ec.SECP384R1(), 13)),
+            curve,
+            label="wrong-curve key",
+        )
+
+
+@pytest.mark.parametrize(
+    ("provider_bytes", "form"),
+    [
+        ("raw", serialization.PublicFormat.UncompressedPoint),
+        ("wrapped-uncompressed", serialization.PublicFormat.UncompressedPoint),
+        ("wrapped-compressed", serialization.PublicFormat.CompressedPoint),
+    ],
+)
+def test_read_conventional_ec_point_returns_validated_value_without_classification(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_bytes: str,
+    form: serialization.PublicFormat,
+) -> None:
+    curve = ec.SECP256R1()
+    sec1 = _encoded_point(curve, 17, form)
+    value = sec1 if provider_bytes == "raw" else _wrap_octet_string(sec1)
+    monkeypatch.setattr(
+        _ec_export,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_EC_POINT: value},
+    )
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    result = read_conventional_ec_point_or_xfail(rs, 2, curve, label="ECDH peer")
+
+    assert result.provider_bytes is value
+    assert result.sec1_bytes == sec1
+    assert result.public_key.public_bytes(serialization.Encoding.X962, form) == sec1
+    assert C.get_records() == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["missing", None, object(), b"", b"\x04\x03\x04\x01"],
+    ids=["missing", "none", "object", "empty", "malformed"],
+)
+def test_read_conventional_ec_point_nonoperational_evidence_has_no_fabricated_ckr(
+    monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    monkeypatch.setattr(
+        _ec_export,
+        "read_attributes",
+        lambda *_args, value=value, **_kwargs: {} if value == "missing" else {CKA_EC_POINT: value},
+    )
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(pytest.xfail.Exception):
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    record = C.get_records()[0]
+    assert record.reason == "not_operational"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+
+
+@pytest.mark.parametrize("rv", [CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID])
+def test_read_conventional_ec_point_direct_refusal_keeps_exact_ckr(
+    monkeypatch: pytest.MonkeyPatch, rv: int
+) -> None:
+    def _read(*_args: object, **_kwargs: object) -> dict[int, bytes]:
+        raise CkrAssertionError("attribute unavailable", int(rv))
+
+    monkeypatch.setattr(_ec_export, "read_attributes", _read)
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(pytest.xfail.Exception):
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    assert C.get_records()[0].actual_ckr == (
+        "CKR_ATTRIBUTE_SENSITIVE" if rv == CKR_ATTRIBUTE_SENSITIVE else "CKR_ATTRIBUTE_TYPE_INVALID"
+    )
+
+
+def test_read_conventional_ec_point_invalid_point_is_crypto_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = bytearray(_encoded_point(ec.SECP256R1(), 19))
+    value[-1] ^= 1
+    monkeypatch.setattr(
+        _ec_export,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_EC_POINT: bytes(value)},
+    )
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(Failed, match="off-curve"):
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    record = C.get_records()[0]
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+    assert record.operation == "C_GetAttributeValue"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [CkrAssertionError("unexpected", int(CKR_FUNCTION_FAILED)), RuntimeError("mapping")],
+)
+def test_read_conventional_ec_point_unexpected_read_errors_propagate(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    monkeypatch.setattr(
+        _ec_export,
+        "read_attributes",
+        lambda *_args, error=error, **_kwargs: (_ for _ in ()).throw(error),
+    )
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(type(error)) as exc_info:
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    assert exc_info.value is error
+    assert C.get_records() == []
+
+
+def test_read_conventional_ec_point_unsupported_algorithm_propagates_without_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = _wrap_octet_string(_encoded_point(ec.SECP256R1(), 17))
+    monkeypatch.setattr(
+        _ec_export,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_EC_POINT: value},
+    )
+    monkeypatch.setattr(
+        _ec_export,
+        "parse_provider_ec_point",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            UnsupportedAlgorithm("backend unavailable")
+        ),
+    )
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    with pytest.raises(UnsupportedAlgorithm, match="backend unavailable"):
+        read_conventional_ec_point_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer")
+
+    assert C.get_records() == []
+
+
+def test_read_ec_public_key_compatibility_wrapper_projects_public_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_key = ec.derive_private_key(17, ec.SECP256R1()).public_key()
+    parsed = ConventionalECPoint(b"provider", b"sec1", public_key)
+    monkeypatch.setattr(
+        _ec_export,
+        "read_conventional_ec_point_or_xfail",
+        lambda *_args, **_kwargs: parsed,
+    )
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+
+    assert read_ec_public_key_or_xfail(rs, 2, ec.SECP256R1(), label="ECDH peer") is public_key
+    assert C.get_records() == []
+
+
+@pytest.mark.parametrize("current_form", ["compressed", "uncompressed"])
+@pytest.mark.parametrize(
+    ("supports_compressed", "supports_uncompressed"),
+    [(False, False), (False, True), (True, False), (True, True)],
+    ids=["neither", "uncompressed-only", "compressed-only", "both"],
+)
+def test_select_ecdh_point_form_covers_advertised_form_matrix(
+    current_form: str, supports_compressed: bool, supports_uncompressed: bool
+) -> None:
+    curve = ec.SECP256R1()
+    source_form = (
+        serialization.PublicFormat.CompressedPoint
+        if current_form == "compressed"
+        else serialization.PublicFormat.UncompressedPoint
+    )
+    point = parse_provider_ec_point(
+        _wrap_octet_string(_encoded_point(curve, 17, source_form)),
+        curve,
+        label="ECDH peer",
+    )
+    expected_form = (
+        source_form
+        if (current_form == "compressed" and supports_compressed)
+        or (current_form == "uncompressed" and supports_uncompressed)
+        or supports_compressed == supports_uncompressed
+        else (
+            serialization.PublicFormat.CompressedPoint
+            if supports_compressed
+            else serialization.PublicFormat.UncompressedPoint
+        )
+    )
+
+    result = select_ecdh_point_form(
+        point,
+        supports_compressed=supports_compressed,
+        supports_uncompressed=supports_uncompressed,
+    )
+
+    expected = point.public_key.public_bytes(serialization.Encoding.X962, expected_form)
+    assert result == expected
+    assert result[:1] in (b"\x02", b"\x03", b"\x04")
+    assert not result.startswith(b"\x04\x81")
 
 
 def test_decode_provider_ec_point_prefers_exact_raw_with_der_like_coordinate() -> None:

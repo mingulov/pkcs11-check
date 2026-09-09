@@ -722,8 +722,8 @@ class TestSP800108CounterKDF:
                     mechanism="CKM_SP800_108_COUNTER_KDF",
                     summary="C_DeriveKey did not return an additional derived key handle",
                 )
-            additional_values = [
-                _read_attr_or_record(
+            for handle in additional_handles:
+                value = _read_attr_or_record(
                     rs.raw,
                     rs.sh,
                     handle,
@@ -733,9 +733,8 @@ class TestSP800108CounterKDF:
                         f"handle {handle} CKA_VALUE readback"
                     ),
                 )
-                for handle in additional_handles
-            ]
-            for handle, value in zip(additional_handles, additional_values, strict=True):
+                if value is MISSING_ATTRIBUTE:
+                    continue
                 _assert_sp800_bytes(
                     value,
                     label=(
@@ -745,8 +744,6 @@ class TestSP800108CounterKDF:
                     mechanism="CKM_SP800_108_COUNTER_KDF",
                     expected_len=16,
                 )
-            if any(value is MISSING_ATTRIBUTE for value in additional_values):
-                return
         finally:
             destroy_quietly(rs.raw, rs.sh, primary)
             for handle in (int(handle.value) for handle in handle_refs if handle.value):

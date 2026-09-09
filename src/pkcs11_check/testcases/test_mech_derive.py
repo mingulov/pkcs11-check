@@ -29,7 +29,9 @@ from ctypes import byref
 from typing import Any, NamedTuple
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -69,6 +71,8 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE_LEN,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKK_AES,
     CKK_ARIA,
     CKK_CAMELLIA,
@@ -95,7 +99,12 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_OK,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
+from pkcs11_check.testcases._ec_export import (
+    read_conventional_ec_point_or_xfail,
+    select_ecdh_point_form,
+)
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import gen_generic_secret
 
@@ -475,7 +484,6 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
     length (32 bytes for P-256) without truncation.
     """
     mech_id = entry.mech_id
-    from pkcs11_check.raw.types_std import CKA_EC_POINT
 
     priv_a, pub_a = 0, 0
     priv_b, pub_b = 0, 0
@@ -485,11 +493,17 @@ def _derive_ecdh(rs: RawSession, entry: MechEntry) -> None:
             rs.raw, rs.sh, _P256_OID, private_attrs={CKA_DERIVE: True, CKA_TOKEN: False}
         )
         pub_b, priv_b = gen_ec_keypair(rs.raw, rs.sh, _P256_OID)
-        # Read peer (B's) public point
-        peer_attrs = read_attributes(rs.raw, rs.sh, pub_b, [CKA_EC_POINT])
-        peer_point = peer_attrs.get(CKA_EC_POINT)
-        if not peer_point or not isinstance(peer_point, bytes):
-            pytest.skip(f"{entry.mech_name}: cannot read CKA_EC_POINT from peer key")
+        peer = read_conventional_ec_point_or_xfail(
+            rs,
+            pub_b,
+            ec.SECP256R1(),
+            label=f"{entry.mech_name}: peer public key",
+        )
+        peer_point = select_ecdh_point_form(
+            peer,
+            supports_compressed=rs.has_mechanism_flag(mech_id, int(CKF_EC_COMPRESS)),
+            supports_uncompressed=rs.has_mechanism_flag(mech_id, int(CKF_EC_UNCOMPRESS)),
+        )
         ecdh_param = mech_ecdh(
             CKM(mech_id),
             kdf=CKD_NULL,
@@ -845,11 +859,51 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
         assert derived_pub != 0, f"{entry.mech_name}: derive returned handle 0"
         # Verify the derived object is a public key
         result = read_attributes(rs.raw, rs.sh, derived_pub, [CKA_CLASS])
-        obj_class_raw = result.get(CKA_CLASS)
-        if obj_class_raw is not None and isinstance(obj_class_raw, int):
-            assert obj_class_raw == int(CKO_PUBLIC_KEY), (
-                f"{entry.mech_name}: derived object class {obj_class_raw:#x} != CKO_PUBLIC_KEY"
+        before = len(C.get_records())
+        obj_class_raw = attr_or_record(
+            result,
+            CKA_CLASS,
+            label=f"{entry.mech_name}: derived object class",
+            reason="not_operational",
+            kind="metadata",
+            mechanism=entry.mech_name,
+        )
+        if obj_class_raw is MISSING_ATTRIBUTE:
+            records = C.get_records()
+            if len(records) > before:
+                C.raise_for_record(records[-1])
+            C.fail_as(
+                "harness_error",
+                kind="metadata",
+                label=f"{entry.mech_name}: derived object class",
+                operation="C_GetAttributeValue",
+                mechanism=entry.mech_name,
+                summary=(
+                    f"{entry.mech_name}: missing derived object class produced no classification"
+                ),
             )
+        if type(obj_class_raw) is not int or obj_class_raw != int(CKO_PUBLIC_KEY):
+            record = C.record_as(
+                "wrong_result",
+                kind="metadata",
+                label=f"{entry.mech_name}: derived object class",
+                operation="C_GetAttributeValue",
+                mechanism=entry.mech_name,
+                detail={
+                    "attribute": int(CKA_CLASS),
+                    "expected": "strict int equal to CKO_PUBLIC_KEY",
+                    "expected_value": int(CKO_PUBLIC_KEY),
+                    "actual_type": type(obj_class_raw).__name__,
+                    "actual": repr(obj_class_raw),
+                    "producer_operation": "C_DeriveKey",
+                    "producer_mechanism": entry.mech_name,
+                },
+                summary=(
+                    f"{entry.mech_name}: derived object CKA_CLASS is malformed or wrong; "
+                    f"expected strict int CKO_PUBLIC_KEY, got {obj_class_raw!r}"
+                ),
+            )
+            C.raise_for_record(record)
     finally:
         destroy_quietly(rs.raw, rs.sh, pub_a)
         destroy_quietly(rs.raw, rs.sh, priv_a)

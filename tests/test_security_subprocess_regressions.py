@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import inspect
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.testcases._probes import error_path_kwp as error_path_kwp_probe
+from pkcs11_check.testcases._probes import error_path_rsa as error_path_rsa_probe
 from pkcs11_check.testcases._probes import ffi_length as ffi_length_probe
 from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
@@ -21,6 +25,7 @@ from pkcs11_check.testcases.security import (
     test_recover_length_boundary,
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
+from tests._attribute_access_guard import analyze_file
 
 
 class _Pin:
@@ -74,16 +79,16 @@ def test_rsa_decrypt_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyP
     """RSA decrypt crash probes should not spawn if setup keygen is unavailable."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
 
-    def _xfail_setup(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        pytest.xfail("RSA setup unavailable")
+    def _setup_marker(*_args: object, **_kwargs: object) -> ProbeResult:
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:RSA decrypt keypair generation rejected: CKR_FUNCTION_FAILED\n",
+            stderr="",
+        )
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        pytest.fail("child spawned before setup preflight")
+    monkeypatch.setattr(test_error_path_rsa, "run_probe", _setup_marker)
 
-    monkeypatch.setattr(test_error_path_rsa, "gen_rsa_keypair_or_xfail", _xfail_setup)
-    monkeypatch.setattr(test_error_path_rsa, "run_probe", _child_should_not_run)
-
-    with pytest.raises(pytest.xfail.Exception, match="RSA setup unavailable"):
+    with pytest.raises(pytest.xfail.Exception, match="keypair generation"):
         test_error_path_rsa.TestRsaPkcsDecryptErrorPaths().test_rsa_pkcs_decrypt_random_ciphertext(
             _RawSession(),
             cfg,
@@ -94,20 +99,1342 @@ def test_rsa_verify_probe_xfails_setup_before_child(monkeypatch: pytest.MonkeyPa
     """RSA verify crash probes should not spawn if setup keygen is unavailable."""
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin())
 
-    def _xfail_setup(*_args: object, **_kwargs: object) -> tuple[int, int]:
-        pytest.xfail("RSA setup unavailable")
+    def _setup_marker(*_args: object, **_kwargs: object) -> ProbeResult:
+        return ProbeResult(
+            returncode=0,
+            stdout="SETUP_XFAIL:RSA verify keypair generation rejected: CKR_FUNCTION_FAILED\n",
+            stderr="",
+        )
 
-    def _child_should_not_run(*_args: object, **_kwargs: object) -> tuple[int, str, str]:
-        pytest.fail("child spawned before setup preflight")
+    monkeypatch.setattr(test_error_path_rsa, "run_probe", _setup_marker)
 
-    monkeypatch.setattr(test_error_path_rsa, "gen_rsa_keypair_or_xfail", _xfail_setup)
-    monkeypatch.setattr(test_error_path_rsa, "run_probe", _child_should_not_run)
-
-    with pytest.raises(pytest.xfail.Exception, match="RSA setup unavailable"):
+    with pytest.raises(pytest.xfail.Exception, match="keypair generation"):
         test_error_path_rsa.TestRsaVerifyCorruptedSignature().test_rsa_verify_corrupted_signature(
             _RawSession(),
             cfg,
         )
+
+
+def _rsa_marker(prefix: str, payload: str) -> str:
+    return f"{prefix}:{payload}\n"
+
+
+def _rsa_complete_decrypt_output(*, case: str = "decrypt:pkcs:random", rv: int = 0x40) -> str:
+    return "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                (
+                    f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+                    '"attribute":{"name":"CKA_MODULUS","id":288},'
+                    '"state":"present","value_len":256,"modulus_bits":2048}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                    '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    f'{{"schema":1,"case":"{case}","stage":"decrypt",'
+                    f'"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":{rv}}}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_DONE",
+                f'{{"schema":1,"case":"{case}","status":"complete"}}',
+            ),
+        )
+    )
+
+
+def test_rsa_protocol_accepts_complete_rejection_without_legacy_markers() -> None:
+    """The RSA child protocol carries a complete, case-bound provider observation."""
+    test_error_path_rsa._check_protocol(
+        0,
+        _rsa_complete_decrypt_output(),
+        "",
+        case_id="decrypt:pkcs:random",
+        mechanism="CKM_RSA_PKCS",
+        operation="C_Decrypt",
+        expected_rvs=(0x40,),
+        requires_attribute=True,
+    )
+    assert C.get_records() == []
+
+
+def test_rsa_protocol_preserves_modulus_omission_without_inventing_ckr() -> None:
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                '{"schema":1,"case":"decrypt:pkcs:random","operation":"C_GetAttributeValue",'
+                '"attribute":{"name":"CKA_MODULUS","id":288},"state":"missing"}',
+            ),
+            _rsa_marker(
+                "RSA_DONE",
+                '{"schema":1,"case":"decrypt:pkcs:random","status":"omitted"}',
+            ),
+        )
+    )
+    with pytest.raises(pytest.xfail.Exception, match="modulus unavailable"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["honest_deviation"]
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].actual_ckr is None
+
+
+def test_rsa_protocol_parses_independent_rv_after_malformed_attribute() -> None:
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                '{"schema":1,"case":"decrypt:pkcs:random","operation":"C_GetAttributeValue",'
+                '"attribute":{"name":"CKA_MODULUS","id":288},'
+                '"state":"present","value_len":256,"modulus_bits":2048,}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    '{"schema":1,"case":"decrypt:pkcs:random","stage":"decrypt_init",'
+                    '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    '{"schema":1,"case":"decrypt:pkcs:random","stage":"decrypt",'
+                    '"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":0}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_DONE",
+                '{"schema":1,"case":"decrypt:pkcs:random","status":"complete"}',
+            ),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["accepted_invalid", "harness_error"]
+
+
+def test_rsa_protocol_accepts_native_width_vendor_ckr() -> None:
+    output = _rsa_complete_decrypt_output(rv=0x1_0000_0001)
+    with pytest.raises(pytest.xfail.Exception, match="rejected invalid RSA input"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["nonspec_reject"]
+    assert records[0].actual_ckr == "0x100000001"
+
+
+def test_rsa_protocol_rejects_case_mismatch_as_harness_error() -> None:
+    with pytest.raises(pytest.fail.Exception, match="case"):
+        test_error_path_rsa._check_protocol(
+            0,
+            _rsa_complete_decrypt_output(case="decrypt:pkcs:truncated"),
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert [record.reason for record in C.get_records()] == ["harness_error"]
+
+
+def test_rsa_protocol_rejects_mismatched_modulus_attribute_id() -> None:
+    output = _rsa_complete_decrypt_output().replace('"id":288', '"id":289')
+    with pytest.raises(pytest.fail.Exception, match="attribute descriptor"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert [record.reason for record in C.get_records()] == ["harness_error"]
+
+
+def test_rsa_protocol_empty_signature_is_hard_crypto_result() -> None:
+    case = "verify:sha256_rsa_pkcs:bitflip"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    f'{{"schema":1,"case":"{case}","stage":"sign",'
+                    '"operation":"C_Sign","mechanism":"CKM_SHA256_RSA_PKCS",'
+                    '"rv":0,"value_len":0}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    f'{{"schema":1,"case":"{case}","stage":"verify_init",'
+                    '"operation":"C_VerifyInit","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                (
+                    f'{{"schema":1,"case":"{case}","stage":"verify",'
+                    '"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":192}'
+                ),
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"complete"}}'),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="empty signature"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == [
+        "wrong_result",
+        "honest_deviation",
+        "harness_error",
+    ]
+    assert records[0].kind == "crypto"
+
+
+def _rsa_verify_output(*, baseline_rv: int, mutated_rv: int) -> str:
+    case = "verify:sha256_rsa_pkcs:bitflip"
+    return "".join(
+        (
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"sign",'
+                '"operation":"C_Sign","mechanism":"CKM_SHA256_RSA_PKCS",'
+                '"rv":0,"value_len":256}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"verify_baseline_init",'
+                '"operation":"C_VerifyInit","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"verify_baseline",'
+                f'"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":{baseline_rv}}}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"verify_init",'
+                '"operation":"C_VerifyInit","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"verify",'
+                f'"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":{mutated_rv}}}',
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"complete"}}'),
+        )
+    )
+
+
+def _rsa_verify_output_with_malformed_rv(*, stage: str | None, escaped: bool = False) -> str:
+    case = "verify:sha256_rsa_pkcs:bitflip"
+    stage_value = "null" if stage is None else f'"{stage}"'
+    if escaped:
+        stage_value = '"verify_\\u0062aseline"'
+    malformed = _rsa_marker(
+        "RSA_RV",
+        (
+            f'{{"schema":1,"case":"{case}","stage":{stage_value},'
+            '"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":true}'
+        ),
+    )
+    done = f'RSA_DONE:{{"schema":1,"case":"{case}","status":"complete"}}\n'
+    return _rsa_verify_output(baseline_rv=0, mutated_rv=0).replace(done, malformed + done)
+
+
+def _rsa_verify_output_with_duplicate_stage(*, stage_fields: str) -> str:
+    case = "verify:sha256_rsa_pkcs:bitflip"
+    malformed = _rsa_marker(
+        "RSA_RV",
+        (
+            f'{{"schema":1,"case":"{case}",{stage_fields},'
+            '"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":true}'
+        ),
+    )
+    done = f'RSA_DONE:{{"schema":1,"case":"{case}","status":"complete"}}\n'
+    return _rsa_verify_output(baseline_rv=0, mutated_rv=0).replace(done, malformed + done)
+
+
+@pytest.mark.parametrize("state", ["missing", "malformed", "inconsistent"])
+@pytest.mark.parametrize("decrypt_rv", [0, 0x40, 0x54])
+def test_rsa_terminal_attribute_disables_decrypt_oracle_for_all_terminal_rvs(
+    state: str, decrypt_rv: int
+) -> None:
+    case = "decrypt:pkcs:random"
+    fields: dict[str, object] = {
+        "missing": {"state": "missing"},
+        "malformed": {"state": "malformed", "value_type": "bytes", "value_repr": "bad"},
+        "inconsistent": {
+            "state": "inconsistent",
+            "value_len": 255,
+            "modulus_bits": 2040,
+            "expected_bits": 2048,
+        },
+    }[state]
+    attribute_payload = {
+        "schema": 1,
+        "case": case,
+        "operation": "C_GetAttributeValue",
+        "attribute": {"name": "CKA_MODULUS", "id": 288},
+        **fields,
+    }
+    done_status = "omitted" if state == "missing" else "malformed"
+    output = "".join(
+        (
+            _rsa_marker("RSA_ATTRIBUTE", json.dumps(attribute_payload, separators=(",", ":"))),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt",'
+                f'"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":{decrypt_rv}}}',
+            ),
+            _rsa_marker(
+                "RSA_DONE",
+                f'{{"schema":1,"case":"{case}","status":"{done_status}"}}',
+            ),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert not any(record.reason == "accepted_invalid" for record in records)
+    dependent = [
+        record
+        for record in records
+        if record.detail is not None
+        and record.detail.get("stage") == "decrypt"
+        and record.detail.get("oracle_disabled") is True
+    ]
+    assert len(dependent) == 1
+    assert dependent[0].actual_ckr == test_error_path_rsa.ckr_name(decrypt_rv)
+    assert any(record.reason == "harness_error" for record in records)
+
+
+@pytest.mark.parametrize(
+    ("rc", "stderr"),
+    [(-11, "segmentation fault"), (0, f"{SUBPROCESS_TIMEOUT_MARKER}:15s\n")],
+)
+def test_rsa_terminal_attribute_preserves_oracle_disabled_evidence_on_process_failure(
+    rc: int, stderr: str
+) -> None:
+    case = "decrypt:pkcs:random"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                (
+                    f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+                    '"attribute":{"name":"CKA_MODULUS","id":288},'
+                    '"state":"inconsistent","value_len":255,"modulus_bits":2040,'
+                    '"expected_bits":2048}'
+                ),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt",'
+                '"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"malformed"}}'),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            rc,
+            output,
+            stderr,
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert not any(record.reason == "accepted_invalid" for record in records)
+    assert any(
+        record.detail is not None
+        and record.detail.get("stage") == "decrypt"
+        and record.detail.get("oracle_disabled") is True
+        for record in records
+    )
+    assert any(record.reason == "harness_error" for record in records)
+    assert any(record.reason == "crash" for record in records)
+
+
+@pytest.mark.parametrize(
+    ("stage", "escaped"),
+    [("sign", False), (None, True), ("verify_init", False), ("verify", False), (None, False)],
+)
+def test_rsa_malformed_lineage_marker_disables_mutation_oracle(
+    stage: str | None, escaped: bool
+) -> None:
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            _rsa_verify_output_with_malformed_rv(stage=stage, escaped=escaped),
+            "",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert not any(record.reason == "accepted_invalid" for record in records)
+    assert any(record.reason == "harness_error" for record in records)
+
+
+@pytest.mark.parametrize(
+    "stage_fields",
+    [
+        '"stage":"sign","stage":"keygen"',
+        '"stage":"keygen","stage":"sign"',
+        '"stage":"sign","\\u0073tage":"keygen"',
+        '"stage":"sign","stage":"\\u006beygen"',
+    ],
+)
+@pytest.mark.parametrize(
+    ("rc", "stderr", "expected_records"),
+    [
+        (0, "", ["honest_deviation", "harness_error"]),
+        (-11, "segmentation fault", ["honest_deviation", "harness_error", "crash"]),
+        (0, f"{SUBPROCESS_TIMEOUT_MARKER}:15s\n", ["honest_deviation", "harness_error", "crash"]),
+    ],
+)
+def test_rsa_duplicate_stage_keys_conservatively_disable_mutation_oracle(
+    stage_fields: str,
+    rc: int,
+    stderr: str,
+    expected_records: list[str],
+) -> None:
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            rc,
+            _rsa_verify_output_with_duplicate_stage(stage_fields=stage_fields),
+            stderr,
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == expected_records
+    assert not any(record.reason == "accepted_invalid" for record in records)
+    assert records[0].detail is not None
+    assert records[0].detail["oracle_disabled"] is True
+
+
+def test_rsa_verify_baseline_rejection_is_visible_and_disables_mutation_oracle() -> None:
+    with pytest.raises(pytest.fail.Exception, match="own successful signature"):
+        test_error_path_rsa._check_protocol(
+            0,
+            _rsa_verify_output(baseline_rv=0xC0, mutated_rv=0),
+            "",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["wrong_result", "honest_deviation"]
+    assert records[0].kind == "crypto"
+    assert not any(record.reason == "accepted_invalid" for record in records)
+
+
+def test_rsa_verify_baseline_success_allows_mutation_rejection() -> None:
+    test_error_path_rsa._check_protocol(
+        0,
+        _rsa_verify_output(baseline_rv=0, mutated_rv=0xC0),
+        "",
+        case_id="verify:sha256_rsa_pkcs:bitflip",
+        mechanism="CKM_SHA256_RSA_PKCS",
+        operation="C_Verify",
+        expected_rvs=(0xC0,),
+        requires_attribute=False,
+    )
+    assert C.get_records() == []
+
+
+@pytest.mark.parametrize(
+    ("stage", "rv", "status", "operation", "mechanism", "expected_reason"),
+    [
+        (
+            "keygen",
+            0x54,
+            "setup_refused",
+            "C_GenerateKeyPair",
+            "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            "not_operational",
+        ),
+        (
+            "keygen",
+            0x80000001,
+            "setup_refused",
+            "C_GenerateKeyPair",
+            "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            "not_operational",
+        ),
+        (
+            "keygen",
+            0x7FFFFFFF,
+            "setup_refused",
+            "C_GenerateKeyPair",
+            "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            "wrong_result",
+        ),
+        (
+            "attribute_read",
+            0x54,
+            "oracle_disabled",
+            "C_GetAttributeValue",
+            "CKM_RSA_PKCS",
+            "not_operational",
+        ),
+        (
+            "attribute_read",
+            0x80000001,
+            "oracle_disabled",
+            "C_GetAttributeValue",
+            "CKM_RSA_PKCS",
+            "not_operational",
+        ),
+        (
+            "attribute_read",
+            0x7FFFFFFF,
+            "oracle_disabled",
+            "C_GetAttributeValue",
+            "CKM_RSA_PKCS",
+            "wrong_result",
+        ),
+    ],
+)
+def test_rsa_terminal_setup_rv_is_classified_without_modulus(
+    stage: str,
+    rv: int,
+    status: str,
+    operation: str,
+    mechanism: str,
+    expected_reason: str,
+) -> None:
+    case = "decrypt:pkcs:random"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"{stage}",'
+                f'"operation":"{operation}","mechanism":"{mechanism}","rv":{rv}}}',
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"{status}"}}'),
+        )
+    )
+    outcome = (
+        pytest.xfail.Exception if expected_reason == "not_operational" else pytest.fail.Exception
+    )
+    with pytest.raises(outcome):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == [expected_reason]
+    if expected_reason == "wrong_result":
+        assert records[0].kind == "metadata"
+
+
+def test_rsa_terminal_setup_branch_rejects_mixed_attribute() -> None:
+    case = "decrypt:pkcs:random"
+    output = (
+        _rsa_marker(
+            "RSA_RV",
+            f'{{"schema":1,"case":"{case}","stage":"keygen",'
+            '"operation":"C_GenerateKeyPair","mechanism":"CKM_RSA_PKCS_KEY_PAIR_GEN","rv":84}',
+        )
+        + _rsa_marker(
+            "RSA_ATTRIBUTE",
+            f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+            '"attribute":{"name":"CKA_MODULUS","id":288},"state":"missing"}',
+        )
+        + _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"setup_refused"}}')
+    )
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert any(record.reason == "harness_error" for record in C.get_records())
+
+
+def test_rsa_setup_marker_is_recorded_when_rsa_markers_are_mixed() -> None:
+    output = "SETUP_XFAIL:module setup incomplete\n" + _rsa_complete_decrypt_output(rv=0x40)
+    with pytest.raises(pytest.fail.Exception, match="malformed RSA child protocol"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert [record.reason for record in C.get_records()] == ["not_operational", "harness_error"]
+
+
+def test_rsa_done_before_cleanup_crash_is_validated_before_crash() -> None:
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        test_error_path_rsa._check_protocol(
+            -11,
+            _rsa_complete_decrypt_output(rv=0x40),
+            "cleanup access violation",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["crash"]
+    assert records[0].detail is not None
+    assert records[0].detail["parsed_measurement"]["done"] == [{"status": "complete"}]
+
+
+def test_rsa_missing_modulus_attaches_dependent_terminal_measurement() -> None:
+    case = "decrypt:pkcs:random"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+                '"attribute":{"name":"CKA_MODULUS","id":288},"state":"missing"}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt",'
+                '"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":84}',
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"omitted"}}'),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="attribute_terminality"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    omission = next(record for record in records if record.reason == "honest_deviation")
+    assert omission.actual_ckr is None
+    assert omission.detail is not None
+    assert omission.detail["dependent_terminal"][0]["actual_ckr"] == "CKR_FUNCTION_NOT_SUPPORTED"
+    assert any(record.reason == "harness_error" for record in records)
+
+
+def test_rsa_baseline_pending_is_nonterminal_and_never_accepts_mutation() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            _rsa_verify_output(baseline_rv=0x204, mutated_rv=0),
+            "",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["honest_deviation", "honest_deviation"]
+    assert all(record.detail is not None for record in records)
+    assert not any(record.reason == "accepted_invalid" for record in records)
+
+
+def test_rsa_duplicate_baseline_never_enables_mutation_oracle() -> None:
+    output = _rsa_verify_output(baseline_rv=0, mutated_rv=0).replace(
+        'RSA_DONE:{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","status":"complete"}',
+        _rsa_marker(
+            "RSA_RV",
+            '{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","stage":"verify_baseline",'
+            '"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}',
+        ).rstrip("\n")
+        + "\n"
+        + 'RSA_DONE:{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","status":"complete"}',
+    )
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    assert not any(record.reason == "accepted_invalid" for record in C.get_records())
+
+
+def test_rsa_incoherent_baseline_order_never_enables_mutation_oracle() -> None:
+    output = _rsa_verify_output(baseline_rv=0, mutated_rv=0)
+    baseline_init = _rsa_marker(
+        "RSA_RV",
+        '{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","stage":"verify_baseline_init",'
+        '"operation":"C_VerifyInit","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}',
+    )
+    baseline = _rsa_marker(
+        "RSA_RV",
+        '{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","stage":"verify_baseline",'
+        '"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}',
+    )
+    output = output.replace(baseline_init + baseline, baseline + baseline_init)
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    assert not any(record.reason == "accepted_invalid" for record in C.get_records())
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        _rsa_marker(
+            "RSA_RV",
+            '{"schema":1,"case":"decrypt:pkcs:random","stage":"decrypt",'
+            '"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":0}',
+        ),
+        _rsa_marker(
+            "RSA_RV",
+            '{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","stage":"verify_baseline",'
+            '"operation":"C_Verify","mechanism":"CKM_SHA256_RSA_PKCS","rv":0}',
+        ),
+    ],
+)
+def test_rsa_impossible_interrupted_transition_is_harness_error(output: str) -> None:
+    case = "decrypt:pkcs:random" if "C_Decrypt" in output else "verify:sha256_rsa_pkcs:bitflip"
+    mechanism = "CKM_RSA_PKCS" if case.startswith("decrypt") else "CKM_SHA256_RSA_PKCS"
+    operation = "C_Decrypt" if case.startswith("decrypt") else "C_Verify"
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            -11,
+            output,
+            "segmentation fault",
+            case_id=case,
+            mechanism=mechanism,
+            operation=operation,
+            expected_rvs=(0x40,) if case.startswith("decrypt") else (0xC0,),
+            requires_attribute=case.startswith("decrypt"),
+        )
+    assert any(record.reason == "harness_error" for record in C.get_records())
+
+
+@pytest.mark.parametrize("state", ["missing", "malformed", "inconsistent"])
+def test_rsa_attribute_terminal_state_rejects_decrypt_tail_on_crash(state: str) -> None:
+    case = "decrypt:pkcs:random"
+    fields: dict[str, dict[str, object]] = {
+        "missing": {"state": "missing"},
+        "malformed": {
+            "state": "malformed",
+            "value_type": "bytes",
+            "value_repr": "bad",
+        },
+        "inconsistent": {
+            "state": "inconsistent",
+            "value_len": 255,
+            "modulus_bits": 2040,
+            "expected_bits": 2048,
+        },
+    }
+    attribute_payload = {
+        "schema": 1,
+        "case": case,
+        "operation": "C_GetAttributeValue",
+        "attribute": {"name": "CKA_MODULUS", "id": 288},
+        **fields[state],
+    }
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                json.dumps(attribute_payload, separators=(",", ":")),
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}',
+            ),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        test_error_path_rsa._check_protocol(
+            -11,
+            output,
+            "segmentation fault",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert records[-1].reason == "crash"
+    assert any(record.reason == "harness_error" for record in records)
+
+
+def test_rsa_mutation_unexpected_defined_rv_is_oracle_disabled_without_baseline() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            _rsa_verify_output(baseline_rv=0x54, mutated_rv=0x05),
+            "",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["not_operational", "honest_deviation"]
+    assert records[1].detail is not None
+    assert records[1].detail["oracle_disabled"] is True
+
+
+@pytest.mark.parametrize(
+    "defect", ["unknown", "missing_done", "wrong_status", "duplicate_done", "malformed_done"]
+)
+def test_rsa_valid_baseline_keeps_mutation_finding_with_unrelated_protocol_defect(
+    defect: str,
+) -> None:
+    case = "verify:sha256_rsa_pkcs:bitflip"
+    output = _rsa_verify_output(baseline_rv=0, mutated_rv=0)
+    done = 'RSA_DONE:{"schema":1,"case":"verify:sha256_rsa_pkcs:bitflip","status":"complete"}\n'
+    if defect == "unknown":
+        output += 'RSA_FUTURE:{"schema":1}\n'
+    elif defect == "missing_done":
+        output = output.replace(done, "")
+    elif defect == "wrong_status":
+        output = output.replace('"status":"complete"', '"status":"omitted"')
+    elif defect == "duplicate_done":
+        output += done
+    else:
+        output = output.replace(done, "RSA_DONE:{not-json}\n")
+    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["accepted_invalid", "harness_error"]
+
+
+def test_rsa_valid_baseline_keeps_mutation_finding_before_timeout() -> None:
+    with pytest.raises(pytest.fail.Exception, match="timed out"):
+        test_error_path_rsa._check_protocol(
+            0,
+            _rsa_verify_output(baseline_rv=0, mutated_rv=0),
+            f"{SUBPROCESS_TIMEOUT_MARKER}:15s\n",
+            case_id="verify:sha256_rsa_pkcs:bitflip",
+            mechanism="CKM_SHA256_RSA_PKCS",
+            operation="C_Verify",
+            expected_rvs=(0xC0,),
+            requires_attribute=False,
+        )
+    assert [record.reason for record in C.get_records()] == ["accepted_invalid", "crash"]
+
+
+def test_rsa_protocol_duplicate_json_key_is_harness_error() -> None:
+    case = "decrypt:pkcs:random"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                (
+                    f'{{"schema":1,"schema":1,"case":"{case}",'
+                    '"attribute":"CKA_MODULUS","state":"missing"}'
+                ),
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"omitted"}}'),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="duplicate key"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert [record.reason for record in C.get_records()] == ["harness_error"]
+
+
+def test_rsa_protocol_missing_downstream_stage_is_harness_error() -> None:
+    case = "decrypt:pkcs:random"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+                '"attribute":{"name":"CKA_MODULUS","id":288},'
+                '"state":"present","value_len":256,"modulus_bits":2048}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}',
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"complete"}}'),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception, match="cardinality"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert [record.reason for record in C.get_records()] == ["harness_error"]
+
+
+def test_rsa_setup_marker_survives_later_signal_crash() -> None:
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        test_error_path_rsa._check_protocol(
+            -11,
+            "SETUP_XFAIL:RSA keypair generation rejected: CKR_FUNCTION_FAILED\n",
+            "segmentation fault",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["not_operational", "crash"]
+
+
+def test_rsa_bad_random_ciphertext_is_outside_modulus() -> None:
+    modulus = (1 << 2047) + 159
+    bad = error_path_rsa_probe._make_bad_ct("random", modulus.to_bytes(256, "big"), 256)
+    assert len(bad) == 256
+    assert int.from_bytes(bad, "big") >= modulus
+
+
+def test_rsa_child_emits_successful_decrypt_init_before_terminal_crash(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class _CrashOnDecrypt:
+        def C_DecryptInit(self, *_args: object) -> int:  # noqa: N802
+            return 0
+
+        def C_Decrypt(self, *_args: object) -> int:  # noqa: N802
+            raise OSError("provider crash")
+
+    with pytest.raises(OSError, match="provider crash"):
+        error_path_rsa_probe._pkcs_decrypt(
+            _CrashOnDecrypt(),
+            1,
+            2,
+            b"\x00" * 256,
+            256,
+            "decrypt:pkcs:all_zeros",
+        )
+
+    output = capsys.readouterr().out
+    assert '"stage":"decrypt_init"' in output
+    assert '"rv":0' in output
+    assert '"stage":"decrypt"' not in output
+
+
+def test_rsa_child_keygen_refusal_is_case_bound_rv(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A provider key-generation refusal is evidence, not a generic setup marker."""
+    error = error_path_rsa_probe.CkrAssertionError("refused", 0x54)
+
+    def _refuse(*_args: object, **_kwargs: object) -> tuple[int, int]:
+        raise error
+
+    monkeypatch.setattr(error_path_rsa_probe, "gen_rsa_keypair", _refuse)
+    ctx = SimpleNamespace(raw=object(), sh=1)
+    error_path_rsa_probe._run_decrypt(
+        ctx,
+        {"probe": "decrypt", "mech": "pkcs", "variant": "random"},
+    )
+    output = capsys.readouterr().out
+    assert "SETUP_XFAIL" not in output
+    assert '"stage":"keygen"' in output
+    assert '"operation":"C_GenerateKeyPair"' in output
+    assert '"status":"setup_refused"' in output
+
+
+def test_rsa_child_attribute_refusal_is_case_bound_rv(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A modulus read refusal identifies C_GetAttributeValue and disables the oracle."""
+    monkeypatch.setattr(error_path_rsa_probe, "gen_rsa_keypair", lambda *_a, **_k: (11, 12))
+    monkeypatch.setattr(
+        error_path_rsa_probe,
+        "read_attributes",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            error_path_rsa_probe.CkrAssertionError("refused", 0x54)
+        ),
+    )
+    monkeypatch.setattr(error_path_rsa_probe, "destroy_quietly", lambda *_a, **_k: None)
+    ctx = SimpleNamespace(raw=object(), sh=1)
+    error_path_rsa_probe._run_decrypt(
+        ctx,
+        {"probe": "decrypt", "mech": "pkcs", "variant": "random"},
+    )
+    output = capsys.readouterr().out
+    assert '"stage":"attribute_read"' in output
+    assert '"operation":"C_GetAttributeValue"' in output
+    assert '"status":"oracle_disabled"' in output
+
+
+def test_rsa_child_missing_modulus_emits_one_fact_and_cleans_both_handles(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing modulus omits decrypt while preserving exact evidence and cleanup."""
+    handles: list[int] = []
+    monkeypatch.setattr(error_path_rsa_probe, "gen_rsa_keypair", lambda *_a, **_k: (11, 12))
+    monkeypatch.setattr(error_path_rsa_probe, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        error_path_rsa_probe,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: handles.append(handle),
+    )
+    ctx = SimpleNamespace(raw=object(), sh=1)
+
+    error_path_rsa_probe._run_decrypt(
+        ctx,
+        {"probe": "decrypt", "mech": "pkcs", "variant": "random"},
+    )
+
+    assert capsys.readouterr().out == (
+        'RSA_ATTRIBUTE:{"schema":1,"case":"decrypt:pkcs:random",'
+        '"operation":"C_GetAttributeValue","attribute":{"name":"CKA_MODULUS",'
+        '"id":288},"state":"missing"}\n'
+        'RSA_DONE:{"schema":1,"case":"decrypt:pkcs:random","status":"omitted"}\n'
+    )
+    assert handles == [11, 12]
+
+
+def test_rsa_child_present_none_modulus_is_malformed_and_cleans_both_handles(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A present ``None`` modulus is malformed, not provider omission."""
+    handles: list[int] = []
+    decrypt_calls: list[object] = []
+    monkeypatch.setattr(error_path_rsa_probe, "gen_rsa_keypair", lambda *_a, **_k: (11, 12))
+    monkeypatch.setattr(
+        error_path_rsa_probe,
+        "read_attributes",
+        lambda *_a, **_k: {error_path_rsa_probe.CKA_MODULUS: None},
+    )
+    monkeypatch.setattr(
+        error_path_rsa_probe,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: handles.append(handle),
+    )
+    monkeypatch.setattr(
+        error_path_rsa_probe,
+        "_pkcs_decrypt",
+        lambda *_a, **_k: decrypt_calls.append(object()),
+    )
+    ctx = SimpleNamespace(raw=object(), sh=1)
+
+    error_path_rsa_probe._run_decrypt(
+        ctx,
+        {"probe": "decrypt", "mech": "pkcs", "variant": "random"},
+    )
+
+    assert capsys.readouterr().out == (
+        'RSA_ATTRIBUTE:{"schema":1,"case":"decrypt:pkcs:random",'
+        '"operation":"C_GetAttributeValue","attribute":{"name":"CKA_MODULUS",'
+        '"id":288},"state":"malformed","value_type":"NoneType",'
+        '"value_repr":"None"}\n'
+        'RSA_DONE:{"schema":1,"case":"decrypt:pkcs:random","status":"malformed"}\n'
+    )
+    assert decrypt_calls == []
+    assert handles == [11, 12]
+
+
+def test_rsa_error_path_has_no_attribute_access_guard_findings() -> None:
+    path = Path(__file__).parents[1] / "src/pkcs11_check/testcases/_probes/error_path_rsa.py"
+
+    assert analyze_file(path) == []
+
+
+@pytest.mark.parametrize("field", ["case", "stage", "mechanism", "status"])
+def test_rsa_hostile_protocol_field_is_harness_error(field: str) -> None:
+    case = "decrypt:pkcs:random"
+    if field == "status":
+        payload: dict[str, object] = {"schema": 1, "case": case, "status": []}
+        output = _rsa_marker("RSA_DONE", json.dumps(payload, separators=(",", ":")))
+    else:
+        payload = {
+            "schema": 1,
+            "case": [] if field == "case" else case,
+            "stage": [] if field == "stage" else "decrypt_init",
+            "operation": "C_DecryptInit",
+            "mechanism": [] if field == "mechanism" else "CKM_RSA_PKCS",
+            "rv": 0,
+        }
+        output = _rsa_marker("RSA_RV", json.dumps(payload, separators=(",", ":")))
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert all(record.reason == "harness_error" for record in C.get_records())
+
+
+def test_rsa_zero_modulus_is_provider_metadata_finding() -> None:
+    case = "decrypt:pkcs:random"
+    output = _rsa_marker(
+        "RSA_ATTRIBUTE",
+        f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+        '"attribute":{"name":"CKA_MODULUS","id":288},"state":"malformed",'
+        '"value_type":"bytes","value_repr":"zero modulus","value_len":0,"modulus_bits":0}',
+    ) + _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"malformed"}}')
+    with pytest.raises(pytest.fail.Exception, match="modulus metadata"):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    assert [record.reason for record in C.get_records()] == ["wrong_result"]
+    assert C.get_records()[0].kind == "metadata"
+
+
+def test_rsa_missing_modulus_does_not_hide_independent_rv_evidence() -> None:
+    case = "decrypt:pkcs:random"
+    output = "".join(
+        (
+            _rsa_marker(
+                "RSA_ATTRIBUTE",
+                f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+                '"attribute":{"name":"CKA_MODULUS","id":288},"state":"missing"}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+                '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":84}',
+            ),
+            _rsa_marker(
+                "RSA_RV",
+                f'{{"schema":1,"case":"{case}","stage":"decrypt",'
+                '"operation":"C_Decrypt","mechanism":"CKM_RSA_PKCS","rv":2147483647}',
+            ),
+            _rsa_marker("RSA_DONE", f'{{"schema":1,"case":"{case}","status":"omitted"}}'),
+        )
+    )
+    with pytest.raises(pytest.fail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert {record.reason for record in records} >= {
+        "honest_deviation",
+        "not_operational",
+        "wrong_result",
+    }
+    assert not any(record.reason == "accepted_invalid" for record in records)
+
+
+def test_rsa_crash_retains_bounded_parsed_measurements() -> None:
+    case = "decrypt:pkcs:random"
+    output = _rsa_marker(
+        "RSA_ATTRIBUTE",
+        f'{{"schema":1,"case":"{case}","operation":"C_GetAttributeValue",'
+        '"attribute":{"name":"CKA_MODULUS","id":288},"state":"present",'
+        '"value_len":256,"modulus_bits":2048}',
+    ) + _rsa_marker(
+        "RSA_RV",
+        f'{{"schema":1,"case":"{case}","stage":"decrypt_init",'
+        '"operation":"C_DecryptInit","mechanism":"CKM_RSA_PKCS","rv":0}',
+    )
+    with pytest.raises(pytest.fail.Exception, match="signal 11"):
+        test_error_path_rsa._check_protocol(
+            -11,
+            output,
+            "segmentation fault",
+            case_id=case,
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    crash = next(record for record in C.get_records() if record.reason == "crash")
+    assert crash.detail is not None
+    assert "parsed_measurement" in crash.detail
+    assert len(crash.detail["parsed_measurement"]["rvs"]) == 1
+
+
+def test_rsa_cleanup_attempts_both_handles_and_prefers_access_violation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    first = OSError("exception: access violation")
+
+    def _destroy(_raw: object, _sh: int, handle: int) -> None:
+        calls.append(handle)
+        if handle == 11:
+            raise first
+        raise RuntimeError("second cleanup error")
+
+    monkeypatch.setattr(error_path_rsa_probe, "destroy_quietly", _destroy)
+    monkeypatch.setattr(
+        error_path_rsa_probe,
+        "ctypes_access_violation_code",
+        lambda exc: 1 if exc is first else None,
+    )
+    with pytest.raises(OSError, match="access violation"):
+        error_path_rsa_probe._destroy_pair(object(), 1, 11, 12)
+    assert calls == [11, 12]
+
+
+def test_rsa_cleanup_attempts_both_handles_and_preserves_first_noncrash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    first = RuntimeError("first cleanup error")
+
+    def _destroy(_raw: object, _sh: int, handle: int) -> None:
+        calls.append(handle)
+        if handle == 11:
+            raise first
+        raise OSError("second cleanup error")
+
+    monkeypatch.setattr(error_path_rsa_probe, "destroy_quietly", _destroy)
+    monkeypatch.setattr(error_path_rsa_probe, "ctypes_access_violation_code", lambda _exc: None)
+    with pytest.raises(RuntimeError, match="first cleanup error"):
+        error_path_rsa_probe._destroy_pair(object(), 1, 11, 12)
+    assert calls == [11, 12]
 
 
 def test_zero_length_aes_cbc_probe_calls_run_probe(monkeypatch: pytest.MonkeyPatch) -> None:

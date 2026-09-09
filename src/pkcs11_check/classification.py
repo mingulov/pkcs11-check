@@ -323,6 +323,7 @@ def classify(
     label: str = "",
     operation: str | None = None,
     mechanism: str | None = None,
+    inherit_mechanism: bool = True,
     expected: object = None,
     actual: object = None,
     spec_ref: str | None = None,
@@ -344,6 +345,7 @@ def classify(
         label=label,
         operation=operation,
         mechanism=mechanism,
+        inherit_mechanism=inherit_mechanism,
         expected=expected,
         actual=actual,
         spec_ref=spec_ref,
@@ -364,6 +366,7 @@ def record_as(
     label: str = "",
     operation: str | None = None,
     mechanism: str | None = None,
+    inherit_mechanism: bool = True,
     expected: object = None,
     actual: object = None,
     spec_ref: str | None = None,
@@ -380,7 +383,7 @@ def record_as(
         source = _active_source
     if vector_id is None:
         vector_id = _active_vector_id
-    if mechanism is None:
+    if mechanism is None and inherit_mechanism:
         mechanism = _active_mechanism
     if operation is None:
         operation = _active_operation

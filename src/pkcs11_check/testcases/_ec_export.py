@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
 from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, x448, x25519
 
 from pkcs11_check.classification import fail_as, xfail_as
@@ -30,6 +32,15 @@ class ProviderECPointEncodingError(ValueError):
 
 class InvalidProviderECPointError(ValueError):
     """Provider CKA_EC_POINT does not identify a point on the expected curve."""
+
+
+@dataclass(frozen=True)
+class ConventionalECPoint:
+    """A validated conventional provider point with both representation views."""
+
+    provider_bytes: bytes
+    sec1_bytes: bytes
+    public_key: ec.EllipticCurvePublicKey
 
 
 class RawECPointFamily(StrEnum):
@@ -97,38 +108,38 @@ def _alternate_curve_for_point(
     return None
 
 
-def decode_provider_ec_point(
+def parse_provider_ec_point(
     data: bytes,
     curve: ec.EllipticCurve,
     *,
     label: str,
-) -> bytes:
-    """Decode a provider-returned conventional EC point for operational use.
+) -> ConventionalECPoint:
+    """Parse and validate a provider-returned conventional EC point.
 
     Exact-length uncompressed SEC1 is recognized before DER because a valid raw
     coordinate may also look like a DER length. Other inputs must be a strict DER
-    OCTET STRING containing compressed or uncompressed SEC1. This helper does not
-    classify the provider's representation; its caller owns that policy decision.
+    OCTET STRING containing compressed or uncompressed SEC1. This pure helper does
+    not classify the provider's representation; its caller owns that policy decision.
     """
     expected_raw_len = 1 + 2 * coord_len_for_curve(curve)
     if len(data) == expected_raw_len and data.startswith(b"\x04"):
         try:
-            ec.EllipticCurvePublicKey.from_encoded_point(curve, data)
+            public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, data)
         except ValueError as exc:
             raise InvalidProviderECPointError(
                 f"{label}: raw CKA_EC_POINT is not on {curve.name}: {exc}"
             ) from exc
-        return data
+        return ConventionalECPoint(data, data, public_key)
 
     try:
-        point = decode_ec_point(data)
+        sec1_bytes = decode_ec_point(data)
     except ValueError as exc:
         raise ProviderECPointEncodingError(
             f"{label}: CKA_EC_POINT is neither exact raw uncompressed SEC1 nor canonical DER: {exc}"
         ) from exc
 
-    if not _has_sec1_shape_for_curve(point, curve):
-        alternate_curve = _alternate_curve_for_point(point, curve)
+    if not _has_sec1_shape_for_curve(sec1_bytes, curve):
+        alternate_curve = _alternate_curve_for_point(sec1_bytes, curve)
         if alternate_curve is not None:
             raise InvalidProviderECPointError(
                 f"{label}: wrapped CKA_EC_POINT validates on {alternate_curve.name}, "
@@ -139,12 +150,47 @@ def decode_provider_ec_point(
         )
 
     try:
-        ec.EllipticCurvePublicKey.from_encoded_point(curve, point)
+        public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, sec1_bytes)
     except ValueError as exc:
         raise InvalidProviderECPointError(
             f"{label}: wrapped CKA_EC_POINT is not on {curve.name}: {exc}"
         ) from exc
-    return point
+    return ConventionalECPoint(data, sec1_bytes, public_key)
+
+
+def decode_provider_ec_point(
+    data: bytes,
+    curve: ec.EllipticCurve,
+    *,
+    label: str,
+) -> bytes:
+    """Decode a provider point, preserving the historical SEC1-only result."""
+    return parse_provider_ec_point(data, curve, label=label).sec1_bytes
+
+
+def select_ecdh_point_form(
+    point: ConventionalECPoint,
+    *,
+    supports_compressed: bool,
+    supports_uncompressed: bool,
+) -> bytes:
+    """Choose raw SEC1 bytes for ECDH from the provider's validated point.
+
+    If the provider's form is advertised, or capability is unavailable or
+    ambiguous, retain the validated provider form. Only an advertised alternate
+    form is serialized from the validated public key.
+    """
+    compressed = point.sec1_bytes.startswith((b"\x02", b"\x03"))
+    current_supported = supports_compressed if compressed else supports_uncompressed
+    if supports_compressed == supports_uncompressed or current_supported:
+        return point.sec1_bytes
+
+    form = (
+        serialization.PublicFormat.CompressedPoint
+        if supports_compressed
+        else serialization.PublicFormat.UncompressedPoint
+    )
+    return point.public_key.public_bytes(serialization.Encoding.X962, form)
 
 
 def split_raw_ecdsa(sig: bytes, coord_len: int) -> tuple[int, int]:
@@ -161,14 +207,14 @@ def split_raw_ecdsa(sig: bytes, coord_len: int) -> tuple[int, int]:
     return r, s
 
 
-def read_ec_public_key_or_xfail(
+def read_conventional_ec_point_or_xfail(
     rs: Any,
     handle: int,
     curve: ec.EllipticCurve,
     *,
     label: str = "EC public key",
-) -> ec.EllipticCurvePublicKey:
-    """Read CKA_EC_POINT and construct a curve-validated public key.
+) -> ConventionalECPoint:
+    """Read and validate a conventional CKA_EC_POINT for an operation.
 
     Unavailable or malformed representations xfail. A structurally valid point
     that is not on the expected curve is a hard cryptographic failure.
@@ -220,7 +266,7 @@ def read_ec_public_key_or_xfail(
         )
 
     try:
-        point_bytes = decode_provider_ec_point(ec_point, curve, label=label)
+        return parse_provider_ec_point(ec_point, curve, label=label)
     except ProviderECPointEncodingError as exc:
         xfail_as(
             "not_operational",
@@ -246,7 +292,16 @@ def read_ec_public_key_or_xfail(
             },
         )
 
-    return ec.EllipticCurvePublicKey.from_encoded_point(curve, point_bytes)
+
+def read_ec_public_key_or_xfail(
+    rs: Any,
+    handle: int,
+    curve: ec.EllipticCurve,
+    *,
+    label: str = "EC public key",
+) -> ec.EllipticCurvePublicKey:
+    """Read a conventional point and project it to its validated public key."""
+    return read_conventional_ec_point_or_xfail(rs, handle, curve, label=label).public_key
 
 
 def read_raw_ec_point_or_xfail(

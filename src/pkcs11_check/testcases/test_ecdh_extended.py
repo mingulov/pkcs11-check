@@ -15,7 +15,6 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.classification import Classification, classify, raise_for_record, record_as
@@ -49,6 +48,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKK_AES,
     CKK_EC_MONTGOMERY,
     CKK_GENERIC_SECRET,
@@ -71,9 +72,11 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._ec_export import (
+    ConventionalECPoint,
     RawECPointFamily,
-    read_ec_public_key_or_xfail,
+    read_conventional_ec_point_or_xfail,
     read_raw_ec_point_or_xfail,
+    select_ecdh_point_form,
 )
 from pkcs11_check.testcases.conftest import assert_correct, xfail_if_known_ckr
 
@@ -127,18 +130,48 @@ def _p256_point(
     rs: Any,
     handle: int,
     *,
+    mechanism: int,
     label: str = "ECDH extended P-256 public key",
 ) -> bytes:
-    """Read and normalize a provider-returned P-256 public point."""
-    public_key = read_ec_public_key_or_xfail(
+    """Read a P-256 point and select its wire form for the target mechanism."""
+    point = read_conventional_ec_point_or_xfail(
         rs,
         handle,
         ec.SECP256R1(),
         label=label,
     )
-    return public_key.public_bytes(
-        serialization.Encoding.X962,
-        serialization.PublicFormat.UncompressedPoint,
+    return select_ecdh_point_form(
+        point,
+        supports_compressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_COMPRESS)),
+        supports_uncompressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_UNCOMPRESS)),
+    )
+
+
+def _p256_conventional_point(
+    rs: Any,
+    handle: int,
+    *,
+    label: str = "ECDH extended P-256 public key",
+) -> ConventionalECPoint:
+    """Read one validated P-256 point before selecting per-mechanism wire forms."""
+    return read_conventional_ec_point_or_xfail(
+        rs,
+        handle,
+        ec.SECP256R1(),
+        label=label,
+    )
+
+
+def _select_p256_point_for_mechanism(
+    rs: Any,
+    point: ConventionalECPoint,
+    mechanism: int,
+) -> bytes:
+    """Select one validated P-256 point for an exact ECDH mechanism."""
+    return select_ecdh_point_form(
+        point,
+        supports_compressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_COMPRESS)),
+        supports_uncompressed=rs.has_mechanism_flag(mechanism, int(CKF_EC_UNCOMPRESS)),
     )
 
 
@@ -319,9 +352,10 @@ def _read_two_p256_points(
     first_handle: int,
     second_handle: int,
     *,
+    mechanism: int,
     label: str,
 ) -> tuple[bytes, bytes]:
-    """Read both independent P-256 points before raising classified outcomes."""
+    """Read both P-256 points and select each for the exact target mechanism."""
     return _read_two_points(
         rs,
         first_handle,
@@ -329,6 +363,7 @@ def _read_two_p256_points(
         lambda current_rs, handle, point_label: _p256_point(
             current_rs,
             handle,
+            mechanism=mechanism,
             label=point_label,
         ),
         label=label,
@@ -441,6 +476,7 @@ class TestECDH1CofactorDerive:
                 rs,
                 pub_a,
                 pub_b,
+                mechanism=CKM_ECDH1_COFACTOR_DERIVE,
                 label="CKM_ECDH1_COFACTOR_DERIVE:shared-secret peers",
             )
 
@@ -503,10 +539,30 @@ class TestECDH1CofactorDerive:
         shared_standard = 0
         shared_cofactor = 0
         try:
-            point_b = _p256_point(rs, pub_b)
+            point_b_conventional = _p256_conventional_point(rs, pub_b)
+            point_b_standard = _select_p256_point_for_mechanism(
+                rs,
+                point_b_conventional,
+                CKM_ECDH1_DERIVE,
+            )
+            point_b_cofactor = _select_p256_point_for_mechanism(
+                rs,
+                point_b_conventional,
+                CKM_ECDH1_COFACTOR_DERIVE,
+            )
 
-            shared_standard = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_DERIVE)
-            shared_cofactor = _ecdh_derive(rs, priv_a, point_b, CKM_ECDH1_COFACTOR_DERIVE)
+            shared_standard = _ecdh_derive(
+                rs,
+                priv_a,
+                point_b_standard,
+                CKM_ECDH1_DERIVE,
+            )
+            shared_cofactor = _ecdh_derive(
+                rs,
+                priv_a,
+                point_b_cofactor,
+                CKM_ECDH1_COFACTOR_DERIVE,
+            )
             # secp256r1 has cofactor=1 so results must match
             value_standard = _read_value(
                 rs,
@@ -567,6 +623,7 @@ class TestECDH1CofactorDerive:
                 rs,
                 pub_b,
                 pub_c,
+                mechanism=CKM_ECDH1_COFACTOR_DERIVE,
                 label="CKM_ECDH1_COFACTOR_DERIVE:different peer keys",
             )
 
@@ -631,7 +688,11 @@ class TestECDH1CofactorDerive:
         (pub_a, priv_a), (pub_b, priv_b) = _gen_ec_pairs(rs, 2)
         derived = 0
         try:
-            point_b = _p256_point(rs, pub_b)
+            point_b = _p256_point(
+                rs,
+                pub_b,
+                mechanism=CKM_ECDH1_COFACTOR_DERIVE,
+            )
 
             try:
                 derived = _ecdh_derive(
@@ -728,7 +789,15 @@ class TestECMQVDerive:
         (pub_a_static, priv_a_static), (pub_b_static, priv_b_static) = _gen_ec_pairs(rs, 2)
         shared = 0
         try:
-            point_b = _p256_point(rs, pub_b_static)
+            # ECMQV deliberately receives an ECDH1 parameter structure below;
+            # point preparation may honor ECMQV's own advertised form flags, but
+            # this remains a malformed-parameter negative probe, never positive
+            # ECMQV evidence.
+            point_b = _p256_point(
+                rs,
+                pub_b_static,
+                mechanism=CKM_ECMQV_DERIVE,
+            )
 
             # Attempt derive - expect failure due to missing ECMQV param support
             try:

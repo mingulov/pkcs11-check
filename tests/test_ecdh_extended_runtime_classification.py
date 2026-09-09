@@ -17,11 +17,12 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKK_AES,
     CKK_EC_MONTGOMERY,
+    CKM_ECDH1_DERIVE,
 )
 from pkcs11_check.testcases import _ec_export
 from pkcs11_check.testcases import test_ecdh_extended as tee
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
-from pkcs11_check.testcases._ec_export import RawECPointFamily
+from pkcs11_check.testcases._ec_export import ConventionalECPoint, RawECPointFamily
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +38,7 @@ def _rs(*mechanisms: str) -> SimpleNamespace:
         raw=object(),
         sh=1,
         has_mechanism=lambda name: name in advertised,
+        has_mechanism_flag=lambda _mechanism, _flag: False,
     )
 
 
@@ -51,6 +53,14 @@ def _p256_point(key: ec.EllipticCurvePublicKey) -> bytes:
     )
 
 
+def _conventional_p256_point(
+    key: ec.EllipticCurvePublicKey | None = None,
+) -> ConventionalECPoint:
+    key = key or _p256_key()
+    point = _p256_point(key)
+    return ConventionalECPoint(point, point, key)
+
+
 def test_p256_consumer_uses_explicit_curve_and_x962_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -59,11 +69,11 @@ def test_p256_consumer_uses_explicit_curve_and_x962_normalization(
 
     def _read(_rs: Any, handle: int, curve: ec.EllipticCurve, **_kwargs: Any) -> Any:
         calls.append((handle, curve))
-        return key
+        return _conventional_p256_point(key)
 
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", _read)
+    monkeypatch.setattr(tee, "read_conventional_ec_point_or_xfail", _read)
 
-    result = tee._p256_point(SimpleNamespace(raw=object(), sh=1), 7)
+    result = tee._p256_point(_rs(), 7, mechanism=CKM_ECDH1_DERIVE)
 
     assert result == _p256_point(key)
     assert calls[0][0] == 7
@@ -83,7 +93,7 @@ def test_p256_consumer_normalizes_raw_and_wrapped_provider_points(
         lambda *_args, **_kwargs: {CKA_EC_POINT: provider_value},
     )
 
-    result = tee._p256_point(SimpleNamespace(raw=object(), sh=1), 7)
+    result = tee._p256_point(_rs(), 7, mechanism=CKM_ECDH1_DERIVE)
 
     assert result == point
     assert C.get_records() == []
@@ -275,7 +285,11 @@ def test_p256_shared_secret_mismatch_remains_hard_failure_after_point_read(
     keys = iter([(11, 12), (13, 14)])
     key = _p256_key()
     monkeypatch.setattr(tee, "_gen_ec", lambda _rs: next(keys))
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", lambda *_args, **_kwargs: key)
+    monkeypatch.setattr(
+        tee,
+        "read_conventional_ec_point_or_xfail",
+        lambda *_args, **_kwargs: _conventional_p256_point(key),
+    )
     monkeypatch.setattr(tee, "_ecdh_derive", lambda *_args, **_kwargs: 21)
     values = iter([b"a" * 32, b"b" * 32])
     monkeypatch.setattr(tee, "_read_value", lambda *_args, **_kwargs: next(values))
@@ -346,7 +360,7 @@ def test_p256_first_xfail_does_not_hide_second_hard_failure_or_cleanup(
             summary="second point is off curve",
         )
 
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", _read)
+    monkeypatch.setattr(tee, "read_conventional_ec_point_or_xfail", _read)
     monkeypatch.setattr(tee, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
 
     with pytest.raises(pytest.fail.Exception):
@@ -406,7 +420,11 @@ def test_cofactor_missing_value_does_not_hide_malformed_peer(
     values = iter((MISSING_ATTRIBUTE, b"b" * 31))
     derived = iter((20, 21))
     monkeypatch.setattr(tee, "_gen_ec", lambda *_args, **_kwargs: next(generated))
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", lambda *_args, **_kwargs: _p256_key())
+    monkeypatch.setattr(
+        tee,
+        "read_conventional_ec_point_or_xfail",
+        lambda *_args, **_kwargs: _conventional_p256_point(),
+    )
     monkeypatch.setattr(tee, "_ecdh_derive", lambda *_args, **_kwargs: next(derived))
     monkeypatch.setattr(tee, "_read_value", lambda *_args, **_kwargs: next(values))
     monkeypatch.setattr(tee, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
@@ -429,7 +447,11 @@ def test_cofactor_equal_malformed_values_are_all_validated(
     values = iter((b"a" * 31, b"a" * 31))
     derived = iter((20, 21))
     monkeypatch.setattr(tee, "_gen_ec", lambda *_args, **_kwargs: next(generated))
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", lambda *_args, **_kwargs: _p256_key())
+    monkeypatch.setattr(
+        tee,
+        "read_conventional_ec_point_or_xfail",
+        lambda *_args, **_kwargs: _conventional_p256_point(),
+    )
     monkeypatch.setattr(tee, "_ecdh_derive", lambda *_args, **_kwargs: next(derived))
     monkeypatch.setattr(tee, "_read_value", lambda *_args, **_kwargs: next(values))
     monkeypatch.setattr(tee, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
@@ -451,7 +473,11 @@ def test_aes_derived_value_length_is_structured_failure(
     destroyed: list[int] = []
     derived = iter((20, 21))
     monkeypatch.setattr(tee, "_gen_ec", lambda *_args, **_kwargs: next(generated))
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", lambda *_args, **_kwargs: _p256_key())
+    monkeypatch.setattr(
+        tee,
+        "read_conventional_ec_point_or_xfail",
+        lambda *_args, **_kwargs: _conventional_p256_point(),
+    )
     monkeypatch.setattr(tee, "_ecdh_derive", lambda *_args, **_kwargs: next(derived))
     monkeypatch.setattr(
         tee,
@@ -474,7 +500,11 @@ def test_ecmqv_malformed_derived_value_is_structured_failure(
     generated = iter([(11, 12), (13, 14)])
     destroyed: list[int] = []
     monkeypatch.setattr(tee, "_gen_ec", lambda *_args, **_kwargs: next(generated))
-    monkeypatch.setattr(tee, "read_ec_public_key_or_xfail", lambda *_args, **_kwargs: _p256_key())
+    monkeypatch.setattr(
+        tee,
+        "read_conventional_ec_point_or_xfail",
+        lambda *_args, **_kwargs: _conventional_p256_point(),
+    )
     monkeypatch.setattr(tee, "_ecdh_derive", lambda *_args, **_kwargs: 20)
     monkeypatch.setattr(tee, "_read_value", lambda *_args, **_kwargs: b"a" * 31)
     monkeypatch.setattr(tee, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
