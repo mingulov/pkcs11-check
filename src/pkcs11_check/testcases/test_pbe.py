@@ -8,13 +8,14 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from ctypes import byref
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.pack import PackedMechanism, mech_pbe, mech_pbkdf2
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import ckr_name, expect_rv
@@ -73,7 +74,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
-from pkcs11_check.testcases.conftest import assert_correct
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 
 # CKK_GENERIC_SECRET is the raw integer value 0x10; CKK_SHA_1_HMAC is 0x28.
 # Some modules return CKK_GENERIC_SECRET for CKM_PBA_SHA1_WITH_SHA1_HMAC keys
@@ -119,7 +120,7 @@ _PBE_MECH_NAMES: dict[int, str] = {
 def _expect_pbe_gen_key_rv(rv: int, mech_type: int) -> None:
     mech_name = _PBE_MECH_NAMES[int(mech_type)]
     if rv in _PBE_ERROR_RVS:
-        classify(
+        C.classify(
             "not_operational",
             label=f"{mech_name}:C_GenerateKey",
             operation="C_GenerateKey",
@@ -128,6 +129,105 @@ def _expect_pbe_gen_key_rv(rv: int, mech_type: int) -> None:
             summary=f"{mech_name} advertised but C_GenerateKey is not operational: {ckr_name(rv)}",
         )
     expect_rv(rv, CKR_OK, context=f"{mech_name} C_GenerateKey")
+
+
+_KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
+_SEVERITY_PRIORITY = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def _record_attribute_mismatch(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    kind: str,
+    mechanism: str,
+) -> C.Classification:
+    """Record a provider-value mismatch without interpreting values as CKR codes."""
+    return C.record_as(
+        "wrong_result",
+        kind=kind,
+        label=label,
+        operation="C_GetAttributeValue",
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual}; expected {expected}",
+        detail={
+            "attribute": {
+                "expected": expected,
+                "actual": actual,
+            }
+        },
+    )
+
+
+def _record_parameter_mismatch(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    mechanism: str,
+) -> C.Classification:
+    """Record a wrong mechanism-parameter output without fabricating CKR evidence."""
+    return C.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation="C_GenerateKey",
+        mechanism=mechanism,
+        summary=f"{label}: provider returned {actual}; expected {expected}",
+        detail={
+            "parameter": {
+                "name": "pInitVector",
+                "expected": expected,
+                "actual": actual,
+            }
+        },
+    )
+
+
+def _raise_strongest(records: list[C.Classification]) -> None:
+    """Raise the strongest recorded hard result after all cleanup has completed."""
+    if not records:
+        return
+    strongest = max(
+        records,
+        key=lambda record: (
+            _KIND_PRIORITY.get(record.kind or "", 0),
+            _SEVERITY_PRIORITY.get(record.severity, 0),
+        ),
+    )
+    C.raise_for_record(strongest)
+
+
+def _read_attribute(
+    attrs: dict[Any, Any],
+    attr: Any,
+    *,
+    label: str,
+    mechanism: str,
+) -> Any:
+    """Read one provider attribute while retaining structured absence evidence."""
+    return attr_or_record(
+        attrs,
+        attr,
+        label=label,
+        reason="not_operational",
+        kind="metadata",
+        mechanism=mechanism,
+    )
+
+
+def _acquire_second_or_cleanup(
+    rs: Any,
+    first_handle: int,
+    acquire: Callable[[], int],
+) -> int:
+    """Acquire a paired handle without leaking the first if the second acquisition fails."""
+    try:
+        return acquire()
+    except BaseException:
+        destroy_quietly(rs.raw, rs.sh, first_handle)
+        raise
 
 
 # Test password and salt
@@ -302,24 +402,39 @@ class TestLegacyPBEVariants:
             iv_len=case.iv_len,
             extra_attrs=extra_attrs,
         )
+        hard_results: list[C.Classification] = []
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert_correct(
-                actual=attrs[CKA_KEY_TYPE],
-                expected=case.key_type,
+            key_type = _read_attribute(
+                attrs,
+                CKA_KEY_TYPE,
                 label=f"{case.mechanism_name}:CKA_KEY_TYPE readback",
-                operation="C_GenerateKey",
                 mechanism=case.mechanism_name,
-                kind="metadata",
             )
+            if key_type is not MISSING_ATTRIBUTE and key_type != case.key_type:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label=f"{case.mechanism_name}:CKA_KEY_TYPE readback",
+                        expected=f"{case.key_type!r}",
+                        actual=f"{key_type!r}",
+                        kind="metadata",
+                        mechanism=case.mechanism_name,
+                    )
+                )
             if case.iv_len is not None:
                 iv = mech.buffer_bytes("init_vector")
-                assert len(iv) == case.iv_len
-                assert iv != b"\x00" * case.iv_len, (
-                    f"{case.mechanism_name} accepted CK_PBE_PARAMS but did not write pInitVector"
-                )
+                if iv == b"\x00" * case.iv_len:
+                    hard_results.append(
+                        _record_parameter_mismatch(
+                            label=f"{case.mechanism_name}:pInitVector",
+                            expected="non-zero IV",
+                            actual=f"{iv!r}",
+                            mechanism=case.mechanism_name,
+                        )
+                    )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
 
 class TestPBESHA1DES3:
@@ -342,18 +457,28 @@ class TestPBESHA1DES3:
             _SALT,
             _ITERATIONS,
         )[0]
+        hard_results: list[C.Classification] = []
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert_correct(
-                actual=attrs[CKA_KEY_TYPE],
-                expected=CKK_DES3,
+            key_type = _read_attribute(
+                attrs,
+                CKA_KEY_TYPE,
                 label="CKM_PBE_SHA1_DES3_EDE_CBC:CKA_KEY_TYPE readback",
-                operation="C_GenerateKey",
                 mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
-                kind="metadata",
             )
+            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_DES3:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES3_EDE_CBC:CKA_KEY_TYPE readback",
+                        expected=f"{CKK_DES3!r}",
+                        actual=f"{key_type!r}",
+                        kind="metadata",
+                        mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_generate_key_writes_init_vector(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -369,14 +494,21 @@ class TestPBESHA1DES3:
             _SALT,
             _ITERATIONS,
         )
+        hard_results: list[C.Classification] = []
         try:
             iv = mech.buffer_bytes("init_vector")
-            assert len(iv) == 8
-            assert iv != b"\x00" * 8, (
-                "C_GenerateKey accepted CK_PBE_PARAMS but did not write pInitVector"
-            )
+            if iv == b"\x00" * 8:
+                hard_results.append(
+                    _record_parameter_mismatch(
+                        label="CKM_PBE_SHA1_DES3_EDE_CBC:pInitVector",
+                        expected="non-zero IV",
+                        actual=f"{iv!r}",
+                        mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_generate_key_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -391,28 +523,49 @@ class TestPBESHA1DES3:
             _SALT,
             _ITERATIONS,
         )[0]
-        h2 = _pbe_gen_key(
+        h2 = _acquire_second_or_cleanup(
             rs,
-            CKM_PBE_SHA1_DES3_EDE_CBC,
-            CKK_DES3,
-            192,
-            _PASSWORD,
-            _SALT,
-            _ITERATIONS,
-        )[0]
+            h1,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBE_SHA1_DES3_EDE_CBC,
+                CKK_DES3,
+                192,
+                _PASSWORD,
+                _SALT,
+                _ITERATIONS,
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert_correct(
-                actual=v1,
-                expected=v2,
-                label="CKM_PBE_SHA1_DES3_EDE_CBC:C_GenerateKey determinism",
-                operation="C_GenerateKey",
+            attrs_1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])
+            v1 = _read_attribute(
+                attrs_1,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:C_GenerateKey determinism:first",
                 mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
             )
+            attrs_2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])
+            v2 = _read_attribute(
+                attrs_2,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:C_GenerateKey determinism:second",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+            )
+            if v1 is not MISSING_ATTRIBUTE and v2 is not MISSING_ATTRIBUTE and v1 != v2:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES3_EDE_CBC:C_GenerateKey determinism",
+                        expected=f"{v2!r}",
+                        actual=f"{v1!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
+        _raise_strongest(hard_results)
 
     def test_different_salt_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -427,22 +580,49 @@ class TestPBESHA1DES3:
             b"\x00" * 8,
             _ITERATIONS,
         )[0]
-        hb = _pbe_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKM_PBE_SHA1_DES3_EDE_CBC,
-            CKK_DES3,
-            192,
-            _PASSWORD,
-            b"\xff" * 8,
-            _ITERATIONS,
-        )[0]
+            ha,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBE_SHA1_DES3_EDE_CBC,
+                CKK_DES3,
+                192,
+                _PASSWORD,
+                b"\xff" * 8,
+                _ITERATIONS,
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb, "Different salts must produce different keys"
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:different-salt:first",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:different-salt:second",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES3_EDE_CBC:different-salt",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
     def test_different_password_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -457,22 +637,49 @@ class TestPBESHA1DES3:
             _SALT,
             _ITERATIONS,
         )[0]
-        hb = _pbe_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKM_PBE_SHA1_DES3_EDE_CBC,
-            CKK_DES3,
-            192,
-            b"PasswordBravo",
-            _SALT,
-            _ITERATIONS,
-        )[0]
+            ha,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBE_SHA1_DES3_EDE_CBC,
+                CKK_DES3,
+                192,
+                b"PasswordBravo",
+                _SALT,
+                _ITERATIONS,
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb, "Different passwords must produce different keys"
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:different-password:first",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES3_EDE_CBC:different-password:second",
+                mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES3_EDE_CBC:different-password",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBE_SHA1_DES3_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
 
 class TestPBESHA1DES2:
@@ -495,18 +702,28 @@ class TestPBESHA1DES2:
             _SALT,
             _ITERATIONS,
         )[0]
+        hard_results: list[C.Classification] = []
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            assert_correct(
-                actual=attrs[CKA_KEY_TYPE],
-                expected=CKK_DES2,
+            key_type = _read_attribute(
+                attrs,
+                CKA_KEY_TYPE,
                 label="CKM_PBE_SHA1_DES2_EDE_CBC:CKA_KEY_TYPE readback",
-                operation="C_GenerateKey",
                 mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
-                kind="metadata",
             )
+            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_DES2:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES2_EDE_CBC:CKA_KEY_TYPE readback",
+                        expected=f"{CKK_DES2!r}",
+                        actual=f"{key_type!r}",
+                        kind="metadata",
+                        mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_generate_key_writes_init_vector(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -522,14 +739,21 @@ class TestPBESHA1DES2:
             _SALT,
             _ITERATIONS,
         )
+        hard_results: list[C.Classification] = []
         try:
             iv = mech.buffer_bytes("init_vector")
-            assert len(iv) == 8
-            assert iv != b"\x00" * 8, (
-                "C_GenerateKey accepted CK_PBE_PARAMS but did not write pInitVector"
-            )
+            if iv == b"\x00" * 8:
+                hard_results.append(
+                    _record_parameter_mismatch(
+                        label="CKM_PBE_SHA1_DES2_EDE_CBC:pInitVector",
+                        expected="non-zero IV",
+                        actual=f"{iv!r}",
+                        mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_generate_key_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -544,28 +768,49 @@ class TestPBESHA1DES2:
             _SALT,
             _ITERATIONS,
         )[0]
-        h2 = _pbe_gen_key(
+        h2 = _acquire_second_or_cleanup(
             rs,
-            CKM_PBE_SHA1_DES2_EDE_CBC,
-            CKK_DES2,
-            128,
-            _PASSWORD,
-            _SALT,
-            _ITERATIONS,
-        )[0]
+            h1,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBE_SHA1_DES2_EDE_CBC,
+                CKK_DES2,
+                128,
+                _PASSWORD,
+                _SALT,
+                _ITERATIONS,
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert_correct(
-                actual=v1,
-                expected=v2,
-                label="CKM_PBE_SHA1_DES2_EDE_CBC:C_GenerateKey determinism",
-                operation="C_GenerateKey",
+            attrs_1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])
+            v1 = _read_attribute(
+                attrs_1,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES2_EDE_CBC:C_GenerateKey determinism:first",
                 mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
             )
+            attrs_2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])
+            v2 = _read_attribute(
+                attrs_2,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES2_EDE_CBC:C_GenerateKey determinism:second",
+                mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+            )
+            if v1 is not MISSING_ATTRIBUTE and v2 is not MISSING_ATTRIBUTE and v1 != v2:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES2_EDE_CBC:C_GenerateKey determinism",
+                        expected=f"{v2!r}",
+                        actual=f"{v1!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
+        _raise_strongest(hard_results)
 
     def test_different_password_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -580,22 +825,49 @@ class TestPBESHA1DES2:
             _SALT,
             _ITERATIONS,
         )[0]
-        hb = _pbe_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKM_PBE_SHA1_DES2_EDE_CBC,
-            CKK_DES2,
-            128,
-            b"PasswordBravo",
-            _SALT,
-            _ITERATIONS,
-        )[0]
+            ha,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBE_SHA1_DES2_EDE_CBC,
+                CKK_DES2,
+                128,
+                b"PasswordBravo",
+                _SALT,
+                _ITERATIONS,
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES2_EDE_CBC:different-password:first",
+                mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PBE_SHA1_DES2_EDE_CBC:different-password:second",
+                mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBE_SHA1_DES2_EDE_CBC:different-password",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBE_SHA1_DES2_EDE_CBC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
 
 class TestPBASHA1:
@@ -626,10 +898,17 @@ class TestPBASHA1:
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )[0]
+        hard_results: list[C.Classification] = []
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE])
-            actual_key_type = int(attrs[CKA_KEY_TYPE])
-            if actual_key_type == _CKK_GENERIC_SECRET_INT:
+            key_type = _read_attribute(
+                attrs,
+                CKA_KEY_TYPE,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:CKA_KEY_TYPE readback",
+                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+            )
+            if key_type is not MISSING_ATTRIBUTE and key_type == _CKK_GENERIC_SECRET_INT:
+                actual_key_type = int(key_type)
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
@@ -639,7 +918,7 @@ class TestPBASHA1:
                     ComplianceLevel.NOT_RECOMMENDED,
                     reference="PKCS#11 spec CKM_PBA_SHA1_WITH_SHA1_HMAC, CKK_SHA_1_HMAC",
                 )
-                classify(
+                C.classify(
                     "honest_deviation",
                     kind="metadata",
                     label="CKM_PBA_SHA1_WITH_SHA1_HMAC:CKA_KEY_TYPE",
@@ -649,17 +928,26 @@ class TestPBASHA1:
                         f"Module returns CKK_GENERIC_SECRET (0x{actual_key_type:02x}) instead of "
                         f"CKK_SHA_1_HMAC (0x28) for CKM_PBA_SHA1_WITH_SHA1_HMAC key generation"
                     ),
+                    detail={
+                        "attribute": {
+                            "expected": repr(CKK_SHA_1_HMAC),
+                            "actual": repr(key_type),
+                        }
+                    },
                 )
-            assert_correct(
-                actual=attrs[CKA_KEY_TYPE],
-                expected=CKK_SHA_1_HMAC,
-                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:CKA_KEY_TYPE readback",
-                operation="C_GenerateKey",
-                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
-                kind="metadata",
-            )
+            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_SHA_1_HMAC:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBA_SHA1_WITH_SHA1_HMAC:CKA_KEY_TYPE readback",
+                        expected=f"{CKK_SHA_1_HMAC!r}",
+                        actual=f"{key_type!r}",
+                        kind="metadata",
+                        mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_generate_key_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -676,30 +964,51 @@ class TestPBASHA1:
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )[0]
-        h2 = _pbe_gen_key(
+        h2 = _acquire_second_or_cleanup(
             rs,
-            CKM_PBA_SHA1_WITH_SHA1_HMAC,
-            CKK_SHA_1_HMAC,
-            160,
-            _PASSWORD,
-            _SALT,
-            _ITERATIONS,
-            iv_len=20,
-            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )[0]
+            h1,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBA_SHA1_WITH_SHA1_HMAC,
+                CKK_SHA_1_HMAC,
+                160,
+                _PASSWORD,
+                _SALT,
+                _ITERATIONS,
+                iv_len=20,
+                extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert_correct(
-                actual=v1,
-                expected=v2,
-                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:C_GenerateKey determinism",
-                operation="C_GenerateKey",
+            attrs_1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])
+            v1 = _read_attribute(
+                attrs_1,
+                CKA_VALUE,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:C_GenerateKey determinism:first",
                 mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
             )
+            attrs_2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])
+            v2 = _read_attribute(
+                attrs_2,
+                CKA_VALUE,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:C_GenerateKey determinism:second",
+                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+            )
+            if v1 is not MISSING_ATTRIBUTE and v2 is not MISSING_ATTRIBUTE and v1 != v2:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBA_SHA1_WITH_SHA1_HMAC:C_GenerateKey determinism",
+                        expected=f"{v2!r}",
+                        actual=f"{v1!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
+        _raise_strongest(hard_results)
 
     def test_different_salt_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -716,24 +1025,51 @@ class TestPBASHA1:
             iv_len=20,
             extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
         )[0]
-        hb = _pbe_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKM_PBA_SHA1_WITH_SHA1_HMAC,
-            CKK_SHA_1_HMAC,
-            160,
-            _PASSWORD,
-            b"\xff" * 8,
-            _ITERATIONS,
-            iv_len=20,
-            extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
-        )[0]
+            ha,
+            lambda: _pbe_gen_key(
+                rs,
+                CKM_PBA_SHA1_WITH_SHA1_HMAC,
+                CKK_SHA_1_HMAC,
+                160,
+                _PASSWORD,
+                b"\xff" * 8,
+                _ITERATIONS,
+                iv_len=20,
+                extra_attrs={CKA_SIGN: True, CKA_VERIFY: True},
+            )[0],
+        )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:different-salt:first",
+                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PBA_SHA1_WITH_SHA1_HMAC:different-salt:second",
+                mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PBA_SHA1_WITH_SHA1_HMAC:different-salt",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PBA_SHA1_WITH_SHA1_HMAC",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
 
 class TestPKCS5PBKD2:
@@ -756,12 +1092,38 @@ class TestPKCS5PBKD2:
             _ITERATIONS,
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
+        hard_results: list[C.Classification] = []
         try:
-            val = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 32
-            assert val != bytes(32), "Derived key must not be all zeros"
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+            val = _read_attribute(
+                attrs,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:CKA_VALUE SHA-256 readback",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if val is not MISSING_ATTRIBUTE and (val.__class__ is not bytes or val.__len__() != 32):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:CKA_VALUE SHA-256 readback",
+                        expected="32-byte bytes",
+                        actual=f"{val!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
+            elif val is not MISSING_ATTRIBUTE and val == bytes(32):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:CKA_VALUE SHA-256 readback",
+                        expected="non-zero 32-byte key",
+                        actual=f"{val!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_derive_generic_secret_sha1(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -776,11 +1138,28 @@ class TestPKCS5PBKD2:
             _ITERATIONS,
             CKP_PKCS5_PBKD2_HMAC_SHA1,
         )
+        hard_results: list[C.Classification] = []
         try:
-            val = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])[CKA_VALUE]
-            assert len(val) == 20
+            attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+            val = _read_attribute(
+                attrs,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:CKA_VALUE SHA-1 readback",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if val is not MISSING_ATTRIBUTE and (val.__class__ is not bytes or val.__len__() != 20):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:CKA_VALUE SHA-1 readback",
+                        expected="20-byte bytes",
+                        actual=f"{val!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)
 
     def test_derive_deterministic(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -795,28 +1174,49 @@ class TestPKCS5PBKD2:
             _ITERATIONS,
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
-        h2 = _pbkdf2_gen_key(
+        h2 = _acquire_second_or_cleanup(
             rs,
-            CKK_GENERIC_SECRET,
-            256,
-            _PASSWORD,
-            _SALT,
-            _ITERATIONS,
-            CKP_PKCS5_PBKD2_HMAC_SHA256,
+            h1,
+            lambda: _pbkdf2_gen_key(
+                rs,
+                CKK_GENERIC_SECRET,
+                256,
+                _PASSWORD,
+                _SALT,
+                _ITERATIONS,
+                CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ),
         )
+        hard_results: list[C.Classification] = []
         try:
-            v1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])[CKA_VALUE]
-            v2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])[CKA_VALUE]
-            assert_correct(
-                actual=v1,
-                expected=v2,
-                label="CKM_PKCS5_PBKD2:C_GenerateKey determinism",
-                operation="C_GenerateKey",
+            attrs_1 = read_attributes(rs.raw, rs.sh, h1, [CKA_VALUE])
+            v1 = _read_attribute(
+                attrs_1,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:C_GenerateKey determinism:first",
                 mechanism="CKM_PKCS5_PBKD2",
             )
+            attrs_2 = read_attributes(rs.raw, rs.sh, h2, [CKA_VALUE])
+            v2 = _read_attribute(
+                attrs_2,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:C_GenerateKey determinism:second",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if v1 is not MISSING_ATTRIBUTE and v2 is not MISSING_ATTRIBUTE and v1 != v2:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:C_GenerateKey determinism",
+                        expected=f"{v2!r}",
+                        actual=f"{v1!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, h1)
             destroy_quietly(rs.raw, rs.sh, h2)
+        _raise_strongest(hard_results)
 
     def test_different_salt_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -831,22 +1231,49 @@ class TestPKCS5PBKD2:
             _ITERATIONS,
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
-        hb = _pbkdf2_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKK_GENERIC_SECRET,
-            256,
-            _PASSWORD,
-            b"\xff" * 16,
-            _ITERATIONS,
-            CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ha,
+            lambda: _pbkdf2_gen_key(
+                rs,
+                CKK_GENERIC_SECRET,
+                256,
+                _PASSWORD,
+                b"\xff" * 16,
+                _ITERATIONS,
+                CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ),
         )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:different-salt:first",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:different-salt:second",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:different-salt",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
     def test_different_password_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -861,22 +1288,49 @@ class TestPKCS5PBKD2:
             _ITERATIONS,
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
-        hb = _pbkdf2_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKK_GENERIC_SECRET,
-            256,
-            b"PasswordBravo",
-            _SALT,
-            _ITERATIONS,
-            CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ha,
+            lambda: _pbkdf2_gen_key(
+                rs,
+                CKK_GENERIC_SECRET,
+                256,
+                b"PasswordBravo",
+                _SALT,
+                _ITERATIONS,
+                CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ),
         )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:different-password:first",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:different-password:second",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:different-password",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
     def test_more_iterations_produces_different_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -891,22 +1345,49 @@ class TestPKCS5PBKD2:
             1000,
             CKP_PKCS5_PBKD2_HMAC_SHA256,
         )
-        hb = _pbkdf2_gen_key(
+        hb = _acquire_second_or_cleanup(
             rs,
-            CKK_GENERIC_SECRET,
-            256,
-            _PASSWORD,
-            _SALT,
-            2000,
-            CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ha,
+            lambda: _pbkdf2_gen_key(
+                rs,
+                CKK_GENERIC_SECRET,
+                256,
+                _PASSWORD,
+                _SALT,
+                2000,
+                CKP_PKCS5_PBKD2_HMAC_SHA256,
+            ),
         )
+        hard_results: list[C.Classification] = []
         try:
-            va = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])[CKA_VALUE]
-            vb = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])[CKA_VALUE]
-            assert va != vb
+            attrs_a = read_attributes(rs.raw, rs.sh, ha, [CKA_VALUE])
+            va = _read_attribute(
+                attrs_a,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:different-iterations:first",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            attrs_b = read_attributes(rs.raw, rs.sh, hb, [CKA_VALUE])
+            vb = _read_attribute(
+                attrs_b,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:different-iterations:second",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if va is not MISSING_ATTRIBUTE and vb is not MISSING_ATTRIBUTE and va == vb:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:different-iterations",
+                        expected="different derived values",
+                        actual=f"{va!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, ha)
             destroy_quietly(rs.raw, rs.sh, hb)
+        _raise_strongest(hard_results)
 
     def test_derive_aes_key(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
@@ -922,16 +1403,43 @@ class TestPKCS5PBKD2:
             CKP_PKCS5_PBKD2_HMAC_SHA256,
             extra_attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
+        hard_results: list[C.Classification] = []
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE, CKA_VALUE])
-            assert_correct(
-                actual=attrs[CKA_KEY_TYPE],
-                expected=CKK_AES,
+            key_type = _read_attribute(
+                attrs,
+                CKA_KEY_TYPE,
                 label="CKM_PKCS5_PBKD2:CKA_KEY_TYPE readback",
-                operation="C_GenerateKey",
                 mechanism="CKM_PKCS5_PBKD2",
-                kind="metadata",
             )
-            assert len(attrs[CKA_VALUE]) == 32
+            value = _read_attribute(
+                attrs,
+                CKA_VALUE,
+                label="CKM_PKCS5_PBKD2:CKA_VALUE readback",
+                mechanism="CKM_PKCS5_PBKD2",
+            )
+            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_AES:
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:CKA_KEY_TYPE readback",
+                        expected=f"{CKK_AES!r}",
+                        actual=f"{key_type!r}",
+                        kind="metadata",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
+            if value is not MISSING_ATTRIBUTE and (
+                value.__class__ is not bytes or value.__len__() != 32
+            ):
+                hard_results.append(
+                    _record_attribute_mismatch(
+                        label="CKM_PKCS5_PBKD2:CKA_VALUE readback",
+                        expected="32-byte bytes",
+                        actual=f"{value!r}",
+                        kind="crypto",
+                        mechanism="CKM_PKCS5_PBKD2",
+                    )
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, handle)
+        _raise_strongest(hard_results)

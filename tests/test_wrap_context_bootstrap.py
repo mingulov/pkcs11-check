@@ -585,6 +585,8 @@ def test_aes_kwp_kek_destroyed_on_readback_failure(monkeypatch: pytest.MonkeyPat
     leaked (never destroyed) when read_attributes failed to read back CKA_VALUE.
     In that case AES-KWP must not be selected and the KEK handle must be destroyed.
     """
+    from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_SENSITIVE
+
     kek_handle = 77
     destroy_calls: list[int] = []
 
@@ -598,7 +600,7 @@ def test_aes_kwp_kek_destroyed_on_readback_failure(monkeypatch: pytest.MonkeyPat
     def fake_read_attributes(
         raw: Any, session: int, handle: int, attr_types: Any
     ) -> dict[int, Any]:
-        raise CkrAssertionError("CKA_VALUE not readable", CKR_MECHANISM_INVALID)  # fails
+        raise CkrAssertionError("CKA_VALUE not readable", CKR_ATTRIBUTE_SENSITIVE)
 
     def fake_destroy_quietly(raw: Any, session: int, handle: int) -> None:
         destroy_calls.append(handle)
@@ -619,7 +621,7 @@ def test_aes_kwp_kek_destroyed_on_readback_failure(monkeypatch: pytest.MonkeyPat
         build_wrap_context(rs, cfg)
 
     # The orphaned KEK handle must have been destroyed
-    assert kek_handle in destroy_calls
+    assert destroy_calls == [kek_handle]
 
 
 def test_aes_kwp_bootstrap_unknown_keygen_ckr_propagates(

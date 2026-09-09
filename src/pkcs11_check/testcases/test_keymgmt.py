@@ -108,8 +108,10 @@ def _decrypt_or_xfail(rs: Any, key: int, data: bytes) -> bytes:
     raise
 
 
-def _wrong_attribute(*, label: str, expected: Any, actual: str, kind: str = "metadata") -> NoReturn:
-    record = C.record_as(
+def _record_wrong_attribute(
+    *, label: str, expected: Any, actual: str, kind: str = "metadata"
+) -> C.Classification:
+    return C.record_as(
         "wrong_result",
         kind=kind,
         label=label,
@@ -122,6 +124,10 @@ def _wrong_attribute(*, label: str, expected: Any, actual: str, kind: str = "met
             }
         },
     )
+
+
+def _wrong_attribute(*, label: str, expected: Any, actual: str, kind: str = "metadata") -> NoReturn:
+    record = _record_wrong_attribute(label=label, expected=expected, actual=actual, kind=kind)
     C.raise_for_record(record)
 
 
@@ -230,7 +236,7 @@ class TestKeyImport:
     def test_import_multiple_sizes(self, p11_raw_session: Any) -> None:
         """Import AES keys at 128, 192, 256 bit sizes."""
         rs = p11_raw_session
-        mismatch: tuple[str, bytes, Any] | None = None
+        first_mismatch: C.Classification | None = None
         for size_bytes in [16, 24, 32]:
             key_bytes = bytes(size_bytes)
             key = import_secret_key(
@@ -255,17 +261,19 @@ class TestKeyImport:
                 )
                 if exported is MISSING_ATTRIBUTE:
                     continue
-                if exported != key_bytes and mismatch is None:
-                    mismatch = (
-                        f"CKA_VALUE:imported-AES-{size_bytes * 8}",
-                        key_bytes,
-                        f"{exported!r}",
+                if exported != key_bytes:
+                    mismatch = _record_wrong_attribute(
+                        label=f"CKA_VALUE:imported-AES-{size_bytes * 8}",
+                        expected=key_bytes,
+                        actual=f"{exported!r}",
+                        kind="crypto",
                     )
+                    if first_mismatch is None:
+                        first_mismatch = mismatch
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)
-        if mismatch is not None:
-            label, expected, actual = mismatch
-            _wrong_attribute(label=label, expected=expected, actual=actual, kind="crypto")
+        if first_mismatch is not None:
+            C.raise_for_record(first_mismatch)
 
 
 class TestKeyExport:
@@ -294,21 +302,27 @@ class TestKeyExport:
             if modulus is not MISSING_ATTRIBUTE and (
                 modulus.__class__ is not bytes or modulus.__len__() != 256
             ):
-                _wrong_attribute(
+                first_mismatch = _record_wrong_attribute(
                     label="CKA_MODULUS:RSA-public",
                     expected="256-byte bytes",
                     actual=f"{modulus!r}",
                     kind="crypto",
                 )
+            else:
+                first_mismatch = None
             if exponent is not MISSING_ATTRIBUTE and (
                 exponent.__class__ is not bytes or not exponent
             ):
-                _wrong_attribute(
+                mismatch = _record_wrong_attribute(
                     label="CKA_PUBLIC_EXPONENT:RSA-public",
                     expected="non-empty bytes",
                     actual=f"{exponent!r}",
                     kind="crypto",
                 )
+                if first_mismatch is None:
+                    first_mismatch = mismatch
+            if first_mismatch is not None:
+                C.raise_for_record(first_mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -360,14 +374,23 @@ class TestKeyCopy:
                 reason="not_operational",
                 kind="metadata",
             )
-            mismatch: tuple[str, Any, Any] | None = None
+            first_mismatch: C.Classification | None = None
             if label_value is not MISSING_ATTRIBUTE and label_value not in (b"copy", "copy"):
-                mismatch = ("CKA_LABEL:copied-AES", (b"copy", "copy"), f"{label_value!r}")
-            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_AES and mismatch is None:
-                mismatch = ("CKA_KEY_TYPE:copied-AES", CKK_AES, f"{key_type!r}")
-            if mismatch is not None:
-                label, expected, actual = mismatch
-                _wrong_attribute(label=label, expected=expected, actual=actual)
+                first_mismatch = _record_wrong_attribute(
+                    label="CKA_LABEL:copied-AES",
+                    expected=(b"copy", "copy"),
+                    actual=f"{label_value!r}",
+                )
+            if key_type is not MISSING_ATTRIBUTE and key_type != CKK_AES:
+                mismatch = _record_wrong_attribute(
+                    label="CKA_KEY_TYPE:copied-AES",
+                    expected=CKK_AES,
+                    actual=f"{key_type!r}",
+                )
+                if first_mismatch is None:
+                    first_mismatch = mismatch
+            if first_mismatch is not None:
+                C.raise_for_record(first_mismatch)
         finally:
             destroy_quietly(rs.raw, rs.sh, original)
             if copy:

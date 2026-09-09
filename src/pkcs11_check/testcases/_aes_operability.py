@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_XTS,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._operability import (
     Operability,
     OperabilityResult,
@@ -324,7 +325,20 @@ def kw_unwrap_operability(rs: Any) -> OperabilityResult:
                 return OperabilityResult(
                     Operability.INCONCLUSIVE, f"KW recovered value read failed: {exc}"
                 )
-            if recovered_attrs.get(CKA_VALUE) != _PROBE_KEY2:
+            recovered_value = attr_or_record(
+                recovered_attrs,
+                CKA_VALUE,
+                label="CKM_AES_KEY_WRAP:recovered CKA_VALUE readback",
+                reason="not_operational",
+                kind="metadata",
+                mechanism="CKM_AES_KEY_WRAP",
+            )
+            if recovered_value is MISSING_ATTRIBUTE:
+                return OperabilityResult(
+                    Operability.INCONCLUSIVE,
+                    "KW recovered value unavailable; equality oracle disabled",
+                )
+            if recovered_value != _PROBE_KEY2:
                 return OperabilityResult(Operability.WRONG_OUTPUT, "KW roundtrip value mismatch")
             return OperabilityResult(Operability.OPERATIONAL, "KW wrap+unwrap OK")
         finally:

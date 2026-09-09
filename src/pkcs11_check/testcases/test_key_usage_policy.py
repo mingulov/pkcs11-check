@@ -19,7 +19,9 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.raw.pack import attr_ulong, mech_simple, template, template_ptr_count
+from pkcs11_check import classification
+from pkcs11_check.raw.metadata_std import ATTR_NAMES
+from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template, template_ptr_count
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
@@ -28,7 +30,7 @@ from pkcs11_check.raw.recipes import (
     read_attributes,
     to_ubyte_buf,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECAPSULATE,
@@ -53,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_768,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_BUFFER_TOO_SMALL,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
@@ -68,12 +71,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
-    classify_negative_rv,
-    classify_policy_enforcement,
+    assert_correct,
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
-    xfail_if_known_ckr,
 )
 
 # Key-usage-policy guards classify 3-way via classify_negative_rv: running the
@@ -83,6 +85,134 @@ from pkcs11_check.testcases.conftest import (
 # xfail.
 
 pytestmark = pytest.mark.security
+
+
+def _record_bool_readback(
+    value: Any,
+    *,
+    attr: int,
+    expected: bool | None,
+    label: str,
+    producer_operation: str,
+    producer_mechanism: str,
+) -> classification.Classification | None:
+    """Record a present flag shape/value contradiction without stopping siblings."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    detail: dict[str, Any] = {
+        "attribute": {"name": ATTR_NAMES.get(int(attr), str(attr)), "id": int(attr)},
+        "expected": "CK_BBOOL boolean" if expected is None else expected,
+        "actual": repr(value),
+        "producer_operation": producer_operation,
+        "producer_mechanism": producer_mechanism,
+    }
+    if type(value) is not bool:
+        detail["expected"] = "CK_BBOOL boolean"
+        return classification.record_as(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=producer_mechanism,
+            detail=detail,
+            summary=f"{label}: present value has invalid CK_BBOOL shape: {value!r}",
+        )
+    if expected is None or value is expected:
+        return None
+    return classification.record_as(
+        "wrong_result",
+        kind="metadata",
+        label=label,
+        operation="C_GetAttributeValue",
+        mechanism=producer_mechanism,
+        detail=detail,
+        summary=f"{label}: expected {expected!r}, got {value!r}",
+    )
+
+
+def _raise_deferred_hard(records: list[classification.Classification]) -> None:
+    """Raise a deferred provider contradiction after independent probes complete."""
+    if records:
+        # A later honest deviation must never hide an earlier hard contradiction.
+        # Keep the reduction independent of probe/append order.
+        priorities = {
+            "CRITICAL": 3,
+            "HIGH": 2,
+            "MEDIUM": 1,
+            "LOW": 0,
+            "INFO": 0,
+        }
+        strongest = max(
+            records,
+            key=lambda record: (
+                record.outcome == "fail",
+                priorities.get(record.severity, 0),
+            ),
+        )
+        classification.raise_for_record(strongest)
+
+
+def _classify_policy_negative_rv(
+    rv: int,
+    *,
+    operation: str,
+    mechanism: str,
+    label: str,
+    expected: tuple[int, ...] = (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+) -> None:
+    """Classify a raw policy return with exact operation and mechanism metadata.
+
+    The operation identity is supplied directly on the record.  This avoids a
+    nested set/clear context that can overwrite a caller's unrelated operation.
+    """
+    record = _record_policy_negative_rv(
+        rv,
+        operation=operation,
+        mechanism=mechanism,
+        label=label,
+        expected=expected,
+    )
+    if record is not None:
+        classification.raise_for_record(record)
+
+
+def _record_policy_negative_rv(
+    rv: int,
+    *,
+    operation: str,
+    mechanism: str,
+    label: str,
+    expected: tuple[int, ...] = (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+) -> classification.Classification | None:
+    """Record a policy return without terminating, for later precedence reduction."""
+    if rv == CKR_OK:
+        return classification.record_as(
+            "accepted_invalid",
+            kind="policy",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=expected,
+            actual=rv,
+            summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
+        )
+    if rv in expected:
+        return None
+    reason = (
+        "nonspec_reject"
+        if is_standard_ckr(rv) or is_vendor_defined_ckr(rv)
+        else "self_contradiction"
+    )
+    kind = "policy" if reason == "nonspec_reject" else "metadata"
+    return classification.record_as(
+        reason,
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=expected,
+        actual=rv,
+    )
 
 
 class TestAESKeyUsagePolicy:
@@ -107,14 +237,21 @@ class TestAESKeyUsagePolicy:
             # Encrypt should succeed
             data = b"\x00" * 16
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, data)
-            assert len(ct) == 16
+            assert_correct(
+                actual=len(ct),
+                expected=16,
+                label="AES-ECB encryption output length",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_ECB",
+            )
 
             # DecryptInit should fail with KEY_FUNCTION_NOT_PERMITTED
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_DecryptInit(rs.sh, mech.byref(), key)
-            classify_negative_rv(
+            _classify_policy_negative_rv(
                 rv,
-                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                operation="C_DecryptInit",
+                mechanism="CKM_AES_ECB",
                 label="C_DecryptInit on an AES key created CKA_DECRYPT=False",
             )
         finally:
@@ -137,15 +274,35 @@ class TestAESKeyUsagePolicy:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_DECRYPT])
-            assert attrs[CKA_DECRYPT] is True
+            decrypt = attr_or_record(
+                attrs,
+                CKA_DECRYPT,
+                label="CKA_DECRYPT on decrypt-only AES key",
+                reason="not_operational",
+                kind="metadata",
+                mechanism="CKM_AES_KEY_GEN",
+            )
+            hard_records: list[classification.Classification] = []
+            record = _record_bool_readback(
+                decrypt,
+                attr=CKA_DECRYPT,
+                expected=True,
+                label="CKA_DECRYPT on decrypt-only AES key",
+                producer_operation="C_GenerateKey",
+                producer_mechanism="CKM_AES_KEY_GEN",
+            )
+            if record is not None:
+                hard_records.append(record)
 
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-            classify_negative_rv(
+            _classify_policy_negative_rv(
                 rv,
-                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                operation="C_EncryptInit",
+                mechanism="CKM_AES_ECB",
                 label="C_EncryptInit on an AES key created CKA_ENCRYPT=False",
             )
+            _raise_deferred_hard(hard_records)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -167,9 +324,10 @@ class TestAESKeyUsagePolicy:
         try:
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
-            classify_negative_rv(
+            _classify_policy_negative_rv(
                 rv,
-                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                operation="C_EncryptInit",
+                mechanism="CKM_AES_ECB",
                 label="C_EncryptInit on a SIGN-only AES key created CKA_ENCRYPT=False",
             )
         finally:
@@ -194,7 +352,13 @@ class TestAESKeyUsagePolicy:
         )
         try:
             ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, b"\x00" * 16)
-            assert len(ct) == 16
+            assert_correct(
+                actual=len(ct),
+                expected=16,
+                label="AES-ECB full-capability encryption output length",
+                operation="C_Encrypt",
+                mechanism="CKM_AES_ECB",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -223,24 +387,60 @@ class TestRSAKeyUsagePolicy:
             },
         )
         try:
-            # Verify SIGN is True on private
+            hard_records: list[classification.Classification] = []
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_SIGN])
-            assert priv_attrs[CKA_SIGN] is True
+            sign = attr_or_record(
+                priv_attrs,
+                CKA_SIGN,
+                label="CKA_SIGN on sign-only RSA private key",
+                reason="not_operational",
+                kind="metadata",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            record = _record_bool_readback(
+                sign,
+                attr=CKA_SIGN,
+                expected=True,
+                label="CKA_SIGN on sign-only RSA private key",
+                producer_operation="C_GenerateKeyPair",
+                producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            if record is not None:
+                hard_records.append(record)
 
             # Verify VERIFY is True on public
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_VERIFY])
-            assert pub_attrs[CKA_VERIFY] is True
+            verify = attr_or_record(
+                pub_attrs,
+                CKA_VERIFY,
+                label="CKA_VERIFY on sign-only RSA public key",
+                reason="not_operational",
+                kind="metadata",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            record = _record_bool_readback(
+                verify,
+                attr=CKA_VERIFY,
+                expected=True,
+                label="CKA_VERIFY on sign-only RSA public key",
+                producer_operation="C_GenerateKeyPair",
+                producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            if record is not None:
+                hard_records.append(record)
 
             # Encrypt should fail on public key
             from pkcs11_check.raw.types_std import CKM_RSA_PKCS
 
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), pub)
-            classify_negative_rv(
+            _classify_policy_negative_rv(
                 rv,
-                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                operation="C_EncryptInit",
+                mechanism="CKM_RSA_PKCS",
                 label="C_EncryptInit on an RSA public key created CKA_ENCRYPT=False",
             )
+            _raise_deferred_hard(hard_records)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -266,22 +466,59 @@ class TestRSAKeyUsagePolicy:
             },
         )
         try:
+            hard_records: list[classification.Classification] = []
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCRYPT])
-            assert pub_attrs[CKA_ENCRYPT] is True
+            encrypt = attr_or_record(
+                pub_attrs,
+                CKA_ENCRYPT,
+                label="CKA_ENCRYPT on encrypt-only RSA public key",
+                reason="not_operational",
+                kind="metadata",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            record = _record_bool_readback(
+                encrypt,
+                attr=CKA_ENCRYPT,
+                expected=True,
+                label="CKA_ENCRYPT on encrypt-only RSA public key",
+                producer_operation="C_GenerateKeyPair",
+                producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            if record is not None:
+                hard_records.append(record)
 
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DECRYPT])
-            assert priv_attrs[CKA_DECRYPT] is True
+            decrypt = attr_or_record(
+                priv_attrs,
+                CKA_DECRYPT,
+                label="CKA_DECRYPT on encrypt-only RSA private key",
+                reason="not_operational",
+                kind="metadata",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            record = _record_bool_readback(
+                decrypt,
+                attr=CKA_DECRYPT,
+                expected=True,
+                label="CKA_DECRYPT on encrypt-only RSA private key",
+                producer_operation="C_GenerateKeyPair",
+                producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            )
+            if record is not None:
+                hard_records.append(record)
 
             # Sign should fail on private key
             from pkcs11_check.raw.types_std import CKM_SHA256_RSA_PKCS
 
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
-            classify_negative_rv(
+            _classify_policy_negative_rv(
                 rv,
-                (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                operation="C_SignInit",
+                mechanism="CKM_SHA256_RSA_PKCS",
                 label="C_SignInit on an RSA private key created CKA_SIGN=False",
             )
+            _raise_deferred_hard(hard_records)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -308,15 +545,37 @@ class TestCapabilityReadback:
             },
         )
         try:
+            hard_records: list[classification.Classification] = []
             attrs = read_attributes(
                 rs.raw,
                 rs.sh,
                 key,
                 [CKA_ENCRYPT, CKA_DECRYPT, CKA_SIGN],
             )
-            assert attrs[CKA_ENCRYPT] is True
-            assert attrs[CKA_DECRYPT] is False
-            assert attrs[CKA_SIGN] is False
+            for attr, expected, label in (
+                (CKA_ENCRYPT, True, "CKA_ENCRYPT on AES capability key"),
+                (CKA_DECRYPT, False, "CKA_DECRYPT on AES capability key"),
+                (CKA_SIGN, False, "CKA_SIGN on AES capability key"),
+            ):
+                value = attr_or_record(
+                    attrs,
+                    attr,
+                    label=label,
+                    reason="not_operational",
+                    kind="metadata",
+                    mechanism="CKM_AES_KEY_GEN",
+                )
+                record = _record_bool_readback(
+                    value,
+                    attr=attr,
+                    expected=expected,
+                    label=label,
+                    producer_operation="C_GenerateKey",
+                    producer_mechanism="CKM_AES_KEY_GEN",
+                )
+                if record is not None:
+                    hard_records.append(record)
+            _raise_deferred_hard(hard_records)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -333,13 +592,55 @@ class TestCapabilityReadback:
             private_attrs={CKA_DECRYPT: True, CKA_SIGN: False},
         )
         try:
+            hard_records: list[classification.Classification] = []
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCRYPT, CKA_VERIFY])
-            assert pub_attrs[CKA_ENCRYPT] is True
-            assert pub_attrs[CKA_VERIFY] is False
+            for attr, expected, label in (
+                (CKA_ENCRYPT, True, "CKA_ENCRYPT on RSA capability public key"),
+                (CKA_VERIFY, False, "CKA_VERIFY on RSA capability public key"),
+            ):
+                value = attr_or_record(
+                    pub_attrs,
+                    attr,
+                    label=label,
+                    reason="not_operational",
+                    kind="metadata",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                )
+                record = _record_bool_readback(
+                    value,
+                    attr=attr,
+                    expected=expected,
+                    label=label,
+                    producer_operation="C_GenerateKeyPair",
+                    producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                )
+                if record is not None:
+                    hard_records.append(record)
 
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_DECRYPT, CKA_SIGN])
-            assert priv_attrs[CKA_DECRYPT] is True
-            assert priv_attrs[CKA_SIGN] is False
+            for attr, expected, label in (
+                (CKA_DECRYPT, True, "CKA_DECRYPT on RSA capability private key"),
+                (CKA_SIGN, False, "CKA_SIGN on RSA capability private key"),
+            ):
+                value = attr_or_record(
+                    priv_attrs,
+                    attr,
+                    label=label,
+                    reason="not_operational",
+                    kind="metadata",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                )
+                record = _record_bool_readback(
+                    value,
+                    attr=attr,
+                    expected=expected,
+                    label=label,
+                    producer_operation="C_GenerateKeyPair",
+                    producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                )
+                if record is not None:
+                    hard_records.append(record)
+            _raise_deferred_hard(hard_records)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -349,6 +650,8 @@ class TestCapabilityReadback:
 # ML-KEM shared-secret size used in encapsulation templates (FIPS 203)
 # ---------------------------------------------------------------------------
 _ML_KEM_SHARED_SECRET_BYTES = 32
+_ML_KEM_768_CIPHERTEXT_BYTES = 1088
+_ML_KEM_MAX_CIPHERTEXT_BYTES = 1568
 
 _ML_KEM_SETUP_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
@@ -369,9 +672,50 @@ _ML_KEM_SETUP_REJECT_RVS = (
 )
 
 
-def _xfail_ml_kem_setup_reject(exc: CkrAssertionError, label: str) -> None:
-    """Expose a clean advertised ML-KEM setup refusal as a visible xfail."""
-    xfail_if_known_ckr(exc, _ML_KEM_SETUP_REJECT_RVS, label)
+def _xfail_ml_kem_setup_reject(
+    exc: CkrAssertionError,
+    label: str,
+    *,
+    operation: str,
+    mechanism: str,
+) -> None:
+    """Expose a clean advertised ML-KEM setup refusal with exact context."""
+    rv = exc.rv
+    if rv == CKR_OK:
+        record = classification.record_as(
+            "accepted_invalid",
+            kind="policy",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=CKR_OK,
+            actual=rv,
+            summary=f"{label}: setup unexpectedly returned CKR_OK",
+        )
+        classification.raise_for_record(record)
+    if rv in _ML_KEM_SETUP_REJECT_RVS or is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        record = classification.record_as(
+            "not_operational",
+            kind="policy",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=CKR_OK,
+            actual=rv,
+            summary=f"{label}: setup refused with CK_RV",
+        )
+        classification.raise_for_record(record)
+    record = classification.record_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=CKR_OK,
+        actual=rv,
+        summary=f"{label}: setup returned an undefined CK_RV",
+    )
+    classification.raise_for_record(record)
 
 
 def _gen_ml_kem_keypair(
@@ -420,6 +764,144 @@ def _ml_kem_secret_template() -> dict[int, Any]:
     }
 
 
+def _remember_handle(handles: list[int], seen: set[int], handle: Any) -> None:
+    """Retain a raw output handle exactly once, including exceptional writes."""
+    value = int(getattr(handle, "value", handle) or 0)
+    if value and value not in seen:
+        seen.add(value)
+        handles.append(value)
+
+
+def _destroy_owned_handles(
+    raw: Any,
+    session: Any,
+    handles: list[int],
+    *,
+    pending: BaseException | None,
+) -> None:
+    """Destroy every deduplicated handle while preserving an earlier exception."""
+    cleanup_errors: list[tuple[int, BaseException]] = []
+    for handle in handles:
+        try:
+            destroy_quietly(raw, session, handle)
+        except BaseException as exc:
+            cleanup_errors.append((handle, exc))
+    for handle, cleanup_exc in cleanup_errors:
+        classification.record_as(
+            "harness_error",
+            kind="lifecycle",
+            label=f"C_DestroyObject cleanup for owned handle {handle}",
+            operation="C_DestroyObject",
+            detail={
+                "handle": handle,
+                "exception_type": type(cleanup_exc).__name__,
+                "exception": repr(cleanup_exc),
+            },
+            summary=(
+                "C_DestroyObject cleanup raised "
+                f"{type(cleanup_exc).__name__} for owned handle {handle}"
+            ),
+        )
+    if cleanup_errors:
+        cleanup_error = cleanup_errors[0][1]
+        if pending is None or getattr(pending, "_pkcs11_check_classification", None) is not None:
+            raise cleanup_error
+
+
+def _record_handle_on_rejection(
+    *,
+    operation: str,
+    rv: int,
+    handle: Any,
+) -> classification.Classification | None:
+    """Expose an output handle written on a rejecting call, without treating it as effect."""
+    value = int(getattr(handle, "value", handle) or 0)
+    if rv == CKR_OK or value == 0:
+        return None
+    return classification.record_as(
+        "wrong_result",
+        kind="lifecycle",
+        label=f"{operation} output handle on rejecting return",
+        operation=operation,
+        mechanism="CKM_ML_KEM",
+        expected=(CKR_OK,),
+        actual=rv,
+        detail={
+            "expected_handle": 0,
+            "actual_handle": value,
+            "return_value": rv,
+        },
+        summary=(
+            f"{operation} wrote output handle {value} while returning a rejection; "
+            "the handle is retained for cleanup but is not policy effect evidence"
+        ),
+    )
+
+
+def _record_kem_length(
+    *,
+    phase: str,
+    operation: str,
+    rv: int,
+    length: int,
+    capacity: int,
+) -> classification.Classification | None:
+    """Record a malformed ML-KEM ciphertext length without consuming it."""
+    if rv == CKR_BUFFER_TOO_SMALL:
+        valid = length in (0, _ML_KEM_768_CIPHERTEXT_BYTES)
+    else:
+        valid = length == _ML_KEM_768_CIPHERTEXT_BYTES
+    if valid and length <= capacity:
+        return None
+    return classification.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=f"ML-KEM-768 {phase} ciphertext output",
+        operation=operation,
+        mechanism="CKM_ML_KEM",
+        expected=(CKR_OK, CKR_BUFFER_TOO_SMALL),
+        actual=rv,
+        detail={
+            "phase": phase,
+            "expected_length": _ML_KEM_768_CIPHERTEXT_BYTES,
+            "actual_length": length,
+            "capacity": capacity,
+            "return_value": rv,
+        },
+        summary=(
+            f"ML-KEM-768 {phase} ciphertext output has invalid length/capacity; "
+            "the result is not safe policy input"
+        ),
+    )
+
+
+def _record_kem_setup_rv(
+    rv: int,
+    *,
+    operation: str,
+    label: str,
+    expected: tuple[int, ...] = (CKR_OK, CKR_BUFFER_TOO_SMALL),
+) -> classification.Classification | None:
+    """Record a setup/query CK_RV deviation while allowing independent probes."""
+    if rv in expected:
+        return None
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        reason = "not_operational"
+        kind = "policy"
+    else:
+        reason = "self_contradiction"
+        kind = "metadata"
+    return classification.record_as(
+        reason,
+        kind=kind,
+        label=label,
+        operation=operation,
+        mechanism="CKM_ML_KEM",
+        expected=expected,
+        actual=rv,
+    )
+
+
 @pytest.mark.v32
 @pytest.mark.needs_function("C_EncapsulateKey")
 class TestKEMKeyUsagePolicy:
@@ -435,8 +917,8 @@ class TestKEMKeyUsagePolicy:
     - ``CKR_KEY_FUNCTION_NOT_PERMITTED`` → ``pass`` (spec-correct enforcement).
     - any other clean rejection → ``xfail`` (noted deviation).
 
-    Setup failures (keypair creation refused, keygen not operational) route
-    to ``pytest.skip`` so they never false-accuse a conformant module.
+    Setup failures (keypair creation refused, keygen not operational) remain
+    visible as context-rich xfails; only an unadvertised mechanism is skipped.
     """
 
     def test_encapsulate_flag_false_rejected(self, p11_raw_session: Any) -> None:
@@ -462,16 +944,19 @@ class TestKEMKeyUsagePolicy:
             _xfail_ml_kem_setup_reject(
                 exc,
                 "ML-KEM keypair generation with CKA_ENCAPSULATE=False is not operational",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
             )
 
         from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CK_ULONG
 
-        handle = CK_OBJECT_HANDLE(0)
+        returned_handles: list[int] = []
+        seen_handles: set[int] = set()
+        deferred_records: list[classification.Classification] = []
+        pending: BaseException | None = None
         try:
             mech = mech_simple(CKM_ML_KEM)
             tmpl_attrs = _ml_kem_secret_template()
-            from pkcs11_check.raw.pack import attr_bool
-
             packed = [
                 attr_ulong(CKA_CLASS, tmpl_attrs[CKA_CLASS]),
                 attr_ulong(CKA_KEY_TYPE, tmpl_attrs[CKA_KEY_TYPE]),
@@ -481,73 +966,210 @@ class TestKEMKeyUsagePolicy:
             ]
             tmpl = template(*packed)
 
-            # First call: query the ciphertext length.
-            ct_len = CK_ULONG(0)
-            size_rv = rs.raw.C_EncapsulateKey(
-                rs.sh,
-                mech.byref(),
-                pub,
-                *template_ptr_count(tmpl),
-                None,
-                byref(ct_len),
-                byref(handle),
+            # Each raw call has its own mutable output state.  Providers may
+            # overwrite the handle between calls, or write it before raising.
+            query_handle = CK_OBJECT_HANDLE(0)
+            query_len = CK_ULONG(0)
+            try:
+                size_rv = rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    pub,
+                    *template_ptr_count(tmpl),
+                    None,
+                    byref(query_len),
+                    byref(query_handle),
+                )
+            finally:
+                _remember_handle(returned_handles, seen_handles, query_handle)
+
+            query_record = _record_kem_setup_rv(
+                size_rv,
+                operation="C_EncapsulateKey",
+                label="ML-KEM C_EncapsulateKey size query",
+                expected=(CKR_OK, CKR_BUFFER_TOO_SMALL, CKR_KEY_FUNCTION_NOT_PERMITTED),
             )
-            # If the module enforces the flag at the size-query stage, classify
-            # immediately and return — no further call needed.
-            if size_rv not in (CKR_OK,):
-                classify_negative_rv(
+            if query_record is not None:
+                deferred_records.append(query_record)
+            query_handle_record = _record_handle_on_rejection(
+                operation="C_EncapsulateKey",
+                rv=size_rv,
+                handle=query_handle,
+            )
+            if query_handle_record is not None:
+                deferred_records.append(query_handle_record)
+            if size_rv == CKR_KEY_FUNCTION_NOT_PERMITTED:
+                _classify_policy_negative_rv(
                     size_rv,
-                    (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
                     label="C_EncapsulateKey with CKA_ENCAPSULATE=False on public key "
                     "(PKCS#11 v3.2 Sec.5.14.7)",
-                    kind="policy",
                 )
+                if query_handle_record is not None:
+                    classification.raise_for_record(query_handle_record)
                 return
 
-            # Second call: full encapsulation with a real buffer.
-            buf_len = ct_len.value if ct_len.value else 4096
-            ct_buf = (ctypes.c_ubyte * buf_len)()
-            ct_len = CK_ULONG(buf_len)
-            rv = rs.raw.C_EncapsulateKey(
-                rs.sh,
-                mech.byref(),
-                pub,
-                *template_ptr_count(tmpl),
-                ct_buf,
-                byref(ct_len),
-                byref(handle),
+            reported_query_len = int(query_len.value)
+            query_capacity = min(
+                max(reported_query_len, _ML_KEM_768_CIPHERTEXT_BYTES),
+                _ML_KEM_MAX_CIPHERTEXT_BYTES,
             )
-            if rv == CKR_OK and handle.value:
-                destroy_quietly(rs.raw, rs.sh, handle.value)
-                handle = CK_OBJECT_HANDLE(0)
+            query_length_record = (
+                _record_kem_length(
+                    phase="size-query",
+                    operation="C_EncapsulateKey",
+                    rv=size_rv,
+                    length=reported_query_len,
+                    capacity=query_capacity,
+                )
+                if size_rv in (CKR_OK, CKR_BUFFER_TOO_SMALL)
+                else None
+            )
+            if query_length_record is not None:
+                deferred_records.append(query_length_record)
 
+            full_handle = CK_OBJECT_HANDLE(0)
+            full_len = CK_ULONG(query_capacity)
+            ct_buf = (ctypes.c_ubyte * query_capacity)()
+            try:
+                rv = rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    mech.byref(),
+                    pub,
+                    *template_ptr_count(tmpl),
+                    ct_buf,
+                    byref(full_len),
+                    byref(full_handle),
+                )
+            finally:
+                _remember_handle(returned_handles, seen_handles, full_handle)
+
+            # BUFFER_TOO_SMALL is useful for negotiating a size query only.  A
+            # clean refusal from the full call remains an xfail unless it is the
+            # exact policy CKR; a handle from the query cannot change that.  Defer
+            # the refusal until any earlier query effect has been inspected.
+            full_refusal_record = None
             if rv != CKR_OK:
-                classify_negative_rv(
+                full_refusal_record = _record_policy_negative_rv(
                     rv,
-                    (CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
                     label="C_EncapsulateKey with CKA_ENCAPSULATE=False on public key "
                     "(PKCS#11 v3.2 Sec.5.14.7)",
-                    kind="policy",
                 )
-                return
+                if full_refusal_record is not None:
+                    deferred_records.append(full_refusal_record)
+                full_handle_record = _record_handle_on_rejection(
+                    operation="C_EncapsulateKey",
+                    rv=rv,
+                    handle=full_handle,
+                )
+                if full_handle_record is not None:
+                    deferred_records.append(full_handle_record)
 
-            # rv == CKR_OK — check whether the module actually claims the flag.
-            # If CKA_ENCAPSULATE reads back False, the module contradicted itself.
-            # If it reads back True (flag silently overridden at create), that is
-            # honest non-enforcement of the restriction → xfail.
-            encap_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCAPSULATE])
-            claimed = encap_attrs.get(CKA_ENCAPSULATE) is False
-            classify_policy_enforcement(
-                claimed=claimed,
-                violated=True,
-                label="C_EncapsulateKey with CKA_ENCAPSULATE=False on public key "
-                "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            full_effect = rv == CKR_OK and bool(full_handle.value)
+            if rv == CKR_OK and not full_effect:
+                deferred_records.append(
+                    classification.record_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="ML-KEM C_EncapsulateKey full-call output handle",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        expected=(CKR_OK,),
+                        actual=CKR_OK,
+                        detail={"expected_handle": "non-zero", "actual_handle": 0},
+                        summary=("C_EncapsulateKey returned CKR_OK without an output handle"),
+                    )
+                )
+            full_length_record = (
+                _record_kem_length(
+                    phase="full-call",
+                    operation="C_EncapsulateKey",
+                    rv=rv,
+                    length=int(full_len.value),
+                    capacity=query_capacity,
+                )
+                if rv in (CKR_OK, CKR_BUFFER_TOO_SMALL)
+                else None
             )
+            if full_length_record is not None:
+                deferred_records.append(full_length_record)
+
+            size_query_effect = size_rv == CKR_OK and bool(query_handle.value)
+            # A successful query handle proves an effect independently of the
+            # reported ciphertext length. Malformed full output still disables
+            # its dependent oracle without suppressing the query handle effect.
+            if size_query_effect or (full_effect and full_length_record is None):
+                encap_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ENCAPSULATE])
+                encap = attr_or_record(
+                    encap_attrs,
+                    CKA_ENCAPSULATE,
+                    label="CKA_ENCAPSULATE=False on ML-KEM public key",
+                    reason="not_operational",
+                    kind="policy",
+                    mechanism="CKM_ML_KEM",
+                )
+                hard_record = _record_bool_readback(
+                    encap,
+                    attr=CKA_ENCAPSULATE,
+                    expected=None,
+                    label="CKA_ENCAPSULATE=False on ML-KEM public key",
+                    producer_operation="C_GenerateKeyPair",
+                    producer_mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                )
+                if hard_record is not None:
+                    deferred_records.append(hard_record)
+                elif encap is MISSING_ATTRIBUTE:
+                    deferred_records.append(
+                        classification.record_as(
+                            "not_operational",
+                            kind="policy",
+                            label=(
+                                "C_EncapsulateKey with missing CKA_ENCAPSULATE readback "
+                                "on public key"
+                            ),
+                            operation="C_EncapsulateKey",
+                            mechanism="CKM_ML_KEM",
+                            expected=(CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                            actual=CKR_OK,
+                            summary=(
+                                "C_EncapsulateKey returned CKR_OK but CKA_ENCAPSULATE "
+                                "was unavailable; policy effect is unobservable"
+                            ),
+                        )
+                    )
+                else:
+                    reason = "accepted_invalid" if encap is False else "honest_deviation"
+                    deferred_records.append(
+                        classification.record_as(
+                            reason,
+                            kind="policy",
+                            label="C_EncapsulateKey with CKA_ENCAPSULATE=False on public key",
+                            operation="C_EncapsulateKey",
+                            mechanism="CKM_ML_KEM",
+                            expected=(CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                            actual=CKR_OK,
+                            summary=(
+                                "C_EncapsulateKey returned CKR_OK for a public key claiming "
+                                "CKA_ENCAPSULATE=False"
+                            ),
+                        )
+                    )
+        except BaseException as exc:
+            pending = exc
+            raise
         finally:
-            if handle.value:
-                destroy_quietly(rs.raw, rs.sh, handle.value)
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            _remember_handle(returned_handles, seen_handles, pub)
+            _remember_handle(returned_handles, seen_handles, priv)
+            _destroy_owned_handles(
+                rs.raw,
+                rs.sh,
+                returned_handles,
+                pending=pending,
+            )
+        _raise_deferred_hard(deferred_records)
 
     def test_decapsulate_flag_false_rejected(self, p11_raw_session: Any) -> None:
         """C_DecapsulateKey is rejected when private key has CKA_DECAPSULATE=False.
@@ -555,7 +1177,7 @@ class TestKEMKeyUsagePolicy:
         Spec: PKCS#11 v3.2 Sec.5.14.8 — ``CKR_KEY_FUNCTION_NOT_PERMITTED``
         when ``CKA_DECAPSULATE`` is ``False``.
 
-        A valid ciphertext is obtained by encapsulating with a normal keypair
+        A valid ciphertext is obtained with the restricted public key itself
         (``CKA_ENCAPSULATE=True``) so the decapsulation attempt is well-formed;
         only the private key's permission flag is restricted.
         """
@@ -563,92 +1185,286 @@ class TestKEMKeyUsagePolicy:
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("CKM_ML_KEM not supported")
 
-        # Generate a normal keypair to produce a valid ciphertext for decapsulation.
-        try:
-            norm_pub, norm_priv = _gen_ml_kem_keypair(rs, encapsulate=True, decapsulate=True)
-        except CkrAssertionError as exc:
-            _xfail_ml_kem_setup_reject(
-                exc,
-                "ML-KEM keypair generation for decapsulation setup is not operational",
-            )
-
-        # Generate the restricted private key to probe.
+        # Use the restricted keypair for both setup and the policy probe.  This
+        # keeps the ciphertext/key relationship explicit and avoids creating an
+        # unrelated normal pair that can mask lifecycle failures.
+        restr_pub = restr_priv = 0
         try:
             restr_pub, restr_priv = _gen_ml_kem_keypair(rs, encapsulate=True, decapsulate=False)
         except CkrAssertionError as exc:
-            destroy_quietly(rs.raw, rs.sh, norm_pub)
-            destroy_quietly(rs.raw, rs.sh, norm_priv)
             _xfail_ml_kem_setup_reject(
                 exc,
                 "ML-KEM keypair generation with CKA_DECAPSULATE=False is not operational",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
             )
 
-        from pkcs11_check.raw.recipes import encapsulate_key
-
-        encap_handle = 0
-        dec_handle = 0
+        returned_handles: list[int] = []
+        seen_handles: set[int] = set()
+        deferred_records: list[classification.Classification] = []
+        pending: BaseException | None = None
         try:
-            # Encapsulate with the normal public key to get a valid ciphertext.
-            try:
-                encap_handle, ct = encapsulate_key(
-                    rs.raw, rs.sh, norm_pub, CKM_ML_KEM, attrs=_ml_kem_secret_template()
-                )
-            except (NotImplementedError, AttributeError):
-                pytest.skip("encapsulate_key not available")
-            except CkrAssertionError as exc:
-                _xfail_ml_kem_setup_reject(
-                    exc,
-                    "ML-KEM encapsulation setup is not operational",
-                )
+            # Build the setup operation locally so both two-call output handles
+            # remain available for teardown if the provider overwrites or writes
+            # them before raising.
+            from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CK_ULONG
 
-            # Attempt to decapsulate using the restricted private key.
-            from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
-
-            handle = CK_OBJECT_HANDLE(0)
-            mech = mech_simple(CKM_ML_KEM)
-
-            packed = [
-                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+            encap_mech = mech_simple(CKM_ML_KEM)
+            encap_template = _ml_kem_secret_template()
+            encap_packed = [
+                attr_ulong(CKA_CLASS, encap_template[CKA_CLASS]),
+                attr_ulong(CKA_KEY_TYPE, encap_template[CKA_KEY_TYPE]),
+                attr_ulong(CKA_VALUE_LEN, encap_template[CKA_VALUE_LEN]),
+                attr_bool(CKA_SENSITIVE, encap_template[CKA_SENSITIVE]),
+                attr_bool(CKA_EXTRACTABLE, encap_template[CKA_EXTRACTABLE]),
             ]
-            tmpl = template(*packed)
-            ct_buf = to_ubyte_buf(ct)
-            rv = rs.raw.C_DecapsulateKey(
-                rs.sh,
-                mech.byref(),
-                restr_priv,
-                *template_ptr_count(tmpl),
-                ct_buf,
-                len(ct),
-                byref(handle),
-            )
-            dec_handle = handle.value
+            encap_tmpl = template(*encap_packed)
 
-            if rv != CKR_OK:
-                classify_negative_rv(
-                    rv,
-                    (CKR_KEY_FUNCTION_NOT_PERMITTED,),
-                    label="C_DecapsulateKey with CKA_DECAPSULATE=False on private key "
-                    "(PKCS#11 v3.2 Sec.5.14.8)",
-                    kind="policy",
+            query_handle = CK_OBJECT_HANDLE(0)
+            query_len = CK_ULONG(0)
+            try:
+                size_rv = rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    encap_mech.byref(),
+                    restr_pub,
+                    *template_ptr_count(encap_tmpl),
+                    None,
+                    byref(query_len),
+                    byref(query_handle),
                 )
-                return
+            finally:
+                _remember_handle(returned_handles, seen_handles, query_handle)
 
-            # rv == CKR_OK — check whether the flag was actually claimed.
-            decap_attrs = read_attributes(rs.raw, rs.sh, restr_priv, [CKA_DECAPSULATE])
-            claimed = decap_attrs.get(CKA_DECAPSULATE) is False
-            classify_policy_enforcement(
-                claimed=claimed,
-                violated=True,
-                label="C_DecapsulateKey with CKA_DECAPSULATE=False on private key "
-                "(PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
+            if size_rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
+                query_record = _record_kem_setup_rv(
+                    size_rv,
+                    operation="C_EncapsulateKey",
+                    label="ML-KEM C_EncapsulateKey setup size query",
+                    expected=(CKR_OK,),
+                )
+                if query_record is not None:
+                    deferred_records.append(query_record)
+                query_handle_record = _record_handle_on_rejection(
+                    operation="C_EncapsulateKey",
+                    rv=size_rv,
+                    handle=query_handle,
+                )
+                if query_handle_record is not None:
+                    deferred_records.append(query_handle_record)
+                _raise_deferred_hard(deferred_records)
+            query_handle_record = _record_handle_on_rejection(
+                operation="C_EncapsulateKey",
+                rv=size_rv,
+                handle=query_handle,
             )
+            if query_handle_record is not None:
+                deferred_records.append(query_handle_record)
+            query_capacity = min(
+                max(int(query_len.value), _ML_KEM_768_CIPHERTEXT_BYTES),
+                _ML_KEM_MAX_CIPHERTEXT_BYTES,
+            )
+            query_length_record = (
+                _record_kem_length(
+                    phase="size-query",
+                    operation="C_EncapsulateKey",
+                    rv=size_rv,
+                    length=int(query_len.value),
+                    capacity=query_capacity,
+                )
+                if size_rv in (CKR_OK, CKR_BUFFER_TOO_SMALL)
+                else None
+            )
+            if query_length_record is not None:
+                deferred_records.append(query_length_record)
+
+            full_handle = CK_OBJECT_HANDLE(0)
+            full_len = CK_ULONG(query_capacity)
+            ct_buf = (ctypes.c_ubyte * query_capacity)()
+            try:
+                full_rv = rs.raw.C_EncapsulateKey(
+                    rs.sh,
+                    encap_mech.byref(),
+                    restr_pub,
+                    *template_ptr_count(encap_tmpl),
+                    ct_buf,
+                    byref(full_len),
+                    byref(full_handle),
+                )
+            finally:
+                _remember_handle(returned_handles, seen_handles, full_handle)
+
+            if full_rv != CKR_OK:
+                full_record = _record_kem_setup_rv(
+                    full_rv,
+                    operation="C_EncapsulateKey",
+                    label="ML-KEM C_EncapsulateKey setup full call",
+                    expected=(CKR_OK,),
+                )
+                if full_record is not None:
+                    deferred_records.append(full_record)
+                full_handle_record = _record_handle_on_rejection(
+                    operation="C_EncapsulateKey",
+                    rv=full_rv,
+                    handle=full_handle,
+                )
+                if full_handle_record is not None:
+                    deferred_records.append(full_handle_record)
+                _raise_deferred_hard(deferred_records)
+            full_length_record = (
+                _record_kem_length(
+                    phase="full-call",
+                    operation="C_EncapsulateKey",
+                    rv=full_rv,
+                    length=int(full_len.value),
+                    capacity=query_capacity,
+                )
+                if full_rv in (CKR_OK, CKR_BUFFER_TOO_SMALL)
+                else None
+            )
+            if full_length_record is not None:
+                deferred_records.append(full_length_record)
+            if not full_handle.value:
+                deferred_records.append(
+                    classification.record_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="ML-KEM C_EncapsulateKey setup output handle",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        expected=(CKR_OK,),
+                        actual=CKR_OK,
+                        detail={"expected_handle": "non-zero", "actual_handle": 0},
+                        summary="ML-KEM C_EncapsulateKey returned CKR_OK without an output handle",
+                    )
+                )
+
+            # Never truncate a malformed provider result into apparently valid
+            # ciphertext.  Decapsulation is skipped until both length and
+            # capacity are exact.
+            if full_length_record is None and full_handle.value:
+                ct = bytes(ct_buf[: int(full_len.value)])
+                handle = CK_OBJECT_HANDLE(0)
+                mech = mech_simple(CKM_ML_KEM)
+                packed = [
+                    attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                    attr_ulong(CKA_KEY_TYPE, CKK_AES),
+                ]
+                tmpl = template(*packed)
+                decap_buf = to_ubyte_buf(ct)
+                try:
+                    rv = rs.raw.C_DecapsulateKey(
+                        rs.sh,
+                        mech.byref(),
+                        restr_priv,
+                        *template_ptr_count(tmpl),
+                        decap_buf,
+                        len(ct),
+                        byref(handle),
+                    )
+                finally:
+                    _remember_handle(returned_handles, seen_handles, handle)
+
+                if rv != CKR_OK:
+                    refusal_record = _record_policy_negative_rv(
+                        rv,
+                        operation="C_DecapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        label="C_DecapsulateKey with CKA_DECAPSULATE=False on private key "
+                        "(PKCS#11 v3.2 Sec.5.14.8)",
+                    )
+                    if refusal_record is not None:
+                        deferred_records.append(refusal_record)
+                    handle_record = _record_handle_on_rejection(
+                        operation="C_DecapsulateKey",
+                        rv=rv,
+                        handle=handle,
+                    )
+                    if handle_record is not None:
+                        deferred_records.append(handle_record)
+                elif not handle.value:
+                    deferred_records.append(
+                        classification.record_as(
+                            "wrong_result",
+                            kind="crypto",
+                            label="ML-KEM C_DecapsulateKey output handle",
+                            operation="C_DecapsulateKey",
+                            mechanism="CKM_ML_KEM",
+                            expected=(CKR_OK,),
+                            actual=CKR_OK,
+                            detail={"expected_handle": "non-zero", "actual_handle": 0},
+                            summary="C_DecapsulateKey returned CKR_OK without an output handle",
+                        )
+                    )
+                else:
+                    # rv == CKR_OK — check whether the flag was actually claimed.
+                    decap_attrs = read_attributes(rs.raw, rs.sh, restr_priv, [CKA_DECAPSULATE])
+                    decap = attr_or_record(
+                        decap_attrs,
+                        CKA_DECAPSULATE,
+                        label="CKA_DECAPSULATE=False on ML-KEM private key",
+                        reason="not_operational",
+                        kind="policy",
+                        mechanism="CKM_ML_KEM",
+                    )
+                    hard_record = _record_bool_readback(
+                        decap,
+                        attr=CKA_DECAPSULATE,
+                        expected=None,
+                        label="CKA_DECAPSULATE=False on ML-KEM private key",
+                        producer_operation="C_GenerateKeyPair",
+                        producer_mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
+                    )
+                    if hard_record is not None:
+                        deferred_records.append(hard_record)
+                    elif decap is MISSING_ATTRIBUTE:
+                        deferred_records.append(
+                            classification.record_as(
+                                "not_operational",
+                                kind="policy",
+                                label=(
+                                    "C_DecapsulateKey with missing CKA_DECAPSULATE "
+                                    "readback on private key"
+                                ),
+                                operation="C_DecapsulateKey",
+                                mechanism="CKM_ML_KEM",
+                                expected=(CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                                actual=CKR_OK,
+                                summary=(
+                                    "C_DecapsulateKey returned CKR_OK but "
+                                    "CKA_DECAPSULATE was unavailable; policy effect "
+                                    "is unobservable"
+                                ),
+                            )
+                        )
+                    else:
+                        reason = "accepted_invalid" if decap is False else "honest_deviation"
+                        deferred_records.append(
+                            classification.record_as(
+                                reason,
+                                kind="policy",
+                                label=(
+                                    "C_DecapsulateKey with CKA_DECAPSULATE=False on private key"
+                                ),
+                                operation="C_DecapsulateKey",
+                                mechanism="CKM_ML_KEM",
+                                expected=(CKR_KEY_FUNCTION_NOT_PERMITTED,),
+                                actual=CKR_OK,
+                                summary=(
+                                    "C_DecapsulateKey returned CKR_OK for a private "
+                                    "key claiming CKA_DECAPSULATE=False"
+                                ),
+                            )
+                        )
+        except BaseException as exc:
+            pending = exc
+            raise
         finally:
-            destroy_quietly(rs.raw, rs.sh, norm_pub)
-            destroy_quietly(rs.raw, rs.sh, norm_priv)
-            destroy_quietly(rs.raw, rs.sh, restr_pub)
-            destroy_quietly(rs.raw, rs.sh, restr_priv)
-            if encap_handle:
-                destroy_quietly(rs.raw, rs.sh, encap_handle)
-            if dec_handle:
-                destroy_quietly(rs.raw, rs.sh, dec_handle)
+            _remember_handle(returned_handles, seen_handles, restr_pub)
+            _remember_handle(returned_handles, seen_handles, restr_priv)
+            _destroy_owned_handles(
+                rs.raw,
+                rs.sh,
+                returned_handles,
+                pending=pending,
+            )
+        _raise_deferred_hard(deferred_records)
