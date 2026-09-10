@@ -610,6 +610,132 @@ def test_lifecycle_ckavalue_undefined_refusal_is_hard_but_continues(
     assert record.mechanism is None
 
 
+def test_lifecycle_ckavalue_refusal_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale active mechanism must not leak into a clean CKA_VALUE refusal record."""
+    rs = _session(mechanisms={"AES_ECB", "AES_KEY_GEN"})
+    destroyed: list[int] = []
+    continuation: list[str] = []
+    monkeypatch.setattr(lifecycle_case, "gen_aes_key_or_xfail", lambda *_a, **_k: 11)
+
+    def _read(*_args: Any, **_kwargs: Any) -> dict[int, Any]:
+        raise CkrAssertionError("CKA_VALUE refused", int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(lifecycle_case, "read_attributes", _read)
+    monkeypatch.setattr(
+        lifecycle_case,
+        "encrypt_single",
+        lambda *_args, **_kwargs: _record_encryption(continuation),
+    )
+    monkeypatch.setattr(
+        lifecycle_case,
+        "import_secret_key_negotiated",
+        lambda *_args, **_kwargs: pytest.fail("refused export must not be imported"),
+    )
+    monkeypatch.setattr(
+        lifecycle_case, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle)
+    )
+    C.set_mechanism("STALE_MECHANISM", operation="C_Stale")
+
+    with pytest.raises(
+        pytest.xfail.Exception, match="attribute read was rejected with CKR_GENERAL_ERROR"
+    ):
+        _run_export_reimport(rs)
+
+    assert continuation == ["encrypt"]
+    assert destroyed == [11]
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].mechanism is None
+    assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_lifecycle_ckavalue_omission_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale active mechanism must not leak into a missing CKA_VALUE record."""
+    rs = _session(mechanisms={"AES_ECB", "AES_KEY_GEN"})
+    destroyed: list[int] = []
+    continuation: list[str] = []
+    monkeypatch.setattr(lifecycle_case, "gen_aes_key_or_xfail", lambda *_a, **_k: 11)
+    monkeypatch.setattr(lifecycle_case, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        lifecycle_case,
+        "encrypt_single",
+        lambda *_args, **_kwargs: _record_encryption(continuation),
+    )
+    monkeypatch.setattr(
+        lifecycle_case,
+        "import_secret_key_negotiated",
+        lambda *_args, **_kwargs: pytest.fail("missing export must not be imported"),
+    )
+    monkeypatch.setattr(
+        lifecycle_case, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle)
+    )
+    C.set_mechanism("STALE_MECHANISM", operation="C_Stale")
+
+    with pytest.raises(pytest.xfail.Exception, match="attribute unavailable"):
+        _run_export_reimport(rs)
+
+    assert continuation == ["encrypt"]
+    assert destroyed == [11]
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].mechanism is None
+    assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_lifecycle_ckavalue_malformed_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale active mechanism must not leak into a malformed CKA_VALUE record."""
+    rs = _session(mechanisms={"AES_ECB", "AES_KEY_GEN"})
+    destroyed: list[int] = []
+    continuation: list[str] = []
+    monkeypatch.setattr(lifecycle_case, "gen_aes_key_or_xfail", lambda *_a, **_k: 11)
+    monkeypatch.setattr(
+        lifecycle_case,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_VALUE: b"short"},
+    )
+    monkeypatch.setattr(
+        lifecycle_case,
+        "encrypt_single",
+        lambda *_args, **_kwargs: _record_encryption(continuation),
+    )
+    monkeypatch.setattr(
+        lifecycle_case,
+        "import_secret_key_negotiated",
+        lambda *_args, **_kwargs: pytest.fail("malformed export must not be imported"),
+    )
+    monkeypatch.setattr(
+        lifecycle_case,
+        "decrypt_single",
+        lambda *_args, **_kwargs: pytest.fail("malformed export must not be decrypted"),
+    )
+    monkeypatch.setattr(
+        lifecycle_case, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle)
+    )
+    C.set_mechanism("STALE_MECHANISM", operation="C_Stale")
+
+    with pytest.raises(pytest.fail.Exception, match="present value is malformed"):
+        _run_export_reimport(rs)
+
+    assert continuation == ["encrypt"]
+    assert destroyed == [11]
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].mechanism is None
+    assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
 def test_lifecycle_ckavalue_unexpected_reader_error_propagates_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

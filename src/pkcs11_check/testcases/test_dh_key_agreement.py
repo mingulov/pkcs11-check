@@ -315,6 +315,7 @@ def _dh_shape_record(
         label=label,
         operation="C_GetAttributeValue",
         mechanism=None,
+        inherit_mechanism=False,
         detail=detail,
         summary=f"{label}: provider returned a value with the wrong shape",
     )
@@ -341,6 +342,7 @@ def _dh_read_and_validate(
         label=label,
         reason="not_operational",
         kind="metadata",
+        inherit_mechanism=False,
     )
     new_records = C.get_records()[before:]
     if value is MISSING_ATTRIBUTE:
@@ -480,6 +482,7 @@ class TestDHKeyAgreement:
                 attrs,
                 CKA_VALUE,
                 label="CKM_DH_PKCS_KEY_PAIR_GEN:public CKA_VALUE readback",
+                inherit_mechanism=False,
             )
             if pub_value is MISSING_ATTRIBUTE:
                 return
@@ -786,6 +789,7 @@ class TestDHKeyAgreement:
                 CKA_VALUE,
                 label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14:derived CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             if value is MISSING_ATTRIBUTE:
                 return
@@ -1305,6 +1309,7 @@ class TestDHParameterGeneration:
                 attrs,
                 CKA_PRIME,
                 label="CKM_DH_PKCS_PARAMETER_GEN:CKA_PRIME readback",
+                inherit_mechanism=False,
             )
             if prime is MISSING_ATTRIBUTE:
                 return

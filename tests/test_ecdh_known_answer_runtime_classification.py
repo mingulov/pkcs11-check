@@ -15,6 +15,7 @@ from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_VALUE
 from pkcs11_check.testcases import _ec_export, test_ecdh_known_answer
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
 from pkcs11_check.testcases._ec_export import ConventionalECPoint
+from tests._attribute_access_guard import analyze_file
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +123,38 @@ def test_missing_derived_value_records_without_inventing_ckr(
     assert record.actual_ckr is None
     assert record.operation == "C_GetAttributeValue"
     assert record.detail == {"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}}
+
+
+def test_missing_derived_value_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    monkeypatch.setattr(test_ecdh_known_answer, "read_attributes", lambda *_a, **_k: {})
+
+    value = test_ecdh_known_answer._read_value_or_record(
+        SimpleNamespace(raw=object(), sh=1),
+        2,
+        label="derived secret",
+    )
+
+    assert value is MISSING_ATTRIBUTE
+    record = C.get_records()[0]
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_malformed_derived_value_drops_stale_active_mechanism() -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+
+    record = test_ecdh_known_answer._validate_derived_value(
+        b"short",
+        leg="crossverify",
+        label="derived secret",
+    )
+
+    assert record is not None
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
 
 
 @pytest.mark.parametrize("value", [False, 0, b"", None])
@@ -320,6 +353,7 @@ def test_symmetric_agreement_retains_malformed_first_and_missing_second(
 def test_symmetric_agreement_retains_both_malformed_records_before_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     keypairs = iter([(11, 12), (13, 14)])
     derived = iter([21, 22])
     destroyed: list[int] = []
@@ -357,6 +391,8 @@ def test_symmetric_agreement_retains_both_malformed_records_before_raising(
         "A-to-B",
         "B-to-A",
     ]
+    assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
     assert destroyed == [21, 22, 11, 12, 13, 14]
 
 
@@ -447,6 +483,7 @@ def test_symmetric_agreement_reads_second_secret_after_first_missing_even_on_err
 def test_symmetric_agreement_reads_both_missing_secrets_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     keypairs = iter([(11, 12), (13, 14)])
     derived = iter([21, 22])
     destroyed: list[int] = []
@@ -472,10 +509,14 @@ def test_symmetric_agreement_reads_both_missing_secrets_and_cleans_up(
 
     test_ecdh_known_answer.TestECDHKnownAnswer().test_ecdh_symmetric_agreement(rs)
 
-    assert [record.reason for record in C.get_records()] == [
+    records = C.get_records()
+    assert [record.reason for record in records] == [
         "not_operational",
         "not_operational",
     ]
+    assert len(records) == 2
+    assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
     assert destroyed == [21, 22, 11, 12, 13, 14]
 
 
@@ -504,3 +545,7 @@ def test_symmetric_agreement_cleans_first_pair_when_second_generation_fails(
         test_ecdh_known_answer.TestECDHKnownAnswer().test_ecdh_symmetric_agreement(rs)
 
     assert destroyed == [11, 12]
+
+
+def test_ecdh_known_answer_source_analyzer_is_clean() -> None:
+    assert analyze_file("src/pkcs11_check/testcases/test_ecdh_known_answer.py") == []

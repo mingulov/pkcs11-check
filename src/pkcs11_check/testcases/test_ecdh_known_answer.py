@@ -124,6 +124,7 @@ def _read_value_or_record(rs: Any, handle: int, *, label: str) -> Any:
         CKA_VALUE,
         label=label,
         reason="not_operational",
+        inherit_mechanism=False,
     )
 
 
@@ -147,6 +148,7 @@ def _validate_derived_value(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         summary=f"{label}: provider returned a derived CKA_VALUE with the wrong shape",
         detail={
             "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},

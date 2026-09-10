@@ -285,6 +285,7 @@ def test_pair_reads_both_present_malformed_outputs_before_raising(
     case: tuple[type[Any], str, str, str],
     value: Any,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     test_class, method_name, _mechanism, _relation = case
     reads, destroyed = _install_pair(monkeypatch, (value, value))
 
@@ -299,6 +300,7 @@ def test_pair_reads_both_present_malformed_outputs_before_raising(
     assert all(record.kind == "metadata" for record in records)
     assert all(record.operation == "C_GetAttributeValue" for record in records)
     assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
     assert all(record.detail is not None for record in records)
     assert all("actual" in record.detail for record in records if record.detail is not None)
     assert all(
@@ -340,6 +342,7 @@ def test_pair_missing_and_malformed_reads_both_legs_and_raises_shape_finding(
     case: tuple[type[Any], str, str, str],
     missing_index: int,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     test_class, method_name, _mechanism, _relation = case
     values: tuple[Any, Any]
     malformed = b"short"
@@ -359,10 +362,12 @@ def test_pair_missing_and_malformed_reads_both_legs_and_raises_shape_finding(
     assert sum(record.reason == "wrong_result" for record in records) == 1
     missing = next(record for record in records if record.reason == "not_operational")
     assert missing.mechanism is None
+    assert missing.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     shape = next(record for record in records if record.reason == "wrong_result")
     assert shape.kind == "metadata"
     assert shape.operation == "C_GetAttributeValue"
     assert shape.mechanism is None
+    assert shape.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     assert not any(record.operation == "C_DeriveKey" for record in records)
 
 

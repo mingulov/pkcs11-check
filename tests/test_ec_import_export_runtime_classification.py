@@ -20,6 +20,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
 from pkcs11_check.testcases import test_ec_import_export
+from tests._attribute_access_guard import analyze_file
 
 pytest_plugins = ["pytester"]
 
@@ -92,6 +93,14 @@ def _raw_uncompressed_point_for_curve(curve_name: str, private_value: int = 30) 
 
 def _wrapped_point_for_curve(curve_name: str, private_value: int = 30) -> bytes:
     return _der_octet_string(_raw_uncompressed_point_for_curve(curve_name, private_value))
+
+
+def _assert_mechanism_free_attribute_records(records: list[Any]) -> None:
+    assert records
+    for record in records:
+        assert record.operation == "C_GetAttributeValue"
+        assert record.mechanism is None
+        assert "CKM_STALE" not in record.spec_ref
 
 
 def test_ec_public_import_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,6 +216,7 @@ def test_operational_verification_failure_is_independent_crypto_result(
 def test_present_false_like_or_missing_export_attribute_is_not_fabricated_ckr(
     monkeypatch: pytest.MonkeyPatch, missing: int, value: object
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     attrs: dict[int, object] = {CKA_EC_POINT: _wrap(_point()), CKA_EC_PARAMS: b"params"}
     attrs[missing] = value
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
@@ -221,9 +231,11 @@ def test_present_false_like_or_missing_export_attribute_is_not_fabricated_ckr(
     assert C.get_records()
     assert all(record.reason == "not_operational" for record in C.get_records())
     assert all(record.actual_ckr is None for record in C.get_records())
+    _assert_mechanism_free_attribute_records(C.get_records())
 
 
 def test_missing_export_attributes_are_independent(monkeypatch: pytest.MonkeyPatch) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
     monkeypatch.setattr(test_ec_import_export, "read_attributes", lambda *_args: {})
     monkeypatch.setattr(test_ec_import_export, "destroy_quietly", lambda *_args: None)
@@ -233,16 +245,19 @@ def test_missing_export_attributes_are_independent(monkeypatch: pytest.MonkeyPat
             _session("ECDSA"), "secp256r1"
         )
 
-    assert [record.detail["attribute"]["name"] for record in C.get_records() if record.detail] == [
+    records = C.get_records()
+    assert [record.detail["attribute"]["name"] for record in records if record.detail] == [
         "CKA_EC_POINT",
         "CKA_EC_PARAMS",
     ]
+    _assert_mechanism_free_attribute_records(records)
 
 
 @pytest.mark.parametrize("rv", [CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID])
 def test_explicit_attribute_read_refusal_is_attributed(
     monkeypatch: pytest.MonkeyPatch, rv: int
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
     monkeypatch.setattr(
         test_ec_import_export,
@@ -256,8 +271,9 @@ def test_explicit_attribute_read_refusal_is_attributed(
             _session("ECDSA"), "secp256r1"
         )
 
-    assert C.get_records()[0].actual_ckr == str(rv)
-    assert C.get_records()[0].operation == "C_GetAttributeValue"
+    records = C.get_records()
+    assert records[0].actual_ckr == str(rv)
+    _assert_mechanism_free_attribute_records(records)
 
 
 def test_unexpected_attribute_read_ckr_is_propagated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -312,6 +328,7 @@ def test_malformed_point_is_metadata_not_operational_and_does_not_sign(
 def test_off_curve_point_is_crypto_failure_not_representation_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     off_curve = bytearray(_point())
     off_curve[-1] ^= 1
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
@@ -329,7 +346,7 @@ def test_off_curve_point_is_crypto_failure_not_representation_xfail(
     record = C.get_records()[0]
     assert record.reason == "wrong_result"
     assert record.kind == "crypto"
-    assert record.operation == "C_GetAttributeValue"
+    _assert_mechanism_free_attribute_records(C.get_records())
 
 
 def test_empty_signature_is_crypto_failure_attributed_to_sign(
@@ -398,6 +415,7 @@ def test_second_keypair_exception_cleans_first_pair(monkeypatch: pytest.MonkeyPa
 
 
 def test_same_point_in_raw_and_wrapped_forms_is_not_unique(monkeypatch: pytest.MonkeyPatch) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     raw_point = _point()
     wrapped_point = _wrap(raw_point)
     # Use the handle to select encodings so that equal mathematical Q has distinct bytes.
@@ -418,8 +436,10 @@ def test_same_point_in_raw_and_wrapped_forms_is_not_unique(monkeypatch: pytest.M
         test_ec_import_export.TestECPointExport().test_two_keypairs_different_points(
             _session("ECDSA")
         )
-    assert C.get_records()[0].reason == "wrong_result"
-    assert C.get_records()[0].kind == "crypto"
+    records = C.get_records()
+    assert records[0].reason == "wrong_result"
+    assert records[0].kind == "crypto"
+    _assert_mechanism_free_attribute_records(records)
 
 
 def test_same_point_in_wrapped_compressed_and_uncompressed_forms_is_not_unique(
@@ -699,6 +719,7 @@ def test_strict_present_empty_or_nonbytes_point_is_wrong_result_fail(
 def test_strict_malformed_trailing_noncanonical_point_is_wrong_result_fail(
     monkeypatch: pytest.MonkeyPatch, point: bytes
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     destroyed: list[int] = []
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
     monkeypatch.setattr(
@@ -720,7 +741,7 @@ def test_strict_malformed_trailing_noncanonical_point_is_wrong_result_fail(
     record = C.get_records()[0]
     assert record.reason == "wrong_result"
     assert record.kind == "metadata"
-    assert record.operation == "C_GetAttributeValue"
+    _assert_mechanism_free_attribute_records(C.get_records())
     assert record.actual_ckr is None
     assert record.mechanism is None
     assert destroyed == [1, 2]
@@ -729,6 +750,7 @@ def test_strict_malformed_trailing_noncanonical_point_is_wrong_result_fail(
 def test_strict_missing_point_remains_not_operational_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     destroyed: list[int] = []
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
     monkeypatch.setattr(test_ec_import_export, "read_attributes", lambda *_args: {})
@@ -746,7 +768,7 @@ def test_strict_missing_point_remains_not_operational_xfail(
     record = C.get_records()[0]
     assert record.reason == "not_operational"
     assert record.kind == "metadata"
-    assert record.operation == "C_GetAttributeValue"
+    _assert_mechanism_free_attribute_records([record])
     assert record.actual_ckr is None
     assert record.mechanism is None
     assert record.detail == {
@@ -760,6 +782,7 @@ def test_strict_missing_point_remains_not_operational_xfail(
 def test_strict_valid_raw_uncompressed_point_remains_honest_deviation_xfail(
     monkeypatch: pytest.MonkeyPatch, curve_name: str
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     destroyed: list[int] = []
     monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
     monkeypatch.setattr(
@@ -781,6 +804,7 @@ def test_strict_valid_raw_uncompressed_point_remains_honest_deviation_xfail(
     record = C.get_records()[0]
     assert record.reason == "honest_deviation"
     assert record.kind == "metadata"
+    _assert_mechanism_free_attribute_records([record])
     assert destroyed == [1, 2]
 
 
@@ -856,3 +880,7 @@ def test_strict_ec_params_missing_is_metadata_xfail_independent_of_point(
         and record.detail.get("attribute", {}).get("name") == "CKA_EC_POINT"
         for record in records
     )
+
+
+def test_ec_import_export_source_analyzer_is_clean() -> None:
+    assert analyze_file("src/pkcs11_check/testcases/test_ec_import_export.py") == []

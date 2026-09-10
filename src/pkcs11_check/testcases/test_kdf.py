@@ -113,6 +113,7 @@ def _record_derived_value_shape(
         kind="metadata",
         label=f"{producer_mechanism}:{leg} CKA_VALUE",
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         mechanism=None,
         detail={
             "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
@@ -285,6 +286,7 @@ class TestHKDF:
                 CKA_VALUE,
                 label="CKM_HKDF_DERIVE:derived CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             if okm is MISSING_ATTRIBUTE:
                 return
@@ -411,6 +413,7 @@ class TestECDHDerive:
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:Alice shared CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             ab_shape = _record_derived_value_shape(
                 val_ab,
@@ -428,6 +431,7 @@ class TestECDHDerive:
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:Bob shared CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             ba_shape = _record_derived_value_shape(
                 val_ba,
@@ -485,6 +489,7 @@ class TestECDHDerive:
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:shared AB CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             ab_shape = _record_derived_value_shape(
                 val_ab,
@@ -502,6 +507,7 @@ class TestECDHDerive:
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:shared AC CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             ac_shape = _record_derived_value_shape(
                 val_ac,
@@ -608,6 +614,7 @@ class TestSHA3ShakeKeyDerive:
                 CKA_VALUE,
                 label=f"{mech_name}:derived CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             if val is MISSING_ATTRIBUTE:
                 return
@@ -667,6 +674,7 @@ class TestSHA3ShakeKeyDerive:
                 CKA_VALUE,
                 label=f"{mech_name}:deterministic output 1 CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             v1_shape = _record_derived_value_shape(
                 v1,
@@ -684,6 +692,7 @@ class TestSHA3ShakeKeyDerive:
                 CKA_VALUE,
                 label=f"{mech_name}:deterministic output 2 CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             v2_shape = _record_derived_value_shape(
                 v2,

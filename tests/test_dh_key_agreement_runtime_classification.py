@@ -256,6 +256,7 @@ def test_shared_secret_missing_alice_public_still_derives_alice_and_cleans_up(
 def test_shared_secret_collects_both_public_missing_records_before_gating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     keypairs = iter([(11, 21), (12, 22)])
     derive_calls: list[int] = []
     destroyed: list[int] = []
@@ -276,11 +277,16 @@ def test_shared_secret_collects_both_public_missing_records_before_gating(
     assert destroyed == [11, 21, 12, 22]
     assert len(C.get_records()) == 2
     assert all(record.reason == "not_operational" for record in C.get_records())
+    assert all(record.mechanism is None for record in C.get_records())
+    assert all(
+        record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in C.get_records()
+    )
 
 
 def test_shared_secret_reads_both_derived_values_before_skipping_oracle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     keypairs = iter([(11, 21), (12, 22)])
     derives = iter([101, 102])
     read_handles: list[int] = []
@@ -304,6 +310,34 @@ def test_shared_secret_reads_both_derived_values_before_skipping_oracle(
         "not_operational",
         "not_operational",
     ]
+    assert all(record.mechanism is None for record in C.get_records())
+    assert all(
+        record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in C.get_records()
+    )
+
+
+def test_dh_paired_both_malformed_outputs_drop_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    reads, destroyed = _install_paired_dh_case(
+        monkeypatch,
+        "test_dh_derive_shared_secret",
+        (b"", b"short"),
+    )
+
+    with pytest.raises(pytest.fail.Exception):
+        dh.TestDHKeyAgreement().test_dh_derive_shared_secret(_session())
+
+    assert reads[-2:] == [101, 102]
+    assert destroyed
+    records = C.get_records()
+    assert len(records) == 2
+    assert all(record.reason == "wrong_result" for record in records)
+    assert all(record.kind == "metadata" for record in records)
+    assert all(record.operation == "C_GetAttributeValue" for record in records)
+    assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
 
 
 def test_encrypt_path_keeps_alice_derive_and_encrypt_when_alice_public_missing(
@@ -422,6 +456,7 @@ def _parameter_session() -> SimpleNamespace:
 def test_generated_prime_missing_is_honest_deviation_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     destroyed: list[int] = []
     monkeypatch.setattr(dh, "read_attributes", lambda *_a, **_k: {})
     monkeypatch.setattr(dh, "destroy_quietly", lambda _raw, _sh, h: destroyed.append(h))
@@ -429,7 +464,47 @@ def test_generated_prime_missing_is_honest_deviation_and_cleans_up(
     dh.TestDHParameterGeneration().test_generate_dh_parameters(_parameter_session())
 
     assert destroyed == [77]
-    assert [record.reason for record in C.get_records()] == ["honest_deviation"]
+    records = C.get_records()
+    assert [record.reason for record in records] == ["honest_deviation"]
+    assert records[0].mechanism is None
+    assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_dh_public_missing_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    monkeypatch.setattr(dh, "_gen_dh_keypair", lambda *_a, **_k: (11, 21))
+    monkeypatch.setattr(dh, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(dh, "destroy_quietly", lambda *_a: None)
+
+    dh.TestDHKeyAgreement().test_dh_keypair_generation(_session())
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "honest_deviation"
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].mechanism is None
+    assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_dh_exact_vector_missing_value_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    monkeypatch.setattr(dh, "_import_dh_private_key", lambda *_a, **_k: 301)
+    monkeypatch.setattr(dh, "_dh_derive_or_xfail", lambda *_a, **_k: 302)
+    monkeypatch.setattr(dh, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(dh, "destroy_quietly", lambda *_a: None)
+
+    dh.TestDHKeyAgreement().test_dh_pkcs_derive_rfc3526_group14_exact_vector(_session())
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].mechanism is None
+    assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
 
 
 def test_generated_params_missing_prime_and_base_blocks_keygen_and_cleans_up(
@@ -609,6 +684,7 @@ def test_dh_shared_secret_valid_outputs_have_exact_length_before_relation(
 def test_dh_public_shape_failure_disables_only_dependent_exchange(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     keypairs = iter([(11, 21), (12, 22), (13, 23), (14, 24)])
     derives: list[int] = []
     destroyed: list[int] = []
@@ -642,12 +718,16 @@ def test_dh_public_shape_failure_disables_only_dependent_exchange(
         record.reason == "wrong_result" and record.operation == "C_GetAttributeValue"
         for record in records
     )
+    read_records = [record for record in records if record.operation == "C_GetAttributeValue"]
+    assert all(record.mechanism is None for record in read_records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in read_records)
     assert not any(record.operation == "C_DeriveKey" for record in records)
 
 
 def test_generated_params_retains_missing_prime_and_malformed_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
     destroyed: list[int] = []
     monkeypatch.setattr(dh, "read_attributes", lambda *_a, **_k: {CKA_BASE: 0})
     monkeypatch.setattr(dh, "destroy_quietly", lambda _raw, _sh, h: destroyed.append(h))
@@ -662,6 +742,7 @@ def test_generated_params_retains_missing_prime_and_malformed_base(
     assert [record.reason for record in records] == ["not_operational", "wrong_result"]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
     assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
 
 
 def test_rfc_wrong_kat_and_second_malformed_value_retain_both_findings(

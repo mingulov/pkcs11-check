@@ -551,6 +551,7 @@ def _read_exported_aes_value(rs: RawSession, key: int) -> tuple[Any, C.Classific
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=CKR_OK,
             actual=exc.rv,
             detail=_aes_export_detail(),
@@ -569,6 +570,7 @@ def _read_exported_aes_value(rs: RawSession, key: int) -> tuple[Any, C.Classific
         label=label,
         reason="not_operational",
         kind="metadata",
+        inherit_mechanism=False,
     )
     if value is MISSING_ATTRIBUTE:
         records = C.get_records()[before:]
@@ -584,6 +586,7 @@ def _read_exported_aes_value(rs: RawSession, key: int) -> tuple[Any, C.Classific
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             detail=_aes_export_detail(
                 expected_length=32,
                 actual_type=type(value).__name__,
