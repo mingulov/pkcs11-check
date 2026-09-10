@@ -42,8 +42,17 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack_mechanisms import mech_ecdh
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.testcases._ec_export import (
+    InvalidProviderECPointError,
+    ProviderECPointEncodingError,
+    parse_provider_ec_point,
+)
 
 # Keep this reader import standalone: the source analyzer's child-evidence contract
 # recognizes the canonical import shape only in this form.
@@ -445,6 +454,33 @@ def _run_verify(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     cleanup()
 
 
+def _destroy_derive_setup_handles(
+    raw: Any, sh: int, handles: tuple[int, ...], cleanup: Callable[[], None]
+) -> None:
+    """Destroy each setup handle once, then run child teardown, preserving errors."""
+    first_error: BaseException | None = None
+    access_violation: BaseException | None = None
+    for handle in handles:
+        try:
+            raw.C_DestroyObject(sh, handle)
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+            if ctypes_access_violation_code(exc) is not None:
+                access_violation = exc
+    try:
+        cleanup()
+    except BaseException as exc:
+        if first_error is None:
+            first_error = exc
+        if ctypes_access_violation_code(exc) is not None:
+            access_violation = exc
+    if access_violation is not None:
+        raise access_violation
+    if first_error is not None:
+        raise first_error
+
+
 def _read_derive_peer_point(raw: Any, sh: int, pub_b_h: int) -> tuple[bool, Any]:
     """Read the peer point while distinguishing omission from a present value."""
     attrs_b = read_attributes(raw, sh, pub_b_h, [CKA_EC_POINT])
@@ -496,20 +532,49 @@ def _run_derive(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         raise SystemExit(0) from None
 
     # --- read the peer public-key EC point ---
+    setup_handles = (pub_a_h, priv_a_h, pub_b_h, priv_b_h)
     try:
         point_present, point_value = _read_derive_peer_point(raw, sh, pub_b_h)
-        if not point_present:
-            for h in (pub_a_h, priv_a_h, pub_b_h, priv_b_h):
-                raw.C_DestroyObject(sh, h)
-            cleanup()
-            return
-        ec_point_b = bytes(point_value)
-    except AssertionError as exc:
-        print(f"SETUP_XFAIL:Could not read peer EC point: {exc}")
-        for h in (pub_a_h, priv_a_h, pub_b_h, priv_b_h):
-            raw.C_DestroyObject(sh, h)
-        cleanup()
-        raise SystemExit(0) from None
+    except CkrAssertionError as exc:
+        if isinstance(exc.rv, bool) or not isinstance(exc.rv, int) or exc.rv <= 0:
+            raise
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+
+        emit_uaf_setup_fact(state="read_error", rv=exc.rv)
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    if not point_present:
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    if not isinstance(point_value, bytes) or not point_value:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+
+        emit_uaf_setup_fact(state="unusable", value=point_value)
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    try:
+        normalized_point = parse_provider_ec_point(
+            point_value,
+            ec.SECP256R1(),
+            label="derive peer CKA_EC_POINT",
+        )
+    except ProviderECPointEncodingError as exc:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+
+        emit_uaf_setup_fact(state="malformed_encoding", diagnostic=str(exc))
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    except InvalidProviderECPointError as exc:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+
+        emit_uaf_setup_fact(state="invalid_point", diagnostic=str(exc))
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    ec_point_b = normalized_point.sec1_bytes
 
     # Destroy peer keypair -- only the peer's public point is needed hereafter.
     raw.C_DestroyObject(sh, pub_b_h)

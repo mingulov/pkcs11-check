@@ -26,6 +26,129 @@ def _kinds(source: str, **kwargs: Any) -> list[str]:
     return [violation.kind for violation in _violations(source, **kwargs)]
 
 
+def _canonical_uaf_setup_source() -> str:
+    return """
+import ctypes
+import sys
+from pkcs11_check.core.crash_codes import ctypes_access_violation_code
+from cryptography.hazmat.primitives.asymmetric import ec
+from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.recipes import gen_ec_keypair
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.raw.types_std import CKA_DERIVE, CKA_EC_POINT, CKA_TOKEN
+from pkcs11_check.testcases._ec_export import (
+    InvalidProviderECPointError,
+    ProviderECPointEncodingError,
+    parse_provider_ec_point,
+)
+
+def _read_derive_peer_point(raw, sh, pub_b_h):
+    attrs_b = read_attributes(raw, sh, pub_b_h, [CKA_EC_POINT])
+    if CKA_EC_POINT not in attrs_b:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_EC_POINT, protocol="UAF", context="derive")
+        sys.stdout.flush()
+        return False, None
+    return True, attrs_b[CKA_EC_POINT]
+
+def _destroy_derive_setup_handles(raw, sh, handles, cleanup):
+    first_error = None
+    access_violation = None
+    for handle in handles:
+        try:
+            raw.C_DestroyObject(sh, handle)
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+            if ctypes_access_violation_code(exc) is not None:
+                access_violation = exc
+    try:
+        cleanup()
+    except BaseException as exc:
+        if first_error is None:
+            first_error = exc
+        if ctypes_access_violation_code(exc) is not None:
+            access_violation = exc
+    if access_violation is not None:
+        raise access_violation
+    if first_error is not None:
+        raise first_error
+
+def _run_derive(ctx, _extra):
+    raw = ctx.raw
+    assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
+    sh = ctx.sh
+    cleanup = ctx.cleanup
+    curve_oid = encode_named_curve_parameters("secp256r1")
+    try:
+        pub_a_h, priv_a_h = gen_ec_keypair(
+            raw,
+            sh,
+            curve_oid,
+            public_attrs={CKA_DERIVE: False, CKA_TOKEN: False},
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
+    except AssertionError as exc:
+        print(f"SETUP_XFAIL:EC keypair generation rejected: {exc}")
+        cleanup()
+        raise SystemExit(0) from None
+    try:
+        pub_b_h, priv_b_h = gen_ec_keypair(
+            raw,
+            sh,
+            curve_oid,
+            public_attrs={CKA_DERIVE: False, CKA_TOKEN: False},
+            private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
+        )
+    except AssertionError as exc:
+        print(f"SETUP_XFAIL:EC keypair (peer) generation rejected: {exc}")
+        raw.C_DestroyObject(sh, pub_a_h)
+        raw.C_DestroyObject(sh, priv_a_h)
+        cleanup()
+        raise SystemExit(0) from None
+    setup_handles = (pub_a_h, priv_a_h, pub_b_h, priv_b_h)
+    try:
+        point_present, point_value = _read_derive_peer_point(raw, sh, pub_b_h)
+    except CkrAssertionError as exc:
+        if isinstance(exc.rv, bool) or not isinstance(exc.rv, int) or exc.rv <= 0:
+            raise
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+        emit_uaf_setup_fact(state="read_error", rv=exc.rv)
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    if not point_present:
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    if not isinstance(point_value, bytes) or not point_value:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+        emit_uaf_setup_fact(state="unusable", value=point_value)
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    try:
+        normalized_point = parse_provider_ec_point(
+            point_value,
+            ec.SECP256R1(),
+            label="derive peer CKA_EC_POINT",
+        )
+    except ProviderECPointEncodingError as exc:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+        emit_uaf_setup_fact(state="malformed_encoding", diagnostic=str(exc))
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    except InvalidProviderECPointError as exc:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+        emit_uaf_setup_fact(state="invalid_point", diagnostic=str(exc))
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+    ec_point_b = normalized_point.sec1_bytes
+"""
+
+
 def test_direct_provider_subscript_is_reported() -> None:
     source = """
 from pkcs11_check.raw.recipes import read_attributes
@@ -279,6 +402,748 @@ def check(raw, session, handle):
 """
 
     assert _violations(source) == []
+
+
+def test_canonical_uaf_setup_fact_evidence_certifies_complete_setup_region() -> None:
+    assert _violations(_canonical_uaf_setup_source()) == []
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "setup_handles = (pub_a_h, priv_a_h, pub_b_h, priv_b_h)",
+            "setup_handles = (pub_a_h, priv_a_h, priv_b_h, priv_b_h)",
+        ),
+        (
+            "        point_present, point_value = _read_derive_peer_point(raw, sh, pub_b_h)",
+            "        point_present, point_value = _read_derive_peer_point(raw, sh, priv_b_h)",
+        ),
+        ("or exc.rv <= 0:", "or exc.rv < 0:"),
+        (
+            'emit_uaf_setup_fact(state="read_error", rv=exc.rv)',
+            'emit_uaf_setup_fact(state="unusable", value=exc.rv)',
+        ),
+        (
+            'emit_uaf_setup_fact(state="read_error", rv=exc.rv)',
+            'emit_uaf_setup_fact(state="read_error", rv=exc)',
+        ),
+        (
+            'emit_uaf_setup_fact(state="unusable", value=point_value)',
+            'emit_uaf_setup_fact(state="unusable", value=other_value)',
+        ),
+        (
+            "sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)",
+            "_destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        sys.stdout.flush()",
+        ),
+        (
+            "sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return",
+            "sys.stdout.flush()\n        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return",
+        ),
+        (
+            'label="derive peer CKA_EC_POINT"',
+            'label="wrong label"',
+        ),
+        (
+            "except ProviderECPointEncodingError as exc:",
+            "except ValueError as exc:",
+        ),
+        (
+            "import sys\n",
+            "import sys as host_sys\n",
+        ),
+        (
+            "    attrs_b = read_attributes(raw, sh, pub_b_h, [CKA_EC_POINT])",
+            "    attrs_b = other_reader(raw, sh, pub_b_h, [CKA_EC_POINT])",
+        ),
+        (
+            "    parse_provider_ec_point,\n",
+            "",
+        ),
+        (
+            "if not point_present:\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return",
+            "if not point_present:\n        pass\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return",
+        ),
+        (
+            'emit_uaf_setup_fact(state="malformed_encoding", diagnostic=str(exc))',
+            'emit_uaf_setup_fact(state="invalid_point", diagnostic=str(exc))',
+        ),
+    ],
+    ids=[
+        "setup-tuple",
+        "reader-argument",
+        "numeric-guard",
+        "read-state",
+        "read-provenance",
+        "unusable-provenance",
+        "tail-reorder",
+        "tail-repeat",
+        "parser-label",
+        "parser-exception",
+        "sys-binding",
+        "missing-reader-helper",
+        "missing-parser-import",
+        "absence-extra",
+        "parser-state",
+    ],
+)
+def test_uaf_setup_region_rejects_protocol_mutation(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "def _read_derive_peer_point(raw, sh, pub_b_h):",
+            "def _read_derive_peer_point(raw, sh, *args):",
+        ),
+        (
+            "    if CKA_EC_POINT not in attrs_b:",
+            "    if CKA_EC_POINT in attrs_b:",
+        ),
+        (
+            "        return False, None\n    return True, attrs_b[CKA_EC_POINT]",
+            "        return False, None\n    return True, attrs_b.get(CKA_EC_POINT)",
+        ),
+    ],
+    ids=["reader-variadic", "reader-presence-guard", "reader-present-access"],
+)
+def test_uaf_setup_region_rejects_reader_provenance_mutation(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "    first_error = None\n",
+            "    return\n    first_error = None\n",
+        ),
+        (
+            "def _destroy_derive_setup_handles(raw, sh, handles, cleanup):",
+            "def _destroy_derive_setup_handles(raw, sh, *args):",
+        ),
+        (
+            "    first_error = None\n",
+            "    first_error = None\n    return\n",
+        ),
+    ],
+    ids=["destroy-helper-terminal", "destroy-helper-variadic", "destroy-helper-pass-shape"],
+)
+def test_uaf_setup_region_rejects_destroy_helper_mutation(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "    global sys\n",
+        "    return\n",
+        "    sys.stdout = evil\n",
+        '    eval("sys")\n',
+        "    sys.exception()\n",
+        "    _read_derive_peer_point = evil\n",
+    ],
+    ids=[
+        "global",
+        "terminal-bypass",
+        "stdout-redirection",
+        "reflection",
+        "sys-reflection",
+        "reader-rebind",
+    ],
+)
+def test_uaf_setup_region_rejects_unanchored_prefix_mutation(mutation: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = "    setup_handles = (pub_a_h, priv_a_h, pub_b_h, priv_b_h)\n"
+    assert needle in source
+    mutated = source.replace(needle, mutation + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+def test_uaf_setup_region_rejects_reader_import_replacement() -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = "from pkcs11_check.raw.recipes import read_attributes\n"
+    assert needle in source
+    mutated = source.replace(needle, needle + "read_attributes = evil\n", 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        ("    sh = ctx.sh\n", "    sh = raw = ctx.sh\n"),
+        ("    cleanup = ctx.cleanup\n", "    cleanup = raw = ctx.cleanup\n"),
+        (
+            '    assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"\n',
+            "    assert evil(ctx.sh) is not None\n",
+        ),
+        (
+            "            public_attrs={CKA_DERIVE: False, CKA_TOKEN: False},\n",
+            "            evil={CKA_DERIVE: False, CKA_TOKEN: False},\n",
+        ),
+        (
+            "            public_attrs={CKA_DERIVE: False, CKA_TOKEN: False},\n",
+            "            public_attrs={CKA_DERIVE: False, CKA_TOKEN: True},\n",
+        ),
+    ],
+    ids=["chained-sh", "chained-cleanup", "assert-call", "keygen-keyword", "keygen-dict"],
+)
+def test_uaf_setup_region_rejects_noncanonical_success_prefix(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "insertion",
+    [
+        "sys.stdout = evil\n",
+        "host_sys = sys\nhost_sys.stdout = io.StringIO()\n",
+        'globals()["read_attributes"] = evil\n',
+        'setattr(module, "_destroy_derive_setup_handles", evil)\n',
+        ("module = sys.modules[__name__]\nmodule._read_derive_peer_point = evil\n"),
+        ("module = sys.modules[__name__]\nmodule._destroy_derive_setup_handles = evil\n"),
+        'exec("read_attributes = evil")\n',
+    ],
+    ids=[
+        "module-stdout",
+        "alias-stdout",
+        "globals-reader",
+        "setattr-destroy",
+        "alias-reader",
+        "alias-destroy",
+        "exec-reader",
+    ],
+)
+def test_uaf_setup_region_rejects_module_protected_mutation(insertion: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = "import sys\n"
+    assert needle in source
+    mutated = source.replace(needle, needle + insertion, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+def test_uaf_setup_region_rejects_manual_exception_reader() -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    canonical = """def _read_derive_peer_point(raw, sh, pub_b_h):
+    attrs_b = read_attributes(raw, sh, pub_b_h, [CKA_EC_POINT])
+    if CKA_EC_POINT not in attrs_b:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_missing_attribute
+        emit_missing_attribute(CKA_EC_POINT, protocol=\"UAF\", context=\"derive\")
+        sys.stdout.flush()
+        return False, None
+    return True, attrs_b[CKA_EC_POINT]
+"""
+    replacement = """def _read_derive_peer_point(raw, sh, pub_b_h):
+    try:
+        attrs_b = read_attributes(raw, sh, pub_b_h, [CKA_EC_POINT])
+    except CkrAssertionError:
+        return False, None
+    return True, attrs_b[CKA_EC_POINT]
+"""
+    assert canonical in source
+    mutated = source.replace(canonical, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+def test_uaf_setup_region_rejects_reordered_parser_handlers() -> None:
+    source = _canonical_uaf_setup_source()
+    first = """    except ProviderECPointEncodingError as exc:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+        emit_uaf_setup_fact(state="malformed_encoding", diagnostic=str(exc))
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+"""
+    second = """    except InvalidProviderECPointError as exc:
+        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact
+        emit_uaf_setup_fact(state="invalid_point", diagnostic=str(exc))
+        sys.stdout.flush()
+        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)
+        return
+"""
+    assert first in source and second in source
+    mutated = source.replace(first, "__PARSER_HANDLER__\n", 1).replace(second, first, 1)
+    mutated = mutated.replace("__PARSER_HANDLER__", second, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            '        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+            '        exc.rv = value\n        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+        ),
+        (
+            '        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+            "        alias = exc\n"
+            "        alias.rv = value\n"
+            '        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+        ),
+        (
+            '        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+            '        del exc.rv\n        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+        ),
+        (
+            '        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+            '        exc.rv += value\n        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+        ),
+        (
+            '        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+            '        exc = value\n        emit_uaf_setup_fact(state="read_error", rv=exc.rv)\n',
+        ),
+    ],
+    ids=["rv-assign", "alias-assign", "rv-delete", "rv-augassign", "exc-rebind"],
+)
+def test_uaf_setup_fact_rejects_exception_provenance_mutations(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "    except CkrAssertionError as exc:\n",
+            "    except RuntimeError as exc:\n",
+        ),
+        (
+            "    except CkrAssertionError as exc:\n",
+            "    except CkrAssertionError as error:\n",
+        ),
+        (
+            "from pkcs11_check.raw.rv import CkrAssertionError\n",
+            "from fake import CkrAssertionError\n",
+        ),
+    ],
+    ids=["wrong-exception", "wrong-binding", "shadowed-import"],
+)
+def test_uaf_setup_fact_rejects_noncanonical_read_error_handler(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        return continue_testing(value)\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        raise continue_testing(value)\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        raise RuntimeError() from continue_testing(value)\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        evil.flush(continue_testing(value))\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        evil.flush()\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        sys.stdout.flush(value)\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        _destroy_derive_setup_handles(raw, make_raw(), setup_handles, cleanup)\n"
+            "        return\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        cleanup()\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        sys.stdout.flush()\n"
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        _destroy_derive_setup_handles = evil\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+        ),
+        (
+            "        sys.stdout.flush()\n"
+            "        _destroy_derive_setup_handles(raw, sh, setup_handles, cleanup)\n"
+            "        return\n",
+            "        sys = evil\n        sys.stdout.flush()\n        return\n",
+        ),
+    ],
+    ids=[
+        "return-expression",
+        "raise-expression",
+        "raise-from-expression",
+        "flush-argument",
+        "wrong-flush-receiver",
+        "flush-argument-on-canonical-receiver",
+        "nested-cleanup-argument",
+        "unbounded-cleanup",
+        "duplicate-flush",
+        "rebound-cleanup-helper",
+        "rebound-sys",
+    ],
+)
+def test_uaf_setup_fact_rejects_noncanonical_terminal_tail(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "insertion",
+    [
+        "        alias = exc\n",
+        "        consume(exc)\n",
+        '        payload = {"exception": exc}\n',
+        "        return exc\n",
+        "        yield exc\n",
+        "        diagnostic = exc.__dict__\n",
+        "        diagnostic = exc.rv.foo\n",
+        "        def capture():\n            return exc\n        capture()\n",
+        '        setattr(exc, "message", value)\n',
+    ],
+    ids=[
+        "alias",
+        "call",
+        "container",
+        "return",
+        "yield",
+        "dict",
+        "attribute-chain",
+        "closure",
+        "reflective-mutation",
+    ],
+)
+def test_uaf_setup_fact_rejects_exception_binding_escape_or_use(insertion: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = (
+        "        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact\n"
+    )
+    assert needle in source
+    mutated = source.replace(needle, insertion + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        '        locals()["exc"].rv = value\n',
+        '        vars()["exc"].rv = value\n',
+        '        globals()["exc"] = value\n',
+        '        eval("exc")\n',
+        '        exec("exc.rv = value")\n',
+        "        sys.exception().rv = value\n",
+        "        sys.exc_info()[1].rv = value\n",
+        "        saved = sys.exception()\n",
+    ],
+    ids=[
+        "locals",
+        "vars",
+        "globals",
+        "eval",
+        "exec",
+        "sys-exception",
+        "sys-exc-info",
+        "saved-exception",
+    ],
+)
+def test_uaf_setup_fact_rejects_reflection_without_exception_name_use(extra: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = (
+        "        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact\n"
+    )
+    assert needle in source
+    mutated = source.replace(needle, extra + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "extra", ["        pass\n", "        consume(value)\n", "        diagnostic = value\n"]
+)
+def test_uaf_setup_fact_rejects_extra_handler_statement(extra: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = (
+        "        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact\n"
+    )
+    assert needle in source
+    mutated = source.replace(needle, extra + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "    except ProviderECPointEncodingError as exc:\n",
+            "    except ValueError as exc:\n",
+        ),
+        (
+            "    except InvalidProviderECPointError as exc:\n",
+            "    except RuntimeError as exc:\n",
+        ),
+        (
+            '        emit_uaf_setup_fact(state="malformed_encoding", diagnostic=str(exc))\n',
+            '        emit_uaf_setup_fact(state="invalid_point", diagnostic=str(exc))\n',
+        ),
+    ],
+    ids=["malformed-wrong-type", "invalid-wrong-type", "relabelled-state"],
+)
+def test_uaf_setup_fact_rejects_relabelled_ec_point_exception(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            "from pkcs11_check.testcases._ec_export import (\n",
+            "from fake import (\n",
+        ),
+        (
+            "    ProviderECPointEncodingError,\n",
+            "    ProviderECPointEncodingError as Error,\n",
+        ),
+        (
+            "    ProviderECPointEncodingError,\n",
+            "",
+        ),
+        (
+            ")\n\ndef _read_derive_peer_point",
+            ")\nProviderECPointEncodingError = fake_error\n\ndef _read_derive_peer_point",
+        ),
+    ],
+    ids=["shadow-import", "aliased-import", "missing-import", "module-rebind"],
+)
+def test_uaf_setup_fact_rejects_noncanonical_ec_point_binding(
+    needle: str,
+    replacement: str,
+) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    assert needle in source
+    mutated = source.replace(needle, replacement, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+def test_uaf_setup_fact_rejects_missing_destroy_helper_definition() -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = "def _destroy_derive_setup_handles(raw, sh, handles, cleanup):\n"
+    assert needle in source
+    mutated = source.replace(
+        needle, "def other_destroy_setup_handles(raw, sh, handles, cleanup):\n", 1
+    )
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "insertion",
+    [
+        "        consume(exc.rv)\n",
+        "        diagnostic = str(exc)\n",
+        "        str = fake_str\n",
+        "        isinstance = fake_isinstance\n",
+    ],
+    ids=["rv-escape", "diagnostic-alias", "shadowed-str", "shadowed-isinstance"],
+)
+def test_uaf_setup_fact_rejects_noncanonical_exception_provenance(insertion: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = (
+        "        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact\n"
+    )
+    assert needle in source
+    mutated = source.replace(needle, insertion + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "        def exc():\n            return None\n",
+        "        class exc:\n            pass\n",
+        "        import fake as exc\n",
+        "        from fake import value as exc\n",
+        (
+            "        try:\n"
+            "            raise RuntimeError()\n"
+            "        except RuntimeError as exc:\n"
+            "            pass\n"
+        ),
+        "        match value:\n            case _ as exc:\n                pass\n",
+        "        with manager() as exc:\n            pass\n",
+        "        for exc in values:\n            pass\n",
+        "        exc = value\n",
+        "        if (exc := value):\n            pass\n",
+        "        [exc for exc in values]\n",
+        "        def capture(exc):\n            return None\n",
+    ],
+    ids=[
+        "function",
+        "class",
+        "import",
+        "from-import",
+        "nested-except",
+        "match-capture",
+        "with-target",
+        "for-target",
+        "assignment",
+        "walrus",
+        "comprehension",
+        "parameter",
+    ],
+)
+def test_uaf_setup_fact_rejects_rebound_exception_name(binding: str) -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = (
+        "        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact\n"
+    )
+    assert needle in source
+    mutated = source.replace(needle, binding + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+def test_uaf_setup_fact_rejects_unrelated_exception_bindings() -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    binding = (
+        "        def other():\n"
+        "            return None\n"
+        "        class Other:\n"
+        "            pass\n"
+        "        import fake as other_import\n"
+        "        from fake import value as other_from\n"
+        "        try:\n"
+        "            raise RuntimeError()\n"
+        "        except RuntimeError as other_handler:\n"
+        "            pass\n"
+        "        match value:\n"
+        "            case _ as other_match:\n"
+        "                pass\n"
+        "        with manager() as other_with:\n"
+        "            pass\n"
+        "        for other_for in values:\n"
+        "            pass\n"
+        "        [other_comp for other_comp in values]\n"
+    )
+    needle = (
+        "        from pkcs11_check.testcases._probes._attribute_facts import emit_uaf_setup_fact\n"
+    )
+    assert needle in source
+    mutated = source.replace(needle, binding + needle, 1)
+    assert "child_evidence_contract" in _kinds(mutated)
+
+
+def test_uaf_setup_fact_rejects_exception_binding_as_unusable_value() -> None:
+    source = _canonical_uaf_setup_source()
+    assert _violations(source) == []
+    needle = '        emit_uaf_setup_fact(state="unusable", value=point_value)\n'
+    assert needle in source
+    mutated = source.replace(
+        needle, '        emit_uaf_setup_fact(state="unusable", value=exc)\n', 1
+    )
+    assert "child_evidence_contract" in _kinds(mutated)
 
 
 def test_scalar_ec_child_evidence_is_rejected_even_in_else_branch() -> None:

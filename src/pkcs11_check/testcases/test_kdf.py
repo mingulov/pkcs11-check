@@ -16,6 +16,8 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check import classification
+from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import mech_ecdh, mech_hkdf
 from pkcs11_check.raw.recipes import (
@@ -34,6 +36,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKK_GENERIC_SECRET,
     CKK_SHA256_HMAC,
     CKK_SHA512_HMAC,
@@ -56,7 +60,11 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
-from pkcs11_check.testcases._ec_export import read_ec_public_key_or_xfail
+from pkcs11_check.testcases._ec_export import (
+    ConventionalECPoint,
+    read_conventional_ec_point_or_xfail,
+    select_ecdh_point_form,
+)
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     gen_ec_keypair_or_xfail,
@@ -74,6 +82,74 @@ _DERIVE_ERROR_RVS = {
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 }
+
+
+def _derived_value_length(value: Any) -> int | None:
+    """Return a safe length summary for malformed derived-value readback."""
+    try:
+        return len(value)
+    except TypeError:
+        return None
+
+
+def _record_derived_value_shape(
+    value: Any,
+    *,
+    leg: str,
+    expected_shape: str,
+    expected_length: int | None,
+    producer_mechanism: str,
+) -> classification.Classification | None:
+    """Record, without raising, malformed present derived-key value evidence."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    valid = isinstance(value, bytes) and bool(value)
+    if expected_length is not None:
+        valid = valid and len(value) == expected_length
+    if valid:
+        return None
+    return classification.record_as(
+        "wrong_result",
+        kind="metadata",
+        label=f"{producer_mechanism}:{leg} CKA_VALUE",
+        operation="C_GetAttributeValue",
+        mechanism=None,
+        detail={
+            "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
+            "leg": leg,
+            "expected_shape": expected_shape,
+            "actual_type": type(value).__name__,
+            "actual_length": _derived_value_length(value),
+            "producer_operation": "C_DeriveKey",
+            "producer_mechanism": producer_mechanism,
+        },
+        summary=f"{producer_mechanism}:{leg} CKA_VALUE: present value is not {expected_shape}",
+    )
+
+
+def _raise_derived_value_shape_failures(
+    records: list[classification.Classification],
+) -> None:
+    """Raise the first malformed-present record after all paired reads validate."""
+    if records:
+        classification.raise_for_record(records[0])
+
+
+def _select_ecdh_point_for_target(rs: Any, point: ConventionalECPoint) -> bytes:
+    """Select the peer representation supported by the target ECDH mechanism."""
+    return select_ecdh_point_form(
+        point,
+        supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
+        supports_uncompressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)),
+    )
+
+
+def _canonical_ec_point_bytes(point: ConventionalECPoint) -> bytes:
+    """Serialize an EC public key canonically, independent of provider encoding."""
+    return point.public_key.public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
 
 
 def _import_generic_secret(rs: Any, value: bytes, derive: bool = True) -> int:
@@ -232,24 +308,30 @@ class TestECDHDerive:
             private_attrs={CKA_DERIVE: True, CKA_TOKEN: False},
         )
 
-    def _extract_ec_point(self, rs: Any, pub_handle: int) -> bytes:
-        public_key = read_ec_public_key_or_xfail(
+    def _extract_ec_point(self, rs: Any, pub_handle: int) -> ConventionalECPoint:
+        return read_conventional_ec_point_or_xfail(
             rs,
             pub_handle,
             ec.SECP256R1(),
             label="ECDH P-256 public key",
         )
-        return public_key.public_bytes(
-            serialization.Encoding.X962,
-            serialization.PublicFormat.UncompressedPoint,
-        )
+
+    def _select_ecdh_point_for_target(self, rs: Any, point: ConventionalECPoint) -> bytes:
+        """Select the peer representation supported by the target ECDH mechanism."""
+        return _select_ecdh_point_for_target(rs, point)
 
     def _derive_shared(
         self,
         rs: Any,
         priv_handle: int,
-        peer_point: bytes,
+        peer_point: ConventionalECPoint,
     ) -> int:
+        peer_wire = self._select_ecdh_point_for_target(rs, peer_point)
+        ecdh_param = mech_ecdh(
+            CKM_ECDH1_DERIVE,
+            kdf=CKD_NULL,
+            public_data=peer_wire,
+        )
         return derive_key(
             rs.raw,
             rs.sh,
@@ -262,11 +344,7 @@ class TestECDHDerive:
                 CKA_EXTRACTABLE: True,
                 CKA_TOKEN: False,
             },
-            mech_param=mech_ecdh(
-                CKM_ECDH1_DERIVE,
-                kdf=CKD_NULL,
-                public_data=peer_point,
-            ),
+            mech_param=ecdh_param,
         )
 
     def test_ecdh_keypair_independence(self, p11_raw_session: Any) -> None:
@@ -281,7 +359,26 @@ class TestECDHDerive:
             pub_b, priv_b = self._generate_ec_keypair(rs)
             point_a = self._extract_ec_point(rs, pub_a)
             point_b = self._extract_ec_point(rs, pub_b)
-            assert point_a != point_b
+            canonical_a = _canonical_ec_point_bytes(point_a)
+            canonical_b = _canonical_ec_point_bytes(point_b)
+            if canonical_a == canonical_b:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_EC_KEY_PAIR_GEN:independent EC keypairs",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                    summary=(
+                        "independently generated EC keypairs produced the same canonical "
+                        "public point"
+                    ),
+                    detail={
+                        "public_point": {
+                            "canonical_a": canonical_a.hex(),
+                            "canonical_b": canonical_b.hex(),
+                        }
+                    },
+                )
         finally:
             for h in (pub_a, priv_a, pub_b, priv_b):
                 if h:
@@ -307,24 +404,43 @@ class TestECDHDerive:
             shared_ab = self._derive_shared(rs, priv_a, point_b)
             shared_ba = self._derive_shared(rs, priv_b, point_a)
 
+            shape_failures: list[classification.Classification] = []
             val_ab_attrs = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])
-            val_ba_attrs = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])
             val_ab = attr_or_record(
                 val_ab_attrs,
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:Alice shared CKA_VALUE",
                 reason="not_operational",
             )
+            ab_shape = _record_derived_value_shape(
+                val_ab,
+                leg="ab",
+                expected_shape="non-empty bytes",
+                expected_length=None,
+                producer_mechanism="CKM_ECDH1_DERIVE",
+            )
+            if ab_shape is not None:
+                shape_failures.append(ab_shape)
+
+            val_ba_attrs = read_attributes(rs.raw, rs.sh, shared_ba, [CKA_VALUE])
             val_ba = attr_or_record(
                 val_ba_attrs,
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:Bob shared CKA_VALUE",
                 reason="not_operational",
             )
+            ba_shape = _record_derived_value_shape(
+                val_ba,
+                leg="ba",
+                expected_shape="non-empty bytes",
+                expected_length=None,
+                producer_mechanism="CKM_ECDH1_DERIVE",
+            )
+            if ba_shape is not None:
+                shape_failures.append(ba_shape)
+            _raise_derived_value_shape_failures(shape_failures)
             if val_ab is MISSING_ATTRIBUTE or val_ba is MISSING_ATTRIBUTE:
                 return
-            assert isinstance(val_ab, bytes)
-            assert isinstance(val_ba, bytes)
             assert_correct(
                 actual=val_ab,
                 expected=val_ba,
@@ -362,25 +478,57 @@ class TestECDHDerive:
             shared_ab = self._derive_shared(rs, priv_a, point_b)
             shared_ac = self._derive_shared(rs, priv_a, point_c)
 
+            shape_failures: list[classification.Classification] = []
             val_ab_attrs = read_attributes(rs.raw, rs.sh, shared_ab, [CKA_VALUE])
-            val_ac_attrs = read_attributes(rs.raw, rs.sh, shared_ac, [CKA_VALUE])
             val_ab = attr_or_record(
                 val_ab_attrs,
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:shared AB CKA_VALUE",
                 reason="not_operational",
             )
+            ab_shape = _record_derived_value_shape(
+                val_ab,
+                leg="ab",
+                expected_shape="non-empty bytes",
+                expected_length=None,
+                producer_mechanism="CKM_ECDH1_DERIVE",
+            )
+            if ab_shape is not None:
+                shape_failures.append(ab_shape)
+
+            val_ac_attrs = read_attributes(rs.raw, rs.sh, shared_ac, [CKA_VALUE])
             val_ac = attr_or_record(
                 val_ac_attrs,
                 CKA_VALUE,
                 label="CKM_ECDH1_DERIVE:shared AC CKA_VALUE",
                 reason="not_operational",
             )
+            ac_shape = _record_derived_value_shape(
+                val_ac,
+                leg="ac",
+                expected_shape="non-empty bytes",
+                expected_length=None,
+                producer_mechanism="CKM_ECDH1_DERIVE",
+            )
+            if ac_shape is not None:
+                shape_failures.append(ac_shape)
+            _raise_derived_value_shape_failures(shape_failures)
             if val_ab is MISSING_ATTRIBUTE or val_ac is MISSING_ATTRIBUTE:
                 return
-            assert isinstance(val_ab, bytes)
-            assert isinstance(val_ac, bytes)
-            assert val_ab != val_ac
+            peer_b_x = point_b.public_key.public_numbers().x
+            peer_c_x = point_c.public_key.public_numbers().x
+            if peer_b_x == peer_c_x:
+                return
+            if val_ab == val_ac:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKM_ECDH1_DERIVE:different peers produce different secrets",
+                    operation="C_DeriveKey",
+                    mechanism="CKM_ECDH1_DERIVE",
+                    detail={"relation": "different_peer_outputs", "legs": ["ab", "ac"]},
+                    summary="CKM_ECDH1_DERIVE:different peers produced the same shared secret",
+                )
         finally:
             for h in (_pub_a, priv_a, pub_b, _priv_b, pub_c, _priv_c):
                 if h:
@@ -512,20 +660,42 @@ class TestSHA3ShakeKeyDerive:
                 xfail_if_known_ckr(
                     exc, _DERIVE_ERROR_RVS, f"{mech_name} derivation not operational"
                 )
+            shape_failures: list[classification.Classification] = []
             v1_attrs = read_attributes(rs.raw, rs.sh, d1, [CKA_VALUE])
-            v2_attrs = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])
             v1 = attr_or_record(
                 v1_attrs,
                 CKA_VALUE,
                 label=f"{mech_name}:deterministic output 1 CKA_VALUE",
                 reason="not_operational",
             )
+            v1_shape = _record_derived_value_shape(
+                v1,
+                leg="output_1",
+                expected_shape="16-byte bytes",
+                expected_length=16,
+                producer_mechanism=f"CKM_{mech_name}",
+            )
+            if v1_shape is not None:
+                shape_failures.append(v1_shape)
+
+            v2_attrs = read_attributes(rs.raw, rs.sh, d2, [CKA_VALUE])
             v2 = attr_or_record(
                 v2_attrs,
                 CKA_VALUE,
                 label=f"{mech_name}:deterministic output 2 CKA_VALUE",
                 reason="not_operational",
             )
+            v2_shape = _record_derived_value_shape(
+                v2,
+                leg="output_2",
+                expected_shape="16-byte bytes",
+                expected_length=16,
+                producer_mechanism=f"CKM_{mech_name}",
+            )
+            if v2_shape is not None:
+                shape_failures.append(v2_shape)
+            producer_mechanism = f"CKM_{mech_name}"
+            _raise_derived_value_shape_failures(shape_failures)
             if v1 is MISSING_ATTRIBUTE or v2 is MISSING_ATTRIBUTE:
                 return
             assert_correct(
@@ -533,7 +703,7 @@ class TestSHA3ShakeKeyDerive:
                 expected=v2,
                 label=f"{mech_name}:C_DeriveKey determinism",
                 operation="C_DeriveKey",
-                mechanism=f"CKM_{mech_name}",
+                mechanism=producer_mechanism,
             )
         finally:
             if d1:

@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKA_VALUE,
+    CKF_EC_UNCOMPRESS,
     CKK_AES,
 )
 from pkcs11_check.testcases import _ec_export
@@ -38,6 +39,7 @@ def _rs(*mechanisms: str) -> SimpleNamespace:
         raw=object(),
         sh=1,
         has_mechanism=lambda name: name in advertised,
+        has_mechanism_flag=lambda _mechanism, flag: int(flag) == int(CKF_EC_UNCOMPRESS),
     )
 
 
