@@ -15,6 +15,8 @@ _RSA_CASES = frozenset(
     for variant in ("random", "truncated", "extended", "all_zeros", "all_ff")
 )
 _EC_PROBE = "ecdh_aes_wrap_compressed_public_key_buffer_too_small"
+_UAF_FACT_MAX_BYTES = 1024
+_UAF_DIAGNOSTIC_MAX_CHARS = 256
 
 
 def _emit_ec_attribute_fact(
@@ -51,11 +53,69 @@ def _descriptor(attribute: int) -> dict[str, int | str]:
     return {"name": name, "id": attribute}
 
 
+def emit_uaf_setup_fact(
+    *,
+    state: Literal["missing", "unusable", "read_error", "malformed_encoding", "invalid_point"],
+    value: object = None,
+    rv: int | None = None,
+    diagnostic: str | None = None,
+) -> None:
+    """Emit one bounded terminal setup fact for the derive UAF child protocol."""
+    payload: dict[str, object] = {
+        "schema": 1,
+        "probe": "derive",
+        "event": "SETUP_ATTRIBUTE",
+        "attribute": _descriptor(int(CKA_EC_POINT)),
+        "state": state,
+    }
+    if state == "missing":
+        payload.update(value_type=None, value_len=None)
+    elif state == "unusable":
+        payload.update(
+            value_type=type(value).__name__[:64],
+            value_len=len(value) if isinstance(value, bytes) else None,
+        )
+    elif state == "read_error":
+        if isinstance(rv, bool) or not isinstance(rv, int) or rv == 0 or rv < 0:
+            raise ValueError("UAF read-error fact requires a nonzero CK_RV integer")
+        payload.update(operation="C_GetAttributeValue", rv=rv)
+    elif state in {"malformed_encoding", "invalid_point"}:
+        if not isinstance(diagnostic, str):
+            raise TypeError("UAF point fact requires a diagnostic string")
+        payload["diagnostic"] = diagnostic[:_UAF_DIAGNOSTIC_MAX_CHARS]
+    else:
+        raise ValueError(f"unknown UAF setup fact state: {state!r}")
+    diagnostic_value = payload.get("diagnostic")
+    if isinstance(diagnostic_value, str):
+        diagnostic = diagnostic_value[:_UAF_DIAGNOSTIC_MAX_CHARS]
+        while (
+            len(
+                json.dumps(payload | {"diagnostic": diagnostic}, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            )
+            > _UAF_FACT_MAX_BYTES
+            and diagnostic
+        ):
+            diagnostic = diagnostic[:-1]
+        payload["diagnostic"] = diagnostic
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > _UAF_FACT_MAX_BYTES:
+        raise ValueError("UAF setup fact exceeds bounded JSON size")
+    print(f"UAF:{encoded.decode('utf-8')}", flush=True)
+
+
 def emit_missing_attribute(
     attribute: int,
     *,
     protocol: Literal["RSA_ATTRIBUTE", "EC_SETUP", "UAF"],
     context: str,
+    state: Literal[
+        "missing", "unusable", "read_error", "malformed_encoding", "invalid_point"
+    ] = "missing",
+    value: object = None,
+    rv: int | None = None,
+    diagnostic: str | None = None,
 ) -> None:
     """Emit one complete, protocol-specific fact for an omitted attribute."""
     if isinstance(attribute, bool) or not isinstance(attribute, int):
@@ -91,16 +151,8 @@ def emit_missing_attribute(
     elif protocol == "UAF":
         if attribute_id != int(CKA_EC_POINT) or context != "derive":
             raise ValueError("invalid UAF missing-attribute adapter")
-        marker = "UAF"
-        payload = {
-            "schema": 1,
-            "probe": context,
-            "event": "SETUP_ATTRIBUTE",
-            "attribute": descriptor,
-            "state": "missing",
-            "value_type": None,
-            "value_len": None,
-        }
+        emit_uaf_setup_fact(state=state, value=value, rv=rv, diagnostic=diagnostic)
+        return
     else:
         raise ValueError(f"unknown missing-attribute protocol: {protocol!r}")
 

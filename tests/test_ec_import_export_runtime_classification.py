@@ -58,6 +58,42 @@ def _wrap(point: bytes) -> bytes:
     return b"\x04" + bytes([len(point)]) + point
 
 
+def _der_length(length: int) -> bytes:
+    """Canonical DER definite-length encoding (short or minimal long form)."""
+    if length < 0x80:
+        return bytes([length])
+    length_bytes = length.to_bytes((length.bit_length() + 7) // 8, "big")
+    return bytes([0x80 | len(length_bytes)]) + length_bytes
+
+
+def _der_octet_string(payload: bytes) -> bytes:
+    """Canonical DER OCTET STRING wrapper, valid for payloads of any length."""
+    return b"\x04" + _der_length(len(payload)) + payload
+
+
+_STRICT_CURVES: dict[str, ec.EllipticCurve] = {
+    "secp256r1": ec.SECP256R1(),
+    "secp384r1": ec.SECP384R1(),
+    "secp521r1": ec.SECP521R1(),
+}
+
+
+def _raw_uncompressed_point_for_curve(curve_name: str, private_value: int = 30) -> bytes:
+    curve = _STRICT_CURVES[curve_name]
+    return (
+        ec.derive_private_key(private_value, curve)
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint,
+        )
+    )
+
+
+def _wrapped_point_for_curve(curve_name: str, private_value: int = 30) -> bytes:
+    return _der_octet_string(_raw_uncompressed_point_for_curve(curve_name, private_value))
+
+
 def test_ec_public_import_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
     def _import_reject(*_args: Any, **_kwargs: Any) -> int:
         raise CkrAssertionError(
@@ -101,7 +137,9 @@ def test_wrapped_sec1_forms_pass_representation_checks(
     )
     monkeypatch.setattr(test_ec_import_export, "destroy_quietly", lambda *_args: None)
 
-    test_ec_import_export.TestECPointExport().test_ec_point_is_uncompressed(_session("ECDSA"))
+    test_ec_import_export.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+        _session("ECDSA"), "secp256r1"
+    )
     assert C.get_records() == []
 
 
@@ -508,7 +546,9 @@ def _setup(monkeypatch, *, verify: bool | None = None) -> None:
 
 def test_strict_raw_node(monkeypatch):
     _setup(monkeypatch)
-    target.TestECPointExport().test_ec_point_is_uncompressed(_session())
+    target.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+        _session(), "secp256r1"
+    )
 
 
 def test_operational_raw_node(monkeypatch):
@@ -546,3 +586,273 @@ def test_operational_false_verify_node(monkeypatch):
     assert [(record["reason"], record["outcome"]) for record in false_verify] == [
         ("wrong_result", "fail")
     ]
+
+
+# ---------------------------------------------------------------------------
+# Strict EC point/params representation regressions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("curve_name", ["secp256r1", "secp384r1", "secp521r1"])
+def test_strict_point_representation_runs_without_ecdsa_and_matches_curve(
+    monkeypatch: pytest.MonkeyPatch, curve_name: str
+) -> None:
+    calls: list[str] = []
+
+    def _make(_rs: Any, name: str) -> tuple[int, int]:
+        calls.append(name)
+        return (1, 2)
+
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", _make)
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {CKA_EC_POINT: _wrapped_point_for_curve(curve_name)},
+    )
+    monkeypatch.setattr(test_ec_import_export, "destroy_quietly", lambda *_args: None)
+
+    # No mechanisms advertised: point-representation shape checks only need
+    # C_GenerateKeyPair, not an operational ECDSA sign/verify mechanism.
+    test_ec_import_export.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+        _session(), curve_name
+    )
+
+    assert calls == [curve_name]
+
+
+@pytest.mark.parametrize("curve_name", ["secp256r1", "secp384r1", "secp521r1"])
+def test_strict_params_representation_runs_without_ecdsa_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, curve_name: str
+) -> None:
+    calls: list[str] = []
+    destroyed: list[int] = []
+
+    def _make(_rs: Any, name: str) -> tuple[int, int]:
+        calls.append(name)
+        return (1, 2)
+
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", _make)
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {CKA_EC_PARAMS: b"params"},
+    )
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, handle: destroyed.append(handle),
+    )
+
+    # No mechanisms advertised: params representation only needs key-pair
+    # generation, not an operational ECDSA sign/verify mechanism.
+    test_ec_import_export.TestECPointExport().test_ec_params_is_present(_session(), curve_name)
+
+    assert calls == [curve_name]
+    assert destroyed == [1, 2]
+    assert C.get_records() == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [b"", None, 0, object(), bytearray(b"x")],
+    ids=["empty", "none", "zero", "object", "bytearray"],
+)
+def test_strict_present_empty_or_nonbytes_point_is_wrong_result_fail(
+    monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {CKA_EC_POINT: value},
+    )
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, h: destroyed.append(h),
+    )
+
+    with pytest.raises(pytest.fail.Exception):
+        test_ec_import_export.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+            _session(), "secp256r1"
+        )
+
+    record = C.get_records()[0]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+    assert record.mechanism is None
+    assert destroyed == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        b"\x04\x03\x04\x01",
+        _der_octet_string(_raw_uncompressed_point_for_curve("secp256r1")) + b"\x00",
+        b"\x04" + bytes([0x81, 65]) + _raw_uncompressed_point_for_curve("secp256r1"),
+    ],
+    ids=["malformed", "trailing", "noncanonical-length"],
+)
+def test_strict_malformed_trailing_noncanonical_point_is_wrong_result_fail(
+    monkeypatch: pytest.MonkeyPatch, point: bytes
+) -> None:
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {CKA_EC_POINT: point},
+    )
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, h: destroyed.append(h),
+    )
+
+    with pytest.raises(pytest.fail.Exception):
+        test_ec_import_export.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+            _session(), "secp256r1"
+        )
+
+    record = C.get_records()[0]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+    assert record.mechanism is None
+    assert destroyed == [1, 2]
+
+
+def test_strict_missing_point_remains_not_operational_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(test_ec_import_export, "read_attributes", lambda *_args: {})
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, h: destroyed.append(h),
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ec_import_export.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+            _session(), "secp256r1"
+        )
+
+    record = C.get_records()[0]
+    assert record.reason == "not_operational"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+    assert record.mechanism is None
+    assert record.detail == {
+        "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
+        "curve": "secp256r1",
+    }
+    assert destroyed == [1, 2]
+
+
+@pytest.mark.parametrize("curve_name", ["secp256r1", "secp384r1", "secp521r1"])
+def test_strict_valid_raw_uncompressed_point_remains_honest_deviation_xfail(
+    monkeypatch: pytest.MonkeyPatch, curve_name: str
+) -> None:
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {CKA_EC_POINT: _raw_uncompressed_point_for_curve(curve_name)},
+    )
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, h: destroyed.append(h),
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ec_import_export.TestECPointExport().test_ec_point_has_canonical_provider_representation(
+            _session(), curve_name
+        )
+
+    record = C.get_records()[0]
+    assert record.reason == "honest_deviation"
+    assert record.kind == "metadata"
+    assert destroyed == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [b"", None, 0, object(), bytearray(b"x")],
+    ids=["empty", "none", "zero", "object", "bytearray"],
+)
+def test_strict_ec_params_present_empty_or_nonbytes_is_metadata_fail(
+    monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    """The separate strict CKA_EC_PARAMS node must FAIL on a broken value."""
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {
+            CKA_EC_POINT: _wrapped_point_for_curve("secp256r1"),
+            CKA_EC_PARAMS: value,
+        },
+    )
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, h: destroyed.append(h),
+    )
+
+    with pytest.raises(pytest.fail.Exception):
+        test_ec_import_export.TestECPointExport().test_ec_params_is_present(_session(), "secp256r1")
+
+    record = C.get_records()[0]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert destroyed == [1, 2]
+
+
+def test_strict_ec_params_missing_is_metadata_xfail_independent_of_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict CKA_EC_PARAMS absence XFAILs independently of point presence."""
+    destroyed: list[int] = []
+    monkeypatch.setattr(test_ec_import_export, "_make_ec_keypair", lambda *_args: (1, 2))
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "read_attributes",
+        lambda *_args: {CKA_EC_POINT: _wrapped_point_for_curve("secp256r1")},
+    )
+    monkeypatch.setattr(
+        test_ec_import_export,
+        "destroy_quietly",
+        lambda _r, _s, h: destroyed.append(h),
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ec_import_export.TestECPointExport().test_ec_params_is_present(_session(), "secp256r1")
+
+    records = C.get_records()
+    record = records[0]
+    assert record.reason == "not_operational"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.actual_ckr is None
+    assert record.mechanism is None
+    assert record.detail == {
+        "attribute": {"name": "CKA_EC_PARAMS", "id": int(CKA_EC_PARAMS)},
+        "curve": "secp256r1",
+    }
+    assert destroyed == [1, 2]
+    assert not any(
+        record.detail is not None
+        and record.detail.get("attribute", {}).get("name") == "CKA_EC_POINT"
+        for record in records
+    )

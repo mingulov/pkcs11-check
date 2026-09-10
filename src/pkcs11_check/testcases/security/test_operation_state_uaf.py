@@ -451,6 +451,7 @@ class TestVerifyOperationStateUAF:
 
 
 _UAF_FACT_MAX_BYTES = 1024
+_UAF_STRING_MAX_CHARS = 256
 _UAF_RV_RE = re.compile(rf"0x[0-9a-f]{{8,{2 * ctypes.sizeof(ctypes.c_ulong)}}}")
 _UAF_MISSING_FACT = {
     "schema": 1,
@@ -461,6 +462,12 @@ _UAF_MISSING_FACT = {
     "value_type": None,
     "value_len": None,
 }
+_UAF_FACT_COMMON_KEYS = frozenset({"schema", "probe", "event", "attribute", "state"})
+_UAF_FACT_ATTRIBUTE = {"name": "CKA_EC_POINT", "id": 385}
+_UAF_FACT_STATES = frozenset(
+    {"missing", "unusable", "read_error", "malformed_encoding", "invalid_point"}
+)
+_UAF_RV_MAX = (1 << (8 * ctypes.sizeof(ctypes.c_ulong))) - 1
 
 
 def _json_no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -477,8 +484,8 @@ def _reject_json_constant(value: str) -> object:
     raise ValueError(f"non-standard JSON constant {value!r}")
 
 
-def _parse_uaf_missing_fact(line: str) -> dict[str, object]:
-    """Parse and validate the one exact missing-peer-point fact."""
+def _parse_uaf_fact(line: str) -> dict[str, object]:
+    """Parse and validate one strict terminal derive setup fact."""
     payload = line.removeprefix("UAF:")
     if len(payload.encode("utf-8")) > _UAF_FACT_MAX_BYTES:
         raise ValueError("UAF fact exceeds bounded JSON size")
@@ -487,15 +494,63 @@ def _parse_uaf_missing_fact(line: str) -> dict[str, object]:
         object_pairs_hook=_json_no_duplicate_keys,
         parse_constant=_reject_json_constant,
     )
-    if not isinstance(value, dict) or value != _UAF_MISSING_FACT:
+    if not isinstance(value, dict):
+        raise ValueError("UAF fact must be a JSON object")
+    if type(value.get("schema")) is not int or value["schema"] != 1:
+        raise ValueError("UAF fact has an invalid schema")
+    if value.get("probe") != "derive" or value.get("event") != "SETUP_ATTRIBUTE":
+        raise ValueError("UAF fact has an invalid probe or event")
+    attribute = value.get("attribute")
+    if not isinstance(attribute, dict) or attribute != _UAF_FACT_ATTRIBUTE:
+        raise ValueError("UAF fact has an invalid CKA_EC_POINT descriptor")
+    if type(attribute.get("id")) is not int:
+        raise ValueError("UAF fact uses a boolean where an integer is required")
+    state = value.get("state")
+    if not isinstance(state, str) or state not in _UAF_FACT_STATES:
+        raise ValueError("UAF fact has an invalid setup state")
+
+    expected_keys = {
+        "missing": _UAF_FACT_COMMON_KEYS | {"value_type", "value_len"},
+        "unusable": _UAF_FACT_COMMON_KEYS | {"value_type", "value_len"},
+        "read_error": _UAF_FACT_COMMON_KEYS | {"operation", "rv"},
+        "malformed_encoding": _UAF_FACT_COMMON_KEYS | {"diagnostic"},
+        "invalid_point": _UAF_FACT_COMMON_KEYS | {"diagnostic"},
+    }[state]
+    if set(value) != expected_keys:
+        raise ValueError("UAF fact has unknown or missing fields")
+
+    if state == "missing":
+        if value["value_type"] is not None or value["value_len"] is not None:
+            raise ValueError("missing UAF fact must retain null legacy fields")
+    elif state == "unusable":
+        value_type = value["value_type"]
+        value_len = value["value_len"]
+        if not isinstance(value_type, str) or not value_type or len(value_type) > 64:
+            raise ValueError("unusable UAF fact has an invalid value_type")
+        if value_len is not None and (type(value_len) is not int or value_len < 0):
+            raise ValueError("unusable UAF fact has an invalid value_len")
+    elif state == "read_error":
+        if value["operation"] != "C_GetAttributeValue":
+            raise ValueError("read-error UAF fact has an invalid operation")
+        rv = value["rv"]
+        if type(rv) is not int or rv <= 0 or rv > _UAF_RV_MAX:
+            raise ValueError("read-error UAF fact has an invalid CK_RV")
+    else:
+        diagnostic = value["diagnostic"]
+        if (
+            not isinstance(diagnostic, str)
+            or not diagnostic
+            or len(diagnostic) > _UAF_STRING_MAX_CHARS
+        ):
+            raise ValueError("point UAF fact has an invalid diagnostic")
+    return value
+
+
+def _parse_uaf_missing_fact(line: str) -> dict[str, object]:
+    """Parse and validate the legacy missing-peer-point fact."""
+    value = _parse_uaf_fact(line)
+    if value["state"] != "missing" or value != _UAF_MISSING_FACT:
         raise ValueError("UAF fact does not match the exact derive omission schema")
-    # Equality above catches all value changes; explicit type checks prevent Python's
-    # bool-as-int equality from ever widening the accepted protocol.
-    attribute = value["attribute"]
-    if type(value["schema"]) is not int or not isinstance(attribute, dict):
-        raise ValueError("UAF fact uses a boolean where an integer is required")
-    if type(attribute["id"]) is not int:
-        raise ValueError("UAF fact uses a boolean where an integer is required")
     return value
 
 
@@ -520,6 +575,7 @@ def _uaf_protocol_error(context: str, errors: list[str]) -> C.Classification:
 
 
 def _uaf_record_missing_fact(context: str, fact: dict[str, object]) -> C.Classification:
+    """Record the legacy missing peer point as metadata unavailability."""
     return C.record_as(
         "not_operational",
         kind="metadata",
@@ -532,6 +588,69 @@ def _uaf_record_missing_fact(context: str, fact: dict[str, object]) -> C.Classif
         ),
         detail={"protocol": "UAF", "dependency": "C_DeriveKey", **fact},
     )
+
+
+def _uaf_record_setup_fact(context: str, fact: dict[str, object]) -> C.Classification:
+    """Record a validated terminal peer-point setup fact without leaking point data."""
+    state = fact["state"]
+    detail = {"protocol": "UAF", "dependency": "C_DeriveKey", **fact}
+    if state == "missing":
+        return _uaf_record_missing_fact(context, fact)
+    if state in {"unusable", "malformed_encoding"}:
+        description = (
+            "CKA_EC_POINT is unusable"
+            if state == "unusable"
+            else "CKA_EC_POINT has malformed encoding"
+        )
+        return C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=context,
+            operation="C_GetAttributeValue",
+            mechanism="CKM_ECDH1_DERIVE",
+            actual=None,
+            summary=f"{context}: {description}; C_DeriveKey dependency could not be exercised",
+            detail=detail,
+        )
+    if state == "invalid_point":
+        return C.record_as(
+            "wrong_result",
+            kind="crypto",
+            label=context,
+            operation="C_GetAttributeValue",
+            mechanism="CKM_ECDH1_DERIVE",
+            actual=None,
+            summary=f"{context}: invalid point returned in CKA_EC_POINT",
+            detail=detail,
+        )
+    if state == "read_error":
+        rv = fact["rv"]
+        if type(rv) is not int:
+            raise AssertionError("validated read-error fact must carry an integer CK_RV")
+        if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+            return C.record_as(
+                "not_operational",
+                kind="metadata",
+                label=context,
+                operation="C_GetAttributeValue",
+                mechanism="CKM_ECDH1_DERIVE",
+                actual=rv,
+                summary=(
+                    f"{context}: C_GetAttributeValue rejected CKA_EC_POINT with {ckr_name(rv)}"
+                ),
+                detail=detail,
+            )
+        return C.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label=context,
+            operation="C_GetAttributeValue",
+            mechanism="CKM_ECDH1_DERIVE",
+            actual=rv,
+            summary=f"{context}: C_GetAttributeValue returned undefined CK_RV {ckr_name(rv)}",
+            detail={**detail, "undefined_rv": rv},
+        )
+    raise AssertionError(f"unknown validated UAF setup fact state: {state!r}")
 
 
 def _uaf_record_destroy_refusal(
@@ -661,7 +780,7 @@ def _check_direct_handle_probe(
             marker_order.append("fact")
             if allow_missing_fact:
                 try:
-                    facts.append(_parse_uaf_missing_fact(line))
+                    facts.append(_parse_uaf_fact(line))
                 except (ValueError, TypeError, json.JSONDecodeError) as exc:
                     errors.append(f"malformed UAF fact: {exc}")
                     marker_validity.append(False)
@@ -759,7 +878,7 @@ def _check_direct_handle_probe(
             )
         )
     if first_valid_marker == "fact" and facts:
-        semantic.append(_uaf_record_missing_fact(context, facts[0]))
+        semantic.append(_uaf_record_setup_fact(context, facts[0]))
 
     # Keep the longest valid target prefix independently of later protocol
     # corruption.  A valid DESTROY_RV/target-RV pair followed by a late marker

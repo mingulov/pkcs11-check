@@ -104,13 +104,14 @@ def _record_attribute_shape(
     attr: int,
     curve: ec.EllipticCurve,
     label: str,
+    strict: bool = False,
 ) -> C.Classification | None:
     if value is MISSING_ATTRIBUTE:
         return None
     if isinstance(value, bytes) and value:
         return None
     return C.record_as(
-        "not_operational",
+        "wrong_result" if strict else "not_operational",
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
@@ -193,6 +194,7 @@ def _read_point_attribute(
     curve: ec.EllipticCurve,
     *,
     label: str,
+    strict: bool = False,
 ) -> tuple[object, list[C.Classification]]:
     """Read one point with explicit refusal routing and presence semantics."""
     before = len(C.get_records())
@@ -211,13 +213,62 @@ def _read_point_attribute(
             detail=_attribute_detail(CKA_EC_POINT, curve),
         )
         return MISSING_ATTRIBUTE, C.get_records()[before:]
-    value = attr_or_record(
-        attrs,
-        CKA_EC_POINT,
-        label=label,
-        reason="not_operational",
-    )
-    _record_attribute_shape(value, attr=CKA_EC_POINT, curve=curve, label=label)
+    if CKA_EC_POINT not in attrs:
+        C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            actual=None,
+            mechanism=None,
+            summary=f"{label}: attribute unavailable",
+            detail=_attribute_detail(CKA_EC_POINT, curve),
+        )
+        return MISSING_ATTRIBUTE, C.get_records()[before:]
+    value = attrs[CKA_EC_POINT]
+    _record_attribute_shape(value, attr=CKA_EC_POINT, curve=curve, label=label, strict=strict)
+    return value, C.get_records()[before:]
+
+
+def _read_params_attribute(
+    rs: Any,
+    handle: int,
+    curve: ec.EllipticCurve,
+    *,
+    label: str,
+    strict: bool = False,
+) -> tuple[object, list[C.Classification]]:
+    """Read one CKA_EC_PARAMS value with explicit refusal routing and presence semantics."""
+    before = len(C.get_records())
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_EC_PARAMS])
+    except CkrAssertionError as exc:
+        if exc.rv not in (int(CKR_ATTRIBUTE_SENSITIVE), int(CKR_ATTRIBUTE_TYPE_INVALID)):
+            raise
+        C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            actual=exc.rv,
+            summary=f"{label}: cannot read CKA_EC_PARAMS: {exc}",
+            detail=_attribute_detail(CKA_EC_PARAMS, curve),
+        )
+        return MISSING_ATTRIBUTE, C.get_records()[before:]
+    if CKA_EC_PARAMS not in attrs:
+        C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            actual=None,
+            mechanism=None,
+            summary=f"{label}: attribute unavailable",
+            detail=_attribute_detail(CKA_EC_PARAMS, curve),
+        )
+        return MISSING_ATTRIBUTE, C.get_records()[before:]
+    value = attrs[CKA_EC_PARAMS]
+    _record_attribute_shape(value, attr=CKA_EC_PARAMS, curve=curve, label=label, strict=strict)
     return value, C.get_records()[before:]
 
 
@@ -237,7 +288,7 @@ def _decode_point(
         return (
             None,
             C.record_as(
-                "not_operational",
+                "wrong_result" if strict else "not_operational",
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
@@ -429,19 +480,24 @@ class TestECPublicKeyImport:
 class TestECPointExport:
     """Test EC point export consistency."""
 
-    def test_ec_point_is_uncompressed(self, p11_raw_session: Any) -> None:
-        """Exported conventional EC point uses a legal SEC1 form and wrapper."""
-        rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
+    @pytest.mark.parametrize("curve_name", ["secp256r1", "secp384r1", "secp521r1"])
+    def test_ec_point_has_canonical_provider_representation(
+        self, p11_raw_session: Any, curve_name: str
+    ) -> None:
+        """Exported conventional EC point uses a legal SEC1 form and wrapper.
 
-        pub, priv = _make_ec_keypair(rs, "secp256r1")
+        This is a pure representation/shape check: it only needs
+        C_GenerateKeyPair, not an operational ECDSA sign/verify mechanism.
+        """
+        rs = p11_raw_session
+        curve = _CURVES[curve_name]
+        pub, priv = _make_ec_keypair(rs, curve_name)
         try:
             value, records = _read_point_attribute(
-                rs, pub, ec.SECP256R1(), label="EC point representation"
+                rs, pub, curve, label=f"EC point representation {curve_name}", strict=True
             )
             observation, error = _decode_point(
-                value, ec.SECP256R1(), label="EC point representation", strict=True
+                value, curve, label=f"EC point representation {curve_name}", strict=True
             )
             if error is not None:
                 records.append(error)
@@ -451,22 +507,22 @@ class TestECPointExport:
         finally:
             _destroy_handles(rs, pub, priv)
 
-    def test_ec_point_correct_length(self, p11_raw_session: Any) -> None:
-        """Exported point has the SEC1 length required by its form."""
-        rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
+    @pytest.mark.parametrize("curve_name", ["secp256r1", "secp384r1", "secp521r1"])
+    def test_ec_params_is_present(self, p11_raw_session: Any, curve_name: str) -> None:
+        """CKA_EC_PARAMS is present and non-empty for the generated key.
 
-        pub, priv = _make_ec_keypair(rs, "secp256r1")
+        A separate node from ``test_ec_point_has_canonical_provider_representation`` so point and
+        params representation checks are independent pytest items; this is a
+        pure representation/shape check and needs no operational ECDSA
+        mechanism.
+        """
+        rs = p11_raw_session
+        curve = _CURVES[curve_name]
+        pub, priv = _make_ec_keypair(rs, curve_name)
         try:
-            value, records = _read_point_attribute(rs, pub, ec.SECP256R1(), label="EC point length")
-            observation, error = _decode_point(
-                value, ec.SECP256R1(), label="EC point length", strict=True
+            _value, records = _read_params_attribute(
+                rs, pub, curve, label=f"EC params representation {curve_name}", strict=True
             )
-            if error is not None:
-                records.append(error)
-            if observation is not None and observation.strict_deviation is not None:
-                records.append(observation.strict_deviation)
             _raise_strongest(records)
         finally:
             _destroy_handles(rs, pub, priv)
@@ -474,9 +530,6 @@ class TestECPointExport:
     def test_two_keypairs_different_points(self, p11_raw_session: Any) -> None:
         """Two independently generated keypairs have different public points."""
         rs = p11_raw_session
-        if not rs.has_mechanism("ECDSA"):
-            pytest.skip("CKM_ECDSA not supported")
-
         pub1, priv1 = _make_ec_keypair(rs, "secp256r1")
         pub2 = priv2 = 0
         try:

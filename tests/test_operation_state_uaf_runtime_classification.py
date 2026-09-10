@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 import ctypes
+import json
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check import classification as C  # noqa: N812 - classification alias convention
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EC_POINT,
     CKR_KEY_HANDLE_INVALID,
     CKR_OBJECT_HANDLE_INVALID,
 )
+from pkcs11_check.testcases._probes import _attribute_facts as facts
 from pkcs11_check.testcases._probes import operation_state_uaf as probe
 from pkcs11_check.testcases._probes.session import ProbeContext
+from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases.security import test_operation_state_uaf as uaf
 from tests._attribute_access_guard import analyze_file
 
@@ -30,6 +37,18 @@ def _missing_point_fact() -> str:
         '"attribute":{"name":"CKA_EC_POINT","id":385},"state":"missing",'
         '"value_type":null,"value_len":null}\n'
     )
+
+
+def _setup_fact(state: str, **fields: object) -> str:
+    payload = {
+        "schema": 1,
+        "probe": "derive",
+        "event": "SETUP_ATTRIBUTE",
+        "attribute": {"name": "CKA_EC_POINT", "id": 385},
+        "state": state,
+        **fields,
+    }
+    return f"UAF:{json.dumps(payload, separators=(',', ':'))}\n"
 
 
 def test_derive_missing_peer_point_is_a_structured_not_operational_xfail(
@@ -61,6 +80,156 @@ def test_derive_missing_peer_point_is_a_structured_not_operational_xfail(
     assert record.operation == "C_GetAttributeValue"
     assert record.mechanism == "CKM_ECDH1_DERIVE"
     assert record.actual_ckr is None
+
+
+@pytest.mark.parametrize(
+    ("state", "fields"),
+    [
+        ("unusable", {"value_type": "NoneType", "value_len": None}),
+        ("malformed_encoding", {"diagnostic": "noncanonical DER"}),
+    ],
+)
+def test_derive_setup_fact_is_metadata_not_operational_without_ckr(
+    state: str, fields: dict[str, object]
+) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _check(_setup_fact(state, **fields))
+
+    record = C.get_records()[0]
+    assert record.reason == "not_operational"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.actual_ckr is None
+
+
+def test_derive_invalid_point_fact_is_a_hard_crypto_failure() -> None:
+    with pytest.raises(pytest.fail.Exception, match="invalid point"):
+        _check(_setup_fact("invalid_point", diagnostic="not on secp256r1"))
+
+    record = C.get_records()[0]
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.actual_ckr is None
+
+
+def test_derive_read_error_preserves_standard_rv_as_metadata_xfail() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _check(_setup_fact("read_error", operation="C_GetAttributeValue", rv=0x12))
+
+    record = C.get_records()[0]
+    assert record.reason == "not_operational"
+    assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism == "CKM_ECDH1_DERIVE"
+
+
+def test_derive_read_error_undefined_rv_is_metadata_failure() -> None:
+    with pytest.raises(pytest.fail.Exception, match="undefined CK_RV"):
+        _check(_setup_fact("read_error", operation="C_GetAttributeValue", rv=0x7F))
+
+    record = C.get_records()[0]
+    assert record.reason == "self_contradiction"
+    assert record.kind == "metadata"
+    assert record.actual_ckr == "0x0000007f"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism == "CKM_ECDH1_DERIVE"
+
+
+def test_derive_vendor_read_error_is_visible_not_operational() -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _check(_setup_fact("read_error", operation="C_GetAttributeValue", rv=0x80000042))
+
+    record = C.get_records()[0]
+    assert record.reason == "not_operational"
+    assert record.actual_ckr == "0x80000042"
+
+
+@pytest.mark.parametrize(
+    "fact",
+    [
+        _setup_fact("missing", value_type="wrong", value_len=None),
+        _setup_fact("unusable", value_type=True, value_len=None),
+        _setup_fact("unusable", value_type="bytes", value_len=True),
+        _setup_fact("read_error", operation="C_GetAttributeValue", rv=0),
+        _setup_fact("read_error", operation="C_GetAttributeValue", rv=True),
+        _setup_fact(
+            "read_error",
+            operation="C_GetAttributeValue",
+            rv=1 << (8 * ctypes.sizeof(ctypes.c_ulong)),
+        ),
+        _setup_fact("malformed_encoding", diagnostic=""),
+        _setup_fact("invalid_point", diagnostic="x" * 257),
+    ],
+)
+def test_derive_setup_fact_union_rejects_wrong_types_and_bounds(fact: str) -> None:
+    with pytest.raises(pytest.fail.Exception, match="malformed UAF protocol"):
+        _check(fact)
+
+    assert [item.reason for item in C.get_records()] == ["harness_error"]
+
+
+def test_derive_setup_fact_rejects_duplicate_keys_and_unknown_fields() -> None:
+    duplicate = (
+        'UAF:{"schema":1,"probe":"derive","event":"SETUP_ATTRIBUTE",'
+        '"attribute":{"name":"CKA_EC_POINT","id":385},"state":"missing",'
+        '"value_type":null,"value_len":null,"value_len":null}\n'
+    )
+    unknown = (
+        _setup_fact("missing")[:-1].replace('"value_len":null}', '"value_len":null,"extra":0}')
+        + "\n"
+    )
+    for output in (duplicate, unknown):
+        with pytest.raises(pytest.fail.Exception, match="malformed UAF protocol"):
+            _check(output)
+        assert [item.reason for item in C.get_records()] == ["harness_error"]
+        C.clear()
+
+
+def test_derive_setup_fact_rejects_wrong_identity_fields() -> None:
+    for key, value in (("schema", 2), ("probe", "other"), ("event", "attribute")):
+        payload = {
+            "schema": 1,
+            "probe": "derive",
+            "event": "SETUP_ATTRIBUTE",
+            "attribute": {"name": "CKA_EC_POINT", "id": 385},
+            "state": "missing",
+            "value_type": None,
+            "value_len": None,
+        }
+        payload[key] = value
+        output = f"UAF:{json.dumps(payload, separators=(',', ':'))}\n"
+        with pytest.raises(pytest.fail.Exception, match="malformed UAF protocol"):
+            _check(output)
+        assert [item.reason for item in C.get_records()] == ["harness_error"]
+        C.clear()
+
+
+def test_derive_setup_fact_is_bounded_and_does_not_print_raw_point_material(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    worst_case = ('😀"\\\n' * 100) + ("x" * 256)
+    facts.emit_missing_attribute(
+        CKA_EC_POINT,
+        protocol="UAF",
+        context="derive",
+        state="malformed_encoding",
+        diagnostic=worst_case,
+    )
+    output = capsys.readouterr().out
+    encoded_payload = output.removeprefix("UAF:").strip()
+    payload = json.loads(encoded_payload)
+    assert len(encoded_payload.encode("utf-8")) <= 1024
+    assert 0 < len(payload["diagnostic"]) <= 256
+    assert "04" * 32 not in output
+
+    with pytest.raises(pytest.xfail.Exception):
+        _check(output)
+    detail = C.get_records()[0].detail
+    assert detail is not None
+    assert detail["diagnostic"] == payload["diagnostic"]
 
 
 def _target(destroy: int, derive: int) -> str:
@@ -344,6 +513,26 @@ def test_derive_missing_fact_plus_crash_retains_fact_before_crash() -> None:
     assert records[0].operation == "C_GetAttributeValue"
     assert records[1].detail is not None
     assert records[1].detail["termination"]["kind"] == "signal"
+
+
+def test_derive_unusable_fact_plus_timeout_retains_fact_before_timeout() -> None:
+    output = _setup_fact("unusable", value_type="NoneType", value_len=None)
+    with pytest.raises(pytest.fail.Exception, match="module hung"):
+        _check(output, rc=1, stderr=SUBPROCESS_TIMEOUT_MARKER)
+
+    records = C.get_records()
+    assert [item.reason for item in records] == ["not_operational", "crash"]
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[1].detail is not None
+    assert records[1].detail["termination"]["kind"] == "timeout"
+
+
+def test_derive_malformed_encoding_fact_plus_late_corruption_retains_fact() -> None:
+    output = _setup_fact("malformed_encoding", diagnostic="noncanonical DER") + "UAF:not-json\n"
+    with pytest.raises(pytest.fail.Exception, match="malformed UAF protocol"):
+        _check(output)
+
+    assert [item.reason for item in C.get_records()] == ["not_operational", "harness_error"]
 
 
 def test_late_setup_marker_preserves_target_lifecycle_before_protocol_error() -> None:
@@ -701,6 +890,240 @@ def test_derive_child_missing_peer_point_cleans_all_objects_and_skips_derive(
     assert capsys.readouterr().out == _missing_point_fact()
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, {"state": "unusable", "value_type": "NoneType", "value_len": None}),
+        (b"", {"state": "unusable", "value_type": "bytes", "value_len": 0}),
+        (False, {"state": "unusable", "value_type": "bool", "value_len": None}),
+        (0, {"state": "unusable", "value_type": "int", "value_len": None}),
+        ("bad", {"state": "unusable", "value_type": "str", "value_len": None}),
+    ],
+)
+def test_derive_child_unusable_peer_point_cleans_all_objects_and_skips_derive(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    value: object,
+    expected: dict[str, object],
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    class Raw:
+        def C_DestroyObject(self, _session: int, handle: int) -> int:  # noqa: N802
+            calls.append(("destroy", handle))
+            return 0
+
+        def C_DeriveKey(self, *_args: object) -> int:  # noqa: N802
+            calls.append(("derive", 0))
+            raise AssertionError("derive must not run after an unusable peer point")
+
+    pairs = iter(((11, 12), (13, 14)))
+    monkeypatch.setattr(probe, "gen_ec_keypair", lambda *_args, **_kwargs: next(pairs))
+    monkeypatch.setattr(probe, "read_attributes", lambda *_args: {CKA_EC_POINT: value})
+    cleanups: list[str] = []
+    ctx = SimpleNamespace(raw=Raw(), sh=7, cleanup=lambda: cleanups.append("cleanup"))
+
+    probe._run_derive(cast(ProbeContext, ctx), {})
+
+    assert calls == [("destroy", 11), ("destroy", 12), ("destroy", 13), ("destroy", 14)]
+    assert cleanups == ["cleanup"]
+    payload = json.loads(capsys.readouterr().out.removeprefix("UAF:").strip())
+    assert payload == {
+        "schema": 1,
+        "probe": "derive",
+        "event": "SETUP_ATTRIBUTE",
+        "attribute": {"name": "CKA_EC_POINT", "id": 385},
+        **expected,
+    }
+
+
+def test_derive_child_attribute_ckr_is_a_bounded_read_error_and_cleans_all_objects(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    class Raw:
+        def C_DestroyObject(self, _session: int, handle: int) -> int:  # noqa: N802
+            calls.append(("destroy", handle))
+            return 0
+
+        def C_DeriveKey(self, *_args: object) -> int:  # noqa: N802
+            calls.append(("derive", 0))
+            raise AssertionError("derive must not run after an attribute read error")
+
+    pairs = iter(((11, 12), (13, 14)))
+    monkeypatch.setattr(probe, "gen_ec_keypair", lambda *_args, **_kwargs: next(pairs))
+
+    def read_error(*_args: object) -> dict[int, object]:
+        raise CkrAssertionError("reader rejected", 0x10)
+
+    monkeypatch.setattr(probe, "read_attributes", read_error)
+    cleanups: list[str] = []
+    ctx = SimpleNamespace(raw=Raw(), sh=7, cleanup=lambda: cleanups.append("cleanup"))
+
+    probe._run_derive(cast(ProbeContext, ctx), {})
+
+    assert calls == [("destroy", 11), ("destroy", 12), ("destroy", 13), ("destroy", 14)]
+    assert cleanups == ["cleanup"]
+    assert json.loads(capsys.readouterr().out.removeprefix("UAF:").strip()) == {
+        "schema": 1,
+        "probe": "derive",
+        "event": "SETUP_ATTRIBUTE",
+        "attribute": {"name": "CKA_EC_POINT", "id": 385},
+        "state": "read_error",
+        "operation": "C_GetAttributeValue",
+        "rv": 0x10,
+    }
+
+
+@pytest.mark.parametrize(
+    ("point_kind", "private_value"),
+    [("raw", 30), ("wrapped_compressed", 7), ("wrapped_uncompressed", 8)],
+)
+def test_derive_child_passes_only_normalized_sec1_to_ecdh(
+    monkeypatch: pytest.MonkeyPatch,
+    point_kind: str,
+    private_value: int,
+) -> None:
+    raw_point = ec.derive_private_key(private_value, ec.SECP256R1()).public_key()
+    sec1 = raw_point.public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.CompressedPoint
+        if point_kind == "wrapped_compressed"
+        else serialization.PublicFormat.UncompressedPoint,
+    )
+    value = sec1
+    if point_kind.startswith("wrapped"):
+        value = b"\x04" + bytes([len(sec1)]) + sec1
+
+    calls: list[tuple[str, object]] = []
+
+    class Raw:
+        def C_DestroyObject(self, _session: int, handle: int) -> int:  # noqa: N802
+            calls.append(("destroy", handle))
+            return 0
+
+        def C_DeriveKey(self, _session: int, mech: object, *_args: object) -> int:  # noqa: N802
+            calls.append(("derive", mech))
+            return int(CKR_KEY_HANDLE_INVALID)
+
+    class Packed:
+        def byref(self) -> None:
+            return None
+
+    packed: list[bytes] = []
+    pairs: Iterator[tuple[int, int]] = iter(((11, 12), (13, 14)))
+
+    def pack(_mechanism: object, *, kdf: int, public_data: bytes) -> Packed:
+        del kdf
+        packed.append(public_data)
+        return Packed()
+
+    monkeypatch.setattr(probe, "gen_ec_keypair", lambda *_args, **_kwargs: next(pairs))
+    monkeypatch.setattr(probe, "read_attributes", lambda *_args: {CKA_EC_POINT: value})
+    monkeypatch.setattr(probe, "mech_ecdh", pack)
+    ctx = SimpleNamespace(raw=Raw(), sh=7, cleanup=lambda: None)
+
+    probe._run_derive(cast(ProbeContext, ctx), {})
+
+    if point_kind == "raw":
+        assert sec1[:2] == b"\x04\x40"
+    assert packed == [sec1]
+    assert [kind for kind, _value in calls] == [
+        "destroy",
+        "destroy",
+        "destroy",
+        "destroy",
+        "derive",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "state"),
+    [
+        (b"\x02" + b"\x00" * 32, "malformed_encoding"),
+        (b"\x04\x81\x20" + b"\x02" + b"\x00" * 32, "malformed_encoding"),
+        (b"\x04\x21" + b"\x02" + b"\x00" * 32 + b"\x00", "malformed_encoding"),
+        (
+            bytes(
+                bytearray(
+                    ec.derive_private_key(19, ec.SECP256R1())
+                    .public_key()
+                    .public_bytes(
+                        serialization.Encoding.X962,
+                        serialization.PublicFormat.UncompressedPoint,
+                    )
+                )[:-1]
+                + bytes(
+                    [
+                        ec.derive_private_key(19, ec.SECP256R1())
+                        .public_key()
+                        .public_bytes(
+                            serialization.Encoding.X962,
+                            serialization.PublicFormat.UncompressedPoint,
+                        )[-1]
+                        ^ 1,
+                    ]
+                )
+            ),
+            "invalid_point",
+        ),
+        (
+            b"\x04"
+            + bytes(
+                [
+                    len(
+                        ec.derive_private_key(13, ec.SECP384R1())
+                        .public_key()
+                        .public_bytes(
+                            serialization.Encoding.X962,
+                            serialization.PublicFormat.UncompressedPoint,
+                        )
+                    )
+                ]
+            )
+            + ec.derive_private_key(13, ec.SECP384R1())
+            .public_key()
+            .public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint,
+            ),
+            "invalid_point",
+        ),
+    ],
+    ids=["raw-compressed", "noncanonical-der", "trailing-der", "off-curve", "wrong-curve"],
+)
+def test_derive_child_invalid_peer_point_cleans_all_objects_and_skips_stale_handle(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    value: bytes,
+    state: str,
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    class Raw:
+        def C_DestroyObject(self, _session: int, handle: int) -> int:  # noqa: N802
+            calls.append(("destroy", handle))
+            return 0
+
+        def C_DeriveKey(self, *_args: object) -> int:  # noqa: N802
+            calls.append(("derive", 0))
+            raise AssertionError("derive must not run after invalid peer point setup")
+
+    pairs = iter(((11, 12), (13, 14)))
+    monkeypatch.setattr(probe, "gen_ec_keypair", lambda *_args, **_kwargs: next(pairs))
+    monkeypatch.setattr(probe, "read_attributes", lambda *_args: {CKA_EC_POINT: value})
+    ctx = SimpleNamespace(raw=Raw(), sh=7, cleanup=lambda: None)
+
+    probe._run_derive(cast(ProbeContext, ctx), {})
+
+    assert calls == [("destroy", 11), ("destroy", 12), ("destroy", 13), ("destroy", 14)]
+    payload = json.loads(capsys.readouterr().out.removeprefix("UAF:").strip())
+    assert payload["state"] == state
+    assert len(payload["diagnostic"]) <= 256
+
+
 def test_derive_child_native_cleanup_fault_does_not_hide_flushed_fact(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -718,6 +1141,32 @@ def test_derive_child_native_cleanup_fault_does_not_hide_flushed_fact(
         probe._run_derive(cast(ProbeContext, ctx), {})
 
     assert capsys.readouterr().out == _missing_point_fact()
+
+
+def test_derive_child_cleanup_attempts_every_handle_and_prefers_access_violation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+    access_violation = OSError("Exception: access violation reading 0x0")
+    cleanup_error = RuntimeError("cleanup fault")
+
+    class Raw:
+        def C_DestroyObject(self, _session: int, handle: int) -> int:  # noqa: N802
+            calls.append(handle)
+            if handle == 11:
+                raise RuntimeError("first destroy fault")
+            if handle == 12:
+                raise access_violation
+            return 0
+
+    def cleanup() -> None:
+        raise cleanup_error
+
+    with pytest.raises(OSError) as caught:
+        probe._destroy_derive_setup_handles(Raw(), 7, (11, 12, 13, 14), cleanup)
+
+    assert caught.value is access_violation
+    assert calls == [11, 12, 13, 14]
 
 
 def test_derive_probe_has_no_required_attribute_access_violation() -> None:

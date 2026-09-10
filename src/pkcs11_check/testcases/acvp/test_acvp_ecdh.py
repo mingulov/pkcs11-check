@@ -12,8 +12,9 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 
-from pkcs11_check.classification import xfail_as
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.der import decode_ec_point
 from pkcs11_check.raw.ec import encode_named_curve_parameters
@@ -34,6 +35,8 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKD_NULL,
+    CKF_EC_COMPRESS,
+    CKF_EC_UNCOMPRESS,
     CKK_EC,
     CKK_GENERIC_SECRET,
     CKM_ECDH1_DERIVE,
@@ -54,10 +57,15 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._ec_export import (
+    InvalidProviderECPointError,
+    ProviderECPointEncodingError,
+    parse_provider_ec_point,
+    select_ecdh_point_form,
+)
 from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
     assert_correct,
-    classify_lifecycle_effect,
     is_known_error,
     xfail_if_known_ckr,
 )
@@ -443,31 +451,74 @@ class TestEcdhKeyAgreement:
             except AssertionError as exc:
                 _skip_if_ec_capability_reject(exc, f"Curve {curve} key generation")
 
-            # Alice derives secret with Bob's public key
+            # Alice derives secret with Bob's public key.  This path intentionally
+            # keeps a stronger post-keygen lifecycle oracle than the classified
+            # conventional reader: missing, empty, or non-bytes CKA_EC_POINT means
+            # the module contradicted its successful key-generation claim.
             bob_point_attrs = read_attributes(rs.raw, rs.sh, bob_pub, [CKA_EC_POINT])
-            bob_ec_point = cast(bytes, bob_point_attrs.get(CKA_EC_POINT, b""))
+            if CKA_EC_POINT not in bob_point_attrs:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=f"Curve {curve} EC keygen claimed success but CKA_EC_POINT is missing",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                )
+            bob_ec_point = bob_point_attrs[CKA_EC_POINT]
+            if not isinstance(bob_ec_point, bytes) or not bob_ec_point:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=(
+                        f"Curve {curve} EC keygen claimed success but CKA_EC_POINT is "
+                        f"not a non-empty byte string: {bob_ec_point!r}"
+                    ),
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                )
 
-            # The module claimed EC keygen success (gen_ec_keypair asserts CKR_OK).
-            # CKA_EC_POINT is a mandatory, non-sensitive attribute on an EC public
-            # key, so an empty readback contradicts the claimed success (lifecycle
-            # self-contradiction) -> fail, not skip.
-            classify_lifecycle_effect(
-                claimed_success=True,
-                effect_observed=not bob_ec_point,
-                label=f"Curve {curve} EC keygen claimed success but CKA_EC_POINT unreadable",
-            )
-
-            # CKA_EC_POINT is DER-encoded; ECDH1_DERIVE requires raw point per OASIS spec.
+            crypto_curve = {
+                "secp256r1": ec.SECP256R1(),
+                "secp384r1": ec.SECP384R1(),
+                "secp521r1": ec.SECP521R1(),
+            }[ec_curve_name]
             try:
-                bob_point_raw = decode_ec_point(bob_ec_point)
-            except ValueError as exc:
+                bob_point = parse_provider_ec_point(
+                    bob_ec_point,
+                    crypto_curve,
+                    label=f"ECDH1_DERIVE:{curve} generated peer public key",
+                )
+            except ProviderECPointEncodingError as exc:
                 xfail_as(
-                    "honest_deviation",
+                    "not_operational",
+                    kind="metadata",
                     label=f"ECDH1_DERIVE:{curve}",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
                     summary=(
                         f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
                     ),
                 )
+            except InvalidProviderECPointError as exc:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label=f"ECDH1_DERIVE:{curve}",
+                    operation="C_GetAttributeValue",
+                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                    summary=(
+                        f"Curve {curve} generated public key has an off-curve or wrong-curve "
+                        f"CKA_EC_POINT: {exc}"
+                    ),
+                )
+
+            bob_point_raw = select_ecdh_point_form(
+                bob_point,
+                supports_compressed=rs.has_mechanism_flag(CKM_ECDH1_DERIVE, int(CKF_EC_COMPRESS)),
+                supports_uncompressed=rs.has_mechanism_flag(
+                    CKM_ECDH1_DERIVE, int(CKF_EC_UNCOMPRESS)
+                ),
+            )
 
             # Derive shared secrets
             mech_param_alice = mech_ecdh(
@@ -476,29 +527,29 @@ class TestEcdhKeyAgreement:
                 public_data=bob_point_raw,
             )
 
-            alice_secret = derive_key(
-                rs.raw,
-                rs.sh,
-                base_key=alice_priv,
-                mechanism=CKM_ECDH1_DERIVE,
-                attrs={
-                    CKA_CLASS: CKO_SECRET_KEY,
-                    CKA_KEY_TYPE: CKK_GENERIC_SECRET,
-                    CKA_SENSITIVE: False,
-                    CKA_EXTRACTABLE: True,
-                },
-                mech_param=mech_param_alice,
-            )
             try:
-                # Read Alice's shared secret
-                alice_attrs = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])
-                alice_shared = cast(bytes, alice_attrs.get(CKA_VALUE, b""))
+                alice_secret = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    base_key=alice_priv,
+                    mechanism=CKM_ECDH1_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                    },
+                    mech_param=mech_param_alice,
+                )
+            except AssertionError as exc:
+                _xfail_if_ecdh_runtime_reject(exc, f"Curve {curve} ECDH derive")
 
-                assert len(alice_shared) > 0, f"{curve}: Failed to derive shared secret"
-            except AssertionError:
-                raise
-        except AssertionError as exc:
-            _xfail_if_ecdh_runtime_reject(exc, f"Curve {curve}")
+            # Read Alice's shared secret. Any provider error here must retain its
+            # C_GetAttributeValue evidence; it is not an ECDH derive rejection.
+            alice_attrs = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])
+            alice_shared = cast(bytes, alice_attrs.get(CKA_VALUE, b""))
+
+            assert len(alice_shared) > 0, f"{curve}: Failed to derive shared secret"
         finally:
             destroy_quietly(rs.raw, rs.sh, alice_secret)
             destroy_quietly(rs.raw, rs.sh, bob_pub)
