@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKP_SLH_DSA_SHA2_128S,
     CKP_SLH_DSA_SHA2_256F,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -137,22 +138,36 @@ class TestMLDSAKeyGeneration:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            pub_cls = read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS])[CKA_CLASS]
-            priv_cls = read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS])[CKA_CLASS]
-            assert_correct(
-                actual=pub_cls,
-                expected=CKO_PUBLIC_KEY,
+            pub_cls = attr_or_record(
+                read_attributes(rs.raw, rs.sh, pub, [CKA_CLASS]),
+                CKA_CLASS,
                 label="ML_DSA:public CKA_CLASS readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
-            assert_correct(
-                actual=priv_cls,
-                expected=CKO_PRIVATE_KEY,
+            priv_cls = attr_or_record(
+                read_attributes(rs.raw, rs.sh, priv, [CKA_CLASS]),
+                CKA_CLASS,
                 label="ML_DSA:private CKA_CLASS readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if pub_cls is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=pub_cls,
+                    expected=CKO_PUBLIC_KEY,
+                    label="ML_DSA:public CKA_CLASS readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
+            if priv_cls is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=priv_cls,
+                    expected=CKO_PRIVATE_KEY,
+                    label="ML_DSA:private CKA_CLASS readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -163,22 +178,36 @@ class TestMLDSAKeyGeneration:
         _skip_if_no(rs, "ML_DSA")
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert_correct(
-                actual=pub_kt,
-                expected=CKK_ML_DSA,
+            pub_kt = attr_or_record(
+                read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE]),
+                CKA_KEY_TYPE,
                 label="ML_DSA:public CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
-            assert_correct(
-                actual=priv_kt,
-                expected=CKK_ML_DSA,
+            priv_kt = attr_or_record(
+                read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE]),
+                CKA_KEY_TYPE,
                 label="ML_DSA:private CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if pub_kt is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=pub_kt,
+                    expected=CKK_ML_DSA,
+                    label="ML_DSA:public CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
+            if priv_kt is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=priv_kt,
+                    expected=CKK_ML_DSA,
+                    label="ML_DSA:private CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -418,22 +447,36 @@ class TestSLHDSAKeyGeneration:
             )
             raise
         try:
-            pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-            assert_correct(
-                actual=pub_kt,
-                expected=CKK_SLH_DSA,
+            pub_kt = attr_or_record(
+                read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE]),
+                CKA_KEY_TYPE,
                 label="SLH_DSA:public CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
-            assert_correct(
-                actual=priv_kt,
-                expected=CKK_SLH_DSA,
+            priv_kt = attr_or_record(
+                read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE]),
+                CKA_KEY_TYPE,
                 label="SLH_DSA:private CKA_KEY_TYPE readback",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if pub_kt is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=pub_kt,
+                    expected=CKK_SLH_DSA,
+                    label="SLH_DSA:public CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
+            if priv_kt is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=priv_kt,
+                    expected=CKK_SLH_DSA,
+                    label="SLH_DSA:private CKA_KEY_TYPE readback",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.keymgmt
@@ -101,7 +102,28 @@ class TestKeypairIDLinkage:
         try:
             pub_attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_ID])
             priv_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ID])
-            assert pub_attrs[CKA_ID] == priv_attrs[CKA_ID] == key_id
+            pub_id = attr_or_record(
+                pub_attrs,
+                CKA_ID,
+                label="RSA_keypair:CKA_ID linkage (public)",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            priv_id = attr_or_record(
+                priv_attrs,
+                CKA_ID,
+                label="RSA_keypair:CKA_ID linkage (private)",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            # Decomposed so a present sibling's correctness is never hidden by the
+            # other's absence: each independently verified equals key_id, which
+            # (when both are present) implies pub_id == priv_id == key_id exactly
+            # as the original chained comparison did.
+            if pub_id is not MISSING_ATTRIBUTE:
+                assert pub_id == key_id
+            if priv_id is not MISSING_ATTRIBUTE:
+                assert priv_id == key_id
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

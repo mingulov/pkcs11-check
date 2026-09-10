@@ -29,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_ECB,
     CKM_SHA256,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     require_operational_aes_keygen,
@@ -108,7 +109,16 @@ def test_generate_use_destroy_cycle(p11_raw_session: Any) -> None:
         # Read attributes should work
         for key in keys:
             attrs = read_attributes(rs.raw, rs.sh, key, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] is not None
+            key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
+                label="CKA_KEY_TYPE:stateful-cycle-key",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if key_type is MISSING_ATTRIBUTE:
+                continue
+            assert key_type is not None
 
         # Destroy half the keys
         for key in keys[:3]:

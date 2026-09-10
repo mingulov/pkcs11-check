@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check import classification as C  # noqa: N812 - matches project convention
 from pkcs11_check.compliance import ComplianceLevel
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
@@ -166,19 +167,36 @@ def test_rsa_non_extractable_claim_alone_makes_readable_exponent_fail(
         )
 
 
-def test_rsa_missing_policy_readback_xfails_after_exponent_probe(
+def test_rsa_missing_policy_readback_records_once_after_exponent_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    reads: list[list[int]] = []
-    with pytest.raises(XFailed, match="CKA_SENSITIVE=None.*CKA_EXTRACTABLE=True"):
-        _run_private_exponent(
+    """A missing CKA_SENSITIVE yields ONE record, not a second "missing or malformed" one.
+
+    The omission is already an emitted observation (``attr_or_record`` records it
+    as ``not_operational``/``policy``); the sibling ``classify`` now fires only for
+    a PRESENT-but-malformed value, so one provider omission is one record.  The
+    exponent probe still runs, and the omission is never rendered as ``None`` --
+    a value the provider did not return.
+    """
+    C.clear()
+    try:
+        reads: list[list[int]] = []
+        notes = _run_private_exponent(
             monkeypatch,
             sensitive=_MISSING,
             extractable=True,
             readable=True,
             read_log=reads,
         )
-    assert reads == [[CKA_SENSITIVE, CKA_EXTRACTABLE], [CKA_PRIVATE_EXPONENT]]
+        assert reads == [[CKA_SENSITIVE, CKA_EXTRACTABLE], [CKA_PRIVATE_EXPONENT]]
+        records = C.get_records()
+        assert [r.reason for r in records] == ["not_operational"]
+        assert records[0].kind == "policy"
+        assert records[0].label == "RSA private-key CKA_SENSITIVE readback"
+        assert records[0].operation == "C_GetAttributeValue"
+        assert notes and "CKA_SENSITIVE=<unavailable>" in notes[0]
+    finally:
+        C.clear()
 
 
 def test_rsa_protected_missing_exponent_is_standard(

@@ -48,6 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
@@ -344,9 +345,18 @@ def test_ecdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[s
 
         # Extract the derived key value
         attrs = read_attributes(rs.raw, rs.sh, derived_key, [CKA_VALUE])
-        shared = attrs[CKA_VALUE]
-        assert isinstance(shared, bytes)
+        shared = attr_or_record(
+            attrs,
+            CKA_VALUE,
+            label=f"ECDH:{vec_id}",
+            reason="not_operational",
+            kind="metadata",
+            inherit_mechanism=False,
+        )
         if result in ("valid", "acceptable"):
+            if shared is MISSING_ATTRIBUTE:
+                return
+            assert isinstance(shared, bytes)
             assert_correct(
                 actual=shared,
                 expected=shared_expected,
@@ -361,7 +371,10 @@ def test_ecdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[s
             # If the peer point is on the base curve, the vector's invalidity is
             # at the X.509 encoding layer the raw PKCS#11 ECDH path never sees,
             # so a correct derive is not a finding (every careful provider does
-            # this for those vectors).
+            # this for those vectors). This determination needs only that
+            # C_DeriveKey produced an object -- it does not depend on the
+            # CKA_VALUE readback above, so it still runs when that readback
+            # was unavailable.
             if _point_on_base_curve(public_point, curve) is True:
                 return
             classify(

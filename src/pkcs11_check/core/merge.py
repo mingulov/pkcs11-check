@@ -36,6 +36,7 @@ from typing import Any
 
 from pkcs11_check.core.file_runner import (
     extract_coverage_from_jsonl,
+    extract_quality_report_evidence_from_jsonl,
     extract_quality_report_records_from_jsonl,
     postprocess_jsonl_to_unified,
     write_quality_json_report,
@@ -569,6 +570,21 @@ def merge_shard_dirs(
 
     report_paths = [d / "report.jsonl" for d in shard_dirs]
     merged_report = output_dir / "report.jsonl"
+    # Classification observability is read from these per-shard raw sources -- each one
+    # declared separately (not the single concatenated `merged_report`) for two reasons:
+    # (1) a shard whose report.jsonl is missing is then a genuine missing declared source
+    # (-> "partial"/lower-bound), which reading only the concatenated file could never
+    # detect, since `_concat_jsonl` silently skips an absent shard file; (2) each path gets
+    # its own fresh marker-provenance scope (per the shared contract's "reset marker
+    # provenance at shard/session boundaries"), instead of one shard's trailing
+    # IsolatedUnitReport marker leaking into the next shard's leading records. These files
+    # are also untouched by the repair below -- `_promote_rv_traces_to_outcome_reports`
+    # only ever rewrites `merged_report` -- so this read is authoritative and pre-repair by
+    # construction; it must run independent of (and is safe to run before) that repair,
+    # which silently drops any malformed line on rewrite and would otherwise make a
+    # repaired, no-longer-authoritative stream look "complete". Pooled quality always
+    # regenerates from these raw sources -- never from summed shard quality.json counts.
+    quality_report_evidence = extract_quality_report_evidence_from_jsonl(report_paths)
     _concat_jsonl(report_paths, merged_report)
     _promote_rv_traces_to_outcome_reports(merged_report)
 
@@ -607,5 +623,6 @@ def merge_shard_dirs(
         merged,
         coverage=coverage,
         report_log_records=records,
+        quality_report_evidence=quality_report_evidence,
     )
     return merged

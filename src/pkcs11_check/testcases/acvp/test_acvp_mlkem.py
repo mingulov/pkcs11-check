@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKR_PARAMETER_SET_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp._mlkem_helpers import (
     get_mlkem_mechanism,
@@ -289,8 +290,26 @@ class TestMlKemEncapsulate:
                     # Both sides must produce the same shared secret
                     encap_attrs = read_attributes(rs.raw, rs.sh, secret_handle, [CKA_VALUE])
                     decap_attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])
-                    encap_secret = encap_attrs.get(CKA_VALUE, b"")
-                    decap_secret = decap_attrs.get(CKA_VALUE, b"")
+                    encap_secret = attr_or_record(
+                        encap_attrs,
+                        CKA_VALUE,
+                        label=f"{vec_id}: ML-KEM encapsulated shared-secret readback",
+                        reason="not_operational",
+                        inherit_mechanism=False,
+                    )
+                    if encap_secret is MISSING_ATTRIBUTE:
+                        # Cannot compare; the encap/decap oracle for this vector is
+                        # disabled, not passed. Independent cleanup still runs below.
+                        return
+                    decap_secret = attr_or_record(
+                        decap_attrs,
+                        CKA_VALUE,
+                        label=f"{vec_id}: ML-KEM decapsulated shared-secret readback",
+                        reason="not_operational",
+                        inherit_mechanism=False,
+                    )
+                    if decap_secret is MISSING_ATTRIBUTE:
+                        return
                     encap_preview = (
                         encap_secret[:16].hex() if isinstance(encap_secret, bytes) else "?"
                     )
@@ -362,7 +381,17 @@ class TestMlKemDecapsulate:
             # Validate recovered shared secret matches expected value
             if "k" in vec:
                 secret_attrs = read_attributes(rs.raw, rs.sh, decap_handle, [CKA_VALUE])
-                secret_value = secret_attrs.get(CKA_VALUE, b"")
+                secret_value = attr_or_record(
+                    secret_attrs,
+                    CKA_VALUE,
+                    label=f"{vec_id}: ML-KEM decapsulated shared-secret readback",
+                    reason="not_operational",
+                    inherit_mechanism=False,
+                )
+                if secret_value is MISSING_ATTRIBUTE:
+                    # Cannot compare against the known answer; the oracle for
+                    # this vector is disabled, not passed.
+                    return
                 assert secret_value == vec["k"], (
                     f"{vec_id}: shared secret mismatch: "
                     f"expected {vec['k'][:16].hex()}..., got {secret_value[:16].hex()}..."

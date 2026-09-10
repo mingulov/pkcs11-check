@@ -35,7 +35,7 @@ from pkcs11_check.raw.recipes import (
     verify_single,
     wrap_key,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_RSA_AES_KEY_WRAP_PARAMS,
@@ -67,6 +67,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKZ_DATA_SPECIFIED,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -315,9 +316,17 @@ class TestRSAX931KeyPairGen:
             assert priv != 0
             # Verify the key has the expected modulus size
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
-            modulus = attrs[CKA_MODULUS]
-            assert isinstance(modulus, bytes)
-            assert len(modulus) == 256  # 2048 bits = 256 bytes
+            modulus = attr_or_record(
+                attrs,
+                CKA_MODULUS,
+                label="RSA X9.31 keypair gen: CKA_MODULUS readback",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if modulus is not MISSING_ATTRIBUTE:
+                assert isinstance(modulus, bytes)
+                assert len(modulus) == 256  # 2048 bits = 256 bytes
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -456,8 +465,16 @@ class TestRSAAESKeyWrap:
         aes_key = _make_extractable_aes(rs, 128)
         try:
             attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attrs[CKA_VALUE]
-            assert isinstance(original_value, bytes)
+            original_value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="RSA-AES-KEY-WRAP AES-128: original key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if original_value is not MISSING_ATTRIBUTE:
+                assert isinstance(original_value, bytes)
 
             wrap_param = _mech_rsa_aes_key_wrap(256)
 
@@ -503,13 +520,25 @@ class TestRSAAESKeyWrap:
                     unwrapped,
                     [CKA_VALUE],
                 )
-                assert_correct(
-                    actual=unwrapped_attrs[CKA_VALUE],
-                    expected=original_value,
-                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-128 roundtrip",
-                    operation="C_UnwrapKey",
-                    mechanism="CKM_RSA_AES_KEY_WRAP",
+                unwrapped_value = attr_or_record(
+                    unwrapped_attrs,
+                    CKA_VALUE,
+                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-128 roundtrip material",
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
                 )
+                if (
+                    original_value is not MISSING_ATTRIBUTE
+                    and unwrapped_value is not MISSING_ATTRIBUTE
+                ):
+                    assert_correct(
+                        actual=unwrapped_value,
+                        expected=original_value,
+                        label="CKM_RSA_AES_KEY_WRAP:unwrap AES-128 roundtrip",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_RSA_AES_KEY_WRAP",
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -527,8 +556,16 @@ class TestRSAAESKeyWrap:
         aes_key = _make_extractable_aes(rs, 256)
         try:
             attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attrs[CKA_VALUE]
-            assert isinstance(original_value, bytes)
+            original_value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="RSA-AES-KEY-WRAP AES-256: original key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if original_value is not MISSING_ATTRIBUTE:
+                assert isinstance(original_value, bytes)
 
             wrap_param = _mech_rsa_aes_key_wrap(256)
 
@@ -571,13 +608,25 @@ class TestRSAAESKeyWrap:
                     unwrapped,
                     [CKA_VALUE],
                 )
-                assert_correct(
-                    actual=unwrapped_attrs[CKA_VALUE],
-                    expected=original_value,
-                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-256 roundtrip",
-                    operation="C_UnwrapKey",
-                    mechanism="CKM_RSA_AES_KEY_WRAP",
+                unwrapped_value = attr_or_record(
+                    unwrapped_attrs,
+                    CKA_VALUE,
+                    label="CKM_RSA_AES_KEY_WRAP:unwrap AES-256 roundtrip material",
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
                 )
+                if (
+                    original_value is not MISSING_ATTRIBUTE
+                    and unwrapped_value is not MISSING_ATTRIBUTE
+                ):
+                    assert_correct(
+                        actual=unwrapped_value,
+                        expected=original_value,
+                        label="CKM_RSA_AES_KEY_WRAP:unwrap AES-256 roundtrip",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_RSA_AES_KEY_WRAP",
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:
@@ -595,8 +644,16 @@ class TestRSAAESKeyWrap:
         aes_key = _make_extractable_aes(rs, 128)
         try:
             attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attrs[CKA_VALUE]
-            assert isinstance(original_value, bytes)
+            original_value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="RSA-AES-KEY-WRAP confidentiality: original key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if original_value is not MISSING_ATTRIBUTE:
+                assert isinstance(original_value, bytes)
 
             wrap_param = _mech_rsa_aes_key_wrap(256)
 
@@ -616,7 +673,8 @@ class TestRSAAESKeyWrap:
                 raise
 
             # The wrapped blob should not contain the raw key bytes
-            assert original_value not in wrapped
+            if original_value is not MISSING_ATTRIBUTE:
+                assert original_value not in wrapped
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -632,8 +690,16 @@ class TestRSAAESKeyWrap:
         aes_key = _make_extractable_aes(rs, 128)
         try:
             attrs = read_attributes(rs.raw, rs.sh, aes_key, [CKA_VALUE])
-            original_value = attrs[CKA_VALUE]
-            assert isinstance(original_value, bytes)
+            original_value = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="RSA-AES-KEY-WRAP tamper test: original key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if original_value is not MISSING_ATTRIBUTE:
+                assert isinstance(original_value, bytes)
 
             try:
                 wrapped = wrap_key(
@@ -678,9 +744,21 @@ class TestRSAAESKeyWrap:
                     "CKM_RSA_AES_KEY_WRAP unwrap (valid leg) not operational",
                 )
                 raise
-            good_value = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE]).get(CKA_VALUE)
+            good_attrs = read_attributes(rs.raw, rs.sh, good, [CKA_VALUE])
+            good_value = attr_or_record(
+                good_attrs,
+                CKA_VALUE,
+                label="RSA-AES-KEY-WRAP unwrap (valid leg): unwrapped key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
             destroy_quietly(rs.raw, rs.sh, good)
-            valid_accepted = good_value is not None and good_value == original_value
+            valid_accepted = (
+                original_value is not MISSING_ATTRIBUTE
+                and good_value is not MISSING_ATTRIBUTE
+                and good_value == original_value
+            )
 
             tampered = bytearray(wrapped)
             tampered[-2] ^= 0xFF
@@ -701,11 +779,33 @@ class TestRSAAESKeyWrap:
             except AssertionError as exc:
                 invalid_outcome = exc
 
-            classify_discrimination(
-                valid_accepted=valid_accepted,
-                invalid_outcome=invalid_outcome,
-                label="RSA-AES-KEY-WRAP unwrap of bit-flipped ciphertext",
-            )
+            tamper_label = "RSA-AES-KEY-WRAP unwrap of bit-flipped ciphertext"
+            if original_value is MISSING_ATTRIBUTE or good_value is MISSING_ATTRIBUTE:
+                # Missing readback evidence disables only the "was the valid leg's
+                # material correct" oracle -- the two not_operational records above
+                # already document why it is unverifiable. It must not fabricate a
+                # crypto break for a conformant provider (a clean tamper rejection),
+                # and it must not suppress a real, independently observable
+                # forgery-acceptance (no readback needed: the invalid leg either
+                # raised a clean CkrAssertionError or handed back a live handle).
+                if isinstance(invalid_outcome, CkrAssertionError):
+                    pass  # cleanly rejected -- nothing further to classify
+                elif isinstance(invalid_outcome, BaseException):
+                    raise invalid_outcome
+                else:
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label=tamper_label,
+                        summary=f"{tamper_label}: accepted the tampered/forged/confused "
+                        "input (security break)",
+                    )
+            else:
+                classify_discrimination(
+                    valid_accepted=valid_accepted,
+                    invalid_outcome=invalid_outcome,
+                    label=tamper_label,
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

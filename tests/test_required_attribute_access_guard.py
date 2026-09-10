@@ -2693,6 +2693,33 @@ def test_all_testcase_sources_are_analyzable() -> None:
     assert all(violation.path in {str(path) for path in source_files} for violation in violations)
 
 
+def test_all_testcase_sources_have_zero_attribute_access_violations() -> None:
+    """Release gate: F7 routed every provider-attribute read through the presence helper.
+
+    This is the acceptance gate, not just the analyzability check above: it asserts
+    ``violations == []`` across every testcase source, with no ``optional_defaults``
+    configured. An unconfigured gate is the stronger release claim - if a site genuinely
+    needed a reviewed default, that would show up here as a failure to investigate, not
+    something to configure away.
+    """
+    testcase_root = Path(__file__).parents[1] / "src" / "pkcs11_check" / "testcases"
+    source_files = sorted(testcase_root.rglob("*.py"))
+
+    assert source_files
+    violations = analyze_paths(source_files)
+
+    if violations:
+        details = "\n".join(
+            f"{violation.path}:{violation.line}:{violation.column}: "
+            f"{violation.code}: {violation.message}"
+            for violation in violations
+        )
+        pytest.fail(
+            f"{len(violations)} unguarded provider-attribute access violation(s) "
+            f"remain in src/pkcs11_check/testcases:\n{details}"
+        )
+
+
 def test_class_method_bodies_are_analyzed() -> None:
     source = """
 from pkcs11_check.raw.recipes import read_attributes
@@ -4929,6 +4956,7 @@ reader = reader.read_attributes
         capture_output=True,
         check=True,
         text=True,
+        encoding="utf-8",
         timeout=2,
     )
 

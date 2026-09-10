@@ -48,6 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR, load_json_cached
 
@@ -249,18 +250,18 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
                         kind="lifecycle",
                     )
                     attrs = {}
-                if CKA_VALUE not in attrs:
-                    classify(
-                        "honest_deviation",
-                        kind="lifecycle",
-                        label=f"{vec_id}: derived ML-KEM shared-key readback",
-                        summary=(
-                            "ML-KEM decapsulation succeeded but the requested "
-                            "extractable CKA_VALUE was not readable"
-                        ),
-                    )
+                shared_value = attr_or_record(
+                    attrs,
+                    CKA_VALUE,
+                    label=f"{vec_id}: derived ML-KEM shared-key readback",
+                    reason="honest_deviation",
+                    kind="lifecycle",
+                    inherit_mechanism=False,
+                )
+                if shared_value is MISSING_ATTRIBUTE:
+                    return
                 assert_correct(
-                    actual=bytes(attrs[CKA_VALUE]),
+                    actual=bytes(shared_value),
                     expected=expected_ss,
                     label=f"ML_KEM:C_DecapsulateKey KAT {vec_id}",
                     operation="C_DecapsulateKey",

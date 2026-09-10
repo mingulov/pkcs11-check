@@ -71,7 +71,11 @@ def test_missing_recovered_value_is_inconclusive_and_records_structured_omission
     assert record.reason == "not_operational"
     assert record.kind == "metadata"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_AES_KEY_WRAP"
+    # The readback is a pure C_GetAttributeValue observation; the CKM_AES_KEY_WRAP
+    # producer context lives in the label text, not in `mechanism` (see F6 fix:
+    # a readback must never be attributed to the operation that produced its input).
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     assert record.actual_ckr is None
     assert record.detail == {
         "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},

@@ -54,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_SESSION_HANDLE_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_attr_null_pointer,
@@ -278,7 +279,19 @@ class TestCreateObjectErrors:
 
         try:
             attrs = read_attributes(rs.raw, rs.sh, handle.value, [CKA_ALLOWED_MECHANISMS])
-            claimed = attrs.get(CKA_ALLOWED_MECHANISMS) == []
+            allowed_mechanisms = attr_or_record(
+                attrs,
+                CKA_ALLOWED_MECHANISMS,
+                label=(
+                    "CKA_ALLOWED_MECHANISMS empty-array enforcement readback "
+                    "for C_EncryptInit/C_Encrypt"
+                ),
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if allowed_mechanisms is MISSING_ATTRIBUTE:
+                return
+            claimed = allowed_mechanisms == []
             mech = mech_simple(CKM_AES_ECB)
             init_rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), handle.value)
             encrypted = False
@@ -414,7 +427,16 @@ class TestGetAttributeErrors:
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
             # actually readable (read_attributes omits unavailable attributes).
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
-            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            sensitive_readback = attr_or_record(
+                sens_attrs,
+                CKA_SENSITIVE,
+                label="CKA_SENSITIVE readback on a CKA_SENSITIVE=True key",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if sensitive_readback is MISSING_ATTRIBUTE:
+                return
+            claimed = sensitive_readback is True
             val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
             violated = CKA_VALUE in val_attrs
             classify_policy_enforcement(
@@ -477,7 +499,18 @@ class TestSetAttributeErrors:
             if rv != CKR_OK:
                 return  # Rejected a write to a read-only attribute -- correct.
             class_attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_CLASS])
-            if class_attrs.get(CKA_CLASS) == CKO_SECRET_KEY:
+            actual_class = attr_or_record(
+                class_attrs,
+                CKA_CLASS,
+                label="C_SetAttributeValue:read-only-class readback",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if actual_class is MISSING_ATTRIBUTE:
+                # Cannot tell whether the write took effect or was a no-op;
+                # neither the fail nor the xfail branch below is safe to claim.
+                return
+            if actual_class == CKO_SECRET_KEY:
                 # policy: claimed read-only protection on CKA_CLASS yet the write
                 # took effect -> self-contradiction.
                 fail_as(

@@ -105,6 +105,7 @@ def _attribute_refusal(exc: CkrAssertionError, label: str, *, fresh: bool = Fals
             kind="lifecycle",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             actual=exc.rv,
             summary=f"{label}: newly acquired object handle is invalid",
         )
@@ -115,6 +116,7 @@ def _attribute_refusal(exc: CkrAssertionError, label: str, *, fresh: bool = Fals
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         actual=exc.rv,
     )
 
@@ -184,6 +186,7 @@ def _rsa_public_der(n_bytes: Any, e_bytes: Any) -> bytes | None:
                     kind="metadata",
                     label=name,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{name}: malformed RSA component",
                 )
             )
@@ -194,6 +197,7 @@ def _rsa_public_der(n_bytes: Any, e_bytes: Any) -> bytes | None:
                     kind="metadata",
                     label=name,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{name}: RSA component must be odd",
                 )
             )
@@ -211,6 +215,7 @@ def _rsa_public_der(n_bytes: Any, e_bytes: Any) -> bytes | None:
             kind="metadata",
             label="RSA public components",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary="Invalid RSA modulus/exponent relationship",
         )
         raise AssertionError("classification must terminate")
@@ -226,6 +231,7 @@ def _readable_kek(value: Any, *, bootstrap: bool = False) -> bytes | None:
             kind="metadata",
             label="CKA_VALUE wrapping key",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary="Malformed AES wrapping key value",
         )
     assert isinstance(value, bytes)
@@ -923,7 +929,11 @@ def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
             value = MISSING_ATTRIBUTE
         else:
             value = attr_or_record(
-                attributes, attr, label=f"configured wrap key {name}", reason="not_operational"
+                attributes,
+                attr,
+                label=f"configured wrap key {name}",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
         if value is MISSING_ATTRIBUTE:
             observations.append(MISSING_ATTRIBUTE)
@@ -936,6 +946,7 @@ def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
                     kind="metadata",
                     label=name,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{name}: malformed integer attribute",
                 )
             )
@@ -959,6 +970,7 @@ def _build_configured_wrap_context(rs: Any, cfg: Any) -> WrapContext | None:
             kind="metadata",
             label="configured wrap key class/type",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary="CKA_CLASS contradicts CKA_KEY_TYPE",
         )
 
@@ -988,13 +1000,18 @@ def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> byt
             _attribute_refusal(exc, "configured RSA public components")
             return None
         n_bytes = attr_or_record(
-            attrs, CKA_MODULUS, label="configured RSA CKA_MODULUS", reason="not_operational"
+            attrs,
+            CKA_MODULUS,
+            label="configured RSA CKA_MODULUS",
+            reason="not_operational",
+            inherit_mechanism=False,
         )
         e_bytes = attr_or_record(
             attrs,
             CKA_PUBLIC_EXPONENT,
             label="configured RSA CKA_PUBLIC_EXPONENT",
             reason="not_operational",
+            inherit_mechanism=False,
         )
         return _rsa_public_der(n_bytes, e_bytes)
 
@@ -1002,7 +1019,11 @@ def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> byt
     try:
         id_attrs = read_attributes(rs.raw, rs.sh, priv_handle, (CKA_ID,))
         key_id = attr_or_record(
-            id_attrs, CKA_ID, label="configured RSA CKA_ID", reason="not_operational"
+            id_attrs,
+            CKA_ID,
+            label="configured RSA CKA_ID",
+            reason="not_operational",
+            inherit_mechanism=False,
         )
     except CkrAssertionError as exc:
         _attribute_refusal(exc, "configured RSA CKA_ID")
@@ -1013,6 +1034,7 @@ def _configured_rsa_pub_der(rs: Any, priv_handle: int, label: str | None) -> byt
             kind="metadata",
             label="configured RSA CKA_ID",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary="Malformed CKA_ID value",
         )
     if key_id is not MISSING_ATTRIBUTE and key_id != b"":
@@ -1107,6 +1129,7 @@ def _configured_secret_material(rs: Any, cfg: Any, handle: int, _fail: Any) -> W
                 CKA_VALUE,
                 label="configured wrapping key CKA_VALUE",
                 reason="not_operational",
+                inherit_mechanism=False,
             )
             sym_kek = _readable_kek(value)
         except CkrAssertionError as exc:
@@ -1209,12 +1232,14 @@ def _build_bootstrap_wrap_context(rs: Any, cfg: Any, owned: list[int]) -> WrapCo
                             CKA_MODULUS,
                             label="bootstrap RSA CKA_MODULUS",
                             reason="not_operational",
+                            inherit_mechanism=False,
                         )
                         e_bytes = attr_or_record(
                             attrs,
                             CKA_PUBLIC_EXPONENT,
                             label="bootstrap RSA CKA_PUBLIC_EXPONENT",
                             reason="not_operational",
+                            inherit_mechanism=False,
                         )
                         der = _rsa_public_der(n_bytes, e_bytes)
                 finally:
@@ -1275,7 +1300,11 @@ def _build_bootstrap_wrap_context(rs: Any, cfg: Any, owned: list[int]) -> WrapCo
             try:
                 kek_attrs = read_attributes(rs.raw, rs.sh, kek_handle, (CKA_VALUE,))
                 kek_value = attr_or_record(
-                    kek_attrs, CKA_VALUE, label="bootstrap AES CKA_VALUE", reason="not_operational"
+                    kek_attrs,
+                    CKA_VALUE,
+                    label="bootstrap AES CKA_VALUE",
+                    reason="not_operational",
+                    inherit_mechanism=False,
                 )
                 kek_val = _readable_kek(kek_value, bootstrap=True)
             except CkrAssertionError as exc:
@@ -1562,6 +1591,7 @@ def provision_secret_key(
                     CKA_VALUE,
                     label=f"{label}: equality oracle unavailable",
                     reason="not_operational",
+                    inherit_mechanism=False,
                 )
             if actual is not MISSING_ATTRIBUTE and actual != value:
                 classify(
