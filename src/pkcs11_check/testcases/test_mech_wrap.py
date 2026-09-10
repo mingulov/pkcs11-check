@@ -74,6 +74,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.conftest import (
     unwrap_key_for_mechanism_roundtrip,
@@ -631,8 +632,17 @@ class TestMechWrapRoundtrip:
             # Encrypt some data with the target key
             plaintext = b"\x5a\xa5\x5a\xa5" * 4  # 16 bytes, one AES block
             original_attrs = read_attributes(rs.raw, rs.sh, target_key, [CKA_VALUE])
-            original_candidate = original_attrs.get(CKA_VALUE)
-            if isinstance(original_candidate, bytes):
+            original_candidate = attr_or_record(
+                original_attrs,
+                CKA_VALUE,
+                label=f"{entry.mech_name}: wrap target CKA_VALUE readback",
+                reason="honest_deviation",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if original_candidate is not MISSING_ATTRIBUTE and isinstance(
+                original_candidate, bytes
+            ):
                 original_value = original_candidate
             ciphertext = encrypt_single(
                 rs.raw,
@@ -704,10 +714,20 @@ class TestMechWrapRoundtrip:
                     mech_param=mech_param,
                 )
                 unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped_key, [CKA_VALUE])
-                unwrapped_candidate = unwrapped_attrs.get(CKA_VALUE)
-                unwrapped_value = (
-                    unwrapped_candidate if isinstance(unwrapped_candidate, bytes) else None
+                unwrapped_candidate = attr_or_record(
+                    unwrapped_attrs,
+                    CKA_VALUE,
+                    label=f"{entry.mech_name}: unwrapped key CKA_VALUE readback",
+                    reason="honest_deviation",
+                    kind="metadata",
+                    inherit_mechanism=False,
                 )
+                if unwrapped_candidate is MISSING_ATTRIBUTE:
+                    unwrapped_value = None
+                else:
+                    unwrapped_value = (
+                        unwrapped_candidate if isinstance(unwrapped_candidate, bytes) else None
+                    )
                 diagnostic = _raw_rsa_unwrap_hint(original_value, decrypted_block, unwrapped_value)
             assert recovered == plaintext, (
                 f"{entry.mech_name}: decrypt mismatch after unwrap -- "

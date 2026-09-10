@@ -331,7 +331,7 @@ def kw_unwrap_operability(rs: Any) -> OperabilityResult:
                 label="CKM_AES_KEY_WRAP:recovered CKA_VALUE readback",
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_WRAP",
+                inherit_mechanism=False,
             )
             if recovered_value is MISSING_ATTRIBUTE:
                 return OperabilityResult(

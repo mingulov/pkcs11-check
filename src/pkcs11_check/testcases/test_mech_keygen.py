@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import classify, fail_as, get_records, raise_for_record, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.recipes import destroy_quietly, read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
@@ -30,6 +30,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_helpers import (
     gen_keypair_for_mech,
@@ -51,14 +52,24 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
     """Read CKA_LOCAL and classify clean provider refusals."""
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_LOCAL])
-        value = attrs.get(CKA_LOCAL)
-        if value is None:
-            xfail_as(
-                "not_operational",
+        before = len(get_records())
+        value = attr_or_record(
+            attrs,
+            CKA_LOCAL,
+            label=f"{label}:CKA_LOCAL",
+            reason="not_operational",
+            kind="metadata",
+        )
+        if value is MISSING_ATTRIBUTE:
+            records = get_records()
+            if len(records) > before:
+                raise_for_record(records[-1])
+            fail_as(
+                "harness_error",
                 kind="metadata",
                 label=f"{label}:CKA_LOCAL",
                 operation="C_GetAttributeValue",
-                summary=f"{label} CKA_LOCAL: provider did not return the requested attribute",
+                summary=f"{label} CKA_LOCAL: missing attribute produced no classification",
             )
         return value
     except AssertionError as exc:

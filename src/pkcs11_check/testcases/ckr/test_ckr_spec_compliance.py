@@ -60,6 +60,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
@@ -277,7 +278,16 @@ class TestCKRAttributeCompliance:
             # CKA_SENSITIVE=True back; violated = the protected CKA_VALUE is
             # actually readable (read_attributes omits unavailable attributes).
             sens_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_SENSITIVE])
-            claimed = sens_attrs.get(CKA_SENSITIVE) is True
+            sensitive_readback = attr_or_record(
+                sens_attrs,
+                CKA_SENSITIVE,
+                label="CKA_SENSITIVE readback on a CKA_SENSITIVE=True key",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if sensitive_readback is MISSING_ATTRIBUTE:
+                return
+            claimed = sensitive_readback is True
             val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
             violated = CKA_VALUE in val_attrs
             classify_policy_enforcement(

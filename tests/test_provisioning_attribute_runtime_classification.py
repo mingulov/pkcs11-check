@@ -719,9 +719,8 @@ def test_next_item_is_clean():
     )
     result = pytester.runpytest_subprocess("--report-log=report.jsonl", "-q")
     result.assert_outcomes(failed=1, passed=1)
-    reports = [
-        json.loads(line) for line in (pytester.path / "report.jsonl").read_text().splitlines()
-    ]
+    report_path = pytester.path / "report.jsonl"
+    reports = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
     call = next(r for r in reports if r.get("when") == "call" and r.get("outcome") == "failed")
     records = dict(call["user_properties"])["pkcs11_classification"]
     crashes = [r for r in records if r["reason"] == "crash"]

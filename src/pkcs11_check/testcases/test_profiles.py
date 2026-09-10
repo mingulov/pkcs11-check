@@ -24,6 +24,7 @@ from pkcs11_check.raw.types_std import (
     CKP_EXTENDED_PROVIDER,
     CKP_VENDOR_DEFINED,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import reject_or_classify
 
 # Known standard profile IDs
@@ -81,7 +82,15 @@ class TestProfileObjects:
                     prof,
                     [CKA_PROFILE_ID],
                 )
-                pid = attrs[CKA_PROFILE_ID]
+                pid = attr_or_record(
+                    attrs,
+                    CKA_PROFILE_ID,
+                    label="CKO_PROFILE:CKA_PROFILE_ID readback",
+                    reason="not_operational",
+                    inherit_mechanism=False,
+                )
+                if pid is MISSING_ATTRIBUTE:
+                    continue
                 assert pid is not None
             except CkrAssertionError as exc:
                 reject_or_classify(
@@ -108,7 +117,15 @@ class TestProfileObjects:
                     kind="metadata",
                 )
                 raise
-            raw_val = attrs[CKA_PROFILE_ID]
+            raw_val = attr_or_record(
+                attrs,
+                CKA_PROFILE_ID,
+                label="CKO_PROFILE:CKA_PROFILE_ID readback",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if raw_val is MISSING_ATTRIBUTE:
+                continue
             pid = (
                 int.from_bytes(raw_val, byteorder=sys.byteorder)
                 if isinstance(raw_val, bytes)
@@ -127,6 +144,7 @@ class TestProfileObjects:
         if not profiles:
             pytest.skip("No CKO_PROFILE objects present")
         pids: set[int] = set()
+        pid_omitted = False
         for prof in profiles:
             try:
                 attrs = read_attributes(rs.raw, rs.sh, prof, [CKA_PROFILE_ID])
@@ -138,14 +156,27 @@ class TestProfileObjects:
                     kind="metadata",
                 )
                 raise
-            raw_val = attrs[CKA_PROFILE_ID]
+            raw_val = attr_or_record(
+                attrs,
+                CKA_PROFILE_ID,
+                label="CKO_PROFILE:CKA_PROFILE_ID readback",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if raw_val is MISSING_ATTRIBUTE:
+                pid_omitted = True
+                continue
             pids.add(
                 int.from_bytes(raw_val, byteorder=sys.byteorder)
                 if isinstance(raw_val, bytes)
                 else int(raw_val)
             )
         standard = {CKP_BASELINE_PROVIDER, CKP_EXTENDED_PROVIDER}
-        if not pids & standard:
+        # A CKA_PROFILE_ID omission disables only this "not advertised" conclusion --
+        # with incomplete evidence we cannot tell whether the module simply does not
+        # advertise Baseline/Extended, or advertises it via the very profile object(s)
+        # whose id we could not read. The omission itself is already recorded above.
+        if not pids & standard and not pid_omitted:
             classify(
                 "honest_deviation",
                 kind="metadata",
@@ -160,8 +191,25 @@ class TestProfileObjects:
 def _read_profile_ids(rs: Any) -> set[int]:
     """Enumerate CKO_PROFILE objects and return the set of their CKA_PROFILE_IDs.
 
-    Returns an empty set only when no profile objects exist. Read and
-    enumeration failures remain visible findings.
+    Read and enumeration failures remain visible findings. A profile object whose
+    CKA_PROFILE_ID is omitted by the provider records a structured
+    not_operational finding (via ``attr_or_record``) and is excluded from
+    the returned set -- its identity cannot be determined, so it does not
+    silently count toward "no profiles present". An empty result therefore does
+    NOT by itself mean no profile objects exist -- see ``_read_profile_ids_detailed``
+    for a variant that distinguishes the two cases for skip-message honesty.
+    """
+    pids, _any_omitted = _read_profile_ids_detailed(rs)
+    return pids
+
+
+def _read_profile_ids_detailed(rs: Any) -> tuple[set[int], bool]:
+    """Like ``_read_profile_ids``, but also report whether any CKA_PROFILE_ID was
+    omitted by the provider.
+
+    The second element lets a caller distinguish "no CKO_PROFILE objects exist" from
+    "CKO_PROFILE objects exist but their id could not be read" -- reporting the
+    latter as "no objects present" would invent a finding from missing evidence.
     """
     try:
         handles = find_objects(rs.raw, rs.sh, template_from_dict({CKA_CLASS: CKO_PROFILE}))
@@ -170,6 +218,7 @@ def _read_profile_ids(rs: Any) -> set[int]:
         raise
 
     pids: set[int] = set()
+    any_omitted = False
     for h in handles:
         try:
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_PROFILE_ID])
@@ -181,13 +230,33 @@ def _read_profile_ids(rs: Any) -> set[int]:
                 kind="metadata",
             )
             raise
-        assert CKA_PROFILE_ID in attrs, "CKO_PROFILE object is missing CKA_PROFILE_ID"
-        raw_val = attrs[CKA_PROFILE_ID]
+        raw_val = attr_or_record(
+            attrs,
+            CKA_PROFILE_ID,
+            label="CKO_PROFILE:CKA_PROFILE_ID readback",
+            reason="not_operational",
+            inherit_mechanism=False,
+        )
+        if raw_val is MISSING_ATTRIBUTE:
+            any_omitted = True
+            continue
         if isinstance(raw_val, bytes):
             pids.add(int.from_bytes(raw_val, byteorder=sys.byteorder))
         else:
             pids.add(int(raw_val))
-    return pids
+    return pids, any_omitted
+
+
+def _skip_reason_for_no_profile_ids(any_omitted: bool) -> str:
+    """A truthful skip message for the "no readable CKA_PROFILE_ID" path.
+
+    Objects may well have been present -- their id attribute simply wasn't
+    readable -- so the message must not claim "no CKO_PROFILE objects present"
+    unless that is actually what happened.
+    """
+    if any_omitted:
+        return "CKO_PROFILE objects present but CKA_PROFILE_ID unreadable on all of them"
+    return "No CKO_PROFILE objects present"
 
 
 class TestProfileBehavioralConformance:
@@ -211,9 +280,9 @@ class TestProfileBehavioralConformance:
         )
 
         rs = p11_raw_session
-        pids = _read_profile_ids(rs)
+        pids, any_omitted = _read_profile_ids_detailed(rs)
         if not pids:
-            pytest.skip("No CKO_PROFILE objects present")
+            pytest.skip(_skip_reason_for_no_profile_ids(any_omitted))
 
         available = set(rs.raw.available_function_names())
         failures: list[str] = []
@@ -269,9 +338,9 @@ class TestProfileBehavioralConformance:
         from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 
         rs = p11_raw_session
-        pids = _read_profile_ids(rs)
+        pids, any_omitted = _read_profile_ids_detailed(rs)
         if not pids:
-            pytest.skip("No CKO_PROFILE objects present")
+            pytest.skip(_skip_reason_for_no_profile_ids(any_omitted))
 
         failures: list[str] = []
         tested_any = False
@@ -330,9 +399,9 @@ class TestProfileBehavioralConformance:
         )
 
         rs = p11_raw_session
-        pids = _read_profile_ids(rs)
+        pids, any_omitted = _read_profile_ids_detailed(rs)
         if not pids:
-            pytest.skip("No CKO_PROFILE objects present")
+            pytest.skip(_skip_reason_for_no_profile_ids(any_omitted))
 
         tested_any = False
         # We only check classes that are *required to be present* per the

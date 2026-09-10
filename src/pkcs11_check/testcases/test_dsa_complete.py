@@ -81,6 +81,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._signature_policy import (
     signature_rejected_or_xfail,
     xfail_if_op_not_operational,
@@ -210,37 +211,72 @@ def _generate_dsa_pq_params(raw: Any, sh: int, mechanism: int) -> tuple[int, Pac
     return dp_handle.value, mech
 
 
-def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[bytes, bytes]:
-    """Assert a FIPS 186-4 p/q-generation result contains the expected attributes."""
+def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[bytes, bytes] | None:
+    """Assert a FIPS 186-4 p/q-generation result contains the expected attributes.
+
+    Returns (prime, subprime), or None if the provider omitted CKA_PRIME or
+    CKA_SUBPRIME on readback (recorded via attr_or_record()) so the generated
+    p/q cannot be used for dependent work.
+    """
     attrs = read_attributes(
         raw,
         sh,
         dp_handle,
         [CKA_PRIME, CKA_SUBPRIME, CKA_PRIME_BITS, CKA_SUBPRIME_BITS],
     )
-    prime = attrs[CKA_PRIME]
-    subprime = attrs[CKA_SUBPRIME]
-    prime_bits = attrs[CKA_PRIME_BITS]
-    subprime_bits = attrs[CKA_SUBPRIME_BITS]
+    prime = attr_or_record(
+        attrs,
+        CKA_PRIME,
+        label="DSA parameter gen: CKA_PRIME readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    subprime = attr_or_record(
+        attrs,
+        CKA_SUBPRIME,
+        label="DSA parameter gen: CKA_SUBPRIME readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    prime_bits = attr_or_record(
+        attrs,
+        CKA_PRIME_BITS,
+        label="DSA parameter gen: CKA_PRIME_BITS readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    subprime_bits = attr_or_record(
+        attrs,
+        CKA_SUBPRIME_BITS,
+        label="DSA parameter gen: CKA_SUBPRIME_BITS readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+
+    if prime_bits is not MISSING_ATTRIBUTE:
+        assert isinstance(prime_bits, int)
+        assert_correct(
+            actual=prime_bits,
+            expected=2048,
+            label="DSA parameter gen: CKA_PRIME_BITS readback",
+            operation="C_GetAttributeValue",
+            kind="metadata",
+        )
+    if subprime_bits is not MISSING_ATTRIBUTE:
+        assert isinstance(subprime_bits, int)
+        assert_correct(
+            actual=subprime_bits,
+            expected=256,
+            label="DSA parameter gen: CKA_SUBPRIME_BITS readback",
+            operation="C_GetAttributeValue",
+            kind="metadata",
+        )
+
+    if prime is MISSING_ATTRIBUTE or subprime is MISSING_ATTRIBUTE:
+        return None
 
     assert isinstance(prime, bytes)
     assert isinstance(subprime, bytes)
-    assert isinstance(prime_bits, int)
-    assert isinstance(subprime_bits, int)
-    assert_correct(
-        actual=prime_bits,
-        expected=2048,
-        label="DSA parameter gen: CKA_PRIME_BITS readback",
-        operation="C_GetAttributeValue",
-        kind="metadata",
-    )
-    assert_correct(
-        actual=subprime_bits,
-        expected=256,
-        label="DSA parameter gen: CKA_SUBPRIME_BITS readback",
-        operation="C_GetAttributeValue",
-        kind="metadata",
-    )
     assert len(prime) > 0
     assert len(subprime) > 0
     return prime, subprime
@@ -307,11 +343,13 @@ def _gen_dsa_keypair_from_params(
     raw: Any,
     sh: int,
     dp_handle: int,
-) -> tuple[int, int]:
+) -> tuple[int, int] | None:
     """Generate a DSA keypair from domain parameters object.
 
     Reads PRIME, SUBPRIME, BASE from dp_handle, then calls C_GenerateKeyPair.
-    Returns (pub_handle, priv_handle).
+    Returns (pub_handle, priv_handle), or None if the provider omitted a
+    required domain-parameter attribute on readback (recorded via
+    attr_or_record()) so keypair generation could not be attempted.
     """
     dp_attrs = read_attributes(
         raw,
@@ -319,9 +357,29 @@ def _gen_dsa_keypair_from_params(
         dp_handle,
         [CKA_PRIME, CKA_SUBPRIME, CKA_BASE],
     )
-    prime = dp_attrs[CKA_PRIME]
-    subprime = dp_attrs[CKA_SUBPRIME]
-    base = dp_attrs[CKA_BASE]
+    prime = attr_or_record(
+        dp_attrs,
+        CKA_PRIME,
+        label="DSA keypair from domain params: CKA_PRIME readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    subprime = attr_or_record(
+        dp_attrs,
+        CKA_SUBPRIME,
+        label="DSA keypair from domain params: CKA_SUBPRIME readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    base = attr_or_record(
+        dp_attrs,
+        CKA_BASE,
+        label="DSA keypair from domain params: CKA_BASE readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    if prime is MISSING_ATTRIBUTE or subprime is MISSING_ATTRIBUTE or base is MISSING_ATTRIBUTE:
+        return None
 
     assert isinstance(prime, bytes)
     assert isinstance(subprime, bytes)
@@ -357,10 +415,12 @@ def _gen_dsa_keypair_from_params(
 
 def _generate_dsa_keypair(
     rs: Any,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int] | None:
     """Generate DSA domain parameters and keypair.
 
-    Returns (dp_handle, public_key_handle, private_key_handle).
+    Returns (dp_handle, public_key_handle, private_key_handle), or None if
+    keypair generation could not be attempted because the provider omitted a
+    required domain-parameter attribute on readback.
     Skips the test if DSA param/key generation is not supported.
     """
     if not rs.has_mechanism("DSA_PARAMETER_GEN"):
@@ -373,10 +433,14 @@ def _generate_dsa_keypair(
         destroy_quietly(rs.raw, rs.sh, dp_handle)
         pytest.skip("CKM_DSA_KEY_PAIR_GEN not supported for DSA setup")
     try:
-        pub, priv = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp_handle)
+        result = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp_handle)
     except AssertionError as e:
         destroy_quietly(rs.raw, rs.sh, dp_handle)
         _xfail_if_dsa_keypair_reject(e)
+    if result is None:
+        destroy_quietly(rs.raw, rs.sh, dp_handle)
+        return None
+    pub, priv = result
     return dp_handle, pub, priv
 
 
@@ -451,7 +515,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             digest = hashlib.sha1(b"raw DSA test data", usedforsecurity=False).digest()  # noqa: S324
             assert len(digest) == 20
@@ -472,7 +539,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             digest = hashlib.sha1(b"original data", usedforsecurity=False).digest()  # noqa: S324
             wrong_digest = hashlib.sha1(b"tampered data", usedforsecurity=False).digest()  # noqa: S324
@@ -491,7 +561,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             digest = hashlib.sha1(b"wrong signature length", usedforsecurity=False).digest()  # noqa: S324
             sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
@@ -518,7 +591,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             digest = hashlib.sha1(b"overlong signature length", usedforsecurity=False).digest()  # noqa: S324
             sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
@@ -545,7 +621,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             digest = hashlib.sha1(b"nonce test", usedforsecurity=False).digest()  # noqa: S324
 
@@ -572,7 +651,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             # 7 bytes is too short for any valid subprime size
             bad_digest = b"\x00" * 7
@@ -614,7 +696,10 @@ class TestDSARaw:
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             digest = hashlib.sha1(  # noqa: S324
                 b"raw DSA verify length baseline",
@@ -656,7 +741,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             chunks = (
                 b"DSA prehash multipart ",
@@ -696,7 +784,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             data = b"DSA prehash wrong signature length"
             sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
@@ -759,7 +850,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             data = b"DSA prehash sign/verify roundtrip test data"
             sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
@@ -784,7 +878,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             data = b"original prehash data"
             sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
@@ -816,7 +913,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             data = b"signature tamper test"
             sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
@@ -862,7 +962,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             data = b""
             sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
@@ -887,7 +990,10 @@ class TestDSAPrehash:
         if not rs.has_mechanism(mech_name_str):
             pytest.skip(f"CKM_{mech_name_str} not supported")
 
-        dp, pub, priv = _generate_dsa_keypair(rs)
+        keypair = _generate_dsa_keypair(rs)
+        if keypair is None:
+            return
+        dp, pub, priv = keypair
         try:
             data = b"A" * 10240
             sig = _dsa_sign_or_xfail(rs, priv, mechanism, data, f"CKM_{mech_name_str}")
@@ -1006,8 +1112,11 @@ class TestDSAParameterGen:
             _skip_or_xfail_dsa_param_gen_reject(e)
 
         try:
-            prime, subprime = _assert_generated_dsa_pq_attrs(rs.raw, rs.sh, dp)
+            pq = _assert_generated_dsa_pq_attrs(rs.raw, rs.sh, dp)
             seed = _dsa_returned_seed(mech)
+            if pq is None:
+                return
+            prime, subprime = pq
             try:
                 base_dp = _generate_dsa_base_from_pq(
                     rs.raw,
@@ -1022,9 +1131,16 @@ class TestDSAParameterGen:
 
             try:
                 attrs = read_attributes(rs.raw, rs.sh, base_dp, [CKA_BASE])
-                base = attrs[CKA_BASE]
-                assert isinstance(base, bytes)
-                assert len(base) > 0
+                base = attr_or_record(
+                    attrs,
+                    CKA_BASE,
+                    label="DSA FIPS G gen: CKA_BASE readback",
+                    reason="not_operational",
+                    inherit_mechanism=False,
+                )
+                if base is not MISSING_ATTRIBUTE:
+                    assert isinstance(base, bytes)
+                    assert len(base) > 0
             finally:
                 destroy_quietly(rs.raw, rs.sh, base_dp)
         finally:
@@ -1045,9 +1161,12 @@ class TestDSAParameterGen:
             if not rs.has_mechanism("DSA_KEY_PAIR_GEN"):
                 pytest.skip("CKM_DSA_KEY_PAIR_GEN not supported")
             try:
-                pub, priv = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp)
+                keypair = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp)
             except AssertionError as e:
                 _xfail_if_dsa_keypair_reject(e)
+            if keypair is None:
+                return
+            pub, priv = keypair
 
             try:
                 assert pub != 0
@@ -1079,9 +1198,12 @@ class TestDSAParameterGen:
             if not rs.has_mechanism("DSA_KEY_PAIR_GEN"):
                 pytest.skip("CKM_DSA_KEY_PAIR_GEN not supported")
             try:
-                pub, priv = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp)
+                keypair = _gen_dsa_keypair_from_params(rs.raw, rs.sh, dp)
             except AssertionError as e:
                 _xfail_if_dsa_keypair_reject(e)
+            if keypair is None:
+                return
+            pub, priv = keypair
 
             try:
                 if has_raw:

@@ -21,6 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.search
@@ -119,11 +120,25 @@ class TestObjectSearch:
             tmpl = template(attr_ulong(CKA_CLASS, CKO_SECRET_KEY))
             found = find_objects(rs.raw, rs.sh, tmpl)
             found_labels = set()
+            label_omitted = False
             for h in found:
                 a = read_attributes(rs.raw, rs.sh, h, [CKA_LABEL])
-                found_labels.add(a[CKA_LABEL])
-            for i in range(50):
-                assert f"bulk-{i:03d}" in found_labels
+                label = attr_or_record(
+                    a,
+                    CKA_LABEL,
+                    label="C_FindObjects:CKA_LABEL readback",
+                    inherit_mechanism=False,
+                )
+                if label is MISSING_ATTRIBUTE:
+                    label_omitted = True
+                    continue
+                found_labels.add(label)
+            # A missing CKA_LABEL readback disables only the completeness oracle below
+            # (it cannot know which of the 50 requested labels the omitted handle held) --
+            # the omission itself is already recorded above via attr_or_record.
+            if not label_omitted:
+                for i in range(50):
+                    assert f"bulk-{i:03d}" in found_labels
         finally:
             for k in keys:
                 destroy_quietly(rs.raw, rs.sh, k)

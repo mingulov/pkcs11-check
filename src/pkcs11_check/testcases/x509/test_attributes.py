@@ -29,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._so_login import so_session
 from pkcs11_check.testcases.conftest import assert_correct, reject_or_classify
 from pkcs11_check.testcases.x509.conftest import (
@@ -133,8 +134,15 @@ class TestCertificateAttributes:
         try:
             # CKA_VALUE SHOULD match original DER
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
-            val = attrs[CKA_VALUE]
-            if val != b"Hello world!":
+            val = attr_or_record(
+                attrs,
+                CKA_VALUE,
+                label="X509:CKA_VALUE matches imported DER",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if val is not MISSING_ATTRIBUTE and val != b"Hello world!":
                 assert_correct(
                     actual=val,
                     expected=der,
@@ -153,13 +161,22 @@ class TestCertificateAttributes:
                     summary="certificate type readback refused",
                 )
             else:
-                assert_correct(
-                    actual=ct.get(CKA_CERTIFICATE_TYPE),
-                    expected=CKC_X_509,
+                ct_value = attr_or_record(
+                    ct,
+                    CKA_CERTIFICATE_TYPE,
                     label="X509:CKA_CERTIFICATE_TYPE must be CKC_X_509",
-                    operation="C_GetAttributeValue",
+                    reason="not_operational",
                     kind="metadata",
+                    inherit_mechanism=False,
                 )
+                if ct_value is not MISSING_ATTRIBUTE:
+                    assert_correct(
+                        actual=ct_value,
+                        expected=CKC_X_509,
+                        label="X509:CKA_CERTIFICATE_TYPE must be CKC_X_509",
+                        operation="C_GetAttributeValue",
+                        kind="metadata",
+                    )
 
             # Check extraction of other fields
             for attr_id in [
@@ -169,7 +186,15 @@ class TestCertificateAttributes:
             ]:
                 try:
                     a = read_attributes(rs.raw, rs.sh, h, [attr_id])
-                    if not a[attr_id]:
+                    a_value = attr_or_record(
+                        a,
+                        attr_id,
+                        label=f"X509:optional derived attribute 0x{attr_id:X} readback",
+                        reason="honest_deviation",
+                        kind="metadata",
+                        inherit_mechanism=False,
+                    )
+                    if a_value is not MISSING_ATTRIBUTE and not a_value:
                         from pkcs11_check.compliance import (
                             ComplianceLevel,
                             note,
@@ -300,8 +325,15 @@ class TestTrustedCertificateImportSO:
                         label="CKA_TRUSTED readback after SO-session trusted import",
                         summary="CKA_TRUSTED readback after SO import rejected",
                     )
-                val = attrs.get(CKA_TRUSTED)
-                if val is not True:
+                val = attr_or_record(
+                    attrs,
+                    CKA_TRUSTED,
+                    label="CKA_TRUSTED readback after SO-session trusted import",
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                )
+                if val is not MISSING_ATTRIBUTE and val is not True:
                     fail_as(
                         "self_contradiction",
                         kind="lifecycle",

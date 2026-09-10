@@ -92,6 +92,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import (
@@ -209,6 +210,17 @@ def _gen_cve_rsa_keypair_or_xfail(rs: Any, bits: int) -> tuple[int, int]:
             "RSA_PKCS_KEY_PAIR_GEN advertised but CVE setup keypair generation is not operational",
         )
     raise
+
+
+def _readback_repr(raw: Any) -> str:
+    """Render an attribute readback for a summary without inventing a value.
+
+    A provider omission is NOT ``None``: rendering the sentinel as ``None`` would
+    put a value the provider never returned into the record.
+    """
+    if raw is MISSING_ATTRIBUTE:
+        return "<unavailable>"
+    return repr(raw)
 
 
 def _abort_encrypt_operation(raw: Any, session: int) -> None:
@@ -357,8 +369,32 @@ class TestTookanUnwrapAttrs:
                     unwrapped,
                     [CKA_EXTRACTABLE, CKA_SENSITIVE],
                 )
-                extractable_after = attrs.get(CKA_EXTRACTABLE)
-                sensitive_after = attrs.get(CKA_SENSITIVE)
+                extractable_after_raw = attr_or_record(
+                    attrs,
+                    CKA_EXTRACTABLE,
+                    label="Tookan unwrapped key CKA_EXTRACTABLE readback",
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                extractable_after: Any
+                if extractable_after_raw is MISSING_ATTRIBUTE:
+                    extractable_after = None
+                else:
+                    extractable_after = extractable_after_raw
+                sensitive_after_raw = attr_or_record(
+                    attrs,
+                    CKA_SENSITIVE,
+                    label="Tookan unwrapped key CKA_SENSITIVE readback",
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                sensitive_after: Any
+                if sensitive_after_raw is MISSING_ATTRIBUTE:
+                    sensitive_after = None
+                else:
+                    sensitive_after = sensitive_after_raw
                 if extractable_after is True or sensitive_after is False:
                     classify(
                         "self_contradiction",
@@ -368,21 +404,29 @@ class TestTookanUnwrapAttrs:
                         summary=(
                             "SECURITY: C_UnwrapKey returned a result contradicting its "
                             "requested protection template: "
-                            f"CKA_EXTRACTABLE={extractable_after!r}, "
-                            f"CKA_SENSITIVE={sensitive_after!r}"
+                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}, "
+                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}"
                         ),
                     )
-                if type(extractable_after) is not bool or type(sensitive_after) is not bool:
+                # Absence is already an emitted observation (the attr_or_record()
+                # calls above); only a PRESENT-but-malformed value is recorded again
+                # here, so one provider omission yields exactly one record.
+                if (
+                    extractable_after_raw is not MISSING_ATTRIBUTE
+                    and type(extractable_after) is not bool
+                ) or (
+                    sensitive_after_raw is not MISSING_ATTRIBUTE
+                    and type(sensitive_after) is not bool
+                ):
                     classify(
                         "honest_deviation",
                         kind="metadata",
                         label="Tookan unwrapped key protection readback",
                         operation="C_GetAttributeValue",
                         summary=(
-                            "Tookan C_UnwrapKey result protection readback is missing or "
-                            "malformed: "
-                            f"CKA_EXTRACTABLE={extractable_after!r}, "
-                            f"CKA_SENSITIVE={sensitive_after!r}"
+                            "Tookan C_UnwrapKey result protection readback is malformed: "
+                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}, "
+                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}"
                         ),
                     )
             finally:
@@ -430,6 +474,22 @@ class TestTookanUnwrapAttrs:
                 rs.sh,
                 target,
                 [CKA_SENSITIVE, CKA_EXTRACTABLE],
+            )
+            source_sensitive_raw = attr_or_record(
+                source_attrs,
+                CKA_SENSITIVE,
+                label="Tookan unbound unwrap source key CKA_SENSITIVE readback",
+                reason="honest_deviation",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            source_extractable_raw = attr_or_record(
+                source_attrs,
+                CKA_EXTRACTABLE,
+                label="Tookan unbound unwrap source key CKA_EXTRACTABLE readback",
+                reason="honest_deviation",
+                kind="metadata",
+                inherit_mechanism=False,
             )
             try:
                 wrapped = wrap_key_recipe(
@@ -486,14 +546,58 @@ class TestTookanUnwrapAttrs:
                     unwrapped,
                     [CKA_SENSITIVE, CKA_EXTRACTABLE, CKA_VALUE],
                 )
-                sensitive_after = attrs.get(CKA_SENSITIVE)
-                extractable_after = attrs.get(CKA_EXTRACTABLE)
-                value = attrs.get(CKA_VALUE)
-                policy_readback_valid = (
-                    type(sensitive_after) is bool and type(extractable_after) is bool
+                sensitive_after_raw = attr_or_record(
+                    attrs,
+                    CKA_SENSITIVE,
+                    label="Tookan unbound unwrap result CKA_SENSITIVE readback",
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                sensitive_after: Any
+                if sensitive_after_raw is MISSING_ATTRIBUTE:
+                    sensitive_after = None
+                else:
+                    sensitive_after = sensitive_after_raw
+                extractable_after_raw = attr_or_record(
+                    attrs,
+                    CKA_EXTRACTABLE,
+                    label="Tookan unbound unwrap result CKA_EXTRACTABLE readback",
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                extractable_after: Any
+                if extractable_after_raw is MISSING_ATTRIBUTE:
+                    extractable_after = None
+                else:
+                    extractable_after = extractable_after_raw
+                # CKA_VALUE is the protected secret this oracle probes for exposure;
+                # a correctly-protected key omits it, which is the secure default,
+                # not a deviation -- so this reads the mapping directly under a
+                # membership guard rather than recording an absence via
+                # attr_or_record().
+                value: Any
+                if CKA_VALUE in attrs:
+                    value = attrs[CKA_VALUE]
+                else:
+                    value = None
+                # Absence is already an emitted observation (the attr_or_record()
+                # calls above); only a PRESENT-but-malformed value is recorded again
+                # below, so one provider omission yields exactly one record.
+                policy_readback_malformed = (
+                    sensitive_after_raw is not MISSING_ATTRIBUTE
+                    and type(sensitive_after) is not bool
+                ) or (
+                    extractable_after_raw is not MISSING_ATTRIBUTE
+                    and type(extractable_after) is not bool
                 )
                 value_readable = type(value) is bytes and bool(value)
                 protected = sensitive_after is True or extractable_after is False
+                # Deliberately NOT gated on the readback being complete: an
+                # observed protective attribute plus readable CKA_VALUE is a hard
+                # self-contradiction on its own, and a missing sibling must never
+                # mask it.
                 if value_readable and protected:
                     classify(
                         "self_contradiction",
@@ -503,11 +607,12 @@ class TestTookanUnwrapAttrs:
                         summary=(
                             "SECURITY: unbound C_UnwrapKey result contains nonempty "
                             "CKA_VALUE while the same result key reports protective "
-                            f"attributes (CKA_SENSITIVE={sensitive_after!r}, "
-                            f"CKA_EXTRACTABLE={extractable_after!r})"
+                            "attributes (CKA_SENSITIVE="
+                            f"{_readback_repr(sensitive_after_raw)}, "
+                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)})"
                         ),
                     )
-                if not policy_readback_valid:
+                if policy_readback_malformed:
                     classify(
                         "honest_deviation",
                         kind="metadata",
@@ -515,13 +620,22 @@ class TestTookanUnwrapAttrs:
                         operation="C_GetAttributeValue",
                         summary=(
                             "Tookan unbound unwrap result-key protection readback is "
-                            "missing or malformed: "
-                            f"CKA_SENSITIVE={sensitive_after!r}, "
-                            f"CKA_EXTRACTABLE={extractable_after!r}"
+                            "malformed: "
+                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}, "
+                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}"
                         ),
                     )
 
-                if sensitive_after is not False or extractable_after is not True:
+                # The template-honouring oracle is evaluated only over the halves the
+                # module actually returned: an omitted attribute disables its own half
+                # (already recorded above) without suppressing a deviation observed on
+                # the other half, and without recording the same omission twice.
+                template_deviation_observed = (
+                    sensitive_after_raw is not MISSING_ATTRIBUTE and sensitive_after is not False
+                ) or (
+                    extractable_after_raw is not MISSING_ATTRIBUTE and extractable_after is not True
+                )
+                if template_deviation_observed:
                     classify(
                         "honest_deviation",
                         kind="metadata",
@@ -530,8 +644,8 @@ class TestTookanUnwrapAttrs:
                         summary=(
                             "Tookan unbound C_UnwrapKey result did not honor the requested "
                             "output template (CKA_SENSITIVE=False, CKA_EXTRACTABLE=True): "
-                            f"CKA_SENSITIVE={sensitive_after!r}, "
-                            f"CKA_EXTRACTABLE={extractable_after!r}"
+                            f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}, "
+                            f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}"
                         ),
                     )
 
@@ -541,11 +655,12 @@ class TestTookanUnwrapAttrs:
                     note(
                         "Tookan/Cryptosense unbound wrap/unwrap posture: source key "
                         "reported "
-                        f"CKA_SENSITIVE={source_attrs.get(CKA_SENSITIVE)!r}, "
-                        f"CKA_EXTRACTABLE={source_attrs.get(CKA_EXTRACTABLE)!r}; the "
+                        f"CKA_SENSITIVE={_readback_repr(source_sensitive_raw)}, "
+                        f"CKA_EXTRACTABLE={_readback_repr(source_extractable_raw)}; the "
                         "caller requested CKA_SENSITIVE=False and CKA_EXTRACTABLE=True, "
-                        f"yielding CKA_SENSITIVE={sensitive_after!r}, "
-                        f"CKA_EXTRACTABLE={extractable_after!r}, and CKA_VALUE readable="
+                        f"yielding CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}, "
+                        f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}, "
+                        "and CKA_VALUE readable="
                         f"{value_readable!r}. This is a posture observation, not a "
                         "provider contradiction: the caller requested a sensitivity "
                         "downgrade on an unbound C_UnwrapKey output. Only "
@@ -642,7 +757,16 @@ class TestROCAFingerprint:
         pub, priv = _gen_cve_rsa_keypair_or_xfail(rs, 2048)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS])
-            modulus = attrs[CKA_MODULUS]
+            modulus = attr_or_record(
+                attrs,
+                CKA_MODULUS,
+                label="RSA public key CKA_MODULUS readback (ROCA fingerprint check)",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if modulus is MISSING_ATTRIBUTE:
+                return
             assert isinstance(modulus, bytes)
             n = int.from_bytes(modulus, "big")
 

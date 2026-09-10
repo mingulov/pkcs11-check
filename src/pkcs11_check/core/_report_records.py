@@ -84,6 +84,24 @@ from pkcs11_check.core.crash_codes import (
 from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.quality_audit import build_quality_audit
 from pkcs11_check.core.report_log import (
+    F11_CONTRACT_VERSION as _F11_CONTRACT_VERSION,
+)
+from pkcs11_check.core.report_log import (
+    F11_COUNT_SEMANTICS as _F11_COUNT_SEMANTICS,
+)
+from pkcs11_check.core.report_log import (
+    ClassificationOccurrence as ClassificationOccurrence,
+)
+from pkcs11_check.core.report_log import (
+    QualityReportEvidence as QualityReportEvidence,
+)
+from pkcs11_check.core.report_log import (
+    UnclassifiedEvidence as UnclassifiedEvidence,
+)
+from pkcs11_check.core.report_log import (
+    iter_classification_occurrences as _iter_classification_occurrences,
+)
+from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
 from pkcs11_check.core.report_log import (
@@ -699,19 +717,201 @@ def extract_quality_report_records_from_jsonl(jsonl_path: Path) -> list[dict[str
     return records
 
 
+# Bounded sample size for QualityReportEvidence.unclassified.samples. Bounding the
+# sample list keeps this extractor's memory footprint small even on a chatty run; the
+# authoritative counts (occurrences, unique_testcases, phase/target/attempt counts,
+# per_file_counts) are always computed from the full stream and are never derived from
+# len(samples) or otherwise capped by it.
+_MAX_UNCLASSIFIED_SAMPLES = 20
+
+_UNCLASSIFIED_REASON = "unclassified"
+
+
+def extract_quality_report_evidence_from_jsonl(
+    jsonl_paths: Sequence[Path],
+) -> QualityReportEvidence:
+    """Extract raw ``unclassified``-classification occurrence evidence from JSONL sources.
+
+    ``jsonl_paths`` is the full list of declared authoritative raw report-log sources (one
+    per shard/isolated-run artifact the caller expects to exist) -- NOT the six re-exporting
+    modules' single merged ``report.jsonl`` path, though a single-element list is exactly
+    that common case. A path that does not exist on disk counts as a missing source and
+    contributes to a ``"partial"`` status with lower-bound counts; this function never
+    raises for a missing or unreadable source.
+
+    This reads the immutable, unmodified raw stream directly (via
+    :func:`iter_classification_occurrences` over :func:`iter_report_log_records`), entirely
+    separate from :func:`extract_quality_report_records_from_jsonl`'s repaired/projected
+    stream -- the two must never be conflated (see the shared F11 contract). Marker
+    provenance (``IsolatedUnitReport`` target/attempt) is reset for every source in
+    ``jsonl_paths`` (a fresh :func:`iter_classification_occurrences` call per source) and at
+    every ``SessionStart`` within a source, so an unmarked shard never inherits a prior
+    shard's marker.
+
+    Returns a :class:`QualityReportEvidence` whose ``unclassified`` block is ``None`` --
+    never a zero-valued block -- when no declared source could be inspected at all
+    (``status == "unavailable"``, including when ``jsonl_paths`` is empty).
+    """
+    malformed_records = 0
+    malformed_markers = 0
+    malformed_properties = 0
+    malformed_entries = 0
+
+    def _on_invalid() -> None:
+        nonlocal malformed_records
+        malformed_records += 1
+
+    def _on_malformed_marker() -> None:
+        nonlocal malformed_markers
+        malformed_markers += 1
+
+    def _on_malformed_property() -> None:
+        nonlocal malformed_properties
+        malformed_properties += 1
+
+    def _on_malformed_entry() -> None:
+        nonlocal malformed_entries
+        malformed_entries += 1
+
+    expected_sources = len(jsonl_paths)
+    readable_sources = 0
+    missing_sources = 0
+
+    occurrences_total = 0
+    canonical_nodeids: set[str] = set()
+    exact_duplicates = 0
+    phase_counts: Counter[str] = Counter()
+    target_counts: Counter[str] = Counter()
+    attempt_counts: Counter[int] = Counter()
+    unattributed = 0
+    per_file_counts: Counter[str] = Counter()
+    samples: list[ClassificationOccurrence] = []
+    seen_duplicate_keys: set[tuple[str, int, str, str, str]] = set()
+
+    for source_index, path in enumerate(jsonl_paths):
+        if not path.is_file():
+            missing_sources += 1
+            continue
+        readable_sources += 1
+        raw_records = _iter_report_log_records(path, on_invalid=_on_invalid)
+        for occurrence in _iter_classification_occurrences(
+            raw_records,
+            source_index=source_index,
+            reason_filter=_UNCLASSIFIED_REASON,
+            on_malformed_marker=_on_malformed_marker,
+            on_malformed_property=_on_malformed_property,
+            on_malformed_entry=_on_malformed_entry,
+        ):
+            occurrences_total += 1
+            canonical_nodeids.add(occurrence.canonical_nodeid)
+            phase_counts[occurrence.phase] += 1
+            per_file_counts[occurrence.canonical_nodeid.split("::", 1)[0]] += 1
+            if occurrence.target is not None and occurrence.attempt is not None:
+                target_counts[occurrence.target] += 1
+                attempt_counts[occurrence.attempt] += 1
+                dup_key = (
+                    occurrence.target,
+                    occurrence.attempt,
+                    occurrence.nodeid,
+                    occurrence.phase,
+                    json.dumps(occurrence.classification, sort_keys=True, separators=(",", ":")),
+                )
+                if dup_key in seen_duplicate_keys:
+                    exact_duplicates += 1
+                else:
+                    seen_duplicate_keys.add(dup_key)
+            else:
+                unattributed += 1
+            if len(samples) < _MAX_UNCLASSIFIED_SAMPLES:
+                samples.append(occurrence)
+
+    malformed_total = (
+        malformed_records + malformed_markers + malformed_properties + malformed_entries
+    )
+
+    if readable_sources == 0:
+        status_reasons = (
+            ("no declared raw source was inspectable",)
+            if expected_sources
+            else ("no raw source declared",)
+        )
+        return QualityReportEvidence(
+            contract_version=_F11_CONTRACT_VERSION,
+            status="unavailable",
+            status_reasons=status_reasons,
+            expected_sources=expected_sources,
+            readable_sources=readable_sources,
+            missing_sources=missing_sources,
+            malformed_records=malformed_records,
+            malformed_markers=malformed_markers,
+            malformed_properties=malformed_properties,
+            malformed_entries=malformed_entries,
+            count_semantics=_F11_COUNT_SEMANTICS,
+            unclassified=None,
+        )
+
+    lower_bound = missing_sources > 0 or malformed_total > 0
+    status_reasons_list: list[str] = []
+    if missing_sources:
+        status_reasons_list.append(f"missing raw source(s): {missing_sources}")
+    if malformed_records:
+        status_reasons_list.append(f"malformed JSON/object record(s): {malformed_records}")
+    if malformed_markers:
+        status_reasons_list.append(f"malformed isolation marker(s): {malformed_markers}")
+    if malformed_properties:
+        status_reasons_list.append(
+            f"malformed classification propert(y/ies): {malformed_properties}"
+        )
+    if malformed_entries:
+        status_reasons_list.append(f"malformed classification entr(y/ies): {malformed_entries}")
+
+    return QualityReportEvidence(
+        contract_version=_F11_CONTRACT_VERSION,
+        status="partial" if lower_bound else "complete",
+        status_reasons=tuple(status_reasons_list),
+        expected_sources=expected_sources,
+        readable_sources=readable_sources,
+        missing_sources=missing_sources,
+        malformed_records=malformed_records,
+        malformed_markers=malformed_markers,
+        malformed_properties=malformed_properties,
+        malformed_entries=malformed_entries,
+        count_semantics=_F11_COUNT_SEMANTICS,
+        unclassified=UnclassifiedEvidence(
+            occurrences=occurrences_total,
+            lower_bound=lower_bound,
+            unique_testcases=len(canonical_nodeids),
+            exact_duplicate_occurrences=exact_duplicates,
+            phase_counts=dict(phase_counts),
+            target_counts=dict(target_counts),
+            attempt_counts=dict(attempt_counts),
+            unattributed_occurrences=unattributed,
+            per_file_counts=dict(per_file_counts),
+            samples=tuple(samples),
+        ),
+    )
+
+
 def write_quality_json_report(
     path: Path,
     results: Mapping[str, Any],
     *,
     coverage: Mapping[str, Any] | None = None,
     report_log_records: Iterable[Mapping[str, Any]] | None = None,
+    quality_report_evidence: QualityReportEvidence | None = None,
 ) -> None:
-    """Write the quality audit artifact."""
+    """Write the quality audit artifact.
+
+    ``quality_report_evidence`` is passed straight through to
+    :func:`build_quality_audit` -- see its docstring. Plumbing only: this function does not
+    compute or interpret it.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_quality_audit(
         results=results,
         coverage=coverage,
         report_log_records=report_log_records,
+        quality_report_evidence=quality_report_evidence,
     )
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

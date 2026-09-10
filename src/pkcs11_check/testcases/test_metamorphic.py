@@ -50,6 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_FUNCTION_NOT_SUPPORTED,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     assert_correct,
@@ -200,13 +201,21 @@ class TestRoundTripInvariants:
             )
             try:
                 unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
-                assert_correct(
-                    actual=unwrapped_attrs[CKA_VALUE],
-                    expected=key_bytes,
+                value = attr_or_record(
+                    unwrapped_attrs,
+                    CKA_VALUE,
                     label="AES_KEY_WRAP:wrap/unwrap preserves key material",
-                    operation="C_UnwrapKey",
-                    mechanism="CKM_AES_KEY_WRAP",
+                    reason="not_operational",
+                    inherit_mechanism=False,
                 )
+                if value is not MISSING_ATTRIBUTE:
+                    assert_correct(
+                        actual=value,
+                        expected=key_bytes,
+                        label="AES_KEY_WRAP:wrap/unwrap preserves key material",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                    )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped)
         finally:

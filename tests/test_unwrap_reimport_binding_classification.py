@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check import classification as C  # noqa: N812 - matches project convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
@@ -334,10 +335,7 @@ def test_default_strip_definitive_protection_claim_fails(
         )
 
 
-@pytest.mark.parametrize(
-    ("sensitive", "extractable"),
-    [(None, True), (False, None), ("false", True)],
-)
+@pytest.mark.parametrize(("sensitive", "extractable"), [("false", True)])
 def test_default_strip_malformed_protection_readback_xfails(
     monkeypatch: pytest.MonkeyPatch,
     sensitive: object,
@@ -349,6 +347,35 @@ def test_default_strip_malformed_protection_readback_xfails(
             sensitive=sensitive,
             extractable=extractable,
         )
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable", "expected_label"),
+    [
+        (None, True, "Default-strip unwrap result CKA_SENSITIVE readback"),
+        (False, None, "Default-strip unwrap result CKA_EXTRACTABLE readback"),
+    ],
+)
+def test_default_strip_absent_protection_readback_records_once(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: object,
+    extractable: object,
+    expected_label: str,
+) -> None:
+    """One omission, one record: absence no longer ALSO fires the malformed classify."""
+    C.clear()
+    try:
+        _run_default_strip_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+        records = C.get_records()
+        assert [r.label for r in records] == [expected_label]
+        assert records[0].reason == "not_operational"
+        assert records[0].kind == "policy"
+    finally:
+        C.clear()
 
 
 @pytest.mark.parametrize(
