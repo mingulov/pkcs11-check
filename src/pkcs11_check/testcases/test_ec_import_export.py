@@ -115,6 +115,7 @@ def _record_attribute_shape(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         summary=(
             f"{label}: expected a non-empty bytes value, got "
             f"{type(value).__name__ if not isinstance(value, bytes) else 'empty bytes'}"
@@ -142,6 +143,7 @@ def _read_export_attributes(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             actual=exc.rv,
             summary=f"{label}: cannot read EC export attributes: {exc}",
             detail={
@@ -156,12 +158,14 @@ def _read_export_attributes(
         CKA_EC_POINT,
         label=f"{label}:CKA_EC_POINT",
         reason="not_operational",
+        inherit_mechanism=False,
     )
     params = attr_or_record(
         attrs,
         CKA_EC_PARAMS,
         label=f"{label}:CKA_EC_PARAMS",
         reason="not_operational",
+        inherit_mechanism=False,
     )
     records = C.get_records()[before:]
     _record_attribute_shape(
@@ -208,24 +212,24 @@ def _read_point_attribute(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             actual=exc.rv,
             summary=f"{label}: cannot read CKA_EC_POINT: {exc}",
             detail=_attribute_detail(CKA_EC_POINT, curve),
         )
         return MISSING_ATTRIBUTE, C.get_records()[before:]
-    if CKA_EC_POINT not in attrs:
-        C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            actual=None,
-            mechanism=None,
-            summary=f"{label}: attribute unavailable",
-            detail=_attribute_detail(CKA_EC_POINT, curve),
-        )
-        return MISSING_ATTRIBUTE, C.get_records()[before:]
-    value = attrs[CKA_EC_POINT]
+    value = attr_or_record(
+        attrs,
+        CKA_EC_POINT,
+        label=label,
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    if value is MISSING_ATTRIBUTE:
+        record = C.get_records()[-1]
+        if record.detail is not None:
+            record.detail.update(_attribute_detail(CKA_EC_POINT, curve))
+        return value, C.get_records()[before:]
     _record_attribute_shape(value, attr=CKA_EC_POINT, curve=curve, label=label, strict=strict)
     return value, C.get_records()[before:]
 
@@ -250,24 +254,24 @@ def _read_params_attribute(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             actual=exc.rv,
             summary=f"{label}: cannot read CKA_EC_PARAMS: {exc}",
             detail=_attribute_detail(CKA_EC_PARAMS, curve),
         )
         return MISSING_ATTRIBUTE, C.get_records()[before:]
-    if CKA_EC_PARAMS not in attrs:
-        C.record_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            actual=None,
-            mechanism=None,
-            summary=f"{label}: attribute unavailable",
-            detail=_attribute_detail(CKA_EC_PARAMS, curve),
-        )
-        return MISSING_ATTRIBUTE, C.get_records()[before:]
-    value = attrs[CKA_EC_PARAMS]
+    value = attr_or_record(
+        attrs,
+        CKA_EC_PARAMS,
+        label=label,
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    if value is MISSING_ATTRIBUTE:
+        record = C.get_records()[-1]
+        if record.detail is not None:
+            record.detail.update(_attribute_detail(CKA_EC_PARAMS, curve))
+        return value, C.get_records()[before:]
     _record_attribute_shape(value, attr=CKA_EC_PARAMS, curve=curve, label=label, strict=strict)
     return value, C.get_records()[before:]
 
@@ -292,6 +296,7 @@ def _decode_point(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: cannot decode CKA_EC_POINT: {exc}",
                 detail=_attribute_detail(CKA_EC_POINT, curve),
             ),
@@ -304,6 +309,7 @@ def _decode_point(
                 kind="crypto",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: provider returned an invalid CKA_EC_POINT: {exc}",
                 detail=_attribute_detail(CKA_EC_POINT, curve),
             ),
@@ -324,6 +330,7 @@ def _decode_point(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             spec_ref=_EC_POINT_SPEC_REF,
             summary=(
                 f"{label}: CKA_EC_POINT uses raw uncompressed SEC1; "
@@ -561,6 +568,7 @@ class TestECPointExport:
                             kind="crypto",
                             label="EC point uniqueness",
                             operation="C_GetAttributeValue",
+                            inherit_mechanism=False,
                             summary=(
                                 "EC point uniqueness: two keypairs returned the same public point"
                             ),

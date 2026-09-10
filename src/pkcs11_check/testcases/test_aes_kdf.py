@@ -63,6 +63,7 @@ def _read_derived_value(
         label=label,
         reason="not_operational",
         kind="metadata",
+        inherit_mechanism=False,
     )
 
 
@@ -88,6 +89,7 @@ def _derived_value_shape_record(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         summary=f"{label}: provider returned a derived CKA_VALUE with the wrong shape",
         detail={
             "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},

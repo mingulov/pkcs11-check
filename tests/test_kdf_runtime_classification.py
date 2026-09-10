@@ -14,6 +14,7 @@ from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.types_std import CKA_EC_POINT, CKA_VALUE, CKM_SHA3_224_KEY_DERIVE
 from pkcs11_check.testcases import _ec_export, test_kdf
 from pkcs11_check.testcases._ec_export import ConventionalECPoint
+from tests._attribute_access_guard import analyze_file
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +165,43 @@ def test_ecdh_shared_secret_reads_both_missing_outputs_before_gating(
     assert destroyed == [11, 21, 12, 22, 101, 102]
     assert len(C.get_records()) == 2
     assert all(record.reason == "not_operational" for record in C.get_records())
+
+
+def test_ecdh_shared_missing_outputs_drop_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    _read_handles, _destroyed = _configure_ecdh_runtime(
+        monkeypatch,
+        lambda _handle: {},
+        keypairs=((11, 21), (12, 22)),
+    )
+
+    test_kdf.TestECDHDerive().test_ecdh_shared_secret_agreement(_session())
+
+    records = C.get_records()
+    assert len(records) == 2
+    assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
+
+
+def test_ecdh_shared_malformed_outputs_drop_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    _read_handles, _destroyed = _configure_ecdh_runtime(
+        monkeypatch,
+        lambda _handle: {CKA_VALUE: "malformed"},
+        keypairs=((11, 21), (12, 22)),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="non-empty bytes"):
+        test_kdf.TestECDHDerive().test_ecdh_shared_secret_agreement(_session())
+
+    records = C.get_records()
+    assert len(records) == 2
+    assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
 
 
 def test_ecdh_keypair_independence_cleans_up_when_second_generation_raises(
@@ -663,6 +701,24 @@ def test_sha3_missing_derived_value_records_and_cleans_up(
     assert [record.reason for record in C.get_records()] == ["not_operational"]
 
 
+def test_sha3_missing_derived_value_drops_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    monkeypatch.setattr(test_kdf, "_import_generic_secret", lambda *_a, **_k: 31)
+    monkeypatch.setattr(test_kdf, "derive_key", lambda *_a, **_k: 32)
+    monkeypatch.setattr(test_kdf, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a: None)
+
+    test_kdf.TestSHA3ShakeKeyDerive().test_derive_produces_key(
+        _session(), "SHA3_224_KEY_DERIVE", int(CKM_SHA3_224_KEY_DERIVE)
+    )
+
+    record = C.get_records()[0]
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
 @pytest.mark.parametrize("value", [None, b"short"])
 def test_sha3_present_invalid_output_remains_a_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -731,6 +787,26 @@ def test_sha3_deterministic_validates_each_present_16_byte_output(
         "producer_operation": "C_DeriveKey",
         "producer_mechanism": "CKM_SHA3_224_KEY_DERIVE",
     }
+
+
+def test_sha3_malformed_outputs_drop_stale_active_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    _read_handles, _destroyed = _configure_sha3_runtime(
+        monkeypatch,
+        lambda _handle: {CKA_VALUE: "malformed"},
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="16-byte bytes"):
+        test_kdf.TestSHA3ShakeKeyDerive().test_derive_deterministic(
+            _session(), "SHA3_224_KEY_DERIVE", int(CKM_SHA3_224_KEY_DERIVE)
+        )
+
+    records = C.get_records()
+    assert len(records) == 2
+    assert all(record.mechanism is None for record in records)
+    assert all(record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue" for record in records)
 
 
 @pytest.mark.parametrize("missing_handle", [34, 35], ids=["first-missing", "second-missing"])
@@ -901,3 +977,7 @@ def test_ecdh_extract_off_curve_point_is_hard_failure(
         test_kdf.TestECDHDerive()._extract_ec_point(_session(), 44)
 
     assert [record.reason for record in C.get_records()] == ["wrong_result"]
+
+
+def test_kdf_source_analyzer_is_clean() -> None:
+    assert analyze_file("src/pkcs11_check/testcases/test_kdf.py") == []
