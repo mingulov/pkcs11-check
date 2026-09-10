@@ -228,6 +228,7 @@ def read_conventional_ec_point_or_xfail(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=exc.rv,
                 summary=f"{label}: cannot read CKA_EC_POINT: {exc}",
                 detail={
@@ -245,6 +246,7 @@ def read_conventional_ec_point_or_xfail(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: CKA_EC_POINT attribute unavailable",
             detail={
                 "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
@@ -258,6 +260,7 @@ def read_conventional_ec_point_or_xfail(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: CKA_EC_POINT is missing or not bytes: {ec_point!r}",
             detail={
                 "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
@@ -273,6 +276,7 @@ def read_conventional_ec_point_or_xfail(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: cannot decode CKA_EC_POINT: {exc}",
             detail={
                 "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
@@ -285,6 +289,7 @@ def read_conventional_ec_point_or_xfail(
             kind="crypto",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: provider returned an off-curve CKA_EC_POINT: {exc}",
             detail={
                 "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},

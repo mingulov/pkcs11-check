@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     ec_public_key_binding_defect,
@@ -180,9 +181,20 @@ class TestCurveOidConfusion:
         pub_handle, priv_handle = gen_ec_keypair_or_xfail(rs, ref_curve)
         try:
             attrs = read_attributes(rs.raw, rs.sh, pub_handle, [int(CKA_EC_POINT)])
-            valid_point: bytes = bytes(attrs[int(CKA_EC_POINT)])
+            point_or_missing = attr_or_record(
+                attrs,
+                int(CKA_EC_POINT),
+                label=f"reference EC keypair for EC_PARAMS OID confusion probe ({label})",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub_handle)
             destroy_quietly(rs.raw, rs.sh, priv_handle)
+
+        if point_or_missing is MISSING_ATTRIBUTE:
+            return
+        valid_point: bytes = bytes(point_or_missing)
 
         _probe_malformed_ec_params(rs, malformed_params, valid_point, label)

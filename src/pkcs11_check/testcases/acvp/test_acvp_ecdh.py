@@ -57,6 +57,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._ec_export import (
     InvalidProviderECPointError,
     ProviderECPointEncodingError,
@@ -381,7 +382,18 @@ def test_acvp_ecdh_shared_secret(
 
         # Read the derived key's value
         attrs = read_attributes(rs.raw, rs.sh, derived_key, [CKA_VALUE])
-        shared_secret = cast(bytes, attrs.get(CKA_VALUE, b""))
+        shared_secret_raw = attr_or_record(
+            attrs,
+            CKA_VALUE,
+            label=f"ECDH:C_DeriveKey KAT {vec_id} shared-secret readback",
+            reason="not_operational",
+            inherit_mechanism=False,
+        )
+        if shared_secret_raw is MISSING_ATTRIBUTE:
+            # Cannot compare against the known answer; the oracle for this
+            # vector is disabled, not passed.
+            return
+        shared_secret = cast(bytes, shared_secret_raw)
 
         # Compare to expected (may need coordinate extraction for some modules)
         expected = vec["expected_shared"]
@@ -547,7 +559,18 @@ class TestEcdhKeyAgreement:
             # Read Alice's shared secret. Any provider error here must retain its
             # C_GetAttributeValue evidence; it is not an ECDH derive rejection.
             alice_attrs = read_attributes(rs.raw, rs.sh, alice_secret, [CKA_VALUE])
-            alice_shared = cast(bytes, alice_attrs.get(CKA_VALUE, b""))
+            alice_shared_raw = attr_or_record(
+                alice_attrs,
+                CKA_VALUE,
+                label=f"Curve {curve} ECDH derived shared-secret readback",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if alice_shared_raw is MISSING_ATTRIBUTE:
+                # Cannot assess the derived secret; the oracle below is
+                # disabled, not passed. Independent cleanup still runs below.
+                return
+            alice_shared = cast(bytes, alice_shared_raw)
 
             assert len(alice_shared) > 0, f"{curve}: Failed to derive shared secret"
         finally:

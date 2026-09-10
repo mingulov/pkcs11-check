@@ -49,6 +49,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._provisioning import provision_ec_private_key
 from pkcs11_check.testcases.conftest import (
@@ -341,18 +342,16 @@ def test_xdh(p11_module_session: Any, p11_config: Any, vec_id: str, vec: dict[st
             )
 
         attrs = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-        if CKA_VALUE not in attrs:
-            classify(
-                "not_operational",
-                label=vec_id,
-                summary=(
-                    f"X25519/X448 derived key value unavailable for {vec_id}; "
-                    "the result cannot be verified"
-                ),
-                source=vec.get("_source"),
-                vector_id=vec.get("_vector_id"),
-            )
-        shared = attrs[CKA_VALUE]
+        shared = attr_or_record(
+            attrs,
+            CKA_VALUE,
+            label=vec_id,
+            reason="not_operational",
+            kind="metadata",
+            inherit_mechanism=False,
+        )
+        if shared is MISSING_ATTRIBUTE:
+            return
         assert isinstance(shared, bytes)
     finally:
         if derived is not None:

@@ -57,6 +57,7 @@ def _rsa_int_attr(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             detail={"attribute": {"name": _attr_name(attr), "id": int(attr)}},
             summary=f"{label}: missing RSA {kind} attribute {_attr_name(attr)}",
         )

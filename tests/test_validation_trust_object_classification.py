@@ -9,6 +9,7 @@ import pytest
 from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
+from pkcs11_check.compliance import clear_notes, get_notes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_ISSUER,
@@ -32,8 +33,10 @@ def _session() -> SimpleNamespace:
 @pytest.fixture(autouse=True)
 def _clear_classifications() -> None:
     C.clear()
+    clear_notes()
     yield
     C.clear()
+    clear_notes()
 
 
 @pytest.mark.parametrize(
@@ -221,8 +224,33 @@ def test_missing_required_validation_metadata_records_and_continues(
 
 
 def test_absent_trust_usage_uses_table_25_unknown_default_without_record() -> None:
+    """The Table 25 absent-default is the spec-defined case, not a deviation from
+    it: applying it must NEVER emit a classification record (that would manufacture
+    a finding against a conformant provider)."""
     present, value = trust._trust_usage_value_or_unknown({}, CKA_TRUST_SERVER_AUTH)
 
     assert present is False
     assert value == CKT_TRUST_UNKNOWN
     assert C.get_records() == []
+
+
+def test_absent_trust_usage_still_emits_a_compliance_note() -> None:
+    """The classification-free Table 25 default must not silently drop the
+    observation either: the omitted attribute is surfaced via a non-gating
+    compliance note so a report can still distinguish a provider that returns
+    trust usages from one that returns none."""
+    present, value = trust._trust_usage_value_or_unknown({}, CKA_TRUST_SERVER_AUTH)
+
+    assert present is False
+    assert value == CKT_TRUST_UNKNOWN
+    notes = get_notes()
+    assert len(notes) == 1
+    assert "CKA_TRUST_SERVER_AUTH" in notes[0].description
+    assert C.get_records() == []
+
+
+def test_trust_usage_value_or_unknown_rejects_non_trust_attribute() -> None:
+    """The Table 25 absent-default is bounded to the CKA_TRUST_* usage-attribute
+    family; it must never silently apply to an unrelated attribute id."""
+    with pytest.raises(ValueError, match="CKA_TRUST_"):
+        trust._trust_usage_value_or_unknown({}, CKA_ISSUER)

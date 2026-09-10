@@ -59,6 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_768,
     CKR_OK,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEYGEN, assert_ckr
 from pkcs11_check.testcases.ckr._malformed_attrs import (
@@ -124,22 +125,38 @@ class TestGenerateKeyErrors:
                     summary="C_GenerateKey(NULL, 0) returned CKR_OK without a key handle",
                 )
             attrs = read_attributes(rs.raw, rs.sh, key.value, [CKA_CLASS, CKA_KEY_TYPE])
-            assert_correct(
-                actual=attrs[CKA_CLASS],
-                expected=CKO_SECRET_KEY,
+            actual_class = attr_or_record(
+                attrs,
+                CKA_CLASS,
                 label=f"{name}:generate-key-null-template:CKA_CLASS",
-                operation="C_GenerateKey",
-                mechanism=f"CKM_{name}",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
-            assert_correct(
-                actual=attrs[CKA_KEY_TYPE],
-                expected=expected_key_type,
+            if actual_class is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=actual_class,
+                    expected=CKO_SECRET_KEY,
+                    label=f"{name}:generate-key-null-template:CKA_CLASS",
+                    operation="C_GenerateKey",
+                    mechanism=f"CKM_{name}",
+                    kind="metadata",
+                )
+            actual_key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
                 label=f"{name}:generate-key-null-template:CKA_KEY_TYPE",
-                operation="C_GenerateKey",
-                mechanism=f"CKM_{name}",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if actual_key_type is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=actual_key_type,
+                    expected=expected_key_type,
+                    label=f"{name}:generate-key-null-template:CKA_KEY_TYPE",
+                    operation="C_GenerateKey",
+                    mechanism=f"CKM_{name}",
+                    kind="metadata",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key.value)
 

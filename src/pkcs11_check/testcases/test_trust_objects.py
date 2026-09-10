@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.pack import attr_ulong, template
 from pkcs11_check.raw.recipes import find_objects, read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError
@@ -44,17 +46,61 @@ _KNOWN_TRUST_VALUES = {
     CKT_TRUST_MUST_VERIFY_TRUST,
 }
 
+# The CKA_TRUST_* usage-attribute family (PKCS#11 v3.2 Table 25) this module reads.
+# Bounds the Table-25-footnote-3 absent-default below to *only* these attributes --
+# an explicit membership guard, not a file/provider/path allowlist -- so the default
+# can never be misapplied to an unrelated attribute id.
+_CKA_TRUST_USAGE_ATTRS = frozenset(
+    {
+        CKA_TRUST_SERVER_AUTH,
+        CKA_TRUST_CLIENT_AUTH,
+        CKA_TRUST_CODE_SIGNING,
+        CKA_TRUST_EMAIL_PROTECTION,
+    }
+)
+
 
 def _trust_usage_value_or_unknown(attrs: Mapping[int, Any], attr_id: int) -> tuple[bool, Any]:
     """Return an optional trust usage value with Table 25's absent default.
 
     PKCS#11 v3.2 Table 25 footnote 3 treats an absent ``CKA_TRUST_XXX`` as
-    ``CKT_TRUST_UNKNOWN``.  Preserve the presence bit so an actual unknown
-    value remains distinct from the spec-defined absent case.
+    ``CKT_TRUST_UNKNOWN`` -- this IS the spec-defined case, not a deviation from
+    it: v3.2 defines seven ``CKA_TRUST_*`` usages and no ``CKO_TRUST`` object sets
+    all seven, so each is optional-with-default (the provider omits the key on
+    ``CKR_ATTRIBUTE_TYPE_INVALID``/``CKR_ATTRIBUTE_SENSITIVE``, which is the
+    conformant answer for an object that simply does not carry that usage). A
+    membership guard (not ``attr_or_record()``) is used deliberately: recording
+    this as a *classification* would manufacture a finding against a conformant
+    provider -- unlike ``CKA_ISSUER``/``CKA_SERIAL_NUMBER`` elsewhere in this file,
+    which ARE required for ``CKO_TRUST`` and so DO get recorded (and classified)
+    on absence.
+
+    The omission is still a real, non-gating cross-provider signal worth keeping
+    (one provider advertising four usages versus zero is a genuine observable
+    difference), so it is logged via ``compliance.note()`` -- the project's
+    channel for a conformant-but-notable difference -- rather than dropped
+    silently. Preserve the presence bit so an actual on-the-wire
+    ``CKT_TRUST_UNKNOWN`` remains distinct from the spec-defined absent case.
+
+    ``attr_id`` MUST be one of ``_CKA_TRUST_USAGE_ATTRS`` -- the spec default this
+    function applies is defined only for that trust-usage-attribute family, never
+    for an arbitrary attribute.
     """
-    if attr_id not in attrs:
-        return False, CKT_TRUST_UNKNOWN
-    return True, attrs[attr_id]
+    if attr_id not in _CKA_TRUST_USAGE_ATTRS:
+        raise ValueError(
+            "_trust_usage_value_or_unknown is bounded to the CKA_TRUST_* usage-attribute "
+            f"family (Table 25); got attribute id 0x{attr_id:08X}"
+        )
+    if attr_id in attrs:
+        return True, attrs[attr_id]
+    attr_name = ATTR_NAMES.get(attr_id, f"0x{attr_id:08X}")
+    note(
+        f"CKO_TRUST object omits {attr_name} (PKCS#11 v3.2 Table 25 footnote 3: an "
+        "absent trust usage attribute defaults to CKT_TRUST_UNKNOWN)",
+        ComplianceLevel.STANDARD,
+        reference="PKCS#11 v3.2 Table 25 footnote 3",
+    )
+    return False, CKT_TRUST_UNKNOWN
 
 
 def _find_trust_objects(raw: Any, sh: int) -> list[int]:

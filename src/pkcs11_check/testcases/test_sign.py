@@ -59,6 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     gen_ec_keypair_or_xfail,
@@ -425,12 +426,39 @@ class TestDSASignature:
                 param_obj.value,
                 [CKA_PRIME, CKA_SUBPRIME, CKA_BASE],
             )
+            prime = attr_or_record(
+                params,
+                CKA_PRIME,
+                label="CKA_PRIME:DSA-domain-parameters",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            subprime = attr_or_record(
+                params,
+                CKA_SUBPRIME,
+                label="CKA_SUBPRIME:DSA-domain-parameters",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            base = attr_or_record(
+                params,
+                CKA_BASE,
+                label="CKA_BASE:DSA-domain-parameters",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if (
+                prime is MISSING_ATTRIBUTE
+                or subprime is MISSING_ATTRIBUTE
+                or base is MISSING_ATTRIBUTE
+            ):
+                return
 
             # Step 3: Generate keypair with extracted domain parameters
             pub_tmpl = template(
-                attr_bytes(CKA_PRIME, params[CKA_PRIME]),
-                attr_bytes(CKA_SUBPRIME, params[CKA_SUBPRIME]),
-                attr_bytes(CKA_BASE, params[CKA_BASE]),
+                attr_bytes(CKA_PRIME, prime),
+                attr_bytes(CKA_SUBPRIME, subprime),
+                attr_bytes(CKA_BASE, base),
             )
             priv_tmpl = template()
             kp_mech = mech_simple(CKM_DSA_KEY_PAIR_GEN)

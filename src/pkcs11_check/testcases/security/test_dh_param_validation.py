@@ -70,6 +70,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = pytest.mark.security
@@ -282,8 +283,19 @@ class TestDHDomainParameterValidation:
                 ),
             )
 
-        base_back = pub_attrs.get(CKA_BASE)
-        if isinstance(base_back, bytes) and int.from_bytes(base_back, "big") != 0:
+        base_back = attr_or_record(
+            pub_attrs,
+            CKA_BASE,
+            label="CKM_DH_PKCS_KEY_PAIR_GEN base=0 readback: CKA_BASE",
+            reason="not_operational",
+            kind="metadata",
+            inherit_mechanism=False,
+        )
+        if (
+            base_back is not MISSING_ATTRIBUTE
+            and isinstance(base_back, bytes)
+            and int.from_bytes(base_back, "big") != 0
+        ):
             fail_as(
                 "self_contradiction",
                 kind="crypto",
@@ -293,7 +305,16 @@ class TestDHDomainParameterValidation:
                 ),
             )
 
-        peer_value = pub_attrs.get(CKA_VALUE)
+        peer_value = attr_or_record(
+            pub_attrs,
+            CKA_VALUE,
+            label="CKM_DH_PKCS_KEY_PAIR_GEN base=0 readback: CKA_VALUE",
+            reason="not_operational",
+            kind="metadata",
+            inherit_mechanism=False,
+        )
+        if peer_value is MISSING_ATTRIBUTE:
+            return
         if not isinstance(peer_value, bytes):
             fail_as(
                 "self_contradiction",

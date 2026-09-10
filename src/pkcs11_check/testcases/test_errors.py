@@ -68,6 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -537,8 +538,24 @@ class TestKeyLifecycle:
                 key,
                 [CKA_KEY_TYPE, CKA_ENCRYPT],
             )
-            assert attrs[CKA_KEY_TYPE] == CKK_AES
-            assert attrs[CKA_ENCRYPT] in (True, False)
+            key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
+                label="CKA_KEY_TYPE:key-attribute-access",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if key_type is not MISSING_ATTRIBUTE:
+                assert key_type == CKK_AES
+            encrypt_flag = attr_or_record(
+                attrs,
+                CKA_ENCRYPT,
+                label="CKA_ENCRYPT:key-attribute-access",
+                reason="honest_deviation",
+                inherit_mechanism=False,
+            )
+            if encrypt_flag is not MISSING_ATTRIBUTE:
+                assert encrypt_flag in (True, False)
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
