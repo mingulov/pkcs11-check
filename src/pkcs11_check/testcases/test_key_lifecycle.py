@@ -67,6 +67,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     gen_rsa_keypair_or_xfail,
     require_operational_aes_keygen,
@@ -108,8 +109,26 @@ class TestRSAKeyLifecycle:
 
             # Export public key components
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
-            modulus = attrs[CKA_MODULUS]
-            exponent = attrs[CKA_PUBLIC_EXPONENT]
+            modulus = attr_or_record(
+                attrs,
+                CKA_MODULUS,
+                label="RSA lifecycle: exported public modulus",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            exponent = attr_or_record(
+                attrs,
+                CKA_PUBLIC_EXPONENT,
+                label="RSA lifecycle: exported public exponent",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if modulus is MISSING_ATTRIBUTE or exponent is MISSING_ATTRIBUTE:
+                # Missing evidence disables only the dependent import/verify
+                # oracle below; the independent sign step above already ran.
+                return
             assert isinstance(modulus, bytes)
             assert isinstance(exponent, bytes)
 
@@ -166,13 +185,22 @@ class TestAESKeyWrapLifecycle:
         unwrapped = 0
         try:
             # Read original value
-            original_value = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])[CKA_VALUE]
+            original_attrs = read_attributes(rs.raw, rs.sh, target, [CKA_VALUE])
+            original_value = attr_or_record(
+                original_attrs,
+                CKA_VALUE,
+                label="AES-KEY-WRAP lifecycle: original key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
 
-            # Wrap
+            # Wrap -- independent of whether the readback above succeeded.
             wrapped = wrap_key_recipe(rs.raw, rs.sh, wrap_h, target, CKM_AES_KEY_WRAP)
-            assert wrapped != original_value
+            if original_value is not MISSING_ATTRIBUTE:
+                assert wrapped != original_value
 
-            # Unwrap
+            # Unwrap -- independent of whether the readback above succeeded.
             unwrapped = unwrap_key_for_mechanism_roundtrip(
                 rs,
                 p11_config,
@@ -188,9 +216,18 @@ class TestAESKeyWrapLifecycle:
                 purpose="AES-KEY-WRAP lifecycle roundtrip",
             )
 
-            # Verify material matches
-            unwrapped_value = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])[CKA_VALUE]
-            assert unwrapped_value == original_value
+            # Verify material matches -- only when both legs are readable.
+            unwrapped_attrs = read_attributes(rs.raw, rs.sh, unwrapped, [CKA_VALUE])
+            unwrapped_value = attr_or_record(
+                unwrapped_attrs,
+                CKA_VALUE,
+                label="AES-KEY-WRAP lifecycle: unwrapped key value",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if original_value is not MISSING_ATTRIBUTE and unwrapped_value is not MISSING_ATTRIBUTE:
+                assert unwrapped_value == original_value
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target)
@@ -301,8 +338,26 @@ class TestECKeyLifecycle:
 
             # Export
             attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_POINT, CKA_EC_PARAMS])
-            ec_point = attrs[CKA_EC_POINT]
-            ec_params = attrs[CKA_EC_PARAMS]
+            ec_point = attr_or_record(
+                attrs,
+                CKA_EC_POINT,
+                label="EC lifecycle: exported public point",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            ec_params = attr_or_record(
+                attrs,
+                CKA_EC_PARAMS,
+                label="EC lifecycle: exported public params",
+                reason="not_operational",
+                kind="metadata",
+                inherit_mechanism=False,
+            )
+            if ec_point is MISSING_ATTRIBUTE or ec_params is MISSING_ATTRIBUTE:
+                # Missing evidence disables only the dependent import/verify
+                # oracle below; the independent sign step above already ran.
+                return
             assert isinstance(ec_point, bytes)
             assert isinstance(ec_params, bytes)
 

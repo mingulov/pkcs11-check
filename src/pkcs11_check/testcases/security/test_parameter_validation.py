@@ -88,6 +88,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._ec_export import (
     read_conventional_ec_point_or_xfail,
     select_ecdh_point_form,
@@ -1113,7 +1114,6 @@ class TestEcPointValidation:
             # Derive succeeded -- read the shared secret value.
             try:
                 result = read_attributes(rs.raw, rs.sh, derived, [CKA_VALUE])
-                secret = result[CKA_VALUE]
             except AssertionError:
                 xfail_as(
                     "not_operational",
@@ -1123,6 +1123,20 @@ class TestEcPointValidation:
                         "but shared secret is unreadable"
                     ),
                 )
+
+            secret = attr_or_record(
+                result,
+                CKA_VALUE,
+                label=(
+                    f"{curve_name} ECDH low-order point: derive returned CKR_OK "
+                    "but shared secret is unreadable"
+                ),
+                reason="not_operational",
+                kind="crypto",
+                inherit_mechanism=False,
+            )
+            if secret is MISSING_ATTRIBUTE:
+                return
 
             assert isinstance(secret, bytes)
             if secret == b"\x00" * len(secret):

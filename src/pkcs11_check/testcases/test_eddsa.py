@@ -39,6 +39,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._ec_export import RawECPointFamily, read_raw_ec_point_or_xfail
 from pkcs11_check.testcases.conftest import (
     EC_CURVE_UNSUPPORTED_RVS,
@@ -141,22 +142,36 @@ class TestEdDSAKeyGeneration:
         """Ed25519 key should have EC_EDWARDS key type."""
         rs = p11_raw_session
         pub, priv = ed25519_keypair
-        pub_kt = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-        priv_kt = read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE])[CKA_KEY_TYPE]
-        assert_correct(
-            actual=pub_kt,
-            expected=CKK_EC_EDWARDS,
+        pub_kt = attr_or_record(
+            read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE]),
+            CKA_KEY_TYPE,
             label="Ed25519:public CKA_KEY_TYPE readback",
-            operation="C_GetAttributeValue",
-            kind="metadata",
+            reason="not_operational",
+            inherit_mechanism=False,
         )
-        assert_correct(
-            actual=priv_kt,
-            expected=CKK_EC_EDWARDS,
+        priv_kt = attr_or_record(
+            read_attributes(rs.raw, rs.sh, priv, [CKA_KEY_TYPE]),
+            CKA_KEY_TYPE,
             label="Ed25519:private CKA_KEY_TYPE readback",
-            operation="C_GetAttributeValue",
-            kind="metadata",
+            reason="not_operational",
+            inherit_mechanism=False,
         )
+        if pub_kt is not MISSING_ATTRIBUTE:
+            assert_correct(
+                actual=pub_kt,
+                expected=CKK_EC_EDWARDS,
+                label="Ed25519:public CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
+        if priv_kt is not MISSING_ATTRIBUTE:
+            assert_correct(
+                actual=priv_kt,
+                expected=CKK_EC_EDWARDS,
+                label="Ed25519:private CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
 
     def test_ed25519_ec_params(
         self, p11_raw_session: Any, ed25519_keypair: tuple[int, int]
@@ -164,14 +179,21 @@ class TestEdDSAKeyGeneration:
         """Ed25519 key should have correct EC params (OID)."""
         rs = p11_raw_session
         pub, _ = ed25519_keypair
-        params = read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS])[CKA_EC_PARAMS]
-        assert_correct(
-            actual=params,
-            expected=ED25519_OID,
+        params = attr_or_record(
+            read_attributes(rs.raw, rs.sh, pub, [CKA_EC_PARAMS]),
+            CKA_EC_PARAMS,
             label="Ed25519:CKA_EC_PARAMS readback",
-            operation="C_GetAttributeValue",
-            kind="metadata",
+            reason="not_operational",
+            inherit_mechanism=False,
         )
+        if params is not MISSING_ATTRIBUTE:
+            assert_correct(
+                actual=params,
+                expected=ED25519_OID,
+                label="Ed25519:CKA_EC_PARAMS readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
 
 
 class TestEdDSASignVerify:
@@ -341,13 +363,21 @@ class TestEd448:
         rs = p11_raw_session
         pub, _ = ed448_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_KEY_TYPE])
-        assert_correct(
-            actual=attrs[CKA_KEY_TYPE],
-            expected=int(CKK_EC_EDWARDS),
+        key_type = attr_or_record(
+            attrs,
+            CKA_KEY_TYPE,
             label="Ed448:CKA_KEY_TYPE readback",
-            operation="C_GetAttributeValue",
-            kind="metadata",
+            reason="not_operational",
+            inherit_mechanism=False,
         )
+        if key_type is not MISSING_ATTRIBUTE:
+            assert_correct(
+                actual=key_type,
+                expected=int(CKK_EC_EDWARDS),
+                label="Ed448:CKA_KEY_TYPE readback",
+                operation="C_GetAttributeValue",
+                kind="metadata",
+            )
 
     def test_sign_verify_roundtrip(
         self, p11_raw_session: Any, ed448_keypair: tuple[int, int]

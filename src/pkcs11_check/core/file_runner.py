@@ -156,6 +156,9 @@ from pkcs11_check.core._report_records import (
     _write_unit_report_record_cache_from_jsonl_paths as _write_unit_report_record_cache_from_jsonl_paths,  # noqa: E501
 )
 from pkcs11_check.core._report_records import (
+    extract_quality_report_evidence_from_jsonl as extract_quality_report_evidence_from_jsonl,
+)
+from pkcs11_check.core._report_records import (
     extract_quality_report_records_from_jsonl as extract_quality_report_records_from_jsonl,
 )
 from pkcs11_check.core._report_records import (
@@ -390,6 +393,7 @@ from pkcs11_check.core.recovery import (
     probe_provider_liveness,
     run_recover_cmd,
 )
+from pkcs11_check.core.report_log import QualityReportEvidence
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 _MAX_TIMEOUT_RETRIES = 3
@@ -1237,6 +1241,7 @@ def run_isolated_pytest_units(
         if report_config is not None:
             coverage_data: dict[str, Any] | None = None
             quality_records: list[dict[str, Any]] = []
+            quality_report_evidence: QualityReportEvidence | None = None
             inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
             for unit, records in state.report_records_by_unit.items():
                 inline_report_records_by_unit.setdefault(unit, records)
@@ -1302,6 +1307,12 @@ def run_isolated_pytest_units(
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
                     )
+                    # The single-run raw report.jsonl IS the declared authoritative source for
+                    # this run's classification observability (never sum shard quality.json
+                    # counts -- there is only one source here).
+                    quality_report_evidence = extract_quality_report_evidence_from_jsonl(
+                        [report_config.jsonl_path]
+                    )
                     coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
                         coverage_data,
                         output_state,
@@ -1339,6 +1350,7 @@ def run_isolated_pytest_units(
                     results_payload,
                     coverage=coverage_data,
                     report_log_records=quality_records,
+                    quality_report_evidence=quality_report_evidence,
                 )
             else:
                 write_isolated_report(
@@ -2708,6 +2720,7 @@ def run_isolated_pytest_units(
     finally:
         coverage_data = None
         quality_records = []
+        quality_report_evidence = None
         merged_details = dict(per_unit_details)
         if report_config is not None:
             inline_report_records_by_unit = {}
@@ -2768,6 +2781,12 @@ def run_isolated_pytest_units(
                     quality_records = extract_quality_report_records_from_jsonl(
                         report_config.jsonl_path
                     )
+                    # The single-run raw report.jsonl IS the declared authoritative source for
+                    # this run's classification observability (never sum shard quality.json
+                    # counts -- there is only one source here).
+                    quality_report_evidence = extract_quality_report_evidence_from_jsonl(
+                        [report_config.jsonl_path]
+                    )
                     coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
                         coverage_data,
                         output_state,
@@ -2815,6 +2834,7 @@ def run_isolated_pytest_units(
                     results_payload,
                     coverage=coverage_data,
                     report_log_records=quality_records,
+                    quality_report_evidence=quality_report_evidence,
                 )
             else:
                 write_isolated_report(

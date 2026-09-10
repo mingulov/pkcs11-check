@@ -7,6 +7,12 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any, Literal, cast
 
 from pkcs11_check.core.hollow_coverage import assess_hollow_coverage
+from pkcs11_check.core.report_log import (
+    F11_CONTRACT_VERSION,
+    F11_COUNT_SEMANTICS,
+    ClassificationOccurrence,
+    QualityReportEvidence,
+)
 from pkcs11_check.core.run_metrics import RESULT_OUTCOME_KEYS
 
 # A claimed operation (e.g. "C_Decrypt") is productively satisfied by any function in its
@@ -72,6 +78,12 @@ type SkipReasonCategory = Literal[
 ]
 
 SCHEMA_VERSION: SchemaVersion = "1"
+
+# Label for the declared raw source(s) backing `classification_observability` -- always the
+# raw pytest-reportlog JSONL stream (single-run or merged), never a filesystem path (paths are
+# a caller/deployment detail, not part of this artifact's stable contract).
+_OBSERVABILITY_SOURCE_ARTIFACT = "report.jsonl"
+
 _PASSING_OUTCOMES = {"passed", "xpassed"}
 _KNOWN_OUTCOMES = set(RESULT_OUTCOME_KEYS)
 _SELECTED_REASON_CATEGORY = {
@@ -223,13 +235,104 @@ def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
     return "unknown"
 
 
+def _serialize_classification_occurrence(occurrence: ClassificationOccurrence) -> dict[str, Any]:
+    """Serialize one bounded sample occurrence verbatim (see `UnclassifiedEvidence.samples`)."""
+    return {
+        "source_index": occurrence.source_index,
+        "nodeid": occurrence.nodeid,
+        "canonical_nodeid": occurrence.canonical_nodeid,
+        "phase": occurrence.phase,
+        "target": occurrence.target,
+        "attempt": occurrence.attempt,
+        "property_index": occurrence.property_index,
+        "occurrence_index": occurrence.occurrence_index,
+        "reason": occurrence.reason,
+        "classification": dict(occurrence.classification),
+    }
+
+
+def _build_classification_observability(
+    evidence: QualityReportEvidence | None,
+) -> dict[str, Any]:
+    """Build the separately-versioned `classification_observability` block.
+
+    See `.superpowers/sdd/2026-09-08-v020-reporting-integrity-fixes/f11-shared-contract.md` for
+    the binding status vocabulary/counting semantics this mirrors -- this function only
+    serializes a :class:`QualityReportEvidence` (already computed from the raw, unrepaired
+    report-log stream by the caller) into the quality-audit artifact shape. It never counts or
+    re-derives anything itself: no evidence in means an honest ``"unavailable"`` block out
+    (never a fabricated zero), and every count from a ``"partial"`` evidence object is passed
+    through as the LOWER BOUND it is -- rendering is the report layer's job.
+    """
+    if evidence is None:
+        return {
+            "contract_version": F11_CONTRACT_VERSION,
+            "source_artifact": _OBSERVABILITY_SOURCE_ARTIFACT,
+            "status": "unavailable",
+            "status_reasons": ["no raw source declared"],
+            "expected_sources": 0,
+            "readable_sources": 0,
+            "missing_sources": 0,
+            "malformed_records": 0,
+            "malformed_markers": 0,
+            "malformed_properties": 0,
+            "malformed_entries": 0,
+            "count_semantics": F11_COUNT_SEMANTICS,
+            "unclassified": None,
+        }
+
+    unclassified = evidence.unclassified
+    unclassified_block: dict[str, Any] | None = None
+    if unclassified is not None:
+        unclassified_block = {
+            "occurrences": unclassified.occurrences,
+            "lower_bound": unclassified.lower_bound,
+            "unique_testcases": unclassified.unique_testcases,
+            "exact_duplicate_occurrences": unclassified.exact_duplicate_occurrences,
+            "phase_counts": dict(unclassified.phase_counts),
+            "target_counts": dict(unclassified.target_counts),
+            "attempt_counts": {str(k): v for k, v in unclassified.attempt_counts.items()},
+            "unattributed_occurrences": unclassified.unattributed_occurrences,
+            "per_file_counts": dict(unclassified.per_file_counts),
+            "samples": [
+                _serialize_classification_occurrence(sample) for sample in unclassified.samples
+            ],
+        }
+
+    return {
+        "contract_version": evidence.contract_version,
+        "source_artifact": _OBSERVABILITY_SOURCE_ARTIFACT,
+        "status": evidence.status,
+        "status_reasons": list(evidence.status_reasons),
+        "expected_sources": evidence.expected_sources,
+        "readable_sources": evidence.readable_sources,
+        "missing_sources": evidence.missing_sources,
+        "malformed_records": evidence.malformed_records,
+        "malformed_markers": evidence.malformed_markers,
+        "malformed_properties": evidence.malformed_properties,
+        "malformed_entries": evidence.malformed_entries,
+        "count_semantics": evidence.count_semantics,
+        "unclassified": unclassified_block,
+    }
+
+
 def build_quality_audit(
     *,
     results: Mapping[str, Any] | None = None,
     coverage: Mapping[str, Any] | None = None,
     report_log_records: Iterable[Mapping[str, Any]] | None = None,
+    quality_report_evidence: QualityReportEvidence | None = None,
 ) -> dict[str, Any]:
-    """Build a conservative quality audit from partial artifact data."""
+    """Build a conservative quality audit from partial artifact data.
+
+    ``quality_report_evidence`` is the raw classification-observability evidence (from
+    ``core._report_records.extract_quality_report_evidence_from_jsonl``, computed by the caller
+    over the declared authoritative raw report-log source(s) -- see
+    ``classification_observability`` in the return value). It is entirely separate from
+    ``report_log_records`` (the existing repaired/projected stream this function already reads
+    for summary/skip/mechanism findings): the two must never be conflated. ``None`` (the
+    default) renders an honest ``"unavailable"`` observability block, never a fabricated zero.
+    """
     results_map = _mapping_or_empty(results)
     coverage_map = _mapping_or_empty(coverage)
     report_records = list(report_log_records or ())
@@ -321,6 +424,9 @@ def build_quality_audit(
         "mechanism_findings": mechanism_findings,
         "hollow_coverage": hollow_coverage,
         "data_quality_warnings": _dedupe_preserve_order(warnings),
+        "classification_observability": _build_classification_observability(
+            quality_report_evidence
+        ),
     }
 
 

@@ -9,6 +9,7 @@ import pytest
 from _pytest.outcomes import Failed, XFailed
 
 import pkcs11_check.compliance as compliance
+from pkcs11_check import classification as C  # noqa: N812 - matches project convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
@@ -390,14 +391,53 @@ def test_tookan_preservation_definitive_mismatch_fails_with_missing_sibling(
 
 
 @pytest.mark.parametrize(
-    ("sensitive", "extractable"),
-    [(True, _MISSING), (_MISSING, False), (_MISSING, _MISSING)],
+    ("sensitive", "extractable", "expected_labels"),
+    [
+        (True, _MISSING, ["Tookan unwrapped key CKA_EXTRACTABLE readback"]),
+        (_MISSING, False, ["Tookan unwrapped key CKA_SENSITIVE readback"]),
+        (
+            _MISSING,
+            _MISSING,
+            [
+                "Tookan unwrapped key CKA_EXTRACTABLE readback",
+                "Tookan unwrapped key CKA_SENSITIVE readback",
+            ],
+        ),
+    ],
 )
-def test_tookan_preservation_incomplete_claims_xfail(
+def test_tookan_preservation_incomplete_claims_record_each_omission_once(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: object,
+    extractable: object,
+    expected_labels: list[str],
+) -> None:
+    """One omission, one record.
+
+    ``attr_or_record`` already emits the omission; the sibling "protection
+    readback" classify now fires only for a PRESENT-but-malformed value, so a
+    single provider omission is no longer counted as two deviations.
+    """
+    C.clear()
+    try:
+        _run_tookan_preservation_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+        records = C.get_records()
+        assert [r.label for r in records] == expected_labels
+        assert all(r.reason == "not_operational" and r.kind == "policy" for r in records)
+    finally:
+        C.clear()
+
+
+@pytest.mark.parametrize(("sensitive", "extractable"), [("true", False), (True, "false")])
+def test_tookan_preservation_malformed_claims_still_xfail(
     monkeypatch: pytest.MonkeyPatch,
     sensitive: object,
     extractable: object,
 ) -> None:
+    """A PRESENT-but-malformed value keeps its own metadata record."""
     with pytest.raises(XFailed, match="result protection readback"):
         _run_tookan_preservation_result(
             monkeypatch,
@@ -423,10 +463,7 @@ def test_tookan_unbound_definitive_protection_claim_fails(
         )
 
 
-@pytest.mark.parametrize(
-    ("sensitive", "extractable"),
-    [(_MISSING, True), (False, _MISSING), ("true", True)],
-)
+@pytest.mark.parametrize(("sensitive", "extractable"), [("true", True)])
 def test_tookan_unbound_malformed_protection_readback_xfails(
     monkeypatch: pytest.MonkeyPatch,
     sensitive: object,
@@ -438,6 +475,35 @@ def test_tookan_unbound_malformed_protection_readback_xfails(
             sensitive=sensitive,
             extractable=extractable,
         )
+
+
+@pytest.mark.parametrize(
+    ("sensitive", "extractable", "expected_label"),
+    [
+        (_MISSING, True, "Tookan unbound unwrap result CKA_SENSITIVE readback"),
+        (False, _MISSING, "Tookan unbound unwrap result CKA_EXTRACTABLE readback"),
+    ],
+)
+def test_tookan_unbound_absent_protection_readback_records_once(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: object,
+    extractable: object,
+    expected_label: str,
+) -> None:
+    """One omission, one record: absence no longer ALSO fires the malformed classify."""
+    C.clear()
+    try:
+        _run_tookan_unbound_result(
+            monkeypatch,
+            sensitive=sensitive,
+            extractable=extractable,
+        )
+        records = C.get_records()
+        assert [r.label for r in records] == [expected_label]
+        assert records[0].reason == "not_operational"
+        assert records[0].kind == "policy"
+    finally:
+        C.clear()
 
 
 @pytest.mark.parametrize(

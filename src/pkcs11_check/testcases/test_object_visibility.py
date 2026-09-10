@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
     CKU_USER,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     gen_aes_key_or_xfail,
@@ -256,13 +257,21 @@ class TestTokenObjectPersistence:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1, "Token data object did not persist"
             attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
-            assert_correct(
-                actual=attrs[CKA_VALUE],
-                expected=b"persistent-value",
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
                 label="CKO_DATA:CKA_VALUE preserved across sessions (token)",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if value is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=value,
+                    expected=b"persistent-value",
+                    label="CKO_DATA:CKA_VALUE preserved across sessions (token)",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -287,20 +296,35 @@ class TestTokenObjectPersistence:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1
             attrs = read_attributes(rs.raw, sh2, found[0], [CKA_LABEL, CKA_VALUE])
-            assert_correct(
-                actual=attrs[CKA_LABEL],
-                expected=label,
+            attr_label = attr_or_record(
+                attrs,
+                CKA_LABEL,
                 label="CKO_DATA:CKA_LABEL preserved across sessions",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                inherit_mechanism=False,
             )
-            assert_correct(
-                actual=attrs[CKA_VALUE],
-                expected=payload,
+            if attr_label is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=attr_label,
+                    expected=label,
+                    label="CKO_DATA:CKA_LABEL preserved across sessions",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
+            attr_value = attr_or_record(
+                attrs,
+                CKA_VALUE,
                 label="CKO_DATA:CKA_VALUE preserved across sessions",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if attr_value is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=attr_value,
+                    expected=payload,
+                    label="CKO_DATA:CKA_VALUE preserved across sessions",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -376,13 +400,21 @@ class TestPrivateVisibility:
                     )
                 else:
                     attrs = read_attributes(rs.raw, sh_pub, found[0], [CKA_VALUE])
-                    assert_correct(
-                        actual=attrs[CKA_VALUE],
-                        expected=b"public-data",
+                    value = attr_or_record(
+                        attrs,
+                        CKA_VALUE,
                         label="CKO_DATA:public CKA_VALUE readback in public session",
-                        operation="C_GetAttributeValue",
-                        kind="metadata",
+                        reason="not_operational",
+                        inherit_mechanism=False,
                     )
+                    if value is not MISSING_ATTRIBUTE:
+                        assert_correct(
+                            actual=value,
+                            expected=b"public-data",
+                            label="CKO_DATA:public CKA_VALUE readback in public session",
+                            operation="C_GetAttributeValue",
+                            kind="metadata",
+                        )
             finally:
                 close_session_quietly(rs.raw, sh_pub)
         finally:
@@ -411,13 +443,21 @@ class TestPrivateVisibility:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1, "Private object not visible after login"
             attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
-            assert_correct(
-                actual=attrs[CKA_VALUE],
-                expected=b"secret-stuff",
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
                 label="CKO_DATA:private CKA_VALUE readback after login",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if value is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=value,
+                    expected=b"secret-stuff",
+                    label="CKO_DATA:private CKA_VALUE readback after login",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -518,13 +558,21 @@ class TestCrossSessionModification:
                     found = _find_data_by_label(rs.raw, sh_b, label)
                     assert len(found) >= 1
                     attrs = read_attributes(rs.raw, sh_b, found[0], [CKA_VALUE])
-                    assert_correct(
-                        actual=attrs[CKA_VALUE],
-                        expected=b"after",
+                    value = attr_or_record(
+                        attrs,
+                        CKA_VALUE,
                         label="CKO_DATA:modified CKA_VALUE reflected in session B",
-                        operation="C_SetAttributeValue",
-                        kind="metadata",
+                        reason="not_operational",
+                        inherit_mechanism=False,
                     )
+                    if value is not MISSING_ATTRIBUTE:
+                        assert_correct(
+                            actual=value,
+                            expected=b"after",
+                            label="CKO_DATA:modified CKA_VALUE reflected in session B",
+                            operation="C_SetAttributeValue",
+                            kind="metadata",
+                        )
                 finally:
                     close_session_quietly(rs.raw, sh_b)
             finally:
@@ -687,13 +735,21 @@ class TestTokenPrivateInteraction:
             found = _find_data_by_label(rs.raw, sh2, label)
             assert len(found) >= 1, "Private token object not found after login in new session"
             attrs = read_attributes(rs.raw, sh2, found[0], [CKA_VALUE])
-            assert_correct(
-                actual=attrs[CKA_VALUE],
-                expected=b"priv-token-data",
+            value = attr_or_record(
+                attrs,
+                CKA_VALUE,
                 label="CKO_DATA:private token CKA_VALUE readback in new session",
-                operation="C_GetAttributeValue",
-                kind="metadata",
+                reason="not_operational",
+                inherit_mechanism=False,
             )
+            if value is not MISSING_ATTRIBUTE:
+                assert_correct(
+                    actual=value,
+                    expected=b"priv-token-data",
+                    label="CKO_DATA:private token CKA_VALUE readback in new session",
+                    operation="C_GetAttributeValue",
+                    kind="metadata",
+                )
         finally:
             for fh in _find_data_by_label(rs.raw, sh2, label):
                 destroy_quietly(rs.raw, sh2, fh)
@@ -732,13 +788,25 @@ class TestSessionObjectCrossVisibility:
                         )
                     else:
                         attrs = read_attributes(rs.raw, sh_b, found[0], [CKA_VALUE])
-                        assert_correct(
-                            actual=attrs[CKA_VALUE],
-                            expected=b"cross-visible",
+                        value = attr_or_record(
+                            attrs,
+                            CKA_VALUE,
                             label="CKO_DATA:session object CKA_VALUE in concurrent session",
-                            operation="C_GetAttributeValue",
-                            kind="metadata",
+                            reason="not_operational",
+                            inherit_mechanism=False,
                         )
+                        # Omission here must not be reported as a visibility violation:
+                        # visibility was already established by `found` being non-empty
+                        # above; a missing CKA_VALUE only disables this value-readback
+                        # oracle, not the (already-recorded) visibility evidence.
+                        if value is not MISSING_ATTRIBUTE:
+                            assert_correct(
+                                actual=value,
+                                expected=b"cross-visible",
+                                label="CKO_DATA:session object CKA_VALUE in concurrent session",
+                                operation="C_GetAttributeValue",
+                                kind="metadata",
+                            )
                 finally:
                     close_session_quietly(rs.raw, sh_b)
             finally:

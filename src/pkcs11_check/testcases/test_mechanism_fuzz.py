@@ -29,6 +29,7 @@ from pkcs11_check.raw.types_std import (
     CKM_SHA256_RSA_PKCS,
     CKR_OK,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.security
@@ -159,7 +160,15 @@ class TestKeyGenParameterFuzz:
         if rv == CKR_OK:
             # If it works, key should still be valid
             attrs = read_attributes(rs.raw, rs.sh, key_h.value, [CKA_KEY_TYPE])
-            assert attrs[CKA_KEY_TYPE] is not None
+            key_type = attr_or_record(
+                attrs,
+                CKA_KEY_TYPE,
+                label="CKA_KEY_TYPE:AES-keygen-random-param",
+                reason="not_operational",
+                inherit_mechanism=False,
+            )
+            if key_type is not MISSING_ATTRIBUTE:
+                assert key_type is not None
             destroy_quietly(rs.raw, rs.sh, key_h.value)
         # Any non-crash result is acceptable
 

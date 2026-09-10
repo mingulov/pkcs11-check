@@ -115,6 +115,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_HANDLE_INVALID,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
@@ -453,14 +454,20 @@ class TestTemplateConstraintAttributes:
         try:
             try:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_WRAP_TEMPLATE])
-                wt = vals[CKA_WRAP_TEMPLATE]
-                assert wt is not None or wt == b""
-            except KeyError:
-                pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
             except CkrAssertionError as exc:
-                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
-                    pytest.skip("Module does not support CKA_WRAP_TEMPLATE")
-                raise
+                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
+                    raise
+                return
+            wt = attr_or_record(
+                vals,
+                CKA_WRAP_TEMPLATE,
+                label="CKA_WRAP_TEMPLATE:generated-AES-wrap-key readback",
+                reason="honest_deviation",
+                kind="metadata",
+            )
+            if wt is MISSING_ATTRIBUTE:
+                return
+            assert wt is not None or wt == b""
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -483,14 +490,20 @@ class TestTemplateConstraintAttributes:
         try:
             try:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_UNWRAP_TEMPLATE])
-                ut = vals[CKA_UNWRAP_TEMPLATE]
-                assert ut is not None or ut == b""
-            except KeyError:
-                pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
             except CkrAssertionError as exc:
-                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
-                    pytest.skip("Module does not support CKA_UNWRAP_TEMPLATE")
-                raise
+                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
+                    raise
+                return
+            ut = attr_or_record(
+                vals,
+                CKA_UNWRAP_TEMPLATE,
+                label="CKA_UNWRAP_TEMPLATE:generated-AES-unwrap-key readback",
+                reason="honest_deviation",
+                kind="metadata",
+            )
+            if ut is MISSING_ATTRIBUTE:
+                return
+            assert ut is not None or ut == b""
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -512,14 +525,20 @@ class TestTemplateConstraintAttributes:
         try:
             try:
                 vals = read_attributes(rs.raw, rs.sh, key, [CKA_DERIVE_TEMPLATE])
-                dt = vals[CKA_DERIVE_TEMPLATE]
-                assert dt is not None or dt == b""
-            except KeyError:
-                pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
             except CkrAssertionError as exc:
-                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
-                    pytest.skip("Module does not support CKA_DERIVE_TEMPLATE")
-                raise
+                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
+                    raise
+                return
+            dt = attr_or_record(
+                vals,
+                CKA_DERIVE_TEMPLATE,
+                label="CKA_DERIVE_TEMPLATE:generated-AES-derive-key readback",
+                reason="honest_deviation",
+                kind="metadata",
+            )
+            if dt is MISSING_ATTRIBUTE:
+                return
+            assert dt is not None or dt == b""
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -576,17 +595,21 @@ class TestTemplateConstraintAttributes:
             claimed = False
             try:
                 attrs = read_attributes(rs.raw, rs.sh, wrapping_key.value, [CKA_WRAP_TEMPLATE])
-                raw_template = attrs.get(CKA_WRAP_TEMPLATE)
-                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                    CK_ATTRIBUTE
-                )
-            except KeyError:
-                claimed = False
             except CkrAssertionError as exc:
-                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
-                    claimed = False
-                else:
+                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
                     raise
+            else:
+                raw_template = attr_or_record(
+                    attrs,
+                    CKA_WRAP_TEMPLATE,
+                    label="CKA_WRAP_TEMPLATE:wrapping-key readback",
+                    reason="honest_deviation",
+                    kind="metadata",
+                )
+                if raw_template is not MISSING_ATTRIBUTE:
+                    claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
+                        CK_ATTRIBUTE
+                    )
 
             allowed_target = gen_aes_key_or_xfail(
                 rs,
@@ -707,17 +730,21 @@ class TestTemplateConstraintAttributes:
             claimed = False
             try:
                 attrs = read_attributes(rs.raw, rs.sh, unwrapping_key.value, [CKA_UNWRAP_TEMPLATE])
-                raw_template = attrs.get(CKA_UNWRAP_TEMPLATE)
-                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                    CK_ATTRIBUTE
-                )
-            except KeyError:
-                claimed = False
             except CkrAssertionError as exc:
-                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
-                    claimed = False
-                else:
+                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
                     raise
+            else:
+                raw_template = attr_or_record(
+                    attrs,
+                    CKA_UNWRAP_TEMPLATE,
+                    label="CKA_UNWRAP_TEMPLATE:unwrapping-key readback",
+                    reason="honest_deviation",
+                    kind="metadata",
+                )
+                if raw_template is not MISSING_ATTRIBUTE:
+                    claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
+                        CK_ATTRIBUTE
+                    )
 
             source_key = gen_aes_key_or_xfail(
                 rs,
@@ -884,17 +911,21 @@ class TestTemplateConstraintAttributes:
             claimed = False
             try:
                 attrs = read_attributes(rs.raw, rs.sh, base_key.value, [CKA_DERIVE_TEMPLATE])
-                raw_template = attrs.get(CKA_DERIVE_TEMPLATE)
-                claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
-                    CK_ATTRIBUTE
-                )
-            except KeyError:
-                claimed = False
             except CkrAssertionError as exc:
-                if exc.rv == CKR_ATTRIBUTE_TYPE_INVALID:
-                    claimed = False
-                else:
+                if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
                     raise
+            else:
+                raw_template = attr_or_record(
+                    attrs,
+                    CKA_DERIVE_TEMPLATE,
+                    label="CKA_DERIVE_TEMPLATE:base-key readback",
+                    reason="honest_deviation",
+                    kind="metadata",
+                )
+                if raw_template is not MISSING_ATTRIBUTE:
+                    claimed = isinstance(raw_template, bytes) and len(raw_template) >= sizeof(
+                        CK_ATTRIBUTE
+                    )
 
             derive_mech = mech_string_data(CKM_CONCATENATE_BASE_AND_DATA, derive_data)
             matching_template = template(
@@ -1006,12 +1037,20 @@ class TestOtpKeyAttributes:
             for attr_int in (CKA_OTP_FORMAT, CKA_OTP_LENGTH):
                 try:
                     vals = read_attributes(rs.raw, rs.sh, key_h, [attr_int])
-                    assert vals[attr_int] is not None
-                except KeyError:
-                    pass  # Optional OTP attribute is absent.
                 except CkrAssertionError as exc:
                     if exc.rv != CKR_ATTRIBUTE_TYPE_INVALID:
                         raise
+                    continue
+                value = attr_or_record(
+                    vals,
+                    attr_int,
+                    label=f"CKA_OTP:0x{attr_int:08X}:OTP-key readback",
+                    reason="honest_deviation",
+                    kind="metadata",
+                )
+                if value is MISSING_ATTRIBUTE:
+                    continue  # Optional OTP attribute is absent.
+                assert value is not None
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
