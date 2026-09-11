@@ -508,6 +508,31 @@ def _record_rv(
                 ),
                 detail={**detail, "oracle_disabled": True, "baseline_verified": False},
             )
+        if stage == "decrypt" and item_mechanism == "CKM_RSA_PKCS":
+            # RSA PKCS#1 v1.5 implicit rejection: the Bleichenbacher/Marvin-attack
+            # countermeasure implemented by OpenSSL >= 3.2 and NSS by design. On a
+            # padding failure the implementation returns CKR_OK with a deterministic
+            # pseudo-random plaintext instead of an error CKR, precisely so the
+            # caller cannot use the return code as a padding oracle. This probe only
+            # observes the CK_RV protocol trace (no returned plaintext), so it
+            # cannot prove genuine forgery acceptance versus the countermeasure --
+            # the observation is real and worth keeping, but it must not be branded
+            # a CRITICAL crypto break for behavior that is a conformant defense.
+            return C.record_as(
+                "honest_deviation",
+                label=label,
+                operation=operation,
+                mechanism=item_mechanism,
+                expected=expected_rvs,
+                actual=rv,
+                summary=(
+                    f"{label}: returned CKR_OK for malformed RSA PKCS#1 v1.5 "
+                    "ciphertext; consistent with an implicit-rejection countermeasure "
+                    "(OpenSSL >= 3.2 / NSS), not distinguishable from genuine "
+                    "acceptance without the returned plaintext"
+                ),
+                detail={**detail, "implicit_rejection_suspected": True},
+            )
         return C.record_as(
             "accepted_invalid",
             kind="crypto",

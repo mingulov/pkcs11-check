@@ -149,6 +149,13 @@ def _classify_unhonorable_length_outcome(
         )
         return
 
+    # SKIP: a v3.0 message-family Init/Begin call returned CKR_FUNCTION_NOT_SUPPORTED --
+    # capability absence (see _probes/_ffi_length_message.py._message_setup_reject), not a
+    # deviation. Checked before SETUP_XFAIL so it is never misrecorded as one.
+    for line in stdout.splitlines():
+        if line.startswith("SKIP:"):
+            pytest.skip(line.removeprefix("SKIP:").strip())
+
     # SETUP_XFAIL: setup (keygen/Init) cleanly errored before the probe ran.
     for line in stdout.splitlines():
         if line.startswith(SETUP_XFAIL_PREFIX):

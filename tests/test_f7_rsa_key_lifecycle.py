@@ -51,8 +51,14 @@ def _session(*, mechanisms: set[str] | None = None) -> Any:
     return SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name in mechs)
 
 
-def _assert_readback_record(record: C.Classification, *, reason: str) -> None:
+def _assert_readback_record(
+    record: C.Classification, *, reason: str, kind: str = "metadata"
+) -> None:
     assert record.reason == reason
+    # ``kind`` is asserted because ``record_as()`` derives outcome and severity from
+    # ``(reason, kind)`` together -- leaving it unchecked lets a severity regression
+    # through even while ``reason`` still matches.
+    assert record.kind == kind
     assert record.operation == "C_GetAttributeValue"
     assert record.mechanism is None
     assert record.spec_ref == _SPEC_REF
@@ -503,7 +509,7 @@ def test_non_extractable_wrap_missing_extractable_still_fails_on_successful_wrap
 
     records = C.get_records()
     assert len(records) == 2
-    _assert_readback_record(records[0], reason="not_operational")
+    _assert_readback_record(records[0], reason="not_operational", kind="policy")
     assert records[1].reason == "self_contradiction"
 
 
@@ -532,7 +538,7 @@ def test_non_extractable_wrap_missing_extractable_and_refused_wrap_passes(
 
     records = C.get_records()
     assert len(records) == 1
-    _assert_readback_record(records[0], reason="not_operational")
+    _assert_readback_record(records[0], reason="not_operational", kind="policy")
 
 
 def test_non_extractable_key_cannot_be_wrapped_missing_readback_still_fails(

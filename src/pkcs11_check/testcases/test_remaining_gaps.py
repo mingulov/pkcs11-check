@@ -45,7 +45,6 @@ from pkcs11_check.classification import (
     fail_as,
     raise_for_record,
     record,
-    xfail_as,
 )
 from pkcs11_check.raw.pack import mech_ulong
 from pkcs11_check.raw.recipes import (
@@ -106,6 +105,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_NO_EVENT,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_UNWRAPPING_KEY_HANDLE_INVALID,
@@ -339,6 +339,13 @@ def _parse_gap_ckr_marker(
         return None, None, True
     if rv == CKR_OK:
         return rv, None, False
+    if rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_NOT_INITIALIZED):
+        # CKR_FUNCTION_NOT_SUPPORTED is the spec-defined way to say the function isn't
+        # implemented (capability absence); CKR_OPERATION_NOT_INITIALIZED is the
+        # spec-required answer to this dual-function call, which is probed with no
+        # sign/encrypt (or decrypt/verify) operation initialised. Mechanism advertisement
+        # is orthogonal to function support and cannot promote either into a deviation.
+        return rv, None, False
     if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
         outcome, severity = derive_verdict("self_contradiction", "metadata")
         return (
@@ -412,9 +419,13 @@ def _classify_dual_ckr(
     operation: str,
     recorded: Classification | None = None,
 ) -> None:
-    """A defined CKR refusal is not operational; CKR_OK is the only positive pass."""
-    if rv == CKR_OK:
+    """CKR_OK passes. CKR_FUNCTION_NOT_SUPPORTED is capability absence (skip) and
+    CKR_OPERATION_NOT_INITIALIZED is the spec-required answer to this uninitialised
+    dual-function call -- neither is a deviation. Any other defined CKR refusal is."""
+    if rv in (CKR_OK, CKR_OPERATION_NOT_INITIALIZED):
         return
+    if rv == CKR_FUNCTION_NOT_SUPPORTED:
+        pytest.skip(f"{context}: CKR_FUNCTION_NOT_SUPPORTED - dual function not implemented")
     if recorded is not None:
         raise_for_record(recorded)
     classify(
@@ -1091,13 +1102,11 @@ class TestWaitForSlotEvent:
         # flags=1 means CKF_DONT_BLOCK (non-blocking)
         rv = rs.raw.C_WaitForSlotEvent(1, byref(slot_out), None)
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
-            xfail_as(
-                "not_operational",
-                label="C_WaitForSlotEvent",
-                operation="C_WaitForSlotEvent",
-                actual=rv,
-                summary="Module exposes C_WaitForSlotEvent but does not implement it",
-            )
+            # C_WaitForSlotEvent is a mandatory-in-table function whose spec return-value
+            # table (v2.40+ Sec.5.6) explicitly lists CKR_FUNCTION_NOT_SUPPORTED as
+            # defined: the module implements the function pointer but declines slot-event
+            # polling entirely -- capability absence, not a deviation, so skip.
+            pytest.skip("Module exposes C_WaitForSlotEvent but does not implement it")
         classify_negative_rv(
             rv,
             (CKR_NO_EVENT,),

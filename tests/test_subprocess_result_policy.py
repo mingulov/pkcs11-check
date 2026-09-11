@@ -94,7 +94,7 @@ def test_subprocess_result_policy_records_normalized_termination_detail(
 
 
 def test_subprocess_result_policy_reports_positive_child_failure() -> None:
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
         assert_subprocess_completed(
             1,
             "",
@@ -116,7 +116,10 @@ def test_subprocess_result_policy_reports_positive_child_failure() -> None:
 )
 def test_capability_phrase_does_not_hide_child_failure(rc: int, stderr: str) -> None:
     try:
-        with pytest.raises(pytest.fail.Exception, match="subprocess failed"):
+        with pytest.raises(
+            pytest.fail.Exception,
+            match="probe child exited without completing a recognized protocol",
+        ):
             assert_subprocess_completed(rc, "", stderr, context="generated child script")
     except pytest.skip.Exception as exc:
         pytest.fail(f"incidental capability phrase hid child failure: {exc}")

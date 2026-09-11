@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_MECHANISM_INVALID,
 )
 from pkcs11_check.testcases import test_ec_import_export
 from tests._attribute_access_guard import analyze_file
@@ -884,3 +885,50 @@ def test_strict_ec_params_missing_is_metadata_xfail_independent_of_point(
 
 def test_ec_import_export_source_analyzer_is_clean() -> None:
     assert analyze_file("src/pkcs11_check/testcases/test_ec_import_export.py") == []
+
+
+# I-1 / F-A regression: _make_ec_keypair() must gate on EC_KEY_PAIR_GEN
+# advertisement before generating -- previously it always attempted
+# gen_ec_keypair() and, on CKR_MECHANISM_INVALID (which is itself evidence
+# the mechanism is NOT advertised), mislabelled the module with
+# "EC key generation advertised but ... is not operational" (xfail), fabricating
+# an advertisement claim the module never made (pkcs11-mock, 7 false xfails).
+# Mutation check: removing the has_mechanism() gate from _make_ec_keypair
+# turns test_make_ec_keypair_skips_when_keygen_not_advertised red (it raises
+# xfail instead of skip) and reproduces exactly this false claim.
+
+
+def test_make_ec_keypair_skips_when_keygen_not_advertised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither EC_KEY_PAIR_GEN nor ECDSA_KEY_PAIR_GEN advertised -> skip, not xfail."""
+
+    def _gen_ec_keypair(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise AssertionError("gen_ec_keypair must not be called when unadvertised")
+
+    monkeypatch.setattr(test_ec_import_export, "gen_ec_keypair", _gen_ec_keypair)
+
+    with pytest.raises(pytest.skip.Exception):
+        test_ec_import_export._make_ec_keypair(_session(), "secp256r1")
+
+    assert C.get_records() == []
+
+
+def test_make_ec_keypair_xfails_only_when_actually_advertised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EC_KEY_PAIR_GEN advertised, CKR_MECHANISM_INVALID at runtime -> genuine
+    advertised-but-not-operational xfail (the claim is now true)."""
+
+    def _gen_ec_keypair(*_args: Any, **_kwargs: Any) -> tuple[int, int]:
+        raise CkrAssertionError("C_GenerateKeyPair", CKR_MECHANISM_INVALID)
+
+    monkeypatch.setattr(test_ec_import_export, "gen_ec_keypair", _gen_ec_keypair)
+
+    with pytest.raises(pytest.xfail.Exception):
+        test_ec_import_export._make_ec_keypair(_session("EC_KEY_PAIR_GEN"), "secp256r1")
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert "advertised" in records[0].label

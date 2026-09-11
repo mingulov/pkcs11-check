@@ -6,8 +6,9 @@ import pytest
 
 from pkcs11_check.classification import get_records
 from pkcs11_check.compliance import clear_notes, get_notes
-from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_NOT_INITIALIZED
 from pkcs11_check.testcases import test_remaining_gaps
+from tests._skip_assert import assert_skips
 
 
 def _config() -> SimpleNamespace:
@@ -103,20 +104,80 @@ def test_dual_function_ckr_is_recorded_before_cleanup_crash(
     method_name: str,
     marker: str,
 ) -> None:
-    """A complete provider CKR remains visible when cleanup later crashes."""
+    """A complete provider CKR remains visible when cleanup later crashes.
+
+    CKR_GENERAL_ERROR is a genuine operational deviation here (not
+    CKR_FUNCTION_NOT_SUPPORTED / CKR_OPERATION_NOT_INITIALIZED, which are the
+    spec-sanctioned non-deviation answers to this uninitialised dual-function call --
+    see ``test_dual_function_fns_and_uninitialized_are_not_deviations`` below).
+    """
     monkeypatch.setattr(
         test_remaining_gaps,
         "_run_gap_probe",
-        lambda *_args, **_kwargs: (-11, f"{marker}:0x00000054\n", "segmentation fault"),
+        lambda *_args, **_kwargs: (-11, f"{marker}:0x00000005\n", "segmentation fault"),
     )
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name)(_config())
 
     records = get_records()
     assert [record.reason for record in records] == ["not_operational", "crash"]
-    assert records[0].actual_ckr == "CKR_FUNCTION_NOT_SUPPORTED"
+    assert records[0].actual_ckr == "CKR_GENERAL_ERROR"
     assert records[1].detail is not None
     assert records[1].detail["termination"]["kind"] == "signal"
+
+
+@pytest.mark.parametrize(
+    ("method_name", "marker"),
+    [
+        ("test_sign_encrypt_update_callable", "SEU"),
+        ("test_decrypt_verify_update_callable", "DVU"),
+    ],
+)
+@pytest.mark.parametrize(
+    "ckr",
+    [CKR_FUNCTION_NOT_SUPPORTED, CKR_OPERATION_NOT_INITIALIZED],
+)
+def test_dual_function_fns_and_uninitialized_are_not_deviations(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    marker: str,
+    ckr: int,
+) -> None:
+    """FNS (capability absence) and OPERATION_NOT_INITIALIZED (spec-required answer to
+    an uninitialised dual-function call) must never become a `not_operational` deviation
+    record; mechanism advertisement is orthogonal and cannot promote either."""
+    monkeypatch.setattr(
+        test_remaining_gaps,
+        "_run_gap_probe",
+        lambda *_args, **_kwargs: (0, f"{marker}:0x{int(ckr):08x}\n", ""),
+    )
+    if ckr == CKR_FUNCTION_NOT_SUPPORTED:
+        with pytest.raises(pytest.skip.Exception):
+            getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name)(_config())
+    else:
+        getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name)(_config())
+
+    assert get_records() == []
+
+
+class _WaitForSlotEventRaw:
+    def __init__(self, rv: int) -> None:
+        self._rv = rv
+
+    def C_WaitForSlotEvent(self, *_args: object) -> int:  # noqa: N802
+        return self._rv
+
+
+def test_wait_for_slot_event_function_not_supported_is_skip() -> None:
+    """C_WaitForSlotEvent is mandatory-in-table but its return-value table (v2.40+
+    Sec.5.6) explicitly defines CKR_FUNCTION_NOT_SUPPORTED -- capability absence, not
+    a deviation. Regression for the fix that skips instead of xfailing."""
+    rs = SimpleNamespace(raw=_WaitForSlotEventRaw(int(CKR_FUNCTION_NOT_SUPPORTED)), sh=1)
+    assert_skips(
+        test_remaining_gaps.TestWaitForSlotEvent().test_wait_for_slot_event_non_blocking,
+        rs,
+        match="C_WaitForSlotEvent",
+    )
 
 
 @pytest.mark.parametrize("stdout", ["", "SEU:not-a-ckr\n"])

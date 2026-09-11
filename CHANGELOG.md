@@ -1,8 +1,41 @@
 # Changelog
 
-## Unreleased
+## [0.2.0] - 2026-09-11
+
+A reporting-integrity release. Every change here is about the suite reporting provider
+behaviour truthfully: a finding is never hidden, never silently downgraded, and never
+invented. Four defects found by validating this branch against real providers are fixed,
+each of which had corrupted what the tool published:
+
+- `CKR_FUNCTION_NOT_SUPPORTED` had been folded into expected-return-code sets, turning 21
+  recorded xfails into unrecorded passes. Function-level capability absence is now a skip:
+  never a pass, and never a widened expected-RV set.
+- Probe subprocesses that exited without explaining themselves were attributed to the
+  harness, which removed them from provider counts entirely. They now report as
+  `probe_incomplete` (`fail`/HIGH), which is deliberately not an exclusion reason.
+- A module that terminates its host process with a C `exit()` from inside a PKCS#11 call is
+  now detected via a finalization sentinel and reported as `crash`, not as a pkcs11-check
+  defect.
+- The promotion gate treated crash-limited coverage as an integrity failure, so the
+  strongest class of finding disabled publication. Integrity loss still fails closed;
+  coverage loss now publishes as `partial` with counts marked as lower bounds.
+
+Validated by a per-node-id differential against a real baseline round across six providers:
+154 findings gained or sharpened against 71 released, every one of the 71 individually
+justified, and no node-id that produced a finding stopped running.
 
 ### Added
+
+- **Attribution ratchet for mechanism-inheriting attribute reads.** `record_as()` resolves
+  `mechanism` as `if mechanism is None and inherit_mechanism: mechanism = _active_mechanism`,
+  so an `attr_or_record` site that omits `inherit_mechanism=False` stamps whatever mechanism
+  the calling test last made active onto an unrelated readback -- and since
+  `wrap_context_for()` memoises per session handle, *which* mechanism lands depends on test
+  ordering and `-k` selection. 103 sites across 28 files still rely on `clear()` running at
+  teardown rather than on a rule. `tests/test_f6_inherit_mechanism_ratchet.py` pins a per-file
+  baseline and fails when a new unguarded site appears, so the backlog can only shrink; it
+  also fails if the baseline is left stale after sites are fixed, or if a new file introduces
+  unguarded sites at all.
 
 - **Exact case batching via `--selection-manifest`.** For oversized KAT suites on slow
   execution profiles (e.g. OP-TEE), `pkcs11-check test --selection-manifest PATH` executes a
@@ -53,6 +86,20 @@
   observability fixture.
 
 ### Fixed
+
+- **`kind` is now asserted on readback classification records.** `record_as()` derives outcome
+  and severity from `(reason, kind)` together, so the `_assert_readback_record` helpers that
+  checked reason, operation, mechanism and `spec_ref` but not `kind` would have let a severity
+  regression through while `reason` still matched. Asserting it showed five sensitive-value
+  readbacks are `policy`, not `metadata`; those sites now say so.
+- **The twin `CKA_EC_POINT` readback in `acvp/test_acvp_ecdh.py`** no longer stamps
+  `mechanism="CKM_EC_KEY_PAIR_GEN"` on a plain `C_GetAttributeValue`. Its sibling branch in the
+  same `try`/`except` pair was corrected by the F6 sweep and this one was missed; the producer
+  mechanism now rides in the label, matching the sibling. Attribution fidelity only -- no
+  verdict, reason or kind changes.
+- **The TestPyPI staging contract test no longer hardcodes the release version.** It ran the CI
+  staging snippet against a copy of the real tree while pinning `0.1.9` in five places, so it
+  broke on every version bump. It now reads `__version__` from the file the snippet rewrites.
 
 - **Collection failures leave durable harness evidence (GH #16).** Metadata and isolated pytest
   collection/configuration failures are recorded as `CollectReport` harness errors with labeled
@@ -150,6 +197,55 @@
   (`self._funcs.pop(name, None)`) instead of leaving a stale callable behind, so a genuinely
   absent function is reported as a missing function-table entry rather than surfacing as a crash
   the first time it is called.
+- **`CKR_FUNCTION_NOT_SUPPORTED` is capability absence, not a deviation.** FNS is the spec-defined
+  way for a module to say it does not implement a function at all, and function support is
+  orthogonal to mechanism advertisement -- so an advertised mechanism cannot promote it into a
+  deviation. Every site that recorded it as an xfail now skips with the declining function named:
+  `C_LoginUser`, `C_SessionCancel`, `C_WaitForSlotEvent`, `C_WrapKeyAuthenticated`,
+  `C_UnwrapKeyAuthenticated`, `C_SignRecoverInit`/`C_VerifyRecoverInit`, `C_CopyObject`, the v3.0
+  message family, and the dual functions. Across a six-provider round this released 63 invented
+  findings while keeping every observation visible in skip accounting.
+- **A declined function must skip, never pass.** The raw v3.0/v3.2 CKR probes had corrected the
+  same FNS misclassification by adding `CKR_FUNCTION_NOT_SUPPORTED` to each function's expected-RV
+  set, which turned "the module does not implement this at all" into a silent pass -- no
+  classification record, no skip reason, and an inflated PASS count. `_check_protocol` now
+  recognises FNS in the semantic loop and skips, behind the existing protocol-error, crash, and
+  child-`SKIP:` dispositions. A pass asserts the module answered correctly; it may never stand in
+  for a module that did not answer.
+- **Attribute readbacks compare by value, not by `repr()`.** `test_kem.py`'s
+  `_check_equal_attribute` compared `repr(value) == repr(expected)`, and `repr(2)` is not
+  `repr(CKO_PUBLIC_KEY)` even though `2 == CKO_PUBLIC_KEY`. Every conformant ML-KEM `CKA_CLASS`
+  and `CKA_KEY_TYPE` readback was reported as `wrong_result`. The comparison is now numeric;
+  `repr(expected)` survives only in the diagnostic, where the symbolic name is useful.
+- **DER-wrapped Edwards and Montgomery `CKA_EC_POINT` values are accepted again.** A strictness
+  change intended for `decode_ec_point` also reached `read_raw_ec_point_or_xfail`, turning
+  conformant DER-wrapped points into `not_operational` xfails. The reader now falls back to
+  `decode_ec_point` for them, and `_der_decode_length`'s `strict=` mode stays opted into only by
+  `decode_ec_point` so `ecdsa_sig_from_der` is unaffected.
+- **RSA implicit rejection is an honest deviation, not an accepted-invalid break.** A module that
+  returns plausible-looking plaintext for an invalid PKCS#1 v1.5 ciphertext is implementing
+  implicit rejection, a deliberate Bleichenbacher countermeasure. `test_error_path_rsa.py` records
+  it as `honest_deviation` with `detail.implicit_rejection_suspected`, instead of a CRITICAL
+  `accepted_invalid` finding against four providers.
+- **A single `pulLen` echo is no longer hidden behind a substring match.** The buffer-too-small
+  probes computed `ckr_ok = "CKR:0x00000000" in stdout`, a raw substring scan that also matched the
+  probe's own `RETRY_CKR:0x00000000` line -- so every provider that correctly returned
+  `CKR_BUFFER_TOO_SMALL` and then retried successfully was reported as having returned `CKR_OK` for
+  a one-byte buffer. Field parsing is now exact, and the real finding underneath (a returned count
+  of 1 contradicting the required size) surfaces as `self_contradiction`/`metadata`.
+- **`CKM_SSL3_KEY_AND_MAC_DERIVE` requests the MAC size it compares against.** The exact-vector
+  test omitted `mac_size_bits`, whose default is `0`, so it asked for zero-length MAC secrets while
+  comparing against an RFC 6101 reference computed for 16-byte MACs -- the recorded actual value was
+  an exact 64-byte prefix of the 96-byte expected one. It now passes `mac_size_bits=128` and
+  compares each of the six derived components individually.
+- **`CKM_RSA_X_509` short input is valid input.** `test_sign_recover_wrong_data_length` sent 9-byte
+  data and demanded `CKR_DATA_LEN_RANGE`, but raw RSA accepts any input up to the modulus length
+  (left zero-padded), so conformant providers were flagged. The probe now sends a genuine
+  out-of-range vector of k+1 bytes.
+- **A conformant rejection is a pass.** `test_key_gen_mechanism_read_only` routed
+  `C_SetAttributeValue`'s `CKR_ATTRIBUTE_READ_ONLY` -- the expected spec code for that negative op --
+  through `xfail_if_known_ckr`, recording `not_operational` for correct behaviour. It now uses
+  `reject_or_classify`, so the expected code passes, another clean code xfails, and `CKR_OK` fails.
 
 ## [0.1.9] - 2026-08-28
 

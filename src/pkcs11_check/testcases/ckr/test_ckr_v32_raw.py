@@ -34,6 +34,7 @@ from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
@@ -112,6 +113,11 @@ def _check(rc: int, out: str, err: str, func: str) -> None:
         "C_AsyncGetID": ("C_AsyncGetID",),
         "C_WrapKeyAuthenticated": ("C_WrapKeyAuthenticated",),
     }.get(func, (func,))
+    # CKR_FUNCTION_NOT_SUPPORTED is NOT listed here. It is the spec-defined way to say a
+    # v3.2 function is unimplemented -- capability absence, so _check_protocol turns it
+    # into a *skip* carrying the declining function's identity. Listing it as an expected
+    # RV would turn "the module does not implement this at all" into a silent pass, which
+    # both inflates PASS counts and erases the observation from the report.
     expected_rvs = {
         "C_VerifySignatureInit": (CKR_MECHANISM_INVALID,),
         "C_VerifySignature": (CKR_OPERATION_NOT_INITIALIZED,),
@@ -264,6 +270,9 @@ def _check_protocol(
         protocol_error = protocol_error or "missing_terminal_marker"
 
     semantic: list[Classification] = []
+    # Function-level "not implemented" observations, kept apart from the child-emitted
+    # ``skips`` so the mixed_terminal_markers protocol check above is unaffected.
+    unimplemented: list[str] = []
     # Valid provider observations remain trustworthy when the process is
     # interrupted before later phases or the optional completion line; the
     # shared process disposition below preserves them alongside a crash/harness record.
@@ -272,6 +281,15 @@ def _check_protocol(
         expected_names = [ckr_name(int(code)) for code in expected_rvs]
         for phase, rv in results:
             if rv in expected_ints:
+                continue
+            if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+                # Capability absence at the function level: the module exposes the entry
+                # point but declines the function outright. Orthogonal to mechanism
+                # advertisement, so it is not a deviation -- but it is not a pass either.
+                # Skip keeps the declining function named and visible in skip accounting.
+                unimplemented.append(
+                    f"{func}: {phase} not implemented (CKR_FUNCTION_NOT_SUPPORTED)"
+                )
                 continue
             actual_name = ckr_name(rv)
             if rv == int(CKR_OK):
@@ -347,7 +365,9 @@ def _check_protocol(
         # harness defect for the marker the crash prevented.
         if protocol_error != "missing_terminal_marker":
             record(protocol)
-    termination, explicit_harness_seen = assert_subprocess_completed(rc, out, err, context=func)
+    termination, explicit_harness_seen = assert_subprocess_completed(
+        rc, out, err, context=func, already_attributed=protocol_error is not None
+    )
     if explicit_harness_seen:
         return
     if protocol_error is not None:
@@ -369,6 +389,8 @@ def _check_protocol(
         raise_for_record(strongest)
     if skips:
         pytest.skip(skips[0])
+    if unimplemented:
+        pytest.skip(unimplemented[0])
     if terminal is None:
         fail_as(
             "harness_error",

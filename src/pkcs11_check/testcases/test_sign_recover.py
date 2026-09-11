@@ -95,11 +95,26 @@ def _protocol_records(stdout: str, context: str) -> tuple[list[Classification], 
     return records, malformed
 
 
-def _ckr_records(stdout: str, context: str) -> tuple[list[Classification], bool, bool]:
-    """Parse CKR:<operation>:<value> measurements without raising on malformed output."""
+# C_SignRecoverInit / C_VerifyRecoverInit are the function-level entry points: a clean
+# CKR_FUNCTION_NOT_SUPPORTED here is the spec-defined way to say the function isn't
+# implemented (capability absence, orthogonal to mechanism advertisement), not a
+# deviation -- ``_skip_missing_functions`` only gates on the function *pointer* being
+# absent from the table, so this call-time refusal needs its own skip path.
+_FUNCTION_LEVEL_INIT_PHASES = frozenset({"SignRecoverInit", "VerifyRecoverInit"})
+
+
+def _ckr_records(stdout: str, context: str) -> tuple[list[Classification], bool, bool, list[str]]:
+    """Parse CKR:<operation>:<value> measurements without raising on malformed output.
+
+    Returns ``(records, malformed, found, function_not_supported)`` where
+    ``function_not_supported`` lists the function-level phases (see
+    ``_FUNCTION_LEVEL_INIT_PHASES``) that cleanly returned CKR_FUNCTION_NOT_SUPPORTED --
+    reported for the caller to ``pytest.skip()`` on, never recorded as a deviation.
+    """
     records: list[Classification] = []
     malformed = False
     found = False
+    function_not_supported: list[str] = []
     for line in stdout.splitlines():
         if not line.startswith("CKR:"):
             continue
@@ -115,8 +130,11 @@ def _ckr_records(stdout: str, context: str) -> tuple[list[Classification], bool,
             continue
         if rv == 0:
             continue
-        outcome, severity = derive_verdict("not_operational", "crypto")
         operation = parts[1].strip()
+        if operation in _FUNCTION_LEVEL_INIT_PHASES and rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+            function_not_supported.append(operation)
+            continue
+        outcome, severity = derive_verdict("not_operational", "crypto")
         records.append(
             Classification(
                 reason="not_operational",
@@ -130,7 +148,7 @@ def _ckr_records(stdout: str, context: str) -> tuple[list[Classification], bool,
                 detail={"protocol_marker": "CKR", "operation": operation},
             )
         )
-    return records, malformed, found
+    return records, malformed, found, function_not_supported
 
 
 def _skip_missing_functions(module: Any, names: tuple[str, ...]) -> None:
@@ -151,17 +169,23 @@ def _inspect_probe(
     stderr: str,
     *,
     context: str,
-) -> tuple[list[Classification], list[Classification], bool, bool]:
+) -> tuple[list[Classification], list[Classification], bool, bool, list[str]]:
     """Record all provider observations, then apply signal/SEH/timeout handling."""
     semantic, malformed_semantic = _protocol_records(stdout, context)
-    measurements, malformed_ckr, has_ckr = _ckr_records(stdout, context)
+    measurements, malformed_ckr, has_ckr, function_not_supported = _ckr_records(stdout, context)
     for item in (*semantic, *measurements):
         record(item)
     _termination, explicit_harness = assert_subprocess_completed(
         returncode, stdout, stderr, context=context
     )
     if explicit_harness:
-        return semantic, measurements, malformed_semantic or malformed_ckr, has_ckr
+        return (
+            semantic,
+            measurements,
+            malformed_semantic or malformed_ckr,
+            has_ckr,
+            function_not_supported,
+        )
     if malformed_semantic or malformed_ckr:
         fail_as(
             "harness_error",
@@ -169,7 +193,7 @@ def _inspect_probe(
             summary=f"{context}: malformed CKR or semantic protocol marker",
             detail={"probe_incomplete": True, "protocol": "malformed_marker"},
         )
-    return semantic, measurements, False, has_ckr
+    return semantic, measurements, False, has_ckr, function_not_supported
 
 
 def _raise_provider_disposition(
@@ -289,7 +313,7 @@ class TestSignRecover:
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
-        semantic, measurements, _malformed, _has_ckr = _inspect_probe(
+        semantic, measurements, _malformed, _has_ckr, function_not_supported = _inspect_probe(
             returncode,
             stdout,
             stderr,
@@ -297,6 +321,11 @@ class TestSignRecover:
         )
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped sign-recover: {lines_map['SKIP']}")
+        if function_not_supported:
+            pytest.skip(
+                "required PKCS#11 function(s) not operational: "
+                + ", ".join(f"{op}: CKR_FUNCTION_NOT_SUPPORTED" for op in function_not_supported)
+            )
         _require_result_fields(
             stdout,
             lines_map,
@@ -361,7 +390,7 @@ class TestSignRecover:
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
-        semantic, measurements, _malformed, _has_ckr = _inspect_probe(
+        semantic, measurements, _malformed, _has_ckr, function_not_supported = _inspect_probe(
             returncode,
             stdout,
             stderr,
@@ -369,6 +398,11 @@ class TestSignRecover:
         )
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped sign/verify-recover: {lines_map['SKIP']}")
+        if function_not_supported:
+            pytest.skip(
+                "required PKCS#11 function(s) not operational: "
+                + ", ".join(f"{op}: CKR_FUNCTION_NOT_SUPPORTED" for op in function_not_supported)
+            )
         _require_result_fields(
             stdout,
             lines_map,
@@ -420,7 +454,7 @@ class TestSignRecover:
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
 
-        semantic, measurements, _malformed, _has_ckr = _inspect_probe(
+        semantic, measurements, _malformed, _has_ckr, function_not_supported = _inspect_probe(
             returncode,
             stdout,
             stderr,
@@ -428,6 +462,11 @@ class TestSignRecover:
         )
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped sign-recover error test: {lines_map['SKIP']}")
+        if function_not_supported:
+            pytest.skip(
+                "required PKCS#11 function(s) not operational: "
+                + ", ".join(f"{op}: CKR_FUNCTION_NOT_SUPPORTED" for op in function_not_supported)
+            )
         _require_result_fields(
             stdout,
             lines_map,

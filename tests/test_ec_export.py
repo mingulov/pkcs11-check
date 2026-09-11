@@ -694,6 +694,42 @@ def test_read_raw_ec_point_accepts_each_family_byte_for_byte(
 
 
 @pytest.mark.parametrize(
+    ("family", "raw"),
+    [
+        (RawECPointFamily.X25519, b"\x04" + b"\x00" * 31),
+        (RawECPointFamily.X448, b"\x04" + b"\x00" * 55),
+        (RawECPointFamily.ED25519, b"\x01" + b"\x00" * 31),
+        (RawECPointFamily.ED448, b"\x01" + b"\x00" * 56),
+    ],
+    ids=["x25519", "x448", "ed25519", "ed448"],
+)
+def test_read_raw_ec_point_accepts_der_wrapped_octet_string(
+    monkeypatch: pytest.MonkeyPatch,
+    family: RawECPointFamily,
+    raw: bytes,
+) -> None:
+    """PKCS#11 v3.0 defines Edwards/Montgomery CKA_EC_POINT as a DER-wrapped OCTET
+    STRING (the tool's own importer emits this form, e.g. the 34-byte Ed25519 fixture
+    at ``tests/test_eddsa_runtime_classification.py``); it must be unwrapped and
+    accepted, not treated as a length-mismatch deviation.
+
+    ``pytest.raises``-free: a bare call would let an uncaught ``pytest.xfail()``
+    through as a silent, green-exit xfail rather than a hard failure -- catch it (and
+    ``pytest.fail()``) explicitly and turn either into a real assertion failure.
+    """
+    wrapped = bytes([0x04, len(raw)]) + raw
+    rs = _raw_ec_rs(monkeypatch, wrapped)
+
+    try:
+        result = read_raw_ec_point_or_xfail(rs, 2, family, label="raw public key")
+    except (pytest.xfail.Exception, Failed) as exc:
+        pytest.fail(f"DER-wrapped {family.value} point must be accepted, not: {exc!r}")
+
+    assert result == raw
+    assert C.get_records() == []
+
+
+@pytest.mark.parametrize(
     ("family", "expected_length"),
     [
         (RawECPointFamily.X25519, 32),
@@ -876,6 +912,7 @@ def test_read_raw_ec_point_constructor_invalid_is_crypto_failure(
         "attribute": {"name": "CKA_EC_POINT", "id": int(CKA_EC_POINT)},
         "family": family.value,
         "length": {"expected": 32, "actual": 32},
+        "representation": "raw",
     }
 
 

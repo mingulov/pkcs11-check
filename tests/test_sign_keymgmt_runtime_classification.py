@@ -163,6 +163,65 @@ def test_sign_recover_missing_result_is_incomplete(
     assert get_records()[-1].reason == "harness_error"
 
 
+@pytest.mark.parametrize(
+    ("method_name", "probe_name", "stdout"),
+    [
+        (
+            "test_sign_recover_produces_output",
+            "sign_recover_produces_output",
+            "KEYGEN_OK:1:2\nCKR:SignRecoverInit:0x00000054\n",
+        ),
+        (
+            "test_verify_recover_round_trip",
+            "verify_recover_round_trip",
+            "KEYGEN_OK:1:2\nCKR:VerifyRecoverInit:0x00000054\n",
+        ),
+        (
+            "test_sign_recover_wrong_data_length",
+            "sign_recover_wrong_data_length",
+            "KEYGEN_OK:1:2\nCKR:SignRecoverInit:0x00000054\n",
+        ),
+    ],
+)
+def test_sign_recover_function_not_supported_is_skip_not_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    probe_name: str,
+    stdout: str,
+) -> None:
+    """A clean CKR_FUNCTION_NOT_SUPPORTED at C_SignRecoverInit/C_VerifyRecoverInit is
+    capability absence (skip), never a `not_operational` deviation record.
+
+    ``pytest.raises(pytest.skip.Exception, ...)`` would let an uncaught
+    ``pytest.xfail()``/``pytest.fail()`` (both distinct ``OutcomeException``
+    subclasses) through as a silent, green-exit xfail instead of a hard test
+    failure -- catch all three explicitly and assert on which one fired.
+    """
+    monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
+    monkeypatch.setattr(
+        test_sign_recover,
+        "run_probe",
+        lambda *_a, **_k: ProbeResult(returncode=0, stdout=stdout, stderr=""),
+    )
+    config = SimpleNamespace(module="x", slot=0, pin=None)
+
+    from pkcs11_check.classification import get_records
+
+    try:
+        getattr(test_sign_recover.TestSignRecover(), method_name)(
+            config,
+            SimpleNamespace(get_slots=lambda **_k: []),
+        )
+    except pytest.skip.Exception as exc:
+        assert "CKR_FUNCTION_NOT_SUPPORTED" in str(exc)
+    except (pytest.xfail.Exception, pytest.fail.Exception) as exc:
+        pytest.fail(f"{method_name}: clean CKR_FUNCTION_NOT_SUPPORTED must skip, not: {exc!r}")
+    else:
+        pytest.fail(f"{method_name}: expected a pytest.skip for CKR_FUNCTION_NOT_SUPPORTED")
+
+    assert get_records() == []
+
+
 def _run_sign_recover_length_probe(monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
     monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
     monkeypatch.setattr(

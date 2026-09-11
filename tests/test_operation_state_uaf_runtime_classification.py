@@ -615,13 +615,18 @@ def test_derive_prefix_crash_retains_structured_measurement() -> None:
     }
 
 
-def test_hard_provider_contradiction_precedes_positive_exit_harness_error() -> None:
+def test_hard_provider_contradiction_precedes_positive_exit_disposition() -> None:
+    """Provider evidence parsed from the child's own output outranks how it exited.
+
+    The process disposition describes how the child ENDED; the contradiction describes
+    what the MODULE did. Both are retained, and the module's is raised.
+    """
     with pytest.raises(pytest.fail.Exception, match="accepted a destroyed"):
         _check(_target(0, 0), rc=2)
 
     assert [item.reason for item in C.get_records()] == [
         "self_contradiction",
-        "harness_error",
+        "probe_incomplete",
     ]
 
 

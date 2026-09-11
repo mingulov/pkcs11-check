@@ -1064,6 +1064,14 @@ class TestDigestStateRoundTrip:
             _raise_provider_disposition(semantic, measurements)
         if _cross_session_function_not_supported(cross_protocol):
             pytest.skip("C_SetOperationState is not supported")
+        # _cross_session_function_not_supported only inspects CROSS_SESSION_REJECTED:,
+        # i.e. C_SetOperationState. A module that declines C_GetOperationState never
+        # reaches that marker at all, so without this the FNS fell through to the
+        # missing-result branch below and was reported as a HIGH failure. Function-level
+        # capability absence is a skip -- the same guard the same-session tests use.
+        state_function = _state_function_not_supported(stdout)
+        if state_function is not None:
+            pytest.skip(f"{state_function} is not supported")
         if "SKIP" in lines_map:
             pytest.skip(f"Module skipped cross-session test: {lines_map['SKIP']}")
         if cross_protocol is None:
@@ -1084,7 +1092,7 @@ class TestDigestStateRoundTrip:
                 label="cross-session-state",
                 summary=(
                     "cross-session-state: child emitted REFERENCE without a terminal "
-                    "cross-session result or provider measurement"
+                    f"cross-session result or provider measurement: {stdout!r}"
                 ),
                 detail={"probe_incomplete": True, "protocol": "missing_result"},
             )

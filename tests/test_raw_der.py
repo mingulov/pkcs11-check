@@ -296,6 +296,53 @@ class TestRsaPublicKeyEncoding:
         assert exp2 == exponent
 
 
+class TestLenientLengthDefaultCanary:
+    """Pin the defect fixed in 41ea9fb7 (finding-strength regression).
+
+    Commit 607c1df7 made ``_der_decode_length`` strict by default, intended
+    only for ``decode_ec_point``, but the same helper also backs
+    ``ecdsa_sig_from_der`` (via ``_decode_der_sequence_integers``) and the RSA
+    decoders. Non-canonical-but-legal long-form lengths -- which real
+    PKCS#11 providers and standard ASN.1 encoders emit -- then raised
+    ValueError, silently breaking signature parsing: PKCS#11 fingerprints
+    were never computed and duplicate-detection never ran, while every gate
+    stayed green because the only test that would have noticed
+    (tests/test_wycheproof_signature_duplicate_guards.py) needs fetched
+    vector data and was skipping in every empty-data/ worktree.
+
+    This test hand-builds the DER bytes -- it needs no fetched vector data --
+    so it runs in every worktree, including one with an empty data/ dir, and
+    would have caught the regression on its own.
+    """
+
+    # SEQUENCE body: INTEGER(1), INTEGER(1) = 02 01 01 02 01 01 (6 bytes)
+    _BODY = bytes([0x02, 0x01, 0x01, 0x02, 0x01, 0x01])
+
+    def test_ecdsa_sig_from_der_accepts_long_form_length_for_short_value(self) -> None:
+        # Non-canonical: length 6 encoded in long form (0x81 0x06) instead of
+        # short form (0x06). Legal DER decoders accept this; only strict mode
+        # (decode_ec_point's opt-in) should reject it.
+        der = bytes([0x30, 0x81, 0x06]) + self._BODY
+        r, s = ecdsa_sig_from_der(der)
+        assert (r, s) == (1, 1)
+
+    def test_ecdsa_sig_from_der_accepts_leading_zero_long_form_length(self) -> None:
+        # Non-canonical: long-form length with a leading zero byte
+        # (0x82 0x00 0x06).
+        der = bytes([0x30, 0x82, 0x00, 0x06]) + self._BODY
+        r, s = ecdsa_sig_from_der(der)
+        assert (r, s) == (1, 1)
+
+    def test_decode_ec_point_still_rejects_same_noncanonical_length(self) -> None:
+        # decode_ec_point opts into strict=True and must keep rejecting what
+        # ecdsa_sig_from_der above accepts -- the two must not regress
+        # together.
+        point_body = b"\x04" + b"\x01" * 64
+        der = bytes([0x04, 0x81, len(point_body)]) + point_body
+        with pytest.raises(ValueError, match="canonical"):
+            decode_ec_point(der)
+
+
 class TestTruncatedInput:
     """Truncated or malformed DER raises ValueError, not IndexError."""
 

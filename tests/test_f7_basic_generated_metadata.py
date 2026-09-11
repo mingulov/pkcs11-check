@@ -38,8 +38,12 @@ def _clear_classifications() -> Generator[None, None, None]:
     C.clear()
 
 
-def _assert_readback_record(rec: C.Classification, *, reason: str) -> None:
+def _assert_readback_record(rec: C.Classification, *, reason: str, kind: str = "metadata") -> None:
     assert rec.reason == reason
+    # ``kind`` is asserted because ``record_as()`` derives outcome and severity from
+    # ``(reason, kind)`` together -- leaving it unchecked lets a severity regression
+    # through even while ``reason`` still matches.
+    assert rec.kind == kind
     assert rec.operation == "C_GetAttributeValue"
     assert rec.mechanism is None
     assert rec.spec_ref == _SPEC_REF

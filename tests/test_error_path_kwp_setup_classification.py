@@ -1,7 +1,7 @@
 """PC-5 regression: a KWP/KW wrap-setup rejection inside the crash-isolated child
 must be classified (emit a SETUP_XFAIL marker the parent turns into pytest.xfail),
 not propagate as an unhandled Python error the parent reports as a generic
-"subprocess failed with exit code 1". An UNKNOWN reject must NOT be swallowed --
+"subprocess exited with code 1". An UNKNOWN reject must NOT be swallowed --
 it re-raises so a real provider bug/crash still surfaces.
 """
 
