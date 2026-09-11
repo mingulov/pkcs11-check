@@ -152,13 +152,20 @@ def _digest_key_reference_or_record(
 ) -> Any:
     """Read generated key bytes without hiding unavailable or malformed readback."""
     attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
+    # The key's CKA_VALUE was produced by C_GenerateKey(CKM_AES_KEY_GEN), not by the
+    # CKM_SHA256 digest this readback feeds into as a reference -- attributing this
+    # readback to CKM_SHA256 would corrupt spec_ref (F6). Preserve the real producer
+    # in the label instead.
     key_bytes = attr_or_record(
         attrs,
         CKA_VALUE,
-        label=f"{label}:CKA_VALUE",
+        label=(
+            f"{label}:CKA_VALUE "
+            "(producer_operation=C_GenerateKey, producer_mechanism=CKM_AES_KEY_GEN)"
+        ),
         reason="not_operational",
         kind="metadata",
-        mechanism="CKM_SHA256",
+        inherit_mechanism=False,
     )
     if key_bytes is MISSING_ATTRIBUTE:
         return key_bytes

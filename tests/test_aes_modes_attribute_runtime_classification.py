@@ -72,7 +72,10 @@ def test_missing_unwrapped_value_is_structured_and_cleanup_runs(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_WRAP_PKCS7"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_WRAP_PKCS7" in records[0].label
     assert records[0].detail == {
         "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
     }
@@ -100,7 +103,8 @@ def test_earlier_wrap_output_failure_is_preserved_with_missing_unwrapped_value(
         }
     }
     assert records[1].operation == "C_GetAttributeValue"
-    assert records[1].mechanism == "CKM_AES_KEY_WRAP_PKCS7"
+    assert records[1].mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_WRAP_PKCS7" in records[1].label
 
 
 @pytest.mark.parametrize("value", [False, 0, b"", None], ids=["false", "zero", "empty", "none"])

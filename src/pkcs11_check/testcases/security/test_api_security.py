@@ -319,7 +319,12 @@ class TestSensitiveExtraction:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
-            if CKA_VALUE in attrs:
+            # Membership is resolved into a plain bool *before* branching: the
+            # `in` test itself is safe (it never returns provider-backed data),
+            # so pre-computing it leaves no absence branch that could silently
+            # fabricate a value -- CKA_VALUE correctly absent needs no record.
+            value_present = CKA_VALUE in attrs
+            if value_present:
                 fail_as(
                     "self_contradiction",
                     kind="policy",
@@ -329,12 +334,6 @@ class TestSensitiveExtraction:
                         "SECURITY: CKA_VALUE readable on SENSITIVE key -- key material exposed"
                     ),
                 )
-            else:
-                # CKA_VALUE correctly absent -- the protection held; nothing to record.
-                # The explicit `else` branch is load-bearing, not dead code: without
-                # it the attribute-access analyzer reports `unstructured_absence`
-                # for the bare membership guard above.
-                pass
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 
@@ -386,16 +385,31 @@ class TestSensitiveExtraction:
                 sensitive_raw is not MISSING_ATTRIBUTE and type(sensitive_value) is not bool
             ) or (extractable_raw is not MISSING_ATTRIBUTE and type(extractable_value) is not bool)
             exponent_attrs = read_attributes(rs.raw, rs.sh, priv_h, [CKA_PRIVATE_EXPONENT])
-            # CKA_PRIVATE_EXPONENT is the protected secret this test probes for exposure;
-            # a correctly-protected key omits it, which is the secure default, not a
-            # deviation -- so this reads the mapping directly under a membership guard
-            # rather than recording an absence via attr_or_record().
+            # CKA_PRIVATE_EXPONENT is the protected secret this test probes for exposure.
+            # It legitimately CAN be sensitive (it is the private-key component this whole
+            # test is about), so a clean CKR_ATTRIBUTE_SENSITIVE refusal here is conformant,
+            # not a deviation -- sensitive_is_conformant=True lets attr_or_record record it
+            # that way. A missing CKR (silent omission) or CKR_ATTRIBUTE_TYPE_INVALID is
+            # still a deviation via `reason`. Previously this branch bypassed attr_or_record
+            # entirely via a membership guard, so a correctly-protected key produced ZERO
+            # report.jsonl record for this absence (N16) -- calling attr_or_record
+            # unconditionally makes the absence visible without changing which case is
+            # conformant vs. a deviation.
+            exponent_raw = attr_or_record(
+                exponent_attrs,
+                CKA_PRIVATE_EXPONENT,
+                label="RSA private-key CKA_PRIVATE_EXPONENT readback",
+                reason="honest_deviation",
+                kind="metadata",
+                inherit_mechanism=False,
+                sensitive_is_conformant=True,
+            )
             exponent_value: Any
-            if CKA_PRIVATE_EXPONENT in exponent_attrs:
-                exponent_value = exponent_attrs[CKA_PRIVATE_EXPONENT]
-            else:
+            if exponent_raw is MISSING_ATTRIBUTE:
                 exponent_value = None
-            exponent_returned = CKA_PRIVATE_EXPONENT in exponent_attrs
+            else:
+                exponent_value = exponent_raw
+            exponent_returned = exponent_raw is not MISSING_ATTRIBUTE
             exponent_readback_valid = type(exponent_value) is bytes and bool(exponent_value)
 
             if exponent_readback_valid and (sensitive_claimed or non_extractable_claimed):
@@ -586,7 +600,11 @@ class TestAttributeLaunderingViaCopy:
                 copy_h = copy_object(rs.raw, rs.sh, key_h, {CKA_SENSITIVE: False})
                 try:
                     attrs = read_attributes(rs.raw, rs.sh, copy_h, [CKA_VALUE])
-                    if CKA_VALUE in attrs:
+                    # Membership is resolved into a plain bool *before* branching (the
+                    # `in` test itself is safe): CKA_VALUE correctly absent needs no
+                    # record, and there is no absence branch left to fabricate a value.
+                    value_present = CKA_VALUE in attrs
+                    if value_present:
                         fail_as(
                             "self_contradiction",
                             kind="policy",
@@ -595,12 +613,6 @@ class TestAttributeLaunderingViaCopy:
                             summary="SECURITY: Copy downgraded CKA_SENSITIVE, "
                             "key material readable",
                         )
-                    else:
-                        # CKA_VALUE correctly absent -- the protection held; nothing to
-                        # record.  The explicit `else` branch is load-bearing, not dead
-                        # code: without it the attribute-access analyzer reports
-                        # `unstructured_absence` for the bare membership guard above.
-                        pass
                 finally:
                     destroy_quietly(rs.raw, rs.sh, copy_h)
             except AssertionError as exc:
@@ -644,7 +656,11 @@ class TestKeyUsageRestrictions:
         )
         try:
             attrs = read_attributes(rs.raw, rs.sh, key_h, [CKA_VALUE])
-            if CKA_VALUE in attrs:
+            # Membership is resolved into a plain bool *before* branching (the `in`
+            # test itself is safe): CKA_VALUE correctly absent needs no record, and
+            # there is no absence branch left to fabricate a value.
+            value_present = CKA_VALUE in attrs
+            if value_present:
                 fail_as(
                     "self_contradiction",
                     kind="policy",
@@ -655,12 +671,6 @@ class TestKeyUsageRestrictions:
                         "key material exposed"
                     ),
                 )
-            else:
-                # CKA_VALUE correctly absent -- the protection held; nothing to record.
-                # The explicit `else` branch is load-bearing, not dead code: without
-                # it the attribute-access analyzer reports `unstructured_absence`
-                # for the bare membership guard above.
-                pass
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)
 

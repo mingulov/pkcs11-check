@@ -863,10 +863,12 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
         obj_class_raw = attr_or_record(
             result,
             CKA_CLASS,
+            # label already names the derive mechanism; this is a plain
+            # C_GetAttributeValue readback, not the C_DeriveKey outcome (F6).
             label=f"{entry.mech_name}: derived object class",
             reason="not_operational",
             kind="metadata",
-            mechanism=entry.mech_name,
+            inherit_mechanism=False,
         )
         if obj_class_raw is MISSING_ATTRIBUTE:
             records = C.get_records()

@@ -158,9 +158,11 @@ def _read_bool(
     return attr_or_record(
         attrs,
         attr,
-        label=read_label,
+        label=(
+            read_label if mechanism is None else f"{read_label} (producer_mechanism={mechanism})"
+        ),
         kind="metadata",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
 
 
@@ -211,9 +213,9 @@ def _read_class(
     return attr_or_record(
         attrs,
         CKA_CLASS,
-        label=label,
+        label=(label if mechanism is None else f"{label} (producer_mechanism={mechanism})"),
         kind="metadata",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
 
 

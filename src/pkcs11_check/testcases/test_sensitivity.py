@@ -399,10 +399,12 @@ class TestSensitiveKeyValue:
             sensitive = attr_or_record(
                 sens_attrs,
                 CKA_SENSITIVE,
-                label="CKA_SENSITIVE=True on generated AES key",
+                label=(
+                    "CKA_SENSITIVE=True on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="policy",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             hard_records: list[classification.Classification] = []
             record = _record_bool_readback(
@@ -417,17 +419,23 @@ class TestSensitiveKeyValue:
                 hard_records.append(record)
             val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
             violated = CKA_VALUE in val_attrs
-            value = (
-                attr_or_record(
-                    val_attrs,
-                    CKA_VALUE,
-                    label="CKA_VALUE on a CKA_SENSITIVE=True AES key",
-                    reason="honest_deviation",
-                    kind="policy",
-                    mechanism="CKM_AES_KEY_GEN",
-                )
-                if violated
-                else MISSING_ATTRIBUTE
+            # CKA_VALUE of a CKA_SENSITIVE key is exactly the protected secret this test
+            # probes for -- legitimately sensitive, so a clean CKR_ATTRIBUTE_SENSITIVE
+            # refusal is conformant (sensitive_is_conformant=True), not a deviation.
+            # attr_or_record is now called unconditionally (previously only `if violated`,
+            # i.e. only when the attribute was present and no recording happened at all) so
+            # the correctly-protected case -- an absent CKA_VALUE -- is a visible record
+            # instead of a dead branch with zero report.jsonl output.
+            value = attr_or_record(
+                val_attrs,
+                CKA_VALUE,
+                label=(
+                    "CKA_VALUE on a CKA_SENSITIVE=True AES key (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                reason="honest_deviation",
+                kind="policy",
+                inherit_mechanism=False,
+                sensitive_is_conformant=True,
             )
             record = _record_bytes_readback(
                 value,
@@ -440,10 +448,19 @@ class TestSensitiveKeyValue:
             if record is not None:
                 hard_records.append(record)
             _raise_deferred_hard(hard_records)
+            # gen_aes_key() above raises unless C_GenerateKey returns CKR_OK, so
+            # reaching this point already proves the module accepted the
+            # CKA_SENSITIVE=True template at creation -- that acceptance is
+            # independent claim evidence.  A missing CKA_SENSITIVE readback (the
+            # _record_bool_readback() call above already records it) must not
+            # downgrade the claim: `violated` was observed directly from the
+            # CKA_VALUE readback and is real evidence regardless.
             if sensitive is MISSING_ATTRIBUTE:
-                return
+                claimed = True
+            else:
+                claimed = sensitive is True
             _classify_sensitive_policy(
-                claimed=sensitive is True,
+                claimed=claimed,
                 violated=violated,
                 label="read CKA_VALUE on a CKA_SENSITIVE=True AES key "
                 "(PKCS#11 v3.2: sensitive attributes cannot be revealed)",
@@ -545,10 +562,17 @@ class TestSensitiveKeyValue:
             _raise_deferred_hard(hard_records)
             if deferred_rv is not None:
                 raise deferred_rv
+            # import_secret_key() above either raises (re-raised unless a known
+            # rejection RV, which already xfails) or succeeds, so reaching this
+            # point already proves the module accepted the CKA_SENSITIVE=True
+            # template at creation -- independent claim evidence that a missing
+            # CKA_SENSITIVE readback must not downgrade.
             if sensitive is MISSING_ATTRIBUTE:
-                return
+                claimed = True
+            else:
+                claimed = sensitive is True
             _classify_sensitive_policy(
-                claimed=sensitive is True,
+                claimed=claimed,
                 violated=rv == CKR_OK or leaked,
                 label=(
                     "raw C_GetAttributeValue copied CKA_VALUE bytes for a "
@@ -685,10 +709,13 @@ class TestSensitiveKeyValue:
             value = attr_or_record(
                 attrs,
                 CKA_VALUE,
-                label="CKA_VALUE on a CKA_SENSITIVE=False AES key",
+                label=(
+                    "CKA_VALUE on a CKA_SENSITIVE=False AES key "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             if value is MISSING_ATTRIBUTE:
                 return
@@ -718,10 +745,13 @@ class TestSensitiveKeyValue:
             sensitive = attr_or_record(
                 sens_attrs,
                 CKA_SENSITIVE,
-                label="CKA_SENSITIVE=True on RSA private key",
+                label=(
+                    "CKA_SENSITIVE=True on RSA private key "
+                    "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                ),
                 reason="not_operational",
                 kind="policy",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                inherit_mechanism=False,
             )
             hard_records: list[classification.Classification] = []
             record = _record_bool_readback(
@@ -736,17 +766,23 @@ class TestSensitiveKeyValue:
                 hard_records.append(record)
             exp_attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_PRIVATE_EXPONENT])
             violated = CKA_PRIVATE_EXPONENT in exp_attrs
-            value = (
-                attr_or_record(
-                    exp_attrs,
-                    CKA_PRIVATE_EXPONENT,
-                    label="CKA_PRIVATE_EXPONENT on a CKA_SENSITIVE=True RSA private key",
-                    reason="honest_deviation",
-                    kind="policy",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-                )
-                if violated
-                else MISSING_ATTRIBUTE
+            # CKA_PRIVATE_EXPONENT is legitimately sensitive on this key (it is the
+            # secret this test probes for), so sensitive_is_conformant=True records a
+            # clean CKR_ATTRIBUTE_SENSITIVE refusal as conformant. attr_or_record is now
+            # called unconditionally -- previously only `if violated` (i.e. only once the
+            # attribute was already known present), leaving the correctly-protected case
+            # a dead branch with zero report.jsonl record for the absence.
+            value = attr_or_record(
+                exp_attrs,
+                CKA_PRIVATE_EXPONENT,
+                label=(
+                    "CKA_PRIVATE_EXPONENT on a CKA_SENSITIVE=True RSA private key "
+                    "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                ),
+                reason="honest_deviation",
+                kind="policy",
+                inherit_mechanism=False,
+                sensitive_is_conformant=True,
             )
             if value is not MISSING_ATTRIBUTE and violated:
                 if not isinstance(value, bytes) or not value:
@@ -775,10 +811,18 @@ class TestSensitiveKeyValue:
                         )
                     )
             _raise_deferred_hard(hard_records)
+            # gen_rsa_keypair_or_xfail() above raises/xfails unless the module
+            # accepted the CKA_SENSITIVE=True private-key template, so reaching
+            # this point already proves creation-time acceptance -- independent
+            # claim evidence that a missing CKA_SENSITIVE readback must not
+            # downgrade.  `violated` was observed directly from the
+            # CKA_PRIVATE_EXPONENT readback and is real evidence regardless.
             if sensitive is MISSING_ATTRIBUTE:
-                return
+                claimed = True
+            else:
+                claimed = sensitive is True
             _classify_sensitive_policy(
-                claimed=sensitive is True,
+                claimed=claimed,
                 violated=violated,
                 label="read CKA_PRIVATE_EXPONENT on a CKA_SENSITIVE=True RSA private key "
                 "(PKCS#11 v3.2: sensitive attributes cannot be revealed)",
@@ -808,10 +852,13 @@ class TestExtractableEnforcement:
                 extractable = attr_or_record(
                     attrs,
                     CKA_EXTRACTABLE,
-                    label="CKA_EXTRACTABLE default on generated AES key",
+                    label=(
+                        "CKA_EXTRACTABLE default on generated AES key "
+                        "(producer_mechanism=CKM_AES_KEY_GEN)"
+                    ),
                     reason="honest_deviation",
                     kind="metadata",
-                    mechanism="CKM_AES_KEY_GEN",
+                    inherit_mechanism=False,
                 )
             except CkrAssertionError as e:
                 if is_known_error(e, {CKR_ATTRIBUTE_TYPE_INVALID}):
@@ -880,10 +927,12 @@ class TestExtractableEnforcement:
             extractable = attr_or_record(
                 attrs,
                 CKA_EXTRACTABLE,
-                label="CKA_EXTRACTABLE=True on generated AES key",
+                label=(
+                    "CKA_EXTRACTABLE=True on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             hard_records: list[classification.Classification] = []
             record = _record_bool_readback(
@@ -900,10 +949,10 @@ class TestExtractableEnforcement:
             value = attr_or_record(
                 val_attrs,
                 CKA_VALUE,
-                label="CKA_VALUE on extractable AES key",
+                label="CKA_VALUE on extractable AES key (producer_mechanism=CKM_AES_KEY_GEN)",
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bytes_readback(
                 value,
@@ -933,10 +982,12 @@ class TestSensitiveFlag:
             value = attr_or_record(
                 attrs,
                 CKA_SENSITIVE,
-                label="CKA_SENSITIVE=True on generated AES key",
+                label=(
+                    "CKA_SENSITIVE=True on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 value,
@@ -960,10 +1011,12 @@ class TestSensitiveFlag:
             value = attr_or_record(
                 attrs,
                 CKA_SENSITIVE,
-                label="CKA_SENSITIVE=False on generated AES key",
+                label=(
+                    "CKA_SENSITIVE=False on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 value,
@@ -1000,10 +1053,12 @@ class TestSensitiveFlag:
             always_sensitive = attr_or_record(
                 a1,
                 CKA_ALWAYS_SENSITIVE,
-                label="CKA_ALWAYS_SENSITIVE on sensitive AES key",
+                label=(
+                    "CKA_ALWAYS_SENSITIVE on sensitive AES key (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             hard_records: list[classification.Classification] = []
             record = _record_bool_readback(
@@ -1021,10 +1076,13 @@ class TestSensitiveFlag:
             always_sensitive = attr_or_record(
                 a2,
                 CKA_ALWAYS_SENSITIVE,
-                label="CKA_ALWAYS_SENSITIVE on non-sensitive AES key",
+                label=(
+                    "CKA_ALWAYS_SENSITIVE on non-sensitive AES key "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
                 reason="not_operational",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 always_sensitive,

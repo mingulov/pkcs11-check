@@ -659,11 +659,13 @@ class TestSP800108CounterKDF:
             if va is MISSING_ATTRIBUTE or vb is MISSING_ATTRIBUTE:
                 return
             if va == vb:
+                # This finding is about C_DeriveKey's output diversity, not the
+                # C_GetAttributeValue readback that retrieved it (F6).
                 classify(
                     "wrong_result",
                     kind="crypto",
                     label="CKM_SP800_108_COUNTER_KDF:distinct labels produce distinct outputs",
-                    operation="C_GetAttributeValue",
+                    operation="C_DeriveKey",
                     mechanism="CKM_SP800_108_COUNTER_KDF",
                     summary="Different labels produced the same derived key",
                 )

@@ -16,7 +16,13 @@ The first successful upload creates the TestPyPI project and converts the pendin
 ## Cutting a release
 
 1. On `main`, bump `__version__` in `src/pkcs11_check/__init__.py` and fold the development branch's `## Unreleased` notes into a matching `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`. These are one atomic edit: the top numbered changelog heading must match the package version at release time.
-2. Run `uv lock` if dependencies changed, and check the whole gate set locally.
+2. Run `uv lock` if dependencies changed, and check the whole gate set locally, including
+   `tests/test_reporting_integrity_release_gate.py` and
+   `tests/test_required_attribute_access_guard.py` - the evidence-integrity gate described in
+   [docs/interpreting-results.md](interpreting-results.md#framework-release-gate). It is not
+   wired into CI as a separate check; it runs as part of the ordinary `pytest tests/` suite that
+   step 3's CI green check already covers, so a local run before pushing is the only place it is
+   exercised ahead of that push.
 3. Push to `main` and wait for CI to go green. The release refuses to run otherwise.
 4. Dispatch **Release** with the version and `dry_run` left ticked. Read the job summary: it prints the commit, the tag it would create, and the exact release notes.
 5. Dispatch again with `dry_run` unticked.

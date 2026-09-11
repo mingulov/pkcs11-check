@@ -512,12 +512,17 @@ class TestEcdhKeyAgreement:
                     ),
                 )
             except InvalidProviderECPointError as exc:
+                # This is a plain C_GetAttributeValue readback of a keygen-produced
+                # CKA_EC_POINT, not a CKM_EC_KEY_PAIR_GEN outcome record (F6); the
+                # producer mechanism belongs in the label, matching the established
+                # read_conventional_ec_point_or_xfail precedent for this same finding
+                # shape.
                 fail_as(
                     "wrong_result",
                     kind="crypto",
-                    label=f"ECDH1_DERIVE:{curve}",
+                    label=f"ECDH1_DERIVE:{curve} (producer_mechanism=CKM_EC_KEY_PAIR_GEN)",
                     operation="C_GetAttributeValue",
-                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                    inherit_mechanism=False,
                     summary=(
                         f"Curve {curve} generated public key has an off-curve or wrong-curve "
                         f"CKA_EC_POINT: {exc}"

@@ -81,7 +81,11 @@ def test_missing_first_value_keeps_second_read_and_cleanup(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_X2RATCHET_INITIALIZE"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer already lives in the label (set by every
+    # caller of _read_derived_value).
+    assert records[0].mechanism is None
+    assert "CKM_X2RATCHET_INITIALIZE" in records[0].label
     assert records[0].detail == {
         "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
     }
@@ -103,7 +107,12 @@ def test_malformed_first_value_and_missing_second_are_both_retained(
         "C_GetAttributeValue",
         "C_GetAttributeValue",
     ]
-    assert all(record.mechanism == "CKM_X2RATCHET_INITIALIZE" for record in records)
+    # records[0] ("wrong_result", malformed present value) is an unrelated
+    # C_GetAttributeValue record outside the F6 fix scope and keeps its mechanism;
+    # records[1] ("not_operational", missing value) is the fixed readback site.
+    assert records[0].mechanism == "CKM_X2RATCHET_INITIALIZE"
+    assert records[1].mechanism is None
+    assert "CKM_X2RATCHET_INITIALIZE" in records[1].label
     malformed = records[0]
     assert malformed.detail is not None
     assert malformed.detail["attribute"]["actual"] == "False"
@@ -180,7 +189,8 @@ def test_first_missing_value_survives_second_derive_rejection(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "not_operational"]
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_X2RATCHET_INITIALIZE"
+    assert records[0].mechanism is None
+    assert "CKM_X2RATCHET_INITIALIZE" in records[0].label
     assert records[1].operation == "C_DeriveKey"
     assert records[1].mechanism == "CKM_X2RATCHET_INITIALIZE"
     assert events[:4] == ["derive", "read", "destroy:301", "derive"]

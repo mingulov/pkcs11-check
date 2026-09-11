@@ -8,6 +8,19 @@ The same systemic amplification that inflates xfail also inflates `fail`: one pr
 
 Both xfail and fail are recorded findings - a difference from the checked expectation - not defects in pkcs11-check. This is current behavior and may change.
 
+## Framework release gate
+
+A pkcs11-check release is gated on reporting integrity and safe continuation, not on making providers appear clean. Provider `fail`/`xfail` results and real crashes are expected evidence and do not by themselves block a framework release. Release validation must show that pkcs11-check:
+
+- classifies observations accurately and preserves serialized findings across setup, call, teardown, retries, and derived reports;
+- distinguishes provider behavior from harness defects and does not invent crash attribution;
+- continues independent tests safely, recovering damaged shared state before reuse; and
+- leaves no unresolved harness defects, lost classifications, false crash reports, or unexplained `unclassified` results in the validated release scope.
+
+Strict conformance tests retain provider deviations as independent results. Operational tests may continue through capability gaps or non-standard representations only when that behavior is explicitly validated and the separate conformance evidence is not erased.
+
+The v0.2.0 preservation guarantee covers findings already serialized to authoritative artifacts. Observations held only in memory when a worker terminates abruptly cannot be recovered without a separate durable journal and are outside this release guarantee; the worker crash itself remains evidence.
+
 ## Counts and retained observations
 
 For ordinary pytest `TestReport` records, `counts` describes logical testcases, not report-log lines. One testcase contributes one conservative outcome across its setup, call, teardown, and retained retry records, in this priority order: `timeout`, `crashed`, `error`, `failed`, `xpassed`, `xfailed`, `passed`, `skipped`. A later pass therefore does not erase an earlier finding, and a cleanup error does not erase the original call-phase evidence. The `tests` list retains each nonpassing observation for inspection, so it can contain more entries than the sum of ordinary testcase counts. Raw `report.jsonl` records remain unchanged and authoritative.

@@ -312,12 +312,19 @@ class TestSensitivePreservation:
                 kind="policy",
                 inherit_mechanism=False,
             )
-            orig_extractable: Any
+            claimed: bool
             if orig_extractable_raw is MISSING_ATTRIBUTE:
-                orig_extractable = None
+                # The readback is unavailable, but the CLAIM is not: the module
+                # ACCEPTED a CKA_EXTRACTABLE=False template at C_GenerateKey
+                # (gen_aes_key_or_xfail above raises/xfails otherwise), and that
+                # acceptance is independent claim evidence.  Deriving `claimed`
+                # from the readback alone would let one unreadable attribute
+                # downgrade a proven copy-escalation to an xfail.  The
+                # attr_or_record() record above keeps the unreadable readback
+                # itself visible.
+                claimed = True
             else:
-                orig_extractable = orig_extractable_raw
-            claimed = orig_extractable is False
+                claimed = orig_extractable_raw is False
 
             try:
                 copied = copy_object(

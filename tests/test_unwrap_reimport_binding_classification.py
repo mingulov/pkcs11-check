@@ -401,3 +401,100 @@ def test_default_strip_valid_unprotected_result_is_posture_note(
 ) -> None:
     notes = _run_default_strip_result(monkeypatch)
     assert notes and "Default wrap+unwrap strip posture" in notes[0]
+
+
+# --- Default-strip CKA_VALUE readback (Task 2b) ----------------------------
+
+
+def _run_default_strip_value(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    result_value_attrs: object,
+) -> list[Any]:
+    """Drive test_default_strip_is_permitted() with a scripted CKA_VALUE
+    readback on the unwrap result; return the emitted records.
+    """
+    monkeypatch.setattr(target, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(target, "gen_aes_key_or_xfail", lambda *_a, **_k: 2)
+    monkeypatch.setattr(target, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(target, "wrap_key", lambda *_a, **_k: b"wrapped")
+    monkeypatch.setattr(target, "unwrap_key", lambda *_a, **_k: 3)
+    monkeypatch.setattr(target, "note", lambda *_a, **_k: None)
+    monkeypatch.setattr(target, "read_attributes", lambda *_a, **_k: result_value_attrs)
+
+    target.TestDefaultStripIsPermitted().test_default_strip_is_permitted(_session(int(CKR_OK)))
+    return C.get_records()
+
+
+def test_default_strip_value_sensitive_refusal_is_sanctioned_not_a_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean CKR_ATTRIBUTE_SENSITIVE refusal for CKA_VALUE is conformant.
+
+    Proves the site now RECORDS this refusal (the removed "already an emitted
+    observation" comment was false here too: the sibling CKA_SENSITIVE /
+    CKA_EXTRACTABLE attr_or_record() calls read different attributes and never
+    mention CKA_VALUE) and that it lands pass-class (sanctioned_refusal).
+    """
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    result = AttrReadResult()
+    result[CKA_SENSITIVE] = False
+    result[CKA_EXTRACTABLE] = True
+    result.refusals[CKA_VALUE] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_SENSITIVE))
+
+    records = _run_default_strip_value(monkeypatch, result_value_attrs=result)
+
+    value_records = [
+        r for r in records if r.label == "Default-strip unwrap result CKA_VALUE readback"
+    ]
+    assert len(value_records) == 1
+    assert value_records[0].reason == "sanctioned_refusal"
+    assert value_records[0].actual_ckr == "CKR_ATTRIBUTE_SENSITIVE"
+
+
+def test_default_strip_value_silent_omission_is_recorded_honest_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A silent CKA_VALUE omission (no CKR at all) is now visible per provider.
+
+    Before this change this absence was read via ``_read_secret_or_absent()``
+    and never reached report.jsonl -- proving the removed comment's claim
+    false for this exact case too.
+    """
+    result = {CKA_SENSITIVE: False, CKA_EXTRACTABLE: True}
+
+    records = _run_default_strip_value(monkeypatch, result_value_attrs=result)
+
+    value_records = [
+        r for r in records if r.label == "Default-strip unwrap result CKA_VALUE readback"
+    ]
+    assert len(value_records) == 1
+    assert value_records[0].reason == "honest_deviation"
+    assert value_records[0].kind == "metadata"
+    assert value_records[0].actual_ckr is None
+
+
+def test_default_strip_value_refusal_with_leaked_data_is_self_contradiction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal claiming CKR_ATTRIBUTE_SENSITIVE while still leaking bytes into
+    the template is a self-contradiction that must now be caught -- invisible
+    under the old ``_read_secret_or_absent()`` helper, which had no
+    refusals-channel awareness at all.
+    """
+    from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
+
+    result = AttrReadResult()
+    result[CKA_SENSITIVE] = False
+    result[CKA_EXTRACTABLE] = True
+    result.refusals[CKA_VALUE] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_SENSITIVE), leaked_len=16)
+
+    records = _run_default_strip_value(monkeypatch, result_value_attrs=result)
+
+    value_records = [
+        r for r in records if r.label == "Default-strip unwrap result CKA_VALUE readback"
+    ]
+    assert len(value_records) == 1
+    assert value_records[0].reason == "self_contradiction"
+    assert value_records[0].kind == "policy"

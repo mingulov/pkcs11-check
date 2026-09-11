@@ -62,6 +62,94 @@ def test_missing_capability_readback_does_not_hide_forbidden_operation(
     assert records[0].detail is not None
     assert records[0].detail["attribute"]["id"] == int(CKA_DECRYPT)
     assert MISSING_ATTRIBUTE is not False
+    # This CKA_DECRYPT readback is claim/posture corroboration only -- the
+    # live policy oracle above (C_EncryptInit rejection) runs unconditionally
+    # and does not branch on it, so its absence must never be classified as
+    # oracle-disabling (not_operational/policy); it is posture-only evidence.
+    assert records[0].reason == "honest_deviation"
+    assert records[0].kind == "metadata"
+
+
+def test_sign_only_rsa_missing_readbacks_stay_posture_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKA_SIGN/CKA_VERIFY readback absence on the sign-only RSA probe.
+
+    Both readbacks only corroborate the RSA keypair's own creation-time claim;
+    the live policy oracle (C_EncryptInit rejection on the public key) runs
+    unconditionally afterward and does not depend on either readback.
+    """
+    monkeypatch.setattr(policy, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(policy, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(policy, "destroy_quietly", lambda *_a, **_k: None)
+    raw = SimpleNamespace(C_EncryptInit=lambda *_a, **_k: int(CKR_KEY_FUNCTION_NOT_PERMITTED))
+
+    policy.TestRSAKeyUsagePolicy().test_sign_only_rsa_cannot_encrypt(_session(raw))
+
+    records = C.get_records()
+    by_attr = {r.detail["attribute"]["name"]: r for r in records if r.detail is not None}
+    assert by_attr["CKA_SIGN"].reason == "honest_deviation"
+    assert by_attr["CKA_SIGN"].kind == "metadata"
+    assert by_attr["CKA_VERIFY"].reason == "honest_deviation"
+    assert by_attr["CKA_VERIFY"].kind == "metadata"
+
+
+def test_encrypt_only_rsa_missing_readbacks_stay_posture_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKA_ENCRYPT/CKA_DECRYPT readback absence on the encrypt-only RSA probe.
+
+    Same posture-only relationship as the sign-only case: the live policy
+    oracle (C_SignInit rejection on the private key) runs unconditionally.
+    """
+    monkeypatch.setattr(policy, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(policy, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(policy, "destroy_quietly", lambda *_a, **_k: None)
+    raw = SimpleNamespace(C_SignInit=lambda *_a, **_k: int(CKR_KEY_FUNCTION_NOT_PERMITTED))
+
+    policy.TestRSAKeyUsagePolicy().test_encrypt_only_rsa_cannot_sign(_session(raw))
+
+    records = C.get_records()
+    by_attr = {r.detail["attribute"]["name"]: r for r in records if r.detail is not None}
+    assert by_attr["CKA_ENCRYPT"].reason == "honest_deviation"
+    assert by_attr["CKA_ENCRYPT"].kind == "metadata"
+    assert by_attr["CKA_DECRYPT"].reason == "honest_deviation"
+    assert by_attr["CKA_DECRYPT"].kind == "metadata"
+
+
+def test_aes_capability_readback_missing_attrs_stay_posture_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AES capability-match readback has no runtime oracle at all -- pure posture."""
+    monkeypatch.setattr(policy, "require_operational_aes_keygen", lambda *_a: None)
+    monkeypatch.setattr(policy, "gen_aes_key", lambda *_a, **_k: 17)
+    monkeypatch.setattr(policy, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(policy, "destroy_quietly", lambda *_a, **_k: None)
+
+    policy.TestCapabilityReadback().test_aes_capabilities_match_template(_session())
+
+    records = C.get_records()
+    assert len(records) == 3
+    for record in records:
+        assert record.reason == "honest_deviation"
+        assert record.kind == "metadata"
+
+
+def test_rsa_capability_readback_missing_attrs_stay_posture_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RSA capability-match readback (public + private halves) is pure posture."""
+    monkeypatch.setattr(policy, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(policy, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(policy, "destroy_quietly", lambda *_a, **_k: None)
+
+    policy.TestCapabilityReadback().test_rsa_capabilities_match_template(_session())
+
+    records = C.get_records()
+    assert len(records) == 4
+    for record in records:
+        assert record.reason == "honest_deviation"
+        assert record.kind == "metadata"
 
 
 @pytest.mark.parametrize("value", [False, 0, b"", None], ids=["false", "zero", "empty", "none"])
@@ -484,4 +572,7 @@ def test_kem_missing_claim_is_structured_when_operation_is_accepted(
     records = C.get_records()
     assert records
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_ML_KEM"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_ML_KEM" in records[0].label

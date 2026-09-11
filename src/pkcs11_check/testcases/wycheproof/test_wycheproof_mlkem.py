@@ -11,6 +11,7 @@ import pytest
 
 from pkcs11_check.classification import classify, set_params
 from pkcs11_check.raw.recipes import (
+    AttrReadResult,
     decapsulate_key,
     destroy_quietly,
     import_pqc_private_key,
@@ -249,7 +250,7 @@ def test_mlkem_decaps(vec_id: str, vec: dict[str, Any], p11_module_session: Any)
                         label=f"{vec_id}: derived ML-KEM shared-key readback",
                         kind="lifecycle",
                     )
-                    attrs = {}
+                    attrs = AttrReadResult()
                 shared_value = attr_or_record(
                     attrs,
                     CKA_VALUE,

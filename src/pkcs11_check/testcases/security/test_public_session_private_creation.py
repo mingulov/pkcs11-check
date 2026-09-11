@@ -166,7 +166,16 @@ def _read_private_claim(
     producer_operation: str,
     producer_mechanism: str | None = None,
 ) -> tuple[bool, C.Classification | None]:
-    """Read CKA_PRIVATE strictly, retaining missing/malformed metadata evidence."""
+    """Read CKA_PRIVATE strictly, retaining missing/malformed metadata evidence.
+
+    Every call site creates `handle` via an operation that explicitly requests
+    CKA_PRIVATE=True and raises/returns on any non-CKR_OK result, so reaching
+    this call already proves the module ACCEPTED that protective template at
+    creation -- independent claim evidence.  A missing or unreadable readback
+    must not downgrade that claim (it would let one unreadable attribute mask
+    a proven public-session private-object self-contradiction); only an
+    explicit `False` readback is real evidence the claim does not hold.
+    """
     detail: dict[str, Any] = {
         "attribute": {"name": "CKA_PRIVATE", "id": int(CKA_PRIVATE)},
         "producer_operation": producer_operation,
@@ -197,7 +206,7 @@ def _read_private_claim(
                 else f"{label}: attribute read returned undefined CK_RV {exc.rv:#x}"
             ),
         )
-        return False, record
+        return True, record
 
     before = len(C.get_records())
     value = attr_or_record(
@@ -214,7 +223,7 @@ def _read_private_claim(
             raise AssertionError(f"{label}: missing attribute did not produce evidence")
         record = records[-1]
         record.detail = {**(record.detail or {}), **detail}
-        return False, record
+        return True, record
     if type(value) is bool:
         return value, None
 

@@ -16,6 +16,7 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.recipes import (
+    AttrReadResult,
     create_object,
     destroy_quietly,
     get_object_size,
@@ -108,7 +109,7 @@ def test_exhaustive_cert_import_no_crash(
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
         except CkrAssertionError as exc:
             _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(CKA_VALUE)")
-            attrs = {}  # CKR error reading VALUE is acceptable
+            attrs = AttrReadResult()  # CKR error reading VALUE is acceptable
             read_failed = True
         stored = (
             MISSING_ATTRIBUTE
@@ -195,7 +196,7 @@ def test_exhaustive_crl_import_no_crash(
             attrs = read_attributes(rs.raw, rs.sh, h, [CKA_VALUE])
         except CkrAssertionError as exc:
             _accept_clean_crash_probe_rejection(exc, "C_GetAttributeValue(CKA_VALUE)")
-            attrs = {}  # CKR error reading VALUE is acceptable
+            attrs = AttrReadResult()  # CKR error reading VALUE is acceptable
             read_failed = True
         stored = (
             MISSING_ATTRIBUTE
