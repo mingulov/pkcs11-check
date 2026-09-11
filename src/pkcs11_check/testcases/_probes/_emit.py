@@ -54,6 +54,36 @@ def rv_trace_maxlen() -> int | None:
     return maxlen if maxlen > 0 else None
 
 
+def mark_python_finalized() -> None:
+    """Leave proof that CPython finalization ran, if nothing else already has.
+
+    Registered by ``probe_main``/``probe_main_raw`` as their FIRST action, before the
+    params file or the module can fail to load. ``atexit`` is LIFO, so this runs last --
+    after the real coverage write -- and it never clobbers it: it writes only when the
+    coverage file is still empty or unparseable.
+
+    The parent uses the presence of a parseable coverage file to tell "the module called
+    exit() from inside a PKCS#11 call and took the process down" apart from "Python
+    raised and died normally". Without this, a child that died BEFORE registering its
+    teardown would leave the same empty file as a module-terminated process, and would be
+    reported as a provider crash. Registering first closes that window.
+    """
+    path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8") as fh:
+            if isinstance(json.load(fh), dict):
+                return
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"python_finalized": True}, fh)
+    except OSError:
+        pass
+
+
 def write_coverage(
     call_log: dict[str, int],
     mechanism_counts: dict[str, int],

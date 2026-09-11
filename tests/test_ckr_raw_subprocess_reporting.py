@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import get_records
+from pkcs11_check.classification import HARNESS_REASONS, get_records
 from pkcs11_check.core.subprocess_trace import (
     drain_subprocess_rv_trace,
 )
@@ -95,9 +95,17 @@ def test_raw_check_reports_signal_as_crash(check: RawCheck) -> None:
     [test_ckr_v30_raw._check, test_ckr_v32_raw._check],
 )
 def test_raw_check_reports_positive_exit_as_subprocess_failure(check: RawCheck) -> None:
-    """Assertion failures inside the child process are not crash findings."""
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    """Assertion failures inside the child process are not crash findings.
+
+    Here the parent can say more than "the child exited 1": the bare ``CKR:`` line is a
+    legacy marker this protocol no longer accepts, which is a defect in our own probe.
+    A positively identified cause outranks the unresolved-attribution fallback, and
+    `harness_error` is earned rather than inferred.
+    """
+    with pytest.raises(pytest.fail.Exception, match="invalid child result protocol"):
         check(1, "CKR:0x00000007", "AssertionError: unexpected CKR", "C_Test")
+
+    assert [record.reason for record in get_records()] == ["harness_error"]
 
 
 def test_v30_raw_message_encrypt_dispatches_probe(
@@ -165,7 +173,7 @@ def test_v32_raw_verify_signature_dispatches_probe(
 
 
 def test_ckr_subprocess_helper_reports_positive_exit_as_child_failure() -> None:
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
         assert_ckr_subprocess_ok(
             1,
             "",
@@ -185,8 +193,13 @@ def test_ckr_subprocess_helper_converts_setup_marker_to_xfail() -> None:
 
 
 def test_clean_positive_exit_is_not_crash() -> None:
-    """A complete CKR protocol on a positive exit is harness evidence, not a crash."""
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    """A complete CKR protocol on an unexplained positive exit is not a crash.
+
+    It is not a harness defect either: nothing here identifies a cause. The record must
+    stay a loud provider-side fail with attribution stated as unresolved, because the
+    child's streams are just as likely to hold a module observation as our own bug.
+    """
+    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
         assert_ckr_subprocess_ok(
             1,
             "CKR:0x00000007\nOK:C_Test rejected the mechanism\n",
@@ -195,7 +208,9 @@ def test_clean_positive_exit_is_not_crash() -> None:
         )
 
     records = get_records()
-    assert [record.reason for record in records] == ["harness_error"]
+    assert [record.reason for record in records] == ["probe_incomplete"]
+    assert records[0].reason not in HARNESS_REASONS
+    assert "NOT the module under test" not in (records[0].summary or "")
     assert records[0].detail is not None
     assert records[0].detail["probe_incomplete"] is True
     assert records[0].detail["termination"]["kind"] == "exit"
@@ -214,6 +229,49 @@ def test_v3_result_protocol_classifies_clean_wrong_ckr_as_provider_xfail() -> No
     assert [record.reason for record in records] == ["nonspec_reject"]
     assert records[0].actual_ckr == "CKR_ARGUMENTS_BAD"
     assert records[0].expected_ckr == ["CKR_MECHANISM_INVALID"]
+
+
+@pytest.mark.parametrize(
+    ("check", "func", "phase"),
+    [
+        (test_ckr_v30_raw._check, "C_MessageEncryptInit", "C_MessageEncryptInit"),
+        (test_ckr_v32_raw._check, "C_WrapKeyAuthenticated", "C_WrapKeyAuthenticated"),
+        (test_ckr_v32_raw._check, "C_AsyncGetID", "C_AsyncGetID"),
+        (test_ckr_v32_raw._check, "C_DecapsulateKey", "C_DecapsulateKey"),
+    ],
+)
+def test_v3_clean_function_not_supported_skips_and_is_not_a_deviation(
+    check: RawCheck, func: str, phase: str
+) -> None:
+    """CKR_FUNCTION_NOT_SUPPORTED is capability absence: a skip, never a deviation.
+
+    It must also never be a *pass*. A pass asserts the module answered the negative op
+    correctly when in fact it declined the function outright, which erases the
+    observation from the report and inflates the provider's PASS count. The skip keeps
+    the declining function named.
+
+    ``pytest.xfail()``/``pytest.fail()`` raise ``OutcomeException`` subclasses that
+    ``pytest.raises(pytest.fail.Exception, ...)`` would silently let through as an
+    uncaught (green-exit) xfail rather than a hard test failure -- catch both
+    explicitly and turn either into a real assertion failure.
+    """
+    try:
+        check(
+            0,
+            f"RESULT:{phase}:CKR:0x00000054\nOK:{phase}\n",
+            "",
+            func,
+        )
+    except (pytest.xfail.Exception, pytest.fail.Exception) as exc:
+        pytest.fail(f"{func}: clean CKR_FUNCTION_NOT_SUPPORTED must not be a deviation: {exc!r}")
+    except pytest.skip.Exception as exc:
+        assert func in str(exc)
+        assert phase in str(exc)
+        assert "CKR_FUNCTION_NOT_SUPPORTED" in str(exc)
+    else:
+        pytest.fail(f"{func}: clean CKR_FUNCTION_NOT_SUPPORTED must skip, not pass silently")
+
+    assert get_records() == []
 
 
 def test_v3_result_protocol_classifies_ckr_ok_as_provider_failure() -> None:
@@ -1042,7 +1100,7 @@ def test_ckr_null_result_positive_exit_records_child_trace() -> None:
         'P11_RV_TRACE_JSON:[{"i":0,"fn":"C_OpenSession","rv":176,"rv_name":"CKR_SESSION_COUNT"}]'
     )
 
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
         test_ckr_null_params._check_null_result("C_GenerateRandom", 1, marker, "")
 
     assert drain_subprocess_rv_trace() == [
@@ -1166,7 +1224,7 @@ def test_ckr_dual_reports_positive_subprocess_exit_as_child_failure(
     monkeypatch.setattr(test_ckr_dual, "run_probe", fake_run_probe)
 
     test_case = test_ckr_dual.TestOperationStateSubprocess()
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
         test_case.test_encrypt_without_init(SimpleNamespace(module="/fake/p11.so", pin=None))
 
 

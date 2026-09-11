@@ -22,7 +22,14 @@ The first successful upload creates the TestPyPI project and converts the pendin
    [docs/interpreting-results.md](interpreting-results.md#framework-release-gate). It is not
    wired into CI as a separate check; it runs as part of the ordinary `pytest tests/` suite that
    step 3's CI green check already covers, so a local run before pushing is the only place it is
-   exercised ahead of that push.
+   exercised ahead of that push. **This local run must have fetched vector data** (run
+   `pkcs11-check fetch-data` first, or use a checkout that already has `data/` populated) -
+   with `data/` empty, `tests/conftest.py` skips every vector-dependent meta-test, including
+   100% of the duplicate-detection guard suite, and the run silently omits ~290 tests without
+   failing. Verify the skip count in the final summary line is close to the data-bearing
+   baseline (~39 skipped), not the empty-`data/` baseline (~330 skipped); the terminal summary
+   also prints a `vector data coverage` warning whenever any module was skipped for missing
+   data, which must be absent from a release-qualifying run.
 3. Push to `main` and wait for CI to go green. The release refuses to run otherwise.
 4. Dispatch **Release** with the version and `dry_run` left ticked. Read the job summary: it prints the commit, the tag it would create, and the exact release notes.
 5. Dispatch again with `dry_run` unticked.

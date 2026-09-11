@@ -14,7 +14,6 @@ import pytest
 
 from pkcs11_check.classification import (
     Classification,
-    classify,
     derive_verdict,
     fail_as,
     get_records,
@@ -640,62 +639,6 @@ def _run_probe(p11_config: Any, probe: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
-def classify_undersized_digest_outcome(overwritten: int, ckr_ok: bool) -> None:
-    """Classify C_Digest's response to an undersized (1-byte) output buffer.
-
-    The probe over-allocates the real buffer but declares ``*pulDigestLen = 1``
-    and counts how many bytes were written past that declared boundary, so the
-    return code and an actual out-of-bounds write are SEPARATE signals:
-
-    - ``overwritten > 0`` -> the module wrote past the declared buffer: a real
-      OOB write (would corrupt a genuinely 1-byte caller buffer) -> ``fail``,
-      regardless of the return code.
-    - ``CKR_OK`` with ``overwritten == 0`` -> the module returned success but did
-      NOT overflow: a clean PKCS#11 §5.10.2 return-code deviation (it should have
-      returned ``CKR_BUFFER_TOO_SMALL``) with no security impact -> ``xfail``,
-      recorded not hidden. (Every probed provider takes this path; the original
-      "SECURITY" hard-fail conflated a benign return-code deviation with a buffer
-      overflow.)
-    - otherwise (CKR_BUFFER_TOO_SMALL, no overwrite) -> returns; the caller runs
-      the size-query retry checks.
-    """
-    if overwritten > 0:
-        from pkcs11_check.compliance import ComplianceLevel, note
-
-        note(
-            f"C_Digest wrote {overwritten} bytes past a declared 1-byte output buffer.",
-            ComplianceLevel.CRITICAL,
-            reference="PKCS#11 v3.2",
-        )
-        # A real out-of-bounds write past the declared output buffer: the module
-        # ignored the declared size it was given -> self-contradiction.
-        classify(
-            "self_contradiction",
-            kind="policy",
-            label="C_Digest:undersized-output-buffer",
-            operation="C_Digest",
-            spec_ref="PKCS#11 v3.2",
-            summary=(
-                f"SECURITY: C_Digest wrote {overwritten} bytes past a declared 1-byte output "
-                f"buffer (out-of-bounds write)"
-            ),
-        )
-    if ckr_ok:
-        # CKR_OK with no overflow: a benign return-code deviation (should have
-        # returned CKR_BUFFER_TOO_SMALL) with no security impact -> xfail.
-        classify(
-            "honest_deviation",
-            label="C_Digest:undersized-output-buffer",
-            operation="C_Digest",
-            spec_ref="PKCS#11 v3.2",
-            summary=(
-                "C_Digest returned CKR_OK for a 1-byte output buffer without writing past it "
-                "(PKCS#11 §5.10.2 expects CKR_BUFFER_TOO_SMALL; clean return-code deviation, "
-                "no buffer overflow)"
-            ),
-        )
-
-
 @dataclass(frozen=True)
 class BufferProbeSchema:
     """Required protocol fields and effect checks for one buffer probe."""
@@ -905,7 +848,13 @@ def _collect_buffer_measurement(
                 )
         else:
             usable = None
-        retry_required = schema.require_retry or usable is not None and usable > 0
+        # A MEASURED usable==0 settles it: the provider returned CKR_BUFFER_TOO_SMALL
+        # without a usable length, so the probe could not size a retry buffer and
+        # correctly did not try. Demanding the retry measurements anyway produced four
+        # `harness_error` records on top of the self_contradiction recorded just above --
+        # noise that blamed us for a measurement the provider's own behaviour made
+        # unobtainable. Only an UNMEASURED usable falls back to the schema's requirement.
+        retry_required = schema.require_retry if usable is None else usable > 0
         for name in schema.retry_fields:
             parse(name, required=retry_required)
         for name in schema.retry_effect_fields:

@@ -133,10 +133,56 @@ def test_copy_access_control_does_not_swallow_harness_assertion(
         test_access_control.TestCopyableAttribute().test_copyable_key_can_be_copied(rs)
 
 
+def test_copy_rejection_of_function_not_supported_is_skip_not_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C_CopyObject is optional; a clean CKR_FUNCTION_NOT_SUPPORTED refusal is capability
+    absence (skip), never a `not_operational` deviation -- unlike the genuine
+    CKR_GENERAL_ERROR / vendor-defined deviations below.
+
+    ``pytest.raises(pytest.fail.Exception, ...)`` would let an uncaught ``pytest.xfail()``
+    through as a silent, green-exit xfail rather than a hard failure -- catch both
+    ``pytest.skip.Exception`` and ``pytest.xfail.Exception`` explicitly instead.
+    """
+    monkeypatch.setattr(test_access_control, "_gen_access_control_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(
+        test_access_control, "read_attributes", lambda *_a, **_k: {CKA_COPYABLE: True}
+    )
+    monkeypatch.setattr(
+        test_access_control,
+        "copy_object",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            CkrAssertionError(
+                "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
+                int(CKR_FUNCTION_NOT_SUPPORTED),
+            )
+        ),
+    )
+    destroyed: list[int] = []
+    monkeypatch.setattr(
+        test_access_control,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+
+    try:
+        test_access_control.TestCopyableAttribute().test_copyable_key_can_be_copied(
+            SimpleNamespace(raw=object(), sh=1)
+        )
+    except pytest.skip.Exception as exc:
+        assert "CKR_FUNCTION_NOT_SUPPORTED" in str(exc)
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"clean CKR_FUNCTION_NOT_SUPPORTED must skip, not xfail: {exc!r}")
+    else:
+        pytest.fail("expected a pytest.skip for CKR_FUNCTION_NOT_SUPPORTED")
+
+    assert C.get_records() == []
+    assert destroyed == [1]
+
+
 @pytest.mark.parametrize(
     ("rv", "actual_ckr"),
     [
-        (CKR_FUNCTION_NOT_SUPPORTED, "CKR_FUNCTION_NOT_SUPPORTED"),
         (CKR_GENERAL_ERROR, "CKR_GENERAL_ERROR"),
         (CKR_VENDOR_DEFINED + 1, "0x80000001"),
     ],

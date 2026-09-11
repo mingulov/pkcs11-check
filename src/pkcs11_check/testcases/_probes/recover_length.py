@@ -51,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_X_509,
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
@@ -83,6 +84,20 @@ def _setup_xfail_rv(rv: int, purpose: str) -> NoReturn:
 def _setup_xfail_if_known(rv: int, purpose: str) -> None:
     if int(rv) in _RECOVER_SETUP_RVS:
         _setup_xfail_rv(rv, purpose)
+
+
+def _setup_skip_if_init_not_supported(rv: int, purpose: str) -> None:
+    """C_SignRecoverInit / C_VerifyRecoverInit are the function-level entry points: a clean
+    CKR_FUNCTION_NOT_SUPPORTED here is the spec-defined way to say the optional recover
+    function itself is not implemented (capability absence, orthogonal to mechanism
+    advertisement), never a deviation -- matches the rule already applied in
+    test_sign_recover.py. Must be checked before ``_setup_xfail_if_known``, whose
+    ``_RECOVER_SETUP_RVS`` set (shared with genuine mechanism-level setup rejections such
+    as keypair generation) also contains CKR_FUNCTION_NOT_SUPPORTED.
+    """
+    if int(rv) == int(CKR_FUNCTION_NOT_SUPPORTED):
+        print(f"SKIP:{purpose}: {ckr_name(rv)}")
+        raise _SetupXfailError()
 
 
 def _template_ptr(attrs: Any) -> Any:
@@ -139,6 +154,7 @@ def _sign_recover(raw: Any, sh: int, priv: Any, payload: bytes) -> bytes:
     mech = mech_simple(CKM_RSA_X_509)
     rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
     if rv != CKR_OK:
+        _setup_skip_if_init_not_supported(rv, "C_SignRecoverInit rejected")
         _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
         raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
     payload_buf = _byte_array(payload)
@@ -174,6 +190,7 @@ def _run_sign_huge_data_len(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech = mech_simple(CKM_RSA_X_509)
         rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
         if rv != CKR_OK:
+            _setup_skip_if_init_not_supported(rv, "C_SignRecoverInit rejected")
             _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
             raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
         data = (ctypes.c_ubyte * 16)(*range(16))
@@ -207,6 +224,7 @@ def _run_verify_huge_sig_len(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech = mech_simple(CKM_RSA_X_509)
         rv = raw.C_VerifyRecoverInit(sh, mech.byref(), pub.value)
         if rv != CKR_OK:
+            _setup_skip_if_init_not_supported(rv, "C_VerifyRecoverInit rejected")
             _setup_xfail_if_known(rv, "C_VerifyRecoverInit rejected")
             raise AssertionError(f"C_VerifyRecoverInit returned {ckr_name(rv)}")
         signature = (ctypes.c_ubyte * 16)(*range(16))
@@ -249,6 +267,7 @@ def _run_verify_inflated_out_len(ctx: ProbeContext, _extra: dict[str, Any]) -> N
         mech = mech_simple(CKM_RSA_X_509)
         rv = raw.C_VerifyRecoverInit(sh, mech.byref(), pub.value)
         if rv != CKR_OK:
+            _setup_skip_if_init_not_supported(rv, "C_VerifyRecoverInit rejected")
             _setup_xfail_if_known(rv, "C_VerifyRecoverInit rejected")
             raise AssertionError(f"C_VerifyRecoverInit returned {ckr_name(rv)}")
 
@@ -291,6 +310,7 @@ def _run_verify_one_byte_guard(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
         mech = mech_simple(CKM_RSA_X_509)
         rv = raw.C_VerifyRecoverInit(sh, mech.byref(), pub.value)
         if rv != CKR_OK:
+            _setup_skip_if_init_not_supported(rv, "C_VerifyRecoverInit rejected")
             _setup_xfail_if_known(rv, "C_VerifyRecoverInit rejected")
             raise AssertionError(f"C_VerifyRecoverInit returned {ckr_name(rv)}")
 
@@ -367,6 +387,7 @@ def _run_sign_one_byte_guard(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         mech = mech_simple(CKM_RSA_X_509)
         rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
         if rv != CKR_OK:
+            _setup_skip_if_init_not_supported(rv, "C_SignRecoverInit rejected")
             _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
             raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
 

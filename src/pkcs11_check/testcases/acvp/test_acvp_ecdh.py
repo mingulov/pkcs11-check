@@ -501,12 +501,16 @@ class TestEcdhKeyAgreement:
                     label=f"ECDH1_DERIVE:{curve} generated peer public key",
                 )
             except ProviderECPointEncodingError as exc:
+                # Twin of the InvalidProviderECPointError branch below: a plain
+                # C_GetAttributeValue readback of a keygen-produced CKA_EC_POINT, not a
+                # CKM_EC_KEY_PAIR_GEN outcome record (F6). The producer mechanism belongs
+                # in the label.
                 xfail_as(
                     "not_operational",
                     kind="metadata",
-                    label=f"ECDH1_DERIVE:{curve}",
+                    label=f"ECDH1_DERIVE:{curve} (producer_mechanism=CKM_EC_KEY_PAIR_GEN)",
                     operation="C_GetAttributeValue",
-                    mechanism="CKM_EC_KEY_PAIR_GEN",
+                    inherit_mechanism=False,
                     summary=(
                         f"Curve {curve} generated public key has malformed CKA_EC_POINT: {exc}"
                     ),

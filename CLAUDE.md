@@ -78,6 +78,17 @@ Two spec-grounded refinements (advertised-capability-honesty model):
 
 Tests MUST record their verdict at the decision point via `classification.classify()` / `fail_as()` / `xfail_as()` / `assert_correct()` (or the existing `classify_*` / `assert_ckr` helpers, which now route through it) - NOT raw `pytest.xfail()` / `pytest.fail()` in `testcases/` (enforced by `tests/test_no_raw_xfail_fail.py`). The emitted record carries reason/kind/label/operation/mechanism/expected/actual and rides to `report.jsonl`; severity is derived centrally. The reason `unclassified` is **reserved** for the plugin's runtime gate (it auto-injects it for any un-migrated fail/xfail) and must NEVER be emitted by a test.
 - reason ∈ {wrong_result, accepted_invalid, self_contradiction, oracle, crash (fail); not_operational, nonspec_reject, honest_deviation, undeclared_capability (xfail); sanctioned_refusal (pass)}; kind ∈ {crypto, policy, lifecycle, metadata}. See [docs/architecture.md](docs/architecture.md) "At-source test-outcome classification".
+- Three further reasons exist that a **test must never emit**: `unclassified` (the plugin's runtime gate, above), and the two process-disposition reasons recorded only by `assert_subprocess_completed` -- `harness_error` and `probe_incomplete`.
+
+#### `harness_error` is an exclusion filter, not a label - never infer it
+
+`harness_error` is the only reason in `classification.HARNESS_REASONS`, and membership is a **positive claim that pkcs11-check itself is at fault**. It is costly: such a record is removed from the provider's fail total and every severity section (`report/render.py`), from the fail buckets (`report/health.py`), and from cross-provider correlation (`report/correlate.py`), then re-rendered under "harness errors - NOT provider findings ... excluded from every provider count above" and routed `HARNESS_FIX`.
+
+So emit it ONLY when the harness announced its own defect -- an explicit `HARNESS_ERROR:` marker from a child, or a failure in our own code you have positively identified. **Never infer it from a child exit code you do not recognise.** A probe that detects a provider defect and raises a bare `AssertionError` exits 1 with a traceback, byte-identical in shape to a real harness bug; blaming the harness there published a module writing past a caller-declared output length as a defect in this tool, subtracted from that provider's counts.
+
+Unresolved attribution belongs in **`probe_incomplete`** (fail/HIGH, deliberately NOT a harness reason): it states only that the measurement is missing, keeps the record in the provider's counts, and points the reader at the captured streams. The project's probe-soundness doctrine sets the default -- it is a finding until something shows otherwise.
+
+A module that terminates the calling process (a C `exit()` from inside a PKCS#11 call, detected via the finalization sentinel `probe_main` writes) is `crash`, not either of these: it never returned a CK_RV.
 
 ### Error handling - CRITICAL
 - **NEVER use a bare `except Exception: pass` or catch-all CKR check** - this hides real bugs. Every CKR check must list SPECIFIC acceptable return codes.
