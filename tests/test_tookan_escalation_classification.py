@@ -60,6 +60,27 @@ def test_copy_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
         _run_copy(monkeypatch, claimed=False, escalated=True)
 
 
+def test_copy_missing_original_readback_but_escalated_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: gen_aes_key_or_xfail() already proves creation-time
+    acceptance of CKA_EXTRACTABLE=False, so a missing *original* readback must not
+    downgrade a proven copy-escalation to xfail."""
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(tt, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(tt, "copy_object", lambda *_a, **_k: 5)
+
+    def _read(_raw: object, _sh: object, handle: int, attrs: list[int]) -> dict:
+        if handle == 5:
+            return {CKA_EXTRACTABLE: True}  # copy escalated
+        return {}  # original readback unavailable
+
+    monkeypatch.setattr(tt, "read_attributes", _read)
+    with pytest.raises(Failed) as ei:
+        tt.TestSensitivePreservation().test_extractable_cannot_escalate_on_copy(_session())
+    assert not isinstance(ei.value, XFailed)
+
+
 def test_copy_not_escalated_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_copy(monkeypatch, claimed=True, escalated=False)
 

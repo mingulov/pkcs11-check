@@ -138,9 +138,9 @@ def _read_attr_or_record(
     return attr_or_record(
         values,
         attr,
-        label=label,
+        label=f"{label} (producer_mechanism={mechanism})",
         reason="not_operational",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
 
 
@@ -1561,11 +1561,15 @@ class TestMLKEMNegative:
                 )
                 return
 
-            # rv == CKR_OK -- policy claim/effect-check. The protection is only
-            # claimed if the private key actually reads back CKA_DECAPSULATE=False
-            # (a module that did not honor the flag at create has not claimed the
-            # protection -> honest non-support -> xfail). If it was claimed and
-            # decapsulation still succeeded, the module contradicted itself.
+            # rv == CKR_OK -- policy claim/effect-check. Creation-time template
+            # acceptance is independent claim evidence: _generate_ml_kem_keypair
+            # above raises unless C_GenerateKeyPair returns CKR_OK, so reaching
+            # this point already proves the module accepted CKA_DECAPSULATE=False
+            # at create. The readback below corroborates the claim where
+            # available, but a missing readback must not downgrade it -- that
+            # would let one unreadable attribute mask a proven
+            # decapsulate-permission violation. If the protection was claimed
+            # and decapsulation still succeeded, the module contradicted itself.
             decap_flag = _read_attr_or_record(
                 rs.raw,
                 rs.sh,
@@ -1584,9 +1588,17 @@ class TestMLKEMNegative:
                         mechanism="CKM_ML_KEM",
                     )
                 )
-            elif decap_flag is not MISSING_ATTRIBUTE:
+            else:
+                # decap_flag is either a bool or MISSING_ATTRIBUTE here.  A
+                # missing readback does not erase the creation-time claim
+                # (see comment above) -- it stays claimed=True and the missing
+                # readback itself is already recorded by _read_attr_or_record.
+                if decap_flag is MISSING_ATTRIBUTE:
+                    claimed = True
+                else:
+                    claimed = decap_flag is False
                 _record_policy_enforcement(
-                    claimed=decap_flag is False,
+                    claimed=claimed,
                     label="decapsulate with CKA_DECAPSULATE=False on private key "
                     "(PKCS#11 v3.2 Sec.5.14.8 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
                     operation="C_DecapsulateKey",
@@ -1727,9 +1739,20 @@ class TestMLKEMNegative:
                             mechanism="CKM_ML_KEM",
                         )
                     )
-                elif encap_flag is not MISSING_ATTRIBUTE:
+                else:
+                    # encap_flag is either a bool or MISSING_ATTRIBUTE here.
+                    # _generate_ml_kem_keypair raises unless C_GenerateKeyPair
+                    # returns CKR_OK, so reaching this point already proves the
+                    # module accepted CKA_ENCAPSULATE=False at create; a missing
+                    # readback must not downgrade that creation-time claim (the
+                    # missing readback itself is already recorded by
+                    # _read_attr_or_record above).
+                    if encap_flag is MISSING_ATTRIBUTE:
+                        claimed = True
+                    else:
+                        claimed = encap_flag is False
                     _record_policy_enforcement(
-                        claimed=encap_flag is False,
+                        claimed=claimed,
                         label="encapsulate with CKA_ENCAPSULATE=False on public key "
                         "(PKCS#11 v3.2 Sec.5.14.7 requires CKR_KEY_FUNCTION_NOT_PERMITTED)",
                         operation="C_EncapsulateKey",

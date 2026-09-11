@@ -601,11 +601,15 @@ class TestCopyObject:
                 attrs,
                 CKA_COPYABLE,
                 label="CKA_COPYABLE:copy-extractable-key",
+                reason="not_operational",
+                kind="policy",
             )
             extractable = attr_or_record(
                 attrs,
                 CKA_EXTRACTABLE,
                 label="CKA_EXTRACTABLE:copy-extractable-key",
+                reason="not_operational",
+                kind="policy",
             )
             if extractable is not MISSING_ATTRIBUTE:
                 extractable_value = _require_access_bool(
@@ -648,6 +652,8 @@ class TestCopyObject:
                     copy_attrs,
                     CKA_EXTRACTABLE,
                     label="C_CopyObject:CKA_EXTRACTABLE on copy",
+                    reason="not_operational",
+                    kind="policy",
                 )
                 if copied_extractable is MISSING_ATTRIBUTE:
                     return

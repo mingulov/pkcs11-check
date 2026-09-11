@@ -31,6 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_GENERAL_ERROR,
+    CKR_OK,
 )
 from pkcs11_check.testcases import test_sensitivity
 
@@ -78,6 +79,17 @@ def test_aes_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_aes_claimed_and_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_aes(monkeypatch, claimed=True, value_readable=False)
+    # N16: this correctly-protected case previously hit a dead branch (attr_or_record
+    # was only called `if violated`, i.e. only once CKA_VALUE was already known
+    # present) -- the absence produced ZERO report.jsonl record. It must now be a
+    # visible record even though the test still passes overall.
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "honest_deviation"
+    assert records[0].operation == "C_GetAttributeValue"
+    # The mock returns a plain dict with no refusals channel, so no CKR was actually
+    # observed for this absence -- it must not be invented.
+    assert records[0].actual_ckr is None
 
 
 # --- RSA CKA_PRIVATE_EXPONENT --------------------------------------------
@@ -120,11 +132,47 @@ def test_rsa_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_rsa_claimed_and_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_rsa(monkeypatch, claimed=True, value_readable=False)
+    # N16: same dead-branch fix as the AES case above, for CKA_PRIVATE_EXPONENT.
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "honest_deviation"
+    assert records[0].actual_ckr is None
+
+
+def test_rsa_missing_sensitive_claim_but_exponent_readable_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: gen_rsa_keypair_or_xfail() raises/xfails unless
+    the module accepted CKA_SENSITIVE=True, so a missing readback must not
+    downgrade a proven CKA_PRIVATE_EXPONENT leak to xfail."""
+
+    def _read(_raw: object, _sh: object, _handle: object, attr_list: list[int]) -> dict[int, Any]:
+        if CKA_PRIVATE_EXPONENT in attr_list:
+            return {CKA_PRIVATE_EXPONENT: b"\x00" * 256}
+        return {}
+
+    monkeypatch.setattr(test_sensitivity, "gen_rsa_keypair_or_xfail", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_sensitivity, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_sensitivity, "read_attributes", _read)
+
+    with pytest.raises(Failed) as excinfo:
+        test_sensitivity.TestSensitiveKeyValue().test_sensitive_rsa_private_exponent_not_readable(
+            _session()
+        )
+    assert not isinstance(excinfo.value, XFailed)
+    assert C.get_records()[-1].reason == "self_contradiction"
 
 
 def test_missing_sensitive_claim_still_runs_raw_value_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """F7 claim-sweep regression: gen_aes_key() raises unless C_GenerateKey
+    returns CKR_OK, so reaching the value probe already proves creation-time
+    acceptance of CKA_SENSITIVE=True -- a missing CKA_SENSITIVE readback must
+    not downgrade a proven CKA_VALUE leak to a silent pass (mutation:
+    restoring the pre-fix ``if sensitive is MISSING_ATTRIBUTE: return`` early
+    exit -- which ran before ``_classify_sensitive_policy`` -- turns this back
+    into a silent pass instead of a fail)."""
     reads: list[list[int]] = []
 
     def _read(_raw: object, _sh: object, _handle: object, attrs: list[int]) -> dict[int, Any]:
@@ -136,14 +184,18 @@ def test_missing_sensitive_claim_still_runs_raw_value_probe(
     monkeypatch.setattr(test_sensitivity, "destroy_quietly", lambda *_a, **_k: None)
     monkeypatch.setattr(test_sensitivity, "read_attributes", _read)
 
-    test_sensitivity.TestSensitiveKeyValue().test_sensitive_aes_value_not_readable(_session())
+    with pytest.raises(Failed) as excinfo:
+        test_sensitivity.TestSensitiveKeyValue().test_sensitive_aes_value_not_readable(_session())
+    assert not isinstance(excinfo.value, XFailed)
 
     assert reads == [[CKA_SENSITIVE], [CKA_VALUE]]
-    assert C.get_records()[0].operation == "C_GetAttributeValue"
-    assert C.get_records()[0].detail is not None
-    detail = C.get_records()[0].detail
+    records = C.get_records()
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[0].detail is not None
+    detail = records[0].detail
     assert detail is not None
     assert detail["attribute"]["id"] == int(CKA_SENSITIVE)
+    assert records[-1].reason == "self_contradiction"
 
 
 def test_mixed_sensitive_probe_is_not_short_circuited_by_missing_claim(
@@ -198,7 +250,15 @@ def test_present_malformed_sensitive_flag_is_hard_after_value_probe(
         test_sensitivity.TestSensitiveKeyValue().test_sensitive_aes_value_not_readable(_session())
 
     assert reads == [[CKA_SENSITIVE], [CKA_VALUE]]
-    assert C.get_records()[-1].reason == "wrong_result"
+    records = C.get_records()
+    # The hard failure is still driven by the malformed CKA_SENSITIVE readback...
+    assert records[0].reason == "wrong_result"
+    # ...but the CKA_VALUE absence (a plain dict with no refusals channel -- no CKR was
+    # observed for it) is now ALSO a visible record instead of the prior dead branch
+    # (N16): it is a deviation, not silently dropped, since sensitive_is_conformant=True
+    # only demotes an *observed* CKR_ATTRIBUTE_SENSITIVE refusal to conformant.
+    assert records[-1].reason == "honest_deviation"
+    assert records[-1].actual_ckr is None
 
 
 def test_false_like_non_sensitive_value_is_present_and_hard(
@@ -292,6 +352,36 @@ def test_rejected_sensitive_read_zeroed_buffer_is_not_a_leak(
         _session_with_raw(raw)
     )
     assert not any(record.reason == "self_contradiction" for record in C.get_records())
+
+
+def test_missing_sensitive_claim_with_clean_ok_readback_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: import_secret_key() raises unless C_CreateObject
+    returns CKR_OK, so reaching the raw-buffer probe already proves creation-time
+    acceptance of CKA_SENSITIVE=True. Here C_GetAttributeValue cleanly returns
+    CKR_OK (not the fragment-leak path covered above), so this exercises the
+    final ``_classify_sensitive_policy`` call directly: a missing CKA_SENSITIVE
+    readback must not downgrade this proven CKA_VALUE leak to xfail (mutation:
+    restoring the pre-fix ``if sensitive is MISSING_ATTRIBUTE: return`` early
+    exit -- which ran before ``_classify_sensitive_policy`` -- turns this back
+    into a silent pass instead of a fail)."""
+    secret = bytes.fromhex("00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f")
+    monkeypatch.setattr(test_sensitivity, "import_secret_key", lambda *_a, **_k: 7)
+    monkeypatch.setattr(test_sensitivity, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_sensitivity, "read_attributes", lambda *_a, **_k: {})
+
+    def _get_attribute(_session: int, _handle: int, attrs: Any, _count: int) -> int:
+        ctypes.memmove(attrs[0].pValue, secret, len(secret))
+        return int(CKR_OK)
+
+    raw = SimpleNamespace(C_GetAttributeValue=_get_attribute)
+    with pytest.raises(Failed) as ei:
+        test_sensitivity.TestSensitiveKeyValue().test_sensitive_value_not_copied_on_rejected_get_attribute(
+            _session_with_raw(raw)
+        )
+    assert not isinstance(ei.value, XFailed)
+    assert C.get_records()[-1].reason == "self_contradiction"
 
 
 @pytest.mark.parametrize(

@@ -3593,8 +3593,14 @@ class _Analyzer:
         missing_body = node.body if isinstance(operator, ast.NotIn) else node.orelse
         if not missing_body:
             return
-        if not self._all_paths_terminal(missing_body, state=state, call_stack=call_stack):
-            return
+        # A non-terminal absence branch (``else: v = None``, ``else: pass``, a
+        # bare ``record_as(...)``-only else) silently converts a provider
+        # omission into a fabricated value without ever raising -- it must
+        # fall through to the same structured/reviewed checks below as a
+        # terminal branch, not bypass them.  Only `_all_paths_classified_terminal`
+        # requires termination, and it naturally returns False for a
+        # non-terminal branch (its own flow.state-is-None check fails), so no
+        # separate terminal gate is needed here.
         if self._all_paths_classified_terminal(missing_body, state=state, call_stack=call_stack):
             return
         if self._structured_absence(missing_body, key, state, call_stack=call_stack):
@@ -4114,10 +4120,66 @@ class _Analyzer:
                 and _key_text(node.value) == mapping
                 and _key_text(node.slice) == key
                 for statement in present_body
-                for node in self._scope_walk(statement)
+                for node in self._unconditionally_reached_nodes(statement)
             ):
                 return True
         return False
+
+    @staticmethod
+    def _unconditionally_reached_nodes(statement: ast.stmt) -> Iterable[ast.AST]:
+        """Yield subtree nodes of ``statement`` that necessarily execute whenever
+        ``statement`` itself does.
+
+        This backs ``_is_reviewed_optional_helper``'s proof that a certified
+        helper's "present" path actually reads the provider mapping, rather than
+        merely containing a matching ``Subscript`` node somewhere in its syntax
+        tree.  A full reachability analysis is not attempted here; instead this
+        refuses to certify anything it cannot prove reached: it does not descend
+        into a nested compound statement (``if``/``try``/loop/``with``/``match``),
+        since a statement nested inside one is not provably reached on every path
+        without a full control-flow analysis, and within a single simple
+        statement's own expression it excludes conditionally-evaluated
+        sub-expressions (a ternary's non-test branches, a boolean operator's
+        short-circuited operands, a lambda body, a comprehension). Without this,
+        dead code such as ``if False: return attrs[KEY]`` -- unreachable, yet
+        syntactically containing the expected subscript -- would certify a
+        helper that never actually returns the provider-backed value.
+        """
+        if isinstance(statement, ast.Return) and statement.value is not None:
+            expression = statement.value
+        elif (
+            isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+            and statement.value is not None
+        ):
+            expression = statement.value
+        elif isinstance(statement, ast.Expr):
+            expression = statement.value
+        else:
+            return
+        yield from _Analyzer._unconditional_expr_walk(expression)
+
+    @staticmethod
+    def _unconditional_expr_walk(node: ast.expr) -> Iterable[ast.AST]:
+        yield node
+        if isinstance(node, ast.IfExp):
+            # Only the test is unconditionally evaluated; the body/orelse each
+            # run on only one path.
+            yield from _Analyzer._unconditional_expr_walk(node.test)
+            return
+        if isinstance(node, ast.BoolOp):
+            # Only the first operand is guaranteed to evaluate; the rest are
+            # short-circuited.
+            yield from _Analyzer._unconditional_expr_walk(node.values[0])
+            return
+        if isinstance(
+            node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            # Deferred or repeated/conditional execution, not a plain
+            # unconditional read.
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.expr):
+                yield from _Analyzer._unconditional_expr_walk(child)
 
     def _record_call_is_resolved(self, node: ast.Call, function: _Function) -> bool:
         local_names = self._local_names(function)
@@ -4242,6 +4304,10 @@ class _Analyzer:
             if iterable.terminal:
                 return _Flow(None, [_Exit("terminal", state.copy(), node=node)])
             self._check_optional(node.iter, iterable, loop_state)
+            if iterable.taint:
+                self._check_taint_escape(
+                    node.iter, iterable, "iterating over provider-backed mapping"
+                )
         for _ in range(_MAX_FLOW_ITERATIONS):
             body_state = loop_state.copy()
             if isinstance(node, ast.While):
@@ -5054,8 +5120,19 @@ def analyze_source(
     reviewed_optional_helpers: Iterable[str] = (),
     reviewed_negative_oracles: Iterable[str] = (),
     optional_defaults: Mapping[str, str] | None = None,
+    coverage: dict[str, int] | None = None,
 ) -> list[Violation]:
-    """Analyze Python source and return stable, source-provenance-aware violations."""
+    """Analyze Python source and return stable, source-provenance-aware violations.
+
+    ``coverage``, when given, records ``coverage[path] = len(source)`` for the exact
+    ``source`` this call actually parses and walks -- taken as early as possible, before
+    any early-return. A caller can compare this against an independently measured
+    on-disk length to prove a file was analyzed in full rather than silently truncated
+    (a size-cap early-out) or skipped (a path filter / discovery regression), which
+    would otherwise let the zero-violation release gate pass by analyzing nothing.
+    """
+    if coverage is not None:
+        coverage[path] = len(source)
     try:
         tree = ast.parse(source, filename=path)
     except SyntaxError as exc:
@@ -5097,8 +5174,12 @@ def analyze_file(
     reviewed_optional_helpers: Iterable[str] = (),
     reviewed_negative_oracles: Iterable[str] = (),
     optional_defaults: Mapping[str, str] | None = None,
+    coverage: dict[str, int] | None = None,
 ) -> list[Violation]:
-    """Analyze a UTF-8 Python file, retaining its exact path in every finding."""
+    """Analyze a UTF-8 Python file, retaining its exact path in every finding.
+
+    See ``analyze_source`` for the optional ``coverage`` recording.
+    """
     file_path = Path(path)
     return analyze_source(
         file_path.read_text(encoding="utf-8"),
@@ -5106,6 +5187,7 @@ def analyze_file(
         reviewed_optional_helpers=reviewed_optional_helpers,
         reviewed_negative_oracles=reviewed_negative_oracles,
         optional_defaults=optional_defaults,
+        coverage=coverage,
     )
 
 
@@ -5115,8 +5197,12 @@ def analyze_paths(
     reviewed_optional_helpers: Iterable[str] = (),
     reviewed_negative_oracles: Iterable[str] = (),
     optional_defaults: Mapping[str, str] | None = None,
+    coverage: dict[str, int] | None = None,
 ) -> list[Violation]:
-    """Analyze multiple files and return one stable, source-sorted diagnostic list."""
+    """Analyze multiple files and return one stable, source-sorted diagnostic list.
+
+    See ``analyze_source`` for the optional ``coverage`` recording.
+    """
     violations = [
         violation
         for path in paths
@@ -5125,6 +5211,7 @@ def analyze_paths(
             reviewed_optional_helpers=reviewed_optional_helpers,
             reviewed_negative_oracles=reviewed_negative_oracles,
             optional_defaults=optional_defaults,
+            coverage=coverage,
         )
     ]
     return sorted(violations)

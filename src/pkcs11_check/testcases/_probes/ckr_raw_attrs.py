@@ -42,7 +42,7 @@ Launch with ``coverage="session"`` and ``pin=pin_from_config(p11_config)``.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from ctypes import byref, cast
 from typing import Any
 
@@ -70,28 +70,37 @@ def _template_ptr(attrs: Any) -> Any:
     return cast(attrs.array, CK_ATTRIBUTE_PTR)
 
 
+def _classify_readback(vals: Mapping[int, Any], attr: int) -> dict[str, Any]:
+    """Classify one attribute readback into a self-describing partial event.
+
+    Absence and malformed values stay distinct from booleans: treating either
+    as a false claim would invent a provider assertion. Both branches below
+    are terminal returns, so there is no absence branch left to silently
+    collapse a provider omission into a fabricated value.
+    """
+    if attr in vals:
+        value = vals[attr]
+        if isinstance(value, bool):
+            return {"event": "boolean", "value": value}
+        return {
+            "event": "malformed",
+            "value_type": type(value).__name__[:64],
+            "value_repr": repr(value)[:256],
+        }
+    return {"event": "omitted"}
+
+
 def _claim(ctx: ProbeContext, sh: int, key_value: int, attr: int, *, operation: str) -> None:
     # The event is self-describing so the parent can reject output copied from
-    # another probe. Absence and malformed values stay distinct from booleans:
-    # treating either as a false claim would invent a provider assertion.
+    # another probe.
     vals = read_attributes(ctx.raw, sh, key_value, [attr])
     attr_id = int(attr)
     attr_descriptor = {"name": ATTR_NAMES.get(attr_id, str(attr)), "id": attr_id}
     event: dict[str, Any] = {
         "operation": operation,
         "attribute": attr_descriptor,
+        **_classify_readback(vals, attr),
     }
-    if attr not in vals:
-        event["event"] = "omitted"
-    else:
-        value = vals[attr]
-        if isinstance(value, bool):
-            event["event"] = "boolean"
-            event["value"] = value
-        else:
-            event["event"] = "malformed"
-            event["value_type"] = type(value).__name__[:64]
-            event["value_repr"] = repr(value)[:256]
     print("ATTRIBUTE_EVENT:" + json.dumps(event, separators=(",", ":")))
 
 

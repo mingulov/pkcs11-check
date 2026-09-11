@@ -347,6 +347,25 @@ def check(raw, session, handle):
     assert _kinds(source) == ["taint_escape", "taint_escape"]
 
 
+def test_for_loop_over_provider_mapping_reports_taint_escape() -> None:
+    """``for k in attrs:`` iterates a provider-backed mapping directly, so it must
+    be flagged the same as ``list(attrs)``/``attrs.items()`` -- ``_exec_loop`` did
+    not previously check ``node.iter`` for ``For``/``AsyncFor`` at all, so a bare
+    membership loop bypassed taint tracking entirely while the equivalent
+    ``list(...)``/``.items()`` forms were (accidentally) already caught elsewhere.
+    """
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    for key in attrs:
+        print(key)
+"""
+
+    assert _kinds(source) == ["taint_escape"]
+
+
 def test_membership_guard_proves_subscript_present() -> None:
     source = """
 from pkcs11_check.raw.recipes import read_attributes
@@ -2458,6 +2477,89 @@ def check(raw, session, handle):
     assert _kinds(source) == ["unstructured_absence"]
 
 
+def test_non_terminal_else_v_none_absence_branch_is_flagged() -> None:
+    """M4 guard-bypass fix: ``if K in attrs: v = attrs[K] else: v = None`` is the
+    exact shape verified to silently bypass the guard before the fix (the
+    early return on a non-terminal absence branch skipped emission entirely).
+    """
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE in attrs:
+        v = attrs[CKA_VALUE]
+    else:
+        v = None
+    return v
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_non_terminal_else_v_none_absence_branch_is_flagged_not_in_order() -> None:
+    """Same M4 bypass shape with the membership test inverted (`not in`), so the
+    fabricated default lives in the if-body rather than the else-clause.
+    """
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE not in attrs:
+        v = None
+    else:
+        v = attrs[CKA_VALUE]
+    return v
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_non_terminal_else_pass_absence_branch_is_flagged() -> None:
+    """M4 guard-bypass fix: ``else: pass`` is a non-terminal absence branch that
+    silently falls through without recording anything; it must be flagged the
+    same as ``else: v = None``.
+    """
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE in attrs:
+        v = attrs[CKA_VALUE]
+        return v
+    else:
+        pass
+    return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_non_terminal_bare_record_as_else_is_flagged() -> None:
+    """M4 guard-bypass fix: a bare ``record_as(...)`` call in the else-clause that
+    does not terminate is still a non-terminal absence branch -- recording the
+    observation is not enough on its own; the guard requires the record_as call
+    to be followed by terminal code (``_structured_absence``), not silence.
+    """
+    source = """
+from pkcs11_check.classification import record_as
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE in attrs:
+        v = attrs[CKA_VALUE]
+        return v
+    else:
+        record_as("honest_deviation", operation="C_GetAttributeValue", detail="CKA_VALUE")
+    return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
 def test_structured_record_as_absence_branch_is_accepted() -> None:
     source = """
 from pkcs11_check.classification import record_as
@@ -2504,6 +2606,9 @@ def check(raw, session, handle):
 
 
 def test_nonterminating_record_as_does_not_prove_presence() -> None:
+    """A record_as() call that does not terminate is itself unstructured absence
+    handling (see the M4 guard-bypass fix): it no longer silently exempts the
+    if-statement, and the later unconditional subscript is still unsafe too."""
     source = """
 from pkcs11_check.classification import record_as
 from pkcs11_check.raw.recipes import read_attributes
@@ -2515,7 +2620,7 @@ def check(raw, session, handle):
     return attrs[CKA_VALUE]
 """
 
-    assert _kinds(source) == ["unsafe_subscript"]
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
 
 
 def test_reviewed_spec_default_helper_is_explicit_and_attribute_specific() -> None:
@@ -2546,6 +2651,35 @@ def check(raw, session, handle):
         )
         == []
     )
+
+
+def test_reviewed_helper_certification_refuses_unreachable_present_path() -> None:
+    """A helper whose "present" branch never actually reaches the provider
+    subscript must not certify. Here the subscript sits inside a dead
+    ``if False:`` block and the helper always raises instead -- if
+    certification only checked "does this subscript appear anywhere in the
+    syntax tree", this dead code would be accepted and the guard would treat
+    a helper that never returns the provider-backed value as reviewed."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def trust_or_default(attrs):
+    if CKA_TRUST_XXX not in attrs:
+        return CKT_TRUST_UNKNOWN
+    if False:
+        return attrs[CKA_TRUST_XXX]
+    raise RuntimeError("never actually returns the mapping value")
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_TRUST_XXX])
+    return trust_or_default(attrs)
+"""
+
+    assert _kinds(
+        source,
+        reviewed_optional_helpers={"trust_or_default"},
+        optional_defaults={"CKA_TRUST_XXX": "CKT_TRUST_UNKNOWN"},
+    ) == ["unstructured_absence"]
 
 
 def test_unreviewed_or_wrong_spec_default_is_not_optional() -> None:
@@ -2718,6 +2852,48 @@ def test_all_testcase_sources_have_zero_attribute_access_violations() -> None:
             f"{len(violations)} unguarded provider-attribute access violation(s) "
             f"remain in src/pkcs11_check/testcases:\n{details}"
         )
+
+
+def test_all_testcase_sources_are_fully_covered_by_analysis() -> None:
+    """Canary for the zero-violation gate above: it must fail *because there are no
+    violations*, not because a regression scoped to real-file discovery/analysis --
+    an ``rglob`` exclusion, a size-cap early-out, a path filter -- silently analyzed
+    nothing and reported zero for that reason instead.
+
+    Rather than plant a canary file inside ``src/pkcs11_check/testcases/`` (a
+    separate agent is actively editing that tree), this asserts per-file coverage
+    directly: every file the same ``rglob`` discovers must have been handed to
+    ``analyze_source`` in full. ``analyze_paths(..., coverage=...)`` records, for
+    each path, the exact length of the ``source`` string the analyzer actually
+    parsed -- captured at the top of ``analyze_source``, before any early return --
+    so a silently skipped file is simply absent from ``coverage``, and a silently
+    truncated read (e.g. a byte-size cap) shows up as a length mismatch against an
+    independent on-disk read performed here, outside the analyzer.
+    """
+    testcase_root = Path(__file__).parents[1] / "src" / "pkcs11_check" / "testcases"
+    source_files = sorted(testcase_root.rglob("*.py"))
+
+    assert source_files
+    expected_lengths = {str(path): len(path.read_text(encoding="utf-8")) for path in source_files}
+
+    coverage: dict[str, int] = {}
+    analyze_paths(source_files, coverage=coverage)
+
+    missing = sorted(set(expected_lengths) - set(coverage))
+    assert not missing, (
+        f"{len(missing)} discovered testcase source file(s) were never analyzed "
+        f"(a discovery/path-filter regression would show up here): {missing}"
+    )
+    mismatched = sorted(
+        path
+        for path, expected_length in expected_lengths.items()
+        if coverage[path] != expected_length
+    )
+    assert not mismatched, (
+        f"{len(mismatched)} discovered testcase source file(s) were analyzed with a "
+        f"length that does not match their on-disk content (a size-cap early-out "
+        f"would show up here): {mismatched}"
+    )
 
 
 def test_class_method_bodies_are_analyzed() -> None:
@@ -3809,7 +3985,7 @@ def check(raw, session, handle):
     return attrs[CKA_VALUE]
 """
 
-    assert _kinds(source) == ["unsafe_subscript"]
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
 
 
 def test_assert_correct_is_not_a_terminal_summary() -> None:
@@ -3823,7 +3999,7 @@ def check(raw, session, handle):
     return attrs[CKA_VALUE]
 """
 
-    assert _kinds(source) == ["unsafe_subscript"]
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
 
 
 @pytest.mark.parametrize(
@@ -4404,7 +4580,7 @@ def check(raw, session, handle):
     return attrs[CKA_VALUE]
 """
 
-    assert _kinds(source) == ["unsafe_subscript"]
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
 
 
 def test_shadowed_terminal_name_with_silent_return_is_unstructured() -> None:
@@ -4457,7 +4633,7 @@ def check(raw, session, handle, condition):
     return attrs[CKA_VALUE]
 """
 
-    assert _kinds(source) == ["unsafe_subscript"]
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
 
 
 def test_recursive_terminal_wrapper_does_not_gain_terminal_summary() -> None:
@@ -4477,7 +4653,7 @@ def check(raw, session, handle, condition):
     return attrs[CKA_VALUE]
 """
 
-    assert _kinds(source) == ["unsafe_subscript"]
+    assert _kinds(source) == ["unstructured_absence", "unsafe_subscript"]
 
 
 @pytest.mark.parametrize(

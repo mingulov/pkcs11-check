@@ -105,7 +105,7 @@ def _read_leg(
         label=label,
         reason="not_operational",
         kind="metadata",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
     if value is not MISSING_ATTRIBUTE:
         return value, None

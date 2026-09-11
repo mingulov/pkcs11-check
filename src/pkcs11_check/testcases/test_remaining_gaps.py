@@ -592,7 +592,14 @@ class TestTemplateConstraintAttributes:
                     label="CKA_WRAP_TEMPLATE wrapping key generation",
                 )
 
-            claimed = False
+            # C_GenerateKey/C_CreateObject above already returned CKR_OK
+            # (not one of the unsupported-attribute rejection codes), which
+            # already proves the module accepted the nested-template attribute
+            # at creation -- independent claim evidence a missing readback must
+            # not downgrade.  The readback below only corroborates (or, if
+            # present but malformed, weakens) the claim; it can raise it back
+            # down only when actual (not missing) evidence contradicts it.
+            claimed = True
             try:
                 attrs = read_attributes(rs.raw, rs.sh, wrapping_key.value, [CKA_WRAP_TEMPLATE])
             except CkrAssertionError as exc:
@@ -727,7 +734,14 @@ class TestTemplateConstraintAttributes:
                     label="CKA_UNWRAP_TEMPLATE unwrapping key generation",
                 )
 
-            claimed = False
+            # C_GenerateKey/C_CreateObject above already returned CKR_OK
+            # (not one of the unsupported-attribute rejection codes), which
+            # already proves the module accepted the nested-template attribute
+            # at creation -- independent claim evidence a missing readback must
+            # not downgrade.  The readback below only corroborates (or, if
+            # present but malformed, weakens) the claim; it can raise it back
+            # down only when actual (not missing) evidence contradicts it.
+            claimed = True
             try:
                 attrs = read_attributes(rs.raw, rs.sh, unwrapping_key.value, [CKA_UNWRAP_TEMPLATE])
             except CkrAssertionError as exc:
@@ -908,7 +922,14 @@ class TestTemplateConstraintAttributes:
                     label="CKA_DERIVE_TEMPLATE base-key import",
                 )
 
-            claimed = False
+            # C_GenerateKey/C_CreateObject above already returned CKR_OK
+            # (not one of the unsupported-attribute rejection codes), which
+            # already proves the module accepted the nested-template attribute
+            # at creation -- independent claim evidence a missing readback must
+            # not downgrade.  The readback below only corroborates (or, if
+            # present but malformed, weakens) the claim; it can raise it back
+            # down only when actual (not missing) evidence contradicts it.
+            claimed = True
             try:
                 attrs = read_attributes(rs.raw, rs.sh, base_key.value, [CKA_DERIVE_TEMPLATE])
             except CkrAssertionError as exc:

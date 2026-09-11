@@ -110,11 +110,14 @@ def _assert_misc_different(
     if first is MISSING_ATTRIBUTE or second is MISSING_ATTRIBUTE:
         return
     if first == second:
+        # This finding is about C_DeriveKey's output diversity, not the
+        # C_GetAttributeValue readback that retrieved it (F6): all call sites pass a
+        # C_DeriveKey-family KDF mechanism here.
         classify(
             "wrong_result",
             kind="crypto",
             label=label,
-            operation="C_GetAttributeValue",
+            operation="C_DeriveKey",
             mechanism=mechanism,
             summary=f"{label}: independent provider outputs were equal",
         )

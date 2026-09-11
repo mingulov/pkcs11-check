@@ -139,10 +139,10 @@ def _read_attribute(attrs: Mapping[Any, Any], attr: Any, *, label: str, mechanis
     return attr_or_record(
         attrs,
         attr,
-        label=label,
+        label=f"{label} (producer_mechanism={mechanism})",
         reason="not_operational",
         kind="metadata",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
 
 

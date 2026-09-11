@@ -104,3 +104,29 @@ def test_uad_session_handle_invalid_passes(monkeypatch: pytest.MonkeyPatch) -> N
 def test_uad_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(pytest.xfail.Exception):
         _run_uad(monkeypatch, getattr_rv=int(CKR_FUNCTION_FAILED))
+
+
+def test_sensitive_readback_absent_is_recorded_as_policy_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKA_SENSITIVE absence still feeds the claimed/violated policy oracle via
+    the creation-time claim fallback, so the absence record must be
+    kind="policy", not the helper's kind="metadata" default.
+    """
+    from pkcs11_check import classification as C  # noqa: N812
+
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ckr_codes, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
+        return {}
+
+    monkeypatch.setattr(test_ckr_codes, "read_attributes", _read)
+    test_ckr_codes.TestCKRAttributeErrors().test_ckr_attribute_sensitive(
+        SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda n: True)
+    )
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].kind == "policy"

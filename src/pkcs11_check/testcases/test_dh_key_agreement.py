@@ -486,8 +486,18 @@ class TestDHKeyAgreement:
             )
             if pub_value is MISSING_ATTRIBUTE:
                 return
-            assert isinstance(pub_value, bytes)
-            assert len(pub_value) > 0
+            shape_record = _dh_shape_record(
+                pub_value,
+                attr=CKA_VALUE,
+                leg="public",
+                label="CKM_DH_PKCS_KEY_PAIR_GEN:public CKA_VALUE readback",
+                expected="non-empty bytes",
+                expected_length=None,
+                producer_operation="C_GenerateKeyPair",
+                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
+            )
+            if shape_record is not None:
+                C.raise_for_record(shape_record)
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -1313,8 +1323,32 @@ class TestDHParameterGeneration:
             )
             if prime is MISSING_ATTRIBUTE:
                 return
-            assert isinstance(prime, bytes)
-            assert len(prime) * 8 >= 2048
+            if type(prime) is bytes and len(prime) * 8 >= 2048:
+                return
+            try:
+                actual: dict[str, Any] = {"type": type(prime).__name__, "bits": len(prime) * 8}
+            except TypeError:
+                actual = {"type": type(prime).__name__, "bits": None}
+            record = C.record_as(
+                "wrong_result",
+                kind="metadata",
+                label="CKM_DH_PKCS_PARAMETER_GEN:CKA_PRIME readback",
+                operation="C_GetAttributeValue",
+                mechanism="CKM_DH_PKCS_PARAMETER_GEN",
+                inherit_mechanism=False,
+                detail={
+                    "attribute": _dh_attribute_info(CKA_PRIME),
+                    "expected": {"type": "bytes", "min_bits": 2048},
+                    "actual": actual,
+                    "producer_operation": "C_GenerateKey",
+                    "producer_mechanism": "CKM_DH_PKCS_PARAMETER_GEN",
+                },
+                summary=(
+                    "CKM_DH_PKCS_PARAMETER_GEN:CKA_PRIME readback: provider returned a "
+                    "CKA_PRIME with the wrong shape"
+                ),
+            )
+            C.raise_for_record(record)
         finally:
             destroy_quietly(rs.raw, rs.sh, dp_handle.value)
 

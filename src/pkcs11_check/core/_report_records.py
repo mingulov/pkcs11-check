@@ -338,12 +338,31 @@ def _write_unit_report_record_cache_from_jsonl_paths(
             for jsonl_path in jsonl_paths:
                 source_started = False
                 for record in _iter_report_log_records(jsonl_path):
-                    if record.get("$report_type") == _ISOLATED_UNIT_REPORT_TYPE:
+                    report_type = record.get("$report_type")
+                    if report_type == _ISOLATED_UNIT_REPORT_TYPE:
                         source_started = True
                         raw_attempt = record.get("attempt")
-                        if isinstance(raw_attempt, int):
+                        if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool):
                             next_attempt = max(next_attempt, raw_attempt + 1)
-                    elif not source_started:
+                        out_fh.write(json.dumps(record) + "\n")
+                        wrote = True
+                        continue
+                    if not source_started and report_type == "SessionStart":
+                        # iter_classification_occurrences() resets attribution
+                        # provenance on SessionStart (a real, necessary guard against an
+                        # unmarked shard inheriting a previous shard's marker). A pytest
+                        # report log always opens with SessionStart, so a marker written
+                        # before it here would be wiped by that same reset the instant
+                        # it is read back. Emit the session bookend first, THEN the
+                        # marker, so the reset fires before attribution is established
+                        # rather than after it.
+                        out_fh.write(json.dumps(record) + "\n")
+                        out_fh.write(json.dumps(_isolated_unit_report(unit, next_attempt)) + "\n")
+                        next_attempt += 1
+                        source_started = True
+                        wrote = True
+                        continue
+                    if not source_started:
                         out_fh.write(json.dumps(_isolated_unit_report(unit, next_attempt)) + "\n")
                         next_attempt += 1
                         source_started = True
@@ -697,23 +716,13 @@ def extract_quality_report_records_from_jsonl(jsonl_path: Path) -> list[dict[str
     never materialized.
     """
     records: list[dict[str, Any]] = []
-    try:
-        fh = jsonl_path.open(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return []
-    with fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(rec, dict):
-                continue
-            if rec.get("$report_type", "TestReport") in {"TestReport", "SelectionReport"}:
-                records.append({k: v for k, v in rec.items() if k in _QUALITY_AUDIT_RECORD_FIELDS})
+    # Streamed via the shared binary-decode iterator (see report_log.py's
+    # iter_report_log_records) rather than a text-mode `for line in fh` loop, so a
+    # single undecodable byte anywhere in the file only drops that one line instead
+    # of raising UnicodeDecodeError and losing every remaining record.
+    for rec in _iter_report_log_records(jsonl_path):
+        if rec.get("$report_type", "TestReport") in {"TestReport", "SelectionReport"}:
+            records.append({k: v for k, v in rec.items() if k in _QUALITY_AUDIT_RECORD_FIELDS})
     return records
 
 
@@ -792,6 +801,19 @@ def extract_quality_report_evidence_from_jsonl(
         if not path.is_file():
             missing_sources += 1
             continue
+        # A source that exists but cannot actually be opened (permissions, a race
+        # where it disappears between is_file() and open(), ...) must not inflate
+        # readable_sources -- that would overstate how much evidence was actually
+        # inspected. Probe the open here so the count reflects success/failure
+        # precisely; _iter_report_log_records's own on_invalid callback (invoked
+        # below for the identical open failure) keeps malformed-record accounting
+        # unchanged.
+        try:
+            _probe_fh = path.open("rb")
+        except OSError:
+            _on_invalid()
+            continue
+        _probe_fh.close()
         readable_sources += 1
         raw_records = _iter_report_log_records(path, on_invalid=_on_invalid)
         for occurrence in _iter_classification_occurrences(

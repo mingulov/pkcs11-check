@@ -479,6 +479,9 @@ class TestWrappedKeyUsability:
             pytest.skip("CKM_RSA_PKCS not supported")
 
         pub, priv = _make_rsa_pair(rs)
+        # gen_aes_key() raises unless C_GenerateKey returns CKR_OK, so reaching
+        # this point already proves the module ACCEPTED the CKA_EXTRACTABLE=False
+        # template at creation -- that acceptance is independent claim evidence.
         non_extractable = gen_aes_key(
             rs.raw,
             rs.sh,
@@ -487,26 +490,31 @@ class TestWrappedKeyUsability:
         )
 
         try:
-            # Establish the claim: the key must actually read back
-            # CKA_EXTRACTABLE=False. If the module did not honour the flag at
-            # creation, it never claimed the protection -> honest non-support.
+            # Corroborate the claim with a readback where available, but never
+            # let a missing readback downgrade the creation-time claim: deriving
+            # `claimed` from the readback alone would let one unreadable
+            # attribute mask a proven wrap-extraction break.
             extractable_attrs = read_attributes(rs.raw, rs.sh, non_extractable, [CKA_EXTRACTABLE])
             extractable = attr_or_record(
                 extractable_attrs,
                 CKA_EXTRACTABLE,
                 label="C_GenerateKey:CKA_EXTRACTABLE",
-                reason="honest_deviation",
-                kind="metadata",
+                reason="not_operational",
+                kind="policy",
                 inherit_mechanism=False,
             )
-            claimed = extractable is not MISSING_ATTRIBUTE and extractable is False
-            if not claimed:
-                xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label="C_GenerateKey:CKA_EXTRACTABLE",
-                    summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
-                )
+            claimed: bool
+            if extractable is MISSING_ATTRIBUTE:
+                claimed = True
+            else:
+                claimed = extractable is False
+                if not claimed:
+                    xfail_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="C_GenerateKey:CKA_EXTRACTABLE",
+                        summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
+                    )
 
             try:
                 wrap_key_recipe(
@@ -563,29 +571,40 @@ class TestNonExtractableWrapRefusal:
     ) -> None:
         """Core: try to wrap a verified non-extractable key, classify the outcome.
 
-        Readback guard: if the module did not honour CKA_EXTRACTABLE=False at
-        creation it never made the claim -> honest_deviation/xfail, not fail.
-        Wrap refused -> pass. Wrap accepted on a claimed key -> self_contradiction
-        policy fail (key material exfiltration).
+        Claim: gen_aes_key() already proved creation-time acceptance of
+        CKA_EXTRACTABLE=False (it raises unless C_GenerateKey returns CKR_OK),
+        so `claimed` defaults to True and a missing readback cannot downgrade
+        it; only an explicit readback showing the key IS extractable disables
+        the claim (-> honest_deviation/xfail, not fail). Wrap refused -> pass.
+        Wrap accepted on a claimed key -> self_contradiction policy fail (key
+        material exfiltration).
         """
-        # Verify the claim before probing the enforcement.
+        # Corroborate the claim with a readback where available, but never let
+        # a missing readback downgrade the creation-time claim: `target` was
+        # produced by gen_aes_key(attrs={CKA_EXTRACTABLE: False}), which raises
+        # unless C_GenerateKey returns CKR_OK, so reaching this call already
+        # proves the module accepted the protective template.
         extractable_attrs = read_attributes(rs.raw, rs.sh, target, [CKA_EXTRACTABLE])
         extractable = attr_or_record(
             extractable_attrs,
             CKA_EXTRACTABLE,
             label=f"C_GenerateKey:CKA_EXTRACTABLE ({mech_label})",
-            reason="honest_deviation",
-            kind="metadata",
+            reason="not_operational",
+            kind="policy",
             inherit_mechanism=False,
         )
-        claimed = extractable is not MISSING_ATTRIBUTE and extractable is False
-        if not claimed:
-            xfail_as(
-                "honest_deviation",
-                kind="metadata",
-                label=f"C_GenerateKey:CKA_EXTRACTABLE ({mech_label})",
-                summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
-            )
+        claimed: bool
+        if extractable is MISSING_ATTRIBUTE:
+            claimed = True
+        else:
+            claimed = extractable is False
+            if not claimed:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"C_GenerateKey:CKA_EXTRACTABLE ({mech_label})",
+                    summary="Module did not honour CKA_EXTRACTABLE=False at key creation",
+                )
 
         # Probe enforcement for this mechanism.
         try:

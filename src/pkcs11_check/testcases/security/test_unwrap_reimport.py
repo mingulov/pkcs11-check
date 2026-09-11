@@ -318,19 +318,30 @@ class TestDefaultStripIsPermitted:
                     extractable_after = None
                 else:
                     extractable_after = extractable_after_raw
-                # CKA_VALUE is the protected secret this oracle probes for exposure;
-                # a correctly-protected key omits it, which is the secure default,
-                # not a deviation -- so this reads the mapping directly under a
-                # membership guard rather than recording an absence via
-                # attr_or_record().
+                # CKA_VALUE is the protected secret this oracle probes for exposure.
+                # It legitimately CAN be sensitive (that is the point of the
+                # protection this test probes), so a clean CKR_ATTRIBUTE_SENSITIVE
+                # refusal is conformant, not a deviation -- sensitive_is_conformant=True
+                # records it as such. A missing CKR (silent omission) or
+                # CKR_ATTRIBUTE_TYPE_INVALID is still a deviation via `reason`. The
+                # CKA_SENSITIVE/CKA_EXTRACTABLE attr_or_record() calls above read
+                # DIFFERENT attributes and record nothing about CKA_VALUE itself --
+                # recording it here, unconditionally, is what makes a refusal vs. a
+                # silent omission vs. a refusal-with-leaked-data visible per provider.
+                value_raw = attr_or_record(
+                    attrs,
+                    CKA_VALUE,
+                    label="Default-strip unwrap result CKA_VALUE readback",
+                    reason="honest_deviation",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                    sensitive_is_conformant=True,
+                )
                 value: Any
-                if CKA_VALUE in attrs:
-                    value = attrs[CKA_VALUE]
-                else:
+                if value_raw is MISSING_ATTRIBUTE:
                     value = None
-                # Absence is already an emitted observation (the attr_or_record()
-                # calls above); only a PRESENT-but-malformed value is recorded again
-                # below, so one provider omission yields exactly one record.
+                else:
+                    value = value_raw
                 policy_readback_malformed = (
                     sensitive_after_raw is not MISSING_ATTRIBUTE
                     and type(sensitive_after) is not bool

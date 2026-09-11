@@ -565,10 +565,12 @@ def _get_value(
     value = attr_or_record(
         attrs,
         CKA_VALUE,
+        # label already names the producing derive mechanism at every call site; this
+        # is a plain C_GetAttributeValue readback, not the C_DeriveKey outcome (F6).
         label=label,
         reason="not_operational",
         kind="metadata",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
     if value is MISSING_ATTRIBUTE:
         return value

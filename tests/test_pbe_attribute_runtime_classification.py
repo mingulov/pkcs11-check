@@ -42,7 +42,10 @@ def test_missing_key_type_is_structured_and_cleans_up(monkeypatch: pytest.Monkey
     records = C.get_records()
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_PBE_SHA1_DES3_EDE_CBC"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_PBE_SHA1_DES3_EDE_CBC" in records[0].label
     assert records[0].detail == {"attribute": {"name": "CKA_KEY_TYPE", "id": int(CKA_KEY_TYPE)}}
     assert all(record.reason != "unclassified" for record in records)
     assert MISSING_ATTRIBUTE is not False
