@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
-from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_TYPE_INVALID, CKR_OK
 from pkcs11_check.testcases.ckr import test_ckr_wrap as tcw
 
 
@@ -59,3 +59,22 @@ def test_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_claimed_and_rejected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     # Honoured EXTRACTABLE=False and wrap rejected (CKR_KEY_UNEXTRACTABLE=0x68).
     _run(monkeypatch, extractable_readback=0, getattr_rv=int(CKR_OK), wrap_rv=0x68)
+
+
+def test_missing_readback_but_wrapped_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F7 claim-sweep regression: gen_aes_key() raises unless C_GenerateKey
+    returns CKR_OK, so reaching the enforcement probe already proves
+    creation-time acceptance of CKA_EXTRACTABLE=False. An unreadable readback
+    (CKR_ATTRIBUTE_TYPE_INVALID, a known accepted precondition-check outcome)
+    must not downgrade a proven wrap-extraction self-contradiction to xfail
+    (mutation: restoring the pre-fix ``claimed = rv == CKR_OK and val.value ==
+    0`` derivation -- False when rv != CKR_OK -- turns this back into an
+    xfail)."""
+    with pytest.raises(Failed) as ei:
+        _run(
+            monkeypatch,
+            extractable_readback=1,  # ignored: readback rv below is not CKR_OK
+            getattr_rv=int(CKR_ATTRIBUTE_TYPE_INVALID),
+            wrap_rv=int(CKR_OK),
+        )
+    assert not isinstance(ei.value, XFailed)

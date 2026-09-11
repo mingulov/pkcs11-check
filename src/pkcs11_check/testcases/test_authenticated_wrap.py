@@ -114,9 +114,9 @@ def _read_attr_or_record(
     return attr_or_record(
         values,
         attr,
-        label=label,
+        label=f"{label} (producer_mechanism={mechanism})",
         reason="not_operational",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
 
 
@@ -977,13 +977,14 @@ class TestAuthenticatedWrapAAD:
                 pytest.skip(f"AES-GCM authenticated wrap API not available: {exc}")
                 return
             except AssertionError as exc:
-                # Wrap-side failure. Skip ONLY when the failure looks
-                # like a legitimate "module rejected this configuration"
-                # (mech-not-supported / AAD-too-long / GCM-params-bad).
-                # Crashes (CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED /
-                # CKR_DEVICE_ERROR) re-raise — those are findings, not
-                # skip conditions.
-                if is_known_error(
+                # Wrap-side failure. xfail ONLY when the failure looks like a clean
+                # refusal of this advertised configuration (mech-not-supported /
+                # AAD-too-long / GCM-params-bad) -- that is a noted deviation, not an
+                # absent capability, so it must stay a retained finding (xfail), never
+                # a skip that would void the observation. Crashes (CKR_GENERAL_ERROR /
+                # CKR_FUNCTION_FAILED / CKR_DEVICE_ERROR) re-raise -- those are
+                # findings, not xfail conditions.
+                xfail_if_known_ckr(
                     exc,
                     {
                         CKR_MECHANISM_INVALID,
@@ -992,10 +993,8 @@ class TestAuthenticatedWrapAAD:
                         CKR_KEY_FUNCTION_NOT_PERMITTED,
                         CKR_ARGUMENTS_BAD,
                     },
-                ):
-                    pytest.skip(f"AES-GCM authenticated wrap rejected: {exc}")
-                    return
-                raise
+                    "AES-GCM authenticated wrap (AAD leg) rejected",
+                )
 
             # Valid leg (D4/D5): unwrap with the SAME AAD and recover original.
             good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)

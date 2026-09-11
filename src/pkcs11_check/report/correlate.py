@@ -17,9 +17,19 @@ from pkcs11_check.classification import HARNESS_REASONS
 
 ThemeKey = tuple[str, str | None, str | None]
 
+#: Sort-key label for a mechanism-free record. F6 made readback records deliberately
+#: mechanism-free (``inherit_mechanism=False``), so this bucket is now common; sorting
+#: on ``str(None)`` would render it under the literal, dishonest text "None".
+_NO_MECHANISM_LABEL = "(no mechanism)"
+
 
 def _theme_key(group: dict[str, Any]) -> ThemeKey:
     return (str(group.get("reason", "")), group.get("kind"), group.get("mechanism"))
+
+
+def _mechanism_sort_label(mechanism: str | None) -> str:
+    """Render a theme's mechanism for sorting, honest about the mechanism-free case."""
+    return mechanism if mechanism is not None else _NO_MECHANISM_LABEL
 
 
 def correlate(provider_groups: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
@@ -51,7 +61,13 @@ def correlate(provider_groups: dict[str, list[dict[str, Any]]]) -> dict[str, Any
         else:
             outliers.append(entry)
 
-    universal.sort(key=lambda e: (-int(e["providers"]), str(e["reason"]), str(e["mechanism"])))
+    universal.sort(
+        key=lambda e: (
+            -int(e["providers"]),
+            str(e["reason"]),
+            _mechanism_sort_label(e["mechanism"]),
+        )
+    )
     outliers.sort(key=lambda e: (str(e["provider_names"]), str(e["reason"])))
     return {"universal_themes": universal, "outliers": outliers}
 

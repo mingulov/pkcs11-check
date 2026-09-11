@@ -61,7 +61,10 @@ def test_missing_original_value_is_structured_and_cleans_up(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "not_operational"]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
-    assert all(record.mechanism == "CKM_AES_GCM" for record in records)
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert all(record.mechanism is None for record in records)
+    assert all("producer_mechanism=CKM_AES_GCM" in record.label for record in records)
     assert all(
         record.detail == {"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}}
         for record in records
@@ -234,6 +237,55 @@ def test_empty_authenticated_wrap_output_is_structured_and_cleanup_runs(
     }
 
 
+def test_aad_leg_clean_wrap_rejection_of_advertised_mechanism_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: the wrap leg cleanly rejects CKM_AES_GCM (advertised) with a known CKR.
+
+    Before the fix this was ``pytest.skip(...)`` -- discarding the observation entirely and
+    silently voiding the CWE-354 discrimination this test exists to make. A clean refusal of
+    an *advertised* mechanism is a deviation, not an absent capability, so it must now be
+    retained as an xfail (matching the sibling ``test_aes_gcm_wrap_unwrap`` at the wrap leg),
+    never a skip.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_MECHANISM_INVALID
+
+    handles = iter([10, 11])
+    monkeypatch.setattr(authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: next(handles))
+    monkeypatch.setattr(
+        authenticated_wrap,
+        "read_attributes",
+        lambda *_args: {CKA_VALUE: b"k" * 16},
+    )
+    monkeypatch.setattr(authenticated_wrap, "generate_random", lambda *_args: b"i" * 12)
+    monkeypatch.setattr(
+        authenticated_wrap,
+        "mech_gcm_message",
+        lambda *_args, **_kwargs: SimpleNamespace(buffer_bytes=lambda _name: b"t"),
+    )
+
+    def _raise_mechanism_invalid(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_INVALID", int(CKR_MECHANISM_INVALID)
+        )
+
+    monkeypatch.setattr(authenticated_wrap, "wrap_key_authenticated", _raise_mechanism_invalid)
+
+    # rs.has_mechanism must report AES_GCM as advertised for this to be a genuine deviation
+    # rather than a capability-absence skip.
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "AES_GCM")
+
+    with pytest.raises(pytest.xfail.Exception):
+        authenticated_wrap.TestAuthenticatedWrapAAD().test_aes_gcm_unwrap_with_different_aad_rejected(
+            rs, "3.2", object()
+        )
+
+    records = C.get_records()
+    assert records[-1].reason == "not_operational"
+    assert records[-1].outcome == "xfail"
+
+
 def test_valid_leg_wrong_result_uses_unwrap_operation() -> None:
     hard_results: list[C.Classification] = []
     authenticated_wrap._record_discrimination(
@@ -312,7 +364,8 @@ def test_missing_valid_leg_readback_keeps_tamper_acceptance_independent(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "accepted_invalid"]
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_GCM"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_GCM" in records[0].label
     assert records[1].operation == "C_UnwrapKeyAuthenticated"
     assert records[1].mechanism == "CKM_AES_GCM"
 

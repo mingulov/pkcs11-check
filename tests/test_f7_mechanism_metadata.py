@@ -17,9 +17,14 @@ these are real runtime calls into the migrated code paths, not re-implementation
 Site classes (13 diagnostics grouped by identical guard shape):
 
   A. Presence-gated policy claim, no termination on omission --
-     ``_claim_false_or_xfail`` (test_mech_message.py, test_mech_negative.py) and the three
+     ``_claim_false_or_xfail`` (test_mech_message.py, test_mech_negative.py). The three
      structurally identical inline ``claimed = ...`` sites in test_remaining_gaps.py's
-     ``TestTemplateConstraintAttributes.test_*_template_enforces_*`` methods.
+     ``TestTemplateConstraintAttributes.test_*_template_enforces_*`` methods were of this
+     shape too until the F7 claim-sweep fix: C_GenerateKey/C_CreateObject already proved
+     creation-time acceptance of the nested-template attribute, so ``claimed`` now
+     defaults to True and only a present-but-malformed readback can disprove it (a
+     missing readback no longer downgrades the claim -- see
+     tests/test_f7_remaining_gaps_template_claim_sweep.py and the tests below).
   B. Hard xfail via ``attr_or_record`` + ``raise_for_record`` (+ ``harness_error``
      totality fallback) -- ``_read_attr_safe`` (test_mech_attribute.py) and
      ``_read_local_flag`` (test_mech_keygen.py).
@@ -253,14 +258,15 @@ class _WrapEnforcementRaw:
         return 0
 
 
-def test_wrap_template_enforcement_missing_readback_defaults_claimed_false(
+def test_wrap_template_enforcement_missing_readback_stays_claimed_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The identical inline guard in test_remaining_gaps.py's enforcement test:
-
-    a missing CKA_WRAP_TEMPLATE readback records honest_deviation metadata and leaves
-    ``claimed`` False (unchanged default), while the real enforcement check (C_WrapKey)
-    still runs and drives its own, separate classify_policy_enforcement() call."""
+    """F7 claim-sweep fix to the inline guard in test_remaining_gaps.py's enforcement
+    test: C_GenerateKey above already returned CKR_OK for a template requesting
+    CKA_WRAP_TEMPLATE, so a missing readback records honest_deviation metadata but
+    must NOT downgrade the creation-time claim -- ``claimed`` stays True, and the
+    real enforcement check (C_WrapKey) still drives its own, separate
+    classify_policy_enforcement() call as a proven self-contradiction."""
     monkeypatch.setattr(rg, "gen_aes_key_or_xfail", _sequential_handles([601, 602]))
     monkeypatch.setattr(rg, "read_attributes", lambda *_a, **_k: {})
     monkeypatch.setattr(rg, "destroy_quietly", lambda *_a, **_k: None)
@@ -272,7 +278,7 @@ def test_wrap_template_enforcement_missing_readback_defaults_claimed_false(
     rg.TestTemplateConstraintAttributes().test_wrap_template_enforces_target_attributes(rs)
 
     assert len(calls) == 1
-    assert calls[0]["claimed"] is False
+    assert calls[0]["claimed"] is True
     assert calls[0]["violated"] is True
     records = C.get_records()
     assert len(records) == 1
@@ -319,12 +325,12 @@ class _UnwrapEnforcementRaw:
         return 0
 
 
-def test_unwrap_template_enforcement_missing_readback_defaults_claimed_false(
+def test_unwrap_template_enforcement_missing_readback_stays_claimed_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The identical inline guard, independently copied for CKA_UNWRAP_TEMPLATE --
-
-    a distinct site from the wrap-template one above, so it needs its own regression."""
+    """F7 claim-sweep fix to the identical inline guard, independently copied for
+    CKA_UNWRAP_TEMPLATE -- a distinct site from the wrap-template one above, so it
+    needs its own regression."""
     monkeypatch.setattr(rg, "gen_aes_key_or_xfail", lambda *_a, **_k: 702)
     monkeypatch.setattr(rg, "read_attributes", lambda *_a, **_k: {})
     destroyed: list[int] = []
@@ -339,7 +345,7 @@ def test_unwrap_template_enforcement_missing_readback_defaults_claimed_false(
     )
 
     assert len(calls) == 1
-    assert calls[0]["claimed"] is False
+    assert calls[0]["claimed"] is True
     assert calls[0]["violated"] is True
     assert destroyed == [704, 703, 702, 701]
     records = C.get_records()
@@ -370,10 +376,11 @@ class _DeriveEnforcementRaw:
         return 0
 
 
-def test_derive_template_enforcement_missing_readback_defaults_claimed_false(
+def test_derive_template_enforcement_missing_readback_stays_claimed_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The identical inline guard, independently copied for CKA_DERIVE_TEMPLATE."""
+    """F7 claim-sweep fix to the identical inline guard, independently copied for
+    CKA_DERIVE_TEMPLATE."""
     monkeypatch.setattr(rg, "read_attributes", lambda *_a, **_k: {})
     destroyed: list[int] = []
     monkeypatch.setattr(rg, "destroy_quietly", lambda _raw, _sh, h: destroyed.append(h))
@@ -387,7 +394,7 @@ def test_derive_template_enforcement_missing_readback_defaults_claimed_false(
     )
 
     assert len(calls) == 1
-    assert calls[0]["claimed"] is False
+    assert calls[0]["claimed"] is True
     assert calls[0]["violated"] is True
     assert destroyed == [803, 802, 801]
     records = C.get_records()

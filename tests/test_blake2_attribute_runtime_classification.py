@@ -112,7 +112,8 @@ def test_keygen_keeps_independent_attribute_evidence_and_cleans_before_failure(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "wrong_result"]
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_BLAKE2B_256_KEY_GEN"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_BLAKE2B_256_KEY_GEN" in records[0].label
     assert records[1].operation == "C_GetAttributeValue"
     assert records[1].mechanism == "CKM_BLAKE2B_256_KEY_GEN"
     assert calls == ["sign", "destroy"]
@@ -152,7 +153,8 @@ def test_keygen_well_typed_key_type_contradiction_uses_producer_operation(
     assert records[0].operation == "C_GenerateKey"
     assert records[0].mechanism == "CKM_BLAKE2B_256_KEY_GEN"
     assert records[1].operation == "C_GetAttributeValue"
-    assert records[1].mechanism == "CKM_BLAKE2B_256_KEY_GEN"
+    assert records[1].mechanism is None
+    assert "producer_mechanism=CKM_BLAKE2B_256_KEY_GEN" in records[1].label
     assert calls == ["sign", "destroy"]
 
 
@@ -185,7 +187,8 @@ def test_default_derive_preserves_missing_type_and_malformed_value(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "wrong_result"]
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_BLAKE2B_256_KEY_DERIVE"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_BLAKE2B_256_KEY_DERIVE" in records[0].label
     assert records[1].operation == "C_GetAttributeValue"
     assert records[1].mechanism == "CKM_BLAKE2B_256_KEY_DERIVE"
     assert destroyed == [5, 9]
@@ -222,7 +225,8 @@ def test_length_only_derive_preserves_contradictory_type_and_missing_value(
     assert records[0].operation == "C_DeriveKey"
     assert records[0].mechanism == "CKM_BLAKE2B_256_KEY_DERIVE"
     assert records[1].operation == "C_GetAttributeValue"
-    assert records[1].mechanism == "CKM_BLAKE2B_256_KEY_DERIVE"
+    assert records[1].mechanism is None
+    assert "producer_mechanism=CKM_BLAKE2B_256_KEY_DERIVE" in records[1].label
     assert destroyed == [5, 9]
 
 

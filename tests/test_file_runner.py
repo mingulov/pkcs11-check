@@ -4140,6 +4140,77 @@ def test_write_unit_report_record_cache_from_jsonl_paths_streams_sources(
     ]
 
 
+def test_write_unit_report_record_cache_bool_attempt_marker_not_treated_as_valid(
+    tmp_path: Path,
+) -> None:
+    """N13 (second half): writer/parser must agree that a bool is not a valid attempt.
+
+    ``isinstance(x, int)`` is True for ``x = True`` in Python, so a marker with
+    ``"attempt": True`` would previously make the writer's ``next_attempt``
+    tracking treat it as a real attempt 0 (bumping to 1) even though the shared
+    parser (``report_log.iter_classification_occurrences``) rejects a bool
+    attempt as malformed and never establishes attribution from it. A second,
+    unmarked source processed afterwards exposes the disagreement: its
+    synthesized marker's attempt number reveals what the writer believed
+    ``next_attempt`` was.
+    """
+    state_file = tmp_path / "state.json"
+    first = tmp_path / "first.jsonl"
+    first.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": True}
+                ),
+                json.dumps(
+                    {
+                        "$report_type": "TestReport",
+                        "nodeid": "test_a.py::test_one",
+                        "when": "call",
+                        "outcome": "passed",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    second = tmp_path / "second.jsonl"
+    second.write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": "test_a.py::test_two",
+                "when": "call",
+                "outcome": "passed",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    file_runner_mod._write_unit_report_record_cache_from_jsonl_paths(
+        state_file, "test_a.py", [first, second]
+    )
+
+    cache_text = file_runner_mod._report_record_cache_path(state_file, "test_a.py").read_text(
+        encoding="utf-8"
+    )
+    recs = [json.loads(line) for line in cache_text.splitlines()]
+    synthesized_markers = [
+        r
+        for r in recs
+        if r.get("$report_type") == "IsolatedUnitReport" and r.get("attempt") is not True
+    ]
+    # `second` has no marker of its own, so one is synthesized for it. The bool
+    # marker in `first` must NOT have counted toward next_attempt (the parser never
+    # honors it either), so the synthesized marker must start back at attempt 0 --
+    # not attempt 2, which is what `True + 1` would have produced.
+    assert synthesized_markers == [
+        {"$report_type": "IsolatedUnitReport", "target": "test_a.py", "attempt": 0}
+    ]
+
+
 def test_write_report_jsonl_adds_owner_boundaries_to_legacy_cache_shards(
     tmp_path: Path,
 ) -> None:
@@ -4227,11 +4298,15 @@ def test_cache_attempt_checkpoint_keeps_all_attempt_sources(tmp_path: Path) -> N
     )
 
     cached = _load_cached_report_records_by_unit(state_file, ["test_a.py"])["test_a.py"]
+    # The second source's first record is a SessionStart: the marker is written AFTER it
+    # (not before), so a reader resetting attribution provenance on SessionStart resets
+    # BEFORE the marker establishes it, not after (M1 fix) -- see
+    # `_write_unit_report_record_cache_from_jsonl_paths`.
     assert [record["$report_type"] for record in cached] == [
         "IsolatedUnitReport",
         "TestReport",
-        "IsolatedUnitReport",
         "SessionStart",
+        "IsolatedUnitReport",
         "SessionFinish",
     ]
 
@@ -4614,9 +4689,13 @@ def test_run_isolated_pytest_units_persists_report_records_into_state(
     # Records are persisted as per-unit shards, not inline in state.json.
     records_by_unit = _load_cached_report_records_by_unit(state_file, units)
     assert list(records_by_unit) == ["test_a.py"]
+    # The source's first record is a SessionStart: the marker is written AFTER it (not
+    # before), so a reader resetting attribution provenance on SessionStart resets BEFORE
+    # the marker establishes it, not after (M1 fix) -- see
+    # `_write_unit_report_record_cache_from_jsonl_paths`.
     assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
-        "IsolatedUnitReport",
         "SessionStart",
+        "IsolatedUnitReport",
         "TestReport",
         "SelectionReport",
         "CoverageReport",

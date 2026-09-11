@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import XFailed
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -26,6 +27,8 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDH1_COFACTOR_DERIVE,
     CKM_ECDH1_DERIVE,
     CKO_SECRET_KEY,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_GENERAL_ERROR,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_USER_NOT_LOGGED_IN,
@@ -398,6 +401,58 @@ def test_nested_claim_reader_preserves_unexpected_ckr(
         )
     assert exc_info.value.rv == int(CKR_GENERAL_ERROR)
     assert C.get_records() == []
+
+
+def test_nested_claim_reader_missing_readback_stays_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: every call site reaches ``_read_claimed_template``
+    only after C_GenerateKey(Pair)/C_CreateObject already returned CKR_OK for a
+    template requesting the nested-template attribute, so a missing readback
+    must not downgrade that creation-time claim (mutation: reverting the
+    ``claimed = False`` initial default -- pre-fix -- turns this back into
+    ``claimed is False``)."""
+    rs = _session()
+    monkeypatch.setattr(nested_case, "read_attributes", lambda *_args, **_kwargs: {})
+
+    claimed, read_record = nested_case._read_claimed_template(
+        rs,
+        11,
+        CKA_DERIVE_TEMPLATE,
+        label="nested template read",
+        mechanism="CKM_ECDH1_DERIVE",
+    )
+
+    assert claimed is True
+    assert read_record is not None
+    assert read_record.reason == "not_operational"
+
+
+@pytest.mark.parametrize("rv", [CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID])
+def test_nested_claim_reader_refused_read_stays_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+    rv: int,
+) -> None:
+    """Same fix, for the branch where the readback itself is refused with a
+    known refusal CKR rather than merely omitted from the returned mapping."""
+    rs = _session()
+
+    def _reader(*_args: Any, **_kwargs: Any) -> dict[int, Any]:
+        raise CkrAssertionError("refused template read", int(rv))
+
+    monkeypatch.setattr(nested_case, "read_attributes", _reader)
+
+    claimed, read_record = nested_case._read_claimed_template(
+        rs,
+        11,
+        CKA_DERIVE_TEMPLATE,
+        label="nested template read",
+        mechanism="CKM_ECDH1_DERIVE",
+    )
+
+    assert claimed is True
+    assert read_record is not None
+    assert read_record.reason == "not_operational"
 
 
 @pytest.mark.parametrize(
@@ -924,14 +979,22 @@ def test_public_ecdh_runtime_reaches_private_readback_before_policy(
 def test_public_private_missing_is_not_operational_before_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing CKA_PRIVATE is distinct evidence, while the policy oracle still runs."""
+    """A missing CKA_PRIVATE is distinct evidence, but does not erase the creation-time
+    claim: every caller already proved the module accepted CKA_PRIVATE=True at creation,
+    so the policy oracle still runs as claimed=True and a violation is a hard fail."""
     rs = _session()
     policy_calls: list[dict[str, Any]] = []
+    real_classify_policy_enforcement = public_case.classify_policy_enforcement
     monkeypatch.setattr(public_case, "read_attributes", lambda *_a, **_k: {})
+
+    def _spy_classify_policy_enforcement(**kwargs: Any) -> None:
+        policy_calls.append(kwargs)
+        real_classify_policy_enforcement(**kwargs)
+
     monkeypatch.setattr(
         public_case,
         "classify_policy_enforcement",
-        lambda **kwargs: policy_calls.append(kwargs),
+        _spy_classify_policy_enforcement,
     )
     claimed, read_record = public_case._read_private_claim(
         rs,
@@ -941,18 +1004,19 @@ def test_public_private_missing_is_not_operational_before_policy(
         producer_operation="C_DeriveKey",
         producer_mechanism="CKM_ECDH1_DERIVE",
     )
-    with pytest.raises(pytest.xfail.Exception, match="attribute unavailable"):
+    with pytest.raises(pytest.fail.Exception, match="self-contradiction") as excinfo:
         public_case._classify_private_policy(
             claimed=claimed,
             read_record=read_record,
             label="public-session policy after missing CKA_PRIVATE",
         )
-    assert claimed is False
+    assert not isinstance(excinfo.value, XFailed)
+    assert claimed is True
     assert read_record is not None
     assert read_record.reason == "not_operational"
     assert policy_calls == [
         {
-            "claimed": False,
+            "claimed": True,
             "violated": True,
             "label": "public-session policy after missing CKA_PRIVATE",
         }
@@ -975,7 +1039,7 @@ def test_public_private_missing_readback_preserves_copy_provenance(
         producer_operation="C_CopyObject",
     )
 
-    assert claimed is False
+    assert claimed is True
     assert read_record is not None
     assert read_record.reason == "not_operational"
     assert read_record.operation == "C_GetAttributeValue"
@@ -1062,7 +1126,7 @@ def test_public_private_read_refusal_preserves_actual_rv_and_provenance(
         producer_mechanism="CKM_AES_KEY_WRAP",
     )
 
-    assert claimed is False
+    assert claimed is True
     assert read_record is not None
     assert read_record.reason == reason
     assert read_record.operation == "C_GetAttributeValue"

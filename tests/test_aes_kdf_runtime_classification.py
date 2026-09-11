@@ -263,6 +263,13 @@ def test_reader_exception_propagates_and_still_cleans_up(
 def test_all_zero_derived_value_remains_a_hard_crypto_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Mutation: derived CKA_VALUE = 16 zero bytes.
+
+    This used to be a bare ``assert okm != b"\\x00" * 16`` -- an unclassified pytest failure
+    with no reason/kind and no classification record at all. It must now be a properly
+    classified ``wrong_result``/``crypto`` finding (a crypto-correctness break) while still
+    failing -- same direction/strength, now with a real finding instead of "unclassified".
+    """
     monkeypatch.setattr(test_aes_kdf, "_create_base_key", lambda *_a, **_k: 80)
     monkeypatch.setattr(test_aes_kdf, "derive_key", lambda *_a, **_k: 81)
     monkeypatch.setattr(
@@ -272,10 +279,16 @@ def test_all_zero_derived_value_remains_a_hard_crypto_failure(
     )
     monkeypatch.setattr(test_aes_kdf, "destroy_quietly", lambda *_a: None)
 
-    with pytest.raises(AssertionError, match="all zeros"):
+    with pytest.raises(BaseException, match="all zeros"):
         test_aes_kdf.TestAESECBEncryptData().test_derive_basic(_session())
 
-    assert C.get_records() == []
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].kind == "crypto"
+    assert records[0].outcome == "fail"
+    assert records[0].mechanism == "CKM_AES_ECB_ENCRYPT_DATA"
+    assert records[0].operation == "C_DeriveKey"
 
 
 @pytest.mark.parametrize("case", _PAIR_CASES)
@@ -487,3 +500,47 @@ def test_pair_second_derive_error_cleans_first_handle_before_base(
 
     assert derive_calls == 2
     assert destroyed == [91, 90]
+
+
+def test_cbc_all_zero_derived_key_is_classified_crypto_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: same all-zero defect on the CBC leg (a second, separate bare assert site)."""
+    monkeypatch.setattr(test_aes_kdf, "_create_base_key", lambda *_a, **_k: 100)
+    monkeypatch.setattr(test_aes_kdf, "derive_key", lambda *_a, **_k: 101)
+    monkeypatch.setattr(
+        test_aes_kdf, "read_attributes", lambda *_a, **_k: {CKA_VALUE: b"\x00" * 16}
+    )
+    monkeypatch.setattr(test_aes_kdf, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(BaseException, match="all zeros"):
+        test_aes_kdf.TestAESCBCEncryptData().test_derive_basic(_session())
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].kind == "crypto"
+    assert records[0].outcome == "fail"
+    assert records[0].mechanism == "CKM_AES_CBC_ENCRYPT_DATA"
+    assert records[0].operation == "C_DeriveKey"
+
+
+@pytest.mark.parametrize(
+    "test_class",
+    [test_aes_kdf.TestAESECBEncryptData, test_aes_kdf.TestAESCBCEncryptData],
+)
+def test_nonzero_derived_key_is_not_flagged_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    test_class: type[Any],
+) -> None:
+    """Control: a normal non-zero derived key must not trip the all-zero check."""
+    monkeypatch.setattr(test_aes_kdf, "_create_base_key", lambda *_a, **_k: 110)
+    monkeypatch.setattr(test_aes_kdf, "derive_key", lambda *_a, **_k: 111)
+    monkeypatch.setattr(
+        test_aes_kdf, "read_attributes", lambda *_a, **_k: {CKA_VALUE: b"\x01" * 16}
+    )
+    monkeypatch.setattr(test_aes_kdf, "destroy_quietly", lambda *_a: None)
+
+    test_class().test_derive_basic(_session())
+
+    assert C.get_records() == []

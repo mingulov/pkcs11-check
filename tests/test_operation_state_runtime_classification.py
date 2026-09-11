@@ -20,6 +20,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_SAVED_STATE_INVALID,
     CKR_STATE_UNSAVEABLE,
 )
@@ -85,6 +86,56 @@ def test_set_operation_state_function_not_supported_is_capability_skip() -> None
     from pkcs11_check.classification import get_records
 
     assert get_records() == []
+
+
+def _get_op_session(rv: int) -> SimpleNamespace:
+    raw = SimpleNamespace(
+        available_function_names=lambda: {"C_GetOperationState"},
+        C_GetOperationState=lambda *_a, **_k: int(rv),
+    )
+    return SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
+
+
+def test_no_active_operation_spec_code_passes_and_records_nothing() -> None:
+    """CKR_OPERATION_NOT_INITIALIZED (the spec code) is a clean pass, no finding."""
+    tos.TestGetOperationStateAPI().test_no_active_operation(
+        _get_op_session(int(CKR_OPERATION_NOT_INITIALIZED))
+    )
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records() == []
+
+
+def test_no_active_operation_ok_is_tolerated_and_records_nothing() -> None:
+    """CKR_OK was always in the old "acceptable" set -- classify_negative_rv(allow_ok=True)
+    preserves that same silent-pass behavior rather than turning it into a fail."""
+    tos.TestGetOperationStateAPI().test_no_active_operation(_get_op_session(int(CKR_OK)))
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records() == []
+
+
+def test_no_active_operation_unexpected_clean_reject_is_classified_xfail() -> None:
+    """Mutation: an unrecognized-but-clean CK_RV (e.g. CKR_ARGUMENTS_BAD).
+
+    Before the fix this was a bare ``assert rv in acceptable`` -- an unclassified pytest
+    failure with no reason/kind. It must now surface as a properly classified xfail
+    (``nonspec_reject``), matching the "clean error, advertised but not operational" row of
+    the classification model -- not a raw unclassified fail.
+    """
+    with pytest.raises(pytest.xfail.Exception):
+        tos.TestGetOperationStateAPI().test_no_active_operation(
+            _get_op_session(int(CKR_ARGUMENTS_BAD))
+        )
+
+    from pkcs11_check.classification import get_records
+
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "nonspec_reject"
+    assert records[0].outcome == "xfail"
 
 
 def test_spec_reject_passes() -> None:

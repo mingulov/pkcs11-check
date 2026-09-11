@@ -41,6 +41,9 @@ from pkcs11_check.core.file_runner import (
     postprocess_jsonl_to_unified,
     write_quality_json_report,
 )
+from pkcs11_check.core.report_log import (
+    iter_report_log_records as _iter_report_log_records,
+)
 from pkcs11_check.core.report_log import user_property_names as _user_property_names
 from pkcs11_check.core.run_metrics import (
     RESULT_OUTCOME_KEYS,
@@ -115,18 +118,14 @@ def _rv_trace_props(record: dict[str, Any]) -> list[list[Any]]:
 
 
 def _stream_records(jsonl_path: Path) -> Iterator[dict[str, Any]]:
-    """Yield parsed dict records from a JSONL file line-by-line (no load-all)."""
-    with jsonl_path.open(encoding="utf-8") as fh:
-        for raw in fh:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(rec, dict):
-                yield rec
+    """Yield parsed dict records from a JSONL file line-by-line (no load-all).
+
+    Delegates to the shared binary-decode iterator (report_log.iter_report_log_records)
+    rather than a text-mode `for line in fh` loop, so a single undecodable byte anywhere
+    in the file only drops that one line instead of raising UnicodeDecodeError and losing
+    every remaining record.
+    """
+    yield from _iter_report_log_records(jsonl_path)
 
 
 def _apply_trace_promotion(

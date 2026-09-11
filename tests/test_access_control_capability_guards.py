@@ -229,7 +229,11 @@ def test_copy_extractable_contradiction_is_checked_when_copyable_is_missing(
 
     assert destroyed == [7]
     records = C.get_records()
-    assert [record.reason for record in records] == ["honest_deviation", "self_contradiction"]
+    assert [record.reason for record in records] == ["not_operational", "self_contradiction"]
+    # CKA_COPYABLE absence here disables the downstream copy-result policy
+    # oracle (the test returns early once it is missing), so it must be
+    # not_operational/policy, not the helper's honest_deviation/metadata default.
+    assert records[0].kind == "policy"
     assert records[1].kind == "policy"
     assert records[1].operation == "C_GenerateKey"
 
@@ -474,3 +478,66 @@ def test_modifiable_create_readback_contradiction_uses_generator_operation(
     assert record.reason == "self_contradiction"
     assert record.kind == "policy"
     assert record.operation == "C_GenerateKey"
+
+
+def test_copy_extractable_copyable_missing_disables_downstream_copy_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKA_COPYABLE absence on the extractable-downgrade probe ends the test early.
+
+    Absence of CKA_COPYABLE here short-circuits the whole test (an early
+    ``return``) before the C_CopyObject self-contradiction oracle ever runs --
+    this is exactly the "absence disables a policy oracle" case, so it must be
+    classified not_operational/policy, not the helper's honest_deviation/metadata
+    default.
+    """
+    monkeypatch.setattr(test_access_control, "_gen_access_control_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(
+        test_access_control,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_EXTRACTABLE: True},
+    )
+    monkeypatch.setattr(test_access_control, "destroy_quietly", lambda *_a, **_k: None)
+
+    test_access_control.TestCopyObject().test_copy_changes_extractable(
+        SimpleNamespace(raw=object(), sh=1)
+    )
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].detail["attribute"]["name"] == "CKA_COPYABLE"
+    assert records[0].reason == "not_operational"
+    assert records[0].kind == "policy"
+
+
+def test_copy_extractable_readback_absence_does_not_mask_downstream_copy_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKA_EXTRACTABLE (pre-copy) and copied CKA_EXTRACTABLE absence both disable
+    a self-contradiction policy oracle (the claim check and the copy-result check
+    respectively), so both must be not_operational/policy.
+    """
+    monkeypatch.setattr(test_access_control, "_gen_access_control_aes_key", lambda *_a, **_k: 1)
+
+    def _read(_raw: object, _sh: object, handle: int, attrs: list[int]) -> dict:
+        if CKA_COPYABLE in attrs:
+            return {CKA_COPYABLE: True}
+        return {}
+
+    monkeypatch.setattr(test_access_control, "read_attributes", _read)
+    monkeypatch.setattr(test_access_control, "copy_object", lambda *_a, **_k: 2)
+    monkeypatch.setattr(test_access_control, "destroy_quietly", lambda *_a, **_k: None)
+
+    test_access_control.TestCopyObject().test_copy_changes_extractable(
+        SimpleNamespace(raw=object(), sh=1)
+    )
+
+    records = C.get_records()
+    by_label = {r.label: r for r in records}
+    assert len(records) == 2
+    pre_copy = by_label["CKA_EXTRACTABLE:copy-extractable-key"]
+    post_copy = by_label["C_CopyObject:CKA_EXTRACTABLE on copy"]
+    assert pre_copy.reason == "not_operational"
+    assert pre_copy.kind == "policy"
+    assert post_copy.reason == "not_operational"
+    assert post_copy.kind == "policy"

@@ -1020,8 +1020,8 @@ class TestTrustedAttribute:
                     val = attr_or_record(
                         attrs,
                         CKA_TRUSTED,
-                        label="SO:create-CKA_TRUSTED readback",
-                        mechanism="CKM_AES_KEY_GEN",
+                        label="SO:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)",
+                        inherit_mechanism=False,
                     )
                 except CkrAssertionError as e:
                     _classify_post_success_attribute_error(
@@ -1113,8 +1113,8 @@ class TestTrustedAttribute:
             val = attr_or_record(
                 attrs,
                 CKA_TRUSTED,
-                label="USER:create-CKA_TRUSTED readback",
-                mechanism="CKM_AES_KEY_GEN",
+                label="USER:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)",
+                inherit_mechanism=False,
             )
             if val is MISSING_ATTRIBUTE:
                 return
@@ -1205,8 +1205,11 @@ class TestTrustedAttribute:
                 val = attr_or_record(
                     attrs,
                     CKA_TRUSTED,
-                    label="USER:setattr-CKA_TRUSTED initial readback",
-                    mechanism="CKM_AES_KEY_GEN",
+                    label=(
+                        "USER:setattr-CKA_TRUSTED initial readback "
+                        "(producer_mechanism=CKM_AES_KEY_GEN)"
+                    ),
+                    inherit_mechanism=False,
                 )
                 if val is not MISSING_ATTRIBUTE:
                     _require_bool_attribute(
@@ -1366,8 +1369,8 @@ class TestTrustedAttribute:
             val = attr_or_record(
                 attrs,
                 CKA_WRAP_WITH_TRUSTED,
-                label="CKA_WRAP_WITH_TRUSTED setup readback",
-                mechanism="CKM_AES_KEY_GEN",
+                label=("CKA_WRAP_WITH_TRUSTED setup readback (producer_mechanism=CKM_AES_KEY_GEN)"),
+                inherit_mechanism=False,
             )
             if val is MISSING_ATTRIBUTE:
                 return
@@ -1510,8 +1513,11 @@ class TestTrustedAttribute:
                 val = attr_or_record(
                     attrs,
                     CKA_WRAP_WITH_TRUSTED,
-                    label="CKA_WRAP_WITH_TRUSTED enforcement setup readback",
-                    mechanism="CKM_AES_KEY_GEN",
+                    label=(
+                        "CKA_WRAP_WITH_TRUSTED enforcement setup readback "
+                        "(producer_mechanism=CKM_AES_KEY_GEN)"
+                    ),
+                    inherit_mechanism=False,
                 )
             except CkrAssertionError as exc:
                 _classify_post_success_attribute_error(
@@ -1704,8 +1710,11 @@ class TestAlwaysAuthenticate:
                 val = attr_or_record(
                     attrs,
                     CKA_ALWAYS_AUTHENTICATE,
-                    label="CKA_ALWAYS_AUTHENTICATE setup readback",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    label=(
+                        "CKA_ALWAYS_AUTHENTICATE setup readback "
+                        "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                    ),
+                    inherit_mechanism=False,
                 )
             except CkrAssertionError as e:
                 _classify_post_success_attribute_error(
@@ -1839,8 +1848,11 @@ class TestAlwaysAuthenticate:
                 val = attr_or_record(
                     attrs,
                     CKA_ALWAYS_AUTHENTICATE,
-                    label="CKA_ALWAYS_AUTHENTICATE context-login setup readback",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    label=(
+                        "CKA_ALWAYS_AUTHENTICATE context-login setup readback "
+                        "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                    ),
+                    inherit_mechanism=False,
                 )
             except CkrAssertionError as e:
                 _classify_post_success_attribute_error(
@@ -2329,22 +2341,30 @@ class TestPublicSessionRestrictions:
             priv = attr_or_record(
                 private_attrs,
                 CKA_PRIVATE,
-                label="public CKA_PRIVATE=True token object readback",
-                mechanism="CKM_AES_KEY_GEN",
+                label=(
+                    "public CKA_PRIVATE=True token object readback "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                inherit_mechanism=False,
             )
-            if priv is MISSING_ATTRIBUTE:
-                return
-            _require_bool_attribute(
-                priv,
-                attr=CKA_PRIVATE,
-                label="public CKA_PRIVATE=True token object readback",
-                mechanism="CKM_AES_KEY_GEN",
-            )
+            if priv is not MISSING_ATTRIBUTE:
+                _require_bool_attribute(
+                    priv,
+                    attr=CKA_PRIVATE,
+                    label="public CKA_PRIVATE=True token object readback",
+                    mechanism="CKM_AES_KEY_GEN",
+                )
             label = (
                 "public (unauthenticated) session created a CKA_PRIVATE=True "
                 "token object (PKCS#11 requires CKR_USER_NOT_LOGGED_IN)"
             )
-            if priv is True:
+            # gen_aes_key() above raises unless C_GenerateKey returns CKR_OK, so
+            # reaching this point already proves the module accepted the
+            # CKA_PRIVATE=True template on an unauthenticated session --
+            # independent claim evidence a missing readback must not downgrade.
+            # Only an explicit CKA_PRIVATE=False readback is real evidence the
+            # claim does not hold.
+            if priv is MISSING_ATTRIBUTE or priv is True:
                 fail_as(
                     "self_contradiction",
                     kind="policy",
@@ -2356,7 +2376,7 @@ class TestPublicSessionRestrictions:
                     detail={
                         "attribute": int(CKA_PRIVATE),
                         "expected": True,
-                        "actual": priv,
+                        "actual": "missing" if priv is MISSING_ATTRIBUTE else priv,
                         "read_operation": "C_GetAttributeValue",
                         "read_mechanism": "CKM_AES_KEY_GEN",
                         "producer_operation": "C_GenerateKey",

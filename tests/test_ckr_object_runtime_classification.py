@@ -70,6 +70,31 @@ def test_sensitive_protected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_sensitive(monkeypatch, claimed=True, readable=False)
 
 
+def test_sensitive_missing_readback_but_value_readable_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: gen_aes_key_or_xfail() raises/xfails unless the
+    module accepted CKA_SENSITIVE=True, so a missing readback must not
+    downgrade a proven CKA_VALUE leak to xfail."""
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
+        if CKA_SENSITIVE in attrs:
+            return {}
+        if CKA_VALUE in attrs:
+            return {CKA_VALUE: b"\x00" * 32}
+        return {}
+
+    monkeypatch.setattr(test_ckr_object, "read_attributes", _read)
+
+    with pytest.raises(Failed) as ei:
+        test_ckr_object.TestGetAttributeErrors().test_sensitive_value(
+            SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda n: True)
+        )
+    _assert_real_fail(ei)
+
+
 # --- lifecycle: use-after-destroy (C_GetAttributeValue) -----------------------
 
 
@@ -211,3 +236,32 @@ def test_setattr_noop_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_setattr_rejected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_setattr(monkeypatch, setattr_rv=int(CKR_FUNCTION_FAILED), changed=False)
+
+
+def test_sensitive_readback_absent_is_recorded_as_policy_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKA_SENSITIVE absence (no CKR at all, not just False) still feeds the
+    claimed/violated policy oracle: gen_aes_key_or_xfail() already proved
+    creation-time acceptance of CKA_SENSITIVE=True, so `claimed` falls back to
+    True regardless of the readback. The absence itself must therefore be
+    recorded kind="policy" (it corroborates the same oracle as a present
+    readback would), not the helper's kind="metadata" default.
+    """
+    from pkcs11_check import classification as C  # noqa: N812
+
+    monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_ckr_object, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict:
+        return {}
+
+    monkeypatch.setattr(test_ckr_object, "read_attributes", _read)
+    test_ckr_object.TestGetAttributeErrors().test_sensitive_value(
+        SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda n: True)
+    )
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "not_operational"
+    assert records[0].kind == "policy"

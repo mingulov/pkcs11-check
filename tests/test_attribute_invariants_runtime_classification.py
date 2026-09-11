@@ -137,7 +137,10 @@ def test_never_extractable_absent_records_exact_attribute(
     records = C.get_records()
     assert len(records) == 1
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_GEN"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_GEN" in records[0].label
     assert records[0].actual_ckr is None
     assert records[0].detail == {
         "attribute": {"name": "CKA_NEVER_EXTRACTABLE", "id": int(CKA_NEVER_EXTRACTABLE)},
@@ -245,7 +248,8 @@ def test_always_sensitive_absent_records_exact_attribute(
     records = C.get_records()
     assert len(records) == 1
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_GEN"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_GEN" in records[0].label
     assert records[0].actual_ckr is None
     assert records[0].detail == {
         "attribute": {"name": "CKA_ALWAYS_SENSITIVE", "id": int(CKA_ALWAYS_SENSITIVE)},
@@ -313,7 +317,8 @@ def test_generated_aes_origin_missing_local_records_exact_attribute(
     records = C.get_records()
     assert len(records) == 1
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_GEN"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_GEN" in records[0].label
     assert records[0].actual_ckr is None
     assert records[0].detail == {
         "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
@@ -332,7 +337,8 @@ def test_generated_origin_missing_pair_records_each_linked_attribute(
         int(CKA_KEY_GEN_MECHANISM),
     ]
     assert all(record.actual_ckr is None for record in records)
-    assert all(record.mechanism == "CKM_AES_KEY_GEN" for record in records)
+    assert all(record.mechanism is None for record in records)
+    assert all("producer_mechanism=CKM_AES_KEY_GEN" in record.label for record in records)
 
 
 def test_generated_origin_wrong_mechanism_remains_hard_contradiction(
@@ -392,7 +398,8 @@ def test_generated_aes_origin_missing_mechanism_records_exact_attribute(
     records = C.get_records()
     assert len(records) == 1
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_GEN"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_GEN" in records[0].label
     assert records[0].actual_ckr is None
     assert records[0].detail == {
         "attribute": {"name": "CKA_KEY_GEN_MECHANISM", "id": int(CKA_KEY_GEN_MECHANISM)},
@@ -542,7 +549,11 @@ def test_faithful_readback_missing_pair_records_both_before_return(
         int(CKA_VERIFY),
     ]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
-    assert all(record.mechanism == "CKM_AES_KEY_GEN" for record in records)
+    assert all(record.mechanism is None for record in records)
+    assert all(
+        f"attribute {attr!r} (producer_mechanism=CKM_AES_KEY_GEN)" in record.label
+        for record, attr in zip(records, [CKA_SIGN, CKA_VERIFY], strict=True)
+    )
 
 
 def test_faithful_readback_missing_value_does_not_hide_present_contradiction(

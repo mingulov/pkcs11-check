@@ -52,10 +52,10 @@ def test_keypair_missing_outputs_are_structured_and_cleanup_runs(
     ]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
     assert all(record.actual_ckr is None for record in records)
-    assert [record.mechanism for record in records] == [
-        "CKM_ML_KEM_KEY_PAIR_GEN",
-        "CKM_ML_KEM_KEY_PAIR_GEN",
-    ]
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert all(record.mechanism is None for record in records)
+    assert all("producer_mechanism=CKM_ML_KEM_KEY_PAIR_GEN" in record.label for record in records)
 
 
 @pytest.mark.parametrize("value", [False, 0, b"", None], ids=["false", "zero", "empty", "none"])
@@ -126,7 +126,8 @@ def test_missing_first_secret_does_not_hide_later_mismatch(
     assert destroyed == [11, 12, 21, 22]
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "wrong_result"]
-    assert records[0].mechanism == "CKM_ML_KEM"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_ML_KEM" in records[0].label
     assert records[1].mechanism == "CKM_ML_KEM"
     assert records[-1].kind == "crypto"
 
@@ -318,13 +319,60 @@ def test_encapsulate_permission_distinct_handles_are_each_cleaned(
     assert records[0].mechanism == "CKM_ML_KEM"
 
 
+def test_encapsulate_missing_readback_but_violated_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: _generate_ml_kem_keypair() already proves
+    creation-time acceptance of CKA_ENCAPSULATE=False (gen_keypair() raises
+    unless CKR_OK), so a missing CKA_ENCAPSULATE readback must not downgrade a
+    proven encapsulate-permission violation to xfail (mutation: restoring the
+    pre-fix `elif encap_flag is not MISSING_ATTRIBUTE:` guard -- which skipped
+    the policy record entirely on MISSING_ATTRIBUTE -- turns this back into a
+    silent pass instead of a fail)."""
+    monkeypatch.setattr(kem, "_generate_ml_kem_keypair", lambda *_args, **_kwargs: (11, 12))
+    monkeypatch.setattr(kem, "read_attributes", lambda *_args: {})
+    calls: list[int] = []
+    destroyed: list[int] = []
+
+    def _encapsulate(*args: Any) -> int:
+        calls.append(len(calls) + 1)
+        output_handle = args[-1]._obj
+        if len(calls) == 1:
+            output_handle.value = 31
+            args[-2]._obj.value = 1024
+            return CKR_OK
+        assert output_handle.value == 31
+        assert destroyed == []
+        output_handle.value = 32
+        return CKR_KEY_FUNCTION_NOT_PERMITTED
+
+    raw = SimpleNamespace(C_EncapsulateKey=_encapsulate)
+    monkeypatch.setattr(kem, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
+
+    with pytest.raises(pytest.fail.Exception):
+        kem.TestMLKEMNegative().test_encapsulate_missing_permission_flag(
+            SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
+        )
+
+    assert calls == [1, 2]
+    assert destroyed[:2] == [31, 32]
+    records = C.get_records()
+    assert records[-1].reason == "accepted_invalid"
+    assert records[-1].operation == "C_EncapsulateKey"
+    assert records[-1].mechanism == "CKM_ML_KEM"
+
+
 @pytest.mark.parametrize(
-    ("value", "reason"),
+    ("value", "reason", "record_count"),
     [
-        (MISSING_ATTRIBUTE, "not_operational"),
-        (True, "honest_deviation"),
-        (False, "accepted_invalid"),
-        (0, "wrong_result"),
+        # F7 claim-sweep: creation-time acceptance of CKA_ENCAPSULATE=False is
+        # already proven (gen_keypair() raises unless CKR_OK), so a missing
+        # readback must not downgrade the proven violation to a silent pass --
+        # it still fails, alongside the "not_operational" readback record.
+        (MISSING_ATTRIBUTE, "accepted_invalid", 2),
+        (True, "honest_deviation", 1),
+        (False, "accepted_invalid", 1),
+        (0, "wrong_result", 1),
     ],
     ids=["missing", "true", "false", "malformed"],
 )
@@ -332,6 +380,7 @@ def test_encapsulate_permission_actual_success_classifies_policy_once(
     monkeypatch: pytest.MonkeyPatch,
     value: Any,
     reason: str,
+    record_count: int,
 ) -> None:
     monkeypatch.setattr(kem, "_generate_ml_kem_keypair", lambda *_args, **_kwargs: (11, 12))
     attrs = {} if value is MISSING_ATTRIBUTE else {CKA_ENCAPSULATE: value}
@@ -372,8 +421,8 @@ def test_encapsulate_permission_actual_success_classifies_policy_once(
     assert calls == [1, 2]
     assert destroyed == [31, 11, 12]
     records = C.get_records()
-    assert len(records) == 1
-    assert records[0].reason == reason
+    assert len(records) == record_count
+    assert records[-1].reason == reason
 
 
 @pytest.mark.parametrize("malformed", [b"", False, None], ids=["empty", "false", "none"])

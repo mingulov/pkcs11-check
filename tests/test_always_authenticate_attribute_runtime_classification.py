@@ -50,7 +50,11 @@ def test_missing_always_auth_readback_is_visible_and_nonterminal(
     assert rec.reason == "honest_deviation"
     assert rec.outcome == "xfail"
     assert rec.operation == "C_GetAttributeValue"
-    assert rec.mechanism == "CKM_RSA_PKCS_KEY_PAIR_GEN"
+    # F6: a plain C_GetAttributeValue readback is never stamped with the mechanism
+    # that produced the object being read; the producer still survives in detail
+    # (post-hoc merge) and in the label.
+    assert rec.mechanism is None
+    assert "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN" in rec.label
     assert rec.actual_ckr is None
     assert rec.detail == {
         "attribute": {"name": "CKA_ALWAYS_AUTHENTICATE", "id": int(CKA_ALWAYS_AUTHENTICATE)},

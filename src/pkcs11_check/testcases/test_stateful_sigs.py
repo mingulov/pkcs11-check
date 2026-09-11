@@ -185,10 +185,10 @@ def _check_expected_attributes(
         value = attr_or_record(
             attrs,
             attr,
-            label=label,
+            label=f"{label} (producer_mechanism={mechanism})",
             reason="not_operational",
             kind="metadata",
-            mechanism=mechanism,
+            inherit_mechanism=False,
         )
         if value is MISSING_ATTRIBUTE:
             hard.extend(classification.get_records()[record_count:])

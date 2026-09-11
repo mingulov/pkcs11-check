@@ -96,3 +96,24 @@ def test_perm_not_claimed_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_perm_claimed_and_rejected_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_perm(monkeypatch, claimed=True, decap_rv=int(CKR_KEY_FUNCTION_NOT_PERMITTED))
+
+
+def test_perm_missing_readback_but_violated_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F7 claim-sweep regression: _generate_ml_kem_keypair() already proves
+    creation-time acceptance of CKA_DECAPSULATE=False (gen_keypair() raises
+    unless CKR_OK), so a missing CKA_DECAPSULATE readback must not downgrade a
+    proven decapsulate-permission violation to xfail (mutation: restoring the
+    pre-fix `elif decap_flag is not MISSING_ATTRIBUTE:` guard -- which skipped
+    the policy record entirely on MISSING_ATTRIBUTE -- turns this back into a
+    silent pass instead of a fail)."""
+    monkeypatch.setattr(test_kem, "_skip_if_no_ml_kem", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_kem, "_generate_ml_kem_keypair", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(
+        test_kem, "_encapsulate_ml_kem_or_xfail", lambda *_a, **_k: (3, b"\x00" * 32)
+    )
+    monkeypatch.setattr(test_kem, "destroy_quietly", lambda *_a, **_k: None)
+    monkeypatch.setattr(test_kem, "read_attributes", lambda *_a, **_k: {})
+
+    with pytest.raises(Failed) as excinfo:
+        test_kem.TestMLKEMNegative().test_decapsulate_missing_permission_flag(_session(int(CKR_OK)))
+    assert not isinstance(excinfo.value, XFailed)

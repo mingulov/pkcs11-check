@@ -102,9 +102,47 @@ def test_phase_attempt_and_duplicate_metadata_are_populated(tmp_path: Path) -> N
     assert grp["count"] == 3
     assert grp["phase_counts"] == {"call": 2, "teardown": 1}
     assert grp["target_counts"] == {nodeid: 3}
-    assert grp["attempt_counts"] == {"0": 2, "1": 1}
+    # N14: attempt_counts keys are ints in memory (unified with the Counter[int]
+    # convention in core/_report_records.py / report_log.py); JSON serialization at
+    # render time (report.__main__._write_group_lines -> json.dumps) is what turns
+    # them into string keys, not this accumulation step.
+    assert grp["attempt_counts"] == {0: 2, 1: 1}
     assert grp["exact_duplicate_count"] == 1
     assert grp["unattributed_count"] == 0
+
+
+def test_attempt_counts_keys_are_int_not_str(tmp_path: Path) -> None:
+    """N14: unify attempt_counts key type across layers.
+
+    ``report.extract`` used to stringify keys at accumulation time
+    (``group["attempt_counts"][str(attempt)]``) while
+    ``core._report_records.extract_quality_report_evidence_from_jsonl`` /
+    ``report_log.QualityReportEvidence.attempt_counts`` keep ``Counter[int]`` /
+    ``Mapping[int, int]`` until the quality_audit.py render step. Both were
+    JSON-equal after ``json.dumps`` (JSON object keys are always strings), but
+    an in-memory comparison between the two layers would mismatch on key type.
+    This pins the side that changed: report.extract now keeps int keys too,
+    stringifying only implicitly at the final json.dumps render boundary
+    (report/__main__.py's `json.dumps(group, ...)`), matching the
+    core._report_records/report_log convention instead of inventing a second one.
+    """
+    path = tmp_path / "report.jsonl"
+    classification = _classification(vector_id="tc1")
+    nodeid = "tests/test_rsa.py::test_case"
+    lines: list[dict[str, object]] = [
+        _marker(nodeid, 0),
+        _test_report(nodeid, [classification], when="call"),
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+
+    groups = extract_groups(path, crashes=[])
+
+    attempt_counts = groups[0]["attempt_counts"]
+    assert attempt_counts == {0: 1}
+    assert all(isinstance(k, int) for k in attempt_counts)
+    # Still JSON-equal to the old stringified shape after serialization -- the render
+    # boundary, not this accumulation step, is where keys become strings.
+    assert json.loads(json.dumps(attempt_counts)) == {"0": 1}
 
 
 def test_unmarked_occurrence_is_unattributed_not_reconstructed(tmp_path: Path) -> None:

@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.rv import CkrAssertionError
@@ -479,18 +480,82 @@ def test_rsa_pkcs_wrap_missing_value_continues_wrap_unwrap_and_cleans_up(
 # ---------------------------------------------------------------------------
 
 
-def test_non_extractable_wrap_missing_extractable_drops_stale_mechanism_and_xfails(
+def test_non_extractable_wrap_missing_extractable_still_fails_on_successful_wrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """F7 claim-sweep regression: gen_aes_key() raises unless C_GenerateKey
+    returns CKR_OK, so the caller already proved creation-time acceptance of
+    CKA_EXTRACTABLE=False before this helper runs. A missing readback must not
+    downgrade a proven wrap-extraction self-contradiction to xfail -- it must
+    still surface as a hard fail (mutation: restoring the pre-fix
+    ``claimed = extractable is not MISSING_ATTRIBUTE and extractable is False``
+    derivation turns this back into an xfail)."""
+    rs = _session()
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    monkeypatch.setattr(rsa_wrap_case, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(rsa_wrap_case, "wrap_key_recipe", lambda *_a, **_k: b"wrapped")
+
+    with pytest.raises(Failed) as ei:
+        rsa_wrap_case.TestNonExtractableWrapRefusal._check_non_extractable(
+            rs, 91, 92, CKM_AES_KEY_WRAP, "CKM_AES_KEY_WRAP"
+        )
+    assert not isinstance(ei.value, XFailed)
+
+    records = C.get_records()
+    assert len(records) == 2
+    _assert_readback_record(records[0], reason="not_operational")
+    assert records[1].reason == "self_contradiction"
+
+
+def test_non_extractable_wrap_missing_extractable_and_refused_wrap_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The creation-time claim still yields a clean pass when the module
+    actually refuses the wrap -- claimed=True, violated=False."""
     rs = _session()
     C.set_mechanism("CKM_STALE", operation="C_Stale")
     monkeypatch.setattr(rsa_wrap_case, "read_attributes", lambda *_a, **_k: {})
 
-    with pytest.raises(pytest.xfail.Exception, match="did not honour CKA_EXTRACTABLE=False"):
-        rsa_wrap_case.TestNonExtractableWrapRefusal._check_non_extractable(
-            rs, 91, 92, CKM_AES_KEY_WRAP, "CKM_AES_KEY_WRAP"
-        )
+    def _refuse(*_a: Any, **_k: Any) -> bytes:
+        raise AssertionError("Unexpected CK_RV CKR_KEY_UNEXTRACTABLE")
+
+    monkeypatch.setattr(rsa_wrap_case, "wrap_key_recipe", _refuse)
+    monkeypatch.setattr(
+        rsa_wrap_case,
+        "reject_or_classify",
+        lambda *_a, **_k: None,
+    )
+
+    rsa_wrap_case.TestNonExtractableWrapRefusal._check_non_extractable(
+        rs, 91, 92, CKM_AES_KEY_WRAP, "CKM_AES_KEY_WRAP"
+    )
 
     records = C.get_records()
-    assert len(records) == 2
-    _assert_readback_record(records[0], reason="honest_deviation")
+    assert len(records) == 1
+    _assert_readback_record(records[0], reason="not_operational")
+
+
+def test_non_extractable_key_cannot_be_wrapped_missing_readback_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7 claim-sweep regression: gen_aes_key() raises unless C_GenerateKey
+    returns CKR_OK, so reaching the wrap probe already proves creation-time
+    acceptance of CKA_EXTRACTABLE=False. A missing readback must not downgrade
+    a proven CKM_RSA_PKCS wrap-extraction self-contradiction to xfail
+    (mutation: restoring the pre-fix
+    ``claimed = extractable is not MISSING_ATTRIBUTE and extractable is False``
+    derivation turns this back into an xfail)."""
+    rs = _session(mechanisms={"RSA_PKCS"})
+    monkeypatch.setattr(rsa_wrap_case, "_make_rsa_pair", lambda *_a, **_k: (81, 82))
+    monkeypatch.setattr(rsa_wrap_case, "gen_aes_key", lambda *_a, **_k: 83)
+    monkeypatch.setattr(rsa_wrap_case, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(rsa_wrap_case, "wrap_key_recipe", lambda *_a, **_k: b"\x00" * 256)
+    monkeypatch.setattr(rsa_wrap_case, "destroy_quietly", lambda *_a, **_k: None)
+
+    with pytest.raises(Failed) as ei:
+        rsa_wrap_case.TestWrappedKeyUsability().test_non_extractable_key_cannot_be_wrapped(rs)
+    assert not isinstance(ei.value, XFailed)
+
+    records = C.get_records()
+    assert records[0].reason == "not_operational"
+    assert records[-1].reason == "self_contradiction"

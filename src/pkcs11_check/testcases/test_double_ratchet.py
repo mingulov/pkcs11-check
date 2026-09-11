@@ -139,14 +139,19 @@ _X2RATCHET_SHARED_SECRET = bytes(range(32))
 
 
 def _read_derived_value(rs: Any, handle: int, *, label: str) -> Any:
-    """Read derived CKA_VALUE while retaining an unavailable-value observation."""
+    """Read derived CKA_VALUE while retaining an unavailable-value observation.
+
+    ``label`` already names the producing mechanism (CKM_X2RATCHET_INITIALIZE) at every
+    call site; this is a plain C_GetAttributeValue readback, not a C_DeriveKey outcome
+    record, so the mechanism must not ride the record itself (F6).
+    """
     return attr_or_record(
         read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE]),
         CKA_VALUE,
         label=label,
         reason="not_operational",
         kind="metadata",
-        mechanism="CKM_X2RATCHET_INITIALIZE",
+        inherit_mechanism=False,
     )
 
 

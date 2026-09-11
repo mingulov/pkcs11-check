@@ -85,7 +85,11 @@ def test_missing_nonce_outputs_are_visible_and_do_not_stop_second_derivation(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "not_operational"]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
-    assert all(record.mechanism == "CKM_IKE2_PRF_PLUS_DERIVE" for record in records)
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer already lives in the label (set by every
+    # caller of _get_value).
+    assert all(record.mechanism is None for record in records)
+    assert all("CKM_IKE2_PRF_PLUS_DERIVE" in record.label for record in records)
     assert all(
         record.detail == {"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}}
         for record in records
@@ -111,7 +115,8 @@ def test_missing_first_output_survives_second_derive_rejection_and_cleanup(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "not_operational"]
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_IKE2_PRF_PLUS_DERIVE"
+    assert records[0].mechanism is None
+    assert "CKM_IKE2_PRF_PLUS_DERIVE" in records[0].label
     assert records[1].operation == "C_DeriveKey"
     assert records[1].mechanism == "CKM_IKE2_PRF_PLUS_DERIVE"
     assert records[1].actual_ckr == "CKR_MECHANISM_INVALID"

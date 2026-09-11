@@ -803,14 +803,10 @@ class TestGetOperationStateAPI:
         """
         import ctypes
 
-        from pkcs11_check.raw.rv import ckr_name
         from pkcs11_check.raw.types_std import (
             CKR_FUNCTION_NOT_SUPPORTED,
             CKR_OPERATION_NOT_INITIALIZED,
             CKR_STATE_UNSAVEABLE,
-        )
-        from pkcs11_check.raw.types_std import (
-            CKR_OK as _CKR_OK,
         )
 
         rs = p11_raw_session
@@ -819,13 +815,12 @@ class TestGetOperationStateAPI:
         rv = rs.raw.C_GetOperationState(rs.sh, None, ctypes.byref(state_len))
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
             pytest.skip("C_GetOperationState is not supported")
-        acceptable = {
-            _CKR_OK,
-            CKR_OPERATION_NOT_INITIALIZED,
-            CKR_STATE_UNSAVEABLE,
-            CKR_FUNCTION_NOT_SUPPORTED,
-        }
-        assert rv in acceptable, f"C_GetOperationState returned unexpected {ckr_name(rv)}"
+        classify_negative_rv(
+            rv,
+            (CKR_OPERATION_NOT_INITIALIZED, CKR_STATE_UNSAVEABLE, CKR_FUNCTION_NOT_SUPPORTED),
+            label="C_GetOperationState:no active operation",
+            allow_ok=True,
+        )
 
     def test_garbage_state_raises_saved_state_invalid(
         self,
