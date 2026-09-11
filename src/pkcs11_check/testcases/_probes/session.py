@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes._emit import (
     emit_rv_trace,
+    mark_python_finalized,
     rv_trace_enabled,
     rv_trace_maxlen,
     write_coverage,
@@ -151,6 +152,11 @@ def probe_main(
     I7 — atexit emits P11_RV_TRACE_JSON:<json> when PKCS11_CHECK_RV_TRACE is set,
          matching the format record_subprocess_rv_trace() expects.
     """
+    # FIRST, before anything can fail: proof that CPython finalization ran. atexit is
+    # LIFO so this fires last and never clobbers the real coverage write. The parent
+    # reads its absence as 'the module terminated the process from inside a PKCS#11
+    # call', so a load failure here must not look the same as one.
+    atexit.register(mark_python_finalized)
     params = ProbeParams.load(sys.argv[1])
     raw = RawPKCS11.from_lib(params.module_path)
 

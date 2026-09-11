@@ -319,8 +319,12 @@ def read_raw_ec_point_or_xfail(
     """Read and validate a raw Montgomery or Edwards public key.
 
     Raw-family public keys are not SEC1 points and must not be passed through the
-    conventional EC point decoder. The original provider bytes are returned after
-    validation so representation-sensitive callers can inspect them separately.
+    conventional SEC1-shape validation (``parse_provider_ec_point``). A provider may
+    still return them DER-wrapped in an OCTET STRING (PKCS#11 v3.0; the tool's own
+    importer emits this form) -- that generic unwrap is reused via ``decode_ec_point``
+    before a length mismatch is treated as a deviation. The returned bytes are always
+    the unwrapped raw point (never re-wrapped) so representation-sensitive callers can
+    inspect them separately.
     """
     expected_length = _RAW_EC_POINT_LENGTHS[family]
     detail: dict[str, Any] = {
@@ -377,18 +381,36 @@ def read_raw_ec_point_or_xfail(
             summary=f"{label}: CKA_EC_POINT is empty",
             detail=detail,
         )
+
+    representation = "raw"
     if actual_length != expected_length:
-        xfail_as(
-            "not_operational",
-            kind="metadata",
-            label=label,
-            operation="C_GetAttributeValue",
-            summary=(
-                f"{label}: CKA_EC_POINT length {actual_length} does not match "
-                f"{family.value} length {expected_length}"
-            ),
-            detail=detail,
-        )
+        # PKCS#11 v3.0 defines the Edwards/Montgomery CKA_EC_POINT as a DER-encoded
+        # OCTET STRING wrapping the RFC 8032/7748 point (later text also sanctions the
+        # bare raw form); the tool's own importer emits the DER-wrapped form. Try
+        # unwrapping a well-formed OCTET STRING before treating a length mismatch as
+        # a deviation -- reusing the same strict decoder as the conventional SEC1 path.
+        try:
+            unwrapped = decode_ec_point(ec_point)
+        except ValueError:
+            unwrapped = None
+        if unwrapped is not None and len(unwrapped) == expected_length:
+            ec_point = unwrapped
+            actual_length = expected_length
+            representation = "der"
+            detail["length"] = {"expected": expected_length, "actual": actual_length}
+        else:
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=label,
+                operation="C_GetAttributeValue",
+                summary=(
+                    f"{label}: CKA_EC_POINT length {actual_length} does not match "
+                    f"{family.value} length {expected_length}"
+                ),
+                detail=detail,
+            )
+    detail["representation"] = representation
 
     try:
         _RAW_EC_POINT_CONSTRUCTORS[family](ec_point)

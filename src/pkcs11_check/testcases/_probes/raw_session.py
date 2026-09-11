@@ -43,6 +43,7 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.testcases._probes._emit import (
     emit_harness_error,
     emit_rv_trace,
+    mark_python_finalized,
     rv_trace_enabled,
     write_coverage,
 )
@@ -132,6 +133,11 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
     enabled.  The raw CDLL path has no automatic interceptor, so the list is always
     empty; record_subprocess_rv_trace ignores an empty trace.
     """
+    # FIRST, before anything can fail: proof that CPython finalization ran. atexit is
+    # LIFO so this fires last and never clobbers the real coverage write. The parent
+    # reads its absence as 'the module terminated the process from inside a PKCS#11
+    # call', so a load failure here must not look the same as one.
+    atexit.register(mark_python_finalized)
     params = ProbeParams.load(sys.argv[1])
 
     # Windows DLL-dir handling before CDLL load (I11).

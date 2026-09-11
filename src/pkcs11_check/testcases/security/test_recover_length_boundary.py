@@ -46,6 +46,17 @@ def _parse_output_value(output: str, prefix: str) -> int:
     raise AssertionError(f"Missing {prefix!r} line in subprocess output: {output[-300:]}")
 
 
+def _skip_if_recover_init_not_supported(stdout: str) -> None:
+    """Skip when the child probe hit CKR_FUNCTION_NOT_SUPPORTED at C_SignRecoverInit /
+    C_VerifyRecoverInit (see _probes/recover_length.py -- capability absence, not a
+    deviation) before racing into assert_subprocess_no_crash, which only recognizes
+    SETUP_XFAIL and would otherwise treat the missing CKR: line as a harness error.
+    """
+    for line in stdout.splitlines():
+        if line.startswith("SKIP:"):
+            pytest.skip(line.removeprefix("SKIP:").strip())
+
+
 class TestRecoverInputLengthBoundary:
     """Recover APIs must reject impossible claimed input lengths without crashing."""
 
@@ -75,6 +86,7 @@ class TestRecoverInputLengthBoundary:
             timeout=15,
             coverage="session",
         )
+        _skip_if_recover_init_not_supported(result.stdout)
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
@@ -114,6 +126,7 @@ class TestRecoverInputLengthBoundary:
             timeout=15,
             coverage="session",
         )
+        _skip_if_recover_init_not_supported(result.stdout)
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
@@ -163,6 +176,7 @@ class TestRecoverOutputLengthBoundary:
             timeout=20,
             coverage="session",
         )
+        _skip_if_recover_init_not_supported(result.stdout)
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
@@ -202,6 +216,7 @@ class TestRecoverOutputLengthBoundary:
             timeout=20,
             coverage="session",
         )
+        _skip_if_recover_init_not_supported(result.stdout)
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
@@ -266,6 +281,7 @@ class TestRecoverOutputLengthBoundary:
             timeout=20,
             coverage="session",
         )
+        _skip_if_recover_init_not_supported(result.stdout)
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,

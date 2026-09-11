@@ -1,9 +1,9 @@
 """Runtime regression tests for the F7 CKR/ACVP attribute-presence migration (slice 10).
 
 Covers `ckr/test_ckr_object.py`, `ckr/test_ckr_keygen.py`, `ckr/test_ckr_codes.py`,
-`ckr/test_ckr_spec_compliance.py`, `acvp/test_acvp_mlkem.py`, `acvp/test_acvp_ecdh.py`, and
-`acvp/test_acvp_rsa_keygen.py`: every migrated call site now routes a provider-backed
-`read_attributes()` result through `attr_or_record()` instead of a bare subscript/`.get()`.
+`ckr/test_ckr_spec_compliance.py`, `acvp/test_acvp_mlkem.py`, and `acvp/test_acvp_ecdh.py`:
+every migrated call site in those files now routes a provider-backed `read_attributes()`
+result through `attr_or_record()` instead of a bare subscript/`.get()`.
 
 These tests prove, per migrated site:
 - an omitted attribute produces a structured record (reason, `operation ==
@@ -14,6 +14,12 @@ These tests prove, per migrated site:
   handles are still destroyed;
 - a present-but-wrong value is unaffected by the migration and still fails/xfails hard;
 - no CKR is invented for a plain omission.
+
+`acvp/test_acvp_rsa_keygen.py` is the one exception in this slice: a generated RSA public
+key's CKA_MODULUS_BITS/CKA_MODULUS/CKA_PUBLIC_EXPONENT are self-generated output with no
+independent evidence elsewhere, so their omission after a successful readback is itself a
+self-contradiction, not missing evidence -- `_require_rsa_keygen_attribute` fails hard
+immediately instead of deferring to `attr_or_record`. See the RSA-keygen tests below.
 
 Adequacy is mutation-checked: for each site, the guard is masked back to the pre-migration
 bare access and the corresponding test is confirmed to fail (see slice report).
@@ -113,8 +119,14 @@ def _session(*, mechanisms: set[str] | None = None, raw: Any = None, **extra: An
     )
 
 
-def _assert_readback_record(record: C.Classification, *, reason: str) -> None:
+def _assert_readback_record(
+    record: C.Classification, *, reason: str, kind: str = "metadata"
+) -> None:
     assert record.reason == reason
+    # ``kind`` is asserted because ``record_as()`` derives outcome and severity from
+    # ``(reason, kind)`` together -- leaving it unchecked lets a severity regression
+    # through even while ``reason`` still matches.
+    assert record.kind == kind
     assert record.operation == "C_GetAttributeValue"
     assert record.mechanism is None
     assert record.spec_ref == _SPEC_REF
@@ -241,7 +253,7 @@ def test_ckr_object_sensitive_value_missing_readback_still_enforces_and_cleans_u
     assert destroyed == [201]
     records = C.get_records()
     assert len(records) == 1
-    _assert_readback_record(records[0], reason="not_operational")
+    _assert_readback_record(records[0], reason="not_operational", kind="policy")
 
 
 def test_ckr_codes_attribute_sensitive_missing_readback_still_enforces_and_cleans_up(
@@ -282,7 +294,7 @@ def test_ckr_codes_attribute_sensitive_missing_readback_still_enforces_and_clean
     assert destroyed == [202]
     records = C.get_records()
     assert len(records) == 1
-    _assert_readback_record(records[0], reason="not_operational")
+    _assert_readback_record(records[0], reason="not_operational", kind="policy")
 
 
 def test_ckr_spec_compliance_sensitive_value_missing_readback_still_enforces(
@@ -323,7 +335,7 @@ def test_ckr_spec_compliance_sensitive_value_missing_readback_still_enforces(
     assert destroyed == [203]
     records = C.get_records()
     assert len(records) == 1
-    _assert_readback_record(records[0], reason="not_operational")
+    _assert_readback_record(records[0], reason="not_operational", kind="policy")
 
 
 # ---------------------------------------------------------------------------
@@ -674,12 +686,16 @@ def test_ecdh_key_agreement_missing_shared_secret_skips_length_check_and_cleans_
 # ---------------------------------------------------------------------------
 
 
-def test_rsa_keygen_missing_modulus_bits_does_not_hide_malformed_exponent(
+def test_rsa_keygen_missing_modulus_bits_is_a_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing CKA_MODULUS_BITS skips only its own check; a genuinely malformed,
-    present CKA_PUBLIC_EXPONENT (even, not odd) still fails hard -- the omission of
-    one attribute must never suppress a real defect found via a sibling attribute."""
+    """A missing CKA_MODULUS_BITS after a successful attribute readback is a
+    self-contradiction (the module returned CKR_OK on the query yet omitted
+    required generated-key metadata), not merely missing evidence -- it fails
+    hard immediately and does not defer to sibling attribute checks (a
+    genuinely malformed present CKA_PUBLIC_EXPONENT here is never reached,
+    since the CKA_MODULUS_BITS omission is already a sufficient, correct
+    terminal verdict on its own)."""
     from pkcs11_check.raw.types_std import CKA_MODULUS, CKA_PUBLIC_EXPONENT
 
     rs = _session(mechanisms={"RSA_PKCS_KEY_PAIR_GEN"})
@@ -698,21 +714,22 @@ def test_rsa_keygen_missing_modulus_bits_does_not_hide_malformed_exponent(
     monkeypatch.setattr(rsa_keygen_case, "destroy_quietly", lambda *_a, **_k: None)
 
     vec = {"modulo": 2048}
-    with pytest.raises(pytest.fail.Exception, match="Public exponent must be odd"):
+    with pytest.raises(pytest.fail.Exception, match="omitted required CKA_MODULUS_BITS"):
         rsa_keygen_case.TestRsaKeyGen().test_rsa_keygen_attributes(rs, "tc-6", vec)
 
     records = C.get_records()
-    assert len(records) == 2
-    _assert_readback_record(records[0], reason="not_operational")
-    assert records[1].reason == "wrong_result"
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].outcome == "fail"
+    assert records[0].kind == "metadata"
 
 
-def test_rsa_keygen_missing_all_three_attributes_records_each_and_cleans_up(
+def test_rsa_keygen_missing_all_three_attributes_fails_hard_on_the_first_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """All three generated-key attributes omitted: each gets its own readback record
-    and every dependent check is skipped without inventing a pass or a crash; cleanup
-    still runs for both handles."""
+    """All three generated-key attributes omitted: the first one checked
+    (CKA_MODULUS_BITS) fails hard immediately rather than recording three soft
+    deviations and passing; cleanup still runs for both handles regardless."""
     rs = _session(mechanisms={"RSA_PKCS_KEY_PAIR_GEN"})
     destroyed: list[int] = []
 
@@ -725,10 +742,12 @@ def test_rsa_keygen_missing_all_three_attributes_records_each_and_cleans_up(
     )
 
     vec = {"modulo": 2048}
-    rsa_keygen_case.TestRsaKeyGen().test_rsa_keygen_attributes(rs, "tc-7", vec)
+    with pytest.raises(pytest.fail.Exception, match="omitted required CKA_MODULUS_BITS"):
+        rsa_keygen_case.TestRsaKeyGen().test_rsa_keygen_attributes(rs, "tc-7", vec)
 
     assert set(destroyed) == {803, 804}
     records = C.get_records()
-    assert len(records) == 3
-    for record in records:
-        _assert_readback_record(record, reason="not_operational")
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].outcome == "fail"
+    assert records[0].kind == "metadata"

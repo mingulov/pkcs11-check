@@ -15,8 +15,16 @@ def _der_encode_length(length: int) -> bytes:
     return bytes([0x80 | len(length_bytes)]) + length_bytes
 
 
-def _der_decode_length(data: bytes, offset: int) -> tuple[int, int]:
-    """Decode DER length at *offset*. Returns (length, next_offset)."""
+def _der_decode_length(data: bytes, offset: int, *, strict: bool = False) -> tuple[int, int]:
+    """Decode DER length at *offset*. Returns (length, next_offset).
+
+    ``strict`` rejects non-canonical long-form length encodings (leading zero,
+    or a long form used for a value that fits in short form). It defaults to
+    ``False`` -- the general integer/SEQUENCE decoders used for signature
+    parsing (:func:`ecdsa_sig_from_der`, DSA/ECDSA verify) must stay lenient,
+    since tightening them is unrelated to, and must not change, that decode
+    path. Only :func:`decode_ec_point` opts into ``strict=True``.
+    """
     if offset >= len(data):
         raise ValueError("Truncated DER: expected length byte")
     first = data[offset]
@@ -28,10 +36,10 @@ def _der_decode_length(data: bytes, offset: int) -> tuple[int, int]:
     end = offset + 1 + num_bytes
     if end > len(data):
         raise ValueError(f"Truncated DER: need {num_bytes} length bytes")
-    if data[offset + 1] == 0:
+    if strict and data[offset + 1] == 0:
         raise ValueError("Non-canonical DER length: leading zero")
     length = int.from_bytes(data[offset + 1 : end], "big")
-    if length < 128:
+    if strict and length < 128:
         raise ValueError("Non-canonical DER length: short value uses long form")
     return length, end
 
@@ -147,7 +155,7 @@ def decode_ec_point(der: bytes) -> bytes:
         raise ValueError("DER data is empty")
     if der[0] != 0x04:
         raise ValueError(f"Expected DER OCTET STRING tag 0x04, got 0x{der[0]:02x}")
-    length, offset = _der_decode_length(der, 1)
+    length, offset = _der_decode_length(der, 1, strict=True)
     end = offset + length
     if end > len(der):
         raise ValueError(

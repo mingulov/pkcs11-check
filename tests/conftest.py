@@ -13,6 +13,8 @@ from pkcs11_check.testcases.data import ACVP_DIR, CCTV_DIR, WYCHEPROOF_DIR
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from _pytest.terminal import TerminalReporter
+
 
 @pytest.fixture
 def classification_report_plugin_enabled() -> None:
@@ -119,10 +121,18 @@ def mock_module_path() -> str:
     return path
 
 
+# Populated by pytest_collection_modifyitems with the vector-dependent module
+# names it actually skipped in this session (i.e. missing data, not some other
+# skip reason). Read back by pytest_terminal_summary to report the coverage
+# gap -- see that function's docstring for why this exists.
+_vector_skipped_modules: set[str] = set()
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: Iterable[pytest.Item]) -> None:
     """Skip vector-dependent meta-tests when any required data dir is not fetched."""
     for item in items:
-        required = _VECTOR_DEPENDENT_MODULES.get(Path(str(item.fspath)).name)
+        module_name = Path(str(item.fspath)).name
+        required = _VECTOR_DEPENDENT_MODULES.get(module_name)
         if required is None:
             continue
         missing = [d for d in required if not d.exists()]
@@ -131,3 +141,35 @@ def pytest_collection_modifyitems(config: pytest.Config, items: Iterable[pytest.
             item.add_marker(
                 pytest.mark.skip(reason=f"vector data not fetched: {reason} (run fetch-data)")
             )
+            _vector_skipped_modules.add(module_name)
+
+
+def pytest_terminal_summary(
+    terminalreporter: TerminalReporter,
+    exitstatus: int,
+    config: pytest.Config,
+) -> None:
+    """Make a data-less run's reduced coverage visible instead of silent.
+
+    An empty ``data/`` (every fresh git worktree, and CI without fetch-data)
+    makes ``pytest_collection_modifyitems`` above skip every vector-dependent
+    meta-test -- ~290 tests, including 100% of the duplicate-detection guard
+    suite (see ``tests/test_wycheproof_signature_duplicate_guards.py``). The
+    run still exits green, so nothing distinguishes a full release-grade run
+    (~39 skips) from one silently missing that whole defect class (~330
+    skips). This line is the only signal: it costs a normal, vector-less
+    developer run nothing (still passes, still fast, no new failure mode) but
+    makes it impossible to mistake for a release-qualifying run. See
+    docs/releasing.md for the release-gate requirement this backs.
+    """
+    if not _vector_skipped_modules:
+        return
+    terminalreporter.write_sep("=", "vector data coverage", yellow=True)
+    terminalreporter.write_line(
+        f"{len(_vector_skipped_modules)} vector-dependent test module(s) skipped -- "
+        "Wycheproof/ACVP/CCTV data not fetched under data/. This run is NOT "
+        "release-grade: it silently omits ~290 tests, including the entire "
+        "duplicate-detection guard suite. Run `pkcs11-check fetch-data` and re-run "
+        "before treating results as release evidence; see docs/releasing.md.",
+        yellow=True,
+    )

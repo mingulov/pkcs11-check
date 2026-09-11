@@ -59,7 +59,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
 )
-from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
 from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.acvp.rsa.base_loader import load_keygen_vectors
@@ -85,17 +85,22 @@ _RSA_KEYGEN_CAPABILITY_CKRS = (
 def _require_rsa_keygen_attribute(
     attrs: dict[int, Any], attr_id: int, vec_id: str, name: str
 ) -> Any:
-    """Return a generated RSA public-key attribute, or record its absence.
+    """Return a generated RSA public-key attribute, or hard-fail its absence.
 
-    An omitted attribute disables only the checks that depend on it (this
-    vector's oracle for that attribute); it never becomes a passing check.
+    A module that reports success generating the key and answering the
+    attribute query, yet omits a required attribute from the readback, is
+    self-contradicting: this is a metadata ``wrong_result`` failure, not
+    missing evidence -- it must never be downgraded to an xfail.
     """
-    return attr_or_record(
-        attrs,
-        attr_id,
+    if attr_id in attrs:
+        return attrs[attr_id]
+    fail_as(
+        "wrong_result",
+        kind="metadata",
         label=f"{vec_id}:{name}",
-        reason="not_operational",
+        operation="C_GetAttributeValue",
         inherit_mechanism=False,
+        summary=f"{vec_id}: generated RSA public key omitted required {name}",
     )
 
 

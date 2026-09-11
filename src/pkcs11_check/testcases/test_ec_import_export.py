@@ -376,7 +376,9 @@ def _destroy_handles(rs: Any, *handles: int) -> None:
 
 
 def _make_ec_keypair(rs: Any, curve_name: str) -> tuple[int, int]:
-    """Generate EC keypair, skip if curve unsupported."""
+    """Generate EC keypair, skip if EC keygen or the curve is unsupported."""
+    if not (rs.has_mechanism("EC_KEY_PAIR_GEN") or rs.has_mechanism("ECDSA_KEY_PAIR_GEN")):
+        pytest.skip("EC_KEY_PAIR_GEN not supported by module")
     curve_oid = encode_named_curve_parameters(curve_name)
     try:
         return gen_ec_keypair(rs.raw, rs.sh, curve_oid)

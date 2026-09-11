@@ -47,10 +47,24 @@ _REASON_OUTCOME: dict[str, Outcome] = {
     # Not a provider verdict: OUR code broke (GH #9/#11). Still a fail so it is loud and
     # can never pass silently, but reports must not count it against the module.
     "harness_error": "fail",
+    # Attribution genuinely unresolved: a probe child exited without completing a
+    # recognized protocol, so we know the measurement is missing but NOT whose fault that
+    # is. Deliberately NOT a harness reason -- claiming "our bug" here suppressed real
+    # provider findings (a module writing past a caller-declared output length reached the
+    # report as a pkcs11-check defect, excluded from the provider's counts). It stays a
+    # loud provider-side fail until something identifies the cause.
+    "probe_incomplete": "fail",
 }
 
 # Reasons that describe the harness rather than the module under test. Report surfaces
 # use this to keep them out of provider finding counts.
+#
+# Membership is a POSITIVE claim that pkcs11-check itself is at fault, and it is costly:
+# a reason in this set is removed from the provider fail total and severity sections
+# (report/render.py), from the fail buckets (report/health.py), and from cross-provider
+# correlation (report/correlate.py). Only add a reason here when the harness announced its
+# own defect -- never on inference from an exit code we do not recognize. Unresolved
+# attribution belongs in "probe_incomplete", which stays in the provider's counts.
 HARNESS_REASONS = frozenset({"harness_error"})
 
 
@@ -59,7 +73,7 @@ def _severity(reason: str, kind: str | None) -> Severity:
         return "CRITICAL" if kind == "crypto" else "MEDIUM"
     if reason in ("accepted_invalid", "self_contradiction"):
         return "CRITICAL" if kind in ("crypto", "policy") else "HIGH"
-    if reason in ("oracle", "crash", "unclassified", "harness_error"):
+    if reason in ("oracle", "crash", "unclassified", "harness_error", "probe_incomplete"):
         return "HIGH"
     if reason in ("not_operational", "nonspec_reject", "honest_deviation", "undeclared_capability"):
         return "LOW"

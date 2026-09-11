@@ -239,19 +239,27 @@ def _raise_strongest(records: list[C.Classification]) -> None:
 def _check_equal_attribute(
     value: Any,
     *,
-    expected: str,
+    expected: Any,
     label: str,
     mechanism: str,
     kind: str = "metadata",
 ) -> C.Classification | None:
-    """Return a structured mismatch for a present provider attribute."""
+    """Return a structured mismatch for a present provider attribute.
+
+    Compares by *value* (``==``), not by ``repr()``: a conformant readback is a
+    plain ``int``/``bool``, while ``expected`` is often a ``CK_CONSTANT`` whose
+    ``repr`` embeds its symbolic name -- ``repr(2) != repr(CKO_PUBLIC_KEY)`` even
+    though ``2 == CKO_PUBLIC_KEY``. ``CK_CONSTANT`` is a plain ``int`` subclass
+    with no custom ``__eq__``, so numeric equality is exact. The symbolic name
+    is still surfaced in the diagnostic via ``repr(expected)``.
+    """
     if value is MISSING_ATTRIBUTE:
         return None
-    if repr(value) == expected:
+    if value == expected:
         return None
     return _record_attribute_mismatch(
         label=label,
-        expected=expected,
+        expected=repr(expected),
         actual=repr(value),
         kind=kind,
         mechanism=mechanism,
@@ -469,7 +477,7 @@ class TestMLKEMKeyGeneration:
             )
             mismatch = _check_equal_attribute(
                 pub_cls,
-                expected=repr(CKO_PUBLIC_KEY),
+                expected=CKO_PUBLIC_KEY,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_CLASS readback",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
             )
@@ -477,7 +485,7 @@ class TestMLKEMKeyGeneration:
                 hard_results.append(mismatch)
             mismatch = _check_equal_attribute(
                 priv_cls,
-                expected=repr(CKO_PRIVATE_KEY),
+                expected=CKO_PRIVATE_KEY,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_CLASS readback",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
             )
@@ -513,7 +521,7 @@ class TestMLKEMKeyGeneration:
             )
             mismatch = _check_equal_attribute(
                 pub_kt,
-                expected=repr(CKK_ML_KEM),
+                expected=CKK_ML_KEM,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
             )
@@ -521,7 +529,7 @@ class TestMLKEMKeyGeneration:
                 hard_results.append(mismatch)
             mismatch = _check_equal_attribute(
                 priv_kt,
-                expected=repr(CKK_ML_KEM),
+                expected=CKK_ML_KEM,
                 label="CKM_ML_KEM_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
                 mechanism="CKM_ML_KEM_KEY_PAIR_GEN",
             )
@@ -1034,7 +1042,7 @@ class TestMLKEMKeyDerivation:
             )
             mismatch = _check_equal_attribute(
                 kt,
-                expected=repr(CKK_AES),
+                expected=CKK_AES,
                 label="CKM_ML_KEM:encapsulated AES-128 key CKA_KEY_TYPE readback",
                 mechanism="CKM_ML_KEM",
             )
@@ -1116,7 +1124,7 @@ class TestMLKEMKeyDerivation:
             )
             mismatch = _check_equal_attribute(
                 kt,
-                expected=repr(CKK_AES),
+                expected=CKK_AES,
                 label="CKM_ML_KEM:encapsulated AES-256 key CKA_KEY_TYPE readback",
                 mechanism="CKM_ML_KEM",
             )
@@ -1387,7 +1395,7 @@ class TestMLKEMDecapsulation:
             )
             mismatch = _check_equal_attribute(
                 extractable,
-                expected=repr(False),
+                expected=False,
                 label="CKM_ML_KEM:decapsulated CKA_EXTRACTABLE readback",
                 mechanism="CKM_ML_KEM",
             )
@@ -1395,7 +1403,7 @@ class TestMLKEMDecapsulation:
                 hard_results.append(mismatch)
             mismatch = _check_equal_attribute(
                 sensitive,
-                expected=repr(True),
+                expected=True,
                 label="CKM_ML_KEM:decapsulated CKA_SENSITIVE readback",
                 mechanism="CKM_ML_KEM",
             )

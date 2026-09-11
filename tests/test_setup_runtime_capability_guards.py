@@ -105,6 +105,7 @@ from pkcs11_check.testcases.security import (
     test_parameter_validation,
     test_tookan,
 )
+from tests._skip_assert import assert_skips
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -294,7 +295,7 @@ def test_generic_secret_hmac_runtime_general_error_is_xfail(
         test_generic_secret.TestGenericSecretHMAC().test_hmac_with_imported_generic_secret(rs)
 
 
-def test_sign_recover_subprocess_keygen_fatal_is_harness_error(
+def test_sign_recover_subprocess_keygen_fatal_is_probe_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(test_sign_recover, "_has_rsa_x509", lambda _module: True)
@@ -307,12 +308,18 @@ def test_sign_recover_subprocess_keygen_fatal_is_harness_error(
     )
     config = SimpleNamespace(module="/tmp/mock-pkcs11.so", slot=0, pin=None)
 
-    with pytest.raises(pytest.fail.Exception, match="pkcs11-check itself failed"):
+    with pytest.raises(
+        pytest.fail.Exception,
+        match="probe child exited without completing a recognized protocol",
+    ):
         test_sign_recover.TestSignRecover().test_sign_recover_produces_output(config, object())
 
     records = C.get_records()
     assert len(records) == 1
-    assert records[0].reason == "harness_error"
+    # Nothing here identifies a cause, so the record must not claim one. It stays a
+    # provider-side fail (probe_incomplete is deliberately NOT a HARNESS_REASON) with
+    # attribution stated as unresolved.
+    assert records[0].reason == "probe_incomplete"
     assert records[0].outcome == "fail"
 
 
@@ -356,9 +363,13 @@ def test_authenticated_wrap_v240_probe_xfails_when_aes_keygen_rejects_runtime(
         )
 
 
-def test_authenticated_wrap_generated_iv_runtime_reject_is_xfail(
+def test_authenticated_wrap_generated_iv_runtime_reject_is_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """CKR_FUNCTION_NOT_SUPPORTED from C_WrapKeyAuthenticated is capability absence
+    (the optional v3.2 function itself is unimplemented) -- skip, never an
+    "advertised but not operational" xfail deviation. This test used to pin the
+    invented-finding xfail behaviour; flipped alongside the fix."""
     rs = _session_with_mechanisms("AES_GCM")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
     monkeypatch.setattr(
@@ -367,11 +378,6 @@ def test_authenticated_wrap_generated_iv_runtime_reject_is_xfail(
         lambda *_args, **_kwargs: {test_authenticated_wrap.CKA_VALUE: b"\x5a" * 16},
     )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
-    monkeypatch.setattr(
-        test_authenticated_wrap.pytest,
-        "skip",
-        lambda message: pytest.fail(f"unexpected skip: {message}"),
-    )
 
     def _wrap_reject(*_args: Any, **_kwargs: Any) -> bytes:
         raise CkrAssertionError(
@@ -381,15 +387,18 @@ def test_authenticated_wrap_generated_iv_runtime_reject_is_xfail(
 
     monkeypatch.setattr(test_authenticated_wrap, "wrap_key_authenticated", _wrap_reject)
 
-    with pytest.raises(pytest.xfail.Exception, match="authenticated generated-IV wrap rejected"):
-        test_authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_authenticated_wrap_generated_iv_and_tag(
-            rs, "3.2"
-        )
+    assert_skips(
+        test_authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_authenticated_wrap_generated_iv_and_tag,
+        rs,
+        "3.2",
+        match="C_WrapKeyAuthenticated",
+    )
 
 
-def test_authenticated_wrap_roundtrip_runtime_reject_is_xfail(
+def test_authenticated_wrap_roundtrip_runtime_reject_is_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Same rule for the plain (non-generated-IV) wrap/unwrap roundtrip."""
     rs = _session_with_mechanisms("AES_GCM")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
     monkeypatch.setattr(test_authenticated_wrap, "generate_random", lambda *_args: b"\x01" * 12)
@@ -400,18 +409,17 @@ def test_authenticated_wrap_roundtrip_runtime_reject_is_xfail(
     )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
-        test_authenticated_wrap.pytest,
-        "skip",
-        lambda message: pytest.fail(f"unexpected skip: {message}"),
-    )
-    monkeypatch.setattr(
         test_authenticated_wrap,
         "wrap_key_authenticated",
         _raise_function_not_supported,
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="AES-GCM authenticated wrap rejected"):
-        test_authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_wrap_unwrap(rs, "3.2")
+    assert_skips(
+        test_authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_wrap_unwrap,
+        rs,
+        "3.2",
+        match="C_WrapKeyAuthenticated",
+    )
 
 
 def test_authenticated_wrap_aes_kw_baseline_wrap_runtime_reject_is_xfail(
@@ -443,9 +451,10 @@ def test_authenticated_wrap_aes_kw_baseline_wrap_runtime_reject_is_xfail(
         )
 
 
-def test_authenticated_wrap_gcm_bitflip_baseline_wrap_runtime_reject_is_xfail(
+def test_authenticated_wrap_gcm_bitflip_baseline_wrap_runtime_reject_is_skip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Same rule for the bit-flip-integrity baseline wrap."""
     rs = _session_with_mechanisms("AES_GCM")
     p11_config = SimpleNamespace(module="/tmp/mock-pkcs11.so")
     monkeypatch.setattr(test_authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: 10)
@@ -457,20 +466,18 @@ def test_authenticated_wrap_gcm_bitflip_baseline_wrap_runtime_reject_is_xfail(
     )
     monkeypatch.setattr(test_authenticated_wrap, "destroy_quietly", lambda *_args: None)
     monkeypatch.setattr(
-        test_authenticated_wrap.pytest,
-        "skip",
-        lambda message: pytest.fail(f"unexpected skip: {message}"),
-    )
-    monkeypatch.setattr(
         test_authenticated_wrap,
         "wrap_key_authenticated",
         _raise_function_not_supported,
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="AES-GCM authenticated wrap rejected"):
-        test_authenticated_wrap.TestWrapIntegrity().test_aes_gcm_wrap_bit_flip_detected(
-            rs, "3.2", p11_config
-        )
+    assert_skips(
+        test_authenticated_wrap.TestWrapIntegrity().test_aes_gcm_wrap_bit_flip_detected,
+        rs,
+        "3.2",
+        p11_config,
+        match="C_WrapKeyAuthenticated",
+    )
 
 
 def test_authenticated_wrap_gcm_bitflip_unknown_unwrap_error_propagates(

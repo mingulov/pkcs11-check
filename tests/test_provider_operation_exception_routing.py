@@ -100,7 +100,11 @@ def test_ec_import_setup_non_ckr_exception_propagates(
         "gen_ec_keypair",
         lambda *_a, **_k: (_ for _ in ()).throw(exc),
     )
-    rs = SimpleNamespace(raw=object(), sh=1)
+    # I-1: _make_ec_keypair() now gates on EC_KEY_PAIR_GEN advertisement before
+    # calling gen_ec_keypair(); advertise it here so this test still exercises
+    # the non-CKR exception path it exists to cover, rather than short-circuiting
+    # on the (unrelated) missing has_mechanism attribute.
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: True)
 
     with pytest.raises(type(exc), match=str(exc)):
         try:
