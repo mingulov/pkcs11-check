@@ -151,13 +151,16 @@ class _FakeRawCreateEncrypt:
         return CKR_OK
 
 
-def test_allowed_mechanisms_missing_readback_disables_enforcement_oracle_and_cleans_up(
+def test_allowed_mechanisms_missing_readback_still_enforces_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing CKA_ALLOWED_MECHANISMS readback disables the empty-array enforcement
-    oracle entirely (no `classify_policy_enforcement` call, no encrypt probe on
-    unverified enforcement) instead of silently treating the sentinel comparison
-    `None == []` as a claimed-but-unverified `False`; the object is still destroyed."""
+    """F7 claim-sweep regression: ``rv == CKR_OK`` from the earlier C_CreateObject
+    already proves the module accepted the empty CKA_ALLOWED_MECHANISMS template
+    at creation, so a missing readback must not disable the enforcement oracle --
+    ``classify_policy_enforcement`` still runs as claimed=True (mutation:
+    restoring the pre-fix ``claimed = allowed_mechanisms == []`` sentinel-compare
+    derivation -- ``None == []`` is False -- silently disables the oracle
+    instead)."""
     raw = _FakeRawCreateEncrypt()
     rs = _session(mechanisms={"AES_ECB"}, raw=raw)
     destroyed: list[int] = []
@@ -175,8 +178,13 @@ def test_allowed_mechanisms_missing_readback_disables_enforcement_oracle_and_cle
 
     ckr_object_case.TestCreateObjectErrors().test_allowed_mechanisms_empty_null_pointer_enforced(rs)
 
-    assert enforcement_calls == []
-    assert raw.encrypt_init_calls == 0
+    assert enforcement_calls == [
+        {
+            "claimed": True,
+            "violated": True,
+            "label": "CKA_ALLOWED_MECHANISMS empty-array enforcement for C_EncryptInit/C_Encrypt",
+        }
+    ]
     assert destroyed == [100]
 
     records = C.get_records()
@@ -191,15 +199,26 @@ def test_allowed_mechanisms_missing_readback_disables_enforcement_oracle_and_cle
 # ---------------------------------------------------------------------------
 
 
-def test_ckr_object_sensitive_value_missing_readback_disables_enforcement_and_cleans_up(
+def test_ckr_object_sensitive_value_missing_readback_still_enforces_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """F7 claim-sweep regression: gen_aes_key_or_xfail() raises/xfails unless the
+    module accepted CKA_SENSITIVE=True, so a missing readback must not disable
+    the enforcement oracle -- claimed stays True and a readable CKA_VALUE still
+    reaches classify_policy_enforcement as a proven violation (mutation:
+    restoring the pre-fix ``claimed = sensitive_readback is True`` derivation on
+    MISSING_ATTRIBUTE silently disables the oracle instead)."""
+    from pkcs11_check.raw.types_std import CKA_VALUE
+
     rs = _session()
     destroyed: list[int] = []
     enforcement_calls: list[dict[str, Any]] = []
 
+    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict[Any, Any]:
+        return {CKA_VALUE: b"\x00" * 32} if CKA_VALUE in attrs else {}
+
     monkeypatch.setattr(ckr_object_case, "gen_aes_key_or_xfail", lambda *_a, **_k: 201)
-    monkeypatch.setattr(ckr_object_case, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(ckr_object_case, "read_attributes", _read)
     monkeypatch.setattr(
         ckr_object_case,
         "classify_policy_enforcement",
@@ -211,22 +230,36 @@ def test_ckr_object_sensitive_value_missing_readback_disables_enforcement_and_cl
 
     ckr_object_case.TestGetAttributeErrors().test_sensitive_value(rs)
 
-    assert enforcement_calls == []
+    assert enforcement_calls == [
+        {
+            "claimed": True,
+            "violated": True,
+            "label": "read CKA_VALUE on a CKA_SENSITIVE=True key "
+            "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+        }
+    ]
     assert destroyed == [201]
     records = C.get_records()
     assert len(records) == 1
     _assert_readback_record(records[0], reason="not_operational")
 
 
-def test_ckr_codes_attribute_sensitive_missing_readback_disables_enforcement_and_cleans_up(
+def test_ckr_codes_attribute_sensitive_missing_readback_still_enforces_and_cleans_up(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """F7 claim-sweep regression: same shape as the ckr_object.py sensitive-value
+    site -- a missing readback must not disable the enforcement oracle."""
+    from pkcs11_check.raw.types_std import CKA_VALUE
+
     rs = _session()
     destroyed: list[int] = []
     enforcement_calls: list[dict[str, Any]] = []
 
+    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict[Any, Any]:
+        return {CKA_VALUE: b"\x00" * 32} if CKA_VALUE in attrs else {}
+
     monkeypatch.setattr(ckr_codes_case, "gen_aes_key_or_xfail", lambda *_a, **_k: 202)
-    monkeypatch.setattr(ckr_codes_case, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(ckr_codes_case, "read_attributes", _read)
     monkeypatch.setattr(
         ckr_codes_case,
         "classify_policy_enforcement",
@@ -238,22 +271,36 @@ def test_ckr_codes_attribute_sensitive_missing_readback_disables_enforcement_and
 
     ckr_codes_case.TestCKRAttributeErrors().test_ckr_attribute_sensitive(rs)
 
-    assert enforcement_calls == []
+    assert enforcement_calls == [
+        {
+            "claimed": True,
+            "violated": True,
+            "label": "read CKA_VALUE on a CKA_SENSITIVE=True key "
+            "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+        }
+    ]
     assert destroyed == [202]
     records = C.get_records()
     assert len(records) == 1
     _assert_readback_record(records[0], reason="not_operational")
 
 
-def test_ckr_spec_compliance_sensitive_value_missing_readback_disables_enforcement(
+def test_ckr_spec_compliance_sensitive_value_missing_readback_still_enforces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """F7 claim-sweep regression: same shape as the ckr_object.py sensitive-value
+    site -- a missing readback must not disable the enforcement oracle."""
+    from pkcs11_check.raw.types_std import CKA_VALUE
+
     rs = _session()
     destroyed: list[int] = []
     enforcement_calls: list[dict[str, Any]] = []
 
+    def _read(_raw: object, _sh: object, _h: object, attrs: list[int]) -> dict[Any, Any]:
+        return {CKA_VALUE: b"\x00" * 32} if CKA_VALUE in attrs else {}
+
     monkeypatch.setattr(ckr_spec_case, "gen_aes_key_or_xfail", lambda *_a, **_k: 203)
-    monkeypatch.setattr(ckr_spec_case, "read_attributes", lambda *_a, **_k: {})
+    monkeypatch.setattr(ckr_spec_case, "read_attributes", _read)
     monkeypatch.setattr(
         ckr_spec_case,
         "classify_policy_enforcement",
@@ -265,7 +312,14 @@ def test_ckr_spec_compliance_sensitive_value_missing_readback_disables_enforceme
 
     ckr_spec_case.TestCKRAttributeCompliance().test_sensitive_value_returns_attribute_sensitive(rs)
 
-    assert enforcement_calls == []
+    assert enforcement_calls == [
+        {
+            "claimed": True,
+            "violated": True,
+            "label": "read CKA_VALUE on a CKA_SENSITIVE=True key "
+            "(PKCS#11 v3.2 requires CKR_ATTRIBUTE_SENSITIVE)",
+        }
+    ]
     assert destroyed == [203]
     records = C.get_records()
     assert len(records) == 1

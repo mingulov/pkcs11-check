@@ -643,14 +643,20 @@ class TestDerivedAttributeInvariants:
             extractable = attr_or_record(
                 attrs,
                 CKA_EXTRACTABLE,
-                label="CKA_EXTRACTABLE:never-extractable-invariant",
-                mechanism="CKM_AES_KEY_GEN",
+                label=(
+                    "CKA_EXTRACTABLE:never-extractable-invariant "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                inherit_mechanism=False,
             )
             never_extractable = attr_or_record(
                 attrs,
                 CKA_NEVER_EXTRACTABLE,
-                label="CKA_NEVER_EXTRACTABLE:never-extractable-invariant",
-                mechanism="CKM_AES_KEY_GEN",
+                label=(
+                    "CKA_NEVER_EXTRACTABLE:never-extractable-invariant "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                inherit_mechanism=False,
             )
             if extractable is MISSING_ATTRIBUTE:
                 if never_extractable is not MISSING_ATTRIBUTE:
@@ -759,14 +765,17 @@ class TestDerivedAttributeInvariants:
             local = attr_or_record(
                 attrs,
                 CKA_LOCAL,
-                label="CKA_LOCAL:generated-key-origin",
-                mechanism="CKM_AES_KEY_GEN",
+                label=("CKA_LOCAL:generated-key-origin (producer_mechanism=CKM_AES_KEY_GEN)"),
+                inherit_mechanism=False,
             )
             mechanism = attr_or_record(
                 attrs,
                 CKA_KEY_GEN_MECHANISM,
-                label="CKA_KEY_GEN_MECHANISM:generated-key-origin",
-                mechanism="CKM_AES_KEY_GEN",
+                label=(
+                    "CKA_KEY_GEN_MECHANISM:generated-key-origin "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                inherit_mechanism=False,
             )
             _classify_generated_key_origin_invariant(
                 local_present=local is not MISSING_ATTRIBUTE,
@@ -789,14 +798,19 @@ class TestDerivedAttributeInvariants:
             sensitive = attr_or_record(
                 attrs,
                 CKA_SENSITIVE,
-                label="CKA_SENSITIVE:always-sensitive-invariant",
-                mechanism="CKM_AES_KEY_GEN",
+                label=(
+                    "CKA_SENSITIVE:always-sensitive-invariant (producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                inherit_mechanism=False,
             )
             always_sensitive = attr_or_record(
                 attrs,
                 CKA_ALWAYS_SENSITIVE,
-                label="CKA_ALWAYS_SENSITIVE:always-sensitive-invariant",
-                mechanism="CKM_AES_KEY_GEN",
+                label=(
+                    "CKA_ALWAYS_SENSITIVE:always-sensitive-invariant "
+                    "(producer_mechanism=CKM_AES_KEY_GEN)"
+                ),
+                inherit_mechanism=False,
             )
             if sensitive is MISSING_ATTRIBUTE:
                 if always_sensitive is not MISSING_ATTRIBUTE:
@@ -910,8 +924,8 @@ class TestContradictoryCreationFaithfulness:
                 actual = attr_or_record(
                     readback,
                     attr,
-                    label=f"{label}:attribute {attr!r}",
-                    mechanism="CKM_AES_KEY_GEN",
+                    label=f"{label}:attribute {attr!r} (producer_mechanism=CKM_AES_KEY_GEN)",
+                    inherit_mechanism=False,
                 )
                 if actual is MISSING_ATTRIBUTE:
                     continue

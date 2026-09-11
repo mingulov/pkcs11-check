@@ -37,6 +37,20 @@
   Sidecar recovery remains in place for salvage only (corrupt or missing `results.json`, or an
   externally salvaged `partial` payload), where it is warned as unproven and the payload stays
   `incomplete`.
+- **Classification observability in the quality audit.** `quality.json` gains an additive
+  `classification_observability` block (separately versioned via its own `contract_version`,
+  independent of the unchanged `quality.json` `schema_version`) reporting `unclassified`
+  occurrences directly from the raw, unrepaired `report.jsonl` stream(s). It never fabricates a
+  zero: a `status` of `unavailable` renders an explicit `--` instead of a fake `unclassified: 0`,
+  and a `status` of `partial` (a missing or malformed source was seen) renders every count as an
+  explicit lower bound (`>=N`), never as if it were exact. A pooled/merged run regenerates this
+  block by re-reading each shard's own raw `report.jsonl` directly rather than summing per-shard
+  `quality.json` counts. `pkcs11-check report` renders a `## classification observability`
+  section from this block when present. An integrated release-gate test exercises the real
+  isolated file-runner's crash/retry machinery end-to-end and asserts the release-acceptance
+  properties on the raw JSONL, grouped classification occurrences, unified logical counts, and
+  JUnit artifact together with both a clean and a deliberately-explained-unclassified
+  observability fixture.
 
 ### Fixed
 
@@ -105,6 +119,37 @@
 - **Fresh empty runs clear old evidence before failing.** A non-resume run that collects zero units
   still exits with the no-tests error, but first removes stale state-adjacent recovery/report
   caches and report/coverage/provisioning/quality artifacts, then writes an empty durable result.
+- **`C_GetAttributeValue` readback records no longer inherit an unrelated ambient mechanism.**
+  Shared readback helpers reached from multiple call sites (EC, DH, KDF, AES-KDF, lifecycle, and
+  provisioning helpers, plus operational ECDH peer-point normalization) recorded findings under
+  whichever mechanism happened to be active in the caller, making `spec_ref` non-deterministic
+  across test orderings because `wrap_context_for()` memoises per session handle. These records
+  are now mechanism-free (`operation="C_GetAttributeValue"`, `mechanism=None`,
+  `inherit_mechanism=False`), with the producing mechanism preserved as context in the label and
+  `detail.producer_mechanism` instead of being asserted as the record's own mechanism.
+- **Missing provider attributes no longer fabricate or mask findings.** Every provider-backed
+  attribute read in `testcases/` now routes through the caller-owned `attr_or_record()` presence
+  helper instead of subscripting the readback dict directly, so a provider that omits an
+  attribute yields a structured `<unavailable>` observation rather than an uncaught `KeyError`
+  that aborts the test and discards every other observation already recorded in it. This also
+  fixed several sites where an omission had been silently normalized into a wrong value (masking
+  a finding) or, conversely, misread as a value the provider never returned (fabricating one),
+  including a case where a module that correctly refused a key-type-confusion attack by omitting
+  `CKA_VALUE` was reported as a CRITICAL accepted-confusion finding. An all-source AST+symtable
+  taint analyzer (`tests/_attribute_access_guard.py`) enforces this with an unconfigured
+  zero-violation gate (`tests/test_required_attribute_access_guard.py`) across every file under
+  `src/pkcs11_check/testcases/`.
+- **Honeypot page-size probing survives a 32-bit `OverflowError`.** On builds where `mmap.mmap()`
+  raises `OverflowError` for an oversized length instead of `OSError`/`ValueError`, the honeypot
+  now falls back to the next candidate size instead of letting the exception escape.
+- **p11-kit interop tests skip cleanly when its CLI is absent.** `test_interop_openssl.py` checks
+  `_have_p11kit()` before invoking the `p11-kit` CLI, instead of failing when the tool is not
+  installed.
+- **A NULL function-list entry is no longer misclassified as a provider crash.** Loading a
+  selected function table now removes any previously-loaded entry whose pointer has gone NULL
+  (`self._funcs.pop(name, None)`) instead of leaving a stale callable behind, so a genuinely
+  absent function is reported as a missing function-table entry rather than surfacing as a crash
+  the first time it is called.
 
 ## [0.1.9] - 2026-08-28
 

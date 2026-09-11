@@ -185,9 +185,13 @@ def test_missing_initial_trusted_read_keeps_setter_probe_and_omission_finding(
     records = classification.get_records()
     assert len(records) == 1
     assert records[0].reason == "honest_deviation"
-    assert records[0].label == "USER:setattr-CKA_TRUSTED initial readback"
+    assert records[0].label == (
+        "USER:setattr-CKA_TRUSTED initial readback (producer_mechanism=CKM_AES_KEY_GEN)"
+    )
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_GEN"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert records[0].mechanism is None
     assert records[0].detail == {
         "attribute": {"name": "CKA_TRUSTED", "id": int(CKA_TRUSTED)},
     }
@@ -323,9 +327,11 @@ def test_so_trusted_missing_disables_only_dependent_check(
 
     records = classification.get_records()
     assert len(records) == 1
-    assert records[0].label == "SO:create-CKA_TRUSTED readback"
+    assert records[0].label == (
+        "SO:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)"
+    )
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_KEY_GEN"
+    assert records[0].mechanism is None
     assert destroyed == [7]
 
 
@@ -398,12 +404,18 @@ def test_always_auth_missing_is_reported_without_running_dependent_sign(
 
     records = classification.get_records()
     assert len(records) == 1
-    assert records[0].label == "CKA_ALWAYS_AUTHENTICATE setup readback"
+    assert records[0].label == (
+        "CKA_ALWAYS_AUTHENTICATE setup readback (producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+    )
+    assert records[0].mechanism is None
 
 
-def test_public_private_missing_is_not_claimed_as_policy_breach(
+def test_public_private_missing_readback_is_still_claimed_as_policy_breach(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """gen_aes_key() succeeding with CKA_PRIVATE=True on an unauthenticated session
+    already proves creation-time acceptance of the claim; a missing CKA_PRIVATE
+    readback must not downgrade the resulting self-contradiction to a non-fail."""
     session = _access_session()
     config = SimpleNamespace(pin="1234")
     monkeypatch.setattr(tal, "require_operational_aes_keygen", lambda *_a, **_k: None)
@@ -415,13 +427,20 @@ def test_public_private_missing_is_not_claimed_as_policy_breach(
     monkeypatch.setattr(tal, "_login_user_raw", lambda *_a, **_k: None)
     session.raw.C_Logout = lambda *_a, **_k: int(CKR_OK)
 
-    tal.TestPublicSessionRestrictions().test_public_cannot_create_private_token_object(
-        session, config
-    )
+    with pytest.raises(Failed) as exc_info:
+        tal.TestPublicSessionRestrictions().test_public_cannot_create_private_token_object(
+            session, config
+        )
+    assert not isinstance(exc_info.value, XFailed)
 
     records = classification.get_records()
-    assert len(records) == 1
-    assert records[0].label == "public CKA_PRIVATE=True token object readback"
+    assert records[0].label == (
+        "public CKA_PRIVATE=True token object readback (producer_mechanism=CKM_AES_KEY_GEN)"
+    )
+    assert records[0].mechanism is None
+    assert records[-1].reason == "self_contradiction"
+    assert records[-1].detail is not None
+    assert records[-1].detail["actual"] == "missing"
 
 
 def test_user_granted_trusted_is_a_hard_policy_contradiction(

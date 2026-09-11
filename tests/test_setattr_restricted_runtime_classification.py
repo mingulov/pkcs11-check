@@ -87,7 +87,10 @@ def test_read_bool_missing_is_structured_and_noncolliding(
     record = C.get_records()[0]
     assert record.reason == "honest_deviation"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_AES_KEY_GEN"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert record.mechanism is None
+    assert "producer_mechanism=CKM_AES_KEY_GEN" in record.label
     assert record.actual_ckr is None
     assert record.detail == {
         "attribute": {"name": "CKA_SENSITIVE", "id": int(CKA_SENSITIVE)},

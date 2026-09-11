@@ -177,7 +177,7 @@ def _accumulate(
         group["phase_counts"][phase] = group["phase_counts"].get(phase, 0) + 1
     if target is not None and attempt is not None:
         group["target_counts"][target] = group["target_counts"].get(target, 0) + 1
-        group["attempt_counts"][str(attempt)] = group["attempt_counts"].get(str(attempt), 0) + 1
+        group["attempt_counts"][attempt] = group["attempt_counts"].get(attempt, 0) + 1
         dedup_key = (
             target,
             attempt,

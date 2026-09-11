@@ -173,9 +173,13 @@ def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
         value = attr_or_record(
             attrs,
             CKA_ALWAYS_AUTHENTICATE,
-            label="CKA_ALWAYS_AUTHENTICATE setup readback",
+            label=(
+                "CKA_ALWAYS_AUTHENTICATE setup readback "
+                "(producer_operation=C_GenerateKeyPair, "
+                "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+            ),
             kind="metadata",
-            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            inherit_mechanism=False,
         )
         if value is MISSING_ATTRIBUTE:
             missing_record = classification.get_records()[-1]

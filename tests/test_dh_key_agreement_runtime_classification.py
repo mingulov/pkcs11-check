@@ -470,6 +470,30 @@ def test_generated_prime_missing_is_honest_deviation_and_cleans_up(
     assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
 
 
+def test_generated_prime_too_short_is_classified_metadata_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: generated CKA_PRIME readback is present but under the requested 2048 bits.
+
+    Before the fix this was a bare ``assert isinstance(prime, bytes)`` /
+    ``assert len(prime) * 8 >= 2048`` -- an unclassified pytest failure. It must now surface
+    as a properly classified ``wrong_result``/``metadata`` finding (still a hard failure).
+    """
+    monkeypatch.setattr(dh, "read_attributes", lambda *_a, **_k: {CKA_PRIME: b"\x01" * 8})
+    monkeypatch.setattr(dh, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(BaseException):
+        dh.TestDHParameterGeneration().test_generate_dh_parameters(_parameter_session())
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].kind == "metadata"
+    assert records[0].outcome == "fail"
+    assert records[0].detail is not None
+    assert records[0].detail["actual"]["bits"] == 64
+
+
 def test_dh_public_missing_drops_stale_active_mechanism(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -486,6 +510,29 @@ def test_dh_public_missing_drops_stale_active_mechanism(
     assert records[0].operation == "C_GetAttributeValue"
     assert records[0].mechanism is None
     assert records[0].spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+
+
+def test_dh_public_present_empty_value_is_classified_metadata_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: CKA_VALUE readback for the generated public key is present but empty.
+
+    Before the fix this was a bare ``assert isinstance(pub_value, bytes)`` /
+    ``assert len(pub_value) > 0`` -- an unclassified pytest failure. It must now surface as
+    a properly classified ``wrong_result``/``metadata`` finding (still a hard failure).
+    """
+    monkeypatch.setattr(dh, "_gen_dh_keypair", lambda *_a, **_k: (11, 21))
+    monkeypatch.setattr(dh, "read_attributes", lambda *_a, **_k: {CKA_VALUE: b""})
+    monkeypatch.setattr(dh, "destroy_quietly", lambda *_a: None)
+
+    with pytest.raises(BaseException):
+        dh.TestDHKeyAgreement().test_dh_keypair_generation(_session())
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "wrong_result"
+    assert records[0].kind == "metadata"
+    assert records[0].outcome == "fail"
 
 
 def test_dh_exact_vector_missing_value_drops_stale_active_mechanism(

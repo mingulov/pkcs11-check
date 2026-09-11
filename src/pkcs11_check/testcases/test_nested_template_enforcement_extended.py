@@ -171,7 +171,15 @@ def _read_claimed_template(
     label: str,
     mechanism: str,
 ) -> tuple[bool, C.Classification | None]:
-    """Read a nested-template claim without hiding provider metadata failures."""
+    """Read a nested-template claim without hiding provider metadata failures.
+
+    Every call site reaches this only after C_GenerateKey(Pair)/C_CreateObject
+    already returned CKR_OK for a template requesting the nested-template
+    attribute (a rejection classifies/raises before this is called), so
+    creation-time acceptance is independent claim evidence.  A missing or
+    unreadable readback must not downgrade that claim; only a present but
+    malformed value is real (non-missing) evidence and stays unclaimed.
+    """
     try:
         attrs = read_attributes(rs.raw, rs.sh, handle, [attr])
     except CkrAssertionError as exc:
@@ -191,20 +199,20 @@ def _read_claimed_template(
             detail={"attribute": int(attr)},
             summary=f"{label}: attribute read was rejected with {ckr_name(exc.rv)}",
         )
-        return False, record
+        return True, record
 
     before = len(C.get_records())
     raw_template = attr_or_record(
         attrs,
         attr,
-        label=label,
+        label=f"{label} (producer_mechanism={mechanism})",
         reason="not_operational",
         kind="metadata",
-        mechanism=mechanism,
+        inherit_mechanism=False,
     )
     if raw_template is MISSING_ATTRIBUTE:
         records = C.get_records()
-        return False, records[-1] if len(records) > before else None
+        return True, records[-1] if len(records) > before else None
 
     if (
         type(raw_template) is bytes

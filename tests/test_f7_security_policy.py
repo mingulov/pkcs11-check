@@ -308,10 +308,17 @@ def test_private_key_missing_sensitive_does_not_mask_exponent_exposure(
 def test_private_key_missing_protection_readback_is_recorded_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One omission, one record: absence must not ALSO fire the malformed classify."""
+    """Each independent omission is its own single record: absence must not ALSO fire
+    the malformed classify for that same attribute.
+
+    N16: CKA_PRIVATE_EXPONENT's own absence used to be read via a bare membership
+    check (bypassing attr_or_record), so a correctly-protected key produced ZERO
+    report.jsonl record for it. It must now be its own visible record too --
+    "recorded once" is a per-attribute invariant, not a per-test one.
+    """
     monkeypatch.setattr(api_sec, "_gen_api_security_rsa_keypair", lambda *_a, **_k: (525, 526))
     # CKA_SENSITIVE omitted; CKA_EXTRACTABLE present; the exponent is correctly
-    # NOT returned, so there is no contradiction -- only the omission.
+    # NOT returned, so there is no contradiction -- only the two omissions.
     monkeypatch.setattr(api_sec, "read_attributes", lambda *_a, **_k: {CKA_EXTRACTABLE: False})
     monkeypatch.setattr(api_sec, "destroy_quietly", lambda *_a, **_k: None)
 
@@ -320,14 +327,23 @@ def test_private_key_missing_protection_readback_is_recorded_once(
     )
 
     records = C.get_records()
-    assert [r.reason for r in records] == ["not_operational"]
+    assert [r.reason for r in records] == ["not_operational", "honest_deviation"]
     assert records[0].label == "RSA private-key CKA_SENSITIVE readback"
+    assert records[1].label == "RSA private-key CKA_PRIVATE_EXPONENT readback"
+    # No CKR was actually observed for the exponent's absence (the mock returns a
+    # plain dict with no refusals channel) -- none may be invented.
+    assert records[1].actual_ckr is None
 
 
 def test_private_key_malformed_protection_readback_is_recorded_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A PRESENT-but-malformed protection attribute is still its own record."""
+    """A PRESENT-but-malformed protection attribute is still its own record.
+
+    The mock returns the same dict for every ``read_attributes`` call, so
+    CKA_PRIVATE_EXPONENT is also absent from it -- that absence is now its own
+    visible record too (N16), ahead of the malformed-policy-readback record.
+    """
     monkeypatch.setattr(api_sec, "_gen_api_security_rsa_keypair", lambda *_a, **_k: (523, 524))
     monkeypatch.setattr(
         api_sec,
@@ -340,8 +356,9 @@ def test_private_key_malformed_protection_readback_is_recorded_once(
         api_sec.TestSensitiveExtraction().test_private_key_not_extractable(_session())
 
     records = C.get_records()
-    assert [r.reason for r in records] == ["honest_deviation"]
-    assert records[0].label == "RSA private-key protection attributes malformed"
+    assert [r.reason for r in records] == ["honest_deviation", "honest_deviation"]
+    assert records[0].label == "RSA private-key CKA_PRIVATE_EXPONENT readback"
+    assert records[1].label == "RSA private-key protection attributes malformed"
 
 
 def test_non_extractable_value_present_is_a_hard_fail(
@@ -605,15 +622,18 @@ def test_unbound_unwrap_honored_template_records_only_the_omissions(
 ) -> None:
     """A conformant unbound unwrap is not turned into a deviation by the oracle.
 
-    The result honors the caller template exactly, so only the two source-key
-    omissions are recorded -- no invented template-honouring deviation, and each
-    omission is recorded exactly once.
+    The result honors the caller template exactly, so no template-honouring
+    deviation is invented. The two source-key omissions are recorded, and so
+    is the result key's CKA_VALUE omission -- the CKA_SENSITIVE/CKA_EXTRACTABLE
+    attr_or_record() calls on the result read DIFFERENT attributes and do not
+    cover CKA_VALUE, so recording it here is what makes its absence visible;
+    each omission is still recorded exactly once.
     """
     destroyed: list[int] = []
     session = _patch_unbound_unwrap(
         monkeypatch,
         {},  # source claims unreadable: posture-only evidence
-        {CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+        {CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},  # CKA_VALUE also omitted
         destroyed,
     )
 
@@ -623,11 +643,17 @@ def test_unbound_unwrap_honored_template_records_only_the_omissions(
 
     assert destroyed == [713, 711, 712]
     records = C.get_records()
-    assert [r.reason for r in records] == ["honest_deviation", "honest_deviation"]
-    assert [r.kind for r in records] == ["metadata", "metadata"]
+    assert [r.reason for r in records] == [
+        "honest_deviation",
+        "honest_deviation",
+        "honest_deviation",
+    ]
+    assert [r.kind for r in records] == ["metadata", "metadata", "metadata"]
     assert records[0].label == "Tookan unbound unwrap source key CKA_SENSITIVE readback"
     assert records[0].mechanism is None
     assert records[0].spec_ref == _SPEC_REF
+    assert records[2].label == "Tookan unbound unwrap result CKA_VALUE readback"
+    assert records[2].actual_ckr is None
 
 
 # ---------------------------------------------------------------------------
@@ -855,17 +881,20 @@ def test_cbc_oracle_observed_extractable_true_is_not_applicable(
 def test_unbound_unwrap_partial_readback_records_each_omission_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One omission, one record.
+    """One omission per attribute, one record per attribute.
 
-    The result honors CKA_SENSITIVE=False and omits CKA_EXTRACTABLE, so exactly
-    one record is expected: neither the "protection readback" classify nor the
-    "did not honor output template" classify may re-report the same omission.
+    The result honors CKA_SENSITIVE=False and omits both CKA_EXTRACTABLE and
+    CKA_VALUE, so exactly two records are expected -- one per distinct
+    omitted attribute: neither the "protection readback" classify nor the
+    "did not honor output template" classify may re-report either omission,
+    and the CKA_VALUE readback (a different attribute from the sibling
+    CKA_SENSITIVE/CKA_EXTRACTABLE calls) is recorded in its own right.
     """
     destroyed: list[int] = []
     session = _patch_unbound_unwrap(
         monkeypatch,
         {CKA_SENSITIVE: True, CKA_EXTRACTABLE: True},
-        {CKA_SENSITIVE: False},
+        {CKA_SENSITIVE: False},  # CKA_EXTRACTABLE and CKA_VALUE both omitted
         destroyed,
     )
 
@@ -875,8 +904,10 @@ def test_unbound_unwrap_partial_readback_records_each_omission_once(
 
     assert destroyed == [713, 711, 712]
     records = C.get_records()
-    assert [r.reason for r in records] == ["not_operational"]
+    assert [r.reason for r in records] == ["not_operational", "honest_deviation"]
     assert records[0].label == "Tookan unbound unwrap result CKA_EXTRACTABLE readback"
+    assert records[1].label == "Tookan unbound unwrap result CKA_VALUE readback"
+    assert records[1].actual_ckr is None
 
 
 def test_unbound_unwrap_observed_template_deviation_is_still_recorded(
@@ -887,7 +918,7 @@ def test_unbound_unwrap_observed_template_deviation_is_still_recorded(
     session = _patch_unbound_unwrap(
         monkeypatch,
         {CKA_SENSITIVE: True, CKA_EXTRACTABLE: True},
-        {CKA_EXTRACTABLE: False},  # requested True -> observed deviation
+        {CKA_EXTRACTABLE: False},  # requested True -> observed deviation; CKA_VALUE omitted
         destroyed,
     )
 
@@ -895,9 +926,14 @@ def test_unbound_unwrap_observed_template_deviation_is_still_recorded(
         cve.TestTookanUnwrapAttrs().test_unwrapped_key_cannot_unset_sensitive(session)
 
     records = C.get_records()
-    assert [r.reason for r in records] == ["not_operational", "honest_deviation"]
+    assert [r.reason for r in records] == [
+        "not_operational",
+        "honest_deviation",
+        "honest_deviation",
+    ]
     assert records[0].label == "Tookan unbound unwrap result CKA_SENSITIVE readback"
-    assert records[1].label == "Tookan unbound unwrap result did not honor output template"
+    assert records[1].label == "Tookan unbound unwrap result CKA_VALUE readback"
+    assert records[2].label == "Tookan unbound unwrap result did not honor output template"
 
 
 def _patch_type_confusion(
@@ -1090,12 +1126,15 @@ def test_default_strip_missing_extractable_does_not_mask_value_exposure(
 def test_default_strip_partial_readback_records_each_omission_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One omission, one record, for the default-strip result readback."""
+    """One omission per attribute, one record per attribute, for the
+    default-strip result readback -- CKA_EXTRACTABLE and CKA_VALUE are
+    different attributes, so each gets its own record.
+    """
     monkeypatch.setattr(reimport, "gen_aes_key", lambda *_a, **_k: 911)
     monkeypatch.setattr(reimport, "gen_aes_key_or_xfail", lambda *_a, **_k: 912)
     monkeypatch.setattr(reimport, "wrap_key", lambda *_a, **_k: b"wrapped")
     monkeypatch.setattr(reimport, "unwrap_key", lambda *_a, **_k: 913)
-    # CKA_SENSITIVE honors the template; CKA_EXTRACTABLE omitted; CKA_VALUE absent.
+    # CKA_SENSITIVE honors the template; CKA_EXTRACTABLE and CKA_VALUE both omitted.
     monkeypatch.setattr(reimport, "read_attributes", lambda *_a, **_k: {CKA_SENSITIVE: False})
     destroyed: list[int] = []
     monkeypatch.setattr(reimport, "destroy_quietly", lambda _raw, _sh, h: destroyed.append(h))
@@ -1107,8 +1146,10 @@ def test_default_strip_partial_readback_records_each_omission_once(
 
     assert destroyed == [913, 912, 911]
     records = C.get_records()
-    assert [r.reason for r in records] == ["not_operational"]
+    assert [r.reason for r in records] == ["not_operational", "honest_deviation"]
     assert records[0].label == "Default-strip unwrap result CKA_EXTRACTABLE readback"
+    assert records[1].label == "Default-strip unwrap result CKA_VALUE readback"
+    assert records[1].actual_ckr is None
 
 
 def test_default_strip_observed_template_deviation_is_still_recorded(
@@ -1127,9 +1168,14 @@ def test_default_strip_observed_template_deviation_is_still_recorded(
         reimport.TestDefaultStripIsPermitted().test_default_strip_is_permitted(session)
 
     records = C.get_records()
-    assert [r.reason for r in records] == ["not_operational", "honest_deviation"]
+    assert [r.reason for r in records] == [
+        "not_operational",
+        "honest_deviation",
+        "honest_deviation",
+    ]
     assert records[0].label == "Default-strip unwrap result CKA_SENSITIVE readback"
-    assert records[1].label == "Default-strip unwrap result did not honor output template"
+    assert records[1].label == "Default-strip unwrap result CKA_VALUE readback"
+    assert records[2].label == "Default-strip unwrap result did not honor output template"
 
 
 class _FakeGenerateKeyRaw:

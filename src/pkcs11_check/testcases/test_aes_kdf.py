@@ -102,6 +102,37 @@ def _derived_value_shape_record(
     )
 
 
+def _derived_value_zero_record(
+    value: Any,
+    *,
+    leg: str,
+    label: str,
+    mechanism: str,
+) -> C.Classification | None:
+    """Record an all-zero derived key: a crypto-correctness break, not a shape defect."""
+    if value is MISSING_ATTRIBUTE:
+        return None
+    if not isinstance(value, bytes) or not value:
+        return None
+    if value != b"\x00" * len(value):
+        return None
+    return C.record_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation="C_DeriveKey",
+        mechanism=mechanism,
+        summary=f"{label}: derived key material is all zeros",
+        detail={
+            "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
+            "leg": leg,
+            "actual": {"length": len(value)},
+            "producer_operation": "C_DeriveKey",
+            "producer_mechanism": mechanism,
+        },
+    )
+
+
 def _read_pair_value(
     rs: Any,
     handle: int,
@@ -275,7 +306,14 @@ class TestAESECBEncryptData:
                     mechanism="CKM_AES_ECB_ENCRYPT_DATA",
                     expected_length=16,
                 )
-                assert okm != b"\x00" * 16, "Derived key is all zeros"
+                zero_record = _derived_value_zero_record(
+                    okm,
+                    leg="derived",
+                    label="CKM_AES_ECB_ENCRYPT_DATA:derived CKA_VALUE",
+                    mechanism="CKM_AES_ECB_ENCRYPT_DATA",
+                )
+                if zero_record is not None:
+                    C.raise_for_record(zero_record)
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         finally:
@@ -464,7 +502,14 @@ class TestAESCBCEncryptData:
                     mechanism="CKM_AES_CBC_ENCRYPT_DATA",
                     expected_length=16,
                 )
-                assert okm != b"\x00" * 16, "Derived key is all zeros"
+                zero_record = _derived_value_zero_record(
+                    okm,
+                    leg="derived",
+                    label="CKM_AES_CBC_ENCRYPT_DATA:derived CKA_VALUE",
+                    mechanism="CKM_AES_CBC_ENCRYPT_DATA",
+                )
+                if zero_record is not None:
+                    C.raise_for_record(zero_record)
             finally:
                 destroy_quietly(rs.raw, rs.sh, derived)
         finally:

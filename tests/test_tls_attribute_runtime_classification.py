@@ -60,7 +60,10 @@ def test_tls12_missing_derived_value_is_structured_and_cleans_up(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_TLS12_MASTER_KEY_DERIVE"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_TLS12_MASTER_KEY_DERIVE" in records[0].label
     assert records[0].detail == {"attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)}}
     assert MISSING_ATTRIBUTE is not False
 
@@ -432,12 +435,17 @@ def test_ssl3_key_material_reads_independent_outputs_before_hard_failure(
         "wrong_result",
         "wrong_result",
     ]
+    # F6: records[0] (missing value) is a plain readback and is never stamped with
+    # the mechanism that produced the object being read -- the producer survives in
+    # the label instead. records[1:] (malformed present values) are unrelated and
+    # keep their mechanism.
     assert [record.mechanism for record in records] == [
-        "CKM_SSL3_KEY_AND_MAC_DERIVE",
+        None,
         "CKM_SSL3_KEY_AND_MAC_DERIVE",
         "CKM_SSL3_KEY_AND_MAC_DERIVE",
         "CKM_SSL3_KEY_AND_MAC_DERIVE",
     ]
+    assert "producer_mechanism=CKM_SSL3_KEY_AND_MAC_DERIVE" in records[0].label
     assert [record.operation for record in records] == [
         "C_GetAttributeValue",
         "C_DeriveKey",
@@ -875,7 +883,10 @@ def test_wtls_missing_key_type_is_structured_and_cleans_up(
     record = C.get_records()[0]
     assert record.reason == "not_operational"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_WTLS_PRE_MASTER_KEY_GEN"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert record.mechanism is None
+    assert "producer_mechanism=CKM_WTLS_PRE_MASTER_KEY_GEN" in record.label
     assert record.detail == {"attribute": {"name": "CKA_KEY_TYPE", "id": int(CKA_KEY_TYPE)}}
 
 
@@ -1038,10 +1049,14 @@ def test_wtls_key_material_reads_independent_outputs_before_hard_failure(
     assert reads == [202, 204]
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "wrong_result"]
+    # F6: records[0] (missing value) is a plain readback and is never stamped with
+    # the mechanism that produced the object being read; records[1] is an unrelated
+    # C_DeriveKey outcome and keeps its mechanism.
     assert [record.mechanism for record in records] == [
-        "CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE",
+        None,
         "CKM_WTLS_CLIENT_KEY_AND_MAC_DERIVE",
     ]
+    assert "producer_mechanism=CKM_WTLS_SERVER_KEY_AND_MAC_DERIVE" in records[0].label
     assert [record.operation for record in records] == [
         "C_GetAttributeValue",
         "C_DeriveKey",

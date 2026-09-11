@@ -289,9 +289,13 @@ class TestCreateObjectErrors:
                 reason="not_operational",
                 inherit_mechanism=False,
             )
+            # rv == CKR_OK above already proves the module accepted the empty
+            # (NULL_PTR/0-length) CKA_ALLOWED_MECHANISMS template at creation --
+            # independent claim evidence a missing readback must not downgrade.
             if allowed_mechanisms is MISSING_ATTRIBUTE:
-                return
-            claimed = allowed_mechanisms == []
+                claimed = True
+            else:
+                claimed = allowed_mechanisms == []
             mech = mech_simple(CKM_AES_ECB)
             init_rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), handle.value)
             encrypted = False
@@ -432,11 +436,17 @@ class TestGetAttributeErrors:
                 CKA_SENSITIVE,
                 label="CKA_SENSITIVE readback on a CKA_SENSITIVE=True key",
                 reason="not_operational",
+                kind="policy",
                 inherit_mechanism=False,
             )
+            # gen_aes_key_or_xfail() above raises/xfails unless the module
+            # accepted the CKA_SENSITIVE=True template, so reaching this point
+            # already proves creation-time acceptance -- independent claim
+            # evidence a missing readback must not downgrade.
             if sensitive_readback is MISSING_ATTRIBUTE:
-                return
-            claimed = sensitive_readback is True
+                claimed = True
+            else:
+                claimed = sensitive_readback is True
             val_attrs = read_attributes(rs.raw, rs.sh, key, [CKA_VALUE])
             violated = CKA_VALUE in val_attrs
             classify_policy_enforcement(

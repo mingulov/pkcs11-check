@@ -16,7 +16,7 @@ CLI-first PKCS#11 test suite with segfault survival, interface forcing, and pyte
 
 See [docs/commands.md](docs/commands.md) for all build/test/docker commands.
 See [docs/architecture.md](docs/architecture.md) for codebase structure, modules, and test writing guide.
-See [docs/interpreting-results.md](docs/interpreting-results.md) for guidance on why xfail and fail counts in results can be large.
+See [docs/interpreting-results.md](docs/interpreting-results.md) for guidance on why xfail and fail counts in results can be large and for the evidence-integrity release gate.
 
 ## Git workflow - CRITICAL
 

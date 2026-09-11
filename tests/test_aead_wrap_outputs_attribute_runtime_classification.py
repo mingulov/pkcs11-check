@@ -68,7 +68,10 @@ def test_make_keys_missing_value_retains_handles_and_returns_sentinel(
     record = C.get_records()[0]
     assert record.reason == "not_operational"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_AES_GCM"
+    # F6: a plain readback is never stamped with the mechanism that produced the
+    # object being read; the producer survives in the label instead.
+    assert record.mechanism is None
+    assert "producer_mechanism=CKM_AES_GCM" in record.label
 
 
 def _patch_gcm_roundtrip(
@@ -123,7 +126,8 @@ def test_missing_unwrapped_value_is_structured_and_skips_only_equality(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    assert records[0].mechanism == "CKM_AES_GCM"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_GCM" in records[0].label
     assert records[0].detail == {
         "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
     }
@@ -148,7 +152,8 @@ def test_missing_target_value_keeps_independent_gcm_legs_running(
     records = C.get_records()
     assert len(records) == 1
     assert records[0].reason == "not_operational"
-    assert records[0].mechanism == "CKM_AES_GCM"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_GCM" in records[0].label
 
 
 @pytest.mark.parametrize(
@@ -287,7 +292,8 @@ def test_missing_target_value_uses_constant_ccm_data_length(
 
     assert calls == {"generated": [16], "unwrap": [16]}
     assert destroyed == [12, 10, 11]
-    assert C.get_records()[0].mechanism == "CKM_AES_CCM"
+    assert C.get_records()[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_CCM" in C.get_records()[0].label
 
 
 def test_earlier_wrap_output_failure_is_preserved_with_missing_unwrapped_value(
@@ -311,7 +317,8 @@ def test_earlier_wrap_output_failure_is_preserved_with_missing_unwrapped_value(
         }
     }
     assert records[1].operation == "C_GetAttributeValue"
-    assert records[1].mechanism == "CKM_AES_GCM"
+    assert records[1].mechanism is None
+    assert "producer_mechanism=CKM_AES_GCM" in records[1].label
 
 
 def test_later_raw_unwrap_error_retains_prior_output_records(
@@ -338,7 +345,8 @@ def test_later_raw_unwrap_error_retains_prior_output_records(
     assert destroyed == [10, 11]
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "wrong_result"]
-    assert records[0].mechanism == "CKM_AES_GCM"
+    assert records[0].mechanism is None
+    assert "producer_mechanism=CKM_AES_GCM" in records[0].label
     assert records[1].operation == "C_WrapKey"
     assert records[1].mechanism == "CKM_AES_GCM"
 

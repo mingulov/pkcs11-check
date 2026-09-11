@@ -277,10 +277,10 @@ class TestAESKeyUsagePolicy:
             decrypt = attr_or_record(
                 attrs,
                 CKA_DECRYPT,
-                label="CKA_DECRYPT on decrypt-only AES key",
-                reason="not_operational",
+                label=("CKA_DECRYPT on decrypt-only AES key (producer_mechanism=CKM_AES_KEY_GEN)"),
+                reason="honest_deviation",
                 kind="metadata",
-                mechanism="CKM_AES_KEY_GEN",
+                inherit_mechanism=False,
             )
             hard_records: list[classification.Classification] = []
             record = _record_bool_readback(
@@ -392,10 +392,13 @@ class TestRSAKeyUsagePolicy:
             sign = attr_or_record(
                 priv_attrs,
                 CKA_SIGN,
-                label="CKA_SIGN on sign-only RSA private key",
-                reason="not_operational",
+                label=(
+                    "CKA_SIGN on sign-only RSA private key "
+                    "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                ),
+                reason="honest_deviation",
                 kind="metadata",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 sign,
@@ -413,10 +416,13 @@ class TestRSAKeyUsagePolicy:
             verify = attr_or_record(
                 pub_attrs,
                 CKA_VERIFY,
-                label="CKA_VERIFY on sign-only RSA public key",
-                reason="not_operational",
+                label=(
+                    "CKA_VERIFY on sign-only RSA public key "
+                    "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                ),
+                reason="honest_deviation",
                 kind="metadata",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 verify,
@@ -471,10 +477,13 @@ class TestRSAKeyUsagePolicy:
             encrypt = attr_or_record(
                 pub_attrs,
                 CKA_ENCRYPT,
-                label="CKA_ENCRYPT on encrypt-only RSA public key",
-                reason="not_operational",
+                label=(
+                    "CKA_ENCRYPT on encrypt-only RSA public key "
+                    "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                ),
+                reason="honest_deviation",
                 kind="metadata",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 encrypt,
@@ -491,10 +500,13 @@ class TestRSAKeyUsagePolicy:
             decrypt = attr_or_record(
                 priv_attrs,
                 CKA_DECRYPT,
-                label="CKA_DECRYPT on encrypt-only RSA private key",
-                reason="not_operational",
+                label=(
+                    "CKA_DECRYPT on encrypt-only RSA private key "
+                    "(producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)"
+                ),
+                reason="honest_deviation",
                 kind="metadata",
-                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                inherit_mechanism=False,
             )
             record = _record_bool_readback(
                 decrypt,
@@ -560,10 +572,10 @@ class TestCapabilityReadback:
                 value = attr_or_record(
                     attrs,
                     attr,
-                    label=label,
-                    reason="not_operational",
+                    label=f"{label} (producer_mechanism=CKM_AES_KEY_GEN)",
+                    reason="honest_deviation",
                     kind="metadata",
-                    mechanism="CKM_AES_KEY_GEN",
+                    inherit_mechanism=False,
                 )
                 record = _record_bool_readback(
                     value,
@@ -601,10 +613,10 @@ class TestCapabilityReadback:
                 value = attr_or_record(
                     pub_attrs,
                     attr,
-                    label=label,
-                    reason="not_operational",
+                    label=f"{label} (producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)",
+                    reason="honest_deviation",
                     kind="metadata",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    inherit_mechanism=False,
                 )
                 record = _record_bool_readback(
                     value,
@@ -625,10 +637,10 @@ class TestCapabilityReadback:
                 value = attr_or_record(
                     priv_attrs,
                     attr,
-                    label=label,
-                    reason="not_operational",
+                    label=f"{label} (producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN)",
+                    reason="honest_deviation",
                     kind="metadata",
-                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    inherit_mechanism=False,
                 )
                 record = _record_bool_readback(
                     value,
@@ -1106,10 +1118,13 @@ class TestKEMKeyUsagePolicy:
                 encap = attr_or_record(
                     encap_attrs,
                     CKA_ENCAPSULATE,
-                    label="CKA_ENCAPSULATE=False on ML-KEM public key",
+                    label=(
+                        "CKA_ENCAPSULATE=False on ML-KEM public key "
+                        "(producer_operation=C_GenerateKeyPair, producer_mechanism=CKM_ML_KEM)"
+                    ),
                     reason="not_operational",
                     kind="policy",
-                    mechanism="CKM_ML_KEM",
+                    inherit_mechanism=False,
                 )
                 hard_record = _record_bool_readback(
                     encap,
@@ -1401,10 +1416,14 @@ class TestKEMKeyUsagePolicy:
                     decap = attr_or_record(
                         decap_attrs,
                         CKA_DECAPSULATE,
-                        label="CKA_DECAPSULATE=False on ML-KEM private key",
+                        label=(
+                            "CKA_DECAPSULATE=False on ML-KEM private key "
+                            "(producer_operation=C_GenerateKeyPair, "
+                            "producer_mechanism=CKM_ML_KEM)"
+                        ),
                         reason="not_operational",
                         kind="policy",
-                        mechanism="CKM_ML_KEM",
+                        inherit_mechanism=False,
                     )
                     hard_record = _record_bool_readback(
                         decap,
