@@ -249,6 +249,19 @@ def _xfail_if_wrap_runtime_reject(exc: AssertionError, msg: str) -> NoReturn:
     raise
 
 
+def _skip_if_authenticated_wrap_not_implemented(exc: AssertionError, operation: str) -> None:
+    """Skip when CKR_FUNCTION_NOT_SUPPORTED means C_(Un)WrapKeyAuthenticated itself is
+    absent (capability absence -- both are optional PKCS#11 v3.2 functions), not a
+    mechanism-level refusal. A module may expose a non-null function-table pointer yet
+    stub the call with CKR_FUNCTION_NOT_SUPPORTED, so ``needs_function`` alone cannot
+    catch this. Must be checked before ``_xfail_if_wrap_runtime_reject`` -- that helper's
+    RV set includes CKR_FUNCTION_NOT_SUPPORTED for the *mandatory* C_WrapKey/C_UnwrapKey
+    call sites it also serves, where it correctly stays a mechanism-level xfail.
+    """
+    if isinstance(exc, CkrAssertionError) and exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        pytest.skip(f"{operation} not implemented: CKR_FUNCTION_NOT_SUPPORTED")
+
+
 class _EcdhAesKwCase(NamedTuple):
     short_name: str
     mechanism: Any
@@ -428,6 +441,7 @@ class TestAuthenticatedWrap:
                 pytest.skip("wrap_key_authenticated not available or GCM params unsupported")
                 return
             except AssertionError as exc:
+                _skip_if_authenticated_wrap_not_implemented(exc, "C_WrapKeyAuthenticated")
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             if original_bytes is not None and wrapped == original_bytes:
@@ -578,11 +592,11 @@ class TestAuthenticatedWrap:
                     mech_param=wrap_mech,
                 )
             except AssertionError as exc:
+                _skip_if_authenticated_wrap_not_implemented(exc, "C_WrapKeyAuthenticated")
                 if is_known_error(
                     exc,
                     {
                         CKR_ARGUMENTS_BAD,
-                        CKR_FUNCTION_NOT_SUPPORTED,
                         CKR_KEY_FUNCTION_NOT_PERMITTED,
                         CKR_MECHANISM_INVALID,
                         CKR_MECHANISM_PARAM_INVALID,
@@ -742,6 +756,7 @@ class TestAuthenticatedWrap:
                 pytest.skip("wrap_key_authenticated not available")
                 return
             except AssertionError as exc:
+                _skip_if_authenticated_wrap_not_implemented(exc, "C_WrapKeyAuthenticated")
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             tag = wrap_mech.buffer_bytes("tag")
@@ -770,6 +785,7 @@ class TestAuthenticatedWrap:
                         mech_param=good_mech,
                     )
                 except AssertionError as exc:
+                    _skip_if_authenticated_wrap_not_implemented(exc, "C_UnwrapKeyAuthenticated")
                     _xfail_if_wrap_runtime_reject(
                         exc, "AES-GCM authenticated unwrap (valid leg) not operational"
                     )
@@ -977,6 +993,14 @@ class TestAuthenticatedWrapAAD:
                 pytest.skip(f"AES-GCM authenticated wrap API not available: {exc}")
                 return
             except AssertionError as exc:
+                # CKR_FUNCTION_NOT_SUPPORTED is capability absence (C_WrapKeyAuthenticated
+                # itself unimplemented) -- mechanism advertisement is orthogonal to function
+                # support and cannot promote it into a deviation, so it is a skip, not an
+                # xfail (checked before xfail_if_known_ckr so it never reaches that set).
+                if isinstance(exc, CkrAssertionError) and exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+                    pytest.skip(
+                        "C_WrapKeyAuthenticated not implemented: CKR_FUNCTION_NOT_SUPPORTED"
+                    )
                 # Wrap-side failure. xfail ONLY when the failure looks like a clean
                 # refusal of this advertised configuration (mech-not-supported /
                 # AAD-too-long / GCM-params-bad) -- that is a noted deviation, not an
@@ -989,7 +1013,6 @@ class TestAuthenticatedWrapAAD:
                     {
                         CKR_MECHANISM_INVALID,
                         CKR_MECHANISM_PARAM_INVALID,
-                        CKR_FUNCTION_NOT_SUPPORTED,
                         CKR_KEY_FUNCTION_NOT_PERMITTED,
                         CKR_ARGUMENTS_BAD,
                     },
@@ -1011,6 +1034,7 @@ class TestAuthenticatedWrapAAD:
                     mech_param=good_mech,
                 )
             except AssertionError as exc:
+                _skip_if_authenticated_wrap_not_implemented(exc, "C_UnwrapKeyAuthenticated")
                 _xfail_if_wrap_runtime_reject(
                     exc, "AES-GCM authenticated unwrap (valid AAD leg) not operational"
                 )
@@ -1346,6 +1370,7 @@ class TestWrapIntegrity:
                 pytest.skip(f"AES-GCM authenticated wrap unavailable: {e}")
                 return
             except AssertionError as exc:
+                _skip_if_authenticated_wrap_not_implemented(exc, "C_WrapKeyAuthenticated")
                 _xfail_if_wrap_runtime_reject(exc, "AES-GCM authenticated wrap rejected")
 
             wrapped_usable = isinstance(wrapped, bytes) and bool(wrapped)
@@ -1374,6 +1399,7 @@ class TestWrapIntegrity:
                         mech_param=good_mech,
                     )
                 except AssertionError as exc:
+                    _skip_if_authenticated_wrap_not_implemented(exc, "C_UnwrapKeyAuthenticated")
                     _xfail_if_wrap_runtime_reject(
                         exc, "AES-GCM authenticated unwrap (valid leg) not operational"
                     )

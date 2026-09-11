@@ -69,7 +69,10 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER, pin_from_config
-from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from pkcs11_check.testcases._subprocess_result import (
+    PROCESS_DISPOSITION_REASONS,
+    assert_subprocess_completed,
+)
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 
@@ -1001,7 +1004,11 @@ def _check_direct_handle_probe(
             # prefix in the crash record.
             raise
         process_harness = next(
-            (item for item in reversed(process_records) if item.reason == "harness_error"),
+            (
+                item
+                for item in reversed(process_records)
+                if item.reason in PROCESS_DISPOSITION_REASONS
+            ),
             None,
         )
         if process_harness is None:
@@ -1014,7 +1021,7 @@ def _check_direct_handle_probe(
         explicit_harness = True
     process_records = C.get_records()[before_process:]
     process_harness = next(
-        (item for item in reversed(process_records) if item.reason == "harness_error"),
+        (item for item in reversed(process_records) if item.reason in PROCESS_DISPOSITION_REASONS),
         None,
     )
 

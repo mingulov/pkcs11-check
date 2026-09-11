@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pkcs11_check.core.process_observation import (
+    SUBPROCESS_ABRUPT_EXIT_MARKER,
     build_process_observation,
     record_process_observation,
 )
@@ -56,6 +57,47 @@ class ProbeResult:
     stdout: str
     stderr: str
     observation: dict[str, object] | None = None
+
+
+_PYTHON_TRACEBACK = "Traceback (most recent call last)"
+
+
+def _finalizer_ran(cov_path: str) -> bool:
+    """Whether the child reached its own exit path, per the coverage file it always writes.
+
+    ``probe_main`` writes this file from a ``finally`` block and again from ``atexit``, so
+    a clean return, ``sys.exit``, ``SETUP_XFAIL``, or any uncaught Python exception all
+    leave a parseable JSON object behind. Nothing Python-side can skip both writes. An
+    empty or unreadable file on a non-zero exit therefore means the process was torn down
+    below CPython -- i.e. the module terminated its host.
+
+    Returns False on an unreadable or empty file. That alone is NOT sufficient to call a
+    death abrupt -- see :func:`_module_terminated_process` for the conjunction that is.
+    """
+    try:
+        with open(cov_path, encoding="utf-8") as fh:
+            return isinstance(json.load(fh), dict)
+    except (OSError, ValueError):
+        return False
+
+
+def _module_terminated_process(rc: int, stderr: str, cov_path: str) -> bool:
+    """Whether the MODULE tore the process down, rather than Python dying normally.
+
+    Requires both halves, because neither alone is safe:
+
+    * the child's finalizer never ran (:func:`_finalizer_ran`) -- but ``probe_main`` loads
+      the params file and the module BEFORE registering that finalizer, so a bad params
+      file or a module that will not load also leaves no coverage, and must never be
+      reported as a provider crash;
+    * and stderr carries no Python traceback -- a C ``exit()`` from inside a PKCS#11 call
+      pre-empts CPython entirely, so there is nothing to print. Every Python-level death
+      leaves a traceback, including the pre-registration failures above.
+
+    A module that writes its own diagnostics to stderr before exiting is still caught: the
+    test is for a traceback specifically, not for silence.
+    """
+    return rc > 0 and not _finalizer_ran(cov_path) and _PYTHON_TRACEBACK not in stderr
 
 
 def run_probe(
@@ -125,6 +167,17 @@ def run_probe(
             out = _as_text(exc.stdout)
             err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
             rc = SUBPROCESS_TIMEOUT_RC
+
+        # A positive exit code alone cannot tell "the module called exit() from inside the
+        # PKCS#11 call" apart from "Python raised and died normally" -- both arrive as
+        # rc>0. The discriminator is the coverage file: probe_main writes it from its
+        # own `finally` AND from atexit, so every Python-level termination leaves
+        # parseable JSON there, while a C exit()/_exit() bypasses CPython finalization
+        # and leaves it empty. Publish that observation on stderr so it reaches every
+        # downstream classifier and the visible stderr excerpt (mirrors the I8 timeout
+        # marker above), rather than re-deriving it at each of the ~70 call sites.
+        if rc is not None and not timed_out and _module_terminated_process(rc, err, cov_path):
+            err += f"\n{SUBPROCESS_ABRUPT_EXIT_MARKER}:{rc}\n"
 
         record_subprocess_rv_trace(out, err)  # I7
 

@@ -15,7 +15,10 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCAPSULATE,
     CKA_KEY_TYPE,
     CKA_VALUE,
+    CKK_AES,
     CKK_ML_KEM,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
 )
@@ -512,3 +515,76 @@ def test_decapsulation_permission_acceptance_keeps_operation_identity(
     assert records[-1].reason == "accepted_invalid"
     assert records[-1].operation == "C_DecapsulateKey"
     assert records[-1].mechanism == "CKM_ML_KEM"
+
+
+# C-1 regression: read_attributes() returns plain int/bool values (see
+# raw/recipes.py read_attributes()), never a CK_CONSTANT. _check_equal_attribute
+# previously compared repr(value) == expected where expected was itself
+# repr(CK_CONSTANT) (e.g. "<CKO_PUBLIC_KEY: 0x00000002>"), so a fully conformant
+# int readback (repr "2") could never match and every call fabricated a
+# wrong_result fail. Mutation check: reverting _check_equal_attribute to
+# `if repr(value) == expected` (with callers restored to `expected=repr(...)`)
+# turns test_conformant_int_readback_produces_no_finding red and
+# test_wrong_int_readback_still_fails green-for-the-wrong-reason (message
+# changes from a real mismatch to a repr-format artifact) -- both are covered
+# below by asserting the exact detail contents, not just outcome/reason.
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (2, CKO_PUBLIC_KEY),  # plain int equal to a CK_CONSTANT's numeric value
+        (3, CKO_PRIVATE_KEY),
+        (73, CKK_ML_KEM),
+        (31, CKK_AES),
+        (False, False),  # plain bool readback, not wrapped in a CK_CONSTANT
+        (True, True),
+    ],
+)
+def test_conformant_int_readback_produces_no_finding(value: Any, expected: Any) -> None:
+    """A plain int/bool readback that numerically matches must not fabricate a fail."""
+    assert (
+        kem._check_equal_attribute(
+            value,
+            expected=expected,
+            label="regression:plain-int-readback",
+            mechanism="CKM_ML_KEM",
+        )
+        is None
+    )
+
+
+def test_wrong_int_readback_still_fails() -> None:
+    """A genuinely wrong plain int readback must still be reported."""
+    record = kem._check_equal_attribute(
+        73,  # CKK_ML_KEM's value, wrong for a CKA_CLASS check
+        expected=CKO_PUBLIC_KEY,
+        label="regression:plain-int-readback",
+        mechanism="CKM_ML_KEM",
+    )
+    assert record is not None
+    assert record.reason == "wrong_result"
+    assert record.detail is not None
+    assert record.detail["attribute"]["actual"] == "73"
+    assert "CKO_PUBLIC_KEY" in record.detail["attribute"]["expected"]
+
+
+def test_keypair_classes_plain_int_readback_produces_no_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: a live provider readback is a plain int, never a CK_CONSTANT --
+    conformant CKA_CLASS values (2, 3) must pass test_ml_kem_keypair_classes
+    cleanly, with no fabricated wrong_result records."""
+    monkeypatch.setattr(kem, "_generate_ml_kem_keypair", lambda _rs: (11, 12))
+    destroyed: list[int] = []
+    monkeypatch.setattr(kem, "destroy_quietly", lambda _raw, _sh, handle: destroyed.append(handle))
+
+    def _read(_raw: object, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
+        return {CKA_CLASS: 2 if handle == 11 else 3}
+
+    monkeypatch.setattr(kem, "read_attributes", _read)
+
+    kem.TestMLKEMKeyGeneration().test_ml_kem_keypair_classes(_rs())
+
+    assert destroyed == [11, 12]
+    assert C.get_records() == []

@@ -26,6 +26,7 @@ from pkcs11_check.testcases.security import (
 )
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
 from tests._attribute_access_guard import analyze_file
+from tests._skip_assert import assert_skips
 
 
 class _Pin:
@@ -43,7 +44,7 @@ class _RawSession:
 
 def test_assert_subprocess_no_crash_rejects_positive_exit() -> None:
     """A child Python error is not a valid no-crash pass."""
-    with pytest.raises(pytest.fail.Exception, match="subprocess failed with exit code 1"):
+    with pytest.raises(pytest.fail.Exception, match="subprocess exited with code 1"):
         assert_subprocess_no_crash(
             1,
             "",
@@ -227,7 +228,13 @@ def test_rsa_protocol_parses_independent_rv_after_malformed_attribute() -> None:
             ),
         )
     )
-    with pytest.raises(pytest.fail.Exception, match="accepted invalid"):
+    # I-3: CKR_OK on a CKM_RSA_PKCS decrypt of malformed ciphertext is classified
+    # honest_deviation (implicit-rejection countermeasure), not accepted_invalid --
+    # it no longer outranks the independent harness_error from the malformed
+    # attribute marker, so that is what _raise_strongest surfaces here. The rv is
+    # still parsed and recorded independently of the malformed attribute, which is
+    # the property this test exists to prove.
+    with pytest.raises(pytest.fail.Exception, match="malformed RSA child protocol"):
         test_error_path_rsa._check_protocol(
             0,
             output,
@@ -239,7 +246,86 @@ def test_rsa_protocol_parses_independent_rv_after_malformed_attribute() -> None:
             requires_attribute=True,
         )
     records = C.get_records()
-    assert [record.reason for record in records] == ["accepted_invalid", "harness_error"]
+    assert [record.reason for record in records] == ["honest_deviation", "harness_error"]
+    assert records[0].detail is not None
+    assert records[0].detail.get("implicit_rejection_suspected") is True
+
+
+# I-3 regression: RSA PKCS#1 v1.5 implicit rejection (the Bleichenbacher/Marvin
+# countermeasure implemented by OpenSSL >= 3.2 and NSS by design) must not be
+# branded a CRITICAL accepted_invalid crypto break. CKR_OK on malformed
+# CKM_RSA_PKCS decrypt input is honest_deviation (xfail, LOW), carrying
+# detail.implicit_rejection_suspected=True; the observation is kept, not hidden.
+# CKM_RSA_PKCS_OAEP is unaffected -- implicit rejection is specific to PKCS#1
+# v1.5 padding, so CKR_OK there remains a real accepted_invalid finding.
+# Mutation check: removing the `stage == "decrypt" and item_mechanism ==
+# "CKM_RSA_PKCS"` branch from _record_rv turns
+# test_rsa_pkcs_decrypt_ckr_ok_is_honest_deviation_not_accepted_invalid red
+# (reason reverts to accepted_invalid/CRITICAL and severity/xfail assertions fail).
+
+
+def test_rsa_pkcs_decrypt_ckr_ok_is_honest_deviation_not_accepted_invalid() -> None:
+    payload = {
+        "schema": 1,
+        "case": "decrypt:pkcs:random",
+        "stage": "decrypt",
+        "operation": "C_Decrypt",
+        "mechanism": "CKM_RSA_PKCS",
+        "rv": 0,
+    }
+    record = test_error_path_rsa._record_rv(
+        payload,
+        label="decrypt:pkcs:random C_Decrypt",
+        mechanism="CKM_RSA_PKCS",
+        expected_rvs=(0x40,),
+    )
+    assert record is not None
+    assert record.reason == "honest_deviation"
+    assert record.outcome == "xfail"
+    assert record.severity == "LOW"
+    assert record.detail is not None
+    assert record.detail.get("implicit_rejection_suspected") is True
+
+
+def test_rsa_oaep_decrypt_ckr_ok_remains_accepted_invalid() -> None:
+    payload = {
+        "schema": 1,
+        "case": "decrypt:oaep:random",
+        "stage": "decrypt",
+        "operation": "C_Decrypt",
+        "mechanism": "CKM_RSA_PKCS_OAEP",
+        "rv": 0,
+    }
+    record = test_error_path_rsa._record_rv(
+        payload,
+        label="decrypt:oaep:random C_Decrypt",
+        mechanism="CKM_RSA_PKCS_OAEP",
+        expected_rvs=(0x40,),
+    )
+    assert record is not None
+    assert record.reason == "accepted_invalid"
+    assert record.outcome == "fail"
+    assert record.severity == "CRITICAL"
+    assert record.kind == "crypto"
+
+
+def test_rsa_pkcs_decrypt_ckr_ok_end_to_end_is_xfail_not_fail() -> None:
+    """End-to-end via _check_protocol: a clean CKR_OK-only decrypt trace for
+    CKM_RSA_PKCS now xfails (implicit-rejection observation), it does not fail."""
+    output = _rsa_complete_decrypt_output(rv=0)
+    with pytest.raises(pytest.xfail.Exception):
+        test_error_path_rsa._check_protocol(
+            0,
+            output,
+            "",
+            case_id="decrypt:pkcs:random",
+            mechanism="CKM_RSA_PKCS",
+            operation="C_Decrypt",
+            expected_rvs=(0x40,),
+            requires_attribute=True,
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["honest_deviation"]
 
 
 def test_rsa_protocol_accepts_native_width_vendor_ckr() -> None:
@@ -1679,6 +1765,22 @@ def test_unbackable_length_setup_marker_never_hides_crash_or_timeout(
         pytest.fail(f"setup marker hid crash/timeout: {exc}")
 
 
+def test_unhonorable_length_skip_marker_skips_not_xfails() -> None:
+    """A child SKIP: line (v3.0 message-family Init/Begin FNS -- capability absence,
+    see _probes/_ffi_length_message.py._message_setup_reject) must skip, checked
+    before the generic SETUP_XFAIL handling."""
+    assert_skips(
+        test_ffi_length_boundary._classify_unhonorable_length_outcome,
+        0,
+        "SKIP:C_MessageEncryptInit rejected: CKR_FUNCTION_NOT_SUPPORTED\n",
+        "",
+        reject_rvs=(),
+        label_op="C_EncryptMessageBegin(plaintext_len=2^63)",
+        test_id="near-size-max",
+        match="C_MessageEncryptInit",
+    )
+
+
 def test_ffi_length_keypair_child_scripts_mark_setup_reject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2310,6 +2412,49 @@ def test_recover_output_length_child_marks_setup_reject(
     probe_name, params = calls[0]
     assert probe_name == "recover_length"
     assert params.get("which") == "verify_inflated_out_len"
+
+
+def test_recover_input_length_child_skips_on_function_level_fns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKR_FUNCTION_NOT_SUPPORTED at C_SignRecoverInit is capability absence (the
+    optional recover function itself is unimplemented), not a deviation -- must
+    skip, never record an "advertised but not operational" xfail finding."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        skip_stdout = "SKIP:C_SignRecoverInit rejected: CKR_FUNCTION_NOT_SUPPORTED\n"
+        return ProbeResult(returncode=0, stdout=skip_stdout, stderr="")
+
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _capture)
+
+    assert_skips(
+        test_recover_length_boundary.TestRecoverInputLengthBoundary().test_sign_recover_huge_data_len_does_not_crash,
+        _RawSession(),
+        cfg,
+        0x7FFFFFFFFFFFFFFF,
+        match="C_SignRecoverInit",
+    )
+
+
+def test_recover_output_length_child_skips_on_function_level_fns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same rule for C_VerifyRecoverInit on the output-length boundary probe."""
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", pin=_Pin(), slot=0)
+
+    def _capture(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        skip_stdout = "SKIP:C_VerifyRecoverInit rejected: CKR_FUNCTION_NOT_SUPPORTED\n"
+        return ProbeResult(returncode=0, stdout=skip_stdout, stderr="")
+
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _capture)
+
+    assert_skips(
+        test_recover_length_boundary.TestRecoverOutputLengthBoundary().test_verify_recover_inflated_pul_data_len_does_not_crash,
+        _RawSession(),
+        cfg,
+        match="C_VerifyRecoverInit",
+    )
 
 
 # ---------------------------------------------------------------------------

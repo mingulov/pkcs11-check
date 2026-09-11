@@ -9,9 +9,15 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification as C  # noqa: N812
-from pkcs11_check.raw.types_std import CKA_VALUE
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CKA_VALUE,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
+)
 from pkcs11_check.testcases import test_authenticated_wrap as authenticated_wrap
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+from tests._skip_assert import assert_skips
 
 
 @pytest.fixture(autouse=True)
@@ -286,6 +292,57 @@ def test_aad_leg_clean_wrap_rejection_of_advertised_mechanism_xfails(
     assert records[-1].outcome == "xfail"
 
 
+def test_aad_leg_function_not_supported_is_skip_not_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKR_FUNCTION_NOT_SUPPORTED at C_WrapKeyAuthenticated is capability absence, not a
+    deviation -- unlike the genuine CKR_MECHANISM_INVALID deviation above (mechanism
+    advertisement is orthogonal to function support), it must be a skip, never an xfail.
+
+    ``pytest.raises(pytest.fail.Exception, ...)`` would let an uncaught ``pytest.xfail()``
+    through as a silent, green-exit xfail rather than a hard failure -- catch both
+    ``pytest.skip.Exception`` and ``pytest.xfail.Exception`` explicitly instead.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+
+    handles = iter([10, 11])
+    monkeypatch.setattr(authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: next(handles))
+    monkeypatch.setattr(
+        authenticated_wrap,
+        "read_attributes",
+        lambda *_args: {CKA_VALUE: b"k" * 16},
+    )
+    monkeypatch.setattr(authenticated_wrap, "generate_random", lambda *_args: b"i" * 12)
+    monkeypatch.setattr(
+        authenticated_wrap,
+        "mech_gcm_message",
+        lambda *_args, **_kwargs: SimpleNamespace(buffer_bytes=lambda _name: b"t"),
+    )
+
+    def _raise_function_not_supported(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED", int(CKR_FUNCTION_NOT_SUPPORTED)
+        )
+
+    monkeypatch.setattr(authenticated_wrap, "wrap_key_authenticated", _raise_function_not_supported)
+
+    rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "AES_GCM")
+
+    try:
+        authenticated_wrap.TestAuthenticatedWrapAAD().test_aes_gcm_unwrap_with_different_aad_rejected(
+            rs, "3.2", object()
+        )
+    except pytest.skip.Exception as exc:
+        assert "CKR_FUNCTION_NOT_SUPPORTED" in str(exc)
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"clean CKR_FUNCTION_NOT_SUPPORTED must skip, not xfail: {exc!r}")
+    else:
+        pytest.fail("expected a pytest.skip for CKR_FUNCTION_NOT_SUPPORTED")
+
+    assert C.get_records() == []
+
+
 def test_valid_leg_wrong_result_uses_unwrap_operation() -> None:
     hard_results: list[C.Classification] = []
     authenticated_wrap._record_discrimination(
@@ -428,3 +485,90 @@ def test_ecdh_target_acquisition_failure_cleans_recipient_pair(
         )
 
     assert destroyed == [10, 11]
+
+
+# ---------------------------------------------------------------------------
+# CKR_FUNCTION_NOT_SUPPORTED from C_(Un)WrapKeyAuthenticated is capability
+# absence (the optional v3.2 function itself is unimplemented) -> skip, never
+# a deviation. Regression for the fix that intercepts it before
+# _xfail_if_wrap_runtime_reject / xfail_if_known_ckr would otherwise record it
+# as an "advertised but not operational" xfail finding.
+# ---------------------------------------------------------------------------
+
+
+def test_skip_if_authenticated_wrap_not_implemented_skips_on_fns() -> None:
+    exc = CkrAssertionError("CKR_FUNCTION_NOT_SUPPORTED", int(CKR_FUNCTION_NOT_SUPPORTED))
+    assert_skips(
+        authenticated_wrap._skip_if_authenticated_wrap_not_implemented,
+        exc,
+        "C_WrapKeyAuthenticated",
+        match="C_WrapKeyAuthenticated",
+    )
+
+
+def test_skip_if_authenticated_wrap_not_implemented_ignores_other_ckr() -> None:
+    exc = CkrAssertionError("CKR_MECHANISM_INVALID", int(CKR_MECHANISM_INVALID))
+    # Must return quietly (no skip) so the caller's own mechanism-level xfail path runs.
+    authenticated_wrap._skip_if_authenticated_wrap_not_implemented(exc, "C_WrapKeyAuthenticated")
+
+
+def _wrap_unwrap_fixtures(monkeypatch: pytest.MonkeyPatch) -> None:
+    handles = iter([10, 11])
+    monkeypatch.setattr(authenticated_wrap, "gen_aes_key", lambda *_args, **_kwargs: next(handles))
+    monkeypatch.setattr(authenticated_wrap, "read_attributes", lambda *_args: {})
+    monkeypatch.setattr(authenticated_wrap, "generate_random", lambda *_args: b"i" * 12)
+    monkeypatch.setattr(
+        authenticated_wrap,
+        "mech_gcm_message",
+        lambda *_args, **_kwargs: SimpleNamespace(buffer_bytes=lambda _name: b"tag"),
+    )
+    monkeypatch.setattr(authenticated_wrap, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+
+def test_wrap_key_authenticated_fns_is_skip_not_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CKM_AES_GCM:C_WrapKeyAuthenticated rejected with FNS -> skip (site: line ~431)."""
+    _wrap_unwrap_fixtures(monkeypatch)
+
+    def _raise(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("CKR_FUNCTION_NOT_SUPPORTED", int(CKR_FUNCTION_NOT_SUPPORTED))
+
+    monkeypatch.setattr(authenticated_wrap, "wrap_key_authenticated", _raise)
+
+    assert_skips(
+        authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_wrap_unwrap,
+        _rs(),
+        "3.2",
+        match="C_WrapKeyAuthenticated",
+    )
+
+
+def test_wrap_key_authenticated_mechanism_invalid_stays_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine mechanism-level clean reject must remain xfail, not skip."""
+    _wrap_unwrap_fixtures(monkeypatch)
+
+    def _raise(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("CKR_MECHANISM_INVALID", int(CKR_MECHANISM_INVALID))
+
+    monkeypatch.setattr(authenticated_wrap, "wrap_key_authenticated", _raise)
+
+    with pytest.raises(pytest.xfail.Exception, match="AES-GCM authenticated wrap rejected"):
+        authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_wrap_unwrap(_rs(), "3.2")
+
+
+def test_wrap_key_authenticated_generated_iv_fns_is_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The generated-IV variant (site: line ~581) must also skip on FNS."""
+    _wrap_unwrap_fixtures(monkeypatch)
+
+    def _raise(*_a: Any, **_k: Any) -> bytes:
+        raise CkrAssertionError("CKR_FUNCTION_NOT_SUPPORTED", int(CKR_FUNCTION_NOT_SUPPORTED))
+
+    monkeypatch.setattr(authenticated_wrap, "wrap_key_authenticated", _raise)
+
+    assert_skips(
+        authenticated_wrap.TestAuthenticatedWrap().test_aes_gcm_authenticated_wrap_generated_iv_and_tag,
+        _rs(),
+        "3.2",
+        match="C_WrapKeyAuthenticated",
+    )

@@ -48,6 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import (
@@ -111,7 +112,14 @@ def _gen_access_control_aes_key(rs: Any, *, attrs: dict[int, Any] | None = None)
 
 
 def _handle_copy_reject(exc: CkrAssertionError, message: str) -> None:
-    """Record a clean C_CopyObject refusal with the exact operation identity."""
+    """Record a clean C_CopyObject refusal with the exact operation identity.
+
+    C_CopyObject is an optional PKCS#11 function; CKR_FUNCTION_NOT_SUPPORTED is the
+    spec-defined way to say it isn't implemented (capability absence, orthogonal to
+    mechanism advertisement) -- skip, never a deviation.
+    """
+    if exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        pytest.skip(f"{message}: CKR_FUNCTION_NOT_SUPPORTED")
     classify(
         "not_operational",
         kind="policy",

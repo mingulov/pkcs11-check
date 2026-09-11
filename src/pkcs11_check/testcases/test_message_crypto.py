@@ -40,9 +40,11 @@ from pkcs11_check.testcases.conftest import (
 )
 
 # Phase 6 P3: the v3.0 message functions are already gated by the function-list
-# capability check (_skip_unless_message_functions). Past that gate the op is
-# *advertised*, so a clean reject at use is advertised-but-rejecting -> xfail
-# (not skip). A non-CKR error propagates as a real failure.
+# capability check (_skip_unless_message_functions), which only checks hasattr() --
+# it cannot see a stub that returns CKR_FUNCTION_NOT_SUPPORTED at call time,
+# so callers must check that case separately (_skip_if_message_op_not_implemented)
+# before deciding a clean reject is advertised-but-rejecting -> xfail (not skip).
+# A non-CKR error propagates as a real failure.
 _MESSAGE_OP_REJECT_RVS = (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
@@ -103,6 +105,23 @@ def _skip_unless_message_functions(rs: Any, funcs: list[str]) -> None:
     for name in funcs:
         if not hasattr(rs.raw, name):
             pytest.skip(f"{name} not available")
+
+
+def _skip_if_message_op_not_implemented(exc: AssertionError, context: str) -> None:
+    """Skip when ``message_encrypt`` fails with CKR_FUNCTION_NOT_SUPPORTED.
+
+    C_MessageEncryptInit / C_EncryptMessage are optional v3.0 functions: a module may
+    expose non-null function-table pointers (passing ``_skip_unless_message_functions``,
+    which only checks ``hasattr``) yet stub the call with CKR_FUNCTION_NOT_SUPPORTED --
+    capability absence, not a deviation. Matches ``_handle_message_rv``'s own
+    ``_MESSAGE_UNSUPPORTED_RVS`` skip for the same CKR on the raw per-call sites; must be
+    checked before ``xfail_if_known_ckr(exc, _MESSAGE_OP_REJECT_RVS, ...)``, whose RV set
+    also contains CKR_FUNCTION_NOT_SUPPORTED for the genuine mechanism-level rejects.
+    """
+    from pkcs11_check.raw.rv import CkrAssertionError
+
+    if isinstance(exc, CkrAssertionError) and exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        pytest.skip(f"{context}: not supported (CKR_FUNCTION_NOT_SUPPORTED)")
 
 
 def _handle_message_rv(rv: int, context: str) -> None:
@@ -242,6 +261,7 @@ class TestMessageEncryptDecrypt:
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
             except AssertionError as exc:
+                _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
                 )
@@ -264,6 +284,7 @@ class TestMessageEncryptDecrypt:
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
             except AssertionError as exc:
+                _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
                 )
@@ -271,6 +292,7 @@ class TestMessageEncryptDecrypt:
             try:
                 pt = message_decrypt(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
             except AssertionError as exc:
+                _skip_if_message_op_not_implemented(exc, "message decrypt")
                 xfail_if_known_ckr(
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message decrypt rejected (CKM_AES_CBC)"
                 )
@@ -337,6 +359,7 @@ class TestMessageEncryptDecrypt:
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
             except AssertionError as exc:
+                _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
                 )
@@ -391,6 +414,7 @@ class TestMessageEncryptDecrypt:
             try:
                 ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
             except AssertionError as exc:
+                _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
                     exc, _MESSAGE_OP_REJECT_RVS, "advertised message encrypt rejected (CKM_AES_CBC)"
                 )

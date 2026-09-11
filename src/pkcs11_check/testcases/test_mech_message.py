@@ -97,10 +97,16 @@ def _xfail_if_message_init_rejected(rv: int, *, label: str) -> None:
 
     if rv == int(CKR_OK):
         return
+    if rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+        # C_MessageEncryptInit / C_MessageSignInit (and their v3.0 message-family
+        # siblings) are optional functions: a module may expose a non-null
+        # function-table pointer yet stub the call with CKR_FUNCTION_NOT_SUPPORTED.
+        # That is capability absence, not a deviation -- skip, not xfail (mirrors
+        # the fix already applied to test_message_crypto.py / test_v30_session.py).
+        pytest.skip(f"{label}: not implemented (CKR_FUNCTION_NOT_SUPPORTED)")
     reject = (
         int(CKR_MECHANISM_INVALID),
         int(CKR_MECHANISM_PARAM_INVALID),
-        int(CKR_FUNCTION_NOT_SUPPORTED),
         int(CKR_FUNCTION_FAILED),
         int(CKR_DEVICE_ERROR),
         int(CKR_GENERAL_ERROR),
