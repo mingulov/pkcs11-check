@@ -342,6 +342,7 @@ def read_raw_ec_point_or_xfail(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=exc.rv,
                 summary=f"{label}: cannot read CKA_EC_POINT: {exc}",
                 detail=detail,
@@ -356,6 +357,7 @@ def read_raw_ec_point_or_xfail(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: CKA_EC_POINT attribute unavailable",
             detail=detail,
         )
@@ -366,6 +368,7 @@ def read_raw_ec_point_or_xfail(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: CKA_EC_POINT is not bytes: {ec_point!r}",
             detail=detail,
         )
@@ -378,6 +381,7 @@ def read_raw_ec_point_or_xfail(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: CKA_EC_POINT is empty",
             detail=detail,
         )
@@ -404,6 +408,7 @@ def read_raw_ec_point_or_xfail(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=(
                     f"{label}: CKA_EC_POINT length {actual_length} does not match "
                     f"{family.value} length {expected_length}"
@@ -420,6 +425,7 @@ def read_raw_ec_point_or_xfail(
             kind="crypto",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: invalid raw {family.value} public key: {exc}",
             detail=detail,
         )

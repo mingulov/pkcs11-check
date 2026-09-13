@@ -85,6 +85,19 @@ justified, and no node-id that produced a finding stopped running.
   JUnit artifact together with both a clean and a deliberately-explained-unclassified
   observability fixture.
 
+- **HKDF data-object derivation coverage.** HKDF data-object derivation was advertised in
+  several lanes but never invoked by the framework. New `test_hkdf_data_kat.py` slices with
+  independent derived-object oracles, wired through the derive dispatch, cover it.
+- **DES CBC encrypt-data coverage.** DES/3DES CBC encrypt-data was advertised in several
+  lanes but never invoked. New `test_des_kdf.py` slices with independent ciphertext oracles
+  cover it.
+- **Installed-artifact audit.** A new `artifact_audit` module verifies artifacts produced by
+  an installed distribution: it attests the importing package's own distribution metadata,
+  `RECORD` file, and on-disk origin (no source-tree fallback), then rebuilds the quality
+  portion of the result from `report.jsonl` and `results.json` instead of trusting a
+  derived `quality.json`. It runs as `python -m pkcs11_check.artifact_audit`; the interface
+  is a machine-readable protocol emitting canonical JSON.
+
 ### Fixed
 
 - **`kind` is now asserted on readback classification records.** `record_as()` derives outcome
@@ -246,6 +259,69 @@ justified, and no node-id that produced a finding stopped running.
   `C_SetAttributeValue`'s `CKR_ATTRIBUTE_READ_ONLY` -- the expected spec code for that negative op --
   through `xfail_if_known_ckr`, recording `not_operational` for correct behaviour. It now uses
   `reject_or_classify`, so the expected code passes, another clean code xfails, and `CKR_OK` fails.
+- **AES-CTS variant detection is authoritative.** The old detector misrouted correct synthetic
+  outputs (CS1 reported unknown, CS2 reported as CS3), contradicting the NIST SP 800-38A CTS
+  addendum: aligned CS1/CS2 equal CBC, aligned CS3 swaps the last two blocks, and unaligned
+  CS2/CS3 coincide. Detection now uses independent fixed-key, complete-ciphertext KATs for
+  aligned 32-byte and unaligned 33-byte inputs instead of depending on the provider's CBC
+  output. A failed detection still skips the CS-variant tests, but an exact standalone vector
+  selection keeps its own runtime guard, so the detection-failure evidence is not lost when
+  the detector itself was never selected.
+- **Truncated Wycheproof HMAC vectors use `CKM_*_HMAC_GENERAL`.** Truncated cases ran through
+  fixed-length `CKM_*_HMAC`, so a provider's correct refusal of a truncated tag could be
+  recorded as a deviation. The group tag length now selects `CKM_*_HMAC_GENERAL` with native
+  `CK_MAC_GENERAL_PARAMS` (full-length cases stay on fixed HMAC), the supplied tag passes
+  through unchanged so malformed-length invalid vectors keep their oracle, and a missing
+  GENERAL mechanism is a capability skip only for truncated cases.
+- **Absent `CKA_CHECK_VALUE` is not a deviation.** `CKA_CHECK_VALUE` is optional, so its
+  absence -- plain or as `CKR_ATTRIBUTE_TYPE_INVALID` -- is not a provider deviation.
+  `attr_or_record()` gained an `optional_if_absent` mode reserved for spec-optional
+  attributes, returning `MISSING_ATTRIBUTE` without recording; other refusal codes stay
+  visible, and a refusal that still wrote real attribute bytes stays a self-contradiction.
+  A wrong value, wrong type, wrong length, or suppression inconsistency on a present value
+  remains a finding, with the expected value coming from an independent AES oracle.
+- **DES/3DES weak-key probes use valid key-generation inputs.** The weak-key-size test routed
+  DES through the AES generator with a seven-byte `CKA_VALUE_LEN`; DES is a fixed-size
+  eight-byte object including parity and takes no AES-style length request, so provider
+  return codes were uninterpretable. DES now probes its fixed 8-byte key (56 effective bits)
+  and 3DES its fixed 24-byte key, and the weak-posture signal for them is the mechanism's
+  inherent size rather than an invalid request. No accepted-CKR set was broadened.
+- **Child-probe provider observations survive teardown failures.** The OpenCryptoki KWP child
+  observed a changed guard and the secret-key probe observed
+  `CKA_VALUE_LEN = CK_ULONG_MAX`, but both collapsed into generic `probe_incomplete` when a
+  later Python-level cleanup failed. Children now emit terminal observations through a
+  `PROVIDER_FINDING:` sentinel with a fixed schema (reason, kind, operation, mechanism,
+  detail); the parent owns classification and records the finding, while the generic
+  subprocess fallback stays conservative. The protocol is deliberately separate from
+  `HARNESS_ERROR`, which removes a record from provider totals.
+- **Static capability skips leave raw source evidence.** A static skip never starts pytest,
+  so it had no serialized record and resume/merge could not rebuild identical file-skip
+  detail. The isolated-unit marker is now persisted as the authoritative provenance, and
+  the markers carry reason and count so resume and merge reproduce the same detail.
+- **Provider findings stay out of inferred `harness_error`.** File-level abrupt
+  self-termination with test records present but no `SessionFinish`, no traceback, and a
+  positive non-reserved exit is now a provider-kept crash instead of an inferred harness
+  defect. Collection fallback copies streams in binary so one corrupt byte costs its line,
+  not the run, and RSA/EC setup xfails admit only the listed runtime-reject CKRs -- any
+  other code propagates as a finding.
+- **The `attr_or_record` inheritance vector is closed.** Every `attr_or_record` call site
+  (376) now passes `inherit_mechanism=False` at its source, so no readback can silently
+  inherit a caller's ambient mechanism: the per-file backlog ratchet is replaced by a
+  zero-tolerance guard that fails on any unguarded site. EC export helpers and
+  attribute-invariant readbacks are likewise mechanism-free, with producer context kept in
+  the label and detail. What remains is the direct-emitter family (`classify()` /
+  `record_as()` sites that stamp their own mechanism, including helper-parameterized
+  operations): a new effective-attribution inventory (`tests/_f6_readback_inventory.py`)
+  characterizes the current tree -- 91 `unsafe_inherited_readback` findings, 30 mixed-unsafe
+  states -- and pins it, so that backlog can only shrink and never silently grow.
+- **Present values are validated before an omitted sibling short-circuits.** In DSA
+  parameter checks, an omitted `PRIME` could mask a malformed present `SUBPRIME` (and vice
+  versa); each present sibling is now type- and length-checked before the missing-prerequisite
+  guard returns. `CKA_ID`/`CKA_LABEL` omission labels in the provisioned-sign-coherence check
+  now name the key, so the two distinct provider omissions no longer merge under one report
+  label. The operation-state tests stop stamping `CKM_ECDH1_DERIVE` -- a derive that never
+  executed -- on plain `C_GetAttributeValue` readbacks, with the dependency kept in the
+  detail.
 
 ## [0.1.9] - 2026-08-28
 

@@ -385,6 +385,7 @@ def _present_readback_or_record(
     return attr_or_record(
         attrs,
         attr,
+        inherit_mechanism=False,
         label=label,
         kind="metadata",
         mechanism=None,

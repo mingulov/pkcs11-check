@@ -56,6 +56,7 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
         value = attr_or_record(
             attrs,
             CKA_LOCAL,
+            inherit_mechanism=False,
             label=f"{label}:CKA_LOCAL",
             reason="not_operational",
             kind="metadata",

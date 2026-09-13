@@ -78,7 +78,7 @@ def test_derive_missing_peer_point_is_a_structured_not_operational_xfail(
     assert record.reason == "not_operational"
     assert record.kind == "metadata"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.mechanism is None
     assert record.actual_ckr is None
 
 
@@ -99,7 +99,7 @@ def test_derive_setup_fact_is_metadata_not_operational_without_ckr(
     assert record.reason == "not_operational"
     assert record.kind == "metadata"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.mechanism is None
     assert record.actual_ckr is None
 
 
@@ -111,7 +111,7 @@ def test_derive_invalid_point_fact_is_a_hard_crypto_failure() -> None:
     assert record.reason == "wrong_result"
     assert record.kind == "crypto"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.mechanism is None
     assert record.actual_ckr is None
 
 
@@ -123,7 +123,7 @@ def test_derive_read_error_preserves_standard_rv_as_metadata_xfail() -> None:
     assert record.reason == "not_operational"
     assert record.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.mechanism is None
 
 
 def test_derive_read_error_undefined_rv_is_metadata_failure() -> None:
@@ -135,7 +135,7 @@ def test_derive_read_error_undefined_rv_is_metadata_failure() -> None:
     assert record.kind == "metadata"
     assert record.actual_ckr == "0x0000007f"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_ECDH1_DERIVE"
+    assert record.mechanism is None
 
 
 def test_derive_vendor_read_error_is_visible_not_operational() -> None:
@@ -145,6 +145,33 @@ def test_derive_vendor_read_error_is_visible_not_operational() -> None:
     record = C.get_records()[0]
     assert record.reason == "not_operational"
     assert record.actual_ckr == "0x80000042"
+
+
+@pytest.mark.parametrize(
+    ("state", "fields"),
+    [
+        ("missing", {"value_type": None, "value_len": None}),
+        ("unusable", {"value_type": "NoneType", "value_len": None}),
+        ("malformed_encoding", {"diagnostic": "noncanonical DER"}),
+        ("invalid_point", {"diagnostic": "not on secp256r1"}),
+        ("read_error", {"operation": "C_GetAttributeValue", "rv": 0x12}),
+        ("read_error", {"operation": "C_GetAttributeValue", "rv": 0x7F}),
+    ],
+)
+def test_derive_setup_fact_readback_records_do_not_inherit_stale_mechanism(
+    state: str, fields: dict[str, object]
+) -> None:
+    """Every setup-readback branch is mechanism-free, even with an active stale op."""
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    fact = uaf._parse_uaf_fact(_setup_fact(state, **fields).rstrip())
+
+    record = uaf._uaf_record_setup_fact("derive protocol", fact)
+
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
+    assert record.detail is not None
+    assert record.detail["dependency"] == "C_DeriveKey"
 
 
 @pytest.mark.parametrize(

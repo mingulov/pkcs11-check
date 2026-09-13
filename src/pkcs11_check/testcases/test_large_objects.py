@@ -70,6 +70,7 @@ class TestLargeDataObjects:
             stored = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKO_DATA:1MB CKA_VALUE readback",
                 reason="not_operational",
             )
@@ -102,6 +103,7 @@ class TestLargeDataObjects:
             stored = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKO_DATA:100KB CKA_VALUE readback",
                 reason="not_operational",
             )

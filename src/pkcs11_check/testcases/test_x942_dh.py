@@ -117,7 +117,9 @@ def _read_attr_or_record(
 ) -> Any:
     """Read one provider attribute while preserving an unavailable-value record."""
     values = attrs if attrs is not None else read_attributes(raw, sh, handle, [attr])
-    return attr_or_record(values, attr, label=label, reason="not_operational")
+    return attr_or_record(
+        values, attr, inherit_mechanism=False, label=label, reason="not_operational"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -399,21 +401,25 @@ def _assert_x942_params(
     expected_subprime_bits: int,
 ) -> None:
     """Validate each available X9.42 parameter independently."""
+    # The parameter object is produced by C_GenerateKey at every caller (F6).
     _assert_x942_bytes(
         prime,
         label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME readback",
+        operation="C_GenerateKey",
         mechanism="CKM_X9_42_DH_PARAMETER_GEN",
         min_len=(expected_prime_bits + 7) // 8,
     )
     _assert_x942_bytes(
         base,
         label="CKM_X9_42_DH_PARAMETER_GEN:CKA_BASE readback",
+        operation="C_GenerateKey",
         mechanism="CKM_X9_42_DH_PARAMETER_GEN",
         min_len=1,
     )
     _assert_x942_bytes(
         subprime,
         label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME readback",
+        operation="C_GenerateKey",
         mechanism="CKM_X9_42_DH_PARAMETER_GEN",
         min_len=(expected_subprime_bits + 7) // 8,
     )
@@ -422,7 +428,7 @@ def _assert_x942_params(
             actual=prime_bits,
             expected=expected_prime_bits,
             label="CKM_X9_42_DH_PARAMETER_GEN:CKA_PRIME_BITS readback",
-            operation="C_GetAttributeValue",
+            operation="C_GenerateKey",
             mechanism="CKM_X9_42_DH_PARAMETER_GEN",
             kind="metadata",
         )
@@ -431,7 +437,7 @@ def _assert_x942_params(
             actual=subprime_bits,
             expected=expected_subprime_bits,
             label="CKM_X9_42_DH_PARAMETER_GEN:CKA_SUBPRIME_BITS readback",
-            operation="C_GetAttributeValue",
+            operation="C_GenerateKey",
             mechanism="CKM_X9_42_DH_PARAMETER_GEN",
             kind="metadata",
         )
@@ -441,12 +447,19 @@ def _assert_x942_bytes(
     value: Any,
     *,
     label: str,
+    operation: str,
     mechanism: str,
     expected_len: int | None = None,
     min_len: int | None = None,
     require_nonzero: bool = False,
 ) -> None:
-    """Classify malformed provider byte readbacks without harness assertions."""
+    """Classify malformed provider byte readbacks without harness assertions.
+
+    ``operation`` is the per-call-site producing operation (``C_DeriveKey`` for
+    derived secrets, ``C_GenerateKeyPair`` for keypair-generated public values,
+    ``C_GenerateKey`` for parameter objects): the finding is about the produced
+    output, not the ``C_GetAttributeValue`` readback that retrieved it (F6).
+    """
     if value is MISSING_ATTRIBUTE:
         return
     if not isinstance(value, bytes):
@@ -454,7 +467,7 @@ def _assert_x942_bytes(
             "wrong_result",
             kind="metadata",
             label=label,
-            operation="C_GetAttributeValue",
+            operation=operation,
             mechanism=mechanism,
             expected="bytes",
             actual=type(value).__name__,
@@ -465,7 +478,7 @@ def _assert_x942_bytes(
             "wrong_result",
             kind="metadata",
             label=label,
-            operation="C_GetAttributeValue",
+            operation=operation,
             mechanism=mechanism,
             expected=expected_len,
             actual=len(value),
@@ -476,7 +489,7 @@ def _assert_x942_bytes(
             "wrong_result",
             kind="metadata",
             label=label,
-            operation="C_GetAttributeValue",
+            operation=operation,
             mechanism=mechanism,
             expected=f">={min_len}",
             actual=len(value),
@@ -487,7 +500,7 @@ def _assert_x942_bytes(
             "wrong_result",
             kind="crypto",
             label=label,
-            operation="C_GetAttributeValue",
+            operation=operation,
             mechanism=mechanism,
             summary=f"{label}: provider returned an all-zero secret",
         )
@@ -498,9 +511,15 @@ def _assert_x942_different(
     second: Any,
     *,
     label: str,
+    operation: str,
     mechanism: str,
 ) -> None:
-    """Classify equal provider outputs where the test requires diversity."""
+    """Classify equal provider outputs where the test requires diversity.
+
+    ``operation`` is the per-call-site producing operation (see
+    :func:`_assert_x942_bytes`): this finding is about the producer's output
+    diversity, not the readback that retrieved the bytes (F6).
+    """
     if first is MISSING_ATTRIBUTE or second is MISSING_ATTRIBUTE:
         return
     if first == second:
@@ -508,7 +527,7 @@ def _assert_x942_different(
             "wrong_result",
             kind="crypto",
             label=label,
-            operation="C_GetAttributeValue",
+            operation=operation,
             mechanism=mechanism,
             summary=f"{label}: independent provider outputs were equal",
         )
@@ -990,6 +1009,7 @@ class TestX942DHKeyPairGen:
             _assert_x942_bytes(
                 pub_value,
                 label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_VALUE readback",
+                operation="C_GenerateKeyPair",
                 mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
@@ -1021,7 +1041,7 @@ class TestX942DHKeyPairGen:
                     actual=pub_kt,
                     expected=CKK_X9_42_DH,
                     label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_KEY_TYPE readback",
-                    operation="C_GetAttributeValue",
+                    operation="C_GenerateKeyPair",
                     mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                     kind="metadata",
                 )
@@ -1030,7 +1050,7 @@ class TestX942DHKeyPairGen:
                     actual=priv_kt,
                     expected=CKK_X9_42_DH,
                     label="CKM_X9_42_DH_KEY_PAIR_GEN:private-key CKA_KEY_TYPE readback",
-                    operation="C_GetAttributeValue",
+                    operation="C_GenerateKeyPair",
                     mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                     kind="metadata",
                 )
@@ -1115,12 +1135,14 @@ class TestX942DHKeyPairGen:
             _assert_x942_bytes(
                 val1,
                 label="CKM_X9_42_DH_KEY_PAIR_GEN:first public-key CKA_VALUE readback",
+                operation="C_GenerateKeyPair",
                 mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
             _assert_x942_bytes(
                 val2,
                 label="CKM_X9_42_DH_KEY_PAIR_GEN:second public-key CKA_VALUE readback",
+                operation="C_GenerateKeyPair",
                 mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
@@ -1128,6 +1150,7 @@ class TestX942DHKeyPairGen:
                 val1,
                 val2,
                 label="CKM_X9_42_DH_KEY_PAIR_GEN:independent public values",
+                operation="C_GenerateKeyPair",
                 mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
             )
         finally:
@@ -1164,16 +1187,20 @@ class TestX942DHDerive:
             )
             if alice_value is MISSING_ATTRIBUTE and bob_value is MISSING_ATTRIBUTE:
                 return
+            # These public values were produced by C_GenerateKeyPair, not by the
+            # derive under test (F6).
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_DH_DERIVE:Alice public CKA_VALUE readback",
-                mechanism="CKM_X9_42_DH_DERIVE",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_DH_DERIVE:Bob public CKA_VALUE readback",
-                mechanism="CKM_X9_42_DH_DERIVE",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
             if alice_value is not MISSING_ATTRIBUTE and bob_value is not MISSING_ATTRIBUTE:
@@ -1181,7 +1208,8 @@ class TestX942DHDerive:
                     alice_value,
                     bob_value,
                     label="CKM_X9_42_DH_DERIVE:independent public values",
-                    mechanism="CKM_X9_42_DH_DERIVE",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 )
 
             if bob_value is not MISSING_ATTRIBUTE:
@@ -1210,12 +1238,14 @@ class TestX942DHDerive:
             _assert_x942_bytes(
                 va,
                 label="CKM_X9_42_DH_DERIVE:Alice shared CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
                 min_len=1,
             )
             _assert_x942_bytes(
                 vb,
                 label="CKM_X9_42_DH_DERIVE:Bob shared CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
                 min_len=1,
             )
@@ -1657,6 +1687,7 @@ class TestX942DHDerive:
                         "CKM_X9_42_DH_DERIVE:RFC 5114 truncation "
                         f"CKA_VALUE readback len={requested_len}"
                     ),
+                    operation="C_DeriveKey",
                     mechanism="CKM_X9_42_DH_DERIVE",
                     expected_len=requested_len,
                 )
@@ -1902,12 +1933,14 @@ class TestX942DHDerive:
             _assert_x942_bytes(
                 v1,
                 label="CKM_X9_42_DH_DERIVE:first derived CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
                 min_len=1,
             )
             _assert_x942_bytes(
                 v2,
                 label="CKM_X9_42_DH_DERIVE:second derived CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
                 min_len=1,
             )
@@ -1915,6 +1948,7 @@ class TestX942DHDerive:
                 v1,
                 v2,
                 label="CKM_X9_42_DH_DERIVE:distinct exchanges produce distinct secrets",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
             )
         finally:
@@ -2064,16 +2098,20 @@ class TestX942DHParameterGen:
             )
             if alice_value is MISSING_ATTRIBUTE and bob_value is MISSING_ATTRIBUTE:
                 return
+            # These public values were produced by C_GenerateKeyPair from the
+            # generated parameters, not by the derive under test (F6).
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_DH_DERIVE:generated Alice public CKA_VALUE readback",
-                mechanism="CKM_X9_42_DH_DERIVE",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_DH_DERIVE:generated Bob public CKA_VALUE readback",
-                mechanism="CKM_X9_42_DH_DERIVE",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
             )
             if alice_value is not MISSING_ATTRIBUTE and bob_value is not MISSING_ATTRIBUTE:
@@ -2081,7 +2119,8 @@ class TestX942DHParameterGen:
                     alice_value,
                     bob_value,
                     label="CKM_X9_42_DH_DERIVE:generated independent public values",
-                    mechanism="CKM_X9_42_DH_DERIVE",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 )
 
             try:
@@ -2113,12 +2152,14 @@ class TestX942DHParameterGen:
             _assert_x942_bytes(
                 va,
                 label="CKM_X9_42_DH_DERIVE:generated Alice shared CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
                 min_len=1,
             )
             _assert_x942_bytes(
                 vb,
                 label="CKM_X9_42_DH_DERIVE:generated Bob shared CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_DERIVE",
                 min_len=1,
             )
@@ -2230,6 +2271,7 @@ class TestX942DHHybridDerive:
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_DH_HYBRID_DERIVE:Alice secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2237,6 +2279,7 @@ class TestX942DHHybridDerive:
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_DH_HYBRID_DERIVE:Bob secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2320,6 +2363,7 @@ class TestX942DHHybridDerive:
                 _assert_x942_bytes(
                     value,
                     label=f"CKM_X9_42_DH_HYBRID_DERIVE:CKA_VALUE readback len={requested_len}",
+                    operation="C_DeriveKey",
                     mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                     expected_len=requested_len,
                 )
@@ -2422,6 +2466,7 @@ class TestX942DHHybridDerive:
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_DH_HYBRID_DERIVE:concat Alice secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2429,6 +2474,7 @@ class TestX942DHHybridDerive:
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_DH_HYBRID_DERIVE:concat Bob secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2531,6 +2577,7 @@ class TestX942DHHybridDerive:
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_DH_HYBRID_DERIVE:ASN.1 Alice secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2538,6 +2585,7 @@ class TestX942DHHybridDerive:
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_DH_HYBRID_DERIVE:ASN.1 Bob secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_DH_HYBRID_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2724,6 +2772,7 @@ class TestX942MQVDerive:
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_MQV_DERIVE:Alice secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2731,6 +2780,7 @@ class TestX942MQVDerive:
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_MQV_DERIVE:Bob secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2815,6 +2865,7 @@ class TestX942MQVDerive:
                 _assert_x942_bytes(
                     value,
                     label=f"CKM_X9_42_MQV_DERIVE:CKA_VALUE readback len={requested_len}",
+                    operation="C_DeriveKey",
                     mechanism="CKM_X9_42_MQV_DERIVE",
                     expected_len=requested_len,
                 )
@@ -2919,6 +2970,7 @@ class TestX942MQVDerive:
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_MQV_DERIVE:concat Alice secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -2926,6 +2978,7 @@ class TestX942MQVDerive:
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_MQV_DERIVE:concat Bob secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -3030,6 +3083,7 @@ class TestX942MQVDerive:
             _assert_x942_bytes(
                 alice_value,
                 label="CKM_X9_42_MQV_DERIVE:ASN.1 Alice secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,
@@ -3037,6 +3091,7 @@ class TestX942MQVDerive:
             _assert_x942_bytes(
                 bob_value,
                 label="CKM_X9_42_MQV_DERIVE:ASN.1 Bob secret CKA_VALUE readback",
+                operation="C_DeriveKey",
                 mechanism="CKM_X9_42_MQV_DERIVE",
                 expected_len=_X942_EXTENDED_SECRET_LEN,
                 require_nonzero=True,

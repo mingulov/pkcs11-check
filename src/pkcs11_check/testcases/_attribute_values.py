@@ -9,7 +9,7 @@ from pkcs11_check.classification import record_as, xfail_as
 from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.recipes import AttrRefusal
 from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_SENSITIVE
+from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID
 
 MISSING_ATTRIBUTE: Final[object] = object()
 
@@ -39,6 +39,7 @@ def attr_or_record(
     mechanism: str | None = None,
     inherit_mechanism: bool = True,
     sensitive_is_conformant: bool = False,
+    optional_if_absent: bool = False,
 ) -> Any:
     """Return an attribute or record its absence without terminating the test.
 
@@ -57,6 +58,11 @@ def attr_or_record(
     refusal classified as ``reason`` (a deviation), same as CKR_ATTRIBUTE_TYPE_INVALID
     and a plain no-CKR absence -- so existing call sites are unaffected unless
     they opt in.
+
+    ``optional_if_absent=True`` is reserved for attributes the specification
+    explicitly makes optional. A plain omission or CKR_ATTRIBUTE_TYPE_INVALID
+    then returns ``MISSING_ATTRIBUTE`` without recording a deviation. Other
+    refusal codes remain visible, and a refusal-with-data remains a finding.
 
     A refusal-with-data (the module answered a refusal CKR but still wrote real
     attribute bytes into the template) is always a self-contradiction and is
@@ -98,6 +104,9 @@ def attr_or_record(
             ),
             detail=detail,
         )
+        return MISSING_ATTRIBUTE
+
+    if optional_if_absent and (refusal is None or refusal.ckr == CKR_ATTRIBUTE_TYPE_INVALID):
         return MISSING_ATTRIBUTE
 
     if sensitive_is_conformant and refusal is not None and refusal.ckr == CKR_ATTRIBUTE_SENSITIVE:

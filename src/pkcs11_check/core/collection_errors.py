@@ -70,8 +70,7 @@ def ensure_failed_collection_report(
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
+            mode="wb",
             dir=path.parent,
             prefix=f".{path.name}.",
             suffix=".tmp",
@@ -80,12 +79,22 @@ def ensure_failed_collection_report(
             temporary_path = Path(temporary.name)
             inserted = False
             try:
-                source = path.open(encoding="utf-8")
+                source = path.open("rb")
             except OSError:
                 source = None
             if source is not None:
                 with source:
-                    for raw_line in source:
+                    # Binary iteration splits on b"\n" before any decoding, so
+                    # one corrupt byte costs exactly its own line (which is
+                    # still copied through verbatim) instead of aborting the
+                    # whole copy with UnicodeDecodeError.
+                    for raw_bytes in source:
+                        try:
+                            raw_line = raw_bytes.decode("utf-8")
+                        except UnicodeDecodeError:
+                            completion.invalidate()
+                            temporary.write(raw_bytes)
+                            continue
                         parsed: object | None = None
                         if raw_line.strip():
                             try:
@@ -124,9 +133,9 @@ def ensure_failed_collection_report(
                                 and parsed.get("$report_type") == "SessionFinish"
                                 and parsed.get("exitstatus") == returncode
                             ):
-                                temporary.write(record_line)
+                                temporary.write(record_line.encode("utf-8"))
                                 inserted = True
-                        temporary.write(raw_line)
+                        temporary.write(raw_bytes)
             if existing_collection or existing_test:
                 return False
             if (
@@ -142,7 +151,7 @@ def ensure_failed_collection_report(
             ):
                 return False
             if not inserted:
-                temporary.write(record_line)
+                temporary.write(record_line.encode("utf-8"))
         assert temporary_path is not None
         temporary_path.replace(path)
     finally:

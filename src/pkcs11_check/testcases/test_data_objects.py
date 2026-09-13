@@ -70,6 +70,7 @@ def _read_str(attrs: dict[int, Any], key: int, *, label: str) -> Any:
     v = attr_or_record(
         attrs,
         key,
+        inherit_mechanism=False,
         label=label,
         reason="not_operational",
         kind="metadata",
@@ -165,6 +166,7 @@ class TestDataObjectCreate:
             value = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:large-data-object",
                 reason="not_operational",
             )
@@ -288,6 +290,7 @@ class TestDataObjectReadValue:
             value = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:data-object-readback",
                 reason="not_operational",
             )
@@ -350,6 +353,7 @@ class TestDataObjectReadValue:
             object_class = attr_or_record(
                 attrs,
                 CKA_CLASS,
+                inherit_mechanism=False,
                 label="CKA_CLASS:data-object",
                 reason="honest_deviation",
             )
@@ -464,6 +468,7 @@ class TestDataObjectToken:
             value = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:persistent-data-object",
                 reason="not_operational",
             )

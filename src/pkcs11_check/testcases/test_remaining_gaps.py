@@ -472,6 +472,7 @@ class TestTemplateConstraintAttributes:
             wt = attr_or_record(
                 vals,
                 CKA_WRAP_TEMPLATE,
+                inherit_mechanism=False,
                 label="CKA_WRAP_TEMPLATE:generated-AES-wrap-key readback",
                 reason="honest_deviation",
                 kind="metadata",
@@ -508,6 +509,7 @@ class TestTemplateConstraintAttributes:
             ut = attr_or_record(
                 vals,
                 CKA_UNWRAP_TEMPLATE,
+                inherit_mechanism=False,
                 label="CKA_UNWRAP_TEMPLATE:generated-AES-unwrap-key readback",
                 reason="honest_deviation",
                 kind="metadata",
@@ -543,6 +545,7 @@ class TestTemplateConstraintAttributes:
             dt = attr_or_record(
                 vals,
                 CKA_DERIVE_TEMPLATE,
+                inherit_mechanism=False,
                 label="CKA_DERIVE_TEMPLATE:generated-AES-derive-key readback",
                 reason="honest_deviation",
                 kind="metadata",
@@ -620,6 +623,7 @@ class TestTemplateConstraintAttributes:
                 raw_template = attr_or_record(
                     attrs,
                     CKA_WRAP_TEMPLATE,
+                    inherit_mechanism=False,
                     label="CKA_WRAP_TEMPLATE:wrapping-key readback",
                     reason="honest_deviation",
                     kind="metadata",
@@ -762,6 +766,7 @@ class TestTemplateConstraintAttributes:
                 raw_template = attr_or_record(
                     attrs,
                     CKA_UNWRAP_TEMPLATE,
+                    inherit_mechanism=False,
                     label="CKA_UNWRAP_TEMPLATE:unwrapping-key readback",
                     reason="honest_deviation",
                     kind="metadata",
@@ -950,6 +955,7 @@ class TestTemplateConstraintAttributes:
                 raw_template = attr_or_record(
                     attrs,
                     CKA_DERIVE_TEMPLATE,
+                    inherit_mechanism=False,
                     label="CKA_DERIVE_TEMPLATE:base-key readback",
                     reason="honest_deviation",
                     kind="metadata",
@@ -1076,6 +1082,7 @@ class TestOtpKeyAttributes:
                 value = attr_or_record(
                     vals,
                     attr_int,
+                    inherit_mechanism=False,
                     label=f"CKA_OTP:0x{attr_int:08X}:OTP-key readback",
                     reason="honest_deviation",
                     kind="metadata",

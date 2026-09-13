@@ -134,6 +134,7 @@ class TestEcDomainParameters:
             key_type = attr_or_record(
                 attrs,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label="CKA_KEY_TYPE:EC-domain-parameters",
             )
             if key_type is MISSING_ATTRIBUTE:
@@ -158,6 +159,7 @@ class TestEcDomainParameters:
             key_type = attr_or_record(
                 attrs,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label="CKA_KEY_TYPE:token-EC-domain-parameters",
             )
             if key_type is MISSING_ATTRIBUTE:
@@ -182,6 +184,7 @@ class TestEcDomainParameters:
             ec_params = attr_or_record(
                 attrs,
                 CKA_EC_PARAMS,
+                inherit_mechanism=False,
                 label="CKA_EC_PARAMS:domain-parameters",
             )
             if ec_params is MISSING_ATTRIBUTE:
@@ -209,6 +212,7 @@ class TestEcDomainParameters:
             local = attr_or_record(
                 attrs,
                 CKA_LOCAL,
+                inherit_mechanism=False,
                 label="CKA_LOCAL:domain-parameters",
             )
             if local is MISSING_ATTRIBUTE:
@@ -267,6 +271,7 @@ class TestDomainParameterEnumeration:
                 key_type = attr_or_record(
                     attrs,
                     CKA_KEY_TYPE,
+                    inherit_mechanism=False,
                     label="CKA_KEY_TYPE:enumerated-domain-parameters",
                 )
                 if key_type is MISSING_ATTRIBUTE:
@@ -320,6 +325,7 @@ class TestMultipleCurveDomainParams:
             key_type = attr_or_record(
                 attrs,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label=f"CKA_KEY_TYPE:{curve}-domain-parameters",
             )
             if key_type is MISSING_ATTRIBUTE:
