@@ -28,7 +28,10 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
-from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
+from pkcs11_check.testcases.security.conftest import (
+    assert_subprocess_no_crash,
+    handle_child_provider_finding,
+)
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
@@ -85,14 +88,26 @@ class TestCreateObjectSecretKeyValueLen:
             timeout=10,
             coverage="session",
         )
+        context = (
+            f"C_CreateObject({key_type_name}, "
+            f"CKA_VALUE_LEN={_ULONG_MAX:#x}, include_value={include_value})"
+        )
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism=None,
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=(
-                f"C_CreateObject({key_type_name}, "
-                f"CKA_VALUE_LEN={_ULONG_MAX:#x}, include_value={include_value})"
-            ),
+            context=context,
         )
 
 
@@ -114,11 +129,23 @@ class TestExistingSecretKeyValueLen:
             timeout=10,
             coverage="session",
         )
+        context = f"C_CopyObject(secret key, CKA_VALUE_LEN={_ULONG_MAX:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism=None,
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"C_CopyObject(secret key, CKA_VALUE_LEN={_ULONG_MAX:#x})",
+            context=context,
         )
 
     def test_set_secret_key_oversized_value_len_does_not_crash(
@@ -136,11 +163,23 @@ class TestExistingSecretKeyValueLen:
             timeout=10,
             coverage="session",
         )
+        context = f"C_SetAttributeValue(secret key, CKA_VALUE_LEN={_ULONG_MAX:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism=None,
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"C_SetAttributeValue(secret key, CKA_VALUE_LEN={_ULONG_MAX:#x})",
+            context=context,
         )
 
 
@@ -167,11 +206,23 @@ class TestDigestKeySecretKeyValueLen:
             timeout=15,
             coverage="session",
         )
+        context = f"C_DigestKey(secret key imported with CKA_VALUE_LEN={_ULONG_MAX:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_SHA256",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=(f"C_DigestKey(secret key imported with CKA_VALUE_LEN={_ULONG_MAX:#x})"),
+            context=context,
         )
 
 
@@ -200,11 +251,23 @@ class TestUnwrapSecretKeyValueLen:
             timeout=15,
             coverage="session",
         )
+        context = f"C_UnwrapKey(AES_ECB, CKA_VALUE_LEN={_ULONG_MAX:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_AES_ECB",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"C_UnwrapKey(AES_ECB, CKA_VALUE_LEN={_ULONG_MAX:#x})",
+            context=context,
         )
 
 
@@ -231,11 +294,23 @@ class TestGenerateKeySecretKeyValueLen:
             timeout=15,
             coverage="session",
         )
+        context = f"C_GenerateKey(GENERIC_SECRET, CKA_VALUE_LEN={_ULONG_MAX:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_GENERIC_SECRET_KEY_GEN",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"C_GenerateKey(GENERIC_SECRET, CKA_VALUE_LEN={_ULONG_MAX:#x})",
+            context=context,
         )
         rv = _parse_prefixed_int(result.stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -264,11 +339,23 @@ class TestGenerateKeySecretKeyValueLen:
             timeout=15,
             coverage="session",
         )
+        context = f"C_GenerateKey(PBKDF2, CKA_VALUE_LEN={_ULONG_MAX:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_PKCS5_PBKD2",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"C_GenerateKey(PBKDF2, CKA_VALUE_LEN={_ULONG_MAX:#x})",
+            context=context,
         )
         rv = _parse_prefixed_int(result.stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -310,9 +397,21 @@ class TestDeriveKeySecretKeyValueLen:
             timeout=15,
             coverage="session",
         )
+        context = f"C_DeriveKey(HKDF_SHA256, CKA_VALUE_LEN={output_value_len:#x})"
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context=context,
+            expected_reason="self_contradiction",
+            expected_kind="metadata",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_HKDF_DERIVE",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=(f"C_DeriveKey(HKDF_SHA256, CKA_VALUE_LEN={output_value_len:#x})"),
+            context=context,
         )

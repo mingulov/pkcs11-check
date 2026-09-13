@@ -142,6 +142,7 @@ class TestTrustObjects:
             issuer = attr_or_record(
                 attrs,
                 CKA_ISSUER,
+                inherit_mechanism=False,
                 label="CKO_TRUST CKA_ISSUER",
             )
             if issuer is MISSING_ATTRIBUTE:
@@ -168,6 +169,7 @@ class TestTrustObjects:
             serial = attr_or_record(
                 attrs,
                 CKA_SERIAL_NUMBER,
+                inherit_mechanism=False,
                 label="CKO_TRUST CKA_SERIAL_NUMBER",
             )
             if serial is MISSING_ATTRIBUTE:

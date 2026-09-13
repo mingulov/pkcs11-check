@@ -25,6 +25,12 @@ from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
 from pkcs11_check.testcases._probes import session
 
 
+@pytest.fixture(autouse=True)
+def _probe_params_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct probe calls must not depend on pytest's own command-line arguments."""
+    monkeypatch.setattr(sys, "argv", ["session-probe", "params.json"])
+
+
 def _write_probe(tmp_path: Path) -> Path:
     """Write a tiny child module that calls probe_main and reports session state."""
     probe = tmp_path / "probe_under_test.py"

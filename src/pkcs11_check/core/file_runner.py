@@ -150,6 +150,9 @@ from pkcs11_check.core._report_records import (
     _write_report_jsonl_from_record_sources as _write_report_jsonl_from_record_sources,
 )
 from pkcs11_check.core._report_records import (
+    _write_static_skip_report_record_cache as _write_static_skip_report_record_cache,
+)
+from pkcs11_check.core._report_records import (
     _write_unit_report_record_cache as _write_unit_report_record_cache,
 )
 from pkcs11_check.core._report_records import (
@@ -397,6 +400,23 @@ from pkcs11_check.core.report_log import QualityReportEvidence
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 _MAX_TIMEOUT_RETRIES = 3
+# Marker matched against captured output to tell "the module tore the process
+# down" apart from "Python died normally".  Mirrors the probe layer's
+# abrupt-exit discriminator (testcases/_probes/runner.py): a C exit() from
+# inside a PKCS#11 call pre-empts CPython entirely, so there is nothing to
+# print, while every Python-level death leaves a traceback.
+_PYTHON_TRACEBACK_MARKER = "Traceback (most recent call last)"
+# Operator interruption is neither a provider finding nor a harness defect.
+# Exit codes 3/4 are pytest's reserved internal-error/usage-error codes and stay
+# harness evidence (pinned by test_progressive_timeout_confirmation_*): a module
+# choosing exactly those codes to kill the run is outside the threat model.
+# It keeps the historical harness-evidence path below.
+_OPERATOR_EXIT_CODES = frozenset({2})
+_RESERVED_PYTEST_EXIT_CODES = frozenset({3, 4})
+# Upper bound for the record-presence scan: the first test's setup-phase
+# record appears at the head of the stream, so a small prefix suffices.
+_TEST_REPORT_SCAN_LIMIT = 4 * 1024 * 1024
+_TEST_REPORT_NEEDLE = b'"$report_type": "TestReport"'
 # Exit code when the selection (module/marker/match/path) collected ZERO tests:
 # a run that executed nothing must not report success. Maps to the contract's
 # "couldn't run" code 2 (docs/integration-contract.md), so CI gates on rc>=2.
@@ -408,6 +428,67 @@ _NO_TESTS_COLLECTED_EXIT = 2
 # a provider DLL more readily leaves a handle-inheriting helper process). Daemon
 # readers are abandoned after the grace and die at process exit.
 _POST_EXIT_DRAIN_GRACE_S = 3.0
+
+
+def _stream_has_test_reports(jsonl_path: Path | None) -> bool:
+    """Whether the report stream holds any test-phase record.
+
+    The first test's setup-phase record appears at the head of the stream, so
+    a bounded prefix scan suffices.  A chunk-overlap tail keeps a needle split
+    across two reads detectable.
+    """
+
+    if jsonl_path is None:
+        return False
+    needle = _TEST_REPORT_NEEDLE
+    try:
+        with jsonl_path.open("rb") as handle:
+            remaining = _TEST_REPORT_SCAN_LIMIT
+            carry = b""
+            while remaining > 0:
+                chunk = handle.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                if needle in carry + chunk:
+                    return True
+                carry = (carry + chunk)[-(len(needle) - 1) :]
+    except OSError:
+        return False
+    return False
+
+
+def _module_terminated_process(
+    *,
+    returncode: int,
+    session_exitstatus: int | None,
+    stdout: str,
+    stderr: str,
+    jsonl_path: Path | None,
+) -> bool:
+    """Whether the MODULE tore the file-level pytest process down.
+
+    Requires the full conjunction, mirroring the probe layer:
+
+    * a positive exit code that is not operator interruption (signals take
+      the crash path before this is consulted);
+    * no SessionFinish record (orderly pytest always writes one, including
+      genuine no-tests-collected exit 5);
+    * no Python traceback in captured output (every Python-level death,
+      including pytest internal errors, leaves one);
+    * at least one test-phase record (the provider only loads inside test
+      setup, so pre-first-record deaths cannot be attributed to it).
+    """
+
+    return (
+        returncode > 0
+        and returncode not in _OPERATOR_EXIT_CODES
+        and returncode not in _RESERVED_PYTEST_EXIT_CODES
+        and session_exitstatus is None
+        and _PYTHON_TRACEBACK_MARKER not in stderr
+        and _PYTHON_TRACEBACK_MARKER not in stdout
+        and _stream_has_test_reports(jsonl_path)
+    )
 
 
 def _completion_verified_for_attempt(
@@ -447,6 +528,71 @@ def _cache_attempt_report(
             or (f"pytest exited with code {returncode} without a matching SessionFinish record")
         )
         marker_nodeid = evidence_nodeid or unit
+        if _module_terminated_process(
+            returncode=returncode,
+            session_exitstatus=session_exitstatus,
+            stdout=stdout,
+            stderr=stderr,
+            jsonl_path=jsonl_path,
+        ):
+            # The module terminated its own process (e.g. a C exit() from
+            # inside a PKCS#11 call): a crash finding by project doctrine, kept
+            # in provider counts.  It must never become inferred harness_error.
+            abrupt = {
+                "$report_type": "TestReport",
+                "nodeid": marker_nodeid,
+                "when": "call",
+                "outcome": "failed",
+                "longrepr": (
+                    f"{diagnostic}\n"
+                    f"[abrupt-exit] file-level pytest process terminated itself "
+                    f"with exit code {returncode} without a SessionFinish record"
+                ),
+                "user_properties": [
+                    [
+                        "pkcs11_classification",
+                        {
+                            "schema": 1,
+                            "reason": "crash",
+                            "outcome": "fail",
+                            "severity": "HIGH",
+                            "kind": None,
+                            "label": marker_nodeid,
+                            "summary": (
+                                f"{marker_nodeid}: process terminated itself (exit {returncode})"
+                            ),
+                            "operation": None,
+                            "mechanism": None,
+                            "expected_ckr": None,
+                            "actual_ckr": None,
+                            "spec_ref": "",
+                            "source": None,
+                            "vector_id": None,
+                            "detail": {"mode": "abrupt-exit", "returncode": returncode},
+                        },
+                    ]
+                ],
+            }
+            with jsonl_path.open("a", encoding="utf-8") as report_fh:
+                report_fh.write(json.dumps(abrupt) + "\n")
+            detail = _merge_special_entries_into_detail(
+                detail,
+                [
+                    {
+                        "nodeid": marker_nodeid,
+                        "outcome": "failed",
+                        "evidence_type": "provider-crash",
+                        "returncode": returncode,
+                        "completion_verified": False,
+                        "longrepr": diagnostic,
+                    }
+                ],
+            )
+            detail["incomplete"] = True
+            _write_unit_report_record_cache_from_jsonl_paths(
+                state_file, unit, jsonl_paths or [jsonl_path]
+            )
+            return detail, completion_verified
         marker = {
             "$report_type": "HarnessError",
             "nodeid": marker_nodeid,
@@ -1492,11 +1638,18 @@ def run_isolated_pytest_units(
                             duration_s=0.0,
                         )
                         _record_result(state, result)
-                        per_unit_details[unit] = _synthetic_file_skip_detail(
+                        file_skip_detail = _synthetic_file_skip_detail(
                             unit,
                             reason,
                             pytest_args,
                             env,
+                        )
+                        per_unit_details[unit] = file_skip_detail
+                        _write_static_skip_report_record_cache(
+                            state_file,
+                            unit,
+                            reason=reason,
+                            skipped=file_skip_detail["counts"]["skipped"],
                         )
                         save_run_state(state_file, state)
                         index += 1

@@ -51,6 +51,8 @@ is a real ``fail`` (kind="crypto", reason="wrong_result").
 
 from __future__ import annotations
 
+from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -73,8 +75,10 @@ from pkcs11_check.testcases import test_ssl3 as _ssl3
 from pkcs11_check.testcases import test_stateful_sigs as _stateful_sigs
 from pkcs11_check.testcases import test_tls12 as _tls12
 from pkcs11_check.testcases import test_wtls as _wtls
+from pkcs11_check.testcases import test_x942_dh as _x942
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.acvp import test_acvp_ecdh as _acvp_ecdh
+from tests._f6_readback_inventory import STATUS_EXPLICIT_MECHANISM_READBACK, scan_tree
 
 _BARE_C_GET_ATTRIBUTE_VALUE = "PKCS#11 v3.2 · C_GetAttributeValue"
 _STALE_MECHANISM = "CKM_STALE"
@@ -106,7 +110,8 @@ def _last_record() -> C.Classification:
     return records[-1]
 
 
-def _assert_bare_readback(record: C.Classification) -> None:
+def _assert_bare_readback(record: C.Classification, *, kind: str = "metadata") -> None:
+    assert record.kind == kind
     assert record.mechanism is None
     assert record.operation == "C_GetAttributeValue"
     assert record.spec_ref == _BARE_C_GET_ATTRIBUTE_VALUE
@@ -727,7 +732,7 @@ def test_group_b_inline_site_is_mechanism_free(
     result = attr_or_record({}, 0, inherit_mechanism=False, **kwargs)
     assert result is MISSING_ATTRIBUTE
     record = _last_record()
-    _assert_bare_readback(record)
+    _assert_bare_readback(record, kind=kwargs.get("kind", "metadata"))
     assert producer_marker in record.label
 
 
@@ -752,7 +757,7 @@ def test_acvp_ecdh_off_curve_point_finding_is_mechanism_free() -> None:
             ),
         )
     record = _last_record()
-    _assert_bare_readback(record)
+    _assert_bare_readback(record, kind="crypto")
     assert "producer_mechanism=CKM_EC_KEY_PAIR_GEN" in record.label
 
 
@@ -782,3 +787,306 @@ def test_pre_fix_shape_would_fail_the_mechanism_free_assertion() -> None:
     assert record.spec_ref != _BARE_C_GET_ATTRIBUTE_VALUE
     with pytest.raises(AssertionError):
         _assert_bare_readback(record)
+
+
+# ---------------------------------------------------------------------------
+# x942 per-call-site producer operations: test_x942_dh.py's shared byte and
+# diversity helpers stamped every finding ``operation="C_GetAttributeValue"``
+# with one shared mechanism, even where the checked value was produced by a
+# different operation (keypair-generated public values checked inside derive
+# tests were stamped ``CKM_X9_42_DH_DERIVE``). Like the misc_kdf/sp800_108
+# diversity findings (see tests/test_f6_relabeled_diversity_check_sites.py),
+# the mechanism here already names the producer, so the fix relabels the
+# operation to the per-call-site producer (``C_DeriveKey`` /
+# ``C_GenerateKeyPair`` / ``C_GenerateKey``) rather than stripping the
+# mechanism. Reasons, kinds, and verdicts are unchanged -- attribution only.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,kwargs,kind",
+    [
+        ("not-bytes", {}, "metadata"),
+        (b"\x01", {"expected_len": 4}, "metadata"),
+        (b"\x01", {"min_len": 4}, "metadata"),
+        (b"\x00" * 16, {"expected_len": 16, "require_nonzero": True}, "crypto"),
+    ],
+    ids=["non_bytes", "wrong_length", "too_short", "all_zero"],
+)
+@pytest.mark.parametrize(
+    "operation,mechanism",
+    [
+        ("C_DeriveKey", "CKM_X9_42_DH_DERIVE"),
+        ("C_GenerateKeyPair", "CKM_X9_42_DH_KEY_PAIR_GEN"),
+        ("C_GenerateKey", "CKM_X9_42_DH_PARAMETER_GEN"),
+    ],
+    ids=["derive", "keypair", "params"],
+)
+def test_x942_assert_bytes_carries_explicit_producer_operation(
+    value: Any, kwargs: dict[str, Any], kind: str, operation: str, mechanism: str
+) -> None:
+    """Every ``_assert_x942_bytes`` branch attributes its finding to the explicit
+    per-call-site producer operation; metadata branches stay metadata and the
+    all-zero branch keeps kind="crypto"."""
+    with pytest.raises(pytest.fail.Exception):
+        _x942._assert_x942_bytes(
+            value, label="probe readback", operation=operation, mechanism=mechanism, **kwargs
+        )
+    record = _last_record()
+    assert record.operation == operation
+    assert record.mechanism == mechanism
+    assert record.reason == "wrong_result"
+    assert record.kind == kind
+
+
+def test_x942_assert_different_carries_explicit_producer_operation() -> None:
+    with pytest.raises(pytest.fail.Exception):
+        _x942._assert_x942_different(
+            b"\x01" * 16,
+            b"\x01" * 16,
+            label="probe diversity",
+            operation="C_DeriveKey",
+            mechanism="CKM_X9_42_DH_DERIVE",
+        )
+    record = _last_record()
+    assert record.operation == "C_DeriveKey"
+    assert record.mechanism == "CKM_X9_42_DH_DERIVE"
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+
+
+def test_x942_helpers_emit_nothing_for_missing_or_matching_values() -> None:
+    """Guard: the early-return and pass-through paths stay finding-free."""
+    _x942._assert_x942_bytes(
+        MISSING_ATTRIBUTE,
+        label="probe",
+        operation="C_DeriveKey",
+        mechanism="CKM_X9_42_DH_DERIVE",
+        expected_len=1,
+    )
+    _x942._assert_x942_bytes(
+        b"\x01" * 16,
+        label="probe",
+        operation="C_DeriveKey",
+        mechanism="CKM_X9_42_DH_DERIVE",
+        expected_len=16,
+    )
+    _x942._assert_x942_different(
+        MISSING_ATTRIBUTE,
+        b"\x01",
+        label="probe",
+        operation="C_DeriveKey",
+        mechanism="CKM_X9_42_DH_DERIVE",
+    )
+    _x942._assert_x942_different(
+        b"\x01",
+        b"\x02",
+        label="probe",
+        operation="C_DeriveKey",
+        mechanism="CKM_X9_42_DH_DERIVE",
+    )
+    assert C.get_records() == []
+
+
+def test_x942_pre_fix_shape_would_fail_the_producer_operation_assertion() -> None:
+    """Mutation check: the pre-fix ``operation="C_GetAttributeValue"`` literal,
+    reproduced directly, proves the producer-operation assertions above are
+    sensitive to the relabel rather than vacuous."""
+    with pytest.raises(pytest.fail.Exception):
+        C.classify(
+            "wrong_result",
+            kind="metadata",
+            label="probe",
+            operation="C_GetAttributeValue",  # the pre-fix literal, reinstated
+            mechanism="CKM_X9_42_DH_DERIVE",
+            summary="probe",
+        )
+    record = _last_record()
+    assert record.operation == "C_GetAttributeValue"
+    with pytest.raises(AssertionError):
+        assert record.operation == "C_DeriveKey"
+
+
+def _x942_inventory_findings() -> Any:
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+    return [finding for finding in scan_tree(root) if finding.path == "test_x942_dh.py"]
+
+
+def test_x942_no_explicit_mechanism_readback_remains() -> None:
+    """Every x942 readback-shaped emitter now carries a producer operation, so no
+    ``explicit_mechanism_readback`` finding may remain in this file."""
+    readbacks = [
+        finding
+        for finding in _x942_inventory_findings()
+        if finding.status == STATUS_EXPLICIT_MECHANISM_READBACK
+    ]
+    assert readbacks == []
+
+
+_X942_BYTES_PRODUCER_STATES: Counter[tuple[str, str, str]] = Counter(
+    {
+        (
+            "TestX942DHKeyPairGen.test_keypair_generation",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 1,
+        (
+            "TestX942DHKeyPairGen.test_two_keypairs_have_different_public_values",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 2,
+        (
+            "TestX942DHDerive.test_derive_shared_secret",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 2,
+        (
+            "TestX942DHDerive.test_derive_shared_secret",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_DERIVE",
+        ): 2,
+        (
+            "TestX942DHDerive.test_x942_dh_derive_rfc5114_value_len_truncation",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_DERIVE",
+        ): 1,
+        (
+            "TestX942DHDerive.test_different_exchanges_produce_different_secrets",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_DERIVE",
+        ): 2,
+        (
+            "TestX942DHParameterGen.test_generated_params_produce_valid_derive",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 2,
+        (
+            "TestX942DHParameterGen.test_generated_params_produce_valid_derive",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_DERIVE",
+        ): 2,
+        (
+            "TestX942DHHybridDerive.test_hybrid_derive_matches_between_parties",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_HYBRID_DERIVE",
+        ): 2,
+        (
+            "TestX942DHHybridDerive.test_hybrid_derive_value_len_truncation",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_HYBRID_DERIVE",
+        ): 1,
+        (
+            "TestX942DHHybridDerive.test_hybrid_derive_concatenate_other_info",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_HYBRID_DERIVE",
+        ): 2,
+        (
+            "TestX942DHHybridDerive.test_hybrid_derive_asn1_other_info",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_HYBRID_DERIVE",
+        ): 2,
+        ("_assert_x942_params", "C_GenerateKey", "CKM_X9_42_DH_PARAMETER_GEN"): 3,
+        (
+            "TestX942MQVDerive.test_mqv_derive_matches_between_parties",
+            "C_DeriveKey",
+            "CKM_X9_42_MQV_DERIVE",
+        ): 2,
+        (
+            "TestX942MQVDerive.test_mqv_derive_value_len_truncation",
+            "C_DeriveKey",
+            "CKM_X9_42_MQV_DERIVE",
+        ): 1,
+        (
+            "TestX942MQVDerive.test_mqv_derive_concatenate_other_info",
+            "C_DeriveKey",
+            "CKM_X9_42_MQV_DERIVE",
+        ): 2,
+        (
+            "TestX942MQVDerive.test_mqv_derive_asn1_other_info",
+            "C_DeriveKey",
+            "CKM_X9_42_MQV_DERIVE",
+        ): 2,
+    }
+)
+
+_X942_DIFFERENT_PRODUCER_STATES: Counter[tuple[str, str, str]] = Counter(
+    {
+        (
+            "TestX942DHKeyPairGen.test_two_keypairs_have_different_public_values",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 1,
+        (
+            "TestX942DHDerive.test_derive_shared_secret",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 1,
+        (
+            "TestX942DHDerive.test_different_exchanges_produce_different_secrets",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_DERIVE",
+        ): 1,
+        (
+            "TestX942DHParameterGen.test_generated_params_produce_valid_derive",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 1,
+    }
+)
+
+
+def test_x942_bytes_producer_operations_match_audited_disposition() -> None:
+    """Each ``_assert_x942_bytes`` emitter resolves every caller to the operation
+    that produced the checked value: ``C_DeriveKey`` for derived secrets,
+    ``C_GenerateKeyPair`` for keypair-generated public values (including the
+    ones checked inside derive tests), ``C_GenerateKey`` for parameter objects."""
+    findings = [
+        finding
+        for finding in _x942_inventory_findings()
+        if finding.function == "_assert_x942_bytes" and finding.emitter == "classify"
+    ]
+    assert len(findings) == 4
+    for finding in findings:
+        actual = Counter(
+            (state.caller.function, state.operation, state.mechanism) for state in finding.states
+        )
+        assert actual == _X942_BYTES_PRODUCER_STATES
+
+
+def test_x942_different_producer_operations_match_audited_disposition() -> None:
+    findings = [
+        finding
+        for finding in _x942_inventory_findings()
+        if finding.function == "_assert_x942_different" and finding.emitter == "classify"
+    ]
+    assert len(findings) == 1
+    (finding,) = findings
+    actual = Counter(
+        (state.caller.function, state.operation, state.mechanism) for state in finding.states
+    )
+    assert actual == _X942_DIFFERENT_PRODUCER_STATES
+
+
+def test_x942_param_and_keytype_comparisons_carry_producer_operation() -> None:
+    """The ``assert_correct`` readback-shaped comparisons in ``_assert_x942_params``
+    (parameter object, produced by ``C_GenerateKey``) and
+    ``test_keypair_has_correct_key_type`` (generated keys, produced by
+    ``C_GenerateKeyPair``) carry their producer operation."""
+    expected = {
+        "_assert_x942_params": ("C_GenerateKey", "CKM_X9_42_DH_PARAMETER_GEN"),
+        "TestX942DHKeyPairGen.test_keypair_has_correct_key_type": (
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ),
+    }
+    findings = [
+        finding
+        for finding in _x942_inventory_findings()
+        if finding.emitter == "assert_correct" and finding.function in expected
+    ]
+    assert len(findings) == 4
+    for finding in findings:
+        assert finding.states
+        assert {(state.operation, state.mechanism) for state in finding.states} == {
+            expected[finding.function]
+        }

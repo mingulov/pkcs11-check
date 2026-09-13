@@ -69,6 +69,7 @@ class TestGenericSecretKeyGen:
                 value = attr_or_record(
                     attrs,
                     CKA_VALUE,
+                    inherit_mechanism=False,
                     label=f"GENERIC_SECRET_KEY_GEN {bits}-bit CKA_VALUE readback",
                     reason="not_operational",
                 )
@@ -111,12 +112,14 @@ class TestGenericSecretKeyGen:
             v1 = attr_or_record(
                 read_attributes(rs.raw, rs.sh, k1, [CKA_VALUE]),
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="GENERIC_SECRET_KEY_GEN unique key 1 CKA_VALUE readback",
                 reason="not_operational",
             )
             v2 = attr_or_record(
                 read_attributes(rs.raw, rs.sh, k2, [CKA_VALUE]),
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="GENERIC_SECRET_KEY_GEN unique key 2 CKA_VALUE readback",
                 reason="not_operational",
             )

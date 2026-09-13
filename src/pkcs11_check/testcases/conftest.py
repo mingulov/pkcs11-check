@@ -803,15 +803,17 @@ def gen_rsa_keypair_or_xfail(
             private_attrs=private_attrs,
         )
     except CkrAssertionError as exc:
-        _classification.xfail_as(
-            "not_operational",
-            label="RSA keypair setup",
-            operation="C_GenerateKeyPair",
-            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
-            expected=CKR_OK,
-            actual=exc.rv,
-            summary=(f"advertised RSA keypair generation rejected setup: {ckr_name(exc.rv)}"),
-        )
+        if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
+            _classification.xfail_as(
+                "not_operational",
+                label="RSA keypair setup",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=exc.rv,
+                summary=(f"advertised RSA keypair generation rejected setup: {ckr_name(exc.rv)}"),
+            )
+        raise
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,
@@ -842,15 +844,17 @@ def gen_ec_keypair_or_xfail(
             private_attrs=private_attrs,
         )
     except CkrAssertionError as exc:
-        _classification.xfail_as(
-            "not_operational",
-            label="EC keypair setup",
-            operation="C_GenerateKeyPair",
-            mechanism="CKM_EC_KEY_PAIR_GEN",
-            expected=CKR_OK,
-            actual=exc.rv,
-            summary=(f"advertised EC keypair generation rejected setup: {ckr_name(exc.rv)}"),
-        )
+        if exc.rv in KEYPAIR_RUNTIME_REJECT_RVS:
+            _classification.xfail_as(
+                "not_operational",
+                label="EC keypair setup",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_EC_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=exc.rv,
+                summary=(f"advertised EC keypair generation rejected setup: {ckr_name(exc.rv)}"),
+            )
+        raise
     except AssertionError as exc:
         xfail_if_known_ckr(
             exc,

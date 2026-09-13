@@ -497,6 +497,7 @@ class TestSensitiveKeyValue:
             sensitive = attr_or_record(
                 sens_attrs,
                 CKA_SENSITIVE,
+                inherit_mechanism=False,
                 label="CKA_SENSITIVE=True on imported AES key",
                 reason="not_operational",
                 kind="policy",
@@ -612,6 +613,7 @@ class TestSensitiveKeyValue:
             sensitive = attr_or_record(
                 sens_attrs,
                 CKA_SENSITIVE,
+                inherit_mechanism=False,
                 label="mixed C_GetAttributeValue CKA_SENSITIVE claim",
                 reason="not_operational",
                 kind="policy",

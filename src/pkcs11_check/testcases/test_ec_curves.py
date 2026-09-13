@@ -117,11 +117,13 @@ class TestECKeygen:
             pub_type = attr_or_record(
                 attrs_pub,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label=f"CKA_KEY_TYPE:{curve_name}-public-key",
             )
             priv_type = attr_or_record(
                 attrs_priv,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label=f"CKA_KEY_TYPE:{curve_name}-private-key",
             )
             contradictions = [

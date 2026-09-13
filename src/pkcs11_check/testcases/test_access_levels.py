@@ -1268,6 +1268,7 @@ class TestTrustedAttribute:
             val2 = attr_or_record(
                 attrs2,
                 CKA_TRUSTED,
+                inherit_mechanism=False,
                 label="USER:setattr-CKA_TRUSTED final readback",
                 mechanism=None,
             )
@@ -1427,6 +1428,7 @@ class TestTrustedAttribute:
             after_val = attr_or_record(
                 after,
                 CKA_WRAP_WITH_TRUSTED,
+                inherit_mechanism=False,
                 label="CKA_WRAP_WITH_TRUSTED downgrade readback",
                 mechanism=None,
             )
@@ -2529,6 +2531,7 @@ class TestPublicSessionRestrictions:
             priv = attr_or_record(
                 private_attrs,
                 CKA_PRIVATE,
+                inherit_mechanism=False,
                 label="public CKA_PRIVATE=True session object readback",
                 mechanism=None,
             )

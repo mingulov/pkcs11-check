@@ -1267,6 +1267,7 @@ class TestDESWeakKeys:
                 val = attr_or_record(
                     attrs,
                     CKA_VALUE,
+                    inherit_mechanism=False,
                     label=f"DES_KEY_GEN generation {generation + 1} CKA_VALUE readback",
                     reason="not_operational",
                 )
