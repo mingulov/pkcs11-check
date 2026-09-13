@@ -1287,6 +1287,160 @@ def test_harness_returncodes_are_incomplete_and_public_two(
     assert payload["summary"]["incomplete"] is True
 
 
+def _abrupt_stream(target: Path, *, with_finish: bool, traceback: bool) -> str:
+    lines = [
+        json.dumps({"$report_type": "SessionStart"}),
+        _jsonl_line(nodeid=f"{target}::test_case", when="call", outcome="passed"),
+    ]
+    if with_finish:
+        lines.append(json.dumps({"$report_type": "SessionFinish", "exitstatus": 1}))
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("returncode", [1, 5])
+def test_module_self_termination_is_a_provider_crash_not_harness_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
+) -> None:
+    """A module exit() mid-run (test records present, no SessionFinish, no
+    traceback) is a provider crash finding and must never be inferred as a
+    harness defect."""
+
+    target = tmp_path / "test_abrupt.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            _abrupt_stream(target, with_finish=False, traceback=False), encoding="utf-8"
+        )
+        return returncode, "module stdout", "module stderr"
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    exit_code = run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="test",
+    )
+
+    # A provider crash is a test failure at the public boundary (exit 1);
+    # exit 2 stays reserved for harness-incomplete runs.
+    assert exit_code == 1
+    state = load_run_state(state_path)
+    assert state is not None
+    assert state.results[0].completion_verified is False
+    records = [
+        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
+    ]
+    assert not [rec for rec in records if rec.get("$report_type") == "HarnessError"]
+    crashes = [
+        rec
+        for rec in records
+        if rec.get("$report_type") == "TestReport"
+        and any(
+            isinstance(prop, (list, tuple))
+            and len(prop) == 2
+            and prop[0] == "pkcs11_classification"
+            and isinstance(prop[1], dict)
+            and prop[1].get("reason") == "crash"
+            for prop in rec.get("user_properties", [])
+        )
+    ]
+    assert len(crashes) == 1
+
+
+@pytest.mark.parametrize("returncode", [1, 5])
+def test_traceback_death_stays_harness_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
+) -> None:
+    """A Python-level death (traceback present) is never attributed to the
+    provider, even with test records in the stream."""
+
+    target = tmp_path / "test_traceback.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            _abrupt_stream(target, with_finish=False, traceback=False), encoding="utf-8"
+        )
+        return returncode, "", "Traceback (most recent call last):\n  File pytest, line 1\nError"
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="test",
+    )
+    records = [
+        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
+    ]
+    assert [rec for rec in records if rec.get("$report_type") == "HarnessError"]
+
+
+def test_silent_death_before_any_record_stays_harness_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An abrupt death before any test record cannot be attributed to the
+    provider (it only loads inside test setup)."""
+
+    target = tmp_path / "test_silent.py"
+    target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    results_path = tmp_path / "results.json"
+
+    def fake_run(cmd: list[str], **_: object) -> tuple[int, str, str]:
+        report_path_arg = Path(cmd[cmd.index("--report-log") + 1])
+        report_path_arg.write_text(
+            json.dumps({"$report_type": "SessionStart"}) + "\n", encoding="utf-8"
+        )
+        return 1, "", ""
+
+    monkeypatch.setattr(file_runner_mod, "_run_subprocess_tee", fake_run)
+    run_isolated_pytest_units(
+        [str(target)],
+        ["--p11-module", "/tmp/module.so"],
+        timeout=12,
+        state_file=state_path,
+        policy_file=None,
+        report_config=IsolatedReportConfig("json", results_path, jsonl_path=report_path),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="test",
+    )
+    records = [
+        json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
+    ]
+    assert [rec for rec in records if rec.get("$report_type") == "HarnessError"]
+    assert not [
+        rec
+        for rec in records
+        if rec.get("$report_type") == "TestReport"
+        and "abrupt-exit" in json.dumps(rec.get("user_properties", []))
+    ]
+
+
 def test_same_unit_provider_failure_wins_over_harness_exit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -10064,6 +10218,7 @@ def test_file_skip_counts_collected_tests_as_skipped(
         encoding="utf-8",
     )
     report_path = tmp_path / "results.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
 
     monkeypatch.setattr(file_runner_mod, "_load_available_mechanisms", lambda _args: {"AES_CBC"})
 
@@ -10088,7 +10243,7 @@ def test_file_skip_counts_collected_tests_as_skipped(
         timeout=12,
         state_file=tmp_path / "state.json",
         policy_file=None,
-        report_config=IsolatedReportConfig("json", report_path),
+        report_config=IsolatedReportConfig("json", report_path, jsonl_path=report_jsonl_path),
         resume=False,
         stop_on_failure=False,
         console=Console(file=StringIO(), force_terminal=False),
@@ -10107,6 +10262,23 @@ def test_file_skip_counts_collected_tests_as_skipped(
     assert quality["file_skipped_units"] == [
         {"target": str(test_file), "reason": "AES_CCM not supported by module"}
     ]
+    report_records = [
+        json.loads(line) for line in report_jsonl_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert report_records == [
+        {
+            "$report_type": "IsolatedUnitReport",
+            "target": str(test_file),
+            "attempt": 0,
+            "reason": "AES_CCM not supported by module",
+            "skipped": 2,
+        }
+    ]
+    observability = quality["classification_observability"]
+    assert observability["status"] == "complete"
+    assert observability["expected_sources"] == 1
+    assert observability["readable_sources"] == 1
+    assert observability["missing_sources"] == 0
 
 
 def test_mechanism_coverage_buckets_required_mechanisms_for_unit_outcomes(

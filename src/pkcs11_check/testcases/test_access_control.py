@@ -142,6 +142,7 @@ class TestPrivateAttribute:
             private = attr_or_record(
                 attrs,
                 CKA_PRIVATE,
+                inherit_mechanism=False,
                 label="CKA_PRIVATE default (secret key)",
             )
             if private is MISSING_ATTRIBUTE:
@@ -231,6 +232,7 @@ class TestModifiableAttribute:
             modifiable = attr_or_record(
                 attrs,
                 CKA_MODIFIABLE,
+                inherit_mechanism=False,
                 label="CKA_MODIFIABLE default (secret key)",
             )
             if modifiable is MISSING_ATTRIBUTE:
@@ -258,6 +260,7 @@ class TestModifiableAttribute:
             modifiable = attr_or_record(
                 attrs,
                 CKA_MODIFIABLE,
+                inherit_mechanism=False,
                 label="CKA_MODIFIABLE label mutation",
             )
             if modifiable is MISSING_ATTRIBUTE:
@@ -344,6 +347,7 @@ class TestModifiableAttribute:
             modifiable = attr_or_record(
                 attrs,
                 CKA_MODIFIABLE,
+                inherit_mechanism=False,
                 label="CKA_MODIFIABLE=False enforcement (create-time)",
             )
             if modifiable is MISSING_ATTRIBUTE:
@@ -437,6 +441,7 @@ class TestCopyableAttribute:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:generated-key",
             )
             if copyable is MISSING_ATTRIBUTE:
@@ -454,6 +459,7 @@ class TestCopyableAttribute:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:copyable-key",
             )
             if copyable is MISSING_ATTRIBUTE:
@@ -476,6 +482,7 @@ class TestCopyableAttribute:
                 label = attr_or_record(
                     copy_attrs,
                     CKA_LABEL,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_LABEL on copy",
                 )
                 if label is MISSING_ATTRIBUTE:
@@ -505,6 +512,7 @@ class TestCopyObject:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:copy-with-modified-label",
             )
             if copyable is MISSING_ATTRIBUTE:
@@ -535,16 +543,19 @@ class TestCopyObject:
                 copy_label = attr_or_record(
                     copy_attrs,
                     CKA_LABEL,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_LABEL on copy",
                 )
                 copy_type = attr_or_record(
                     copy_attrs,
                     CKA_KEY_TYPE,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_KEY_TYPE on copy",
                 )
                 copy_len = attr_or_record(
                     copy_attrs,
                     CKA_VALUE_LEN,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_VALUE_LEN on copy",
                 )
                 orig_attrs = read_attributes(
@@ -556,11 +567,13 @@ class TestCopyObject:
                 orig_type = attr_or_record(
                     orig_attrs,
                     CKA_KEY_TYPE,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_KEY_TYPE on source",
                 )
                 orig_len = attr_or_record(
                     orig_attrs,
                     CKA_VALUE_LEN,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_VALUE_LEN on source",
                 )
                 if copy_label is not MISSING_ATTRIBUTE:
@@ -608,6 +621,7 @@ class TestCopyObject:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:copy-extractable-key",
                 reason="not_operational",
                 kind="policy",
@@ -615,6 +629,7 @@ class TestCopyObject:
             extractable = attr_or_record(
                 attrs,
                 CKA_EXTRACTABLE,
+                inherit_mechanism=False,
                 label="CKA_EXTRACTABLE:copy-extractable-key",
                 reason="not_operational",
                 kind="policy",
@@ -659,6 +674,7 @@ class TestCopyObject:
                 copied_extractable = attr_or_record(
                     copy_attrs,
                     CKA_EXTRACTABLE,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_EXTRACTABLE on copy",
                     reason="not_operational",
                     kind="policy",
@@ -708,6 +724,7 @@ class TestCopyObject:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:non-copyable-key",
             )
             if copyable is MISSING_ATTRIBUTE:
@@ -781,11 +798,13 @@ class TestCopyObject:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:session-object-copy",
             )
             token = attr_or_record(
                 attrs,
                 CKA_TOKEN,
+                inherit_mechanism=False,
                 label="CKA_TOKEN:session-object-copy",
             )
             if token is not MISSING_ATTRIBUTE:
@@ -824,6 +843,7 @@ class TestCopyObject:
                 copied_token = attr_or_record(
                     copy_attrs,
                     CKA_TOKEN,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_TOKEN on session copy",
                 )
                 if copied_token is MISSING_ATTRIBUTE:
@@ -859,11 +879,13 @@ class TestCopyObject:
             copyable = attr_or_record(
                 attrs,
                 CKA_COPYABLE,
+                inherit_mechanism=False,
                 label="CKA_COPYABLE:token-object-copy",
             )
             token = attr_or_record(
                 attrs,
                 CKA_TOKEN,
+                inherit_mechanism=False,
                 label="CKA_TOKEN:token-object-copy",
             )
             if token is not MISSING_ATTRIBUTE:
@@ -903,6 +925,7 @@ class TestCopyObject:
                 copied_token = attr_or_record(
                     copy_attrs,
                     CKA_TOKEN,
+                    inherit_mechanism=False,
                     label="C_CopyObject:CKA_TOKEN on token copy",
                 )
                 if copied_token is MISSING_ATTRIBUTE:

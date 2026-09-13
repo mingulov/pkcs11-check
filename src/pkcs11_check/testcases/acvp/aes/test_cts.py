@@ -2,12 +2,14 @@
 
 Tests AES-CBC-CS1/CS2/CS3 variants.  PKCS#11 defines a single CKM_AES_CTS
 mechanism without specifying which variant is used.  This module auto-detects
-the variant at runtime by probing the module, then runs only the matching
-variant's ACVP vectors (skipping the other two).
+the variant during collection and reuses that result at runtime, then runs
+only the matching variant's ACVP vectors (skipping the other two).
 
-Detection method (cached, runs once per session):
-  Probe 1 -- 33-byte non-aligned encrypt: distinguishes CS3 from CS1/CS2.
-  Probe 2 -- 32-byte aligned encrypt: distinguishes CS1 from CS2.
+Detection uses cached, independent fixed-key 32-byte aligned and 33-byte
+unaligned known-answer encryptions for each supported AES key size (128, 192,
+and 256 bits).  Collection pruning keeps one deterministic detector reporter
+when the result is unavailable, so a file-isolated run does not repeat the
+same provider outcome for every vector.
 """
 
 from __future__ import annotations
@@ -18,9 +20,12 @@ import pytest
 
 from pkcs11_check.testcases.acvp.acvp_loader import require_acvp_vectors
 from pkcs11_check.testcases.acvp.aes.base_cts import (
+    get_cts_detection,
     load_cbc_cs_vectors,
+    report_cts_detection,
     run_cbc_cs_decrypt_test,
     run_cbc_cs_encrypt_test,
+    skip_unless_cts_encrypt_decrypt,
     skip_unless_cts_variant,
 )
 
@@ -37,6 +42,13 @@ require_acvp_vectors()
 _CBC_CS1_ENCRYPT_VECTORS, _CBC_CS1_DECRYPT_VECTORS = load_cbc_cs_vectors("1")
 _CBC_CS2_ENCRYPT_VECTORS, _CBC_CS2_DECRYPT_VECTORS = load_cbc_cs_vectors("2")
 _CBC_CS3_ENCRYPT_VECTORS, _CBC_CS3_DECRYPT_VECTORS = load_cbc_cs_vectors("3")
+
+
+def test_cts_variant_detected(p11_module_session: Any) -> None:
+    """Report one authoritative result for the advertised AES-CTS probe."""
+    rs = p11_module_session
+    skip_unless_cts_encrypt_decrypt(rs)
+    report_cts_detection(get_cts_detection(rs))
 
 
 # ---------------------------------------------------------------------------

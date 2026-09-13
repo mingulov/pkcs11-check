@@ -91,6 +91,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
     CKZ_SALT_SPECIFIED,
 )
+from pkcs11_check.testcases._probes._emit import emit_provider_finding
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 from pkcs11_check.testcases.conftest import AES_KEYGEN_RUNTIME_REJECT_RVS
 from pkcs11_check.testcases.security.conftest import child_setup_reject_known
@@ -132,7 +133,15 @@ class _SetupXfailError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _assert_value_len_not_toxic(raw: Any, sh: int, obj: int, context: str) -> None:
+def _assert_value_len_not_toxic(
+    raw: Any,
+    sh: int,
+    obj: int,
+    context: str,
+    *,
+    producer_operation: str,
+    mechanism: str | None,
+) -> None:
     """Assert that CKA_VALUE_LEN on *obj* does not equal the oversized probe value.
 
     Output protocol: VALUE_LEN_RV:0x%08x; if CKR_OK also VALUE_LEN_VALUE:%d.
@@ -148,6 +157,16 @@ def _assert_value_len_not_toxic(raw: Any, sh: int, obj: int, context: str) -> No
     if rv == CKR_OK:
         print(f"VALUE_LEN_VALUE:{int(actual_len.value)}")
         if int(actual_len.value) == _ULONG_MAX:
+            emit_provider_finding(
+                reason="self_contradiction",
+                kind="metadata",
+                operation="C_GetAttributeValue",
+                mechanism=mechanism,
+                detail=(
+                    f"{producer_operation} accepted CKA_VALUE_LEN={_ULONG_MAX:#x}; "
+                    f"C_GetAttributeValue returned the same toxic length"
+                ),
+            )
             raise AssertionError(context + " stored oversized CKA_VALUE_LEN")
 
 
@@ -308,7 +327,14 @@ def _run_create_object(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     )
     print(f"TARGET_RV:0x{rv:08x}")
     if rv == CKR_OK:
-        _assert_value_len_not_toxic(raw, sh, handle.value, "C_CreateObject")
+        _assert_value_len_not_toxic(
+            raw,
+            sh,
+            handle.value,
+            "C_CreateObject",
+            producer_operation="C_CreateObject",
+            mechanism=None,
+        )
         destroy_quietly(raw, sh, handle.value)
 
 
@@ -339,7 +365,14 @@ def _run_copy_secret_key(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         )
         print(f"TARGET_RV:0x{rv:08x}")
         if rv == CKR_OK:
-            _assert_value_len_not_toxic(raw, sh, copy_key.value, "C_CopyObject")
+            _assert_value_len_not_toxic(
+                raw,
+                sh,
+                copy_key.value,
+                "C_CopyObject",
+                producer_operation="C_CopyObject",
+                mechanism=None,
+            )
     finally:
         if copy_key.value:
             destroy_quietly(raw, sh, copy_key.value)
@@ -366,7 +399,14 @@ def _run_set_secret_key_attr(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         rv = raw.C_SetAttributeValue(sh, base_key_handle, ctypes.byref(bad_attr), 1)
         print(f"TARGET_RV:0x{rv:08x}")
         if rv == CKR_OK:
-            _assert_value_len_not_toxic(raw, sh, base_key_handle, "C_SetAttributeValue")
+            _assert_value_len_not_toxic(
+                raw,
+                sh,
+                base_key_handle,
+                "C_SetAttributeValue",
+                producer_operation="C_SetAttributeValue",
+                mechanism=None,
+            )
     finally:
         destroy_quietly(raw, sh, base_key_handle)
 
@@ -425,7 +465,14 @@ def _run_digest_key(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         return
 
     try:
-        _assert_value_len_not_toxic(raw, sh, key.value, "C_CreateObject for C_DigestKey")
+        _assert_value_len_not_toxic(
+            raw,
+            sh,
+            key.value,
+            "C_CreateObject for C_DigestKey",
+            producer_operation="C_CreateObject",
+            mechanism="CKM_SHA256",
+        )
 
         mech = CK_MECHANISM()
         mech.mechanism = CKM_SHA256
@@ -557,7 +604,14 @@ def _run_aes_ecb_unwrap(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         )
         print(f"TARGET_RV:0x{rv:08x}")
         if rv == CKR_OK:
-            _assert_value_len_not_toxic(raw, sh, new_key.value, "C_UnwrapKey")
+            _assert_value_len_not_toxic(
+                raw,
+                sh,
+                new_key.value,
+                "C_UnwrapKey",
+                producer_operation="C_UnwrapKey",
+                mechanism="CKM_AES_ECB",
+            )
     finally:
         if new_key.value:
             destroy_quietly(raw, sh, new_key.value)
@@ -591,7 +645,14 @@ def _run_generate_generic_secret(ctx: ProbeContext, _extra: dict[str, Any]) -> N
 
         rv, bad_key = _generate_generic_secret(raw, sh, _ULONG_MAX, "TARGET")
         if rv == CKR_OK:
-            _assert_value_len_not_toxic(raw, sh, bad_key.value, "C_GenerateKey(GENERIC_SECRET)")
+            _assert_value_len_not_toxic(
+                raw,
+                sh,
+                bad_key.value,
+                "C_GenerateKey(GENERIC_SECRET)",
+                producer_operation="C_GenerateKey",
+                mechanism="CKM_GENERIC_SECRET_KEY_GEN",
+            )
     finally:
         if bad_key.value:
             destroy_quietly(raw, sh, bad_key.value)
@@ -662,7 +723,14 @@ def _run_generate_pbkdf2(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     print(f"TARGET_RV:0x{rv:08x}")
     print(f"TARGET_RV_NAME:{ckr_name(rv)}")
     if rv == CKR_OK:
-        _assert_value_len_not_toxic(raw, sh, key.value, "C_GenerateKey(PBKDF2)")
+        _assert_value_len_not_toxic(
+            raw,
+            sh,
+            key.value,
+            "C_GenerateKey(PBKDF2)",
+            producer_operation="C_GenerateKey",
+            mechanism="CKM_PKCS5_PBKD2",
+        )
         destroy_quietly(raw, sh, key.value)
 
 
@@ -755,7 +823,14 @@ def _run_hkdf_derive(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         )
         print(f"TARGET_RV:0x{rv:08x}")
         if rv == CKR_OK:
-            _assert_value_len_not_toxic(raw, sh, derived.value, "C_DeriveKey")
+            _assert_value_len_not_toxic(
+                raw,
+                sh,
+                derived.value,
+                "C_DeriveKey",
+                producer_operation="C_DeriveKey",
+                mechanism="CKM_HKDF_DERIVE",
+            )
     finally:
         if derived.value:
             destroy_quietly(raw, sh, derived.value)

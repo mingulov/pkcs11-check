@@ -81,7 +81,9 @@ def _read_attr_or_record(
 ) -> Any:
     """Read one provider attribute while preserving an unavailable-value record."""
     attrs = read_attributes(raw, sh, handle, [attr])
-    return attr_or_record(attrs, attr, label=label, reason="not_operational")
+    return attr_or_record(
+        attrs, attr, inherit_mechanism=False, label=label, reason="not_operational"
+    )
 
 
 def _assert_sp800_bytes(

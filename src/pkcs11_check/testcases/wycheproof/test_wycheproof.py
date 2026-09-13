@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_GCM,
     CKM_ECDSA,
     CKM_SHA256_HMAC,
+    CKM_SHA256_HMAC_GENERAL,
     CKM_SHA256_RSA_PKCS,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -66,6 +67,10 @@ from pkcs11_check.testcases.conftest import (
     reject_or_classify,
 )
 from pkcs11_check.testcases.data import WYCHEPROOF_DIR  # noqa: F401
+from pkcs11_check.testcases.wycheproof._hmac_routing import (
+    hmac_tag_size_bytes,
+    route_hmac_mechanism,
+)
 from pkcs11_check.testcases.wycheproof._key_decoders import pkcs11_bigint_from_hex
 from pkcs11_check.testcases.wycheproof.wycheproof_loader import load_vectors as load_wycheproof
 
@@ -360,13 +365,28 @@ class TestHMACSHA256Wycheproof:
         self, p11_module_session: Any, p11_config: Any, vec: dict[str, Any]
     ) -> None:
         rs = p11_module_session
-        _skip_unless_mechanism(rs, "SHA256_HMAC")
         key_bytes = bytes.fromhex(vec["key"])
         msg = bytes.fromhex(vec["msg"])
         tag_expected = bytes.fromhex(vec["tag"])
         result = vec["result"]
-        tag_size = vec["_group"].get("tagSize", 256) // 8
-        set_mechanism("CKM_SHA256_HMAC", operation="C_Verify", expect_success=(result == "valid"))
+        expected_tag_size = hmac_tag_size_bytes(
+            vec["_group"].get("tagSize", 256),
+            digest_size=32,
+        )
+        route = route_hmac_mechanism(
+            expected_tag_size=expected_tag_size,
+            digest_size=32,
+            fixed_mechanism=CKM_SHA256_HMAC,
+            fixed_name="SHA256_HMAC",
+            general_mechanism=CKM_SHA256_HMAC_GENERAL,
+            general_name="SHA256_HMAC_GENERAL",
+        )
+        _skip_unless_mechanism(rs, route.display_name)
+        set_mechanism(
+            f"CKM_{route.display_name}",
+            operation="C_Verify",
+            expect_success=(result == "valid"),
+        )
 
         # Track non-recommended key sizes
         if len(key_bytes) < 32 and result == "valid":
@@ -419,14 +439,25 @@ class TestHMACSHA256Wycheproof:
             )
 
         try:
-            verified = verify_single(
-                rs.raw,
-                rs.sh,
-                key,
-                CKM_SHA256_HMAC,
-                msg,
-                tag_expected[:tag_size],
-            )
+            if route.mech_param is None:
+                verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    route.mechanism,
+                    msg,
+                    tag_expected,
+                )
+            else:
+                verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    route.mechanism,
+                    msg,
+                    tag_expected,
+                    mech_param=route.mech_param,
+                )
             if result == "valid" and not verified:
                 classify(
                     "honest_deviation",

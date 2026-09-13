@@ -29,6 +29,12 @@ from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR
 from pkcs11_check.testcases._probes import raw_session
 
 
+@pytest.fixture(autouse=True)
+def _probe_params_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct probe calls must not depend on pytest's own command-line arguments."""
+    monkeypatch.setattr(sys, "argv", ["raw-session-probe", "params.json"])
+
+
 def _write_raw_probe(tmp_path: Path) -> Path:
     """Write a tiny child script that calls probe_main_raw and reports ctx state."""
     probe = tmp_path / "raw_probe.py"

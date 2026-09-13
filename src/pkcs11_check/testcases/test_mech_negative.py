@@ -289,6 +289,7 @@ def _claim_false_or_xfail(rs: RawSession, key: int, flag: int, label: str) -> No
     value = attr_or_record(
         attrs,
         flag,
+        inherit_mechanism=False,
         label=label,
         reason="honest_deviation",
         kind="metadata",

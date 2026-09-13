@@ -173,6 +173,7 @@ def classify_skip_reason(reason: str | None) -> SkipReasonCategory:
             "another user already logged in",
             "no token-present slots",
             "cts variant detection failed",
+            "detection reporter is retained by the selected cts item",
             "skipping cs",
         )
     ):

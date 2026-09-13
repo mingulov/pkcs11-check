@@ -54,7 +54,14 @@ pytestmark = pytest.mark.security
 
 
 def _required_flag(attrs: Mapping[Any, Any], attr: int, *, label: str) -> Any:
-    return attr_or_record(attrs, attr, label=label, reason="honest_deviation", kind="metadata")
+    return attr_or_record(
+        attrs,
+        attr,
+        inherit_mechanism=False,
+        label=label,
+        reason="honest_deviation",
+        kind="metadata",
+    )
 
 
 def _assert_required_flag(value: Any, expected: bool, *, label: str) -> None:

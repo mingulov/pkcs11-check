@@ -60,6 +60,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
+from pkcs11_check.testcases._probes._emit import emit_provider_finding
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
 # Clean rejections of the wrap *setup* (advertised but not operational for this
@@ -175,6 +176,16 @@ def _do_decrypt(
         print(f"decrypt_rv={rv}")
         guard = bytes(out_buf[minimal_len : minimal_len + len(guard_sentinel)])
         if guard != guard_sentinel:
+            emit_provider_finding(
+                reason="self_contradiction",
+                kind="policy",
+                operation="C_Decrypt",
+                mechanism=ckm_name,
+                detail=(
+                    f"C_Decrypt returned {rv} on corrupted data but overwrote the "
+                    f"output guard: expected {guard_sentinel.hex()}, got {guard.hex()}"
+                ),
+            )
             raise AssertionError(
                 "C_Decrypt wrote past the minimal output buffer on a corrupted "
                 f"{ckm_name} error path: guard={guard.hex()}"

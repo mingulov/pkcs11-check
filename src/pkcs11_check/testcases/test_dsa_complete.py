@@ -272,13 +272,21 @@ def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[b
             kind="metadata",
         )
 
+    # Validate each present sibling before deciding whether dependent work can
+    # continue.  A missing PRIME must not turn an empty or wrong-type SUBPRIME
+    # into an unobserved setup omission (and vice versa).
+    if prime is not MISSING_ATTRIBUTE:
+        assert isinstance(prime, bytes)
+        assert len(prime) > 0
+    if subprime is not MISSING_ATTRIBUTE:
+        assert isinstance(subprime, bytes)
+        assert len(subprime) > 0
+
     if prime is MISSING_ATTRIBUTE or subprime is MISSING_ATTRIBUTE:
         return None
 
     assert isinstance(prime, bytes)
     assert isinstance(subprime, bytes)
-    assert len(prime) > 0
-    assert len(subprime) > 0
     return prime, subprime
 
 
@@ -378,6 +386,14 @@ def _gen_dsa_keypair_from_params(
         reason="not_operational",
         inherit_mechanism=False,
     )
+    # Check every value that was actually returned before an omitted sibling
+    # short-circuits dependent key-pair generation.  This keeps malformed
+    # present parameters visible even when another required parameter is absent.
+    for value in (prime, subprime, base):
+        if value is not MISSING_ATTRIBUTE:
+            assert isinstance(value, bytes)
+            assert len(value) > 0
+
     if prime is MISSING_ATTRIBUTE or subprime is MISSING_ATTRIBUTE or base is MISSING_ATTRIBUTE:
         return None
 

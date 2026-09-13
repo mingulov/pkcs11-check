@@ -61,6 +61,7 @@ def _make_read_attributes(values: dict[Any, Any], omit: set[Any] | None = None) 
 
 def _assert_missing_attribute_record(rec: C.Classification, reason: str) -> None:
     assert rec.reason == reason
+    assert rec.kind == "metadata"
     assert rec.operation == "C_GetAttributeValue"
     assert rec.mechanism is None
     assert rec.spec_ref == _SPEC_REF

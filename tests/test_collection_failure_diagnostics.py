@@ -199,3 +199,26 @@ def test_rootdir_relative_test_report_is_not_a_collection_failure(tmp_path: Path
         stderr="",
     )
     assert report.read_text(encoding="utf-8") == original
+
+
+def test_collection_fallback_survives_corrupt_byte_mid_stream(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    before = (
+        b'{"$report_type":"SessionStart"}\n'
+        b'{"$report_type":"TestRep\xffort"}\n'
+        b'{"$report_type":"SessionFinish","exitstatus":1}\n'
+    )
+    report.write_bytes(before)
+    # A corrupt stream is not provably empty, so no fallback record is
+    # synthesized -- but the copy must not abort: the evidence stays intact
+    # byte-for-byte and the run continues with the remaining units.
+    assert not ensure_failed_collection_report(
+        report,
+        target="test_demo.py",
+        status="failed",
+        returncode=1,
+        stdout="",
+        stderr="",
+    )
+    assert report.read_bytes() == before
+    assert not list(tmp_path.glob(".*.tmp"))

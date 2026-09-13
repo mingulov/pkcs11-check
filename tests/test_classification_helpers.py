@@ -335,8 +335,9 @@ def _fake_keygen_rs(mechanism: str) -> Any:
     )
 
 
-def test_rsa_setup_unlisted_clean_ckr_is_structured_xfail(monkeypatch: Any) -> None:
-    """A clean advertised RSA setup refusal carries operation context and CKR."""
+def test_rsa_setup_unlisted_clean_ckr_fails_instead_of_xfail(monkeypatch: Any) -> None:
+    """An out-of-tuple setup CKR (e.g. session/login damage) is a finding, not
+    an advertised-but-not-operational xfail: it must propagate."""
     from pkcs11_check import classification as C
     from pkcs11_check.raw import recipes
     from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
@@ -344,6 +345,29 @@ def test_rsa_setup_unlisted_clean_ckr_is_structured_xfail(monkeypatch: Any) -> N
     error = CkrAssertionError(
         "C_GenerateKeyPair: Unexpected CK_RV CKR_USER_NOT_LOGGED_IN",
         int(CKR_USER_NOT_LOGGED_IN),
+    )
+
+    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
+        raise error
+
+    monkeypatch.setattr(recipes, "gen_rsa_keypair", _raise)
+
+    with pytest.raises(CkrAssertionError, match="CKR_USER_NOT_LOGGED_IN"):
+        gen_rsa_keypair_or_xfail(_fake_keygen_rs("RSA_PKCS_KEY_PAIR_GEN"))
+
+    assert C.get_records() == []
+
+
+def test_rsa_setup_listed_ckr_stays_structured_xfail(monkeypatch: Any) -> None:
+    """A listed advertised-setup refusal still carries operation context and CKR."""
+    from pkcs11_check import classification as C
+    from pkcs11_check.raw import recipes
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
+    from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
+
+    error = CkrAssertionError(
+        "C_GenerateKeyPair: Unexpected CK_RV CKR_FUNCTION_FAILED",
+        int(CKR_FUNCTION_FAILED),
     )
 
     def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
@@ -359,11 +383,11 @@ def test_rsa_setup_unlisted_clean_ckr_is_structured_xfail(monkeypatch: Any) -> N
     assert record.operation == "C_GenerateKeyPair"
     assert record.mechanism == "CKM_RSA_PKCS_KEY_PAIR_GEN"
     assert record.expected_ckr == ["CKR_OK"]
-    assert record.actual_ckr == "CKR_USER_NOT_LOGGED_IN"
+    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
 
 
-def test_ec_setup_clean_ckr_preserves_operation_context(monkeypatch: Any) -> None:
-    """A clean advertised EC setup refusal identifies the EC keygen mechanism."""
+def test_ec_setup_unlisted_clean_ckr_fails_instead_of_xfail(monkeypatch: Any) -> None:
+    """An out-of-tuple EC setup CKR is a finding and must propagate."""
     from pkcs11_check import classification as C
     from pkcs11_check.raw import recipes
     from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail
@@ -371,6 +395,29 @@ def test_ec_setup_clean_ckr_preserves_operation_context(monkeypatch: Any) -> Non
     error = CkrAssertionError(
         "C_GenerateKeyPair: Unexpected CK_RV CKR_USER_NOT_LOGGED_IN",
         int(CKR_USER_NOT_LOGGED_IN),
+    )
+
+    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
+        raise error
+
+    monkeypatch.setattr(recipes, "gen_ec_keypair", _raise)
+
+    with pytest.raises(CkrAssertionError, match="CKR_USER_NOT_LOGGED_IN"):
+        gen_ec_keypair_or_xfail(_fake_keygen_rs("EC_KEY_PAIR_GEN"), b"curve")
+
+    assert C.get_records() == []
+
+
+def test_ec_setup_listed_ckr_preserves_operation_context(monkeypatch: Any) -> None:
+    """A listed advertised EC setup refusal identifies the EC keygen mechanism."""
+    from pkcs11_check import classification as C
+    from pkcs11_check.raw import recipes
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
+    from pkcs11_check.testcases.conftest import gen_ec_keypair_or_xfail
+
+    error = CkrAssertionError(
+        "C_GenerateKeyPair: Unexpected CK_RV CKR_FUNCTION_FAILED",
+        int(CKR_FUNCTION_FAILED),
     )
 
     def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
@@ -386,7 +433,7 @@ def test_ec_setup_clean_ckr_preserves_operation_context(monkeypatch: Any) -> Non
     assert record.operation == "C_GenerateKeyPair"
     assert record.mechanism == "CKM_EC_KEY_PAIR_GEN"
     assert record.expected_ckr == ["CKR_OK"]
-    assert record.actual_ckr == "CKR_USER_NOT_LOGGED_IN"
+    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
 
 
 def test_setup_plain_assertion_remains_unclassified_harness_visible(monkeypatch: Any) -> None:

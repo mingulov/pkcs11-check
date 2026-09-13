@@ -887,6 +887,59 @@ def test_read_raw_ec_point_mapping_exception_propagates_without_record(
     assert C.get_records() == []
 
 
+@pytest.mark.parametrize(
+    "branch",
+    ["direct_ckr", "missing", "non_bytes", "empty", "wrong_length", "invalid_constructor"],
+)
+def test_read_raw_ec_point_emissions_do_not_inherit_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+    branch: str,
+) -> None:
+    """Every mechanism-free raw-point verdict must clear inherited mechanism context."""
+    emissions: list[dict[str, object]] = []
+
+    class EmissionError(Exception):
+        pass
+
+    def capture(_reason: str, **kwargs: object) -> None:
+        emissions.append(kwargs)
+        raise EmissionError
+
+    monkeypatch.setattr(_ec_export, "xfail_as", capture)
+    monkeypatch.setattr(_ec_export, "fail_as", capture)
+
+    family = RawECPointFamily.X25519
+    if branch == "direct_ckr":
+
+        def _read(*_args: object, **_kwargs: object) -> dict[int, bytes]:
+            raise CkrAssertionError("attribute unavailable", int(CKR_ATTRIBUTE_SENSITIVE))
+
+        monkeypatch.setattr(_ec_export, "read_attributes", _read)
+    elif branch == "missing":
+        monkeypatch.setattr(_ec_export, "read_attributes", lambda *_args, **_kwargs: {})
+    elif branch == "non_bytes":
+        _raw_ec_rs(monkeypatch, object())
+    elif branch == "empty":
+        _raw_ec_rs(monkeypatch, b"")
+    elif branch == "wrong_length":
+        _raw_ec_rs(monkeypatch, b"\x00" * 31)
+    else:
+        _raw_ec_rs(monkeypatch, b"\x04" + b"\x00" * 31)
+
+        def _invalid(_value: bytes) -> object:
+            raise ValueError("invalid raw public key")
+
+        monkeypatch.setitem(_ec_export._RAW_EC_POINT_CONSTRUCTORS, family, _invalid)
+
+    rs = type("RS", (), {"raw": object(), "sh": 1})()
+    with pytest.raises(EmissionError):
+        read_raw_ec_point_or_xfail(rs, 2, family, label="raw public key")
+
+    assert len(emissions) == 1
+    assert emissions[0]["operation"] == "C_GetAttributeValue"
+    assert emissions[0]["inherit_mechanism"] is False
+
+
 def test_read_raw_ec_point_constructor_invalid_is_crypto_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

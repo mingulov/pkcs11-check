@@ -252,12 +252,24 @@ def _build_report_owner_aliases(
     )
 
 
-def _isolated_unit_report(unit: str, attempt: int) -> dict[str, Any]:
-    return {
+def _isolated_unit_report(
+    unit: str, attempt: int, *, reason: str | None = None, skipped: int | None = None
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
         "$report_type": _ISOLATED_UNIT_REPORT_TYPE,
         "target": unit,
         "attempt": attempt,
     }
+    # Static-skip provenance only: a unit skipped before pytest execution
+    # records why and how many collected tests were skipped, so resume and
+    # merge paths can rebuild the same file-skip detail the fresh run held in
+    # memory.  Plain attempt markers (stream framing) carry neither field and
+    # must never synthesize evidence.
+    if reason is not None:
+        record["reason"] = reason
+    if skipped is not None:
+        record["skipped"] = skipped
+    return record
 
 
 def _load_report_log_records(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -319,6 +331,23 @@ def _write_unit_report_record_cache(
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+
+
+def _write_static_skip_report_record_cache(
+    state_file: Path, unit: str, *, reason: str, skipped: int
+) -> None:
+    """Persist authoritative unit provenance when collection skips the whole unit.
+
+    A static capability skip never starts pytest, so it has no pytest ``TestReport`` to
+    serialize.  The isolated-unit marker is the truthful raw evidence: the scheduler did
+    account for this unit, while no call-phase record is fabricated for tests that did not
+    execute.  The reason and skipped count ride on the marker so resume and merge paths
+    rebuild the identical file-skip detail instead of zeroing it.
+    """
+
+    _write_unit_report_record_cache(
+        state_file, unit, [_isolated_unit_report(unit, 0, reason=reason, skipped=skipped)]
     )
 
 
@@ -1302,6 +1331,30 @@ def _outcome_is_higher(candidate: str, current: str | None) -> bool:
     )
 
 
+def _static_skip_from_markers(
+    markers: Sequence[Mapping[str, Any]],
+) -> tuple[str, int] | None:
+    """Recover static-skip provenance from enriched isolated-unit markers.
+
+    Returns (reason, skipped) from the last enriched static-skip marker.
+    Plain attempt markers carry no reason and never synthesize evidence; the
+    caller guarantees no other evidence record was seen.
+    """
+
+    found: tuple[str, int] | None = None
+    for rec in markers:
+        marker_reason = rec.get("reason")
+        marker_skipped = rec.get("skipped")
+        if (
+            isinstance(marker_reason, str)
+            and marker_reason
+            and isinstance(marker_skipped, int)
+            and marker_skipped > 0
+        ):
+            found = (marker_reason, marker_skipped)
+    return found
+
+
 def _build_detail_from_report_records(
     records: Iterable[Mapping[str, Any]],
     *,
@@ -1328,6 +1381,8 @@ def _build_detail_from_report_records(
     diagnostic_counts = _empty_counts()
     collect_errors: list[Mapping[str, Any]] = []
     harness_errors: list[Mapping[str, Any]] = []
+    static_markers: list[Mapping[str, Any]] = []
+    saw_evidence = False
     collect_error_files: set[str] = set()
     finalize_events: list[Mapping[str, Any]] = []
     execution_records_seen: set[str] = set()
@@ -1359,14 +1414,21 @@ def _build_detail_from_report_records(
             if outcome != "failed":
                 continue
             collect_errors.append(rec)
+            saw_evidence = True
             continue
 
         if report_type == "HarnessError":
             harness_errors.append(rec)
+            saw_evidence = True
+            continue
+
+        if report_type == _ISOLATED_UNIT_REPORT_TYPE:
+            static_markers.append(rec)
             continue
 
         if report_type != "TestReport":
             continue
+        saw_evidence = True
 
         if when not in {"setup", "call", "teardown"}:
             continue
@@ -1536,6 +1598,21 @@ def _build_detail_from_report_records(
 
     executions = execution_observations
     if not any(counts.values()) and not compliance_notes and not executions:
+        if not saw_evidence:
+            static_skip = _static_skip_from_markers(static_markers)
+            if static_skip is not None:
+                reason, skipped = static_skip
+                file_counts = dict(counts)
+                file_counts["skipped"] = skipped
+                return {
+                    "counts": file_counts,
+                    "tests": [],
+                    _LOGICAL_TEST_OUTCOMES: {},
+                    _DIAGNOSTIC_COUNTS: _empty_counts(),
+                    _LOGICAL_SKIP_REASONS: {reason: skipped},
+                    "skip_reasons": {reason: skipped},
+                    "file_skip": True,
+                }
         return None
     result: dict[str, Any] = {
         "counts": counts,
