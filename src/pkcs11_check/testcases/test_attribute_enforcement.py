@@ -16,7 +16,6 @@ from pkcs11_check import classification
 from pkcs11_check.classification import fail_as
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    encrypt_single,
     gen_rsa_keypair,
     read_attributes,
     set_attributes,
@@ -42,7 +41,6 @@ from pkcs11_check.raw.types_std import (
     CKA_START_DATE,
     CKA_TOKEN,
     CKK_AES,
-    CKM_AES_ECB,
     CKM_AES_KEY_GEN,
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
@@ -95,7 +93,7 @@ def _attribute_value(
     label: str,
 ) -> Any:
     """Return an attribute while retaining an omitted provider value as evidence."""
-    return attr_or_record(attrs, attr, label=label, kind="metadata")
+    return attr_or_record(attrs, attr, inherit_mechanism=False, label=label, kind="metadata")
 
 
 _KIND_PRIORITY = {"metadata": 1, "lifecycle": 2, "policy": 2, "crypto": 3}
@@ -118,7 +116,8 @@ def _record_malformed_attribute(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
-            mechanism=producer_mechanism,
+            mechanism=None,
+            inherit_mechanism=False,
             detail={"attribute": attr},
             summary=f"{label}: attribute unavailable",
         )
@@ -127,7 +126,8 @@ def _record_malformed_attribute(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
-        mechanism=producer_mechanism,
+        mechanism=None,
+        inherit_mechanism=False,
         detail={
             "attribute": attr,
             "expected_shape": expected,
@@ -444,22 +444,6 @@ def _read_attributes_or_xfail(
         return read_attributes(raw, session, handle, attr_types)
     except CkrAssertionError as exc:
         _xfail_attribute_read_reject(exc, label=label, attr=attr)
-
-
-def _read_attributes_recording_reject(
-    raw: Any,
-    session: int,
-    handle: int,
-    attr_types: list[int] | tuple[int, ...] | set[int] | frozenset[int],
-    *,
-    label: str,
-    attr: int | tuple[int, ...],
-) -> tuple[dict[int, Any], classification.Classification | None]:
-    """Read attributes while deferring a typed read refusal for multi-leg checks."""
-    try:
-        return read_attributes(raw, session, handle, attr_types), None
-    except CkrAssertionError as exc:
-        return {}, _record_attribute_read_rejection(exc, label=label, attr=attr)
 
 
 class TestCopyableOneWay:
@@ -1152,20 +1136,30 @@ class TestCheckValue:
             purpose="CKA_CHECK_VALUE setup",
         )
         try:
-            attrs = _read_attributes_or_xfail(
-                rs.raw,
-                rs.sh,
-                key,
-                [CKA_CHECK_VALUE],
-                label="AES:CKA_CHECK_VALUE after C_GenerateKey",
-                attr=CKA_CHECK_VALUE,
-            )
-            kcv = _attribute_value(
+            attrs: dict[int, Any]
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
+            except CkrAssertionError as exc:
+                if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    attrs = {}
+                else:
+                    _xfail_attribute_read_reject(
+                        exc,
+                        label="AES:CKA_CHECK_VALUE after C_GenerateKey",
+                        attr=CKA_CHECK_VALUE,
+                    )
+            record_count = len(classification.get_records())
+            kcv = attr_or_record(
                 attrs,
                 CKA_CHECK_VALUE,
                 label="AES:CKA_CHECK_VALUE after C_GenerateKey",
+                kind="metadata",
+                inherit_mechanism=False,
+                optional_if_absent=True,
             )
             if kcv is MISSING_ATTRIBUTE:
+                _raise_strongest(classification.get_records()[record_count:])
+                pytest.skip("CKA_CHECK_VALUE is not supported")
                 return
             if not isinstance(kcv, bytes) or len(kcv) != 3:
                 classification.raise_for_record(
@@ -1184,8 +1178,6 @@ class TestCheckValue:
     def test_imported_key_kcv_matches_ecb_encrypt(self, p11_raw_session: Any) -> None:
         """KCV should be first 3 bytes of ECB encrypt of all-zeros block."""
         rs = p11_raw_session
-        if not rs.has_mechanism("AES_ECB"):
-            pytest.skip("CKM_AES_ECB not supported")
 
         # Known 128-bit AES key
         key_material = b"\x00" * 16
@@ -1196,24 +1188,30 @@ class TestCheckValue:
             attrs={CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         try:
-            attrs = _read_attributes_or_xfail(
-                rs.raw,
-                rs.sh,
-                key,
-                [CKA_CHECK_VALUE],
-                label="imported AES:CKA_CHECK_VALUE",
-                attr=CKA_CHECK_VALUE,
-            )
-            kcv = _attribute_value(
+            attrs: dict[int, Any]
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
+            except CkrAssertionError as exc:
+                if is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                    attrs = {}
+                else:
+                    _xfail_attribute_read_reject(
+                        exc,
+                        label="imported AES:CKA_CHECK_VALUE",
+                        attr=CKA_CHECK_VALUE,
+                    )
+            record_count = len(classification.get_records())
+            kcv = attr_or_record(
                 attrs,
                 CKA_CHECK_VALUE,
                 label="imported AES:CKA_CHECK_VALUE",
+                kind="metadata",
+                inherit_mechanism=False,
+                optional_if_absent=True,
             )
-
-            # Encrypt 16 zero bytes with AES-ECB - first 3 bytes = KCV
-            plaintext = b"\x00" * 16
-            ct = encrypt_single(rs.raw, rs.sh, key, CKM_AES_ECB, plaintext)
             if kcv is MISSING_ATTRIBUTE:
+                _raise_strongest(classification.get_records()[record_count:])
+                pytest.skip("CKA_CHECK_VALUE is not supported")
                 return
             if not isinstance(kcv, bytes) or len(kcv) != 3:
                 classification.raise_for_record(
@@ -1225,20 +1223,139 @@ class TestCheckValue:
                         producer_operation="C_CreateObject",
                     )
                 )
-            expected_kcv = ct[:3]
-            _assert_attribute(
-                kcv,
-                expected_kcv,
-                attr=CKA_CHECK_VALUE,
-                label="AES:CKA_CHECK_VALUE vs AES-ECB(zeros)[:3]",
-                producer_operation="C_CreateObject",
-                comparison_operation="C_Encrypt",
-                comparison_mechanism="CKM_AES_ECB",
-                reason="wrong_result",
-                kind="crypto",
-            )
+            # FIPS-197 AES-128 known answer for key=00..00, plaintext=00..00.
+            # This must remain independent of the provider under test: using its
+            # own C_Encrypt output could make two wrong implementations agree.
+            expected_kcv = bytes.fromhex("66e94b")
+            if kcv != expected_kcv:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES:CKA_CHECK_VALUE vs independent AES-ECB oracle",
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    summary="Imported AES key has an incorrect CKA_CHECK_VALUE",
+                    detail={
+                        "attribute": CKA_CHECK_VALUE,
+                        "producer_operation": "C_CreateObject",
+                        "producer_mechanism": None,
+                        "comparison_mechanism": "CKM_AES_ECB",
+                        "oracle": "AES-128(key=00..00, plaintext=00..00)[:3]",
+                        "expected_hex": expected_kcv.hex(),
+                        "actual_hex": kcv.hex(),
+                    },
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
+
+    def test_check_value_present_when_encrypt_false(self, p11_raw_session: Any) -> None:
+        """A supported KCV is supplied even when CKA_ENCRYPT is false."""
+        rs = p11_raw_session
+        key_material = b"\x00" * 16
+        expected_kcv = bytes.fromhex("66e94b")
+        support: list[bool] = []
+        hard_results: list[classification.Classification] = []
+
+        for encrypt_enabled in (True, False):
+            policy = "enabled" if encrypt_enabled else "disabled"
+            key = import_secret_key_negotiated(
+                rs,
+                CKK_AES,
+                key_material,
+                attrs={CKA_ENCRYPT: encrypt_enabled, CKA_DECRYPT: True},
+            )
+            kcv: Any = MISSING_ATTRIBUTE
+            try:
+                attrs: dict[int, Any]
+                try:
+                    attrs = read_attributes(rs.raw, rs.sh, key, [CKA_CHECK_VALUE])
+                except CkrAssertionError as exc:
+                    attrs = {}
+                    if not is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
+                        hard_results.append(
+                            _record_attribute_read_rejection(
+                                exc,
+                                label=f"imported AES ({policy}):CKA_CHECK_VALUE",
+                                attr=CKA_CHECK_VALUE,
+                            )
+                        )
+                else:
+                    record_count = len(classification.get_records())
+                    kcv = attr_or_record(
+                        attrs,
+                        CKA_CHECK_VALUE,
+                        label=f"imported AES ({policy}):CKA_CHECK_VALUE",
+                        kind="metadata",
+                        inherit_mechanism=False,
+                        optional_if_absent=True,
+                    )
+                    hard_results.extend(classification.get_records()[record_count:])
+
+                if kcv is MISSING_ATTRIBUTE:
+                    support.append(False)
+                else:
+                    support.append(True)
+                    if not isinstance(kcv, bytes) or len(kcv) != 3:
+                        hard_results.append(
+                            _record_malformed_attribute(
+                                kcv,
+                                attr=CKA_CHECK_VALUE,
+                                label=f"imported AES ({policy}):CKA_CHECK_VALUE",
+                                expected="three-byte bytes",
+                                producer_operation="C_CreateObject",
+                            )
+                        )
+                    elif kcv != expected_kcv:
+                        hard_results.append(
+                            classification.record_as(
+                                "wrong_result",
+                                kind="crypto",
+                                label=(
+                                    f"imported AES ({policy}):CKA_CHECK_VALUE vs "
+                                    "independent AES-ECB oracle"
+                                ),
+                                operation="C_GetAttributeValue",
+                                inherit_mechanism=False,
+                                summary="Imported AES key has an incorrect CKA_CHECK_VALUE",
+                                detail={
+                                    "attribute": CKA_CHECK_VALUE,
+                                    "producer_operation": "C_CreateObject",
+                                    "producer_mechanism": None,
+                                    "comparison_mechanism": "CKM_AES_ECB",
+                                    "oracle": "AES-128(key=00..00, plaintext=00..00)[:3]",
+                                    "expected_hex": expected_kcv.hex(),
+                                    "actual_hex": kcv.hex(),
+                                    "cka_encrypt": encrypt_enabled,
+                                },
+                            )
+                        )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, key)
+
+        normal_supported, disabled_supported = support
+        # Normative SHALL (PKCS#11 secret_key_objects.md): an optional CKA_CHECK_VALUE,
+        # if supported, is always supplied -- even when CKA_ENCRYPT is CK_FALSE. Support
+        # that appears or disappears with the ENCRYPT policy contradicts that SHALL.
+        if normal_supported != disabled_supported:
+            hard_results.append(
+                classification.record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="AES:CKA_CHECK_VALUE support across CKA_ENCRYPT policy",
+                    operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
+                    summary="CKA_CHECK_VALUE support changed with CKA_ENCRYPT policy",
+                    detail={
+                        "attribute": CKA_CHECK_VALUE,
+                        "enabled_supported": normal_supported,
+                        "disabled_supported": disabled_supported,
+                    },
+                )
+            )
+        _raise_strongest(hard_results)
+        if not normal_supported and not disabled_supported:
+            pytest.skip("CKA_CHECK_VALUE is not supported")
 
     def test_same_key_material_same_kcv(self, p11_raw_session: Any) -> None:
         """Two keys with identical material should have the same CKA_CHECK_VALUE."""
@@ -1253,34 +1370,40 @@ class TestCheckValue:
         hard_results: list[classification.Classification] = []
         kcv1: Any = MISSING_ATTRIBUTE
         try:
-            a1, read1_result = _read_attributes_recording_reject(
-                rs.raw,
-                rs.sh,
-                key1,
-                [CKA_CHECK_VALUE],
-                label="AES:key1 CKA_CHECK_VALUE",
-                attr=CKA_CHECK_VALUE,
-            )
-            if read1_result is not None:
-                hard_results.append(read1_result)
-            else:
-                kcv1 = _attribute_value(
-                    a1,
-                    CKA_CHECK_VALUE,
-                    label="AES:key1 CKA_CHECK_VALUE",
-                )
-                if kcv1 is not MISSING_ATTRIBUTE and (
-                    not isinstance(kcv1, bytes) or len(kcv1) != 3
-                ):
+            attrs1: dict[int, Any]
+            try:
+                attrs1 = read_attributes(rs.raw, rs.sh, key1, [CKA_CHECK_VALUE])
+            except CkrAssertionError as exc:
+                attrs1 = {}
+                if not is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     hard_results.append(
-                        _record_malformed_attribute(
-                            kcv1,
-                            attr=CKA_CHECK_VALUE,
+                        _record_attribute_read_rejection(
+                            exc,
                             label="AES:key1 CKA_CHECK_VALUE",
-                            expected="three-byte bytes",
-                            producer_operation="C_CreateObject",
+                            attr=CKA_CHECK_VALUE,
                         )
                     )
+            else:
+                record_count = len(classification.get_records())
+                kcv1 = attr_or_record(
+                    attrs1,
+                    CKA_CHECK_VALUE,
+                    label="AES:key1 CKA_CHECK_VALUE",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                    optional_if_absent=True,
+                )
+                hard_results.extend(classification.get_records()[record_count:])
+            if kcv1 is not MISSING_ATTRIBUTE and (not isinstance(kcv1, bytes) or len(kcv1) != 3):
+                hard_results.append(
+                    _record_malformed_attribute(
+                        kcv1,
+                        attr=CKA_CHECK_VALUE,
+                        label="AES:key1 CKA_CHECK_VALUE",
+                        expected="three-byte bytes",
+                        producer_operation="C_CreateObject",
+                    )
+                )
         finally:
             # Keep the two provider objects independent and ensure key1 is
             # gone before exercising the second import path.
@@ -1294,41 +1417,61 @@ class TestCheckValue:
         )
         kcv2: Any = MISSING_ATTRIBUTE
         try:
-            a2, read2_result = _read_attributes_recording_reject(
-                rs.raw,
-                rs.sh,
-                key2,
-                [CKA_CHECK_VALUE],
-                label="AES:key2 CKA_CHECK_VALUE",
-                attr=CKA_CHECK_VALUE,
-            )
-            if read2_result is not None:
-                hard_results.append(read2_result)
-            else:
-                kcv2 = _attribute_value(
-                    a2,
-                    CKA_CHECK_VALUE,
-                    label="AES:key2 CKA_CHECK_VALUE",
-                )
-                if kcv2 is not MISSING_ATTRIBUTE and (
-                    not isinstance(kcv2, bytes) or len(kcv2) != 3
-                ):
+            attrs2: dict[int, Any]
+            try:
+                attrs2 = read_attributes(rs.raw, rs.sh, key2, [CKA_CHECK_VALUE])
+            except CkrAssertionError as exc:
+                attrs2 = {}
+                if not is_known_error(exc, {CKR_ATTRIBUTE_TYPE_INVALID}):
                     hard_results.append(
-                        _record_malformed_attribute(
-                            kcv2,
-                            attr=CKA_CHECK_VALUE,
+                        _record_attribute_read_rejection(
+                            exc,
                             label="AES:key2 CKA_CHECK_VALUE",
-                            expected="three-byte bytes",
-                            producer_operation="C_CreateObject",
+                            attr=CKA_CHECK_VALUE,
                         )
                     )
+            else:
+                record_count = len(classification.get_records())
+                kcv2 = attr_or_record(
+                    attrs2,
+                    CKA_CHECK_VALUE,
+                    label="AES:key2 CKA_CHECK_VALUE",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                    optional_if_absent=True,
+                )
+                hard_results.extend(classification.get_records()[record_count:])
+            if kcv2 is not MISSING_ATTRIBUTE and (not isinstance(kcv2, bytes) or len(kcv2) != 3):
+                hard_results.append(
+                    _record_malformed_attribute(
+                        kcv2,
+                        attr=CKA_CHECK_VALUE,
+                        label="AES:key2 CKA_CHECK_VALUE",
+                        expected="three-byte bytes",
+                        producer_operation="C_CreateObject",
+                    )
+                )
 
             # Evaluate every present leg before applying the equality oracle.
             # A missing first value must not prevent evidence from key2, and a
             # malformed leg must not prevent the other leg from being checked.
+            if (kcv1 is MISSING_ATTRIBUTE) != (kcv2 is MISSING_ATTRIBUTE):
+                hard_results.append(
+                    classification.record_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label="AES:CKA_CHECK_VALUE support is consistent",
+                        operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
+                        summary=(
+                            "Identically created AES keys disagree on CKA_CHECK_VALUE support"
+                        ),
+                        detail={"attribute": CKA_CHECK_VALUE},
+                    )
+                )
             _raise_strongest(hard_results)
-            if kcv1 is MISSING_ATTRIBUTE or kcv2 is MISSING_ATTRIBUTE:
-                return
+            if kcv1 is MISSING_ATTRIBUTE and kcv2 is MISSING_ATTRIBUTE:
+                pytest.skip("CKA_CHECK_VALUE is not supported")
 
             _assert_attribute(
                 kcv1,

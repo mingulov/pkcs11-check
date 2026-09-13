@@ -73,6 +73,7 @@ def _hw_type(rs: Any, handle: int) -> Any:
     raw_value = attr_or_record(
         attrs,
         CKA_HW_FEATURE_TYPE,
+        inherit_mechanism=False,
         label="CKA_HW_FEATURE_TYPE:hardware-feature",
         reason="honest_deviation",
         kind="metadata",
@@ -152,6 +153,7 @@ class TestHwFeatureClock:
             value = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:hardware-clock",
                 reason="honest_deviation",
                 kind="metadata",
@@ -193,6 +195,7 @@ class TestHwFeatureCounter:
             value = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:monotonic-counter",
                 reason="honest_deviation",
                 kind="metadata",
@@ -217,6 +220,7 @@ class TestHwFeatureCounter:
                 attr_or_record(
                     attrs,
                     CKA_RESET_ON_INIT,
+                    inherit_mechanism=False,
                     label="CKA_RESET_ON_INIT:monotonic-counter",
                     reason="honest_deviation",
                     kind="metadata",
@@ -224,6 +228,7 @@ class TestHwFeatureCounter:
                 attr_or_record(
                     attrs,
                     CKA_HAS_RESET,
+                    inherit_mechanism=False,
                     label="CKA_HAS_RESET:monotonic-counter",
                     reason="honest_deviation",
                     kind="metadata",

@@ -22,22 +22,31 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification
 from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.raw.api import ckm_name
+from pkcs11_check.raw.pack import mech_simple, template
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
+    gen_aes_key,
     gen_rsa_keypair,
     get_mechanism_info,
     import_rsa_public_key,
+    pack_attrs,
     sign_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CKA_DECRYPT,
+    CKA_ENCRYPT,
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VERIFY,
     CKF_ENCRYPT,
     CKK_GENERIC_SECRET,
+    CKM_DES3_KEY_GEN,
+    CKM_DES_KEY_GEN,
     CKM_MD5_RSA_PKCS,
     CKM_PKCS5_PBKD2,
     CKM_RSA_PKCS,
@@ -139,11 +148,24 @@ _DEPRECATED_SIGN_MECHS: list[Any] = [
     ),
 ]
 
-# Symmetric mechanisms and their smallest plausible key sizes (bits)
+# Symmetric posture probes.  AES intentionally asks for a non-standard size;
+# DES and DES3 key-generation mechanisms always produce fixed-size values.
 _WEAK_SYMMETRIC_SIZES: list[Any] = [
     pytest.param("AES_ECB", "AES_KEY_GEN", 64, "AES with 64-bit key", id="AES-64"),
-    pytest.param("DES_ECB", "DES_KEY_GEN", 56, "DES with 56-bit key", id="DES-56"),
-    pytest.param("DES3_ECB", "DES3_KEY_GEN", 80, "3DES with 80-bit key", id="3DES-80"),
+    pytest.param(
+        "DES_ECB",
+        "DES_KEY_GEN",
+        56,
+        "DES fixed 8-byte key (56 effective key bits, inherent to DES)",
+        id="DES-56",
+    ),
+    pytest.param(
+        "DES3_ECB",
+        "DES3_KEY_GEN",
+        168,
+        "3DES fixed 24-byte key (168 keying bits; approximately 112-bit effective strength)",
+        id="3DES-168",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -152,6 +174,28 @@ _WEAK_SYMMETRIC_SIZES: list[Any] = [
 
 _PIN_TIMING_ITERATIONS = 50
 _PIN_TIMING_THRESHOLD_PCT = 20  # report if timing difference exceeds 20%
+
+
+def _generate_fixed_des_key(raw: Any, sh: int, mechanism: int) -> int:
+    """Generate a fixed-size DES or DES3 key without an AES value-length hint.
+
+    ``CKM_DES_KEY_GEN`` and ``CKM_DES3_KEY_GEN`` have no parameters.  The
+    mechanisms contribute the fixed-size ``CKA_VALUE`` (8 and 24 bytes,
+    respectively), so passing ``CKA_VALUE_LEN`` is not part of their keygen
+    template.  In particular, this must not reuse ``gen_aes_key``: its
+    ``bits`` argument deliberately packs an AES-style value length.
+    """
+    attrs = {
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+        CKA_TOKEN: False,
+    }
+    tmpl = template(*pack_attrs(attrs))
+    mech = mech_simple(mechanism)
+    key = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKey(sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key))
+    expect_rv(rv, CKR_OK)
+    return key.value
 
 
 class TestWeakRsaKeySize:
@@ -288,12 +332,9 @@ class TestWeakKeySizeAcceptance:
         bits: int,
         description: str,
     ) -> None:
-        """Try to generate a symmetric key with a weak/small key size."""
-        from pkcs11_check.raw.recipes import gen_aes_key
+        """Probe weak AES size acceptance and fixed DES/3DES key operation."""
         from pkcs11_check.raw.types_std import (
             CKM_AES_KEY_GEN,
-            CKM_DES3_KEY_GEN,
-            CKM_DES_KEY_GEN,
         )
 
         rs = p11_raw_session
@@ -312,16 +353,55 @@ class TestWeakKeySizeAcceptance:
             pytest.skip(f"Unknown keygen mechanism {keygen_name}")
 
         try:
-            key_h = gen_aes_key(rs.raw, rs.sh, bits, mechanism=mechanism)
+            if keygen_name == "AES_KEY_GEN":
+                key_h = gen_aes_key(rs.raw, rs.sh, bits, mechanism=mechanism)
+            else:
+                key_h = _generate_fixed_des_key(rs.raw, rs.sh, mechanism)
         except CkrAssertionError as exc:
-            if not is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
-                raise
-            return  # audit-ok: hardening probe; rejecting the weak key size is correct
+            if keygen_name == "AES_KEY_GEN":
+                if not is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
+                    raise
+                return  # audit-ok: AES-64 rejection is a conformant invalid-size response
+            if is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
+                label = f"{keygen_name} advertised but fixed-size key generation is not operational"
+                classification.xfail_as(
+                    "not_operational",
+                    label=label,
+                    operation="C_GenerateKey",
+                    mechanism=ckm_name(mechanism),
+                    expected=CKR_OK,
+                    actual=exc.rv,
+                    summary=f"{label}: provider returned a clean refusal",
+                )
+            raise
+        if key_h == 0:
+            classification.fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{keygen_name} returned CKR_OK with a zero key handle",
+                operation="C_GenerateKey",
+                mechanism=ckm_name(mechanism),
+                expected=CKR_OK,
+                actual=CKR_OK,
+                summary=f"{keygen_name} returned CKR_OK but produced no key object",
+                detail={"key_handle": 0},
+            )
         try:
             note(
                 f"Module accepts {description}",
                 ComplianceLevel.VENDOR,
-                reference=f"Key size {bits}-bit is below recommended minimums",
+                reference=(
+                    f"CKA_VALUE_LEN={bits // 8} is below recommended AES key sizes"
+                    if keygen_name == "AES_KEY_GEN"
+                    else (
+                        "PKCS #11 defines DES keys as fixed 8-byte values with 56 effective "
+                        "key bits inherent to DES"
+                        if keygen_name == "DES_KEY_GEN"
+                        else "PKCS #11 defines DES3 keys as fixed 24-byte values with 168 "
+                        "keying bits excluding parity and approximately 112-bit effective "
+                        "security strength; its 64-bit block size remains a separate limitation"
+                    )
+                ),
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key_h)

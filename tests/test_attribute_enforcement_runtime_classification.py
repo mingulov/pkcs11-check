@@ -7,6 +7,8 @@ deviation) and a present value that contradicts the operation that produced it.
 
 from __future__ import annotations
 
+import ast
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,16 +18,20 @@ from _pytest.outcomes import Failed
 
 from pkcs11_check import classification
 from pkcs11_check.raw import recipes as raw_recipes
+from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_CHECK_VALUE,
     CKA_COPYABLE,
+    CKA_DECRYPT,
     CKA_DESTROYABLE,
+    CKA_ENCRYPT,
     CKA_END_DATE,
     CKA_KEY_GEN_MECHANISM,
     CKA_START_DATE,
     CKA_TOKEN,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
@@ -305,7 +311,7 @@ def test_present_key_generation_mechanism_mismatch_is_a_hard_readback_failure(
     assert rec.mechanism == "CKM_AES_KEY_GEN"
 
 
-def test_kcv_reads_both_keys_before_equality_oracle(
+def test_kcv_one_missing_leg_is_a_support_inconsistency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     classification.clear()
@@ -317,7 +323,6 @@ def test_kcv_reads_both_keys_before_equality_oracle(
             return {}
         return {CKA_CHECK_VALUE: b"abc"}
 
-    monkeypatch.setattr(tae, "encrypt_single", lambda *_a, **_k: b"abc" + b"rest")
     _setup(monkeypatch, reads=read)
     handles = iter((4, 5))
 
@@ -337,11 +342,27 @@ def test_kcv_reads_both_keys_before_equality_oracle(
         lambda _raw, _sh, handle: events.append(f"destroy:{handle}"),
     )
 
-    tae.TestCheckValue().test_same_key_material_same_kcv(_session())
+    with pytest.raises(Failed):
+        tae.TestCheckValue().test_same_key_material_same_kcv(_session())
 
     assert events == ["import:4", "read:4", "destroy:4", "import:5", "read:5", "destroy:5"]
     assert len(_records()) == 1
-    assert _records()[0].reason == "honest_deviation"
+    assert _records()[0].reason == "self_contradiction"
+    assert _records()[0].kind == "metadata"
+
+
+def test_kcv_absent_on_both_identical_keys_is_optional_capability_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    handles = iter((4, 5))
+    _setup(monkeypatch, reads=lambda *_a, **_k: {})
+    monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
+
+    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
+        tae.TestCheckValue().test_same_key_material_same_kcv(_session())
+
+    assert _records() == []
 
 
 def test_missing_first_kcv_does_not_hide_malformed_second_leg(
@@ -363,7 +384,7 @@ def test_missing_first_kcv_does_not_hide_malformed_second_leg(
         tae.TestCheckValue().test_same_key_material_same_kcv(_session())
 
     assert destroyed == [4, 5]
-    assert [rec.reason for rec in _records()] == ["honest_deviation", "wrong_result"]
+    assert [rec.reason for rec in _records()] == ["wrong_result", "self_contradiction"]
     assert _records()[-1].operation == "C_GetAttributeValue"
 
 
@@ -398,11 +419,105 @@ def test_kcv_read_rejection_does_not_hide_second_leg_evidence(
         tae.TestCheckValue().test_same_key_material_same_kcv(_session())
 
     assert destroyed == [4, 5]
-    assert [rec.reason for rec in _records()] == ["not_operational", "wrong_result"]
-    assert _records()[0].operation == "C_GetAttributeValue"
-    assert _records()[0].expected_ckr == ["CKR_OK"]
-    assert _records()[0].actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+    assert [rec.reason for rec in _records()] == ["wrong_result", "self_contradiction"]
     assert _records()[-1].detail is not None
+
+
+def test_kcv_sensitive_refusal_does_not_hide_support_inconsistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    refused = AttrReadResult()
+    refused.refusals[int(CKA_CHECK_VALUE)] = AttrRefusal(int(CKR_ATTRIBUTE_SENSITIVE))
+    reads = iter((refused, {CKA_CHECK_VALUE: b"abc"}))
+    handles = iter((4, 5))
+
+    def read(*_args: object, **_kwargs: object) -> dict[Any, Any]:
+        return next(reads)
+
+    _setup(monkeypatch, reads=read)
+    monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
+
+    with pytest.raises(Failed):
+        tae.TestCheckValue().test_same_key_material_same_kcv(_session())
+
+    assert [record.reason for record in _records()] == [
+        "honest_deviation",
+        "self_contradiction",
+    ]
+    assert _records()[-1].mechanism is None
+
+
+def test_generated_kcv_absence_is_optional_capability_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    _setup(monkeypatch, reads=lambda *_a, **_k: {})
+
+    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
+        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+
+    assert _records() == []
+
+
+def test_generated_kcv_attribute_type_invalid_is_optional_capability_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+
+    def reject(*_args: object, **_kwargs: object) -> dict[Any, Any]:
+        raise CkrAssertionError("unsupported", int(CKR_ATTRIBUTE_TYPE_INVALID))
+
+    _setup(monkeypatch, reads=reject)
+
+    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
+        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+
+    assert _records() == []
+
+
+def test_generated_kcv_per_attribute_type_invalid_is_optional_capability_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    attrs = AttrReadResult()
+    attrs.refusals[int(CKA_CHECK_VALUE)] = AttrRefusal(int(CKR_ATTRIBUTE_TYPE_INVALID))
+    _setup(monkeypatch, reads=lambda *_a, **_k: attrs)
+
+    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
+        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+
+    assert _records() == []
+
+
+def test_generated_kcv_sensitive_refusal_remains_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    attrs = AttrReadResult()
+    attrs.refusals[int(CKA_CHECK_VALUE)] = AttrRefusal(int(CKR_ATTRIBUTE_SENSITIVE))
+    _setup(monkeypatch, reads=lambda *_a, **_k: attrs)
+
+    with pytest.raises(pytest.xfail.Exception):
+        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+
+    assert [record.reason for record in _records()] == ["honest_deviation"]
+
+
+def test_optional_kcv_refusal_with_data_remains_self_contradiction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    attrs = AttrReadResult()
+    attrs.refusals[int(CKA_CHECK_VALUE)] = AttrRefusal(
+        int(CKR_ATTRIBUTE_TYPE_INVALID), leaked_len=3
+    )
+    _setup(monkeypatch, reads=lambda *_a, **_k: attrs)
+
+    with pytest.raises(Failed):
+        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+
+    assert [record.reason for record in _records()] == ["self_contradiction"]
 
 
 def test_present_malformed_kcv_is_not_treated_as_missing(
@@ -410,6 +525,7 @@ def test_present_malformed_kcv_is_not_treated_as_missing(
 ) -> None:
     classification.clear()
     _setup(monkeypatch, reads=lambda *_a, **_k: {CKA_CHECK_VALUE: b""})
+    classification.set_mechanism("CKM_STALE", operation="C_Stale")
 
     with pytest.raises(Failed):
         tae.TestCheckValue().test_generated_key_has_check_value(_session())
@@ -417,6 +533,8 @@ def test_present_malformed_kcv_is_not_treated_as_missing(
     rec = _records()[-1]
     assert rec.reason == "wrong_result"
     assert rec.operation == "C_GetAttributeValue"
+    assert rec.mechanism is None
+    assert rec.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
 
 
 def test_imported_kcv_mismatch_is_a_crypto_ecb_result(
@@ -424,7 +542,7 @@ def test_imported_kcv_mismatch_is_a_crypto_ecb_result(
 ) -> None:
     classification.clear()
     _setup(monkeypatch, reads=lambda *_a, **_k: {CKA_CHECK_VALUE: b"\x00\x00\x00"})
-    monkeypatch.setattr(tae, "encrypt_single", lambda *_a, **_k: b"\x01\x02\x03rest")
+    classification.set_mechanism("CKM_STALE", operation="C_Stale")
 
     with pytest.raises(Failed):
         tae.TestCheckValue().test_imported_key_kcv_matches_ecb_encrypt(_session())
@@ -432,15 +550,113 @@ def test_imported_kcv_mismatch_is_a_crypto_ecb_result(
     rec = _records()[-1]
     assert rec.reason == "wrong_result"
     assert rec.kind == "crypto"
-    assert rec.operation == "C_Encrypt"
-    assert rec.mechanism == "CKM_AES_ECB"
+    assert rec.operation == "C_GetAttributeValue"
+    assert rec.mechanism is None
+    assert rec.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     assert rec.detail == {
         "attribute": CKA_CHECK_VALUE,
         "producer_operation": "C_CreateObject",
         "producer_mechanism": None,
-        "comparison_operation": "C_Encrypt",
         "comparison_mechanism": "CKM_AES_ECB",
+        "oracle": "AES-128(key=00..00, plaintext=00..00)[:3]",
+        "expected_hex": "66e94b",
+        "actual_hex": "000000",
     }
+
+
+def test_imported_kcv_uses_independent_aes_known_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    _setup(monkeypatch, reads=lambda *_a, **_k: {CKA_CHECK_VALUE: b"\x66\xe9\x4b"})
+
+    tae.TestCheckValue().test_imported_key_kcv_matches_ecb_encrypt(_session())
+
+    assert _records() == []
+
+
+def test_supported_kcv_is_supplied_when_encrypt_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    handles = iter((4, 5))
+    imported_attrs: list[dict[int, object]] = []
+
+    def import_key(*_args: object, **kwargs: object) -> int:
+        attrs = kwargs["attrs"]
+        assert isinstance(attrs, Mapping)
+        imported_attrs.append(dict(attrs))
+        return next(handles)
+
+    _setup(monkeypatch, reads=lambda *_a, **_k: {CKA_CHECK_VALUE: b"\x66\xe9\x4b"})
+    monkeypatch.setattr(tae, "import_secret_key_negotiated", import_key)
+
+    tae.TestCheckValue().test_check_value_present_when_encrypt_false(_session())
+
+    assert imported_attrs == [
+        {CKA_ENCRYPT: True, CKA_DECRYPT: True},
+        {CKA_ENCRYPT: False, CKA_DECRYPT: True},
+    ]
+    assert _records() == []
+
+
+def test_supported_kcv_missing_when_encrypt_false_is_a_contradiction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    handles = iter((4, 5))
+    reads = iter(({CKA_CHECK_VALUE: b"\x66\xe9\x4b"}, {}))
+    _setup(monkeypatch, reads=lambda *_a, **_k: next(reads))
+    monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
+
+    with pytest.raises(Failed):
+        tae.TestCheckValue().test_check_value_present_when_encrypt_false(_session())
+
+    record = _records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.kind == "metadata"
+    assert record.mechanism is None
+    assert record.detail == {
+        "attribute": CKA_CHECK_VALUE,
+        "enabled_supported": True,
+        "disabled_supported": False,
+    }
+
+
+def test_reverse_kcv_policy_asymmetry_records_its_actual_direction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    handles = iter((4, 5))
+    reads = iter(({}, {CKA_CHECK_VALUE: b"\x66\xe9\x4b"}))
+    _setup(monkeypatch, reads=lambda *_a, **_k: next(reads))
+    monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
+
+    with pytest.raises(Failed):
+        tae.TestCheckValue().test_check_value_present_when_encrypt_false(_session())
+
+    record = _records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.summary == "CKA_CHECK_VALUE support changed with CKA_ENCRYPT policy"
+    assert record.detail == {
+        "attribute": CKA_CHECK_VALUE,
+        "enabled_supported": False,
+        "disabled_supported": True,
+    }
+
+
+def test_kcv_absent_with_both_encrypt_policies_is_optional_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    handles = iter((4, 5))
+    _setup(monkeypatch, reads=lambda *_a, **_k: {})
+    monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
+
+    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
+        tae.TestCheckValue().test_check_value_present_when_encrypt_false(_session())
+
+    assert _records() == []
 
 
 def test_missing_start_date_does_not_hide_end_date_contradiction(
@@ -506,6 +722,42 @@ def test_missing_token_readback_does_not_claim_promotion_effect(
 
     assert len(_records()) == 1
     assert _records()[0].reason == "honest_deviation"
+
+
+def test_optional_absence_escape_hatch_is_scoped_to_kcv() -> None:
+    testcase_root = Path(__file__).parents[1] / "src" / "pkcs11_check" / "testcases"
+    approved_source = testcase_root / "test_attribute_enforcement.py"
+    guarded_calls: list[ast.Call] = []
+    for source in testcase_root.rglob("*.py"):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        parents: dict[ast.AST, ast.AST] = {
+            child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+        }
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            function_name = (
+                call.func.id
+                if isinstance(call.func, ast.Name)
+                else call.func.attr
+                if isinstance(call.func, ast.Attribute)
+                else None
+            )
+            keyword = next(
+                (keyword for keyword in call.keywords if keyword.arg == "optional_if_absent"),
+                None,
+            )
+            if function_name != "attr_or_record" or keyword is None:
+                continue
+            assert source == approved_source
+            assert isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+            assert len(call.args) >= 2
+            assert isinstance(call.args[1], ast.Name)
+            assert call.args[1].id == "CKA_CHECK_VALUE"
+            ancestor = parents[call]
+            while not isinstance(ancestor, ast.ClassDef):
+                ancestor = parents[ancestor]
+            assert ancestor.name == "TestCheckValue"
+            guarded_calls.append(call)
+    assert guarded_calls
 
 
 def test_attribute_enforcement_access_slice_is_analyzer_clean() -> None:

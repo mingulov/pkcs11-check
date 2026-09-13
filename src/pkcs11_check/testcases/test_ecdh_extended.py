@@ -180,6 +180,7 @@ def _read_value(rs: Any, handle: int, *, label: str = "derived CKA_VALUE") -> An
     return attr_or_record(
         read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE]),
         CKA_VALUE,
+        inherit_mechanism=False,
         label=label,
         reason="not_operational",
     )
@@ -190,6 +191,7 @@ def _read_montgomery_key_type(rs: Any, handle: int, *, label: str) -> Any:
     return attr_or_record(
         read_attributes(rs.raw, rs.sh, handle, [CKA_KEY_TYPE]),
         CKA_KEY_TYPE,
+        inherit_mechanism=False,
         label=label,
         reason="not_operational",
     )
@@ -714,12 +716,14 @@ class TestECDH1CofactorDerive:
             key_type = attr_or_record(
                 attrs,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_KEY_TYPE readback",
                 reason="not_operational",
             )
             val = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKM_ECDH1_COFACTOR_DERIVE:derived CKA_VALUE readback",
                 reason="not_operational",
             )

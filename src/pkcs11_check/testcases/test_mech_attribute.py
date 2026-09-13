@@ -70,6 +70,7 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
         value = attr_or_record(
             attrs,
             attr_id,
+            inherit_mechanism=False,
             label=label,
             reason="not_operational",
             kind="metadata",

@@ -32,7 +32,10 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
-from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
+from pkcs11_check.testcases.security.conftest import (
+    assert_subprocess_no_crash,
+    handle_child_provider_finding,
+)
 
 pytestmark = [pytest.mark.security, pytest.mark.subprocess]
 
@@ -120,6 +123,30 @@ def _parse_op_rv(stdout: str, api: str) -> int:
     raise AssertionError(f"Missing {api} rv line in subprocess output: {stdout[-300:]}")
 
 
+def _handle_corrupted_provider_finding(
+    rc: int,
+    stdout: str,
+    stderr: str,
+    *,
+    api: str,
+    context: str,
+    mechanism: str,
+) -> bool:
+    """Handle the guard marker only for the C_Decrypt probe branch."""
+    if api != "decrypt":
+        return False
+    return handle_child_provider_finding(
+        rc,
+        stdout,
+        stderr,
+        context=context,
+        expected_reason="self_contradiction",
+        expected_kind="policy",
+        operation="C_Decrypt",
+        mechanism=mechanism,
+    )
+
+
 class TestCorruptedUnwrap:
     """Corrupted wrapped-key blob unwrap/decrypt -- 8 corruptions x 2 mechs x 2 APIs.
 
@@ -166,11 +193,21 @@ class TestCorruptedUnwrap:
             coverage="session",
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        context = f"{ckm_name} {api}: corruption={corruption}"
+        if _handle_corrupted_provider_finding(
+            rc,
+            stdout,
+            stderr,
+            api=api,
+            context=context,
+            mechanism=ckm_name,
+        ):
+            return
         assert_subprocess_no_crash(
             rc,
             stdout,
             stderr,
-            context=(f"{ckm_name} {api}: corruption={corruption}"),
+            context=context,
         )
         # assert_subprocess_no_crash xfails (via xfail_as) on SETUP_XFAIL, so if
         # control reaches here the probe ran and an rv line is present in stdout.
@@ -227,11 +264,12 @@ class TestBitFlipUnwrap:
             coverage="session",
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        context = f"{ckm_name} unwrap: bit_flip at byte {offset}"
         assert_subprocess_no_crash(
             rc,
             stdout,
             stderr,
-            context=(f"{ckm_name} unwrap: bit_flip at byte {offset}"),
+            context=context,
         )
         # assert_subprocess_no_crash xfails (via xfail_as) on SETUP_XFAIL, so if
         # control reaches here the probe ran and an rv line is present in stdout.

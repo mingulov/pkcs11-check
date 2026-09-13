@@ -116,6 +116,60 @@ def test_dsa_keypair_from_params_present_but_malformed_stays_hard(
     assert C.get_records() == []
 
 
+def test_dsa_keypair_from_params_missing_prime_and_subprime_records_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both required DSA domain-parameter siblings must be retained as findings."""
+    monkeypatch.setattr(dsa, "read_attributes", lambda *_a, **_k: {CKA_BASE: b"G"})
+
+    result = dsa._gen_dsa_keypair_from_params(object(), 1, 42)
+
+    assert result is None
+    records = C.get_records()
+    assert len(records) == 2
+    assert [rec.detail for rec in records] == [
+        {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}},
+        {"attribute": {"name": "CKA_SUBPRIME", "id": int(CKA_SUBPRIME)}},
+    ]
+
+
+def test_dsa_keypair_from_params_missing_prime_does_not_mask_bad_subprime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed present sibling must remain hard beside a missing sibling."""
+    monkeypatch.setattr(
+        dsa,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_SUBPRIME: b"", CKA_BASE: b"G"},
+    )
+
+    with pytest.raises(AssertionError):
+        dsa._gen_dsa_keypair_from_params(object(), 1, 42)
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].detail == {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}}
+
+
+@pytest.mark.parametrize("base", [b"", 12345], ids=["empty", "wrong-type"])
+def test_dsa_keypair_from_params_missing_prime_does_not_mask_bad_base(
+    monkeypatch: pytest.MonkeyPatch, base: object
+) -> None:
+    """An omitted sibling must not hide malformed or empty CKA_BASE readback."""
+    monkeypatch.setattr(
+        dsa,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_SUBPRIME: b"Q", CKA_BASE: base},
+    )
+
+    with pytest.raises(AssertionError):
+        dsa._gen_dsa_keypair_from_params(object(), 1, 42)
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].detail == {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}}
+
+
 def test_generate_dsa_keypair_wrapper_missing_attribute_cleans_up_and_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -134,6 +188,11 @@ def test_generate_dsa_keypair_wrapper_missing_attribute_cleans_up_and_returns_no
     assert len(records) == 3  # CKA_PRIME, CKA_SUBPRIME, CKA_BASE all omitted
     assert {rec.reason for rec in records} == {"not_operational"}
     assert all(rec.mechanism is None for rec in records)
+    assert [rec.detail for rec in records] == [
+        {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}},
+        {"attribute": {"name": "CKA_SUBPRIME", "id": int(CKA_SUBPRIME)}},
+        {"attribute": {"name": "CKA_BASE", "id": int(CKA_BASE)}},
+    ]
 
 
 # --- Site class: _assert_generated_dsa_pq_attrs (PRIME/SUBPRIME/BITS) ------------------
@@ -176,6 +235,45 @@ def test_assert_generated_pq_attrs_missing_prime_returns_none(
     result = dsa._assert_generated_dsa_pq_attrs(object(), 1, 7)
 
     assert result is None
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].detail == {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}}
+
+
+def test_assert_generated_pq_attrs_missing_prime_and_subprime_records_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both missing DSA siblings must be reported independently."""
+    monkeypatch.setattr(
+        dsa,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_PRIME_BITS: 2048, CKA_SUBPRIME_BITS: 256},
+    )
+
+    result = dsa._assert_generated_dsa_pq_attrs(object(), 1, 7)
+
+    assert result is None
+    records = C.get_records()
+    assert len(records) == 2
+    assert [rec.detail for rec in records] == [
+        {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}},
+        {"attribute": {"name": "CKA_SUBPRIME", "id": int(CKA_SUBPRIME)}},
+    ]
+
+
+def test_assert_generated_pq_attrs_missing_prime_does_not_mask_bad_subprime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A present malformed sibling remains a hard finding beside a missing one."""
+    monkeypatch.setattr(
+        dsa,
+        "read_attributes",
+        lambda *_a, **_k: {CKA_SUBPRIME: b"", CKA_PRIME_BITS: 2048, CKA_SUBPRIME_BITS: 256},
+    )
+
+    with pytest.raises(AssertionError):
+        dsa._assert_generated_dsa_pq_attrs(object(), 1, 7)
+
     records = C.get_records()
     assert len(records) == 1
     assert records[0].detail == {"attribute": {"name": "CKA_PRIME", "id": int(CKA_PRIME)}}
@@ -352,6 +450,22 @@ def test_match_public_missing_id_falls_through_to_label(monkeypatch: pytest.Monk
     assert rec.outcome == "xfail"
     assert rec.mechanism is None
     assert rec.detail == {"attribute": {"name": "CKA_ID", "id": int(CKA_ID)}}
+
+
+def test_match_public_missing_linking_attributes_have_distinct_labels() -> None:
+    """Independent CKA_ID and CKA_LABEL omissions must remain distinguishable."""
+    result = coh._match_public(_session(), {})
+
+    assert result is None
+    records = C.get_records()
+    assert len(records) == 2
+    labels_by_attribute = {
+        rec.detail["attribute"]["name"]: rec.label for rec in records if rec.detail is not None
+    }
+    assert set(labels_by_attribute) == {"CKA_ID", "CKA_LABEL"}
+    assert labels_by_attribute["CKA_ID"] != labels_by_attribute["CKA_LABEL"]
+    assert "CKA_ID" in labels_by_attribute["CKA_ID"]
+    assert "CKA_LABEL" in labels_by_attribute["CKA_LABEL"]
 
 
 def test_match_public_present_empty_id_is_not_missing_and_falls_through(

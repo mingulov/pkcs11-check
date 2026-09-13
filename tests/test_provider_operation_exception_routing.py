@@ -117,9 +117,11 @@ def test_ec_import_setup_non_ckr_exception_propagates(
 def test_cts_detection_non_ckr_exception_propagates(
     monkeypatch: pytest.MonkeyPatch, exc: BaseException
 ) -> None:
-    from pkcs11_check.raw import recipes
-
-    monkeypatch.setattr(recipes, "gen_aes_key", lambda *_a, **_k: (_ for _ in ()).throw(exc))
+    monkeypatch.setattr(
+        base_cts,
+        "_import_aes_key",
+        lambda *_a, **_k: (_ for _ in ()).throw(exc),
+    )
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "AES_CTS")
 
     with pytest.raises(type(exc), match=str(exc)):

@@ -63,6 +63,7 @@ def _read_attr(raw: Any, sh: int, handle: int, attr: int) -> Any:
         value = attr_or_record(
             attrs,
             attr,
+            inherit_mechanism=False,
             label=f"attribute 0x{attr:08X}:default-readback",
             reason="honest_deviation",
             kind="metadata",
@@ -112,7 +113,9 @@ class TestSecretKeyDefaults:
         """CKA_TOKEN is False (explicitly set)."""
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_TOKEN])
-        token = attr_or_record(attrs, CKA_TOKEN, label="CKA_TOKEN:generated-AES")
+        token = attr_or_record(
+            attrs, CKA_TOKEN, inherit_mechanism=False, label="CKA_TOKEN:generated-AES"
+        )
         if token is MISSING_ATTRIBUTE:
             return
         assert require_bool_attr(token, "CKA_TOKEN") is False
@@ -121,7 +124,9 @@ class TestSecretKeyDefaults:
         """CKA_LOCAL should be True for a generated key."""
         rs, key = aes_key
         attrs = read_attributes(rs.raw, rs.sh, key, [CKA_LOCAL])
-        local_raw = attr_or_record(attrs, CKA_LOCAL, label="CKA_LOCAL:generated-AES")
+        local_raw = attr_or_record(
+            attrs, CKA_LOCAL, inherit_mechanism=False, label="CKA_LOCAL:generated-AES"
+        )
         if local_raw is MISSING_ATTRIBUTE:
             return
         local = require_bool_attr(local_raw, "CKA_LOCAL")
@@ -246,7 +251,9 @@ class TestKeyPairDefaults:
         """Public key CKA_LOCAL should be True."""
         rs, pub, _priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_LOCAL])
-        local_raw = attr_or_record(attrs, CKA_LOCAL, label="CKA_LOCAL:RSA-public-key")
+        local_raw = attr_or_record(
+            attrs, CKA_LOCAL, inherit_mechanism=False, label="CKA_LOCAL:RSA-public-key"
+        )
         if local_raw is MISSING_ATTRIBUTE:
             return
         local = require_bool_attr(local_raw, "CKA_LOCAL")
@@ -272,7 +279,9 @@ class TestKeyPairDefaults:
         """Private key CKA_LOCAL should be True."""
         rs, _pub, priv = rsa_keypair
         attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_LOCAL])
-        local_raw = attr_or_record(attrs, CKA_LOCAL, label="CKA_LOCAL:RSA-private-key")
+        local_raw = attr_or_record(
+            attrs, CKA_LOCAL, inherit_mechanism=False, label="CKA_LOCAL:RSA-private-key"
+        )
         if local_raw is MISSING_ATTRIBUTE:
             return
         local = require_bool_attr(local_raw, "CKA_LOCAL")
@@ -402,7 +411,9 @@ class TestDataObjectDefaults:
         """CKA_TOKEN is False (explicitly set)."""
         rs, h = data_obj
         attrs = read_attributes(rs.raw, rs.sh, h, [CKA_TOKEN])
-        token = attr_or_record(attrs, CKA_TOKEN, label="CKA_TOKEN:data-object")
+        token = attr_or_record(
+            attrs, CKA_TOKEN, inherit_mechanism=False, label="CKA_TOKEN:data-object"
+        )
         if token is MISSING_ATTRIBUTE:
             return
         assert require_bool_attr(token, "CKA_TOKEN") is False

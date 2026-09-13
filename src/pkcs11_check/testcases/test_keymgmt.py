@@ -172,6 +172,7 @@ class TestKeyImport:
             key_type = attr_or_record(
                 attrs,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label="CKA_KEY_TYPE:imported-AES",
                 reason="not_operational",
                 kind="metadata",
@@ -232,6 +233,7 @@ class TestKeyImport:
             exported = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:extractable-AES",
                 reason="not_operational",
                 kind="metadata",
@@ -270,6 +272,7 @@ class TestKeyImport:
                 exported = attr_or_record(
                     attrs,
                     CKA_VALUE,
+                    inherit_mechanism=False,
                     label=f"CKA_VALUE:imported-AES-{size_bytes * 8}",
                     reason="not_operational",
                     kind="metadata",
@@ -303,6 +306,7 @@ class TestKeyExport:
             modulus = attr_or_record(
                 attrs,
                 CKA_MODULUS,
+                inherit_mechanism=False,
                 label="CKA_MODULUS:RSA-public",
                 reason="not_operational",
                 kind="metadata",
@@ -310,6 +314,7 @@ class TestKeyExport:
             exponent = attr_or_record(
                 attrs,
                 CKA_PUBLIC_EXPONENT,
+                inherit_mechanism=False,
                 label="CKA_PUBLIC_EXPONENT:RSA-public",
                 reason="not_operational",
                 kind="metadata",
@@ -378,6 +383,7 @@ class TestKeyCopy:
             label_value = attr_or_record(
                 attrs,
                 CKA_LABEL,
+                inherit_mechanism=False,
                 label="CKA_LABEL:copied-AES",
                 reason="not_operational",
                 kind="metadata",
@@ -385,6 +391,7 @@ class TestKeyCopy:
             key_type = attr_or_record(
                 attrs,
                 CKA_KEY_TYPE,
+                inherit_mechanism=False,
                 label="CKA_KEY_TYPE:copied-AES",
                 reason="not_operational",
                 kind="metadata",
@@ -472,6 +479,7 @@ class TestKeyWrapUnwrap:
             exported = attr_or_record(
                 attrs,
                 CKA_VALUE,
+                inherit_mechanism=False,
                 label="CKA_VALUE:unwrapped-AES",
                 reason="not_operational",
                 kind="metadata",

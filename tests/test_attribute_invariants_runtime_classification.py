@@ -99,17 +99,32 @@ def _run_never_extractable(monkeypatch: pytest.MonkeyPatch, values: dict[int, ob
 
 def test_never_extractable_contradiction_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     # EXTRACTABLE=False (precondition holds) but NEVER_EXTRACTABLE=False -> contradiction.
+    C.set_mechanism("CKM_SHA256", "C_Sign")
     with pytest.raises(Failed) as ei:
         _run_never_extractable(
             monkeypatch,
             {CKA_EXTRACTABLE: False, CKA_NEVER_EXTRACTABLE: False},
         )
     assert not isinstance(ei.value, XFailed)
+    record = C.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.outcome == "fail"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2"
+    assert record.detail == {
+        "attribute": {"name": "CKA_NEVER_EXTRACTABLE", "id": int(CKA_NEVER_EXTRACTABLE)},
+        "expected": True,
+        "actual": False,
+        "producer_operation": "C_GenerateKey",
+        "producer_mechanism": "CKM_AES_KEY_GEN",
+    }
 
 
 def test_never_extractable_present_malformed_derived_is_hard_wrong_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_SHA256", "C_Sign")
     with pytest.raises(Failed) as exc_info:
         _run_never_extractable(
             monkeypatch,
@@ -119,6 +134,10 @@ def test_never_extractable_present_malformed_derived_is_hard_wrong_result(
     assert not isinstance(exc_info.value, XFailed)
     record = C.get_records()[-1]
     assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     assert record.detail == {
         "attribute": {"name": "CKA_NEVER_EXTRACTABLE", "id": int(CKA_NEVER_EXTRACTABLE)},
         "expected": "CK_BBOOL boolean",
@@ -177,6 +196,7 @@ def test_never_extractable_base_not_applied_xfails(monkeypatch: pytest.MonkeyPat
 def test_never_extractable_base_deviation_keeps_exact_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_SHA256", "C_Sign")
     with pytest.raises(pytest.xfail.Exception):
         _run_never_extractable(
             monkeypatch,
@@ -184,8 +204,11 @@ def test_never_extractable_base_deviation_keeps_exact_context(
         )
 
     record = C.get_records()[-1]
+    assert record.reason == "honest_deviation"
+    assert record.outcome == "xfail"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_AES_KEY_GEN"
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     assert record.detail == {
         "attribute": {"name": "CKA_EXTRACTABLE", "id": int(CKA_EXTRACTABLE)},
         "expected": False,
@@ -211,17 +234,32 @@ def _run_always_sensitive(monkeypatch: pytest.MonkeyPatch, values: dict[int, obj
 
 
 def test_always_sensitive_contradiction_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    C.set_mechanism("CKM_SHA256", "C_Sign")
     with pytest.raises(Failed) as ei:
         _run_always_sensitive(
             monkeypatch,
             {CKA_SENSITIVE: True, CKA_ALWAYS_SENSITIVE: False},
         )
     assert not isinstance(ei.value, XFailed)
+    record = C.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.outcome == "fail"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2"
+    assert record.detail == {
+        "attribute": {"name": "CKA_ALWAYS_SENSITIVE", "id": int(CKA_ALWAYS_SENSITIVE)},
+        "expected": True,
+        "actual": False,
+        "producer_operation": "C_GenerateKey",
+        "producer_mechanism": "CKM_AES_KEY_GEN",
+    }
 
 
 def test_always_sensitive_present_malformed_base_is_hard_wrong_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    C.set_mechanism("CKM_SHA256", "C_Sign")
     with pytest.raises(Failed) as exc_info:
         _run_always_sensitive(
             monkeypatch,
@@ -231,6 +269,10 @@ def test_always_sensitive_present_malformed_base_is_hard_wrong_result(
     assert not isinstance(exc_info.value, XFailed)
     record = C.get_records()[-1]
     assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+    assert record.spec_ref == "PKCS#11 v3.2 · C_GetAttributeValue"
     assert record.detail == {
         "attribute": {"name": "CKA_SENSITIVE", "id": int(CKA_SENSITIVE)},
         "expected": "CK_BBOOL boolean",

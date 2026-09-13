@@ -96,6 +96,7 @@ class TestValidationObjects:
             vtype = attr_or_record(
                 attrs,
                 CKA_VALIDATION_TYPE,
+                inherit_mechanism=False,
                 label="CKA_VALIDATION_TYPE:validation-object",
             )
             if vtype is MISSING_ATTRIBUTE:
@@ -125,6 +126,7 @@ class TestValidationObjects:
             level = attr_or_record(
                 attrs,
                 CKA_VALIDATION_LEVEL,
+                inherit_mechanism=False,
                 label="CKA_VALIDATION_LEVEL:validation-object",
             )
             if level is MISSING_ATTRIBUTE:
@@ -152,6 +154,7 @@ class TestValidationObjects:
             auth = attr_or_record(
                 attrs,
                 CKA_VALIDATION_AUTHORITY_TYPE,
+                inherit_mechanism=False,
                 label="CKA_VALIDATION_AUTHORITY_TYPE:validation-object",
             )
             if auth is MISSING_ATTRIBUTE:
@@ -179,6 +182,7 @@ class TestValidationObjects:
             mod_id = attr_or_record(
                 attrs,
                 CKA_VALIDATION_MODULE_ID,
+                inherit_mechanism=False,
                 label="CKA_VALIDATION_MODULE_ID:validation-object",
             )
             if mod_id is MISSING_ATTRIBUTE:

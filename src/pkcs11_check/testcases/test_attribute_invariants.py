@@ -135,7 +135,8 @@ def _classify_derived_invariant(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
-                mechanism="CKM_AES_KEY_GEN",
+                mechanism=None,
+                inherit_mechanism=False,
                 summary=f"{label}: base attribute has malformed CK_BBOOL value",
                 detail={
                     "attribute": {
@@ -156,7 +157,8 @@ def _classify_derived_invariant(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
-                mechanism="CKM_AES_KEY_GEN",
+                mechanism=None,
+                inherit_mechanism=False,
                 summary=f"{label}: derived attribute has malformed CK_BBOOL value",
                 detail={
                     "attribute": {
@@ -180,7 +182,8 @@ def _classify_derived_invariant(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
-            mechanism="CKM_AES_KEY_GEN",
+            mechanism=None,
+            inherit_mechanism=False,
             summary=(
                 f"{label}: base attribute did not take effect "
                 "(isolated deviation, not the invariant)"
@@ -214,7 +217,8 @@ def _classify_derived_invariant(
                 "is not True (self-contradiction)"
             ),
             operation="C_GetAttributeValue",
-            mechanism="CKM_AES_KEY_GEN",
+            mechanism=None,
+            inherit_mechanism=False,
             detail={
                 "attribute": {
                     "name": ATTR_NAMES.get(int(derived_attr), f"0x{int(derived_attr):08x}"),
@@ -721,6 +725,7 @@ class TestDerivedAttributeInvariants:
             local = attr_or_record(
                 attrs,
                 CKA_LOCAL,
+                inherit_mechanism=False,
                 label="CKA_LOCAL:imported-key-origin",
             )
             local_shape_record: Classification | None = None

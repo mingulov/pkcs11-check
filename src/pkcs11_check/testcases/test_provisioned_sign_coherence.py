@@ -76,7 +76,7 @@ def _match_public(rs: Any, priv_attrs: dict[Any, Any]) -> int | None:
         val = attr_or_record(
             priv_attrs,
             key,
-            label="provisioned private key: linking attribute readback",
+            label=f"provisioned private key: {key} linking attribute readback",
             reason="honest_deviation",
             inherit_mechanism=False,
         )

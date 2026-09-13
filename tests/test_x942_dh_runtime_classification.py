@@ -210,7 +210,8 @@ def test_x942_generated_params_keep_metadata_contradiction_and_cleanup(
     wrong = [record for record in records if record.reason == "wrong_result"]
     assert len(wrong) == 1
     assert wrong[0].kind == "metadata"
-    assert wrong[0].operation == "C_GetAttributeValue"
+    assert wrong[0].operation == "C_GenerateKey"
+    assert wrong[0].mechanism == "CKM_X9_42_DH_PARAMETER_GEN"
 
 
 def test_x942_keypair_validates_private_type_when_public_type_is_missing(
@@ -245,7 +246,8 @@ def test_x942_keypair_validates_private_type_when_public_type_is_missing(
     wrong = [record for record in records if record.reason == "wrong_result"]
     assert len(wrong) == 1
     assert wrong[0].kind == "metadata"
-    assert wrong[0].operation == "C_GetAttributeValue"
+    assert wrong[0].operation == "C_GenerateKeyPair"
+    assert wrong[0].mechanism == "CKM_X9_42_DH_KEY_PAIR_GEN"
 
 
 def test_x942_hybrid_reads_peer_secret_after_missing_first_and_classifies_malformed_second(
