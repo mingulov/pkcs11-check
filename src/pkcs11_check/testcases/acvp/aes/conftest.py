@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.testcases.acvp.aes.base_cts import (
     CtsDetectionResult as _CtsDetectionResult,
 )
@@ -106,6 +107,12 @@ def _detection_skip_reason(detection: _CtsDetectionResult) -> str:
         if isinstance(reason, str) and reason:
             return reason
         return "C_CreateObject capability unavailable for CKM_AES_CTS detection"
+    if detection.status is _CtsDetectionStatus.SETUP_ERROR:
+        ckr = ckr_name(detection.error_rv) if detection.error_rv is not None else "unknown CKR"
+        return (
+            f"CKM_AES_CTS variant detection failed with {ckr}; "
+            "the selected CTS reporter records the provider finding"
+        )
     return (
         "CKM_AES_CTS variant detection failed; the selected CTS reporter records "
         "the provider finding"
@@ -133,6 +140,17 @@ def _probe_cts_variant(config: pytest.Config) -> _CtsDetectionResult:
         return _CtsDetectionResult(
             _CtsDetectionStatus.SETUP_UNAVAILABLE,
             detail={"reason": str(exc)},
+        )
+    except CkrAssertionError as exc:
+        # Detection scaffolding (login, session, mechanism list) answers in
+        # CKRs: provider answers, contained like any detector result. Only
+        # non-CKR exceptions (true harness bugs) propagate to the gate.
+        # Nothing was detected, so the process cache stays unprimed and the
+        # runtime guard re-probes instead of reusing this result.
+        return _CtsDetectionResult(
+            _CtsDetectionStatus.SETUP_ERROR,
+            error_rv=exc.rv,
+            detail={"reason": str(exc), "attempts": []},
         )
 
 

@@ -21,7 +21,7 @@ from pkcs11_check.raw.recipes import (
     encrypt_single,
     get_mechanism_info,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
     CKF_DECRYPT,
     CKF_ENCRYPT,
@@ -98,6 +98,7 @@ class CtsDetectionStatus(Enum):
     ABSENT = "absent"
     SETUP_UNAVAILABLE = "setup_unavailable"
     SETUP_REJECTED = "setup_rejected"
+    SETUP_ERROR = "setup_error"
     NOT_OPERATIONAL = "not_operational"
     WRONG_RESULT = "wrong_result"
     DETECTED = "detected"
@@ -275,7 +276,9 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
 
     Returns a structured status.  A clean operation refusal is
     ``NOT_OPERATIONAL``; CKR_OK with bytes that do not match an independent
-    KAT is ``WRONG_RESULT`` and is never downgraded to an xfail.
+    KAT is ``WRONG_RESULT`` and is never downgraded to an xfail.  A CKR
+    outside the known runtime-reject tuples is ``SETUP_ERROR``: gathered here
+    so collection survives, re-raised by the sentinel reporter at runtime.
     """
     if not rs.has_mechanism("AES_CTS"):
         return CtsDetectionResult(CtsDetectionStatus.ABSENT)
@@ -284,6 +287,8 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
     attempted: list[dict[str, Any]] = []
     last_operation_error_rv: int | None = None
     last_setup_error_rv: int | None = None
+    last_operation_unlisted_rv: int | None = None
+    last_setup_unlisted_rv: int | None = None
     setup_unavailable = False
     setup_rejected = False
     operation_attempted = False
@@ -308,10 +313,14 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
             )
             continue
         except CkrAssertionError as exc:
-            if not is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
-                raise
+            # Off-contract CKRs are gathered, never raised: raising here becomes
+            # a pytest INTERNALERROR that deletes the whole file (round-0197 wolf
+            # evidence). The sentinel reporter re-raises the last off-contract
+            # code at runtime, where the plugin gate records it as a finding.
             setup_rejected = True
             last_setup_error_rv = exc.rv
+            if not is_known_error(exc, AES_KEYGEN_RUNTIME_REJECT_RVS):
+                last_setup_unlisted_rv = exc.rv
             attempted.append(
                 _attempt_detail(
                     stage="setup",
@@ -343,9 +352,10 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
                         )
                     )
                 except CkrAssertionError as exc:
-                    if not is_known_error(exc, CIPHER_OP_RUNTIME_REJECT_RVS):
-                        raise
+                    # Gathered, never raised: see the setup-stage note above.
                     last_operation_error_rv = exc.rv
+                    if not is_known_error(exc, CIPHER_OP_RUNTIME_REJECT_RVS):
+                        last_operation_unlisted_rv = exc.rv
                     attempted.append(
                         _attempt_detail(
                             stage="operation",
@@ -397,6 +407,22 @@ def _detect_cts_variant(rs: Any) -> CtsDetectionResult:
                 destroy_quietly(rs.raw, rs.sh, key)
 
     if not successful:
+        # Off-contract evidence dominates clean rejects: a definitive answer
+        # (DETECTED/WRONG_RESULT) already returned above, so anything left
+        # carrying an unlisted CKR is a detection error. The operation flavor
+        # wins over setup: reaching the encrypt stage means setup recovered.
+        if last_operation_unlisted_rv is not None:
+            return CtsDetectionResult(
+                CtsDetectionStatus.SETUP_ERROR,
+                error_rv=last_operation_unlisted_rv,
+                detail={"attempts": attempted},
+            )
+        if last_setup_unlisted_rv is not None:
+            return CtsDetectionResult(
+                CtsDetectionStatus.SETUP_ERROR,
+                error_rv=last_setup_unlisted_rv,
+                detail={"attempts": attempted},
+            )
         if operation_attempted:
             return CtsDetectionResult(
                 CtsDetectionStatus.NOT_OPERATIONAL,
@@ -492,6 +518,36 @@ def report_cts_detection(result: CtsDetectionResult) -> None:
             summary="CKM_AES_CTS fixed-key variant detection returned incorrect ciphertext",
             detail=result.detail,
         )
+    if result.status is CtsDetectionStatus.SETUP_ERROR:
+        # Re-raise at runtime: collection contained the off-contract CKR so the
+        # file survives; the plugin gate now records it as a provider finding,
+        # exactly like any other unlisted CKR from a positive probe.
+        rv = result.error_rv
+        if rv is None:
+            raise RuntimeError(
+                "CTS detection reported setup_error without a CKR; the detector misbuilt the result"
+            )
+        attempts = result.detail.get("attempts", []) if result.detail else []
+        if not attempts:
+            # Probe-scaffolding failures (login, session, mechanism list) carry
+            # the provider's answer as a reason string instead of attempts.
+            reason = (result.detail or {}).get("reason", "detection scaffolding failed")
+            raise CkrAssertionError(
+                f"CTS detection setup failed: {reason} ({ckr_name(rv)} outside the known contract)",
+                int(rv),
+            )
+        # error_rv carries operation priority, so the naming attempt is the
+        # last one that recorded this CKR -- not necessarily the last attempt.
+        last = next(
+            (attempt for attempt in reversed(attempts) if attempt.get("ckr") == rv),
+            attempts[-1],
+        )
+        raise CkrAssertionError(
+            f"CTS detection {last.get('stage', 'detection')} "
+            f"{last.get('operation', 'C_CreateObject')} rejected with "
+            f"{ckr_name(rv)} outside the known contract",
+            int(rv),
+        )
 
 
 def skip_unless_cts_variant(rs: Any, expected_cs: str) -> None:
@@ -524,6 +580,7 @@ def _cts_operability(rs: Any) -> OperabilityResult:
     if result.status.value in {
         CtsDetectionStatus.SETUP_UNAVAILABLE.value,
         CtsDetectionStatus.SETUP_REJECTED.value,
+        CtsDetectionStatus.SETUP_ERROR.value,
     }:
         return OperabilityResult(
             Operability.INCONCLUSIVE,

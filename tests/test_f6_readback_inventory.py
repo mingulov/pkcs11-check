@@ -1415,10 +1415,10 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
         ("unsafe_inherited_readback", 91),
     )
     assert characterization.digest == (
-        "048d3cbbb436f9438742ee74b0baa357db1c1139bdddef0044d98b3fe20a5281"
+        "9f9c7abc54f400f848367fec8240032e4f95ee3e207402ff249e23294ec21fed"
     )
     assert characterization.candidate_digest == (
-        "12af2a8efcebe2177240b68c7b5d60475c66612775ac73615bea3e2644d3aa10"
+        "6c7687db212699cabe0111c0fd76113b4c1b52ebe3550ce45f62c63705ba652b"
     )
     assert characterization.state_statuses == (
         ("explicit_mechanism_grouping", 1231),
@@ -1430,7 +1430,7 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     )
     assert characterization.mixed_unsafe_states == 30
     assert characterization.corpus_digest == (
-        "6250b16c639b530d94f1fa7f7016aa61bd11d066ab2b9c8553e6dab5ae37be7f"
+        "9470305ff3bd865c0ff79f637853b418edaac3ddd64ffcab2f5414700aa01edb"
     )
     assert characterization.direct_emitter_census == (
         ("assert_correct", 268),
