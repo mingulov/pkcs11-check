@@ -19,21 +19,33 @@ import collections
 import pathlib
 
 TESTCASES_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
-EXPECTED_ATTR_OR_RECORD_SITES = 376
+EXPECTED_ATTR_OR_RECORD_SITES = 377
 
 
 def _unguarded_sites() -> tuple[dict[str, list[int]], int]:
-    """Return unguarded sites and the total number of ``attr_or_record`` calls seen."""
+    """Return unguarded sites and the total number of ``attr_or_record`` calls seen.
+
+    Name matching resolves ``as``-aliases per file (``from ... import
+    attr_or_record as _attr_or_record``): an aliased call is the same readback
+    and must carry the flag too. A scanner that only matched the literal name
+    let exactly one such site escape (conftest ``ec_public_key_binding_defect``).
+    """
     found: dict[str, list[int]] = collections.defaultdict(list)
     seen_sites = 0
     for path in sorted(TESTCASES_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        names = {"attr_or_record"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "attr_or_record":
+                        names.add(alias.asname or alias.name)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name != "attr_or_record":
+            if name not in names:
                 continue
             seen_sites += 1
             guarded = any(

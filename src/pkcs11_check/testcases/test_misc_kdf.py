@@ -80,12 +80,15 @@ def _assert_misc_bytes_length(
     """Classify malformed provider output while retaining missing-attribute evidence."""
     if value is MISSING_ATTRIBUTE:
         return
+    # This finding is about C_DeriveKey's output bytes, not the
+    # C_GetAttributeValue readback that retrieved it (F6): all call sites pass a
+    # C_DeriveKey-family KDF mechanism here.
     if not isinstance(value, bytes):
         classify(
             "wrong_result",
             kind="metadata",
             label=label,
-            operation="C_GetAttributeValue",
+            operation="C_DeriveKey",
             mechanism=mechanism,
             expected="bytes",
             actual=type(value).__name__,
@@ -95,7 +98,7 @@ def _assert_misc_bytes_length(
         actual=len(value),
         expected=expected_len,
         label=label,
-        operation="C_GetAttributeValue",
+        operation="C_DeriveKey",
         mechanism=mechanism,
         kind="metadata",
     )
