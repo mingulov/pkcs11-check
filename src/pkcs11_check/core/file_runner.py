@@ -20,6 +20,7 @@ from typing import IO, Any
 
 from rich.console import Console
 
+from pkcs11_check.classification import Classification, serialize
 from pkcs11_check.core._crash_classify import (
     _analyze_report_jsonl as _analyze_report_jsonl,
 )
@@ -551,25 +552,32 @@ def _cache_attempt_report(
                 "user_properties": [
                     [
                         "pkcs11_classification",
-                        {
-                            "schema": 1,
-                            "reason": "crash",
-                            "outcome": "fail",
-                            "severity": "HIGH",
-                            "kind": None,
-                            "label": marker_nodeid,
-                            "summary": (
-                                f"{marker_nodeid}: process terminated itself (exit {returncode})"
-                            ),
-                            "operation": None,
-                            "mechanism": None,
-                            "expected_ckr": None,
-                            "actual_ckr": None,
-                            "spec_ref": "",
-                            "source": None,
-                            "vector_id": None,
-                            "detail": {"mode": "abrupt-exit", "returncode": returncode},
-                        },
+                        serialize(
+                            [
+                                Classification(
+                                    reason="crash",
+                                    outcome="fail",
+                                    severity="HIGH",
+                                    kind=None,
+                                    label=marker_nodeid,
+                                    summary=(
+                                        f"{marker_nodeid}: process terminated itself "
+                                        f"(exit {returncode})"
+                                    ),
+                                    operation=None,
+                                    mechanism=None,
+                                    expected_ckr=None,
+                                    actual_ckr=None,
+                                    spec_ref="",
+                                    source=None,
+                                    vector_id=None,
+                                    detail={
+                                        "mode": "abrupt-exit",
+                                        "returncode": returncode,
+                                    },
+                                )
+                            ]
+                        ),
                     ]
                 ],
             }

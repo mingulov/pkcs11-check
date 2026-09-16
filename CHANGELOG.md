@@ -322,6 +322,48 @@ justified, and no node-id that produced a finding stopped running.
   label. The operation-state tests stop stamping `CKM_ECDH1_DERIVE` -- a derive that never
   executed -- on plain `C_GetAttributeValue` readbacks, with the dependency kept in the
   detail.
+- **CTS variant detection survives off-contract provider answers.** When the detector's
+  setup import or probe encrypt was refused with a CKR outside the known runtime-reject
+  tuples (observed: wolf answering `C_CreateObject` with `CKR_USER_NOT_LOGGED_IN`), the
+  detector re-raised during collection, which pytest turns into an INTERNALERROR that
+  deletes the whole file's collected tests. The detector now gathers every key size and
+  returns a structured `setup_error`; collection skips the variant tests with the
+  offending CKR named, and the sentinel reporter re-raises it at runtime, where the
+  plugin gate records the provider finding exactly like any other unlisted CKR.
+- **File-level abrupt-termination crashes reach rendered reports.** The crash record for
+  a module that terminates its host process carries its classification as a bare dict
+  instead of the list the report extractor requires, so the occurrence was skipped (and
+  counted only as a malformed property) and never appeared in Crash sections. The record
+  is now built through the shared `Classification`/`serialize` path, so the shape is
+  correct by construction.
+- **RSA key generation that omits key attributes fails hard again.** The metadata
+  self-contradiction check in `_require_rsa_keygen_attribute` had been softened into an
+  xfail-class record, so a module reporting `CKR_OK` while silently omitting
+  `CKA_MODULUS_BITS`/`CKA_MODULUS`/`CKA_PUBLIC_EXPONENT` produced no hard finding. The
+  `wrong_result`/`fail`/metadata verdict is restored: a generated key's own attributes
+  have no independent evidence source, so their absence is a contradiction, not a
+  deviation.
+- **EC keypair generation checks advertisement before probing.** `_make_ec_keypair`
+  generated keypairs without checking `EC_KEY_PAIR_GEN`/`ECDSA_KEY_PAIR_GEN`
+  advertisement, so a module answering `CKR_MECHANISM_INVALID` -- itself evidence the
+  mechanism is not advertised -- was mislabelled "advertised but not operational" (7
+  false xfails on pkcs11-mock). The helper now applies the same `has_mechanism()` gate
+  used elsewhere before attempting generation.
+- **Probe evidence survives abrupt child exit.** Probe children are launched with
+  `python -u`, so output printed before an abrupt `os._exit` is no longer lost to
+  stdio buffering. A dedicated `_abrupt_exit` probe (marker + exit 17) pins the
+  launcher's output durability, and the operation-state suites were reworked to flush
+  their evidence before any abrupt termination.
+- **Security findings are conditioned on the provider's own claims.** Sensitive-key
+  extraction, CVE-regression, and unwrap-reimport checks now read the key's protective
+  attributes first: a readable private exponent is a `self_contradiction` only when the
+  same key claims `CKA_SENSITIVE`/`CKA_EXTRACTABLE` protection, while unreadable or
+  malformed policy attributes become an `honest_deviation` metadata observation instead
+  of an unconditional failure or a silent pass.
+- **Test-granularity isolation no longer depends on pytest's rootdir.** Unit discovery
+  anchors test node IDs to the collected file's actual path, so `--isolation test`
+  resolves the same units regardless of the invoking working directory or rootdir
+  inference; test-level disabled-baseline filtering travels with the collected items.
 
 ## [0.1.9] - 2026-08-28
 

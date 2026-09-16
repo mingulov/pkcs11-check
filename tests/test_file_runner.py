@@ -58,6 +58,7 @@ from pkcs11_check.core.file_runner import (
 )
 from pkcs11_check.core.merge import merge_results_payloads
 from pkcs11_check.core.process_observation import build_process_observation
+from pkcs11_check.core.report_log import iter_classification_occurrences
 from pkcs11_check.report.extract import extract_groups
 
 
@@ -1342,20 +1343,33 @@ def test_module_self_termination_is_a_provider_crash_not_harness_error(
         json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines() if line
     ]
     assert not [rec for rec in records if rec.get("$report_type") == "HarnessError"]
-    crashes = [
-        rec
+    classifications = [
+        prop[1]
         for rec in records
-        if rec.get("$report_type") == "TestReport"
-        and any(
-            isinstance(prop, (list, tuple))
-            and len(prop) == 2
-            and prop[0] == "pkcs11_classification"
-            and isinstance(prop[1], dict)
-            and prop[1].get("reason") == "crash"
-            for prop in rec.get("user_properties", [])
-        )
+        for prop in rec.get("user_properties", [])
+        if isinstance(prop, (list, tuple)) and len(prop) == 2 and prop[0] == "pkcs11_classification"
     ]
-    assert len(crashes) == 1
+    # The F11 extractor contract requires a LIST of classification dicts: a bare
+    # dict is skipped and counted as a malformed property (round-0197 evidence),
+    # so the crash occurrence never reaches rendered reports.
+    assert len(classifications) == 1
+    assert isinstance(classifications[0], list)
+    assert len(classifications[0]) == 1
+    assert classifications[0][0].get("reason") == "crash"
+    malformed: list[str] = []
+    occurrences = list(
+        iter_classification_occurrences(
+            records,
+            on_malformed_marker=lambda: malformed.append("marker"),
+            on_malformed_property=lambda: malformed.append("property"),
+            on_malformed_entry=lambda: malformed.append("entry"),
+        )
+    )
+    assert malformed == []
+    assert len(occurrences) == 1
+    assert occurrences[0].reason == "crash"
+    assert occurrences[0].classification.get("outcome") == "fail"
+    assert occurrences[0].classification.get("severity") == "HIGH"
 
 
 @pytest.mark.parametrize("returncode", [1, 5])

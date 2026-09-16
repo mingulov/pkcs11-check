@@ -10,7 +10,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.core.test_selection import compute_batch_id, compute_collection_sha256
-from pkcs11_check.raw.types_std import CKF_ENCRYPT, CKM_AES_CTS
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKF_ENCRYPT, CKM_AES_CTS, CKR_USER_NOT_LOGGED_IN
 from pkcs11_check.testcases.acvp.aes import base_cts
 from pkcs11_check.testcases.acvp.aes import conftest as cts_conftest
 
@@ -119,6 +120,48 @@ def test_cts_detection_failure_keeps_variant_nodes_as_skips(
     assert _skip_reasons(cs3) == [
         "CKM_AES_CTS variant detection failed; the selected CTS reporter records "
         "the provider finding"
+    ]
+
+
+def test_cts_setup_error_keeps_variant_nodes_as_skips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An off-contract detection CKR skips variants but keeps the reporter runnable."""
+    canned = base_cts.CtsDetectionResult(
+        base_cts.CtsDetectionStatus.SETUP_ERROR,
+        error_rv=int(CKR_USER_NOT_LOGGED_IN),
+        detail={
+            "attempts": [
+                {
+                    "stage": "setup",
+                    "operation": "C_CreateObject",
+                    "case": None,
+                    "ckr": int(CKR_USER_NOT_LOGGED_IN),
+                    "key_bits": 256,
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        cts_conftest,
+        "_probe_cts_variant",
+        lambda _config: canned,
+    )
+    config = _FakeConfig()
+    detect = _FakeItem("src/pkcs11_check/testcases/acvp/aes/test_cts.py::test_cts_variant_detected")
+    cs1 = _FakeItem(
+        "src/pkcs11_check/testcases/acvp/aes/test_cts.py::"
+        "test_acvp_aes_cbc_cs1_decrypt[CBC-CS1-AES-dec-tc1]"
+    )
+    items: list[Any] = [detect, cs1]
+
+    cts_conftest.pytest_collection_modifyitems(config, items)
+
+    assert items == [detect, cs1]
+    assert _skip_reasons(detect) == []
+    assert _skip_reasons(cs1) == [
+        "CKM_AES_CTS variant detection failed with CKR_USER_NOT_LOGGED_IN; "
+        "the selected CTS reporter records the provider finding"
     ]
 
 
@@ -232,6 +275,34 @@ def test_collection_probe_preserves_explicit_capability_skip(
     except pytest.skip.Exception as exc:
         pytest.fail(f"explicit capability skip escaped collection probe: {exc}")
     assert result.status is base_cts.CtsDetectionStatus.SETUP_UNAVAILABLE
+
+
+def test_collection_probe_contains_unlisted_detector_ckr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CKR answer from detection setup must not crash collection.
+
+    Login, session, mechanism-list, and import failures surface as
+    CkrAssertionError: provider answers, not harness bugs. Only non-CKR
+    exceptions (true harness bugs) may propagate to the collection gate.
+    """
+
+    def login_refused(_config: Any) -> base_cts.CtsDetectionResult:
+        raise CkrAssertionError("login refusal", int(CKR_USER_NOT_LOGGED_IN))
+
+    monkeypatch.setattr(cts_conftest, "_detect_variant_via_pkcs11", login_refused)
+
+    try:
+        result = cts_conftest._probe_cts_variant(_ProbeConfig())
+    except CkrAssertionError as exc:
+        pytest.fail(f"provider CKR escaped the collection probe: {exc}")
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_ERROR
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    with pytest.raises(CkrAssertionError) as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == int(CKR_USER_NOT_LOGGED_IN)
+    assert "login refusal" in str(excinfo.value)
+    assert "CKR_USER_NOT_LOGGED_IN" in str(excinfo.value)
 
 
 def test_collection_probe_checks_cts_flags_before_provider_session_or_operations(
