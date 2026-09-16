@@ -1,327 +1,125 @@
 # Changelog
 
-## [0.2.0] - 2026-09-11
+## [0.2.0] - 2026-09-16
 
-A reporting-integrity release. Every change here is about the suite reporting provider
-behaviour truthfully: a finding is never hidden, never silently downgraded, and never
-invented. Four defects found by validating this branch against real providers are fixed,
-each of which had corrupted what the tool published:
-
-- `CKR_FUNCTION_NOT_SUPPORTED` had been folded into expected-return-code sets, turning 21
-  recorded xfails into unrecorded passes. Function-level capability absence is now a skip:
-  never a pass, and never a widened expected-RV set.
-- Probe subprocesses that exited without explaining themselves were attributed to the
-  harness, which removed them from provider counts entirely. They now report as
-  `probe_incomplete` (`fail`/HIGH), which is deliberately not an exclusion reason.
-- A module that terminates its host process with a C `exit()` from inside a PKCS#11 call is
-  now detected via a finalization sentinel and reported as `crash`, not as a pkcs11-check
-  defect.
-- The promotion gate treated crash-limited coverage as an integrity failure, so the
-  strongest class of finding disabled publication. Integrity loss still fails closed;
-  coverage loss now publishes as `partial` with counts marked as lower bounds.
-
-Validated by a per-node-id differential against a real baseline round across six providers:
-154 findings gained or sharpened against 71 released, every one of the 71 individually
-justified, and no node-id that produced a finding stopped running.
+A reporting-integrity release: a finding is never hidden, never silently downgraded,
+and never invented. Validated by a per-node-id differential across six providers —
+154 findings gained or sharpened against 71 released, each justified, none gone silent.
 
 ### Added
 
-- **Attribution ratchet for mechanism-inheriting attribute reads.** `record_as()` resolves
-  `mechanism` as `if mechanism is None and inherit_mechanism: mechanism = _active_mechanism`,
-  so an `attr_or_record` site that omits `inherit_mechanism=False` stamps whatever mechanism
-  the calling test last made active onto an unrelated readback -- and since
-  `wrap_context_for()` memoises per session handle, *which* mechanism lands depends on test
-  ordering and `-k` selection. 103 sites across 28 files still rely on `clear()` running at
-  teardown rather than on a rule. `tests/test_f6_inherit_mechanism_ratchet.py` pins a per-file
-  baseline and fails when a new unguarded site appears, so the backlog can only shrink; it
-  also fails if the baseline is left stale after sites are fixed, or if a new file introduces
-  unguarded sites at all.
+- **Attribution ratchet for mechanism-inheriting reads**, plus a test pinning the
+  per-file backlog so it can only shrink.
 
-- **Exact case batching via `--selection-manifest`.** For oversized KAT suites on slow
-  execution profiles (e.g. OP-TEE), `pkcs11-check test --selection-manifest PATH` executes a
-  deterministic slice of test cases from a single test file in one file-isolated subprocess,
-  without weakening the per-test watchdog or changing test node IDs. It requires `--format json`
-  (or `--output json`), `--isolation file`, and exactly one bare file target matching the
-  manifest's `source`; any other combination exits `2` before execution. The schema-1 manifest
-  (`plan_id`, `batch_id`, `source`, `source_collection_count`, `source_collection_sha256`,
-  `nodeids`) is validated before execution: any count mismatch, digest mismatch, missing or
-  duplicate node, path escape, or intersection with the disabled baseline raises an immediate
-  error (exit `2`). Unselected cases in the file are reported to `pytest_deselected`, never marked
-  skipped, and the selected batch count, not the full-file count, authoritatively overrides the
-  aggregate file timeout allowance while the per-test watchdog stays unchanged.
-- **`--format` alias for `pkcs11-check test`.** A permanent third alias alongside `--output`/`-o`
-  for selecting the output format (`rich`, `json`, `junit`).
-- **`results.json` selection schema.** For runs executed under `--selection-manifest`,
-  `results.json` gains a top-level `selection` object repeating the validated canonical manifest,
-  and the selected unit is annotated with `selection_batch_id`. Canonical `selection.json` is
-  materialized beside the JSON artifacts before execution. `--resume` state fingerprinting binds
-  `selection_batch_id` and `selection_digest`, so a changed selection invalidates resume state
-  while an identical selection resumes cleanly.
-- **Merge-side plan and batch integrity validation.** Shard merge validates selection metadata
-  fail-closed: conflicting `plan_id`s across merged shards, duplicate `batch_id`s, overlapping
-  node IDs across batches, a unit's `selection_batch_id` not matching its payload, and a mismatch
-  between a shard's `results.json` selection and its `selection.json` sidecar all raise an error
-  instead of silently merging.
-- **Batch membership must be proven by the payload.** An intact `results.json` proves its own
-  batch membership, because the framework emits the top-level `selection` block whenever
-  `--selection-manifest` was honored. Shard merge now rejects an intact `results.json` that omits
-  that block while a `selection.json` sidecar is present, instead of stamping the batch identity
-  from the sidecar: such a run executed the full source file rather than the assigned slice.
-  Sidecar recovery remains in place for salvage only (corrupt or missing `results.json`, or an
-  externally salvaged `partial` payload), where it is warned as unproven and the payload stays
-  `incomplete`.
-- **Classification observability in the quality audit.** `quality.json` gains an additive
-  `classification_observability` block (separately versioned via its own `contract_version`,
-  independent of the unchanged `quality.json` `schema_version`) reporting `unclassified`
-  occurrences directly from the raw, unrepaired `report.jsonl` stream(s). It never fabricates a
-  zero: a `status` of `unavailable` renders an explicit `--` instead of a fake `unclassified: 0`,
-  and a `status` of `partial` (a missing or malformed source was seen) renders every count as an
-  explicit lower bound (`>=N`), never as if it were exact. A pooled/merged run regenerates this
-  block by re-reading each shard's own raw `report.jsonl` directly rather than summing per-shard
-  `quality.json` counts. `pkcs11-check report` renders a `## classification observability`
-  section from this block when present. An integrated release-gate test exercises the real
-  isolated file-runner's crash/retry machinery end-to-end and asserts the release-acceptance
-  properties on the raw JSONL, grouped classification occurrences, unified logical counts, and
-  JUnit artifact together with both a clean and a deliberately-explained-unclassified
-  observability fixture.
+- **Exact case batching** (`--selection-manifest`): deterministic, digest-pinned case
+  slices with fail-closed validation at execution and merge time.
 
-- **HKDF data-object derivation coverage.** HKDF data-object derivation was advertised in
-  several lanes but never invoked by the framework. New `test_hkdf_data_kat.py` slices with
-  independent derived-object oracles, wired through the derive dispatch, cover it.
-- **DES CBC encrypt-data coverage.** DES/3DES CBC encrypt-data was advertised in several
-  lanes but never invoked. New `test_des_kdf.py` slices with independent ciphertext oracles
-  cover it.
-- **Installed-artifact audit.** A new `artifact_audit` module verifies artifacts produced by
-  an installed distribution: it attests the importing package's own distribution metadata,
-  `RECORD` file, and on-disk origin (no source-tree fallback), then rebuilds the quality
-  portion of the result from `report.jsonl` and `results.json` instead of trusting a
-  derived `quality.json`. It runs as `python -m pkcs11_check.artifact_audit`; the interface
-  is a machine-readable protocol emitting canonical JSON.
+- **`--format` alias** for `pkcs11-check test`, alongside `--output`/`-o`.
+
+- **Selection schema in `results.json`**, binding resume state to the validated manifest.
+
+- **Classification observability in the quality audit**: `unclassified` counts straight
+  from the raw report stream — never a fabricated zero — with a `report` section and
+  an end-to-end release-gate test.
+
+- **HKDF data-object and DES CBC encrypt-data coverage**, previously advertised but
+  never invoked, now with independent oracles.
+
+- **Installed-artifact audit** (`python -m pkcs11_check.artifact_audit`) that trusts
+  neither derived files nor the source tree.
 
 ### Fixed
 
-- **`kind` is now asserted on readback classification records.** `record_as()` derives outcome
-  and severity from `(reason, kind)` together, so the `_assert_readback_record` helpers that
-  checked reason, operation, mechanism and `spec_ref` but not `kind` would have let a severity
-  regression through while `reason` still matched. Asserting it showed five sensitive-value
-  readbacks are `policy`, not `metadata`; those sites now say so.
-- **The twin `CKA_EC_POINT` readback in `acvp/test_acvp_ecdh.py`** no longer stamps
-  `mechanism="CKM_EC_KEY_PAIR_GEN"` on a plain `C_GetAttributeValue`. Its sibling branch in the
-  same `try`/`except` pair was corrected by the F6 sweep and this one was missed; the producer
-  mechanism now rides in the label, matching the sibling. Attribution fidelity only -- no
-  verdict, reason or kind changes.
-- **The TestPyPI staging contract test no longer hardcodes the release version.** It ran the CI
-  staging snippet against a copy of the real tree while pinning `0.1.9` in five places, so it
-  broke on every version bump. It now reads `__version__` from the file the snippet rewrites.
+- **Capability absence is a skip, never a pass or deviation.**
+  `CKR_FUNCTION_NOT_SUPPORTED` no longer widens expected sets: named functions and
+  raw probes skip; 63 invented findings and 21 unrecorded passes gone.
 
-- **Collection failures leave durable harness evidence (GH #16).** Metadata and isolated pytest
-  collection/configuration failures are recorded as `CollectReport` harness errors with labeled
-  diagnostics, incomplete JSON/JUnit output, and preserved resume evidence. They are never
-  classified as provider fail/xfail/crash findings.
-- **Isolation preserves explicit targets.** In `--isolation auto`, an explicit `path::node`
-  remains an exact node unit even when its file has the module-level `subprocess` marker; a bare
-  file remains file-isolated.
-- **Incomplete report-log sessions are reported honestly.** Normal collected pytest exits 0, 1,
-  and 5 require a matching `SessionFinish`/`exitstatus`. Missing or invalid completion is an
-  additive `completion_verified: false` incomplete result, is preserved by continuation-only
-  resume, and is not automatically blamed or retried as a crash or timeout.
-- **Escalation and retry health remain visible.** Grouped JSON/JUnit retain a file-level crash or
-  timeout trigger even when expanded children pass; a preserved timeout retry is stored as
-  `timeout`/`124` and returns nonzero. Resume returns green only when all durable results are
-  verified `passed`/`empty`; crash-limited and escalation residue stays non-green.
-- **Windows crash evidence is retained.** Unhandled native NTSTATUS exits and direct ctypes
-  `OSError: exception: access violation` failures in setup, call, or teardown are classified as
-  crashes. Owned nested child access violations contribute to `child_crash`, including after
-  mixed-separator path joins; outer-process collection failures also classify from captured
-  stderr. Ordinary `OSError` and traceback text alone do not.
-- **Report and recovery evidence fail closed.** Malformed/non-object report-log records and
-  structurally invalid pytest session records make completion unverified. Daemon recovery replaces
-  only the current aggregate verdict: superseded results, classifications, output, and process
-  observations remain in `attempt_history`, while each confirmed daemon death is counted as its
-  own crash. A durable sidecar is replayed on resume if interruption occurs before state save.
-- **Successful corpus operations must prove their output.** Accepted Wycheproof HKDF and
-  X25519/X448 `valid` or `acceptable` vectors now compare readable derived bytes with the corpus;
-  an invalid derive succeeds as a hard finding before readback, and an unreadable successful
-  result remains visible as `not_operational`. Unexpected local errors propagate instead of
-  becoming acceptable-vector passes.
-- **Provider capability refusals are routed at their exact boundary.** Scoped handling now covers
-  role/login and object-storage refusal, private-key and multi-prime RSA-OAEP provisioning,
-  ECDH/XDH runtime refusal, EC import exhaustion, and RSA-PSS zero-salt support. These remain
-  visible skips or xfails where appropriate; an accepted invalid input or wrong cryptographic
-  result remains a hard finding.
-- **Negative-test oracles distinguish behavior from error-code variance.** Non-empty short GCM
-  IVs and caller-managed IV reuse are no longer provider failures, while empty-IV acceptance
-  remains hard. EdDSA KeyVer now evaluates the signature after invalid-key import, CBC-PAD does
-  not confuse multiple clean rejection codes with an oracle, and `C_SetAttributeValue`
-  distinguishes permitted `CKR_GENERAL_ERROR` inconsistency from hard partial updates. Crashes
-  and timeouts near `SIZE_MAX` remain hard pending sanitizer attribution.
-- **Provider-operation exceptions no longer become corpus passes.** AES-GCM/CCM key import is
-  classified separately from invalid-ciphertext rejection; GCM-SIV wrong ciphertext, tag, or
-  plaintext is a hard result mismatch. ACVP GMAC uses `C_Sign`, supplies AAD exactly once, and
-  selects the PKCS#11 2.40 or 3.x parameter shape from the negotiated interface. EdDSA, EC/ECDH,
-  PQC/KEM, CTS, Tookan, X.509 compatibility retries, and boundary probes catch only structured
-  PKCS#11 errors at expected rejection boundaries, so direct crashes, undefined CKRs, and local
-  assertion failures stay visible. Provider lookup errors after external provisioning propagate
-  instead of becoming an unavailable-path skip.
-- **Lifecycle and capability failures cannot finish green.** A non-OK, raised, timed-out, or
-  access-violating teardown `C_Finalize` now fails the pytest process and becomes one additive
-  lifecycle error/crash/timeout in grouped reports without rewriting completed test outcomes.
-  Explicit capability manifests with non-OK status and advertised mechanisms whose
-  `C_GetMechanismInfo` fails are likewise rejected instead of being treated as absent. Successful
-  crash-guard key-generation probes destroy both session objects before continuing.
-- **Positive-operation findings are no longer setup skips.** Advertised RNG refusals, required
-  X.509 readback/search refusals, silently rebound EC imports, refused provisioning unwrap trials,
-  ACVP RSA key-generation refusals, missing generated-key attributes, template-mismatched
-  `CKA_TOKEN`, and readable wrong keys returned by `C_UnwrapKey` remain visible as xfail/fail
-  findings. Provisioning calls a mechanism an unwrap capability only when it advertises
-  `CKF_UNWRAP`; fallback strategies may still succeed, and genuine unadvertised or exhaustively
-  probed capability absence remains a skip.
-- **Fresh empty runs clear old evidence before failing.** A non-resume run that collects zero units
-  still exits with the no-tests error, but first removes stale state-adjacent recovery/report
-  caches and report/coverage/provisioning/quality artifacts, then writes an empty durable result.
-- **`C_GetAttributeValue` readback records no longer inherit an unrelated ambient mechanism.**
-  Shared readback helpers reached from multiple call sites (EC, DH, KDF, AES-KDF, lifecycle, and
-  provisioning helpers, plus operational ECDH peer-point normalization) recorded findings under
-  whichever mechanism happened to be active in the caller, making `spec_ref` non-deterministic
-  across test orderings because `wrap_context_for()` memoises per session handle. These records
-  are now mechanism-free (`operation="C_GetAttributeValue"`, `mechanism=None`,
-  `inherit_mechanism=False`), with the producing mechanism preserved as context in the label and
-  `detail.producer_mechanism` instead of being asserted as the record's own mechanism.
-- **Missing provider attributes no longer fabricate or mask findings.** Every provider-backed
-  attribute read in `testcases/` now routes through the caller-owned `attr_or_record()` presence
-  helper instead of subscripting the readback dict directly, so a provider that omits an
-  attribute yields a structured `<unavailable>` observation rather than an uncaught `KeyError`
-  that aborts the test and discards every other observation already recorded in it. This also
-  fixed several sites where an omission had been silently normalized into a wrong value (masking
-  a finding) or, conversely, misread as a value the provider never returned (fabricating one),
-  including a case where a module that correctly refused a key-type-confusion attack by omitting
-  `CKA_VALUE` was reported as a CRITICAL accepted-confusion finding. An all-source AST+symtable
-  taint analyzer (`tests/_attribute_access_guard.py`) enforces this with an unconfigured
-  zero-violation gate (`tests/test_required_attribute_access_guard.py`) across every file under
-  `src/pkcs11_check/testcases/`.
-- **Honeypot page-size probing survives a 32-bit `OverflowError`.** On builds where `mmap.mmap()`
-  raises `OverflowError` for an oversized length instead of `OSError`/`ValueError`, the honeypot
-  now falls back to the next candidate size instead of letting the exception escape.
-- **p11-kit interop tests skip cleanly when its CLI is absent.** `test_interop_openssl.py` checks
-  `_have_p11kit()` before invoking the `p11-kit` CLI, instead of failing when the tool is not
-  installed.
-- **A NULL function-list entry is no longer misclassified as a provider crash.** Loading a
-  selected function table now removes any previously-loaded entry whose pointer has gone NULL
-  (`self._funcs.pop(name, None)`) instead of leaving a stale callable behind, so a genuinely
-  absent function is reported as a missing function-table entry rather than surfacing as a crash
-  the first time it is called.
-- **`CKR_FUNCTION_NOT_SUPPORTED` is capability absence, not a deviation.** FNS is the spec-defined
-  way for a module to say it does not implement a function at all, and function support is
-  orthogonal to mechanism advertisement -- so an advertised mechanism cannot promote it into a
-  deviation. Every site that recorded it as an xfail now skips with the declining function named:
-  `C_LoginUser`, `C_SessionCancel`, `C_WaitForSlotEvent`, `C_WrapKeyAuthenticated`,
-  `C_UnwrapKeyAuthenticated`, `C_SignRecoverInit`/`C_VerifyRecoverInit`, `C_CopyObject`, the v3.0
-  message family, and the dual functions. Across a six-provider round this released 63 invented
-  findings while keeping every observation visible in skip accounting.
-- **A declined function must skip, never pass.** The raw v3.0/v3.2 CKR probes had corrected the
-  same FNS misclassification by adding `CKR_FUNCTION_NOT_SUPPORTED` to each function's expected-RV
-  set, which turned "the module does not implement this at all" into a silent pass -- no
-  classification record, no skip reason, and an inflated PASS count. `_check_protocol` now
-  recognises FNS in the semantic loop and skips, behind the existing protocol-error, crash, and
-  child-`SKIP:` dispositions. A pass asserts the module answered correctly; it may never stand in
-  for a module that did not answer.
-- **Attribute readbacks compare by value, not by `repr()`.** `test_kem.py`'s
-  `_check_equal_attribute` compared `repr(value) == repr(expected)`, and `repr(2)` is not
-  `repr(CKO_PUBLIC_KEY)` even though `2 == CKO_PUBLIC_KEY`. Every conformant ML-KEM `CKA_CLASS`
-  and `CKA_KEY_TYPE` readback was reported as `wrong_result`. The comparison is now numeric;
-  `repr(expected)` survives only in the diagnostic, where the symbolic name is useful.
-- **DER-wrapped Edwards and Montgomery `CKA_EC_POINT` values are accepted again.** A strictness
-  change intended for `decode_ec_point` also reached `read_raw_ec_point_or_xfail`, turning
-  conformant DER-wrapped points into `not_operational` xfails. The reader now falls back to
-  `decode_ec_point` for them, and `_der_decode_length`'s `strict=` mode stays opted into only by
-  `decode_ec_point` so `ecdsa_sig_from_der` is unaffected.
-- **RSA implicit rejection is an honest deviation, not an accepted-invalid break.** A module that
-  returns plausible-looking plaintext for an invalid PKCS#1 v1.5 ciphertext is implementing
-  implicit rejection, a deliberate Bleichenbacher countermeasure. `test_error_path_rsa.py` records
-  it as `honest_deviation` with `detail.implicit_rejection_suspected`, instead of a CRITICAL
-  `accepted_invalid` finding against four providers.
-- **A single `pulLen` echo is no longer hidden behind a substring match.** The buffer-too-small
-  probes computed `ckr_ok = "CKR:0x00000000" in stdout`, a raw substring scan that also matched the
-  probe's own `RETRY_CKR:0x00000000` line -- so every provider that correctly returned
-  `CKR_BUFFER_TOO_SMALL` and then retried successfully was reported as having returned `CKR_OK` for
-  a one-byte buffer. Field parsing is now exact, and the real finding underneath (a returned count
-  of 1 contradicting the required size) surfaces as `self_contradiction`/`metadata`.
-- **`CKM_SSL3_KEY_AND_MAC_DERIVE` requests the MAC size it compares against.** The exact-vector
-  test omitted `mac_size_bits`, whose default is `0`, so it asked for zero-length MAC secrets while
-  comparing against an RFC 6101 reference computed for 16-byte MACs -- the recorded actual value was
-  an exact 64-byte prefix of the 96-byte expected one. It now passes `mac_size_bits=128` and
-  compares each of the six derived components individually.
-- **`CKM_RSA_X_509` short input is valid input.** `test_sign_recover_wrong_data_length` sent 9-byte
-  data and demanded `CKR_DATA_LEN_RANGE`, but raw RSA accepts any input up to the modulus length
-  (left zero-padded), so conformant providers were flagged. The probe now sends a genuine
-  out-of-range vector of k+1 bytes.
-- **A conformant rejection is a pass.** `test_key_gen_mechanism_read_only` routed
-  `C_SetAttributeValue`'s `CKR_ATTRIBUTE_READ_ONLY` -- the expected spec code for that negative op --
-  through `xfail_if_known_ckr`, recording `not_operational` for correct behaviour. It now uses
-  `reject_or_classify`, so the expected code passes, another clean code xfails, and `CKR_OK` fails.
-- **AES-CTS variant detection is authoritative.** The old detector misrouted correct synthetic
-  outputs (CS1 reported unknown, CS2 reported as CS3), contradicting the NIST SP 800-38A CTS
-  addendum: aligned CS1/CS2 equal CBC, aligned CS3 swaps the last two blocks, and unaligned
-  CS2/CS3 coincide. Detection now uses independent fixed-key, complete-ciphertext KATs for
-  aligned 32-byte and unaligned 33-byte inputs instead of depending on the provider's CBC
-  output. A failed detection still skips the CS-variant tests, but an exact standalone vector
-  selection keeps its own runtime guard, so the detection-failure evidence is not lost when
-  the detector itself was never selected.
-- **Truncated Wycheproof HMAC vectors use `CKM_*_HMAC_GENERAL`.** Truncated cases ran through
-  fixed-length `CKM_*_HMAC`, so a provider's correct refusal of a truncated tag could be
-  recorded as a deviation. The group tag length now selects `CKM_*_HMAC_GENERAL` with native
-  `CK_MAC_GENERAL_PARAMS` (full-length cases stay on fixed HMAC), the supplied tag passes
-  through unchanged so malformed-length invalid vectors keep their oracle, and a missing
-  GENERAL mechanism is a capability skip only for truncated cases.
-- **Absent `CKA_CHECK_VALUE` is not a deviation.** `CKA_CHECK_VALUE` is optional, so its
-  absence -- plain or as `CKR_ATTRIBUTE_TYPE_INVALID` -- is not a provider deviation.
-  `attr_or_record()` gained an `optional_if_absent` mode reserved for spec-optional
-  attributes, returning `MISSING_ATTRIBUTE` without recording; other refusal codes stay
-  visible, and a refusal that still wrote real attribute bytes stays a self-contradiction.
-  A wrong value, wrong type, wrong length, or suppression inconsistency on a present value
-  remains a finding, with the expected value coming from an independent AES oracle.
-- **DES/3DES weak-key probes use valid key-generation inputs.** The weak-key-size test routed
-  DES through the AES generator with a seven-byte `CKA_VALUE_LEN`; DES is a fixed-size
-  eight-byte object including parity and takes no AES-style length request, so provider
-  return codes were uninterpretable. DES now probes its fixed 8-byte key (56 effective bits)
-  and 3DES its fixed 24-byte key, and the weak-posture signal for them is the mechanism's
-  inherent size rather than an invalid request. No accepted-CKR set was broadened.
-- **Child-probe provider observations survive teardown failures.** The OpenCryptoki KWP child
-  observed a changed guard and the secret-key probe observed
-  `CKA_VALUE_LEN = CK_ULONG_MAX`, but both collapsed into generic `probe_incomplete` when a
-  later Python-level cleanup failed. Children now emit terminal observations through a
-  `PROVIDER_FINDING:` sentinel with a fixed schema (reason, kind, operation, mechanism,
-  detail); the parent owns classification and records the finding, while the generic
-  subprocess fallback stays conservative. The protocol is deliberately separate from
-  `HARNESS_ERROR`, which removes a record from provider totals.
-- **Static capability skips leave raw source evidence.** A static skip never starts pytest,
-  so it had no serialized record and resume/merge could not rebuild identical file-skip
-  detail. The isolated-unit marker is now persisted as the authoritative provenance, and
-  the markers carry reason and count so resume and merge reproduce the same detail.
-- **Provider findings stay out of inferred `harness_error`.** File-level abrupt
-  self-termination with test records present but no `SessionFinish`, no traceback, and a
-  positive non-reserved exit is now a provider-kept crash instead of an inferred harness
-  defect. Collection fallback copies streams in binary so one corrupt byte costs its line,
-  not the run, and RSA/EC setup xfails admit only the listed runtime-reject CKRs -- any
-  other code propagates as a finding.
-- **The `attr_or_record` inheritance vector is closed.** Every `attr_or_record` call site
-  (376) now passes `inherit_mechanism=False` at its source, so no readback can silently
-  inherit a caller's ambient mechanism: the per-file backlog ratchet is replaced by a
-  zero-tolerance guard that fails on any unguarded site. EC export helpers and
-  attribute-invariant readbacks are likewise mechanism-free, with producer context kept in
-  the label and detail. What remains is the direct-emitter family (`classify()` /
-  `record_as()` sites that stamp their own mechanism, including helper-parameterized
-  operations): a new effective-attribution inventory (`tests/_f6_readback_inventory.py`)
-  characterizes the current tree -- 91 `unsafe_inherited_readback` findings, 30 mixed-unsafe
-  states -- and pins it, so that backlog can only shrink and never silently grow.
-- **Present values are validated before an omitted sibling short-circuits.** In DSA
-  parameter checks, an omitted `PRIME` could mask a malformed present `SUBPRIME` (and vice
-  versa); each present sibling is now type- and length-checked before the missing-prerequisite
-  guard returns. `CKA_ID`/`CKA_LABEL` omission labels in the provisioned-sign-coherence check
-  now name the key, so the two distinct provider omissions no longer merge under one report
-  label. The operation-state tests stop stamping `CKM_ECDH1_DERIVE` -- a derive that never
-  executed -- on plain `C_GetAttributeValue` readbacks, with the dependency kept in the
-  detail.
+- **Unexplained probe exits are provider findings** (`probe_incomplete`, `fail`/HIGH),
+  and self-terminating modules report as `crash` via a finalization sentinel.
+
+- **Publication survives strong findings**: crash-limited coverage publishes as
+  `partial` with lower-bound counts; only genuine integrity loss fails closed.
+
+- **Readbacks carry no borrowed mechanism (F6).** All 376 `attr_or_record` sites pass
+  `inherit_mechanism=False`; an inventory pins the remaining backlog (91 unsafe, 30
+  mixed) so it can only shrink; `kind` is asserted on every readback record.
+
+- **Missing attributes route through presence checks (F7)**: structured
+  `<unavailable>` observations instead of `KeyError` aborts or masked findings,
+  enforced by a zero-violation AST gate; `CKA_CHECK_VALUE` absence is spec-optional.
+
+- **Collection, session, and recovery failures stay visible** (GH #16):
+  unfinished sessions mark completion unverified, residue never reads green,
+  malformed records cost a line rather than the run.
+
+- **Crashes keep their evidence**: Windows violations, daemon deaths, and child-probe
+  observations (via `PROVIDER_FINDING:`) survive teardown; file-level self-termination
+  with test records present is a provider crash.
+
+- **Corpus and oracle honesty**: valid vectors compare real bytes, truncated HMAC uses
+  `HMAC_GENERAL`, negative-test oracles separate behavior from error-code variance,
+  and unexpected provider exceptions propagate instead of passing.
+
+- **Refusals at their exact boundary**: capability refusals stay visible, conformant
+  rejections pass, accepted-invalid stays hard; RSA implicit rejection is honest.
+
+- **Setup problems can't masquerade** as skips or green runs: positive-operation
+  findings, lifecycle failures, and stale evidence from empty runs stay visible.
+
+- **Audit findings F1–F5**: honeypot overflow, p11-kit skip, NULL function entries,
+  digest KAT routing, host-hash handling.
+
+- **Oracle corrections**: numeric KEM compares, DER-wrapped Edwards/Montgomery points,
+  `pulLen` field parsing, SSL3 MAC sizes, out-of-range RSA-X.509 vectors.
+
+- **Authoritative CTS detection** on independent fixed-key KATs per the NIST CTS
+  addendum, not provider CBC output.
+
+- **Static skips and cross-check details**: marker provenance persists for
+  resume/merge; DSA siblings validate first; omission labels name their key.
+
+- **CTS variant detection no longer dies on surprising provider answers.** When a
+  provider refused the detector's key import or probe encrypt with an unexpected return
+  code (wolf answered `C_CreateObject` with `CKR_USER_NOT_LOGGED_IN`), the detector blew
+  up during collection and pytest threw away all 7,500 collected tests with an
+  INTERNALERROR. Now the detector tries every key size and reports a structured
+  `setup_error`: the variant tests skip with the offending code named, while one
+  sentinel test re-raises it at runtime so the provider finding is still recorded.
+
+- **Crashes that kill the host process now show up in reports.** When a module
+  terminated its own process, the crash record stored its classification in the wrong
+  shape, so the report extractor quietly skipped it (counting a malformed property
+  instead) and it never appeared under Crash sections. The record is now built through
+  the same `Classification`/`serialize` path as everything else.
+
+- **RSA keygen that silently drops key attributes fails hard again.** A module could
+  report `CKR_OK` while omitting `CKA_MODULUS_BITS`, `CKA_MODULUS`, or
+  `CKA_PUBLIC_EXPONENT` and get away with a mere xfail. A generated key's own
+  attributes have nowhere else to come from, so their absence is a contradiction --
+  the `wrong_result` failure is restored.
+
+- **EC keypair generation checks what's advertised before probing.** The helper used to
+  attempt generation without checking for `EC_KEY_PAIR_GEN`/`ECDSA_KEY_PAIR_GEN`, so a
+  `CKR_MECHANISM_INVALID` answer -- which itself says "not advertised" -- was
+  misreported as "advertised but not operational" (7 false xfails on pkcs11-mock). It
+  now uses the same advertisement gate as everywhere else.
+
+- **Probe evidence survives abrupt child exits.** Probe children now run unbuffered
+  (`python -u`), so output printed before an abrupt `os._exit` is no longer swallowed
+  by stdio buffering -- pinned by a dedicated `_abrupt_exit` probe -- and the
+  operation-state suites flush their evidence before terminating.
+
+- **Security findings respect what the provider actually promises.** Sensitive-key
+  extraction, CVE-regression, and unwrap-reimport checks now read a key's protective
+  attributes first: a readable private exponent only contradicts a key that claims
+  `CKA_SENSITIVE`/`CKA_EXTRACTABLE` protection, while unreadable policy attributes
+  become an honest metadata observation instead of an automatic failure or a silent
+  pass.
+
+- **Test-granularity isolation works from any directory.** Unit discovery anchors test
+  IDs to the collected file's real path, so `--isolation test` resolves the same units
+  no matter where you invoke it from, and disabled-baseline filtering travels with the
+  collected items.
 
 ## [0.1.9] - 2026-08-28
 
