@@ -310,7 +310,9 @@ def test_no_teardown_leak():
         "never be reported as crashes"
     )
     assert all(r["observation"]["termination"]["raw_code"] == 0 for r in clean_terminations)
-    assert signal_terminations[0]["observation"]["termination"]["raw_code"] == -11
+    # SIGSEGV's -11 on POSIX; the TerminateProcess NTSTATUS code on Windows.
+    expected_raw = 0xC0000005 if sys.platform == "win32" else -11
+    assert signal_terminations[0]["observation"]["termination"]["raw_code"] == expected_raw
 
     # Reuse the existing file-runner helpers directly on the boundary values they exist to
     # classify, rather than re-deriving crash detection here.
