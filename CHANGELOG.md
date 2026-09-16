@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.0] - 2026-09-11
+## [0.2.0] - 2026-09-16
 
 A reporting-integrity release. Every change here is about the suite reporting provider
 behaviour truthfully: a finding is never hidden, never silently downgraded, and never
