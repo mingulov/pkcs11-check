@@ -91,7 +91,9 @@ def test_non_bytes_digest_key_value_is_metadata_failure_and_cleans_up(
     assert record.outcome == "fail"
     assert record.kind == "metadata"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_SHA256"
+    # F6: same producer rule as the missing branch above -- the malformed
+    # readback carries no borrowed CKM_SHA256 mechanism either.
+    assert record.mechanism is None
     assert record.detail is not None
     assert record.detail["attribute"]["expected"] == "bytes"
     assert record.detail["attribute"]["actual"] == repr(value)

@@ -1093,7 +1093,6 @@ def _check_cipher_derived_value_shape(
         label=label,
         reason="not_operational",
         kind="metadata",
-        mechanism=entry.mech_name,
         inherit_mechanism=False,
     )
     if value is MISSING_ATTRIBUTE:
@@ -1109,7 +1108,6 @@ def _check_cipher_derived_value_shape(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
-        mechanism=entry.mech_name,
         inherit_mechanism=False,
         summary=(f"{label}: provider returned malformed value; expected {expected_length} bytes"),
         detail={
@@ -1338,7 +1336,7 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
                 kind="metadata",
                 label=f"{entry.mech_name}: derived object class",
                 operation="C_GetAttributeValue",
-                mechanism=entry.mech_name,
+                inherit_mechanism=False,
                 summary=(
                     f"{entry.mech_name}: missing derived object class produced no classification"
                 ),
@@ -1349,7 +1347,7 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
                 kind="metadata",
                 label=f"{entry.mech_name}: derived object class",
                 operation="C_GetAttributeValue",
-                mechanism=entry.mech_name,
+                inherit_mechanism=False,
                 detail={
                     "attribute": int(CKA_CLASS),
                     "expected": "strict int equal to CKO_PUBLIC_KEY",

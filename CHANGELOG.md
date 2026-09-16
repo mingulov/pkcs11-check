@@ -40,8 +40,8 @@ and never invented. Validated by a per-node-id differential across six providers
 - **Publication survives strong findings**: crash-limited coverage publishes as
   `partial` with lower-bound counts; only genuine integrity loss fails closed.
 
-- **Readbacks carry no borrowed mechanism (F6).** All 376 `attr_or_record` sites pass
-  `inherit_mechanism=False`; an inventory pins the remaining backlog (91 unsafe, 30
+- **Readbacks carry no borrowed mechanism (F6).** All 377 `attr_or_record` sites pass
+  `inherit_mechanism=False`; an inventory pins the remaining backlog (91 unsafe, 27
   mixed) so it can only shrink; `kind` is asserted on every readback record.
 
 - **Missing attributes route through presence checks (F7)**: structured

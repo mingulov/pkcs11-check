@@ -1407,30 +1407,30 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     assert characterization.candidate_total == 1507
     assert characterization.file_total == 246
     assert characterization.statuses == (
-        ("explicit_mechanism_grouping", 510),
-        ("explicit_mechanism_readback", 52),
+        ("explicit_mechanism_grouping", 512),
+        ("explicit_mechanism_readback", 46),
         ("non_readback", 172),
-        ("safe_mechanism_free_readback", 52),
-        ("unresolved", 802),
+        ("safe_mechanism_free_readback", 59),
+        ("unresolved", 799),
         ("unsafe_inherited_readback", 91),
     )
     assert characterization.digest == (
-        "9f9c7abc54f400f848367fec8240032e4f95ee3e207402ff249e23294ec21fed"
+        "8ce6f97e1a19b7b2342d22e1417cead12f21fa8a19c89b23e101720621de8dce"
     )
     assert characterization.candidate_digest == (
-        "6c7687db212699cabe0111c0fd76113b4c1b52ebe3550ce45f62c63705ba652b"
+        "4d78d449ecf0f684dd638c884b769168cd6fca94a3ba875480ad4d50c76244e2"
     )
     assert characterization.state_statuses == (
-        ("explicit_mechanism_grouping", 1231),
-        ("explicit_mechanism_readback", 358),
+        ("explicit_mechanism_grouping", 1233),
+        ("explicit_mechanism_readback", 339),
         ("non_readback", 352),
-        ("safe_mechanism_free_readback", 1356),
-        ("unresolved", 2664),
-        ("unsafe_inherited_readback", 257),
+        ("safe_mechanism_free_readback", 1380),
+        ("unresolved", 2658),
+        ("unsafe_inherited_readback", 254),
     )
-    assert characterization.mixed_unsafe_states == 30
+    assert characterization.mixed_unsafe_states == 27
     assert characterization.corpus_digest == (
-        "9470305ff3bd865c0ff79f637853b418edaac3ddd64ffcab2f5414700aa01edb"
+        "e0dc40590c7cdaf4ec3a4ea90a186bcd85a102802f917ed3c561edca721425ed"
     )
     assert characterization.direct_emitter_census == (
         ("assert_correct", 268),
@@ -1470,13 +1470,13 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     ]
     assert conftest
     assert any(
-        finding.line == 1285
+        finding.line == 1286
         and finding.status == STATUS_UNRESOLVED
         and finding.operations == (UNKNOWN_OPERATION,)
         for finding in conftest
     )
     assert any(
-        finding.line == 1285
+        finding.line == 1286
         and finding.emitter == "classify"
         and finding.forwarded_parameters == ("mechanism", "operation")
         for finding in conftest
