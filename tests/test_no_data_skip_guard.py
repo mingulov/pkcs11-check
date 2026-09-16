@@ -22,6 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _TESTS_DIR = Path(__file__).parent
 _REPO_ROOT = _TESTS_DIR.parent
 
@@ -43,6 +45,10 @@ def _vector_referencing_files() -> list[str]:
     return files
 
 
+# Outer budget matches the inner subprocess budget: the fenced collection run below
+# legitimately takes ~50s even idle, so the suite-wide 60s default kills it on
+# loaded runners (observed: timeout on macOS/ascii CI lanes and a Windows abort).
+@pytest.mark.timeout(180)
 def test_vector_dependent_meta_tests_skip_without_fetch_data(tmp_path: Path) -> None:
     files = _vector_referencing_files()
     assert files, "expected to discover vector-referencing meta-test files"

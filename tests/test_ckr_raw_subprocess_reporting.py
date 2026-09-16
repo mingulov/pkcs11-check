@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,6 +81,7 @@ def test_v32_probe_returns_normally_after_unexpected_ckr(
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 @pytest.mark.parametrize(
     "check",
     [test_ckr_v30_raw._check, test_ckr_v32_raw._check],
@@ -389,7 +391,12 @@ def test_v3_setup_and_result_are_mixed_harness_evidence() -> None:
 @pytest.mark.parametrize(
     ("rc", "err", "failure"),
     [
-        (-11, "segmentation fault", "module crashed with signal 11"),
+        pytest.param(
+            -11,
+            "segmentation fault",
+            "module crashed with signal 11",
+            marks=pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics"),
+        ),
         (124, f"{SUBPROCESS_TIMEOUT_MARKER}:30s", "timed out"),
         (
             1,
@@ -780,6 +787,7 @@ def test_break_survives_earlier_setup_xfail() -> None:
     assert records[1].outcome == "fail"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_crash_survives_earlier_skip_marker() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         assert_ckr_subprocess_ok(
@@ -813,6 +821,7 @@ def test_windows_seh_positive_exit_is_crash(monkeypatch: pytest.MonkeyPatch) -> 
     assert record.detail["termination"]["raw_code"] == 1
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 @pytest.mark.parametrize(
     ("check", "func", "skip"),
     [
@@ -829,6 +838,7 @@ def test_v3_skip_marker_does_not_hide_signal_crash(check: RawCheck, func: str, s
     assert [item.reason for item in records] == ["crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 @pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
 def test_v3_break_evidence_survives_signal_crash(check: RawCheck) -> None:
     """A semantic provider finding remains visible when the child later crashes."""
@@ -844,6 +854,7 @@ def test_v3_break_evidence_survives_signal_crash(check: RawCheck) -> None:
     assert [item.reason for item in records] == ["accepted_invalid", "crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 @pytest.mark.parametrize("check", [test_ckr_v30_raw._check, test_ckr_v32_raw._check])
 def test_v3_result_survives_signal_before_completion_marker(check: RawCheck) -> None:
     with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):

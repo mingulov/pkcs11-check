@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -497,24 +496,26 @@ def test_evidence_per_file_and_target_counts(tmp_path: Path) -> None:
 
 def test_evidence_unreadable_existing_source_does_not_inflate_readable_count(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Minor 1: an existing-but-unreadable source must not count as readable.
 
-    ``path.is_file()`` is true (the file exists) but the permission bits deny
-    ``open()`` -- distinct from the missing-file case. The status/malformed
+    ``path.is_file()`` is true (the file exists) but opening it raises -- distinct
+    from the missing-file case. The denial is simulated by refusing ``Path.open``
+    rather than chmod bits, so the test runs as root and on Windows, where
+    permission bits cannot express unreadable-but-existing. The status/malformed
     handling this exercises (unavailable + malformed_records bump) was already
     correct; only ``readable_sources`` was wrong (it counted every is_file()
     path, even ones that then failed to open).
     """
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        pytest.skip("root bypasses permission bits; cannot exercise an unreadable-but-existing")
     path = tmp_path / "unreadable.jsonl"
     _write_jsonl(path, [_marker("t.py::test_a", 0)])
-    path.chmod(0o000)
-    try:
-        evidence = extract_quality_report_evidence_from_jsonl([path])
-    finally:
-        path.chmod(0o644)
+
+    def _denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("EACCES (simulated unreadable source)")
+
+    monkeypatch.setattr(Path, "open", _denied)
+    evidence = extract_quality_report_evidence_from_jsonl([path])
     assert evidence.readable_sources == 0
     assert evidence.missing_sources == 0
     assert evidence.malformed_records == 1

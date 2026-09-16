@@ -13,6 +13,8 @@ catchable OSError and a *positive* exit code, not a signal) can never be hidden 
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from pkcs11_check.classification import (
@@ -142,6 +144,7 @@ def test_provider_measurement_survives_cleanup_error() -> None:
     assert [r.reason for r in get_records()] == ["oracle", "harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_signal_crash_is_never_reattributed() -> None:
     with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
         assert_subprocess_completed(
