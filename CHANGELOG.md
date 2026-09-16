@@ -3,7 +3,7 @@
 ## [0.2.0] - 2026-09-16
 
 A reporting-integrity release: a finding is never hidden, never silently downgraded,
-and never invented. Validated by a per-node-id differential across six providers —
+and never invented. Validated by a per-node-id differential across six providers --
 154 findings gained or sharpened against 71 released, each justified, none gone silent.
 
 ### Added
@@ -19,7 +19,7 @@ and never invented. Validated by a per-node-id differential across six providers
 - **Selection schema in `results.json`**, binding resume state to the validated manifest.
 
 - **Classification observability in the quality audit**: `unclassified` counts straight
-  from the raw report stream — never a fabricated zero — with a `report` section and
+  from the raw report stream -- never a fabricated zero -- with a `report` section and
   an end-to-end release-gate test.
 
 - **HKDF data-object and DES CBC encrypt-data coverage**, previously advertised but
@@ -66,7 +66,7 @@ and never invented. Validated by a per-node-id differential across six providers
 - **Setup problems can't masquerade** as skips or green runs: positive-operation
   findings, lifecycle failures, and stale evidence from empty runs stay visible.
 
-- **Audit findings F1–F5**: honeypot overflow, p11-kit skip, NULL function entries,
+- **Audit findings F1-F5**: honeypot overflow, p11-kit skip, NULL function entries,
   digest KAT routing, host-hash handling.
 
 - **Oracle corrections**: numeric KEM compares, DER-wrapped Edwards/Montgomery points,

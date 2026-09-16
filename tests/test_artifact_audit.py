@@ -500,6 +500,20 @@ def test_built_wheel_standard_pip_install_runs_isolated_cli(
     command_env = os.environ.copy()
     command_env.setdefault("UV_CACHE_DIR", "/tmp/pkcs11-check-uv-cache")
 
+    # Warm the (possibly cold) isolated cache online first: the offline build
+    # below must resolve the hatchling backend from cache, and fresh runners
+    # start cold. `uv sync` does not populate it.
+    warmed = subprocess.run(
+        [uv, "build", "--wheel", "--out-dir", str(tmp_path / "warm")],
+        cwd=project_root,
+        env=command_env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert warmed.returncode == 0, warmed.stderr
+
     wheel_dir = tmp_path / "wheel"
     built = subprocess.run(
         [uv, "build", "--offline", "--wheel", "--out-dir", str(wheel_dir)],
@@ -526,8 +540,10 @@ def test_built_wheel_standard_pip_install_runs_isolated_cli(
     )
     assert created.returncode == 0, created.stderr
     venv_python = _venv_python(venv_dir)
+    # Online: pytest-in-venv is scaffolding, not the offline subject (the wheel
+    # build above). It also warms the isolated cache for the run below.
     dependencies = subprocess.run(
-        [uv, "pip", "install", "--offline", "--python", str(venv_python), "pytest"],
+        [uv, "pip", "install", "--python", str(venv_python), "pytest"],
         env=command_env,
         capture_output=True,
         text=True,

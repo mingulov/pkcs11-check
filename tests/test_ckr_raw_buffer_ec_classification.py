@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Mapping
 
 import pytest
@@ -265,6 +266,7 @@ def test_point_event_requires_both_attribute_events_first() -> None:
     assert [record.reason for record in get_records()] == ["harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_deep_ec_marker_is_bounded_and_crash_survives() -> None:
     """Hostile nesting becomes one bounded protocol fact without hiding a crash."""
     nested = "[" * 10_000 + "0" + "]" * 10_000
@@ -281,6 +283,7 @@ def test_deep_ec_marker_is_bounded_and_crash_survives() -> None:
     assert len(records[0].summary) < 512
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_unexpected_read_error_survives_prior_malformed_line_and_crash() -> None:
     """The exact reader CKR is retained once even when parsing then crashes."""
     output = (
@@ -456,6 +459,7 @@ def test_valid_raw_p384_compressed_point_is_hard_wrong_curve_evidence() -> None:
         raw_probe._compress_p256_ec_point(point)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_ec_child_emits_ready_before_import_and_flushes_measurement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -796,6 +800,7 @@ def test_ec_child_ready_then_import_refusal_reaches_parent(monkeypatch: pytest.M
         _check_ec(0, child_output, "", context="EC setup")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 @pytest.mark.parametrize(
     ("refusal", "marker"),
     [
@@ -863,6 +868,7 @@ def test_each_post_ready_refusal_is_flushed_before_cleanup_crash(
     assert [record.reason for record in get_records()] == ["not_operational", "crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_interrupted_ec_prefix_does_not_invent_missing_events() -> None:
     """A crashed child retains its valid prefix without synthetic protocol errors."""
     output = (
