@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -99,6 +100,7 @@ def test_dual_function_probe_accepts_defined_ckr() -> None:
         ("test_decrypt_verify_update_callable", "DVU"),
     ],
 )
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_dual_function_ckr_is_recorded_before_cleanup_crash(
     monkeypatch: pytest.MonkeyPatch,
     method_name: str,

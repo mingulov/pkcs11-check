@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import sys
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import cast
@@ -539,7 +540,10 @@ def test_derive_missing_fact_plus_crash_retains_fact_before_crash() -> None:
     assert records[0].actual_ckr is None
     assert records[0].operation == "C_GetAttributeValue"
     assert records[1].detail is not None
-    assert records[1].detail["termination"]["kind"] == "signal"
+    # rc=-11 renders as a POSIX signal everywhere except Windows, where the
+    # 0xFFFFFFF5 NTSTATUS form classifies as an exception.
+    expected_kind = "exception" if sys.platform == "win32" else "signal"
+    assert records[1].detail["termination"]["kind"] == expected_kind
 
 
 def test_derive_unusable_fact_plus_timeout_retains_fact_before_timeout() -> None:
