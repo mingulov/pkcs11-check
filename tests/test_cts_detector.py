@@ -9,7 +9,12 @@ import pytest
 
 from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKM_AES_CTS, CKR_FUNCTION_FAILED, CKR_KEY_SIZE_RANGE
+from pkcs11_check.raw.types_std import (
+    CKM_AES_CTS,
+    CKR_FUNCTION_FAILED,
+    CKR_KEY_SIZE_RANGE,
+    CKR_USER_NOT_LOGGED_IN,
+)
 from pkcs11_check.testcases.acvp.aes import base_cts
 
 _EXPECTED_OUTPUTS = {
@@ -296,11 +301,136 @@ def test_cts_detector_attributes_clean_import_reject_to_create_object(
     assert record.actual_ckr == "CKR_FUNCTION_FAILED"
 
 
+def test_cts_detector_contains_unlisted_setup_ckr_as_setup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An off-contract CKR from the detection import must not crash collection.
+
+    Round-0197 evidence: wolf answers the detector's C_CreateObject with
+    CKR_USER_NOT_LOGGED_IN, which is not in AES_KEYGEN_RUNTIME_REJECT_RVS.
+    Re-raising it became a pytest INTERNALERROR (exit 3) that deleted all
+    7,500 collected tests and left the provider unpublished. The detector
+    must gather every key size and return a structured error instead.
+    """
+    assert not base_cts.is_known_error(
+        CkrAssertionError("premise", int(CKR_USER_NOT_LOGGED_IN)),
+        base_cts.AES_KEYGEN_RUNTIME_REJECT_RVS,
+    )
+
+    def reject(_rs: Any, _key: bytes, **_kwargs: Any) -> int:
+        raise CkrAssertionError("import refusal", int(CKR_USER_NOT_LOGGED_IN))
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", reject)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+
+    assert result.status.value == "setup_error"
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    attempts = result.detail["attempts"]
+    assert len(attempts) == 3
+    assert all(
+        attempt["stage"] == "setup"
+        and attempt["operation"] == "C_CreateObject"
+        and attempt["case"] is None
+        and attempt["ckr"] == int(CKR_USER_NOT_LOGGED_IN)
+        for attempt in attempts
+    )
+    with pytest.raises(CkrAssertionError) as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == int(CKR_USER_NOT_LOGGED_IN)
+    assert "CKR_USER_NOT_LOGGED_IN" in str(excinfo.value)
+
+
+def test_cts_detector_contains_unlisted_operation_ckr_as_setup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An off-contract CKR from the detection encrypt must not crash collection."""
+    assert not base_cts.is_known_error(
+        CkrAssertionError("premise", int(CKR_USER_NOT_LOGGED_IN)),
+        base_cts.CIPHER_OP_RUNTIME_REJECT_RVS,
+    )
+    monkeypatch.setattr(base_cts, "_import_aes_key", lambda _rs, key, **_kwargs: len(key))
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+
+    def explode(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("encrypt refusal", int(CKR_USER_NOT_LOGGED_IN))
+
+    monkeypatch.setattr(base_cts, "encrypt_single", explode)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+
+    assert result.status.value == "setup_error"
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    attempts = result.detail["attempts"]
+    assert len(attempts) == 3
+    assert all(
+        attempt["stage"] == "operation"
+        and attempt["operation"] == "C_Encrypt"
+        and attempt["ckr"] == int(CKR_USER_NOT_LOGGED_IN)
+        for attempt in attempts
+    )
+
+
+def test_cts_setup_error_message_names_the_priority_operation_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sentinel message must name the attempt that produced error_rv.
+
+    error_rv carries operation priority (an operation-stage unlisted CKR wins
+    over later setup attempts), so the message must cite that attempt -- not
+    the chronologically last one.
+    """
+    assert not base_cts.is_known_error(
+        CkrAssertionError("premise", int(CKR_USER_NOT_LOGGED_IN)),
+        base_cts.CIPHER_OP_RUNTIME_REJECT_RVS,
+    )
+    assert base_cts.is_known_error(
+        CkrAssertionError("premise", int(CKR_KEY_SIZE_RANGE)),
+        base_cts.AES_KEYGEN_RUNTIME_REJECT_RVS,
+    )
+
+    def import_256_only(_rs: Any, key: bytes, **_kwargs: Any) -> int:
+        if len(key) == 32:
+            return 11
+        raise CkrAssertionError("unsupported size", int(CKR_KEY_SIZE_RANGE))
+
+    def explode(*_args: Any, **_kwargs: Any) -> bytes:
+        raise CkrAssertionError("encrypt refusal", int(CKR_USER_NOT_LOGGED_IN))
+
+    monkeypatch.setattr(base_cts, "_import_aes_key", import_256_only)
+    monkeypatch.setattr(base_cts, "encrypt_single", explode)
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+
+    result = base_cts._detect_cts_variant(_FakeSession())
+
+    assert result.status.value == "setup_error"
+    assert result.error_rv == int(CKR_USER_NOT_LOGGED_IN)
+    attempts = result.detail["attempts"]
+    assert [attempt["stage"] for attempt in attempts] == [
+        "operation",
+        "setup",
+        "setup",
+    ]
+    with pytest.raises(CkrAssertionError) as excinfo:
+        base_cts.report_cts_detection(result)
+    assert excinfo.value.rv == int(CKR_USER_NOT_LOGGED_IN)
+    assert "operation C_Encrypt" in str(excinfo.value)
+    assert "setup C_CreateObject" not in str(excinfo.value)
+
+
+def test_cts_setup_error_without_ckr_is_a_harness_bug() -> None:
+    """SETUP_ERROR without the offending CKR means the detector misbuilt it."""
+    result = base_cts.CtsDetectionResult(status=base_cts.CtsDetectionStatus.SETUP_ERROR)
+    with pytest.raises(RuntimeError, match="without a CKR"):
+        base_cts.report_cts_detection(result)
+
+
 @pytest.mark.parametrize(
     "status",
     [
         "setup_unavailable",
         "setup_rejected",
+        "setup_error",
     ],
 )
 def test_cts_setup_outcomes_are_inconclusive_operability(
