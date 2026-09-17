@@ -13,6 +13,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import conftest as testcase_conftest
+from tests._skip_assert import assert_skips
 
 
 @pytest.mark.parametrize("rv", [CKR_ARGUMENTS_BAD, CKR_TEMPLATE_INCONSISTENT])
@@ -24,8 +25,11 @@ def test_valid_data_probe_clean_class_refusal_skips(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(CkrAssertionError("refused", int(rv))),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="does not support CKO_DATA"):
-        testcase_conftest.skip_if_data_objects_unsupported(SimpleNamespace(raw=object(), sh=1))
+    assert_skips(
+        testcase_conftest.skip_if_data_objects_unsupported,
+        SimpleNamespace(raw=object(), sh=1),
+        match="does not support CKO_DATA",
+    )
 
 
 def test_data_probe_unrelated_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

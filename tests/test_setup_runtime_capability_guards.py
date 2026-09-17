@@ -638,8 +638,9 @@ def test_buffer_digest_skips_without_sha256(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(test_buffers, "digest_single", _unexpected_digest)
 
-    with pytest.raises(pytest.skip.Exception, match="CKM_SHA256 not supported"):
-        test_buffers.TestDigestBufferSizes().test_empty_input(rs)
+    assert_skips(
+        test_buffers.TestDigestBufferSizes().test_empty_input, rs, match="CKM_SHA256 not supported"
+    )
 
 
 def test_buffer_sign_skips_without_sha256_rsa_pkcs(
@@ -652,8 +653,11 @@ def test_buffer_sign_skips_without_sha256_rsa_pkcs(
 
     monkeypatch.setattr(test_buffers, "gen_rsa_keypair_or_xfail", _unexpected_keypair)
 
-    with pytest.raises(pytest.skip.Exception, match="CKM_SHA256_RSA_PKCS not supported"):
-        test_buffers.TestSignBufferSizes().test_sign_empty(rs)
+    assert_skips(
+        test_buffers.TestSignBufferSizes().test_sign_empty,
+        rs,
+        match="CKM_SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_mechanism_fuzz_xfails_when_advertised_aes_keygen_rejects_runtime(
@@ -865,11 +869,12 @@ def test_access_levels_public_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_access_levels, "raw_open_session", _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_access_levels.TestPublicSessionVisibility().test_public_session_can_digest(
-            rs,
-            SimpleNamespace(),
-        )
+    assert_skips(
+        test_access_levels.TestPublicSessionVisibility().test_public_session_can_digest,
+        rs,
+        SimpleNamespace(),
+        match="additional session",
+    )
 
 
 def test_legacy_access_extra_session_capacity_reject_is_skip(
@@ -887,11 +892,12 @@ def test_legacy_access_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_access, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_access.TestSessionTypes().test_ro_session_can_read(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_access.TestSessionTypes().test_ro_session_can_read,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional session",
+    )
 
 
 def test_legacy_access_missing_aes_keygen_is_skip(
@@ -903,8 +909,11 @@ def test_legacy_access_missing_aes_keygen_is_skip(
     monkeypatch.setattr(raw_recipes, "gen_aes_key", _unexpected_keygen)
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_access.TestSessionTypes().test_rw_session_can_generate_key(rs)
+    assert_skips(
+        test_access.TestSessionTypes().test_rw_session_can_generate_key,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_ckr_session_invalid_slot_capacity_reject_is_skip() -> None:
@@ -915,8 +924,11 @@ def test_ckr_session_invalid_slot_capacity_reject_is_skip() -> None:
     setattr(raw, "C_OpenSession", lambda *_args, **_kwargs: int(CKR_SESSION_COUNT))
     rs = SimpleNamespace(raw=raw)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_ckr_session.TestOpenSessionErrors().test_invalid_slot_id(rs)
+    assert_skips(
+        test_ckr_session.TestOpenSessionErrors().test_invalid_slot_id,
+        rs,
+        match="additional session",
+    )
 
 
 def test_ckr_session_wrong_pin_capacity_reject_is_skip(
@@ -934,8 +946,7 @@ def test_ckr_session_wrong_pin_capacity_reject_is_skip(
     monkeypatch.setattr(test_ckr_session, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_ckr_session.TestLoginErrors().test_wrong_pin(rs)
+    assert_skips(test_ckr_session.TestLoginErrors().test_wrong_pin, rs, match="additional session")
 
 
 def test_ckr_session_logout_capacity_reject_is_skip(
@@ -953,8 +964,11 @@ def test_ckr_session_logout_capacity_reject_is_skip(
     monkeypatch.setattr(test_ckr_session, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_ckr_session.TestLogoutErrors().test_logout_when_not_logged_in(rs)
+    assert_skips(
+        test_ckr_session.TestLogoutErrors().test_logout_when_not_logged_in,
+        rs,
+        match="additional session",
+    )
 
 
 def test_legacy_ro_session_extra_session_capacity_reject_is_skip(
@@ -972,11 +986,12 @@ def test_legacy_ro_session_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_ro_session, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1, has_mechanism=lambda _name: True)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_ro_session.TestROSessionOperations().test_digest_in_ro_session(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_ro_session.TestROSessionOperations().test_digest_in_ro_session,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional session",
+    )
 
 
 def test_session_info_extra_session_capacity_reject_is_skip(
@@ -996,11 +1011,12 @@ def test_session_info_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_session_info, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_session_info.TestSessionInfo().test_rw_session_is_rw(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_session_info.TestSessionInfo().test_rw_session_is_rw,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional session",
+    )
 
 
 def test_operation_termination_multipart_encrypt_not_initialized_is_xfail(
@@ -1072,8 +1088,11 @@ def test_api_security_missing_aes_keygen_is_skip_not_pass(
     monkeypatch.setattr(test_api_security, keygen_attr, _unexpected_keygen)
     rs = _session_with_mechanisms("AES_ECB")
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_api_security.TestWrapDecryptOracle().test_wrap_decrypt_combination_prevented(rs)
+    assert_skips(
+        test_api_security.TestWrapDecryptOracle().test_wrap_decrypt_combination_prevented,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_api_security_aes_setup_reject_is_xfail(
@@ -1127,8 +1146,11 @@ def test_api_security_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_api_security, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_api_security.TestAccessControl().test_no_login_private_objects_invisible(rs)
+    assert_skips(
+        test_api_security.TestAccessControl().test_no_login_private_objects_invisible,
+        rs,
+        match="additional session",
+    )
 
 
 def test_api_security_wrap_runtime_reject_is_xfail_not_pass(
@@ -1173,11 +1195,12 @@ def test_data_objects_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_data_objects, "skip_if_token_write_protected", lambda *_args: None)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_data_objects.TestDataObjectToken().test_token_data_object_survives_session(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_data_objects.TestDataObjectToken().test_token_data_object_survives_session,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional session",
+    )
 
 
 def test_fuzz_aes_missing_mechanism_skips_before_keygen(
@@ -1189,8 +1212,7 @@ def test_fuzz_aes_missing_mechanism_skips_before_keygen(
     monkeypatch.setattr(test_fuzz, "gen_aes_key", _unexpected_keygen)
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        test_fuzz.TestAESFuzz().test_ecb_roundtrip(rs)
+    assert_skips(test_fuzz.TestAESFuzz().test_ecb_roundtrip, rs, match="AES_ECB not supported")
 
 
 def test_fuzz_digest_missing_mechanism_skips_before_digest(
@@ -1202,8 +1224,9 @@ def test_fuzz_digest_missing_mechanism_skips_before_digest(
     monkeypatch.setattr(test_fuzz, "digest_single", _unexpected_digest)
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_fuzz.TestDigestFuzz().test_sha256_cross_verify(rs)
+    assert_skips(
+        test_fuzz.TestDigestFuzz().test_sha256_cross_verify, rs, match="SHA256 not supported"
+    )
 
 
 def test_fuzz_rsa_missing_sign_mechanism_skips_before_keypair(
@@ -1215,8 +1238,11 @@ def test_fuzz_rsa_missing_sign_mechanism_skips_before_keypair(
     monkeypatch.setattr(test_fuzz, "gen_rsa_keypair", _unexpected_keypair)
     rs = _session_with_mechanisms("RSA_PKCS_KEY_PAIR_GEN")
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_fuzz.TestRSAFuzz().test_sign_verify_roundtrip(rs)
+    assert_skips(
+        test_fuzz.TestRSAFuzz().test_sign_verify_roundtrip,
+        rs,
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_fuzz_hmac_missing_mechanism_skips_before_import(
@@ -1228,8 +1254,9 @@ def test_fuzz_hmac_missing_mechanism_skips_before_import(
     monkeypatch.setattr(test_fuzz, "import_secret_key", _unexpected_import)
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_HMAC not supported"):
-        test_fuzz.TestHMACFuzz().test_hmac_deterministic(rs)
+    assert_skips(
+        test_fuzz.TestHMACFuzz().test_hmac_deterministic, rs, match="SHA256_HMAC not supported"
+    )
 
 
 def test_fuzz_advertised_digest_runtime_reject_is_xfail(
@@ -1265,11 +1292,12 @@ def test_session_state_machine_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_session_state_machine, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_session_state_machine.TestSessionFlags().test_rw_session_flag(
-            rs,
-            SimpleNamespace(),
-        )
+    assert_skips(
+        test_session_state_machine.TestSessionFlags().test_rw_session_flag,
+        rs,
+        SimpleNamespace(),
+        match="additional session",
+    )
 
 
 def test_session_state_machine_aes_setup_reject_is_xfail(
@@ -1350,11 +1378,12 @@ def test_ro_session_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_ro_session_restrictions, open_attr, _open_session_limit)
     rs = SimpleNamespace(raw=object(), slot_id=1)
 
-    with pytest.raises(pytest.skip.Exception, match="additional RO session"):
-        test_ro_session_restrictions.TestROCryptoOperations().test_digest_in_ro_session(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_ro_session_restrictions.TestROCryptoOperations().test_digest_in_ro_session,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional RO session",
+    )
 
 
 def test_ro_session_setup_aes_keygen_reject_is_xfail(
@@ -1436,8 +1465,13 @@ def test_object_visibility_extra_session_capacity_reject_is_skip(
     )
     monkeypatch.setattr(test_object_visibility, open_attr, _open_session_limit)
 
-    with pytest.raises(pytest.skip.Exception, match="object-visibility session"):
-        test_object_visibility._open_rw_session(object(), 1, None)
+    assert_skips(
+        test_object_visibility._open_rw_session,
+        object(),
+        1,
+        None,
+        match="object-visibility session",
+    )
 
 
 def test_object_visibility_aes_setup_reject_is_xfail(
@@ -1896,8 +1930,12 @@ def test_ckr_wrap_mechanism_invalid_skips_without_aes_key_wrap(
 
     monkeypatch.setattr(test_ckr_wrap, "gen_aes_key", _unexpected_keygen)
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_WRAP not supported"):
-        test_ckr_wrap.TestWrapKeyErrors().test_mechanism_invalid(rs, ckr_strict=False)
+    assert_skips(
+        test_ckr_wrap.TestWrapKeyErrors().test_mechanism_invalid,
+        rs,
+        ckr_strict=False,
+        match="AES_KEY_WRAP not supported",
+    )
 
 
 def test_ckr_wrap_size_range_general_error_is_xfail(
@@ -2156,8 +2194,11 @@ def test_interop_missing_rsa_hash_mechanism_skips_before_keygen(
         lambda *_args, **_kwargs: pytest.fail("keygen should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_interop.TestRSAInterop().test_sign_in_p11_verify_in_crypto(rs)
+    assert_skips(
+        test_interop.TestRSAInterop().test_sign_in_p11_verify_in_crypto,
+        rs,
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_interop_missing_ecdsa_mechanism_skips_before_keygen(
@@ -2171,8 +2212,11 @@ def test_interop_missing_ecdsa_mechanism_skips_before_keygen(
         lambda *_args, **_kwargs: pytest.fail("EC keygen should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="ECDSA not supported"):
-        test_interop.TestECDSAInterop().test_ecdsa_sign_p11_verify_crypto(rs)
+    assert_skips(
+        test_interop.TestECDSAInterop().test_ecdsa_sign_p11_verify_crypto,
+        rs,
+        match="ECDSA not supported",
+    )
 
 
 def test_crossverify_missing_aes_ecb_skips_before_import(
@@ -2186,8 +2230,11 @@ def test_crossverify_missing_aes_ecb_skips_before_import(
         lambda *_args, **_kwargs: pytest.fail("AES import should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        test_crossverify.TestAESCrossVerify().test_aes_256_ecb_encrypt(rs)
+    assert_skips(
+        test_crossverify.TestAESCrossVerify().test_aes_256_ecb_encrypt,
+        rs,
+        match="AES_ECB not supported",
+    )
 
 
 def test_crossverify_missing_digest_mechanism_skips_before_digest(
@@ -2201,8 +2248,9 @@ def test_crossverify_missing_digest_mechanism_skips_before_digest(
         lambda *_args, **_kwargs: pytest.fail("digest should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_crossverify.TestDigestCrossVerify().test_sha256(rs)
+    assert_skips(
+        test_crossverify.TestDigestCrossVerify().test_sha256, rs, match="SHA256 not supported"
+    )
 
 
 def test_crossverify_aes_import_sets_allowed_mechanism(
@@ -2514,56 +2562,71 @@ def test_concurrent_sessions_skip_when_aes_keygen_not_advertised(
         slot_id=1,
         has_mechanism=lambda _name: False,
     )
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_concurrent_sessions.TestConcurrentObjectCreation().test_rapid_create_destroy_cycle(
-            rs, SimpleNamespace()
-        )
+    assert_skips(
+        test_concurrent_sessions.TestConcurrentObjectCreation().test_rapid_create_destroy_cycle,
+        rs,
+        SimpleNamespace(),
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_ckr_codes_skip_when_aes_keygen_not_advertised() -> None:
     """AES_KEY_GEN absent → skip (was xfail/raise before canonical-helper consolidation)."""
     rs = _session_with_mechanisms()
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_ckr_codes.TestCKRMechanismErrors().test_ckr_mechanism_invalid(rs)
+    assert_skips(
+        test_ckr_codes.TestCKRMechanismErrors().test_ckr_mechanism_invalid,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_ckr_object_skip_when_aes_keygen_not_advertised() -> None:
     """AES_KEY_GEN absent → skip (was xfail/raise before canonical-helper consolidation)."""
     rs = _session_with_mechanisms()
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_ckr_object.TestGetAttributeErrors().test_destroyed_handle(rs)
+    assert_skips(
+        test_ckr_object.TestGetAttributeErrors().test_destroyed_handle,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_ckr_spec_compliance_skip_when_aes_keygen_not_advertised() -> None:
     """AES_KEY_GEN absent → skip (was xfail/raise before canonical-helper consolidation)."""
     rs = _session_with_mechanisms()
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_ckr_spec_compliance.TestCKRMechanismCompliance().test_sha256_as_encrypt_returns_mechanism_invalid(
-            rs
-        )
+    assert_skips(
+        test_ckr_spec_compliance.TestCKRMechanismCompliance().test_sha256_as_encrypt_returns_mechanism_invalid,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_mech_state_skip_when_aes_keygen_not_advertised() -> None:
     """AES_KEY_GEN absent → skip (was xfail/raise before canonical-helper consolidation)."""
     rs = _session_with_mechanisms("AES_ECB")
-    with pytest.raises(pytest.skip.Exception, match="AES keygen not supported"):
-        test_mech_state.TestEncryptState().test_double_encrypt_init(rs)
+    assert_skips(
+        test_mech_state.TestEncryptState().test_double_encrypt_init,
+        rs,
+        match="AES keygen not supported",
+    )
 
 
 def test_ro_session_skip_when_aes_keygen_not_advertised() -> None:
     """AES_KEY_GEN absent → skip (was xfail/raise before canonical-helper consolidation)."""
     rs = _session_with_mechanisms()
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_ro_session.TestROSessionOperations().test_find_objects_in_ro_session(
-            rs, SimpleNamespace()
-        )
+    assert_skips(
+        test_ro_session.TestROSessionOperations().test_find_objects_in_ro_session,
+        rs,
+        SimpleNamespace(),
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_aead_skip_when_aes_keygen_not_advertised() -> None:
     """AES_KEY_GEN absent → skip (was xfail/raise before canonical-helper consolidation)."""
     rs = _session_with_mechanisms("AES_GCM")
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_aead.TestAESGCMProperties().test_gcm_roundtrip(rs)
+    assert_skips(
+        test_aead.TestAESGCMProperties().test_gcm_roundtrip, rs, match="AES_KEY_GEN not supported"
+    )
 
 
 def test_mech_flags_missing_expected_flags_are_xfail() -> None:
@@ -2699,8 +2762,9 @@ def test_kdf_hmac_as_kdf_skips_when_sha256_hmac_not_advertised(
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms()  # SHA256_HMAC absent
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_HMAC not advertised"):
-        test_kdf.TestKeyDeriveSoftware().test_hmac_as_kdf(rs)
+    assert_skips(
+        test_kdf.TestKeyDeriveSoftware().test_hmac_as_kdf, rs, match="SHA256_HMAC not advertised"
+    )
 
 
 def test_kdf_hmac_sha512_skips_when_sha512_hmac_not_advertised(
@@ -2716,8 +2780,11 @@ def test_kdf_hmac_sha512_skips_when_sha512_hmac_not_advertised(
     monkeypatch.setattr(test_kdf, "destroy_quietly", lambda *_a, **_k: None)
     rs = _session_with_mechanisms()  # SHA512_HMAC absent
 
-    with pytest.raises(pytest.skip.Exception, match="SHA512_HMAC not advertised"):
-        test_kdf.TestKeyDeriveSoftware().test_hmac_sha512_as_kdf(rs)
+    assert_skips(
+        test_kdf.TestKeyDeriveSoftware().test_hmac_sha512_as_kdf,
+        rs,
+        match="SHA512_HMAC not advertised",
+    )
 
 
 def test_kdf_hmac_as_kdf_wrong_mac_is_hard_fail(
@@ -2889,8 +2956,7 @@ def test_aead_gcm_crossverify_skips_when_gcm_not_advertised() -> None:
         crossverify.test_gcm_128_encrypt_crossverify,
         crossverify.test_gcm_decrypt_crossverify,
     ):
-        with pytest.raises(pytest.skip.Exception, match="CKM_AES_GCM not supported"):
-            method(rs)
+        assert_skips(method, rs, match="CKM_AES_GCM not supported")
 
 
 def test_session_edge_cases_wrap_xfail_when_advertised_aes_keygen_rejects_runtime(

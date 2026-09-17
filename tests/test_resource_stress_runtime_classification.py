@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKR_SESSION_COUNT,
 )
 from pkcs11_check.testcases import test_resource, test_stress
+from tests._skip_assert import assert_skips
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -75,8 +76,9 @@ def test_resource_missing_digest_mechanism_is_skip(
     )
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_resource.TestMemoryLeaks().test_digest_cycle_no_leak(rs)
+    assert_skips(
+        test_resource.TestMemoryLeaks().test_digest_cycle_no_leak, rs, match="SHA256 not supported"
+    )
 
 
 def test_resource_extra_session_capacity_reject_is_skip(
@@ -85,11 +87,12 @@ def test_resource_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(raw_bootstrap, "open_session", _raise_session_count)
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_resource.TestSessionChurn().test_rapid_session_cycles(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_resource.TestSessionChurn().test_rapid_session_cycles,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional session",
+    )
 
 
 def test_stress_missing_aes_ecb_is_skip(
@@ -103,8 +106,11 @@ def test_stress_missing_aes_ecb_is_skip(
     )
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        test_stress.TestRapidOperations().test_rapid_encrypt_decrypt_1000(rs)
+    assert_skips(
+        test_stress.TestRapidOperations().test_rapid_encrypt_decrypt_1000,
+        rs,
+        match="AES_ECB not supported",
+    )
 
 
 def test_stress_sign_runtime_reject_is_xfail(
@@ -130,11 +136,12 @@ def test_stress_extra_session_capacity_reject_is_skip(
     monkeypatch.setattr(test_stress, "_raw_open_session", _raise_session_count)
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="additional session"):
-        test_stress.TestSessionStress().test_session_open_close_100(
-            rs,
-            SimpleNamespace(pin=None),
-        )
+    assert_skips(
+        test_stress.TestSessionStress().test_session_open_close_100,
+        rs,
+        SimpleNamespace(pin=None),
+        match="additional session",
+    )
 
 
 def test_stress_random_duplicates_remain_hard_failure(

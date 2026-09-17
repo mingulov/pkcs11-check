@@ -31,7 +31,7 @@ from typing import Any, cast
 import pytest
 
 import pkcs11_check.plugin as plugin_mod
-from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_OK
+from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_GENERAL_ERROR, CKR_OK
 
 _HAS_SIGALRM = getattr(signal, "SIGALRM", None) is not None
 
@@ -52,6 +52,7 @@ class _SpyRaw:
         block: threading.Event | None = None,
     ) -> None:
         self.calls: list[str] = []
+        self.finalize_args: list[Any] = []
         self.finalized = False
         self._finalize_rv = finalize_rv
         self._raises = raises
@@ -66,8 +67,9 @@ class _SpyRaw:
     def available_function_names(self) -> set[str]:
         return set()
 
-    def C_Finalize(self, _arg: Any) -> int:  # noqa: N802
+    def C_Finalize(self, arg: Any) -> int:  # noqa: N802
         self.calls.append("C_Finalize")
+        self.finalize_args.append(arg)
         if self._block is not None:
             # Wait to be interrupted by the watchdog (or, as a safety net,
             # released by the test). A real hang never returns.
@@ -156,6 +158,22 @@ def test_finalize_called_once_on_clean_teardown() -> None:
     assert session.exitstatus == pytest.ExitCode.OK
 
 
+def test_finalize_called_with_null_reserved_pointer() -> None:
+    """Teardown passes NULL, exactly as the PKCS#11 spec mandates.
+
+    A provider rejecting the NULL reserved pointer is then
+    unambiguously a provider quirk: the harness passes what the spec
+    requires.
+    """
+    raw = _SpyRaw()
+    report_log = _FakeReportLogPlugin()
+    config = _make_config(raw, report_log)
+
+    _run(config)
+
+    assert raw.finalize_args == [None]
+
+
 # --------------------------------------------------------------------------
 # 2. Guard: non-OK rv is recorded, never raised / never a verdict.
 # --------------------------------------------------------------------------
@@ -175,6 +193,30 @@ def test_non_ok_rv_recorded_not_raised() -> None:
     assert records[0]["rv_name"] == "CKR_GENERAL_ERROR"
     assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
     # No test-verdict channel was used (no classification/fail record).
+    assert all(
+        r.get("$report_type") not in ("Classification", "TestReport") for r in report_log.records
+    )
+
+
+def test_arguments_bad_fails_session_not_verdict() -> None:
+    """Teardown C_Finalize answers CKR_ARGUMENTS_BAD: fail the file, not a verdict.
+
+    Policy: a lone teardown-finalize quirk keeps failing the file — the
+    record stays additive (never an invented test verdict), but the
+    process goes non-green so no caller accepts it.
+    """
+    raw = _SpyRaw(finalize_rv=int(CKR_ARGUMENTS_BAD))
+    report_log = _FakeReportLogPlugin()
+    config = _make_config(raw, report_log)
+
+    session = _run(config)  # must not raise
+
+    records = _teardown_records(report_log)
+    assert len(records) == 1
+    assert records[0]["outcome"] == "error"
+    assert records[0]["rv"] == 7
+    assert records[0]["rv_name"] == "CKR_ARGUMENTS_BAD"
+    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
     assert all(
         r.get("$report_type") not in ("Classification", "TestReport") for r in report_log.records
     )

@@ -1,4 +1,4 @@
-"""Fail-closed, fixed-point source inventory for F6 attribution.
+"""Fail-closed, fixed-point source inventory for readback attribution.
 
 The inventory lives under ``tests`` deliberately.  It is a source-review aid rather than
 runtime framework code: it follows classification emitters through the helpers in the
@@ -9,15 +9,20 @@ about repository-specific source layout.
 The analysis is conservative.  Unknown expressions, unresolved local calls, and unknown
 defaults are retained as ``unresolved`` findings.  ``readback_only`` therefore means
 "readback candidates plus every uncertainty", never "silently drop things we could not
-understand".
+understand".  Two narrow exemptions exist, each pinned by the gate file: aliases
+rooted at out-of-tree module attributes, and classification-module members proven
+not to emit (``set_mechanism``/``Classification``).
 """
 
 from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import itertools
 import json
+import subprocess
+import tarfile
 from collections import Counter, defaultdict, deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -51,6 +56,13 @@ _CONFTES_MODULE: Final = "pkcs11_check.testcases.conftest"
 _CLASSIFICATION_EMITTERS: Final = frozenset({"classify", "record_as", "fail_as", "xfail_as"})
 _HELPER_EMITTERS: Final = frozenset({"assert_correct"})
 _EMITTERS: Final = _CLASSIFICATION_EMITTERS | _HELPER_EMITTERS
+_EMITTER_LIKE_NAMES: Final = _EMITTERS | {"emit"}
+# Classification-module members that never emit: the ambient-context setter and
+# the record dataclass constructor. Calls bound to these (verified against the
+# live module by the gate file) carry operation/mechanism kwargs as data, not
+# attribution. Unknown names stay candidates: fail closed on new members.
+_CLASSIFICATION_NON_EMITTERS: Final = frozenset({"set_mechanism", "Classification"})
+_ATTRIBUTION_KEYWORDS: Final = frozenset({"operation", "mechanism", "inherit_mechanism"})
 _EXTERNAL: Final = "external"
 RECEIVER_UNBOUND: Final = "unbound"
 RECEIVER_INSTANCE_BOUND: Final = "instance-bound"
@@ -408,7 +420,7 @@ def coordinate_census(root: Path) -> CoordinateCensus:
 
 def registered_definition_coordinates(root: Path) -> tuple[CallerCoordinate, ...]:
     """Return function coordinates currently registered by the analyzer."""
-    analyzer = _Analyzer(_tree_sources(root))
+    analyzer, _ = _cached_tree_analyzer(root)
     return tuple(
         sorted(
             CallerCoordinate(
@@ -557,25 +569,35 @@ class _ScopeVisitor(ast.NodeVisitor):
         self._bind_target(node.target, node.iter)
         self.generic_visit(node)
 
+    def _bind_import(self, name: str, binding: _Binding) -> None:
+        self.local_bindings.add(name)
+        existing = self.local_imports.get(name)
+        if existing is not None and existing != binding:
+            # Conflicting rebinding (try/except fallback imports): the runtime
+            # target is branch-dependent, so fail closed instead of last-wins.
+            self.local_imports[name] = _Binding(
+                "unresolved-import", f"{existing.value}|{binding.value}"
+            )
+        else:
+            self.local_imports[name] = binding
+
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             name = alias.asname or alias.name.split(".")[0]
-            self.local_bindings.add(name)
-            self.local_imports[name] = _Binding("module", alias.name)
+            self._bind_import(name, _Binding("module", alias.name))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         for alias in node.names:
             name = alias.asname or alias.name
-            self.local_bindings.add(name)
             module = node.module or ""
             if module in _CLASSIFICATION_MODULES and alias.name in _CLASSIFICATION_EMITTERS:
-                self.local_imports[name] = _Binding(_EXTERNAL, alias.name)
+                self._bind_import(name, _Binding(_EXTERNAL, alias.name))
             elif module == _CONFTES_MODULE and alias.name in _HELPER_EMITTERS:
-                self.local_imports[name] = _Binding(_EXTERNAL, alias.name)
+                self._bind_import(name, _Binding(_EXTERNAL, alias.name))
             elif module == "pkcs11_check" and alias.name == "classification":
-                self.local_imports[name] = _Binding("module", "pkcs11_check.classification")
+                self._bind_import(name, _Binding("module", "pkcs11_check.classification"))
             else:
-                self.local_imports[name] = _Binding("import", f"{module}:{alias.name}")
+                self._bind_import(name, _Binding("import", f"{module}:{alias.name}"))
 
     def visit_Call(self, node: ast.Call) -> None:
         self.calls.append(node)
@@ -589,6 +611,16 @@ def _parse_imports(
     bindings: dict[str, _Binding] = {}
     assignments: defaultdict[str, list[ast.expr]] = defaultdict(list)
     top_level: set[str] = set()
+
+    def _bind_top_import(name: str, binding: _Binding) -> None:
+        existing = bindings.get(name)
+        if existing is not None and existing != binding and existing.kind in ("module", "import"):
+            # Conflicting rebinding: the runtime target is ambiguous, so fail
+            # closed instead of last-wins.
+            bindings[name] = _Binding("unresolved-import", f"{existing.value}|{binding.value}")
+        else:
+            bindings[name] = binding
+
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             top_level.add(statement.name)
@@ -596,7 +628,7 @@ def _parse_imports(
         elif isinstance(statement, ast.Import):
             for alias in statement.names:
                 name = alias.asname or alias.name.split(".")[0]
-                bindings[name] = _Binding("module", alias.name)
+                _bind_top_import(name, _Binding("module", alias.name))
         elif isinstance(statement, ast.ImportFrom):
             module = _relative_import(statement.module or "", module_name, statement.level)
             for alias in statement.names:
@@ -604,13 +636,13 @@ def _parse_imports(
                 if alias.name == "*":
                     bindings[name] = _Binding("unknown", f"{module}.*")
                 elif module in _CLASSIFICATION_MODULES and alias.name in _CLASSIFICATION_EMITTERS:
-                    bindings[name] = _Binding(_EXTERNAL, alias.name)
+                    _bind_top_import(name, _Binding(_EXTERNAL, alias.name))
                 elif module == _CONFTES_MODULE and alias.name in _HELPER_EMITTERS:
-                    bindings[name] = _Binding(_EXTERNAL, alias.name)
+                    _bind_top_import(name, _Binding(_EXTERNAL, alias.name))
                 elif module == "pkcs11_check" and alias.name == "classification":
-                    bindings[name] = _Binding("module", "pkcs11_check.classification")
+                    _bind_top_import(name, _Binding("module", "pkcs11_check.classification"))
                 else:
-                    bindings[name] = _Binding("import", f"{module}:{alias.name}")
+                    _bind_top_import(name, _Binding("import", f"{module}:{alias.name}"))
         elif isinstance(statement, ast.Assign):
             for target in statement.targets:
                 if isinstance(target, ast.Name):
@@ -684,6 +716,7 @@ class _Analyzer:
             tuple[str, CallerCoordinate | None],
             dict[tuple[str, CallerCoordinate | None], bool],
         ] = defaultdict(dict)
+        self._findings_cache: dict[bool, tuple[EmitterFinding, ...]] = {}
         self._seed_contexts()
 
     def _module_candidates(self, imported: str) -> tuple[_Unit, ...]:
@@ -1326,9 +1359,50 @@ class _Analyzer:
     def _resolve_function_call(self, scope: _Scope, call: ast.Call) -> _CallableBinding | None:
         return self._resolve_callable_expression(scope, call.func, set())
 
+    def _is_external_module_attribute(self, scope: _Scope, expression: ast.expr) -> bool:
+        """Whether an alias value is an attribute of an out-of-tree module.
+
+        Only chains bottoming out at a plain name bound to an imported module
+        that resolves outside the scanned tree (and outside the
+        classification/conftest modules) count: such a value can be neither an
+        in-tree helper nor a recognized emitter. Call/subscript-rooted chains
+        (``factory().helper``), unresolvable ``pkcs11_check.testcases.*`` roots
+        (typos, mirroring :meth:`_resolve_import_binding`), and emitter-like
+        tails stay unresolved so ``emit = foreign.record_as`` keeps its
+        fail-closed finding.
+        """
+        if not isinstance(expression, ast.Attribute):
+            return False
+        base: ast.expr = expression
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        if not isinstance(base, ast.Name):
+            return False
+        dotted = _dotted_name(expression)
+        if dotted is None:
+            return False
+        module = self._module_alias(scope, dotted.split(".", 1)[0])
+        if module is None or self._is_classification_object(scope, expression):
+            return False
+        if module.startswith("pkcs11_check.testcases"):
+            return False
+        if self._module_candidates(module):
+            # Resolvable or ambiguous: the target may be an in-tree helper.
+            return False
+        return dotted.rsplit(".", 1)[-1] not in _EMITTER_LIKE_NAMES
+
     def _unresolved_callable_alias(self, scope: _Scope, call: ast.Call) -> bool:
         if isinstance(call.func, ast.Name):
-            if self._alias_expressions(scope, call.func.id):
+            expressions = self._alias_expressions(scope, call.func.id)
+            if expressions:
+                if all(
+                    self._is_external_module_attribute(
+                        self._alias_definition_scope(scope, assignment),
+                        assignment.expression,
+                    )
+                    for assignment in expressions
+                ):
+                    return False
                 return self._resolve_function_call(scope, call) is None
             binding = self._binding(scope, call.func.id)
             return binding is not None and binding.kind == "unresolved-import"
@@ -1387,13 +1461,34 @@ class _Analyzer:
                 )
         return tuple(edges)
 
+    def _classification_non_emitter_call(self, scope: _Scope, call: ast.Call) -> bool:
+        """Whether the call targets a classification-module member that never emits.
+
+        Known gap (accepted): a conditional definition shadowing the import
+        (``if ...: def set_mechanism``) is invisible to the top-level import
+        tables, so the call exempts though the runtime may bind the local
+        def. Only the call-site marker is affected — emitters inside the
+        shadowing def still report as their own findings.
+        """
+        if isinstance(call.func, ast.Name):
+            binding = self._binding(scope, call.func.id)
+            if binding is None or binding.kind != "unknown":
+                return False
+            module, _, member = binding.value.partition(":")
+            return module in _CLASSIFICATION_MODULES and member in _CLASSIFICATION_NON_EMITTERS
+        name = _dotted_name(call.func)
+        if name is None:
+            return False
+        base, _, member = name.rpartition(".")
+        module = self._module_alias(scope, base.split(".", 1)[0])
+        return module in _CLASSIFICATION_MODULES and member in _CLASSIFICATION_NON_EMITTERS
+
     def _unknown_call_candidate(self, scope: _Scope, call: ast.Call) -> bool:
+        if self._classification_non_emitter_call(scope, call):
+            return False
         return (
             self._unsupported_callee_candidate(scope, call)
-            or any(
-                keyword.arg in {"operation", "mechanism", "inherit_mechanism"}
-                for keyword in call.keywords
-            )
+            or any(keyword.arg in _ATTRIBUTION_KEYWORDS for keyword in call.keywords)
             or self._known_emitter_name(call)
         )
 
@@ -1401,14 +1496,7 @@ class _Analyzer:
         name = _dotted_name(call.func)
         if name is None:
             return False
-        return name.rsplit(".", 1)[-1] in {
-            "assert_correct",
-            "classify",
-            "record_as",
-            "fail_as",
-            "xfail_as",
-            "emit",
-        }
+        return name.rsplit(".", 1)[-1] in _EMITTER_LIKE_NAMES
 
     def _is_classification_object(self, scope: _Scope, expression: ast.expr) -> bool:
         name = _dotted_name(expression)
@@ -1481,6 +1569,7 @@ class _Analyzer:
         seen: set[tuple[str, str]],
         domains: Mapping[tuple[str, str], _Domain] | None = None,
     ) -> _Domain:
+        """Resolve a name to its value domain (see :meth:`_emitter_depends_on_parameters`)."""
         key = (scope.key, name)
         if key in seen:
             return _Domain.scalar(f"{PARAM_PREFIX}{name}", None)
@@ -1662,11 +1751,46 @@ class _Analyzer:
     def _forwarded_parameters(self, scope: _Scope, call: ast.Call) -> tuple[str, ...]:
         names: set[str] = set()
         for keyword in call.keywords:
-            if keyword.arg in {"operation", "mechanism", "inherit_mechanism"}:
+            if keyword.arg in _ATTRIBUTION_KEYWORDS:
                 names.update(
                     node.id for node in ast.walk(keyword.value) if isinstance(node, ast.Name)
                 )
         return tuple(sorted(name for name in names if name in scope.parameters))
+
+    def _emitter_depends_on_parameters(self, scope: _Scope, call: ast.Call) -> bool:
+        """Whether attribution kwargs transitively read scope parameters.
+
+        Caller-context uncertainty (star-arg callers, unknown descriptors) can only
+        affect attribution through parameters. Direct-literal emitters (even under
+        pytest-style decorators or star-arg callers) are certain; anything reaching
+        a parameter stays fail-closed. Over-approximates: every ``Name`` under the
+        kwargs is followed through local and module assignments. Must cover every
+        parameter-reaching channel in :meth:`_domain_for_name`; extend in lockstep.
+        """
+        pending = [
+            node.id
+            for keyword in call.keywords
+            if keyword.arg in _ATTRIBUTION_KEYWORDS
+            for node in ast.walk(keyword.value)
+            if isinstance(node, ast.Name)
+        ]
+        seen: set[str] = set()
+        while pending:
+            name = pending.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            if name in scope.parameters:
+                return True
+            for source in (
+                scope.assignments.get(name, ()),
+                scope.unit.module_assignments.get(name, ()),
+            ):
+                for expression in source:
+                    pending.extend(
+                        node.id for node in ast.walk(expression) if isinstance(node, ast.Name)
+                    )
+        return False
 
     def _raw_domain(
         self,
@@ -1796,15 +1920,26 @@ class _Analyzer:
             emitter=emitter,
             states=tuple(sorted(states)),
             uncertain=(
-                any(self.context_uncertain[context_key] for _, context_key, _ in context_items)
-                or self._call_has_unexpanded_arguments(call)
-                or scope.descriptor == "unknown"
+                self._call_has_unexpanded_arguments(call)
+                or (
+                    self._emitter_depends_on_parameters(scope, call)
+                    and (
+                        any(
+                            self.context_uncertain[context_key]
+                            for _, context_key, _ in context_items
+                        )
+                        or scope.descriptor == "unknown"
+                    )
+                )
             ),
             expression=ast.unparse(expression_node) if expression_node is not None else "<omitted>",
             forwarded_parameters=self._forwarded_parameters(scope, call),
         )
 
     def findings(self, *, readback_only: bool) -> tuple[EmitterFinding, ...]:
+        cached = self._findings_cache.get(readback_only)
+        if cached is not None:
+            return cached
         self._propagate()
         findings: list[EmitterFinding] = []
         for scope in self.scopes.values():
@@ -1834,7 +1969,9 @@ class _Analyzer:
                 )
                 if not readback_only or finding.is_readback:
                     findings.append(finding)
-        return tuple(sorted(findings))
+        result = tuple(sorted(findings))
+        self._findings_cache[readback_only] = result
+        return result
 
 
 def _canonical_finding(finding: EmitterFinding) -> dict[str, object]:
@@ -1943,26 +2080,100 @@ def scan_source(
     return scan_sources({path: source}, readback_only=readback_only)
 
 
+_TREE_ANALYZER_CACHE: dict[str, _Analyzer] = {}
+
+
+def _cached_tree_analyzer(root: Path) -> tuple[_Analyzer, str]:
+    """Return the cached analyzer for the tree under *root* plus its corpus digest.
+
+    Full-tree scans dominate the gate-file runtime while every tree-level entry
+    point re-analyzes identical sources. Sources are still re-read and re-hashed
+    on each call to key the cache; only the analysis is memoized. The analyzer
+    is a pure function of the source mapping, so one entry per corpus digest is
+    exact, never stale.
+    """
+    sources = _tree_sources(root)
+    digest = corpus_digest(sources)
+    analyzer = _TREE_ANALYZER_CACHE.get(digest)
+    if analyzer is None:
+        analyzer = _Analyzer(sources)
+        _TREE_ANALYZER_CACHE[digest] = analyzer
+    return analyzer, digest
+
+
 def scan_tree(
     root: Path,
     *,
     readback_only: bool = False,
 ) -> tuple[EmitterFinding, ...]:
     """Analyze all Python files beneath *root* with root-relative POSIX identities."""
-    sources = {
-        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted(root.rglob("*.py"))
-    }
-    return scan_sources(sources, readback_only=readback_only)
+    analyzer, _ = _cached_tree_analyzer(root)
+    return analyzer.findings(readback_only=readback_only)
+
+
+@dataclass(frozen=True, slots=True)
+class LabeledCallShape:
+    """One static view of a ``func(...)`` call site, for replay coupling."""
+
+    line: int
+    args: tuple[object, ...]
+    kwargs: dict[str, object]
+    label_source: str
+
+
+DYNAMIC_ARG: Final = "<dynamic>"
+
+
+def labeled_call_shapes(source_path: Path, func_name: str) -> tuple[LabeledCallShape, ...]:
+    """Every ``func_name(...)`` call in a file, with static arguments resolved.
+
+    Constant positional/keyword values are returned as-is; anything dynamic
+    (names, f-strings, calls, ``*``/``**`` unpacking) becomes ``<dynamic>``.
+    A call with ``**`` unpacking additionally reports ``mechanism`` as
+    ``<dynamic>`` unless statically present: an explicit mechanism could hide
+    in the mapping. ``label_source`` is the source segment of the ``label=``
+    keyword ("" when absent) so dynamically-built labels can still be matched
+    by substring.
+
+    This couples replay-style regression tests to the source call they
+    characterize: the replay pins the call semantics, this pins the call's
+    continued existence and shape at its source site.
+    """
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    shapes: list[LabeledCallShape] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name != func_name:
+            continue
+        args = tuple(
+            arg.value if isinstance(arg, ast.Constant) else DYNAMIC_ARG for arg in node.args
+        )
+        kwargs: dict[str, object] = {}
+        label_source = ""
+        star_kwargs = False
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                star_kwargs = True
+                continue
+            kwargs[keyword.arg] = (
+                keyword.value.value if isinstance(keyword.value, ast.Constant) else DYNAMIC_ARG
+            )
+            if keyword.arg == "label":
+                label_source = ast.get_source_segment(source, keyword.value) or ""
+        if star_kwargs and "mechanism" not in kwargs:
+            kwargs["mechanism"] = DYNAMIC_ARG
+        shapes.append(LabeledCallShape(node.lineno, args, kwargs, label_source))
+    return tuple(shapes)
 
 
 def characterize_tree(root: Path) -> InventoryCharacterization:
     """Return pinned totals/digests without asserting that the tree is clean."""
-    sources = {
-        path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted(root.rglob("*.py"))
-    }
-    all_findings = scan_sources(sources)
+    analyzer, corpus = _cached_tree_analyzer(root)
+    all_findings = analyzer.findings(readback_only=False)
     candidates = tuple(finding for finding in all_findings if finding.is_readback)
     statuses = tuple(sorted(Counter(finding.status for finding in all_findings).items()))
     state_statuses = tuple(
@@ -1984,6 +2195,233 @@ def characterize_tree(root: Path) -> InventoryCharacterization:
         mixed_unsafe_states=mixed_unsafe_states,
         digest=inventory_digest(all_findings),
         candidate_digest=inventory_digest(candidates),
-        corpus_digest=corpus_digest(sources),
+        corpus_digest=corpus,
         direct_emitter_census=direct_emitter_census(all_findings),
     )
+
+
+def git_head_tree_sources(tree_root: Path) -> dict[str, str]:
+    """Read the HEAD-tree ``*.py`` sources for *tree_root* without touching the worktree.
+
+    The mapping uses the same root-relative POSIX keys as :func:`scan_tree`, so
+    HEAD findings diff cleanly against worktree findings. Raises
+    :class:`subprocess.CalledProcessError` when git fails (not a checkout, no
+    HEAD), :class:`RuntimeError` when the archive holds no Python sources,
+    :class:`ValueError` when *tree_root* escapes the work tree, and
+    :class:`UnicodeDecodeError`/:class:`tarfile.ReadError` on undecodable or
+    corrupt archives.
+    """
+    toplevel = subprocess.run(
+        ["git", "-C", str(tree_root), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    prefix = tree_root.resolve().relative_to(Path(toplevel).resolve()).as_posix()
+    archive = subprocess.run(
+        ["git", "-C", toplevel, "archive", "HEAD", "--", prefix],
+        capture_output=True,
+        check=True,
+    ).stdout
+    sources: dict[str, str] = {}
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        for member in tar.getmembers():
+            if not member.isfile() or not member.name.endswith(".py"):
+                continue
+            name = member.name
+            if prefix != ".":
+                name = name.removeprefix(prefix + "/")
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                continue
+            sources[name] = extracted.read().decode("utf-8")
+    if not sources:
+        raise RuntimeError(f"no HEAD sources found for {tree_root}")
+    return sources
+
+
+def _coordinate_free_finding(finding: EmitterFinding) -> dict[str, object]:
+    """Return the canonical finding with every line/column zeroed for move diffing."""
+    canonical = _canonical_finding(finding)
+    canonical["line"] = 0
+    canonical["column"] = 0
+    states = canonical["states"]
+    if isinstance(states, list):
+        for state in states:
+            if not isinstance(state, dict):
+                continue
+            caller = state.get("caller")
+            if isinstance(caller, dict):
+                caller["line"] = 0
+                caller["column"] = 0
+    return canonical
+
+
+_DIFF_LIST_CAP = 50
+
+
+def _capped(lines: list[str]) -> list[str]:
+    if len(lines) <= _DIFF_LIST_CAP:
+        return lines
+    return [*lines[:_DIFF_LIST_CAP], f"  ... +{len(lines) - _DIFF_LIST_CAP} more"]
+
+
+def _counter_delta_lines(header: str, old: Counter[str], new: Counter[str]) -> list[str]:
+    """Render per-value ``old -> new`` lines for values whose count moved."""
+    changed = sorted(value for value in set(old) | set(new) if old[value] != new[value])
+    if not changed:
+        return [f"{header}: unchanged"]
+    lines = [f"{header}:"]
+    for value in changed:
+        delta = new[value] - old[value]
+        lines.append(f"  {value}: {old[value]} -> {new[value]} ({delta:+d})")
+    return lines
+
+
+def _change_detail(former: EmitterFinding, latter: EmitterFinding) -> str:
+    """Describe what differs between two paired findings, omitting equal fields."""
+    parts: list[str] = []
+    if former.status != latter.status:
+        parts.append(f"status {former.status} -> {latter.status}")
+    if former.operations != latter.operations:
+        parts.append(f"ops {former.operations} -> {latter.operations}")
+    if former.mechanisms != latter.mechanisms:
+        parts.append(f"mechs {former.mechanisms} -> {latter.mechanisms}")
+    return "; ".join(parts) if parts else "content changed"
+
+
+def format_inventory_diff(
+    old: Iterable[EmitterFinding],
+    new: Iterable[EmitterFinding],
+) -> str:
+    """Render what moved between two finding inventories.
+
+    Sections cover paths, emitter and status censuses, coordinate-only
+    moves, status/content changes, and added/removed findings. Within each
+    (path, function, emitter) group, findings pair content-first: identical
+    findings cancel, then coordinate-free matches pair as moves (a match at
+    the same coordinates means only its callers moved). A lone leftover on
+    each side is one edit; any other leftovers are added/removed — so a
+    mid-group insert/delete never fabricates a change or misattributes the
+    removal to a surviving finding.
+    """
+    before = tuple(sorted(old))
+    after = tuple(sorted(new))
+    lines = [f"inventory drift: HEAD {len(before)} findings -> worktree {len(after)} findings"]
+    old_paths = {finding.path for finding in before}
+    new_paths = {finding.path for finding in after}
+    added_paths = sorted(new_paths - old_paths)
+    removed_paths = sorted(old_paths - new_paths)
+    if added_paths or removed_paths:
+        lines.append(f"paths: +{len(added_paths)} -{len(removed_paths)}")
+        path_lines = [f"  + {path}" for path in added_paths]
+        path_lines.extend(f"  - {path}" for path in removed_paths)
+        lines.extend(_capped(path_lines))
+    else:
+        lines.append("paths: unchanged")
+    lines.extend(
+        _counter_delta_lines(
+            "emitters",
+            Counter(finding.emitter for finding in before),
+            Counter(finding.emitter for finding in after),
+        )
+    )
+    lines.extend(
+        _counter_delta_lines(
+            "statuses",
+            Counter(finding.status for finding in before),
+            Counter(finding.status for finding in after),
+        )
+    )
+
+    def _group(
+        findings: tuple[EmitterFinding, ...],
+    ) -> dict[tuple[str, str, str], list[EmitterFinding]]:
+        grouped: dict[tuple[str, str, str], list[EmitterFinding]] = defaultdict(list)
+        for finding in findings:
+            grouped[(finding.path, finding.function, finding.emitter)].append(finding)
+        for group in grouped.values():
+            group.sort(key=lambda finding: (finding.line, finding.column))
+        return grouped
+
+    old_groups = _group(before)
+    new_groups = _group(after)
+    moves: list[str] = []
+    changes: list[str] = []
+    added: list[str] = []
+    removed: list[str] = []
+    for key in sorted(set(old_groups) | set(new_groups)):
+        unmatched_new = list(new_groups.get(key, []))
+        still_old: list[EmitterFinding] = []
+        for former in old_groups.get(key, []):
+            try:
+                unmatched_new.remove(former)
+            except ValueError:
+                still_old.append(former)
+        candidates = [(_coordinate_free_finding(latter), latter) for latter in unmatched_new]
+        leftovers_old: list[EmitterFinding] = []
+        for former in still_old:
+            shape = _coordinate_free_finding(former)
+            hit = next(
+                (entry for entry in candidates if entry[0] == shape),
+                None,
+            )
+            if hit is None:
+                leftovers_old.append(former)
+                continue
+            candidates.remove(hit)
+            latter = hit[1]
+            if (former.line, former.column) != (latter.line, latter.column):
+                moves.append(
+                    f"  {former.path} {former.function} {former.emitter}: "
+                    f"({former.line},{former.column}) -> ({latter.line},{latter.column})"
+                )
+            else:
+                moves.append(
+                    f"  {former.path}:{former.line} {former.function} {former.emitter}: "
+                    "callers moved"
+                )
+        leftovers_new = [latter for _, latter in candidates]
+        if len(leftovers_old) == 1 and len(leftovers_new) == 1:
+            former, latter = leftovers_old[0], leftovers_new[0]
+            changes.append(
+                f"  {former.path}:{former.line} {former.function} {former.emitter}: "
+                f"{_change_detail(former, latter)}"
+            )
+        else:
+            for entries, bucket in ((leftovers_old, removed), (leftovers_new, added)):
+                for entry in entries:
+                    bucket.append(
+                        f"  {entry.path}:{entry.line} {entry.function} "
+                        f"{entry.emitter} [{entry.status}]"
+                    )
+    lines.append(f"coordinate-only moves ({len(moves)}):")
+    lines.extend(_capped(moves))
+    lines.append(f"status/content changes ({len(changes)}):")
+    lines.extend(_capped(changes))
+    lines.append(f"added ({len(added)}):")
+    lines.extend(_capped(added))
+    lines.append(f"removed ({len(removed)}):")
+    lines.extend(_capped(removed))
+    return "\n".join(lines)
+
+
+def head_inventory_diff(tree_root: Path, current: Iterable[EmitterFinding]) -> str:
+    """Diff *current* findings against the git HEAD tree; never raises Exception.
+
+    Diagnostics must not mask the gate failure they explain, so every failure
+    (not a checkout, no HEAD, unreadable archive, unformattable input)
+    degrades to a placeholder.
+    """
+    try:
+        head_findings = scan_sources(git_head_tree_sources(tree_root))
+        after = tuple(sorted(current))
+        if head_findings == after:
+            return (
+                f"inventory drift: HEAD {len(head_findings)} findings "
+                f"-> worktree {len(after)} findings "
+                "(identical findings; drift is in corpus text or the pinned constants)"
+            )
+        return format_inventory_diff(head_findings, after)
+    except Exception as exc:
+        return f"<inventory diff unavailable: {exc}>"

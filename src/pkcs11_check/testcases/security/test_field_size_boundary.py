@@ -506,6 +506,7 @@ class TestHkdfParamLengthTruncation:
                 test_id="TestHkdfParamLengthTruncation.test_hkdf_salt_len_truncation",
             )
 
+    @pytest.mark.allocation_amplifying
     @pytest.mark.slow
     def test_hkdf_info_len_truncation(
         self,

@@ -24,7 +24,7 @@ xfail means "negotiation exhausted", not "first attempt failed".
 
 A9 helper-split: the RSA legs route through ``_xfail_rsa_kat_import_not_operational``
 (xfail).  Batch 3b then converted the EC private leg -- it has no negotiated
-importer (D2, commit b56c3f8c) so the raw single-template import IS the spec path;
+importer (import-audit D2, commit b56c3f8c) so the raw single-template import IS the spec path;
 the broad reject now xfails via ``_xfail_ec_kat_import_not_operational`` while
 curve-absence keeps skip.  Reconciled here; the full EC split is pinned in
 tests/test_import_skip_xfail_batch3b.py.
@@ -386,7 +386,7 @@ def test_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyP
 
 
 # ===========================================================================
-# F1 -- test_mech_sign.py symmetric-MAC KAT secret-key import (fix follow-ups)
+# test_mech_sign.py symmetric-MAC KAT secret-key import (fix follow-ups)
 # ===========================================================================
 # The raw ``import_secret_key`` at the symmetric-MAC KAT site was never wrapped
 # in a negotiated importer + helper: a clean import-reject CKR propagated as a
@@ -476,7 +476,7 @@ def test_f1_kat_vector_site_xfails_on_broad_ckr(monkeypatch: pytest.MonkeyPatch)
 
 
 # ===========================================================================
-# F5 -- _run_asymmetric_sign_kat: priv_key destroyed before pub-import xfail
+# _run_asymmetric_sign_kat: priv_key destroyed before pub-import xfail
 # ===========================================================================
 # When verify_only=True and the public-key negotiated import raises with a broad
 # CKR, _xfail_rsa_kat_import_not_operational fires (raises pytest.xfail) BEFORE

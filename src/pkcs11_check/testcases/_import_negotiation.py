@@ -71,7 +71,7 @@ def _next_import_label() -> bytes:
 
 
 def _storage_variants(base: dict[Any, Any]) -> list[dict[Any, Any]]:
-    """Spec-equivalent storage variants, canonical-minimal first (G1)."""
+    """Spec-equivalent storage variants, canonical-minimal first (negotiation G1)."""
     variants: list[dict[Any, Any]] = [base]
     labeled = base if CKA_LABEL in base else {**base, CKA_LABEL: _next_import_label()}
     if labeled is not base:

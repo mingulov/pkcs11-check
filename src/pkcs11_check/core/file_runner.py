@@ -783,7 +783,7 @@ def _run_subprocess_tee(
         # The child exited on its own -- cleanly OR via a crash signal (negative
         # returncode). Drain the readers, but only for a short grace: the child is
         # gone, so any un-read data is at most the OS pipe buffer. A surviving
-        # grandchild that inherited the pipe (R2) must NOT hold the runner for the
+        # grandchild that inherited the pipe must NOT hold the runner for the
         # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
         # the grace and report the child's real returncode.
         _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)

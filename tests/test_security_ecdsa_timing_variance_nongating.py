@@ -1,4 +1,4 @@
-"""Regression test for CR-6: ECDSA timing-variance heuristic must be
+"""Regression test for catalog §F Timing tests: ECDSA timing-variance heuristic must be
 informational (xfail), not a hard fail.
 
 CV-based timing-leak detection over 100 ECDSA P-256 signatures is

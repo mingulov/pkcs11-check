@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.security import test_cve_regression
+from tests._skip_assert import assert_skips
 
 _MISSING = object()
 
@@ -186,10 +187,11 @@ def test_aes_ecb_boundary_lengths_skips_without_aes_ecb(
 
     monkeypatch.setattr(test_cve_regression, "gen_aes_key", _unexpected_keygen)
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths(
-            _session(raw, "AES_KEY_GEN")
-        )
+    assert_skips(
+        test_cve_regression.TestBoundaryLengthCrypto().test_aes_ecb_boundary_lengths,
+        _session(raw, "AES_KEY_GEN"),
+        match="AES_ECB not supported",
+    )
 
 
 def test_aes_ecb_boundary_lengths_xfails_when_advertised_keygen_rejects(
@@ -206,14 +208,15 @@ def test_aes_ecb_boundary_lengths_xfails_when_advertised_keygen_rejects(
 def test_tookan_sensitive_unwrap_skips_explicit_key_not_wrappable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(pytest.skip.Exception, match="cannot wrap SENSITIVE=True"):
-        _run_tookan_sensitive_unwrap_until_wrap(
-            monkeypatch,
-            CkrAssertionError(
-                "Unexpected CK_RV CKR_KEY_NOT_WRAPPABLE",
-                int(CKR_KEY_NOT_WRAPPABLE),
-            ),
-        )
+    assert_skips(
+        _run_tookan_sensitive_unwrap_until_wrap,
+        monkeypatch,
+        CkrAssertionError(
+            "Unexpected CK_RV CKR_KEY_NOT_WRAPPABLE",
+            int(CKR_KEY_NOT_WRAPPABLE),
+        ),
+        match="cannot wrap SENSITIVE=True",
+    )
 
 
 def test_tookan_sensitive_unwrap_xfails_generic_wrap_runtime_error(
@@ -532,10 +535,11 @@ def test_rapid_sign_skips_without_sha256_rsa_pkcs(
 
     monkeypatch.setattr(test_cve_regression, "gen_rsa_keypair", _unexpected_keypair)
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_cve_regression.TestMutexDeadlockRegression().test_rapid_sign_no_deadlock(
-            _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN")
-        )
+    assert_skips(
+        test_cve_regression.TestMutexDeadlockRegression().test_rapid_sign_no_deadlock,
+        _session(_EncryptStateRaw(), "RSA_PKCS_KEY_PAIR_GEN"),
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_rapid_sign_xfails_when_advertised_rsa_keygen_rejects(

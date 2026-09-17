@@ -3,9 +3,8 @@
 Exercises the migrated ``src/pkcs11_check/testcases/test_object.py`` call sites directly
 (not through pytest collection of that file, which needs a real PKCS#11 module) by
 monkeypatching its collaborator functions and invoking the test methods with a fake
-session. Each test proves a specific behavior contract from
-``.superpowers/sdd/2026-09-08-v020-reporting-integrity-fixes/f7-migration-contract.md``:
-a missing attribute produces a structured, mechanism-free record instead of a ``KeyError``
+session. Each test proves a specific behavior contract: a missing attribute
+produces a structured, mechanism-free record instead of a ``KeyError``
 crash; independent work in the same test still runs; handles are still destroyed; and a
 present-but-wrong value still fails hard.
 """

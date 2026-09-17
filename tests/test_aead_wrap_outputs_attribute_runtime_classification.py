@@ -68,7 +68,7 @@ def test_make_keys_missing_value_retains_handles_and_returns_sentinel(
     record = C.get_records()[0]
     assert record.reason == "not_operational"
     assert record.operation == "C_GetAttributeValue"
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert record.mechanism is None
     assert "producer_mechanism=CKM_AES_GCM" in record.label

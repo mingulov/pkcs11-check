@@ -1,7 +1,9 @@
 """Request negotiation (Pillar 1): adapt a positive request to a module's accepted shape.
 
 The module's own clean reject tells us our request shape is wrong; we retry with a
-spec-equivalent variant. No provider identity. See the design spec, guardrails G1-G6.
+spec-equivalent variant. No provider identity. See the design spec (workspace
+docs/superpowers/specs/2026-06-09-behavioral-module-adaptation-design.md),
+negotiation guardrails G1-G6.
 """
 
 from __future__ import annotations
@@ -27,14 +29,15 @@ TEMPLATE_SHAPE_REJECTS: tuple[int, ...] = (
     CKR_ATTRIBUTE_TYPE_INVALID,
 )
 
-# G3: key types for which a CKA_VALUE_LEN variant is permitted in a C_UnwrapKey template.
+# negotiation G3: key types for which a CKA_VALUE_LEN variant is permitted in a
+# C_UnwrapKey template.
 # Restricted to CKK_GENERIC_SECRET: some modules *require* CKA_VALUE_LEN for a variable-length
 # generic secret, while modules that derive the length from the blob reject it as
 # CKR_ATTRIBUTE_READ_ONLY. For CKK_AES, some modules reject CKA_VALUE_LEN outright (probed
 # 2026-06-09) and others do not require it, so AES is deliberately excluded.
 VALUE_LEN_ON_UNWRAP_OK: frozenset[int] = frozenset({int(CKK_GENERIC_SECRET)})
 
-# G3: mechanisms whose recovered length is unambiguously determined, so a supplied
+# negotiation G3: mechanisms whose recovered length is unambiguously determined, so a supplied
 # CKA_VALUE_LEN is a redundant restatement (rejected on conflict), not a truncation control.
 # Excludes every C_DeriveKey length-bearing mech (ECDH1_DERIVE, HKDF, PBKDF2) and every *_PAD
 # unwrap mech by omission -- there CKA_VALUE_LEN IS the length control and present-vs-absent
@@ -63,12 +66,13 @@ def negotiate_request[T](
 ) -> tuple[T, int]:
     """Try spec-equivalent request variants against the live module, canonical-first.
 
-    variants[0] MUST be the most spec-conformant request (G1). attempt runs the operation
-    with one variant's template/param delta and returns its result or raises a
+    variants[0] MUST be the most spec-conformant request (negotiation G1). attempt runs
+    the operation with one variant's template/param delta and returns its result or raises a
     CkrAssertionError. Returns (result, winning_index). Retries to the next variant ONLY on
-    a clean template-shape reject (G2); any other rejection propagates immediately. If every
-    variant is shape-rejected, the last exception is re-raised. Positive ops only (G6);
-    single-shot recipe ops only (G5).
+    a clean template-shape reject (negotiation G2); any other rejection propagates
+    immediately. If every
+    variant is shape-rejected, the last exception is re-raised. Positive ops only (negotiation G6);
+    single-shot recipe ops only (negotiation G5).
 
     shape_rejects is the per-call-site set of clean rejects that mean "request shape",
     not "operation failed". The default stays the narrow template set; widening it is a

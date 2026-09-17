@@ -2,10 +2,10 @@
 
 Background (see .superpowers/sdd/2026-09-08-v020-reporting-integrity-fixes/):
 
-- DEFECT 1 (M5): CKR_ATTRIBUTE_SENSITIVE and CKR_ATTRIBUTE_TYPE_INVALID both surfaced
-  as one undifferentiated omission, so a caller could not tell "the module correctly
-  refused a legitimately-sensitive attribute" from "the module does not recognise
-  this attribute type" (a real deviation). ``read_attributes`` now returns an
+- DEFECT 1 (BRANCH-REVIEW M5): CKR_ATTRIBUTE_SENSITIVE and CKR_ATTRIBUTE_TYPE_INVALID
+  both surfaced as one undifferentiated omission, so a caller could not tell "the module
+  correctly refused a legitimately-sensitive attribute" from "the module does not
+  recognise this attribute type" (a real deviation). ``read_attributes`` now returns an
   ``AttrReadResult`` carrying an additive ``refusals`` channel with the actual CKR
   observed, and ``attr_or_record`` gained a ``sensitive_is_conformant`` flag that only
   the CALL SITE may set (whether an attribute can legitimately be sensitive is not

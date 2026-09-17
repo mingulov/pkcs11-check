@@ -9,6 +9,7 @@ import pytest
 
 from pkcs11_check.raw.types_std import CKR_MECHANISM_INVALID, CKR_OK
 from pkcs11_check.testcases.security import test_handle_reuse
+from tests._skip_assert import assert_skips
 
 
 def _session(*mechanisms: str, raw: Any | None = None) -> SimpleNamespace:
@@ -69,8 +70,11 @@ def test_missing_aes_keygen_is_skip_not_setup_failure(
         raising=False,
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_handle_reuse.TestHandleReuseAfterDestroy().test_double_destroy(_session())
+    assert_skips(
+        test_handle_reuse.TestHandleReuseAfterDestroy().test_double_destroy,
+        _session(),
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_encrypt_after_destroy_unexpected_ckr_xfails(

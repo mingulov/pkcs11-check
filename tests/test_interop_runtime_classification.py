@@ -8,6 +8,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED, CKR_GENERAL_ERROR
 from pkcs11_check.testcases import test_crossverify, test_interop_openssl
 from pkcs11_check.testcases._interop_runtime import xfail_if_interop_operation_reject
+from tests._skip_assert import assert_skips
 
 pytest_plugins = ["pytester"]
 
@@ -70,8 +71,10 @@ def test_p11kit_list_modules_skips_when_executable_absent(
 
     monkeypatch.setattr(test_interop_openssl, "_run", _unexpected_run)
 
-    with pytest.raises(pytest.skip.Exception, match="p11-kit not installed"):
-        test_interop_openssl.TestP11KitProxy().test_p11kit_list_modules()
+    assert_skips(
+        test_interop_openssl.TestP11KitProxy().test_p11kit_list_modules,
+        match="p11-kit not installed",
+    )
 
 
 def test_p11kit_list_modules_runs_when_executable_present(

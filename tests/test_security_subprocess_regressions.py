@@ -228,7 +228,7 @@ def test_rsa_protocol_parses_independent_rv_after_malformed_attribute() -> None:
             ),
         )
     )
-    # I-3: CKR_OK on a CKM_RSA_PKCS decrypt of malformed ciphertext is classified
+    # FABLE I-3: CKR_OK on a CKM_RSA_PKCS decrypt of malformed ciphertext is classified
     # honest_deviation (implicit-rejection countermeasure), not accepted_invalid --
     # it no longer outranks the independent harness_error from the malformed
     # attribute marker, so that is what _raise_strongest surfaces here. The rv is
@@ -251,7 +251,7 @@ def test_rsa_protocol_parses_independent_rv_after_malformed_attribute() -> None:
     assert records[0].detail.get("implicit_rejection_suspected") is True
 
 
-# I-3 regression: RSA PKCS#1 v1.5 implicit rejection (the Bleichenbacher/Marvin
+# FABLE I-3 regression: RSA PKCS#1 v1.5 implicit rejection (the Bleichenbacher/Marvin
 # countermeasure implemented by OpenSSL >= 3.2 and NSS by design) must not be
 # branded a CRITICAL accepted_invalid crypto break. CKR_OK on malformed
 # CKM_RSA_PKCS decrypt input is honest_deviation (xfail, LOW), carrying
@@ -2352,7 +2352,7 @@ def test_ffi_length_encrypt_final_continuation_child_marks_setup_reject(
 
 
 # ---------------------------------------------------------------------------
-# Phase 6 (I6): TestRecoverInputLengthBoundary + TestRecoverOutputLengthBoundary
+# Phase 6 (June-gap I6): TestRecoverInputLengthBoundary + TestRecoverOutputLengthBoundary
 # ---------------------------------------------------------------------------
 
 
@@ -2458,7 +2458,7 @@ def test_recover_output_length_child_skips_on_function_level_fns(
 
 
 # ---------------------------------------------------------------------------
-# Phase 6 (I7): decrypt-update guard + continuation uncovered methods
+# Phase 6 (June-gap I7): decrypt-update guard + continuation uncovered methods
 # ---------------------------------------------------------------------------
 
 
@@ -2595,7 +2595,7 @@ def test_ffi_length_decrypt_final_continuation_child_marks_setup_reject(
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 (F1/M1): every Category-A FFI length probe must parse + classify its
+# Phase 2 (June-gap F1/M1): every Category-A FFI length probe must parse + classify its
 # child rv, and no dead SETUP_XFAIL classify block may remain.
 # ---------------------------------------------------------------------------
 

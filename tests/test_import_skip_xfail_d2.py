@@ -1,4 +1,4 @@
-"""TDD meta-tests for D2 import-skip -> xfail conversion.
+"""TDD meta-tests for import-audit D2 import-skip -> xfail conversion.
 
 Audit reference: import-skip-audit category D, D2.
 
@@ -43,6 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
 )
 from pkcs11_check.testcases.wycheproof.test_wycheproof_x25519 import X25519_OID
+from tests._skip_assert import assert_skips
 
 _ATTR_INVALID = CkrAssertionError(
     "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID", int(CKR_ATTRIBUTE_VALUE_INVALID)
@@ -117,8 +118,14 @@ def test_d2a_xdh_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch) 
     _patch_xdh_decoders(monkeypatch, mod)
     monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_CURVE_NOT_SUPPORTED))
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import Montgomery private key"):
-        mod.test_xdh(_session(), None, "x25519_test.json:tc1-valid", _xdh_vec("valid"))
+    assert_skips(
+        mod.test_xdh,
+        _session(),
+        None,
+        "x25519_test.json:tc1-valid",
+        _xdh_vec("valid"),
+        match="Cannot import Montgomery private key",
+    )
 
 
 def test_d2a_xdh_invalid_vector_broad_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,8 +197,14 @@ def test_d2b_ecdh_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch)
     _patch_ecdh_decoders(monkeypatch, mod)
     monkeypatch.setattr(mod, "provision_ec_private_key", _raiser(_DOMAIN_PARAMS_INVALID))
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC private key for ECDH"):
-        mod.test_ecdh(_session(), None, "ecdh_secp256r1:tc1-valid", _ecdh_vec("valid"))
+    assert_skips(
+        mod.test_ecdh,
+        _session(),
+        None,
+        "ecdh_secp256r1:tc1-valid",
+        _ecdh_vec("valid"),
+        match="Cannot import EC private key for ECDH",
+    )
 
 
 def test_d2b_ecdh_invalid_vector_broad_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -37,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKR_CURVE_NOT_SUPPORTED,
     CKR_DOMAIN_PARAMS_INVALID,
 )
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # Shared CKR fixtures
@@ -111,8 +112,13 @@ def test_a5_ecdsa_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatch)
     # Avoid the module-level _UNSUPPORTED_CURVES cache leaking across tests.
     monkeypatch.setattr(mod, "_UNSUPPORTED_CURVES", set())
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC key for"):
-        mod.test_ecdsa_wycheproof(_session(), "tc1-valid", _ecdsa_vec())
+    assert_skips(
+        mod.test_ecdsa_wycheproof,
+        _session(),
+        "tc1-valid",
+        _ecdsa_vec(),
+        match="Cannot import EC key for",
+    )
 
 
 def test_a5_ecdsa_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,8 +176,13 @@ def test_a7_ed25519_curve_unsupported_still_skips(monkeypatch: pytest.MonkeyPatc
     )
     monkeypatch.setattr(mod, "_UNSUPPORTED_CURVE_OIDS", set())
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import Ed25519 public key"):
-        mod.test_ed25519_wycheproof(_session(), "tc1-valid", _ed25519_vec())
+    assert_skips(
+        mod.test_ed25519_wycheproof,
+        _session(),
+        "tc1-valid",
+        _ed25519_vec(),
+        match="Cannot import Ed25519 public key",
+    )
 
 
 def test_a7_ed25519_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,8 +240,13 @@ def test_a8_acvp_eddsa_curve_absent_still_skips(monkeypatch: pytest.MonkeyPatch)
         mod, "import_eddsa_public_key_with_supported_encoding", _raiser(_CURVE_NOT_SUPPORTED)
     )
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EdDSA public key for"):
-        mod.test_acvp_eddsa_sigver(_session(), "EDDSA-SigVer-ED-25519-tc1", _acvp_eddsa_vec())
+    assert_skips(
+        mod.test_acvp_eddsa_sigver,
+        _session(),
+        "EDDSA-SigVer-ED-25519-tc1",
+        _acvp_eddsa_vec(),
+        match="Cannot import EdDSA public key for",
+    )
 
 
 def test_a8_acvp_eddsa_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -287,8 +303,14 @@ def test_a14_acvp_ecdsa_curve_absent_still_skips(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(mod, "provision_public_key", _raiser(_DOMAIN_PARAMS_INVALID))
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key for"):
-        mod.test_acvp_ecdsa_sigver(_session(), None, "ECDSA-SigVer-P-256-tc1", _acvp_ecdsa_vec())
+    assert_skips(
+        mod.test_acvp_ecdsa_sigver,
+        _session(),
+        None,
+        "ECDSA-SigVer-P-256-tc1",
+        _acvp_ecdsa_vec(),
+        match="Cannot import EC public key for",
+    )
 
 
 def test_a14_acvp_ecdsa_non_ckr_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

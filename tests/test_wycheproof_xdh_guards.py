@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.wycheproof import test_wycheproof_x25519 as xdh
+from tests._skip_assert import assert_skips
 
 
 class _XdhSession:
@@ -108,8 +109,14 @@ def test_duplicate_xdh_container_vector_is_skipped(
     vec_id = "x25519_asn_test.json:tc1-valid"
     vec = next(vec for candidate_id, vec in xdh._ALL_XDH_VECTORS if candidate_id == vec_id)
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 XDH operation input"):
-        xdh.test_xdh(_XdhSession(), None, vec_id, vec)
+    assert_skips(
+        xdh.test_xdh,
+        _XdhSession(),
+        None,
+        vec_id,
+        vec,
+        match="Duplicate PKCS#11 XDH operation input",
+    )
 
 
 def test_invalid_xdh_public_decode_is_unrepresentable_skip(
@@ -123,8 +130,14 @@ def test_invalid_xdh_public_decode_is_unrepresentable_skip(
         if vec_id == "x25519_jwk_test.json:tc528-invalid"
     )
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot represent invalid"):
-        xdh.test_xdh(_XdhSession(), None, "x25519_jwk_test.json:tc528-invalid", vec)
+    assert_skips(
+        xdh.test_xdh,
+        _XdhSession(),
+        None,
+        "x25519_jwk_test.json:tc528-invalid",
+        vec,
+        match="Cannot represent invalid",
+    )
 
 
 def test_valid_xdh_private_decoder_bug_propagates(
@@ -304,8 +317,14 @@ def test_invalid_xdh_curve_setup_still_skips(monkeypatch: pytest.MonkeyPatch) ->
         ),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import Montgomery private key"):
-        xdh.test_xdh(_XdhSession(), None, "synthetic:tc1-invalid", _vector("invalid"))
+    assert_skips(
+        xdh.test_xdh,
+        _XdhSession(),
+        None,
+        "synthetic:tc1-invalid",
+        _vector("invalid"),
+        match="Cannot import Montgomery private key",
+    )
 
 
 def test_invalid_xdh_setup_non_ckr_assertion_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -67,7 +67,7 @@ def test_missing_original_value_is_structured_and_cleans_up(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "not_operational"]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert all(record.mechanism is None for record in records)
     assert all("producer_mechanism=CKM_AES_GCM" in record.label for record in records)

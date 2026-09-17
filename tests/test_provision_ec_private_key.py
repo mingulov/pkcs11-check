@@ -35,6 +35,7 @@ from pkcs11_check.raw.types_std import (
     CKK_EC,
     CKO_PRIVATE_KEY,
 )
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # P-256 test key (generated once; used across all tests for payload checks)
@@ -309,18 +310,18 @@ def test_off_create_absent_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=402)
     cfg = _make_cfg("off")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_ec_private_key(
-            rs,
-            cfg,
-            ec_params=EC_P256_PARAMS,
-            value=EC_SCALAR,
-            key_type=EC_KEY_TYPE,
-            attrs=_EC_ATTRS,
-            label="t",
-        )
+    skipped = assert_skips(
+        provision_ec_private_key,
+        rs,
+        cfg,
+        ec_params=EC_P256_PARAMS,
+        value=EC_SCALAR,
+        key_type=EC_KEY_TYPE,
+        attrs=_EC_ATTRS,
+        label="t",
+    )
 
-    assert "C_CreateObject" in str(exc_info.value)
+    assert "C_CreateObject" in str(skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -337,18 +338,18 @@ def test_no_wrap_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=403, has_mech=True)
     cfg = _make_cfg("force-unwrap")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_ec_private_key(
-            rs,
-            cfg,
-            ec_params=EC_P256_PARAMS,
-            value=EC_SCALAR,
-            key_type=EC_KEY_TYPE,
-            attrs=_EC_ATTRS,
-            label="t",
-        )
+    skipped = assert_skips(
+        provision_ec_private_key,
+        rs,
+        cfg,
+        ec_params=EC_P256_PARAMS,
+        value=EC_SCALAR,
+        key_type=EC_KEY_TYPE,
+        attrs=_EC_ATTRS,
+        label="t",
+    )
 
-    assert "no wrapping path" in str(exc_info.value)
+    assert "no wrapping path" in str(skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -459,18 +460,18 @@ def test_unsupported_key_type_on_unwrap_path_skips(monkeypatch: pytest.MonkeyPat
 
     # Use an unsupported key_type (not CKK_EC/CKK_EC_EDWARDS/CKK_EC_MONTGOMERY) —
     # ec_pkcs8_from_private will raise ValueError naturally, which must become a pytest.skip.
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_ec_private_key(
-            rs,
-            cfg,
-            ec_params=EC_P256_PARAMS,
-            value=EC_SCALAR,
-            key_type=0xDEADBEEF,  # unsupported key type -> ValueError from ec_pkcs8_from_private
-            attrs=_EC_ATTRS,
-            label="mykey",
-        )
+    skipped = assert_skips(
+        provision_ec_private_key,
+        rs,
+        cfg,
+        ec_params=EC_P256_PARAMS,
+        value=EC_SCALAR,
+        key_type=0xDEADBEEF,  # unsupported key type -> ValueError from ec_pkcs8_from_private
+        attrs=_EC_ATTRS,
+        label="mykey",
+    )
 
-    skip_msg = str(exc_info.value)
+    skip_msg = str(skipped)
     assert "mykey" in skip_msg, "skip message must contain the label"
     assert "PKCS#8" in skip_msg or "encoding" in skip_msg, (
         "skip message must mention PKCS#8 encoding"

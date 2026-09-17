@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
 )
 from pkcs11_check.testcases import test_object
+from tests._skip_assert import assert_skips
 
 
 def _session(*mechanisms: str) -> SimpleNamespace:
@@ -37,8 +38,11 @@ def test_session_object_skips_missing_aes_keygen(
 
     monkeypatch.setattr(raw_recipes, "gen_aes_key", _unexpected_keygen)
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_object.TestSessionObjects().test_create_secret_key_with_label(_session())
+    assert_skips(
+        test_object.TestSessionObjects().test_create_secret_key_with_label,
+        _session(),
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_session_object_aes_keygen_runtime_reject_is_xfail(
@@ -68,8 +72,11 @@ def test_ec_keypair_attributes_skip_missing_ec_keygen(
 
     monkeypatch.setattr(raw_recipes, "gen_ec_keypair", _unexpected_keypair)
 
-    with pytest.raises(pytest.skip.Exception, match="EC_KEY_PAIR_GEN not supported"):
-        test_object.TestKeyPairAttributes().test_ec_keypair_attributes(_session())
+    assert_skips(
+        test_object.TestKeyPairAttributes().test_ec_keypair_attributes,
+        _session(),
+        match="EC_KEY_PAIR_GEN not supported",
+    )
 
 
 def test_imported_key_verifies_signature_skips_missing_rsa_sign_mechanism(
@@ -83,10 +90,11 @@ def test_imported_key_verifies_signature_skips_missing_rsa_sign_mechanism(
     monkeypatch.setattr(raw_recipes, "gen_rsa_keypair", _unexpected_keypair)
     monkeypatch.setattr(test_object, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_object.TestKeyImportExport().test_imported_key_verifies_signature(
-            _session("RSA_PKCS_KEY_PAIR_GEN")
-        )
+    assert_skips(
+        test_object.TestKeyImportExport().test_imported_key_verifies_signature,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_import_rsa_public_key_xfails_malformed_generated_attrs(

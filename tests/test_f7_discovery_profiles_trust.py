@@ -6,8 +6,7 @@ test_duplicate_labels, test_mechanism_objects, test_metamorphic, test_search,
 test_object_search_patterns, test_object_visibility, test_profiles, test_trust_objects}.py``
 directly (not through pytest collection of those files, which need a real PKCS#11 module) by
 monkeypatching their collaborator functions and invoking the test methods / helpers with a fake
-session. Each test proves a behavior contract from
-``.superpowers/sdd/2026-09-08-v020-reporting-integrity-fixes/f7-migration-contract.md``: a missing
+session. Each test proves a behavior contract: a missing
 attribute produces a structured, mechanism-free record instead of a ``KeyError`` crash;
 independent work in the same test still runs; handles/sessions are still cleaned up; and a
 present-but-wrong value still fails hard.

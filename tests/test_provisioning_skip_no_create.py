@@ -15,6 +15,7 @@ from pkcs11_check.config import P11TestConfig
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKK_AES, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases._provisioning import provision_secret_key
+from tests._skip_assert import assert_skips
 
 
 def _reset_cache() -> None:
@@ -47,5 +48,4 @@ def test_no_create_no_unwrap_skips_cleanly(monkeypatch: pytest.MonkeyPatch) -> N
     _reset_cache()
 
     cfg = P11TestConfig(module=Path("/x.so"), key_inject="off")
-    with pytest.raises(pytest.skip.Exception):
-        provision_secret_key(_NoCreateRs(), cfg, CKK_AES, b"\x00" * 16, {}, label="x")
+    assert_skips(provision_secret_key, _NoCreateRs(), cfg, CKK_AES, b"\x00" * 16, {}, label="x")

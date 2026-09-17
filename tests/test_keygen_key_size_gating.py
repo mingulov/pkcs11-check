@@ -20,6 +20,7 @@ from pkcs11_check.testcases.conftest import (
     keygen_key_size_supported,
     require_keygen_key_size,
 )
+from tests._skip_assert import assert_skips
 
 
 def _patch_info(monkeypatch: pytest.MonkeyPatch, *, min_key: int, max_key: int) -> None:
@@ -55,8 +56,7 @@ def test_rsa_below_min_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_info(monkeypatch, min_key=2048, max_key=2048)
     rs = _rs(advertised=True)
     assert keygen_key_size_supported(rs, "RSA_PKCS_KEY_PAIR_GEN", 1024) is False
-    with pytest.raises(pytest.skip.Exception):
-        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", 1024, label="rsa-below")
+    assert_skips(require_keygen_key_size, rs, "RSA_PKCS_KEY_PAIR_GEN", 1024, label="rsa-below")
 
 
 def test_rsa_above_max_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,8 +65,7 @@ def test_rsa_above_max_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
     rs = _rs(advertised=True)
     assert keygen_key_size_supported(rs, "RSA_PKCS_KEY_PAIR_GEN", 3072) is False
     assert keygen_key_size_supported(rs, "RSA_PKCS_KEY_PAIR_GEN", 4096) is False
-    with pytest.raises(pytest.skip.Exception):
-        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", 4096, label="rsa-above")
+    assert_skips(require_keygen_key_size, rs, "RSA_PKCS_KEY_PAIR_GEN", 4096, label="rsa-above")
 
 
 def test_mechanism_not_advertised_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,8 +73,7 @@ def test_mechanism_not_advertised_not_supported(monkeypatch: pytest.MonkeyPatch)
     _patch_info(monkeypatch, min_key=2048, max_key=4096)
     rs = _rs(advertised=False)
     assert keygen_key_size_supported(rs, "RSA_PKCS_KEY_PAIR_GEN", 2048) is False
-    with pytest.raises(pytest.skip.Exception):
-        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", 2048, label="rsa-absent")
+    assert_skips(require_keygen_key_size, rs, "RSA_PKCS_KEY_PAIR_GEN", 2048, label="rsa-absent")
 
 
 def test_info_error_is_not_converted_to_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,5 +115,4 @@ def test_ec_p521_out_of_range_when_max_384(monkeypatch: pytest.MonkeyPatch) -> N
     assert keygen_key_size_supported(rs, "EC_KEY_PAIR_GEN", 521) is False
     assert keygen_key_size_supported(rs, "EC_KEY_PAIR_GEN", 256) is True
     assert keygen_key_size_supported(rs, "EC_KEY_PAIR_GEN", 384) is True
-    with pytest.raises(pytest.skip.Exception):
-        require_keygen_key_size(rs, "EC_KEY_PAIR_GEN", 521, label="p521-out")
+    assert_skips(require_keygen_key_size, rs, "EC_KEY_PAIR_GEN", 521, label="p521-out")

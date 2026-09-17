@@ -1019,7 +1019,7 @@ class TestForkSafety:
 
 
 class TestSessionObjectProcessIsolation:
-    """CROSS-PROC-001: cross-process session-object isolation.
+    """Cross-process session-object isolation.
 
     PKCS#11 v3.2 says session objects belong to a session, and
     sessions belong to an "application". An application is whatever
@@ -1052,8 +1052,7 @@ class TestSessionObjectProcessIsolation:
              visible).
         2. Compare results.
 
-        Closes Phase 4.5 follow-up CROSS-PROC-001 (LOW-MED). Skips when
-        the module doesn't support fork-after-initialize cleanly. Those modules
+        Skips when the module doesn't support fork-after-initialize cleanly. Those modules
         need additional setup that the subprocess test framework already
         documents.
         """

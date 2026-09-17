@@ -8,6 +8,7 @@ import pytest
 from pkcs11_check.compliance import clear_notes, get_notes
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD
 from pkcs11_check.testcases import test_dual_function, test_operation_state
+from tests._skip_assert import assert_skips
 
 
 def _config() -> SimpleNamespace:
@@ -32,11 +33,12 @@ def test_dual_digest_encrypt_skips_before_child_when_aes_setup_missing(
         lambda *_args, **_kwargs: pytest.fail("child subprocess should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN"):
-        test_dual_function.TestDigestEncryptUpdate().test_digest_encrypt_update_round_trip(
-            _config(),
-            _raw_session("AES_CBC", "SHA256"),
-        )
+    assert_skips(
+        test_dual_function.TestDigestEncryptUpdate().test_digest_encrypt_update_round_trip,
+        _config(),
+        _raw_session("AES_CBC", "SHA256"),
+        match="AES_KEY_GEN",
+    )
 
 
 def test_dual_decrypt_digest_skips_before_child_when_digest_setup_missing(
@@ -48,11 +50,12 @@ def test_dual_decrypt_digest_skips_before_child_when_digest_setup_missing(
         lambda *_args, **_kwargs: pytest.fail("child subprocess should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256"):
-        test_dual_function.TestDecryptDigestUpdate().test_decrypt_digest_update_round_trip(
-            _config(),
-            _raw_session("AES_KEY_GEN", "AES_CBC"),
-        )
+    assert_skips(
+        test_dual_function.TestDecryptDigestUpdate().test_decrypt_digest_update_round_trip,
+        _config(),
+        _raw_session("AES_KEY_GEN", "AES_CBC"),
+        match="SHA256",
+    )
 
 
 def test_operation_state_digest_skips_before_child_when_sha256_missing(
@@ -64,11 +67,12 @@ def test_operation_state_digest_skips_before_child_when_sha256_missing(
         lambda *_args, **_kwargs: pytest.fail("child subprocess should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256"):
-        test_operation_state.TestDigestStateRoundTrip().test_digest_state_same_session(
-            _config(),
-            _raw_session(),
-        )
+    assert_skips(
+        test_operation_state.TestDigestStateRoundTrip().test_digest_state_same_session,
+        _config(),
+        _raw_session(),
+        match="SHA256",
+    )
 
 
 def test_operation_state_encrypt_skips_before_child_when_aes_keygen_missing(
@@ -80,11 +84,12 @@ def test_operation_state_encrypt_skips_before_child_when_aes_keygen_missing(
         lambda *_args, **_kwargs: pytest.fail("child subprocess should not run"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN"):
-        test_operation_state.TestEncryptStateRoundTrip().test_encrypt_state_same_session(
-            _config(),
-            _raw_session("AES_CBC"),
-        )
+    assert_skips(
+        test_operation_state.TestEncryptStateRoundTrip().test_encrypt_state_same_session,
+        _config(),
+        _raw_session("AES_CBC"),
+        match="AES_KEY_GEN",
+    )
 
 
 def test_operation_state_api_get_guard_does_not_require_set() -> None:

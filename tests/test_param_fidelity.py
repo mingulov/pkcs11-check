@@ -34,6 +34,7 @@ from pkcs11_check.testcases._param_fidelity import (
     recover_oaep_params,
     recover_pss_salt_len,
 )
+from tests._skip_assert import assert_skips
 
 
 def test_classify_pass_when_valid_and_conforms() -> None:
@@ -304,8 +305,7 @@ def test_pss_mismatch_accept_then_valid_sig_is_honest_deviation(
 def test_pss_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Probe is skipped when mechanism is not advertised."""
     _wire_pss(monkeypatch)
-    with pytest.raises(pytest.skip.Exception):
-        pss_mod.TestPssParamMismatch().test_pss_hash_mismatch(_rs(has_mech=False))
+    assert_skips(pss_mod.TestPssParamMismatch().test_pss_hash_mismatch, _rs(has_mech=False))
 
 
 # ---- OAEP source-param self-contradiction ----
@@ -394,7 +394,8 @@ def test_oaep_mismatch_accept_unrecoverable_is_not_operational(
 def test_oaep_mismatch_skipped_when_mechanism_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Probe is skipped when OAEP is not advertised."""
     _wire_oaep(monkeypatch)
-    with pytest.raises(pytest.skip.Exception):
-        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction(
-            _rs(has_mech=False), None
-        )
+    assert_skips(
+        oaep_mod.TestOaepParamMismatch().test_oaep_source_param_self_contradiction,
+        _rs(has_mech=False),
+        None,
+    )

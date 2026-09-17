@@ -28,7 +28,7 @@ from pkcs11_check.core.nodeids import item_nodeid
 # drop or alter a test. The cache lives in a private owner-only dir (never /tmp,
 # which is world-writable) and is stored as plain JSON (no code-object surface).
 # Disable with PKCS11_CHECK_NO_COLLECTION_CACHE=1.
-_CACHE_FORMAT = 3
+_CACHE_FORMAT = 4
 _PACKAGE_DIR = Path(__file__).resolve().parents[1]
 # pytest args that name a per-run temp file and do NOT affect which items are
 # collected (the manifest is only consulted at runtime, never during
@@ -57,9 +57,22 @@ def _digest_args(pytest_args: list[str]) -> list[str]:
     return out
 
 
-def _iter_input_files() -> list[Path]:
+def _iter_input_files(data_dir_override: str | None = None) -> list[Path]:
     """All files whose content can change what pytest collects: package source
-    plus the resolved vendor vector data."""
+    plus the resolved vendor vector data.
+
+    `data_dir_override` is the child env's PKCS11_CHECK_DATA_DIR (see
+    `_collection_inputs_digest`): the digest runs in the parent but collection
+    runs in the child, so the walked tree must be the child's effective one.
+    """
+    files = list(_PACKAGE_DIR.rglob("*.py"))
+    if data_dir_override:
+        # Child resolves vendor data elsewhere: walk the effective tree (whole
+        # dir, layout-agnostic) so content changes there invalidate the cache.
+        override = Path(data_dir_override)
+        if override.exists():
+            files.extend(p for p in override.rglob("*") if p.is_file())
+        return files
     # Deliberate lazy import of the test-vector data roots: the collection cache must know
     # which data dirs affect collection to invalidate correctly (an inherent cache<->data
     # coupling), and those roots belong in testcases.data. Importing at call time keeps it a
@@ -71,15 +84,25 @@ def _iter_input_files() -> list[Path]:
         X509_LIMBO_DIR,
     )
 
-    files = list(_PACKAGE_DIR.rglob("*.py"))
     for data_dir in (WYCHEPROOF_DIR, ACVP_DIR, CCTV_DIR, X509_LIMBO_DIR):
         if data_dir.exists():
             files.extend(p for p in data_dir.rglob("*") if p.is_file())
     return files
 
 
-def _collection_inputs_digest(targets: list[str], pytest_args: list[str]) -> str | None:
-    """Digest every input that affects collection, or None to bypass the cache."""
+def _collection_inputs_digest(
+    targets: list[str],
+    pytest_args: list[str],
+    data_dir_override: str | None = None,
+) -> str | None:
+    """Digest every input that affects collection, or None to bypass the cache.
+
+    `data_dir_override` is the collecting child's PKCS11_CHECK_DATA_DIR: the
+    digest runs in the parent while collection runs in the child, so without
+    it two children with different data dirs would alias to one cache entry
+    (stale fetch-then-test ordering). The override string itself is digested
+    so distinct-but-empty dirs still key apart.
+    """
     try:
         from pkcs11_check import __version__ as pkg_version
 
@@ -90,9 +113,10 @@ def _collection_inputs_digest(targets: list[str], pytest_args: list[str]) -> str
             f"pkg={pkg_version}",
             f"targets={sorted(str(Path(t)) for t in targets)}",
             f"args={_digest_args(pytest_args)}",
+            f"data_dir={data_dir_override or ''}",
         ]
         stats: list[str] = []
-        for path in _iter_input_files():
+        for path in _iter_input_files(data_dir_override):
             st = path.stat()
             stats.append(f"{path}:{st.st_mtime_ns}:{st.st_size}")
         stats.sort()
@@ -179,9 +203,14 @@ def collect_pytest_item_metadata(
     the ~13-18s --collect-only pass is skipped. Set
     PKCS11_CHECK_NO_COLLECTION_CACHE=1 to bypass it entirely.
     """
-    cache_enabled = (env or os.environ).get("PKCS11_CHECK_NO_COLLECTION_CACHE") not in {"1", "true"}
+    effective_env = env or os.environ
+    cache_enabled = effective_env.get("PKCS11_CHECK_NO_COLLECTION_CACHE") not in {"1", "true"}
     cache_dir = _collection_cache_dir() if cache_enabled else None
-    digest = _collection_inputs_digest(targets, pytest_args) if cache_dir is not None else None
+    digest = (
+        _collection_inputs_digest(targets, pytest_args, effective_env.get("PKCS11_CHECK_DATA_DIR"))
+        if cache_dir is not None
+        else None
+    )
     cache_path = cache_dir / f"{digest}.json" if (cache_dir is not None and digest) else None
     if cache_path is not None:
         cached = _read_collection_cache(cache_path)

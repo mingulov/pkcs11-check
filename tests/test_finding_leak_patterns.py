@@ -154,7 +154,8 @@ def test_no_finding_leak_patterns() -> None:
     )
 
 
-# --- D2: named-tuple CKR_OK acceptance on negative ops (blind spot of the regex above) ---
+# --- arch Class-D D2: named-tuple CKR_OK acceptance on negative ops (blind spot
+# of the regex above) ---
 # The `assert rv in (CKR_OK, ...)` checks above only see a *literal* tuple. Accepting CKR_OK
 # via a named tuple/set -- `assert rv in _ACCEPT` where `_ACCEPT = (..., CKR_OK)` -- is invisible
 # to them. This AST check resolves module-level names so a CKR_OK acceptance can't hide behind a

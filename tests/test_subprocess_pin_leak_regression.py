@@ -1,6 +1,6 @@
 """Regression tests: subprocess test files must not embed the PIN in script text.
 
-Batch B / M1 follow-up. Three files build their own subprocess boilerplate and
+source-audit M1 follow-up. Three files build their own subprocess boilerplate and
 previously interpolated the user PIN into the ``-c`` script (exposing it in the
 child argv via ``ps``/``/proc`` and in any traceback):
 
@@ -22,6 +22,7 @@ import pytest
 
 from pkcs11_check.testcases import test_dual_function, test_sign_recover
 from pkcs11_check.testcases.ckr import test_ckr_raw_state
+from tests._skip_assert import assert_skips
 
 _PIN = "s3cr3t-PIN-DO-NOT-LEAK"
 
@@ -100,10 +101,11 @@ def test_dual_function_pin_routed_to_run_probe_not_params(
     monkeypatch.setattr(test_dual_function, "run_probe", _fake_run_probe)
 
     raw_session = SimpleNamespace(raw=SimpleNamespace(), has_mechanism=lambda _name: True)
-    with pytest.raises(pytest.skip.Exception):
-        test_dual_function.TestDigestEncryptUpdate().test_digest_encrypt_update_round_trip(
-            _cfg(), raw_session
-        )
+    assert_skips(
+        test_dual_function.TestDigestEncryptUpdate().test_digest_encrypt_update_round_trip,
+        _cfg(),
+        raw_session,
+    )
 
     # The PIN must be forwarded to run_probe via pin= only (the runner injects it into
     # the child env under _P11CHECK_PIN); it must never appear in the probe params.
@@ -126,10 +128,11 @@ def test_dual_function_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) ->
 
     raw_session = SimpleNamespace(raw=SimpleNamespace(), has_mechanism=lambda _name: True)
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
-    with pytest.raises(pytest.skip.Exception):
-        test_dual_function.TestDecryptDigestUpdate().test_decrypt_digest_update_round_trip(
-            cfg, raw_session
-        )
+    assert_skips(
+        test_dual_function.TestDecryptDigestUpdate().test_decrypt_digest_update_round_trip,
+        cfg,
+        raw_session,
+    )
 
     assert captured["pin"] is None
 
@@ -161,10 +164,11 @@ def test_sign_recover_pin_routed_to_run_probe_not_params(
 
     monkeypatch.setattr(test_sign_recover, "run_probe", _fake_run_probe)
 
-    with pytest.raises(pytest.skip.Exception):
-        test_sign_recover.TestSignRecover().test_sign_recover_produces_output(
-            _cfg(), _rsa_x509_module()
-        )
+    assert_skips(
+        test_sign_recover.TestSignRecover().test_sign_recover_produces_output,
+        _cfg(),
+        _rsa_x509_module(),
+    )
 
     # The PIN must be forwarded to run_probe via pin= only (the runner injects it into
     # the child env under _P11CHECK_PIN); it must never appear in the probe params.
@@ -186,9 +190,10 @@ def test_sign_recover_no_pin_means_pin_none(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(test_sign_recover, "run_probe", _fake_run_probe)
 
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=None)
-    with pytest.raises(pytest.skip.Exception):
-        test_sign_recover.TestSignRecover().test_sign_recover_produces_output(
-            cfg, _rsa_x509_module()
-        )
+    assert_skips(
+        test_sign_recover.TestSignRecover().test_sign_recover_produces_output,
+        cfg,
+        _rsa_x509_module(),
+    )
 
     assert captured["pin"] is None

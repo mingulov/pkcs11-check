@@ -22,6 +22,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import test_ec_import_export
 from tests._attribute_access_guard import analyze_file
+from tests._skip_assert import assert_skips
 
 pytest_plugins = ["pytester"]
 
@@ -887,7 +888,7 @@ def test_ec_import_export_source_analyzer_is_clean() -> None:
     assert analyze_file("src/pkcs11_check/testcases/test_ec_import_export.py") == []
 
 
-# I-1 / F-A regression: _make_ec_keypair() must gate on EC_KEY_PAIR_GEN
+# FABLE I-1 / F-A regression: _make_ec_keypair() must gate on EC_KEY_PAIR_GEN
 # advertisement before generating -- previously it always attempted
 # gen_ec_keypair() and, on CKR_MECHANISM_INVALID (which is itself evidence
 # the mechanism is NOT advertised), mislabelled the module with
@@ -908,8 +909,7 @@ def test_make_ec_keypair_skips_when_keygen_not_advertised(
 
     monkeypatch.setattr(test_ec_import_export, "gen_ec_keypair", _gen_ec_keypair)
 
-    with pytest.raises(pytest.skip.Exception):
-        test_ec_import_export._make_ec_keypair(_session(), "secp256r1")
+    assert_skips(test_ec_import_export._make_ec_keypair, _session(), "secp256r1")
 
     assert C.get_records() == []
 

@@ -33,6 +33,7 @@ from pkcs11_check.testcases.wycheproof import (
 from pkcs11_check.testcases.wycheproof import (
     test_wycheproof_rsa_oaep as rsa_oaep,
 )
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # Shared CKR fixtures (A12 meta-tests)
@@ -133,8 +134,14 @@ def test_a12_gate_not_advertised_skips() -> None:
     the gate is absent -- regression.
     """
     vec_id, vec = _first_valid_pkcs1()
-    with pytest.raises(pytest.skip.Exception, match="RSA_PKCS not supported"):
-        rsa_dec.test_rsa_pkcs1_decrypt(_RsaNoneSession(), None, vec_id, vec)
+    assert_skips(
+        rsa_dec.test_rsa_pkcs1_decrypt,
+        _RsaNoneSession(),
+        None,
+        vec_id,
+        vec,
+        match="RSA_PKCS not supported",
+    )
 
 
 # ===========================================================================

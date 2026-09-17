@@ -117,20 +117,28 @@ def to_ubyte_buf(data: bytes) -> ctypes.Array[ctypes.c_ubyte]:
     return (ctypes.c_ubyte * n).from_buffer_copy(data)
 
 
+class ImplausibleModuleLengthError(ValueError):
+    """A module reported an absurd output length (e.g. an error sentinel left in a
+    length out-param). A ``ValueError`` subclass so existing generic handlers keep
+    working; collection-time probes catch the subclass to contain provider
+    misbehavior without masking true harness bugs."""
+
+
 def _alloc_module_output(size: int, *, what: str) -> ctypes.Array[ctypes.c_ubyte]:
     """Allocate a ``CK_BYTE * size`` output buffer sized from a module-reported length.
 
     A conformant module reports its real output length; a module that reports an absurd
     length (e.g. an error sentinel left in the length out-param) would make the allocation
     raise an opaque ``OverflowError``/``MemoryError`` that surfaces as a cryptic harness
-    error and masks the real finding.  Re-raise it as a legible ``ValueError`` naming the
-    reported size and call so the module's bad length report stays diagnosable.  No upper
-    cap is imposed, so a genuinely-large legitimate output is never rejected.
+    error and masks the real finding.  Re-raise it as a legible
+    ``ImplausibleModuleLengthError`` naming the reported size and call so the module's
+    bad length report stays diagnosable.  No upper cap is imposed, so a
+    genuinely-large legitimate output is never rejected.
     """
     try:
         return (ctypes.c_ubyte * size)()
     except (OverflowError, MemoryError) as exc:
-        raise ValueError(
+        raise ImplausibleModuleLengthError(
             f"{what}: module reported an implausible output length ({size} bytes)"
         ) from exc
 
@@ -318,12 +326,12 @@ def _two_call_output(
             out_buf = _alloc_module_output(size, what=call_fn)
             out_len = CK_ULONG(size)
             rv = fn(*args, out_buf, byref(out_len))
-        expect_rv(rv, CKR_OK)
+        expect_rv(rv, CKR_OK, context=call_fn)
         return bytes(out_buf[: out_len.value])
     # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
     rv = fn(*args, None, byref(out_len))
-    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL)
+    expect_rv(rv, CKR_OK, CKR_BUFFER_TOO_SMALL, context=f"{call_fn} size query")
     size = out_len.value
     out_buf = _alloc_module_output(size, what=call_fn)
     out_len = CK_ULONG(size)
@@ -335,7 +343,7 @@ def _two_call_output(
         out_buf = _alloc_module_output(size, what=call_fn)
         out_len = CK_ULONG(size)
         rv = fn(*args, out_buf, byref(out_len))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, context=call_fn)
     return bytes(out_buf[: out_len.value])
 
 
@@ -875,7 +883,7 @@ def encrypt_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_EncryptInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, context="C_EncryptInit")
     in_buf = to_ubyte_buf(plaintext)
     hint = output_size_hint or ((len(plaintext) + output_overhead) if output_overhead > 0 else 0)
     try:
@@ -957,7 +965,7 @@ def decrypt_single(
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = _init_or_recover(raw, session, lambda: raw.C_DecryptInit(session, mech.byref(), key))
-    expect_rv(rv, CKR_OK)
+    expect_rv(rv, CKR_OK, context="C_DecryptInit")
     in_buf = to_ubyte_buf(ciphertext)
     try:
         return _two_call_output(

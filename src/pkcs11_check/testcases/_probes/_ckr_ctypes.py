@@ -7,7 +7,7 @@ every raw-ctypes ``ckr`` probe can resolve and call ``C_*`` functions directly t
 module's function-pointer table -- bypassing RawPKCS11's safety checks (needed to pass the
 NULL / oversized arguments a wrapper would reject).
 
-The whole Family-B raw-ctypes family reuses ``FUNC_INDICES`` + ``make_caller``:
+The whole raw-ctypes ckr family reuses ``FUNC_INDICES`` + ``make_caller``:
 
     from pkcs11_check.testcases._probes._ckr_ctypes import make_caller
     call_func, get_func = make_caller(ctx.func_list)   # ctx: RawCtypesContext

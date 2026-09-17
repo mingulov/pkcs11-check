@@ -186,10 +186,11 @@ def test_missing_attribute_does_not_hide_malformed_sibling() -> None:
 
     assert not isinstance(exc_info.value, XFailed)
     records = C.get_records()
-    # F6: records[0] (missing CKA_SENSITIVE) is a plain readback and is never stamped
-    # with the mechanism that produced the object being read -- the producer survives
-    # in the label instead. records[1] (malformed present CKA_KEY_TYPE) goes through
-    # the unrelated _record_attribute_mismatch() path and keeps its mechanism.
+    # Readback attribution: records[0] (missing CKA_SENSITIVE) is a plain readback
+    # and is never stamped with the mechanism that produced the object being read --
+    # the producer survives in the label instead. records[1] (malformed present
+    # CKA_KEY_TYPE) goes through the unrelated _record_attribute_mismatch() path and
+    # keeps its mechanism.
     assert [(record.operation, record.mechanism) for record in records] == [
         ("C_GetAttributeValue", None),
         ("C_GetAttributeValue", "CKM_HSS_KEY_PAIR_GEN"),

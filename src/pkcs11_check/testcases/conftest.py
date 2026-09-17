@@ -329,7 +329,8 @@ def skip_unless_mechanism_flag(rs: Any, mechanism: str | int, flag: int) -> None
     A missing operation flag is the module declaring it does not expose that
     operation for that mechanism -- a genuine capability absence, the one
     sanctioned skip category. The metadata deviation itself is recorded once by
-    test_mech_flags.py::test_expected_flags_present (see the resilience spec).
+    test_mech_flags.py::test_expected_flags_present (see the resilience spec,
+    workspace docs/superpowers/specs/2026-06-15-pkcs11-check-resilience-design.md).
     """
     if rs.has_mechanism_flag(mechanism, flag):
         return
@@ -1196,12 +1197,12 @@ def classify_discrimination(*, valid_accepted: bool, invalid_outcome: Any, label
     Args:
         valid_accepted: the un-tampered operation succeeded AND its result was verified
             (a real, material-checked positive leg). Advertised-but-not-operational
-            positive legs are routed to xfail by the caller BEFORE this call (D5); a
+            positive legs are routed to xfail by the caller BEFORE this call (Pillar-2 D5); a
             ``False`` here means CKR_OK-but-wrong/unverifiable output -- a real break.
         invalid_outcome: the invalid leg's outcome -- either the caught exception, or the
             produced object (handle/bytes) when the module ACCEPTED the bad input.
-            A ``CkrAssertionError`` (clean ``.rv``) -> rejected (any code, D3). Any other
-            exception (no ``.rv``) -> re-raised (D2: a harness/ctypes bug, not detection).
+            A ``CkrAssertionError`` (clean ``.rv``) -> rejected (any code, Pillar-2 D3). Any other
+            exception (no ``.rv``) -> re-raised (Pillar-2 D2: a harness/ctypes bug, not detection).
             A produced object (not an exception) -> accepted -> break.
     """
     if isinstance(invalid_outcome, CkrAssertionError):

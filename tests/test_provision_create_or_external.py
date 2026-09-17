@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 import pkcs11_check.testcases._provisioning as _prov
 from pkcs11_check.raw.types_std import CKK_EC_EDWARDS, CKK_EC_MONTGOMERY
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # Test fixtures: a real P-256 keypair and RSA-2048 keypair for material tests
@@ -441,20 +442,18 @@ def test_public_ec_create_absent_no_external_skips(monkeypatch: pytest.MonkeyPat
     )
 
     clear_provisioning_events()
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_public_key(
-            rs,
-            _make_cfg(),
-            key_type=int(CKK_EC),
-            attrs={},
-            label="test-ec-pub-skip",
-            ec_params=EC_PARAMS,
-            ec_point=EC_POINT,
-        )
-
-    assert "no provisioning path" in str(exc_info.value), (
-        "skip message must say no provisioning path"
+    skipped = assert_skips(
+        provision_public_key,
+        rs,
+        _make_cfg(),
+        key_type=int(CKK_EC),
+        attrs={},
+        label="test-ec-pub-skip",
+        ec_params=EC_PARAMS,
+        ec_point=EC_POINT,
     )
+
+    assert "no provisioning path" in str(skipped), "skip message must say no provisioning path"
     events = get_provisioning_events()
     assert any(e.obj_class == "public" and e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must be recorded"
@@ -639,16 +638,16 @@ def test_certificate_create_absent_no_external_skips(monkeypatch: pytest.MonkeyP
     )
 
     clear_provisioning_events()
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_certificate(
-            rs,
-            _make_cfg(),
-            value=CERT_DER,
-            attrs={},
-            label="test-cert-skip",
-        )
+    skipped = assert_skips(
+        provision_certificate,
+        rs,
+        _make_cfg(),
+        value=CERT_DER,
+        attrs={},
+        label="test-cert-skip",
+    )
 
-    assert "no provisioning path" in str(exc_info.value)
+    assert "no provisioning path" in str(skipped)
     events = get_provisioning_events()
     assert any(e.obj_class == "cert" and e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must be recorded"
@@ -772,16 +771,16 @@ def test_data_create_absent_no_external_skips(monkeypatch: pytest.MonkeyPatch) -
     )
 
     clear_provisioning_events()
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_data(
-            rs,
-            _make_cfg(),
-            value=DATA_VALUE,
-            attrs={},
-            label="test-data-skip",
-        )
+    skipped = assert_skips(
+        provision_data,
+        rs,
+        _make_cfg(),
+        value=DATA_VALUE,
+        attrs={},
+        label="test-data-skip",
+    )
 
-    assert "no provisioning path" in str(exc_info.value)
+    assert "no provisioning path" in str(skipped)
     events = get_provisioning_events()
     assert any(e.obj_class == "data" and e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must be recorded"

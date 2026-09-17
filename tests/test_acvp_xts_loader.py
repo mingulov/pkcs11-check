@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from pkcs11_check.testcases.acvp.aes.test_xts import (
     _XTS_1_0_ENCRYPT_VECTORS,
     _XTS_2_0_ENCRYPT_VECTORS,
@@ -11,6 +9,7 @@ from pkcs11_check.testcases.acvp.aes.test_xts import (
     _require_byte_aligned_xts_vector,
     _xts_data_unit_chunks,
 )
+from tests._skip_assert import assert_skips
 
 
 def _vector_by_id(rows: list[tuple[str, dict[str, object]]], vec_id: str) -> dict[str, object]:
@@ -41,8 +40,9 @@ def test_xts_v1_group_payload_len_is_preserved() -> None:
 def test_xts_non_byte_aligned_vectors_skip_at_runtime() -> None:
     vec = _vector_by_id(_XTS_1_0_ENCRYPT_VECTORS, "XTS-1.0-AES-enc-tc22")
 
-    with pytest.raises(pytest.skip.Exception, match="not byte-aligned"):
-        _require_byte_aligned_xts_vector("XTS-1.0-AES-enc-tc22", vec)
+    assert_skips(
+        _require_byte_aligned_xts_vector, "XTS-1.0-AES-enc-tc22", vec, match="not byte-aligned"
+    )
 
 
 def test_xts_data_unit_chunks_increment_tweak_little_endian() -> None:

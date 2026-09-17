@@ -56,7 +56,8 @@ if _REASON is not None and os.environ.get(_REQUIRE_ENV):
     )
     raise RuntimeError(msg)
 
-#: Apply as ``pytestmark`` in any module whose tests need ``git ls-files``.
+#: Apply as ``pytestmark`` in any module whose tests need a git work tree
+#: (``git ls-files``, ``git archive``, ``git rev-parse``, ...).
 requires_git_tracked_files = pytest.mark.skipif(
     _REASON is not None,
     reason=f"git-tracked file enumeration unavailable: {_REASON}",

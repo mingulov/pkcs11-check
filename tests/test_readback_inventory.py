@@ -1,11 +1,20 @@
-"""Fail-closed tests for the F6 effective-emitter inventory."""
+"""Fail-closed tests for the readback-attribution effective-emitter inventory."""
 
 from __future__ import annotations
 
+import ast
+import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from textwrap import dedent
 
-from tests._f6_readback_inventory import (
+import pytest
+
+from pkcs11_check import classification as classification_module
+from tests._git_guard import requires_git_tracked_files
+from tests._readback_attribution_inventory import (
+    _CLASSIFICATION_NON_EMITTERS,
+    _EMITTERS,
     C_GET_ATTRIBUTE_VALUE,
     FALSE_VALUE,
     GATE_EXCLUDED,
@@ -24,10 +33,14 @@ from tests._f6_readback_inventory import (
     CallerCoordinate,
     EffectiveState,
     EmitterFinding,
+    InventoryCharacterization,
     characterize_tree,
     coordinate_census,
     corpus_digest,
     flatten_effective_states,
+    format_inventory_diff,
+    git_head_tree_sources,
+    head_inventory_diff,
     inventory_digest,
     registered_definition_coordinates,
     scan_source,
@@ -55,7 +68,7 @@ def _find(
     return matches[0]
 
 
-def test_direct_emitters_distinguish_all_relational_f6_states() -> None:
+def test_direct_emitters_distinguish_all_relational_readback_states() -> None:
     findings = _scan(
         """
         from pkcs11_check import classification as C
@@ -1398,50 +1411,561 @@ def test_source_ast_corpus_digest_is_independent_from_finding_digest() -> None:
     assert source_digest != corpus_digest({"synthetic.py": source + "# comment\n"})
 
 
+# H4 attribution-rule fixes. Each rule carries synthetic regression tests here plus
+# a tree-level zero-assertion next to the characterization gate below.
+
+
+def test_decorated_direct_literal_emitter_is_certain() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def deco(function):
+            return function
+
+        class Worker:
+            @deco
+            def check(self):
+                C.record_as(
+                    "wrong_result",
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                )
+        """
+    )
+
+    finding = _find(findings, emitter="record_as", function="Worker.check")
+    assert finding.uncertain is False
+    assert finding.status == STATUS_SAFE_MECHANISM_FREE_READBACK
+
+
+def test_decorated_forwarded_emitter_stays_uncertain() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def deco(function):
+            return function
+
+        class Worker:
+            @deco
+            def emit(self, operation):
+                C.record_as("wrong_result", operation=operation)
+        """
+    )
+
+    finding = _find(findings, emitter="record_as", function="Worker.emit")
+    assert finding.uncertain is True
+    assert finding.status == STATUS_UNRESOLVED
+
+
+def test_star_arg_caller_leaves_literal_emitter_certain() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def emit():
+            C.record_as(
+                "wrong_result",
+                operation="C_GetAttributeValue",
+                mechanism=None,
+                inherit_mechanism=False,
+            )
+
+        def forward(*args):
+            emit(*args)
+
+        def caller():
+            forward()
+        """
+    )
+
+    finding = _find(findings, emitter="record_as", function="emit")
+    assert finding.uncertain is False
+    assert finding.status == STATUS_SAFE_MECHANISM_FREE_READBACK
+
+
+def test_star_arg_caller_keeps_transitively_forwarded_emitter_uncertain() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def emit(operation):
+            resolved = operation
+            C.record_as("wrong_result", operation=resolved)
+
+        def forward(*args):
+            emit(*args)
+
+        def caller():
+            forward()
+        """
+    )
+
+    finding = _find(findings, emitter="record_as", function="emit")
+    assert finding.uncertain is True
+    assert finding.status == STATUS_UNRESOLVED
+
+
+def test_external_module_attribute_alias_is_not_an_unknown_call() -> None:
+    findings = _scan(
+        """
+        import ctypes
+
+        def probe():
+            c_ulong = ctypes.c_ulong
+            byref = ctypes.byref
+            out_len = c_ulong(64)
+            return byref(out_len)
+        """,
+        readback_only=True,
+    )
+
+    assert findings == ()
+
+
+def test_emitter_alias_through_classification_module_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def check():
+            emit = C.record_as
+            emit("wrong_result", operation="C_DeriveKey")
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_emitter_named_foreign_attribute_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import foreign
+
+        def check():
+            emit = foreign.record_as
+            emit("wrong_result")
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_mixed_external_and_local_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import ctypes
+
+        def local(operation):
+            return operation
+
+        def check():
+            handler = ctypes.c_ulong
+            handler = local
+            handler("C_DeriveKey")
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_external_alias_with_attribution_kwarg_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import ctypes
+
+        def check():
+            make = ctypes.c_ulong
+            make(operation="C_DeriveKey")
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_factory_call_root_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import helper
+
+        def check():
+            handler = factory().helper
+            handler()
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_subscript_root_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import helper
+
+        def check():
+            handler = items[0].helper
+            handler()
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_conflicting_double_import_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        def check():
+            try:
+                import helper_mod as backend
+            except ImportError:
+                import ctypes as backend
+            handler = backend.c_ulong
+            handler(64)
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_top_level_conflicting_import_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import helper_mod as backend
+        import ctypes as backend
+
+        def check():
+            handler = backend.c_ulong
+            handler(64)
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_unresolvable_testcases_prefixed_alias_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        import pkcs11_check.testcases.typo as helpers
+
+        def check():
+            run = helpers.run
+            run()
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_classification_context_setter_is_not_an_unknown_call() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check.classification import set_mechanism
+
+        def replay():
+            set_mechanism("CKM_AES", operation="C_Encrypt", expect_success=True)
+        """,
+        readback_only=True,
+    )
+
+    assert findings == ()
+
+
+def test_classification_record_constructor_is_not_an_unknown_call() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check.classification import Classification
+
+        def build():
+            return Classification(
+                reason="wrong_result",
+                outcome="fail",
+                severity="high",
+                kind="metadata",
+                label="probe",
+                summary="probe",
+                operation="C_Digest",
+            )
+        """,
+        readback_only=True,
+    )
+
+    assert findings == ()
+
+
+def test_dotted_classification_context_setter_is_not_an_unknown_call() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification
+
+        def replay():
+            classification.set_mechanism("CKM_AES", operation="C_Encrypt")
+        """,
+        readback_only=True,
+    )
+
+    assert findings == ()
+
+
+def test_unknown_classification_member_with_operation_stays_unknown_call() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check.classification import warn_as
+
+        def check():
+            warn_as("wrong_result", operation="C_Digest")
+        """,
+        readback_only=True,
+    )
+
+    unknown = _find(findings, emitter="<unknown-call>", function="check")
+    assert unknown.status == STATUS_UNRESOLVED
+
+
+def test_local_shadow_named_like_context_setter_still_resolves() -> None:
+    findings = _scan(
+        """
+        from pkcs11_check import classification as C
+        from pkcs11_check.classification import set_mechanism
+
+        def set_mechanism(operation):
+            C.record_as("wrong_result", operation=operation)
+
+        def check():
+            set_mechanism(operation="C_DeriveKey")
+        """
+    )
+
+    finding = _find(findings, emitter="record_as", function="set_mechanism")
+    assert finding.operations == ("C_DeriveKey",)
+    assert not any(item.emitter == "<unknown-call>" for item in findings)
+
+
+def _classification_exempted_member_calls(module_path: Path) -> set[str]:
+    """Callee names reachable from the B2-exempted members' runtime behavior.
+
+    Covers direct calls, delegation through module-level helpers (transitive),
+    ``__post_init__``, new methods, and ``default_factory`` targets including
+    lambdas. The whole class body is a root — over-approx, fail-closed.
+    """
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    assert "set_mechanism" in functions, "set_mechanism renamed or removed"
+    assert "Classification" in classes, "Classification renamed or removed"
+    roots: list[ast.AST] = [functions["set_mechanism"], classes["Classification"]]
+    called: set[str] = set()
+    seen: set[int] = set()
+    stack = list(roots)
+    while stack:
+        root = stack.pop()
+        if id(root) in seen:
+            continue
+        seen.add(id(root))
+        for node in ast.walk(root):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if (
+                    keyword.arg == "default_factory"
+                    and isinstance(keyword.value, ast.Name)
+                    and keyword.value.id in functions
+                ):
+                    called.add(keyword.value.id)
+                    stack.append(functions[keyword.value.id])
+            if isinstance(node.func, ast.Name):
+                called.add(node.func.id)
+                target = functions.get(node.func.id)
+                if target is not None:
+                    stack.append(target)
+            elif isinstance(node.func, ast.Attribute):
+                called.add(node.func.attr)
+    return called
+
+
+def test_classification_non_emitter_exemption_matches_live_module() -> None:
+    """Pin the B2 exemption: names exist, are not emitters, and cannot emit.
+
+    The analyzer exempts calls bound to the classification module's
+    ``set_mechanism``/``Classification`` members. If either is renamed, gains
+    emitter behavior (direct calls, delegation, ``__post_init__``, emitting
+    factories), or stops being a plain context setter / record, this fails so
+    the exemption is re-reviewed instead of silently widening.
+    """
+    module_path = Path(__file__).resolve().parents[1] / "src/pkcs11_check/classification.py"
+    for name in sorted(_CLASSIFICATION_NON_EMITTERS):
+        assert callable(getattr(classification_module, name)), f"{name} renamed or removed"
+    assert _CLASSIFICATION_NON_EMITTERS.isdisjoint(_EMITTERS)
+    assert not (_classification_exempted_member_calls(module_path) & set(_EMITTERS))
+    assert not (set(classification_module.set_mechanism.__code__.co_names) & set(_EMITTERS))
+
+    record_type = classification_module.Classification
+    assert isinstance(record_type, type)
+    init_code = record_type.__init__.__code__
+    assert init_code.co_filename == "<string>", "Classification gained a hand-written __init__"
+    assert not (set(init_code.co_names) & set(_EMITTERS))
+
+
+def test_exempted_member_oracle_catches_post_init_emission(tmp_path: Path) -> None:
+    module = tmp_path / "classification.py"
+    module.write_text(
+        "def set_mechanism() -> None:\n"
+        "    pass\n"
+        "\n"
+        "class Classification:\n"
+        "    def __post_init__(self) -> None:\n"
+        '        classify("x")\n',
+        encoding="utf-8",
+    )
+
+    assert _classification_exempted_member_calls(module) == {"classify"}
+
+
+def test_exempted_member_oracle_catches_delegated_emission(tmp_path: Path) -> None:
+    module = tmp_path / "classification.py"
+    module.write_text(
+        "def _helper() -> None:\n"
+        '    record_as("x")\n'
+        "\n"
+        "def set_mechanism() -> None:\n"
+        "    _helper()\n"
+        "\n"
+        "class Classification:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    assert _classification_exempted_member_calls(module) == {"_helper", "record_as"}
+
+
+def test_exempted_member_oracle_catches_factory_emission(tmp_path: Path) -> None:
+    module = tmp_path / "classification.py"
+    module.write_text(
+        "def _make() -> list:\n"
+        '    return [fail_as("x")]\n'
+        "\n"
+        "def set_mechanism() -> None:\n"
+        "    pass\n"
+        "\n"
+        "class Classification:\n"
+        "    items: list = field(default_factory=_make)\n"
+        "    other: list = field(default_factory=lambda: [xfail_as('y')])\n",
+        encoding="utf-8",
+    )
+
+    assert _classification_exempted_member_calls(module) == {
+        "field",
+        "_make",
+        "fail_as",
+        "xfail_as",
+    }
+
+
+def _assert_characterization_pins(characterization: InventoryCharacterization, root: Path) -> None:
+    """Fail once with a HEAD diff when any pinned characterization value drifts.
+
+    Layout contract: the repin script (workspace scripts/repin-readback-inventory.py)
+    matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
+    """
+    pins: list[tuple[str, object, object]] = [
+        ("total", 1537, characterization.total),
+        ("candidate_total", 1351, characterization.candidate_total),
+        ("file_total", 244, characterization.file_total),
+        (
+            "statuses",
+            (
+                ("explicit_mechanism_grouping", 536),
+                ("explicit_mechanism_readback", 61),
+                ("non_readback", 186),
+                ("safe_mechanism_free_readback", 63),
+                ("unresolved", 595),
+                ("unsafe_inherited_readback", 96),
+            ),
+            characterization.statuses,
+        ),
+        (
+            "digest",
+            "34173a1d432f8ef7bdfd1f6b77028a3d2c4506c7f79a7b7e6074d26e47c09a6b",
+            characterization.digest,
+        ),
+        (
+            "candidate_digest",
+            "4c81c4513f6ab9aab267682a0bfc6aea8957a5534ec9f656abf8a5ae742c2a5e",
+            characterization.candidate_digest,
+        ),
+        (
+            "state_statuses",
+            (
+                ("explicit_mechanism_grouping", 1231),
+                ("explicit_mechanism_readback", 358),
+                ("non_readback", 352),
+                ("safe_mechanism_free_readback", 1356),
+                ("unresolved", 2516),
+                ("unsafe_inherited_readback", 257),
+            ),
+            characterization.state_statuses,
+        ),
+        ("mixed_unsafe_states", 25, characterization.mixed_unsafe_states),
+        (
+            "corpus_digest",
+            "56861e3c4bd502a80ba6cc889fd8e90347e2f6de1b0790bf144342e82c27f8c2",
+            characterization.corpus_digest,
+        ),
+        (
+            "direct_emitter_census",
+            (
+                ("assert_correct", 268),
+                ("classify", 533),
+                ("fail_as", 194),
+                ("record_as", 257),
+                ("xfail_as", 155),
+            ),
+            characterization.direct_emitter_census,
+        ),
+    ]
+    mismatches = [(name, expected, actual) for name, expected, actual in pins if expected != actual]
+    if not mismatches:
+        return
+    lines = [f"characterization drift: {len(mismatches)} pinned values differ"]
+    for name, expected, actual in mismatches:
+        lines.append(f"  {name}: expected {expected!r} but got {actual!r}")
+    lines.extend(["", head_inventory_diff(root, scan_tree(root))])
+    pytest.fail("\n".join(lines))
+
+
 def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate() -> None:
     root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
     characterization = characterize_tree(root)
 
     assert root.is_dir()
-    assert characterization.total == 1679
-    assert characterization.candidate_total == 1507
-    assert characterization.file_total == 246
-    assert characterization.statuses == (
-        ("explicit_mechanism_grouping", 510),
-        ("explicit_mechanism_readback", 52),
-        ("non_readback", 172),
-        ("safe_mechanism_free_readback", 52),
-        ("unresolved", 802),
-        ("unsafe_inherited_readback", 91),
-    )
-    assert characterization.digest == (
-        "9f9c7abc54f400f848367fec8240032e4f95ee3e207402ff249e23294ec21fed"
-    )
-    assert characterization.candidate_digest == (
-        "6c7687db212699cabe0111c0fd76113b4c1b52ebe3550ce45f62c63705ba652b"
-    )
-    assert characterization.state_statuses == (
-        ("explicit_mechanism_grouping", 1231),
-        ("explicit_mechanism_readback", 358),
-        ("non_readback", 352),
-        ("safe_mechanism_free_readback", 1356),
-        ("unresolved", 2664),
-        ("unsafe_inherited_readback", 257),
-    )
-    assert characterization.mixed_unsafe_states == 30
-    assert characterization.corpus_digest == (
-        "9470305ff3bd865c0ff79f637853b418edaac3ddd64ffcab2f5414700aa01edb"
-    )
-    assert characterization.direct_emitter_census == (
-        ("assert_correct", 268),
-        ("classify", 533),
-        ("fail_as", 194),
-        ("record_as", 257),
-        ("xfail_as", 155),
-    )
+    _assert_characterization_pins(characterization, root)
 
-    # These are exact sentinels for the current source tree.  They intentionally characterize
-    # outstanding work instead of asserting zero until the reviewed source slices are fixed.
+    # These are exact sentinels for the current source tree.  The conftest slice is
+    # still outstanding work (characterized, not zero); the provisioning slice was
+    # fixed by the H4 uncertainty rule and now asserts its resolved form.
     all_findings = scan_tree(root)
     provisioning = [
         finding
@@ -1451,14 +1975,15 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     assert provisioning
     assert any(
         finding.line == 114
-        and finding.status == STATUS_UNRESOLVED
+        and finding.status == STATUS_SAFE_MECHANISM_FREE_READBACK
+        and finding.uncertain is False
         and all(state.status == STATUS_SAFE_MECHANISM_FREE_READBACK for state in finding.states)
         for finding in provisioning
     )
     assert any(
         finding.line == 114
         and finding.function == "_attribute_refusal"
-        and finding.uncertain is True
+        and finding.uncertain is False
         and finding.operations == (C_GET_ATTRIBUTE_VALUE,)
         and finding.mechanisms == (NONE_VALUE,)
         for finding in provisioning
@@ -1470,13 +1995,13 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     ]
     assert conftest
     assert any(
-        finding.line == 1285
+        finding.line == 1286
         and finding.status == STATUS_UNRESOLVED
         and finding.operations == (UNKNOWN_OPERATION,)
         for finding in conftest
     )
     assert any(
-        finding.line == 1285
+        finding.line == 1286
         and finding.emitter == "classify"
         and finding.forwarded_parameters == ("mechanism", "operation")
         for finding in conftest
@@ -1531,6 +2056,119 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     assert len(unknown) == 1
     assert unknown[0].status == STATUS_UNRESOLVED
     assert unknown[0].operations == (C_GET_ATTRIBUTE_VALUE,)
+
+
+def test_no_uncertain_finding_has_uniform_resolved_states() -> None:
+    """Tree-hygiene zero-assertion for the H4 uncertainty rule.
+
+    Caller-context uncertainty only poisons emitters whose attribution kwargs
+    transitively read parameters — but the rule deliberately still poisons two
+    uniform patterns (star-args at the emitter always taint; single-literal-
+    caller param forwarding stays uncertain). This bans all such shapes from
+    the tree, so adding one fails loudly for conscious review instead of
+    silently re-widening the blind spot.
+    """
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+    offenders = []
+    for finding in scan_tree(root):
+        if not finding.uncertain:
+            continue
+        statuses = {state.status for state in finding.states}
+        if statuses and STATUS_UNRESOLVED not in statuses:
+            offenders.append((finding.path, finding.line, finding.function, finding.emitter))
+    assert offenders == []
+
+
+def _tree_unknown_call_callee_names(root: Path) -> dict[str, int]:
+    """Map unknown-call findings to callee spellings via an independent re-parse.
+
+    Unmapped findings count under "<unmapped>" so helper drift fails loudly
+    instead of silently shrinking the zero-assertion below.
+    """
+    spellings: dict[tuple[str, int, int], str] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                spelling: str | None = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                spelling = node.func.attr
+            else:
+                spelling = None
+            if spelling is not None:
+                spellings[(path.relative_to(root).as_posix(), node.lineno, node.col_offset)] = (
+                    spelling
+                )
+    counts: dict[str, int] = {}
+    for finding in scan_tree(root):
+        if finding.emitter != "<unknown-call>":
+            continue
+        spelling = spellings.get((finding.path, finding.line, finding.column), "<unmapped>")
+        counts[spelling] = counts.get(spelling, 0) + 1
+    return counts
+
+
+def test_no_unknown_call_targets_exempted_callees() -> None:
+    """Zero-assertion for the H4 unknown-call rules: exempted names never flag.
+
+    External-module attribute aliases (``c_ulong``/``byref``-shaped) and
+    classification-module non-emitters (``set_mechanism``/``Classification``)
+    are not unknown-call findings. The generic rules are pinned synthetically
+    above; this pins the fixed tree vocabulary (definition sites are pinned
+    separately so a rename cannot evade the spelling match).
+    """
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+    counts = _tree_unknown_call_callee_names(root)
+
+    assert counts, "expected remaining unknown-call findings"
+    assert "<unmapped>" not in counts
+    assert not (set(counts) & {"c_ulong", "byref", "set_mechanism", "Classification"})
+
+
+def _tree_bare_ctypes_aliases(root: Path) -> dict[str, set[str]]:
+    """Map alias spellings to targets for bare ``alias = ctypes.<attr>`` defs."""
+    aliases: dict[str, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+        for node in ast.walk(tree):
+            targets: list[ast.expr] = []
+            value: ast.expr | None = None
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+                value = node.value
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+                value = node.value
+            if not (
+                isinstance(value, ast.Attribute)
+                and isinstance(value.value, ast.Name)
+                and value.value.id == "ctypes"
+            ):
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    aliases.setdefault(target.id, set()).add(value.attr)
+    return aliases
+
+
+def test_ctypes_alias_vocabulary_is_pinned() -> None:
+    """Pin the ctypes alias spellings the B1 exemption relies on.
+
+    The unknown-call zero-assertion matches by callee spelling, so a renamed
+    alias (``ulong = ctypes.c_ulong``) would evade its vocabulary. Pinning the
+    definition sites forces a conscious vocabulary review on any rename, while
+    characterization pins backstop exemption regressions.
+    """
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+    assert _tree_bare_ctypes_aliases(root) == {
+        "byref": {"byref"},
+        "c_ubyte": {"c_ubyte"},
+        "c_ulong": {"c_ulong"},
+        "c_void_p": {"c_void_p"},
+        "_CK_RV": {"c_ulong"},
+    }
 
 
 def test_independent_coordinate_census_covers_all_live_definitions_and_emitters() -> None:
@@ -1745,3 +2383,305 @@ def test_inventory_digest_changes_when_a_relational_state_changes() -> None:
     )
 
     assert inventory_digest(safe) != inventory_digest(unsafe)
+
+
+def test_format_inventory_diff_separates_coordinate_moves_from_status_changes() -> None:
+    header = "from pkcs11_check import classification as C\n"
+    body = 'def check() -> None:\n    C.record_as("x", operation="C_GetAttributeValue")\n'
+    before = scan_source(header + body, path="moved.py")
+    after = scan_source(header + "\n\n" + body, path="moved.py")
+
+    moved = format_inventory_diff(before, after)
+    assert "coordinate-only moves (1):" in moved
+    assert "moved.py check record_as: (3,4) -> (5,4)" in moved
+    assert "status/content changes (0):" in moved
+
+    safe = scan_source(
+        header
+        + "def check() -> None:\n"
+        + '    C.record_as("x", operation="C_GetAttributeValue",'
+        + " mechanism=None, inherit_mechanism=False)\n",
+        path="changed.py",
+    )
+    unsafe = scan_source(
+        header
+        + "def check() -> None:\n"
+        + '    C.record_as("x", operation="C_GetAttributeValue")\n',
+        path="changed.py",
+    )
+
+    changed = format_inventory_diff(safe, unsafe)
+    assert "status/content changes (1):" in changed
+    assert "safe_mechanism_free_readback -> unsafe_inherited_readback" in changed
+    assert "coordinate-only moves (0):" in changed
+
+    identical = format_inventory_diff(before, before)
+    assert "coordinate-only moves (0):" in identical
+    assert "status/content changes (0):" in identical
+    assert "added (0):" in identical
+    assert "removed (0):" in identical
+
+
+def test_format_inventory_diff_reports_paths_emitters_and_added_removed() -> None:
+    header = "from pkcs11_check import classification as C\n"
+    classify_src = (
+        header + "def check() -> None:\n" + '    C.classify("x", operation="C_DeriveKey")\n'
+    )
+    record_src = (
+        header + "def check() -> None:\n" + '    C.record_as("x", operation="C_DeriveKey")\n'
+    )
+    before = scan_sources({"staying.py": classify_src, "gone.py": record_src})
+    after = scan_sources({"staying.py": classify_src, "fresh.py": record_src})
+
+    diff = format_inventory_diff(before, after)
+    assert "paths: +1 -1" in diff
+    assert "  + fresh.py" in diff
+    assert "  - gone.py" in diff
+    assert "emitters: unchanged" in diff
+    assert "coordinate-only moves (0):" in diff
+    assert "added (1):" in diff
+    assert "removed (1):" in diff
+
+    grown = scan_sources(
+        {"staying.py": classify_src, "fresh.py": record_src, "extra.py": record_src}
+    )
+    emitter_delta = format_inventory_diff(after, grown)
+    assert "record_as: 1 -> 2 (+1)" in emitter_delta
+
+
+def test_head_inventory_diff_degrades_outside_a_checkout(tmp_path: Path) -> None:
+    assert head_inventory_diff(tmp_path, ()).startswith("<inventory diff unavailable:")
+
+
+@requires_git_tracked_files
+def test_git_head_tree_sources_reads_head_python_files() -> None:
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+    sources = git_head_tree_sources(root)
+
+    assert len(sources) > 200
+    assert "conftest.py" in sources
+    assert all(path.endswith(".py") and not path.startswith("/") for path in sources)
+
+
+def test_tree_scans_share_the_corpus_digest_cached_analyzer() -> None:
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+    first = scan_tree(root)
+    characterization = characterize_tree(root)
+
+    assert characterization.total == len(first)
+    assert scan_tree(root) is first
+    registered_definition_coordinates(root)
+    assert scan_tree(root) is first
+    filtered = scan_tree(root, readback_only=True)
+    assert filtered == tuple(finding for finding in first if finding.is_readback)
+    assert scan_tree(root, readback_only=True) is filtered
+
+
+def test_format_inventory_diff_matches_moved_findings_across_a_removal() -> None:
+    header = "from pkcs11_check import classification as C\n"
+    calls = (
+        '    C.record_as("a", operation="C_Encrypt")\n'
+        '    C.record_as("b", operation="C_Decrypt")\n'
+        '    C.record_as("c", operation="C_Digest")\n'
+    )
+    before = scan_source(header + "def check() -> None:\n" + calls, path="shrunk.py")
+    after = scan_source(
+        header
+        + "def check() -> None:\n"
+        + '    C.record_as("a", operation="C_Encrypt")\n'
+        + '    C.record_as("c", operation="C_Digest")\n',
+        path="shrunk.py",
+    )
+    assert len(before) == 3
+    assert len(after) == 2
+
+    diff = format_inventory_diff(before, after)
+
+    assert "status/content changes (0):" in diff
+    assert "removed (1):" in diff
+    assert "shrunk.py:4 check record_as [non_readback]" in diff
+    assert "coordinate-only moves (1):" in diff
+
+
+def test_format_inventory_diff_pairs_a_lone_edit_among_unchanged_peers() -> None:
+    header = "from pkcs11_check import classification as C\n"
+    before = scan_source(
+        header
+        + "def check() -> None:\n"
+        + '    C.record_as("a", operation="C_Encrypt")\n'
+        + '    C.record_as("b", operation="C_Decrypt")\n',
+        path="edited.py",
+    )
+    after = scan_source(
+        header
+        + "def check() -> None:\n"
+        + '    C.record_as("a", operation="C_Encrypt")\n'
+        + '    C.record_as("b", operation="C_Digest")\n',
+        path="edited.py",
+    )
+
+    diff = format_inventory_diff(before, after)
+
+    assert "status/content changes (1):" in diff
+    assert "ops ('C_Decrypt',) -> ('C_Digest',)" in diff
+    assert "coordinate-only moves (0):" in diff
+    assert "added (0):" in diff
+    assert "removed (0):" in diff
+
+
+def test_format_inventory_diff_change_detail_falls_back_to_content_changed() -> None:
+    emit = (
+        "from pkcs11_check import classification as C\n"
+        "\n"
+        "def emit(\n"
+        '    operation: str = "C_GetAttributeValue",\n'
+        "    mechanism: str | None = None,\n"
+        "    inherit_mechanism: bool = False,\n"
+        ") -> None:\n"
+        "    C.record_as(\n"
+        '        "wrong_result",\n'
+        "        operation=operation,\n"
+        "        mechanism=mechanism,\n"
+        "        inherit_mechanism=inherit_mechanism,\n"
+        "    )\n"
+    )
+
+    def _caller(name: str) -> str:
+        return (
+            f"\ndef {name}() -> None:\n"
+            "    emit(\n"
+            '        operation="C_GetAttributeValue",\n'
+            "        mechanism=None,\n"
+            "        inherit_mechanism=False,\n"
+            "    )\n"
+        )
+
+    before = scan_source(emit + _caller("caller_a") + _caller("caller_b"), path="shrunk.py")
+    after = scan_source(emit + _caller("caller_a"), path="shrunk.py")
+    assert before[0].status == after[0].status
+    assert before[0].operations == after[0].operations
+
+    diff = format_inventory_diff(before, after)
+
+    assert "status/content changes (1):" in diff
+    assert "content changed" in diff
+
+
+def test_format_inventory_diff_change_detail_omits_an_unchanged_status() -> None:
+    header = "from pkcs11_check import classification as C\n"
+    derive = scan_source(
+        header + "def check() -> None:\n" + '    C.record_as("x", operation="C_DeriveKey")\n',
+        path="changed.py",
+    )
+    encrypt = scan_source(
+        header + "def check() -> None:\n" + '    C.record_as("x", operation="C_Encrypt")\n',
+        path="changed.py",
+    )
+
+    diff = format_inventory_diff(derive, encrypt)
+
+    assert "status/content changes (1):" in diff
+    assert "status non_readback -> non_readback" not in diff
+    assert "ops ('C_DeriveKey',) -> ('C_Encrypt',)" in diff
+
+
+def test_format_inventory_diff_reports_caller_only_moves() -> None:
+    before = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def emit(
+            operation: str = "C_GetAttributeValue",
+            mechanism: str | None = None,
+            inherit_mechanism: bool = False,
+        ) -> None:
+            C.record_as(
+                "wrong_result",
+                operation=operation,
+                mechanism=mechanism,
+                inherit_mechanism=inherit_mechanism,
+            )
+
+        def caller() -> None:
+            emit(
+                operation="C_GetAttributeValue",
+                mechanism=None,
+                inherit_mechanism=False,
+            )
+        """
+    )
+    after = _scan(
+        """
+        from pkcs11_check import classification as C
+
+        def emit(
+            operation: str = "C_GetAttributeValue",
+            mechanism: str | None = None,
+            inherit_mechanism: bool = False,
+        ) -> None:
+            C.record_as(
+                "wrong_result",
+                operation=operation,
+                mechanism=mechanism,
+                inherit_mechanism=inherit_mechanism,
+            )
+
+
+        def caller() -> None:
+            emit(
+                operation="C_GetAttributeValue",
+                mechanism=None,
+                inherit_mechanism=False,
+            )
+        """
+    )
+
+    diff = format_inventory_diff(before, after)
+
+    assert "coordinate-only moves (1):" in diff
+    assert "callers moved" in diff
+    assert "status/content changes (0):" in diff
+
+
+def test_format_inventory_diff_caps_long_path_lists() -> None:
+    header = "from pkcs11_check import classification as C\n"
+    body = header + "def check() -> None:\n" + '    C.record_as("x", operation="C_DeriveKey")\n'
+    after = scan_sources({f"file_{index:02d}.py": body for index in range(60)})
+
+    diff = format_inventory_diff((), after)
+
+    assert "paths: +60 -0" in diff
+    paths_block, _, _ = diff.partition("emitters:")
+    assert "... +10 more" in paths_block
+    assert "  + file_59.py" not in paths_block
+
+
+@requires_git_tracked_files
+@pytest.mark.parametrize("kind", ["none", "scalar", "raising"])
+def test_head_inventory_diff_never_raises_on_unformattable_input(kind: str) -> None:
+    root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+
+    def _raising() -> Iterator[EmitterFinding]:
+        raise RuntimeError("boom")
+        yield from ()
+
+    current: object = {"none": None, "scalar": 123, "raising": _raising()}[kind]
+    assert head_inventory_diff(root, current).startswith("<inventory diff unavailable:")  # type: ignore[arg-type]
+
+
+@requires_git_tracked_files
+def test_git_head_tree_sources_reads_a_toplevel_tree(tmp_path: Path) -> None:
+    (tmp_path / "top.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "mod.py").write_text("VALUE = 2\n", encoding="utf-8")
+    for args in (
+        ["init"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "add", "."],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "t"],
+    ):
+        proc = subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+
+    sources = git_head_tree_sources(tmp_path)
+
+    assert sources == {"top.py": "VALUE = 1\n", "nested/mod.py": "VALUE = 2\n"}

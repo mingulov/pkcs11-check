@@ -11,6 +11,7 @@ from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.testcases import test_encrypt
+from tests._skip_assert import assert_skips
 
 
 def test_aes_encrypt_tests_skip_when_aes_keygen_is_absent(
@@ -24,8 +25,11 @@ def test_aes_encrypt_tests_skip_when_aes_keygen_is_absent(
     monkeypatch.setattr(test_encrypt, "gen_aes_key", _unexpected_keygen)
     rs = SimpleNamespace(has_mechanism=lambda _name: False)
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_encrypt.TestAESEncryption().test_aes_generate_key(rs)
+    assert_skips(
+        test_encrypt.TestAESEncryption().test_aes_generate_key,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_aes_encrypt_tests_xfail_when_advertised_aes_keygen_rejects_runtime(

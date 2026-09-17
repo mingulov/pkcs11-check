@@ -22,6 +22,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _TESTS_DIR = Path(__file__).parent
 _REPO_ROOT = _TESTS_DIR.parent
 
@@ -43,6 +45,9 @@ def _vector_referencing_files() -> list[str]:
     return files
 
 
+# Pinned 2026-09-16: 71s loaded, 64.6s idle — the old tribal 60s budget was
+# unrealistic on this host; 120s keeps a regression tripwire with headroom.
+@pytest.mark.timeout(120)
 def test_vector_dependent_meta_tests_skip_without_fetch_data(tmp_path: Path) -> None:
     files = _vector_referencing_files()
     assert files, "expected to discover vector-referencing meta-test files"

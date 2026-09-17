@@ -13,6 +13,8 @@ TestPyPI is a separate service and needs one-time setup before the first upload:
 
 The first successful upload creates the TestPyPI project and converts the pending publisher into the project's normal publisher. Files cannot be overwritten while they exist, so every repeat or changed rehearsal needs a new version; the workflow fails loudly if the version is already present. Unlike production PyPI, TestPyPI is not permanent and may periodically prune projects or accounts.
 
+Every successful TestPyPI run triggers the **TestPyPI gate** (`.github/workflows/testpypi-gate.yml`), which installs the published wheel and sdist from TestPyPI on ubuntu/windows/macos and drives each through version check, entry points, doctor, vector fetch, smoke subset, vector slice, and report. It can also be dispatched manually (optionally pinned to a version) or called as a reusable workflow. A green gate is the sign-off to cut the release below.
+
 ## Cutting a release
 
 1. On `main`, bump `__version__` in `src/pkcs11_check/__init__.py` and fold the development branch's `## Unreleased` notes into a matching `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`. These are one atomic edit: the top numbered changelog heading must match the package version at release time.

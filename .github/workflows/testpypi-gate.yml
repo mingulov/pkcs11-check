@@ -1,0 +1,287 @@
+name: TestPyPI gate
+
+# Permanent post-TestPyPI validation gate: after every TestPyPI publish, install
+# the published wheel AND sdist from TestPyPI into fresh interpreters on
+# ubuntu/windows/macos and drive the installed package (never the source tree)
+# through install -> version check -> entry points -> doctor -> fetch data ->
+# smoke subset -> vector slice -> report. This automates the manual TestPyPI
+# validation pass; the published-artifact assertions live in
+# tests/test_published_artifact.py and the workflow contract in
+# tests/test_testpypi_gate_workflow.py.
+#
+# Triggers:
+#   - workflow_run after the TestPyPI workflow completes successfully (the
+#     automatic "after every publish" leg; a dry_run success re-validates
+#     whatever is latest on TestPyPI, which is harmless);
+#   - workflow_dispatch / workflow_call with an optional pinned version for
+#     manual re-runs. With no version the gate validates TestPyPI latest.
+#
+# This workflow never publishes, tags, or releases anything: it is read-only
+# (contents: read for the checkout) plus installs from TestPyPI.
+
+on:
+  workflow_run:
+    workflows: ["TestPyPI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "TestPyPI version to validate (default: latest on TestPyPI)"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: "TestPyPI version to validate (default: latest on TestPyPI)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # Only the automatic leg is gated: a failed/cancelled publish run has no
+    # new artifacts to validate. Manual legs always run.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        artifact: [wheel, sdist]
+    defaults:
+      run:
+        # One shell for every step on every OS (git-bash on windows-latest) so
+        # the install/check/fetch/smoke sequence is written once; only the
+        # Windows SoftHSM provisioning below overrides this with pwsh.
+        shell: bash
+    steps:
+      - name: Checkout framework (gate tests + helpers)
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Oldest supported interpreter (requires-python >=3.12) is the
+          # strictest install target, so the gate pins it on every OS.
+          python-version: "3.12"
+
+      - name: Resolve candidate version
+        id: candidate
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            VERSION="$REQUESTED"
+          else
+            VERSION=$(python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://test.pypi.org/pypi/pkcs11-check/json', timeout=30))['info']['version'])" | tr -d '\r')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Validating pkcs11-check $VERSION (${{ matrix.artifact }} on ${{ matrix.os }})"
+
+      - name: Install ${{ matrix.artifact }} from TestPyPI
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          if [ "${{ matrix.artifact }}" = "wheel" ]; then
+            BINARY_FLAG="--only-binary=pkcs11-check"
+          else
+            BINARY_FLAG="--no-binary=pkcs11-check"
+          fi
+          python -m pip install \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "$BINARY_FLAG" "pkcs11-check==$VERSION"
+          python -m pip show pkcs11-check
+
+      - name: Version check
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          test "$(pkcs11-check version | tr -d '\r')" = "pkcs11-check $VERSION"
+          python - <<'PY'
+          import os
+          import pkcs11_check
+          assert pkcs11_check.__version__ == os.environ["VERSION"], pkcs11_check.__version__
+          assert "site-packages" in pkcs11_check.__file__, pkcs11_check.__file__
+          print("import OK:", pkcs11_check.__version__, "from", pkcs11_check.__file__)
+          PY
+
+      - name: Entry-point check
+        run: |
+          python - <<'PY'
+          import importlib
+          from importlib.metadata import entry_points
+          pytest11 = {e.name: e.value for e in entry_points(group="pytest11")}
+          assert pytest11.get("pkcs11-check") == "pkcs11_check.plugin", pytest11
+          scripts = {e.name for e in entry_points(group="console_scripts")}
+          assert {"pkcs11-check", "pkcs11-check-report"} <= scripts, scripts
+          plugin = importlib.import_module("pkcs11_check.plugin")
+          assert callable(plugin.pytest_addoption) and callable(plugin.pytest_configure)
+          print("entry points OK")
+          PY
+
+      - name: Published-artifact meta-tests
+        env:
+          # Strict mode: missing dist metadata fails instead of skipping —
+          # a gate install always has metadata, so a skip would mask breakage.
+          PKCS11_CHECK_GATE_STRICT: "1"
+        run: |
+          # Run from outside the checkout against the installed package: the
+          # runner resolves the test path to a native absolute path first
+          # (git-bash /d/... paths are not valid for native Windows python).
+          TEST_FILE=$(python -c "import os; print(os.path.abspath('tests/test_published_artifact.py'))" | tr -d '\r')
+          cd "$RUNNER_TEMP"
+          python -m pytest "$TEST_FILE" -q
+
+      - name: Install SoftHSM2 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y softhsm2
+          CONF="$GITHUB_WORKSPACE/gate-softhsm.conf"
+          mkdir -p "$GITHUB_WORKSPACE/gate-tokens"
+          printf 'directories.tokendir = %s/gate-tokens\nobjectstore.backend = file\n' "$GITHUB_WORKSPACE" > "$CONF"
+          export SOFTHSM2_CONF="$CONF"
+          softhsm2-util --init-token --slot 0 --label pkcs11-check --so-pin 87654321 --pin 1234
+          {
+            echo "SOFTHSM2_CONF=$CONF"
+            echo "P11_MODULE=/usr/lib/softhsm/libsofthsm2.so"
+            echo "P11_SLOT=0"
+            echo "P11_PIN=1234"
+          } >> "$GITHUB_ENV"
+
+      - name: Install SoftHSM2 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install softhsm
+          MODULE="$(brew --prefix)/lib/softhsm/libsofthsm2.so"
+          if [ ! -f "$MODULE" ]; then MODULE="$(brew --prefix)/lib/softhsm/libsofthsm2.dylib"; fi
+          if [ ! -f "$MODULE" ]; then MODULE="$(find "$(brew --prefix)" -name 'libsofthsm2.*' | head -n1)"; fi
+          CONF="$GITHUB_WORKSPACE/gate-softhsm.conf"
+          mkdir -p "$GITHUB_WORKSPACE/gate-tokens"
+          printf 'directories.tokendir = %s/gate-tokens\nobjectstore.backend = file\nlog.level = ERROR\n' "$GITHUB_WORKSPACE" > "$CONF"
+          export SOFTHSM2_CONF="$CONF"
+          softhsm2-util --init-token --slot 0 --label pkcs11-check --so-pin 87654321 --pin 1234
+          {
+            echo "SOFTHSM2_CONF=$CONF"
+            echo "P11_MODULE=$MODULE"
+            echo "P11_SLOT=0"
+            echo "P11_PIN=1234"
+          } >> "$GITHUB_ENV"
+          echo "Resolved module: $MODULE"
+
+      - name: Install SoftHSM2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/disig/SoftHSM2-for-Windows/releases/download/v2.5.0/SoftHSM2-2.5.0-portable.zip'
+          $sha = '85273bcc1a6b90e877f7bb4f7e90221d57103d8f5241d154a79dd730a135b910'
+          Invoke-WebRequest -Uri $url -OutFile sh2.zip
+          if ((Get-FileHash sh2.zip -Algorithm SHA256).Hash -ne $sha) { throw 'SoftHSM2 sha256 mismatch' }
+          Expand-Archive -Path sh2.zip -DestinationPath sh2 -Force
+          # Forward slashes: consumed by git-bash steps below, valid for Win32.
+          $module = ("$PWD/sh2/SoftHSM2/lib/softhsm2-x64.dll").Replace('\', '/')
+          if (!(Test-Path $module)) { throw "SoftHSM2 module not found: $module" }
+          $conf = "$PWD/gate-softhsm.conf"
+          New-Item -ItemType Directory -Force gate-tokens | Out-Null
+          "directories.tokendir = $PWD/gate-tokens`nobjectstore.backend = file`nlog.level = ERROR" |
+            Set-Content -Path $conf -Encoding ascii
+          $env:SOFTHSM2_CONF = $conf
+          python scripts/init_softhsm2_token.py "$module" pkcs11-check 1234 87654321
+          "P11_MODULE=$module" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SOFTHSM2_CONF=$conf" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "P11_SLOT=0" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "P11_PIN=1234" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: doctor (pre-fetch)
+        run: |
+          pkcs11-check info --module "$P11_MODULE"
+          pkcs11-check doctor --module "$P11_MODULE" --slot "$P11_SLOT" --pin "$P11_PIN"
+
+      - name: Fetch vectors
+        run: |
+          # Native absolute data dir (git-bash /d/... paths are not valid for
+          # native Windows python); every later step inherits it via the env.
+          DATA_DIR="$(python -c 'import os; print(os.path.abspath("gate-data"))' | tr -d '\r')"
+          pkcs11-check fetch-data all --data-dir "$DATA_DIR"
+          pkcs11-check fetch-data --status --data-dir "$DATA_DIR"
+          printf '%s\n' "PKCS11_CHECK_DATA_DIR=$DATA_DIR" >> "$GITHUB_ENV"
+
+      - name: doctor (post-fetch)
+        run: |
+          pkcs11-check doctor --module "$P11_MODULE" --slot "$P11_SLOT" --pin "$P11_PIN"
+
+      - name: Smoke (installed package)
+        run: |
+          mkdir -p gate-out/smoke gate-out/vectors
+          pkcs11-check test \
+            --module "$P11_MODULE" --slot "$P11_SLOT" --pin "$P11_PIN" \
+            --timeout 120 --isolation auto --marker "not security" \
+            --match "test_encrypt or test_sign or test_digest" \
+            --output json --output-file gate-out/smoke/results.json
+          python - gate-out/smoke/results.json <<'PY'
+          import json
+          import sys
+          summary = json.load(open(sys.argv[1], encoding="utf-8"))["summary"]
+          assert summary["total"] > 0 and summary["passed"] > 0, summary
+          assert summary["failed"] == 0, summary
+          assert summary.get("crashed", 0) == 0 and summary.get("error", 0) == 0, summary
+          print("smoke summary OK:", {k: summary[k] for k in ("passed", "failed", "skipped", "xfailed", "total")})
+          PY
+
+      - name: Vector slice (fetch-then-test proof)
+        run: |
+          pkcs11-check test \
+            --module "$P11_MODULE" --slot "$P11_SLOT" --pin "$P11_PIN" \
+            --timeout 120 --isolation auto \
+            --match "test_hmac_wycheproof and sha512 and tc1" \
+            --output json --output-file gate-out/vectors/results.json
+          python - gate-out/vectors/results.json <<'PY'
+          import json
+          import sys
+          summary = json.load(open(sys.argv[1], encoding="utf-8"))["summary"]
+          # Fetched bytes are really consumed: the slice must EXECUTE vectors.
+          assert summary["passed"] > 0, summary
+          assert summary["failed"] == 0, summary
+          print("vector slice OK:", {k: summary[k] for k in ("passed", "failed", "skipped", "xfailed", "total")})
+          PY
+
+      - name: Report
+        run: |
+          pkcs11-check-report --report-log gate-out/smoke/report.jsonl \
+            --results-json gate-out/smoke/results.json \
+            --provider softhsm2 --out gate-out/report
+          ls gate-out gate-out/report
+
+      - name: Summarize
+        if: always()
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          python - "gate-out/smoke/results.json" "gate-out/vectors/results.json" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          import sys
+          # ${{ matrix.artifact }} is substituted by GitHub before bash runs.
+          leg = f"{os.environ.get('RUNNER_OS', '?')} ${{ matrix.artifact }}"
+          try:
+              smoke = json.load(open(sys.argv[1], encoding="utf-8")).get("summary", {})
+              vec = json.load(open(sys.argv[2], encoding="utf-8")).get("summary", {})
+              print(f"### pkcs11-check {os.environ['VERSION']} ({leg}): "
+                    f"smoke {smoke.get('passed', 0)}/{smoke.get('total', 0)} passed, "
+                    f"{smoke.get('failed', 0)} failed, {smoke.get('xfailed', 0)} xfailed; "
+                    f"vector slice {vec.get('passed', 0)}/{vec.get('total', 0)} passed, "
+                    f"{vec.get('failed', 0)} failed")
+          except Exception as e:  # noqa: BLE001
+              print(f"### pkcs11-check {os.environ.get('VERSION', '?')} ({leg}): no JSON report ({e})")
+          PY
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: testpypi-gate-${{ matrix.os }}-${{ matrix.artifact }}
+          path: gate-out/
+          if-no-files-found: warn

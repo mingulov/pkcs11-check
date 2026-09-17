@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import test_keymgmt, test_sign, test_sign_recover
 from pkcs11_check.testcases._probes.runner import ProbeResult
+from tests._skip_assert import assert_skips
 
 
 def _session(*mechanisms: str) -> SimpleNamespace:
@@ -52,8 +53,11 @@ def test_rsa_sign_missing_mechanism_is_skip(
         raising=False,
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_sign.TestRSASignature().test_rsa_pkcs_sign_verify(_session("RSA_PKCS_KEY_PAIR_GEN"))
+    assert_skips(
+        test_sign.TestRSASignature().test_rsa_pkcs_sign_verify,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_rsa_sign_runtime_reject_is_xfail(
@@ -90,11 +94,12 @@ def test_rsa_hash_missing_mechanism_is_skip(
         raising=False,
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA384_RSA_PKCS not supported"):
-        test_sign.TestRSASignature().test_rsa_hash_mechanisms(
-            _session("RSA_PKCS_KEY_PAIR_GEN"),
-            CKM_SHA384_RSA_PKCS,
-        )
+    assert_skips(
+        test_sign.TestRSASignature().test_rsa_hash_mechanisms,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        CKM_SHA384_RSA_PKCS,
+        match="SHA384_RSA_PKCS not supported",
+    )
 
 
 def test_keymgmt_roundtrip_missing_aes_ecb_is_skip(
@@ -106,8 +111,11 @@ def test_keymgmt_roundtrip_missing_aes_ecb_is_skip(
         lambda *_a, **_k: pytest.fail("AES import should have been skipped"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        test_keymgmt.TestKeyImport().test_import_aes_key_roundtrip(_session())
+    assert_skips(
+        test_keymgmt.TestKeyImport().test_import_aes_key_roundtrip,
+        _session(),
+        match="AES_ECB not supported",
+    )
 
 
 def test_keymgmt_copy_missing_aes_keygen_is_skip(
@@ -119,8 +127,11 @@ def test_keymgmt_copy_missing_aes_keygen_is_skip(
         lambda *_a, **_k: pytest.fail("AES setup should have been skipped"),
         raising=False,
     )
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_keymgmt.TestKeyCopy().test_copy_preserves_attributes(_session())
+    assert_skips(
+        test_keymgmt.TestKeyCopy().test_copy_preserves_attributes,
+        _session(),
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_keymgmt_wrong_exported_value_remains_hard_failure(

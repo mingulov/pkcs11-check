@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification
+from pkcs11_check.raw.recipes import ImplausibleModuleLengthError
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKM_AES_CTS,
@@ -16,6 +17,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases.acvp.aes import base_cts
+from tests._skip_assert import assert_skips
 
 _EXPECTED_OUTPUTS = {
     128: (
@@ -267,8 +269,7 @@ def test_cts_detector_distinguishes_unavailable_setup_from_import_reject(
         and attempt["ckr"] is None
         for attempt in result.detail["attempts"]
     )
-    with pytest.raises(pytest.skip.Exception):
-        base_cts.report_cts_detection(result)
+    assert_skips(base_cts.report_cts_detection, result)
 
 
 def test_cts_detector_attributes_clean_import_reject_to_create_object(
@@ -538,8 +539,7 @@ def test_cts_detector_missing_mechanism_is_skip(monkeypatch: pytest.MonkeyPatch)
     result = base_cts._detect_cts_variant(rs)
 
     assert result.status is base_cts.CtsDetectionStatus.ABSENT
-    with pytest.raises(pytest.skip.Exception):
-        base_cts.report_cts_detection(result)
+    assert_skips(base_cts.report_cts_detection, result)
     assert classification.get_records() == []
 
 
@@ -564,3 +564,102 @@ def test_cts_detection_result_is_cached(monkeypatch: pytest.MonkeyPatch) -> None
     assert base_cts.get_cts_detection(rs) is expected
     assert calls == 1
     base_cts.reset_cts_detection_cache()
+
+
+def _stub_config() -> Any:
+    return SimpleNamespace(
+        getoption=lambda name, default=None: "/fake/module.so" if name == "p11_module" else default
+    )
+
+
+def test_cts_probe_contains_hostile_length_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hostile module length report must not INTERNALERROR collection.
+
+    The encrypt probe sizes its output buffer from a module-reported length;
+    an absurd report raises out of detection. The collection probe contains
+    it as setup-unavailable (with the honest reason) so the file survives;
+    the unprimed process cache makes the runtime guard re-probe, keeping the
+    failure fail-visible per test.
+    """
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    def hostile(_config: Any) -> base_cts.CtsDetectionResult:
+        raise ImplausibleModuleLengthError(
+            "C_Encrypt: module reported an implausible output length (2**63 bytes)"
+        )
+
+    monkeypatch.setattr(aes_conftest, "_detect_variant_via_pkcs11", hostile)
+
+    result = aes_conftest._probe_cts_variant(_stub_config())
+
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_UNAVAILABLE
+    assert "implausible output length" in result.detail["reason"]
+
+
+def test_cts_probe_reraises_ordinary_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the typed length signal is contained; harness bugs stay visible."""
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    def buggy(_config: Any) -> base_cts.CtsDetectionResult:
+        raise ValueError("harness bug")
+
+    monkeypatch.setattr(aes_conftest, "_detect_variant_via_pkcs11", buggy)
+
+    with pytest.raises(ValueError, match="harness bug"):
+        aes_conftest._probe_cts_variant(_stub_config())
+
+
+def test_cts_probe_coerces_missing_interface_to_auto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An omitted --p11-interface must not crash module loading.
+
+    The plugin default is None ("auto" is only documentation); the probe
+    coerces None like every other consumer instead of letting load_module
+    raise "Unknown interface None" into collection.
+    """
+    from pkcs11_check.testcases.acvp.aes import conftest as aes_conftest
+
+    captured: dict[str, object] = {}
+
+    def fake_load_module(path: object, interface: object = None) -> Any:
+        captured["interface"] = interface
+        return SimpleNamespace(raw=object())
+
+    monkeypatch.setattr("pkcs11_check.core.loader.load_module", fake_load_module)
+    monkeypatch.setattr("pkcs11_check.raw.bootstrap.get_slot_ids", lambda raw: [7])
+    monkeypatch.setattr("pkcs11_check.raw.recipes.get_mechanism_list", lambda raw, slot: [])
+    # The plugin defines --p11-interface with default None, so getoption
+    # returns None (its `default` kwarg only applies to unknown options).
+    config = SimpleNamespace(
+        getoption=lambda name, default=None: (
+            "/fake/module.so" if name == "p11_module" else None
+        )
+    )
+
+    result = aes_conftest._detect_variant_via_pkcs11(config)
+
+    assert captured["interface"] == "auto"
+    assert result.status is base_cts.CtsDetectionStatus.ABSENT
+
+
+def test_cts_detector_propagates_hostile_length_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detection itself still raises: the runtime re-probe must stay fail-visible."""
+    monkeypatch.setattr(base_cts, "_import_aes_key", lambda _rs, key, **_kwargs: len(key))
+    monkeypatch.setattr(base_cts, "destroy_quietly", lambda *_args: None)
+
+    def hostile_length(*_args: Any, **_kwargs: Any) -> bytes:
+        raise ImplausibleModuleLengthError(
+            "C_Encrypt: module reported an implausible output length (2**63 bytes)"
+        )
+
+    monkeypatch.setattr(base_cts, "encrypt_single", hostile_length)
+
+    with pytest.raises(ImplausibleModuleLengthError, match="implausible output length"):
+        base_cts._detect_cts_variant(_FakeSession())

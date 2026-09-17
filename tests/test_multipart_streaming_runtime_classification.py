@@ -23,6 +23,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_multipart_streaming as streaming
+from tests._skip_assert import assert_skips
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -41,8 +42,12 @@ def test_streaming_aes_ecb_skips_when_mechanism_is_absent(
     monkeypatch.setattr(streaming, "gen_aes_key", _unexpected_keygen)
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        streaming.TestMultipartEncrypt().test_aes_ecb_multiblock_roundtrip(rs, 1)
+    assert_skips(
+        streaming.TestMultipartEncrypt().test_aes_ecb_multiblock_roundtrip,
+        rs,
+        1,
+        match="AES_ECB not supported",
+    )
 
 
 def test_streaming_aes_keygen_runtime_reject_is_xfail(

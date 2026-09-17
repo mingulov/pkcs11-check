@@ -869,7 +869,7 @@ _CREATION_REJECT_RVS = TEMPLATE_ERRORS
 
 
 class TestContradictoryCreationFaithfulness:
-    """G5.3: Contradictory-creation faithful-readback (metadata self-contradiction).
+    """hardening G5.3: Contradictory-creation faithful-readback (metadata self-contradiction).
 
     A module must either cleanly REJECT an unusual but legal attribute combination
     (``CKR_TEMPLATE_INCONSISTENT`` / ``CKR_TEMPLATE_INCOMPLETE`` /

@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import test_access_control
 from tests._attribute_access_guard import analyze_file
+from tests._skip_assert import assert_skips
 
 
 @pytest.fixture(autouse=True)
@@ -55,8 +56,11 @@ def test_secret_key_access_control_skips_when_aes_keygen_is_absent(
     monkeypatch.setattr(test_access_control, "gen_aes_key", _unexpected_keygen)
     rs = SimpleNamespace(has_mechanism=lambda _name: False)
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_access_control.TestPrivateAttribute().test_private_key_default_is_private(rs)
+    assert_skips(
+        test_access_control.TestPrivateAttribute().test_private_key_default_is_private,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
 
 def test_secret_key_access_control_xfails_when_advertised_aes_keygen_rejects_runtime(

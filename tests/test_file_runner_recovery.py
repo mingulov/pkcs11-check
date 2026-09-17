@@ -110,7 +110,7 @@ def test_apply_recovery_silent_on_healthy_run() -> None:
 
 def test_probe_reconfirms_before_declaring_dead(monkeypatch) -> None:
     # A single failing probe (slow/timeout blip on a live-but-busy provider) must NOT be treated
-    # as dead; the bound probe re-confirms once (M1). First False, reconfirm True -> alive.
+    # as dead; the bound probe re-confirms once. First False, reconfirm True -> alive.
     import pkcs11_check.core.file_runner as fr
 
     seq = iter([False, True])

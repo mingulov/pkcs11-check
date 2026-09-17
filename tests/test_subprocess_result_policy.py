@@ -15,6 +15,7 @@ from pkcs11_check.core.process_observation import (
 )
 from pkcs11_check.core.subprocess_trace import drain_subprocess_rv_trace
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from tests._skip_assert import assert_skips
 
 
 def test_process_observations_attach_to_call_report_once_and_in_order() -> None:
@@ -131,8 +132,14 @@ def test_exact_dispatcher_capability_failure_skips() -> None:
         '  File "child.py", line 1, in <module>\n'
         "AttributeError: C_Test not available in this module\n"
     )
-    with pytest.raises(pytest.skip.Exception, match="not implemented"):
-        assert_subprocess_completed(1, "", stderr, context="generated child script")
+    assert_skips(
+        assert_subprocess_completed,
+        1,
+        "",
+        stderr,
+        context="generated child script",
+        match="not implemented",
+    )
 
 
 def test_subprocess_result_policy_preserves_rv_trace_marker_after_long_output() -> None:

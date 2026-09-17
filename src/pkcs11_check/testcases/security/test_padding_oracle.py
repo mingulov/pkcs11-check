@@ -781,7 +781,7 @@ class TestAESPaddingOracle:
         #                          leak: padding validated, content
         #                          differs from original)
         # Distinguishing "_MATCH" / "_DIFFERENT" / CKR sets disambiguates
-        # the M1 + M5 audit findings: a module that silently accepts ALL
+        # the Vaudenay-vs-malleability cases: a module that silently accepts ALL
         # corrupted CTs as CKR_OK with garbage plaintext is leaking CT
         # malleability (worse than Vaudenay), distinct from a module
         # that uniformly rejects (real mitigation).
@@ -820,7 +820,7 @@ class TestAESPaddingOracle:
                     else:
                         assert result is not None
                         # Decrypt succeeded — disambiguate match vs
-                        # different plaintext (M1 / M5 mitigation).
+                        # different plaintext (Vaudenay-vs-malleability disambiguation).
                         all_errors[(trial, pos)] = (
                             "CKR_OK_MATCH" if result == plaintext else "CKR_OK_DIFFERENT"
                         )

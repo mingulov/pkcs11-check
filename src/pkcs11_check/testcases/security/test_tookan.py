@@ -141,7 +141,7 @@ _WRAP_EXTRACTION_RUNTIME_REJECT_RVS = {
 
 # Clean reject codes a module may return at an AES-CBC encrypt/decrypt or AES-key
 # import *use* site when the operation is advertised-but-not-operational for the
-# given key/params (the produce leg of the G5.5 oracle). Each of these means the
+# given key/params (the produce leg of the hardening G5.5 oracle). Each of these means the
 # extraction chain could not complete through that leg -> the oracle did not
 # extract anything, routed to a not-applicable outcome rather than a false pass.
 _CIPHER_OP_REJECT_RVS = {
@@ -477,7 +477,7 @@ class TestWrapExtraction:
             destroy_quietly(rs.raw, rs.sh, target_h)
 
     def test_cbc_wrap_then_decrypt_extraction_oracle(self, p11_raw_session: Any) -> None:
-        """G5.5: Inverse-injection / CBC wrap-then-decrypt extraction oracle.
+        """hardening G5.5: Inverse-injection / CBC wrap-then-decrypt extraction oracle.
 
         Classic Clulow/Tookan attack variant: create a dual-purpose key K with
         CKA_WRAP=True and CKA_DECRYPT=True (the dangerous combination that lets
@@ -830,9 +830,9 @@ class TestKeyTypeConfusionOnUnwrap:
                 )
                 raise
 
-            # Valid leg (D4): unwrap the SAME blob as its CORRECT type (CKK_AES),
+            # Valid leg (Pillar-2 D4): unwrap the SAME blob as its CORRECT type (CKK_AES),
             # negotiating the accepted template, and recover the original bytes.
-            # An advertised-but-not-operational unwrap is routed to xfail (D5),
+            # An advertised-but-not-operational unwrap is routed to xfail (Pillar-2 D5),
             # never to valid_accepted=False.
             try:
                 good = unwrap_key_for_mechanism_roundtrip(
@@ -873,7 +873,7 @@ class TestKeyTypeConfusionOnUnwrap:
                 readback_complete = True
                 valid_accepted = good_value_raw == original_raw
 
-            # Invalid leg (D3): unwrap the SAME blob while requesting CKK_DES3.
+            # Invalid leg (Pillar-2 D3): unwrap the SAME blob while requesting CKK_DES3.
             # The wrapped blob carries an AES-128 (16-byte) key, but DES3 requires
             # 24 bytes (with parity). A returned handle == type-confusion accepted
             # == break; a clean CkrAssertionError == correctly refused.

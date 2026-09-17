@@ -7,6 +7,7 @@ import pytest
 from pkcs11_check import fixtures
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKF_SIGN, CKF_VERIFY, CKM_RSA_PKCS
+from tests._skip_assert import assert_skips
 
 
 def _session(monkeypatch, *, flags: int, mechanisms=("CKM_RSA_PKCS", "RSA_PKCS"), raises=False):
@@ -73,8 +74,7 @@ def test_skip_helper_skips_when_flag_absent(monkeypatch):
     from pkcs11_check.testcases.conftest import skip_unless_mechanism_flag
 
     rs, _ = _session(monkeypatch, flags=int(CKF_SIGN))  # no CKF_VERIFY
-    with pytest.raises(pytest.skip.Exception):
-        skip_unless_mechanism_flag(rs, "RSA_PKCS", int(CKF_VERIFY))
+    assert_skips(skip_unless_mechanism_flag, rs, "RSA_PKCS", int(CKF_VERIFY))
 
 
 def test_skip_helper_passes_when_flag_present(monkeypatch):

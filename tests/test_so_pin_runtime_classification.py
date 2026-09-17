@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
 )
 from pkcs11_check.testcases import _so_login, test_access_levels, test_so_pin
+from tests._skip_assert import assert_skips
 
 
 class _Raw:
@@ -80,8 +81,12 @@ def _patch_access_init_pin_setup(
 
 def test_so_pin_incorrect_is_setup_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_so_login, "_SO_PIN_REJECTED", False)
-    with pytest.raises(pytest.skip.Exception, match="SO PIN differs from user PIN"):
-        _so_login.skip_if_so_pin_rejected(int(CKR_PIN_INCORRECT), explicit=False)
+    assert_skips(
+        _so_login.skip_if_so_pin_rejected,
+        int(CKR_PIN_INCORRECT),
+        explicit=False,
+        match="SO PIN differs from user PIN",
+    )
 
 
 def test_set_pin_python_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

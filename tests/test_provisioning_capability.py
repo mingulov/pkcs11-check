@@ -13,6 +13,7 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_USER_TYPE_INVALID
 from pkcs11_check.testcases import _provisioning as provisioning
 from pkcs11_check.testcases import test_provisioning_capability as capability
+from tests._skip_assert import assert_skips
 
 _OBJECT_CLASSES = ("secret", "private", "public", "cert", "data")
 
@@ -45,8 +46,7 @@ def test_user_role_prohibition_is_one_visible_finding_per_object_class(
         assert records[0]["reason"] == "honest_deviation"
         assert records[0]["outcome"] == "xfail"
 
-        with pytest.raises(pytest.skip.Exception):
-            provisioning.skip_unless_can_create(rs, obj_class)
+        assert_skips(provisioning.skip_unless_can_create, rs, obj_class)
 
     events = provisioning.get_provisioning_events()
     assert [(event.obj_class, event.method) for event in events] == [

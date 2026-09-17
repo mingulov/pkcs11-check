@@ -72,7 +72,7 @@ def test_slhdsa_siggen_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) 
 
 
 # ---------------------------------------------------------------------------
-# D3: import-stage classification.
+# import-audit D3: import-stage classification.
 #
 # SLH_DSA is advertised (has_mechanism gate passed). An import reject on an
 # advertised PQC mechanism is "advertised but not operational" -> xfail, NOT

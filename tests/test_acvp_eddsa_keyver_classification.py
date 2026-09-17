@@ -18,6 +18,7 @@ from pkcs11_check.testcases.acvp._eddsa_helpers import (
     load_eddsa_keyver_vectors,
     load_eddsa_sigver_vectors,
 )
+from tests._skip_assert import assert_skips
 
 
 def _session() -> SimpleNamespace:
@@ -115,13 +116,14 @@ def test_eddsa_keyver_probe_curve_reject_is_skip(monkeypatch: pytest.MonkeyPatch
     )
     monkeypatch.setattr(test_acvp_eddsa, "select_eddsa_public_key_encoding", _reject_probe_curve)
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EdDSA public key"):
-        test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver(
-            _session(),
-            SimpleNamespace(),
-            "EDDSA-KeyVer-ED-448-tc1",
-            vec,
-        )
+    assert_skips(
+        test_acvp_eddsa.TestEdDsaKeyVer().test_eddsa_keyver,
+        _session(),
+        SimpleNamespace(),
+        "EDDSA-KeyVer-ED-448-tc1",
+        vec,
+        match="Cannot import EdDSA public key",
+    )
 
 
 def test_eddsa_keygen_sign_runtime_reject_is_xfail(monkeypatch: pytest.MonkeyPatch) -> None:

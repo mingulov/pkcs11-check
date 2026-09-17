@@ -277,6 +277,27 @@ def test_collection_probe_preserves_explicit_capability_skip(
     assert result.status is base_cts.CtsDetectionStatus.SETUP_UNAVAILABLE
 
 
+def test_collection_probe_skips_cleanly_when_module_exposes_no_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty slot list must skip collection, not IndexError (whole-file INTERNALERROR)."""
+    from pkcs11_check.core import loader
+    from pkcs11_check.raw import bootstrap
+
+    raw = object()
+    monkeypatch.setattr(
+        loader, "load_module", lambda *_args, **_kwargs: SimpleNamespace(raw=raw)
+    )
+    monkeypatch.setattr(bootstrap, "get_slot_ids", lambda _raw: [])
+
+    try:
+        result = cts_conftest._probe_cts_variant(_ProbeConfig())
+    except IndexError as exc:
+        pytest.fail(f"empty slot list crashed collection: {exc}")
+    assert result.status is base_cts.CtsDetectionStatus.SETUP_UNAVAILABLE
+    assert "slot" in result.detail["reason"].lower()
+
+
 def test_collection_probe_contains_unlisted_detector_ckr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

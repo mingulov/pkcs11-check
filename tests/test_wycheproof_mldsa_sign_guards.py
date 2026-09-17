@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.testcases.wycheproof import test_wycheproof_mldsa_sign as mldsa_sign
+from tests._skip_assert import assert_skips
 
 _NO_VECTORS = "Wycheproof vectors not available (run `pkcs11-check fetch-data wycheproof`)"
 
@@ -56,8 +57,7 @@ def test_context_vector_skips_as_covered_elsewhere(monkeypatch: pytest.MonkeyPat
     assert "InvalidContext" in vec.get("flags", [])
     _wire_sign_ok(monkeypatch)
 
-    with pytest.raises(pytest.skip.Exception, match="mldsa_context"):
-        mldsa_sign.test_mldsa_sign(vec_id, vec, _Session())
+    assert_skips(mldsa_sign.test_mldsa_sign, vec_id, vec, _Session(), match="mldsa_context")
 
 
 def test_valid_vector_with_nonempty_ctx_skips_as_covered_elsewhere(
@@ -77,8 +77,7 @@ def test_valid_vector_with_nonempty_ctx_skips_as_covered_elsewhere(
     vec_id, vec = hit
     _wire_sign_ok(monkeypatch)
 
-    with pytest.raises(pytest.skip.Exception, match="mldsa_context"):
-        mldsa_sign.test_mldsa_sign(vec_id, vec, _Session())
+    assert_skips(mldsa_sign.test_mldsa_sign, vec_id, vec, _Session(), match="mldsa_context")
 
 
 def test_malformed_key_signed_is_recorded_deviation(monkeypatch: pytest.MonkeyPatch) -> None:

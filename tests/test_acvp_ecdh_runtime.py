@@ -120,7 +120,7 @@ def test_empty_generated_ec_point_is_type_c_fail(monkeypatch: pytest.MonkeyPatch
     """A module that claims EC keygen success but cannot expose CKA_EC_POINT is a
     lifecycle self-contradiction (claimed success, effect not observable), not a skip.
 
-    D1 determination: the former ``pytest.skip("Cannot extract public key point for
+    import-audit D1 determination: the former ``pytest.skip("Cannot extract public key point for
     ECDH")`` masked this. ``gen_ec_keypair`` asserts ``CKR_OK`` (success claimed); a
     public key's ``CKA_EC_POINT`` is a mandatory, non-sensitive attribute, so an empty
     readback contradicts the claim and must ``fail``.

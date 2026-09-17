@@ -10,6 +10,7 @@ from pkcs11_check.classification import get_records
 from pkcs11_check.raw.types_std import CKR_CANT_LOCK, CKR_FUNCTION_FAILED
 from pkcs11_check.testcases import test_mutex_callback_safety as mutex
 from pkcs11_check.testcases._probes.runner import ProbeResult
+from tests._skip_assert import assert_skips
 
 
 def test_mutex_missing_rv_is_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,10 +391,10 @@ def test_mutex_lock_cant_lock_is_the_only_capability_skip(
             stderr="",
         ),
     )
-    with pytest.raises(pytest.skip.Exception):
-        mutex.TestMutexCallbackErrorHandling().test_lock_mutex_callback_returning_general_error_during_call(
-            SimpleNamespace(module="x", slot=0, pin=None)
-        )
+    assert_skips(
+        mutex.TestMutexCallbackErrorHandling().test_lock_mutex_callback_returning_general_error_during_call,
+        SimpleNamespace(module="x", slot=0, pin=None),
+    )
     assert get_records() == []
 
 

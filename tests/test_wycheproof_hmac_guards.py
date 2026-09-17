@@ -33,6 +33,7 @@ from pkcs11_check.raw.types_std import (
     CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.wycheproof import test_wycheproof_hmac as hmac
+from tests._skip_assert import assert_skips
 
 
 def _first(result: str) -> tuple[str, dict[str, Any]]:
@@ -281,8 +282,13 @@ def test_hmac_truncated_vector_skips_when_general_is_absent(
     session = _HmacMechanismSession("SHA_1_HMAC")
     monkeypatch.setattr(hmac, "import_secret_key", _fail_if_called, raising=False)
 
-    with pytest.raises(pytest.skip.Exception, match="SHA_1_HMAC_GENERAL not supported"):
-        hmac.test_hmac_wycheproof(session, "synthetic-truncated", vec)
+    assert_skips(
+        hmac.test_hmac_wycheproof,
+        session,
+        "synthetic-truncated",
+        vec,
+        match="SHA_1_HMAC_GENERAL not supported",
+    )
 
     assert session.checked == ["SHA_1_HMAC_GENERAL"]
 

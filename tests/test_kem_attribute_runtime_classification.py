@@ -55,7 +55,7 @@ def test_keypair_missing_outputs_are_structured_and_cleanup_runs(
     ]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
     assert all(record.actual_ckr is None for record in records)
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert all(record.mechanism is None for record in records)
     assert all("producer_mechanism=CKM_ML_KEM_KEY_PAIR_GEN" in record.label for record in records)
@@ -517,7 +517,7 @@ def test_decapsulation_permission_acceptance_keeps_operation_identity(
     assert records[-1].mechanism == "CKM_ML_KEM"
 
 
-# C-1 regression: read_attributes() returns plain int/bool values (see
+# FABLE C-1 regression: read_attributes() returns plain int/bool values (see
 # raw/recipes.py read_attributes()), never a CK_CONSTANT. _check_equal_attribute
 # previously compared repr(value) == expected where expected was itself
 # repr(CK_CONSTANT) (e.g. "<CKO_PUBLIC_KEY: 0x00000002>"), so a fully conformant
