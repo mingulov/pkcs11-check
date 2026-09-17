@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import tempfile
 import tomllib
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -28,6 +30,10 @@ console = Console()
 _DISABLED_BASELINE_URL = (
     "https://raw.githubusercontent.com/mingulov/pkcs11-check/main/data/disabled-tests.txt"
 )
+
+# Record of what is actually fetched (sources.toml pins what to fetch; this
+# records what landed, so any data dir answers "which versions am I?").
+VERSIONS_FILE = "versions.json"
 
 
 def _validate_https_url(url: str) -> None:
@@ -164,6 +170,32 @@ def _locate_upstream_license_paths(dest: Path, license_files: list[str]) -> list
     return found
 
 
+def _read_fetched_versions(data_dir: Path) -> dict[str, dict[str, str]]:
+    """Previously recorded fetch versions, or {} when absent/corrupt."""
+    try:
+        raw = json.loads((data_dir / VERSIONS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+
+
+def _record_fetched_version(name: str, entry: dict[str, object], data_dir: Path) -> None:
+    """Record the fetched pin for `name` in the data-dir version manifest."""
+    versions = _read_fetched_versions(data_dir)
+    versions[name] = {
+        "repo": str(entry["repo"]),
+        "commit": str(entry["commit"]),
+        "commit_date": str(entry.get("commit_date", "")),
+        "archive_sha256": str(entry.get("archive_sha256", "")),
+        "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    (data_dir / VERSIONS_FILE).write_text(
+        json.dumps(versions, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def _fetch_one(name: str, entry: dict[str, object], data_dir: Path) -> bool:
     """Fetch a single source. Returns True on success."""
     repo = str(entry["repo"])
@@ -202,6 +234,7 @@ def _fetch_one(name: str, entry: dict[str, object], data_dir: Path) -> bool:
         if dest.exists():
             shutil.rmtree(dest)
         shutil.move(str(extract_dir), str(dest))
+        _record_fetched_version(name, entry, data_dir)
         console.print(f"  Installed {count} files to {dest}")
 
         for path in _locate_upstream_license_paths(dest, license_files):
@@ -213,13 +246,24 @@ def _fetch_one(name: str, entry: dict[str, object], data_dir: Path) -> bool:
 def _show_status(data_dir: Path) -> None:
     """Show status of each source."""
     sources = _load_manifest()
+    fetched = _read_fetched_versions(data_dir)
     console.print(f"[bold]Test vector data status[/bold] (target: {data_dir})\n")
     for name, entry in sources.items():
         desc = str(entry.get("description", name))
         license_id = str(entry.get("license") or "unknown")
         dest = data_dir / name
         if dest.exists():
-            console.print(f"  [green]\u2713[/green] {name:<14} {desc}  [dim][{license_id}][/dim]")
+            pinned = str(entry.get("commit", ""))
+            got = fetched.get(name, {}).get("commit", "")
+            if got and got != pinned:
+                state = f" [yellow]@{got[:8]} stale (pinned @{pinned[:8]})[/yellow]"
+            elif got:
+                state = f"  [dim]@{got[:8]}[/dim]"
+            else:
+                state = "  [dim](unrecorded — re-fetch to stamp versions.json)[/dim]"
+            console.print(
+                f"  [green]\u2713[/green] {name:<14} {desc}  [dim][{license_id}][/dim]{state}"
+            )
         else:
             console.print(
                 f"  [red]\u2717[/red] {name:<14} {desc}  "

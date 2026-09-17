@@ -30,6 +30,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import test_encrypt, test_key_sizes
 from pkcs11_check.testcases.security import test_cve_regression, test_padding_oracle
 from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_decrypt
+from tests._skip_assert import assert_skips
 
 
 class _GuardFellThroughError(Exception):
@@ -57,8 +58,11 @@ def test_rsa_encrypt_boundary_skips_without_ckf_encrypt(
     monkeypatch.setattr(test_cve_regression, "_gen_cve_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags=set())  # mechanism advertised, but not for encryption
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
-        test_cve_regression.TestBoundaryLengthCrypto().test_rsa_encrypt_boundary(rs)
+    assert_skips(
+        test_cve_regression.TestBoundaryLengthCrypto().test_rsa_encrypt_boundary,
+        rs,
+        match="CKF_ENCRYPT",
+    )
 
 
 def test_rsa_encrypt_boundary_runs_when_ckf_encrypt_advertised(
@@ -87,8 +91,11 @@ def test_rsa_timing_sanity_skips_without_ckf_encrypt(
     monkeypatch.setattr(test_padding_oracle, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags={int(CKF_DECRYPT)})  # decrypt only -- cannot build the probe
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
-        test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity(rs)
+    assert_skips(
+        test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity,
+        rs,
+        match="CKF_ENCRYPT",
+    )
 
 
 def test_rsa_timing_sanity_skips_without_ckf_decrypt(
@@ -102,8 +109,11 @@ def test_rsa_timing_sanity_skips_without_ckf_decrypt(
     monkeypatch.setattr(test_padding_oracle, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags={int(CKF_ENCRYPT)})
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_DECRYPT"):
-        test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity(rs)
+    assert_skips(
+        test_padding_oracle.TestTimingBasic().test_rsa_decrypt_timing_sanity,
+        rs,
+        match="CKF_DECRYPT",
+    )
 
 
 def test_rsa_timing_sanity_runs_with_both_flags(
@@ -180,8 +190,7 @@ def test_encrypt_rsa_pkcs_roundtrip_skips_without_ckf_decrypt(
     monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags={int(CKF_ENCRYPT)})
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_DECRYPT"):
-        test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip(rs)
+    assert_skips(test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip, rs, match="CKF_DECRYPT")
 
 
 def test_encrypt_rsa_pkcs_roundtrip_skips_without_ckf_encrypt(
@@ -195,8 +204,7 @@ def test_encrypt_rsa_pkcs_roundtrip_skips_without_ckf_encrypt(
     monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags={int(CKF_DECRYPT)})
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
-        test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip(rs)
+    assert_skips(test_encrypt.TestRSAEncryption().test_rsa_pkcs_roundtrip, rs, match="CKF_ENCRYPT")
 
 
 def test_encrypt_rsa_pkcs_roundtrip_runs_with_both_flags(
@@ -225,8 +233,7 @@ def test_encrypt_rsa_oaep_roundtrip_skips_without_flags(
     monkeypatch.setattr(test_encrypt, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags=set())
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
-        test_encrypt.TestRSAEncryption().test_rsa_oaep_roundtrip(rs)
+    assert_skips(test_encrypt.TestRSAEncryption().test_rsa_oaep_roundtrip, rs, match="CKF_ENCRYPT")
 
 
 def test_encrypt_rsa_oaep_roundtrip_xfails_when_advertised_but_not_operational(
@@ -266,8 +273,9 @@ def test_key_sizes_oaep_roundtrip_skips_without_flags(
     monkeypatch.setattr(test_key_sizes, "gen_rsa_keypair_or_xfail", _unexpected_keygen)
     rs = _session(flags=set())
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_ENCRYPT"):
-        test_key_sizes.TestRSAKeySizes().test_rsa_oaep_roundtrip(rs, 2048)
+    assert_skips(
+        test_key_sizes.TestRSAKeySizes().test_rsa_oaep_roundtrip, rs, 2048, match="CKF_ENCRYPT"
+    )
 
 
 def test_key_sizes_oaep_unknown_ckr_stays_a_hard_failure(
@@ -296,5 +304,11 @@ def test_wycheproof_rsa_decrypt_skips_without_ckf_decrypt() -> None:
     The guard must fire before the vector dict is even touched (vec={} here)."""
     rs = _session(flags=set())
 
-    with pytest.raises(pytest.skip.Exception, match="CKF_DECRYPT"):
-        test_wycheproof_rsa_decrypt.test_rsa_pkcs1_decrypt(rs, object(), "unit", {})
+    assert_skips(
+        test_wycheproof_rsa_decrypt.test_rsa_pkcs1_decrypt,
+        rs,
+        object(),
+        "unit",
+        {},
+        match="CKF_DECRYPT",
+    )

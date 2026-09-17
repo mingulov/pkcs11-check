@@ -81,7 +81,7 @@ def test_missing_first_value_keeps_second_read_and_cleanup(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer already lives in the label (set by every
     # caller of _read_derived_value).
     assert records[0].mechanism is None
@@ -108,7 +108,7 @@ def test_malformed_first_value_and_missing_second_are_both_retained(
         "C_GetAttributeValue",
     ]
     # records[0] ("wrong_result", malformed present value) is an unrelated
-    # C_GetAttributeValue record outside the F6 fix scope and keeps its mechanism;
+    # C_GetAttributeValue record outside the readback-attribution fix scope and keeps its mechanism;
     # records[1] ("not_operational", missing value) is the fixed readback site.
     assert records[0].mechanism == "CKM_X2RATCHET_INITIALIZE"
     assert records[1].mechanism is None

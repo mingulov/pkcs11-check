@@ -475,3 +475,58 @@ class TestTwoCallOutputSizing:
         raw = _CountingRaw(b"\xbb" * 20, too_small_once=True)
         with pytest.raises(AssertionError):
             _two_call_output(raw, "C_Encrypt", 1, None, 16, output_size_hint=16)
+
+
+class _FailingRaw:
+    """Stub whose size query and output call fail independently."""
+
+    def __init__(self, *, query_rv: int, output_rv: int) -> None:
+        self._query_rv = query_rv
+        self._output_rv = output_rv
+
+    def C_Encrypt(  # noqa: N802
+        self,
+        _session: int,
+        _in_buf: Any,
+        _in_len: int,
+        out_buf: Any,
+        out_len_ref: Any,
+    ) -> int:
+        if out_buf is None:
+            out_len_ref._obj.value = 16
+            return self._query_rv
+        out_len_ref._obj.value = 16
+        return self._output_rv
+
+    def C_EncryptInit(self, *_args: Any) -> int:  # noqa: N802
+        return self._output_rv
+
+
+class TestTwoCallStageAttribution:
+    """Single-shot failures name the failing stage (Init vs size query vs call)."""
+
+    def test_size_query_failure_names_size_query(self) -> None:
+        from pkcs11_check.raw.rv import CkrAssertionError
+        from pkcs11_check.raw.recipes import _two_call_output
+        from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_OK
+
+        raw = _FailingRaw(query_rv=CKR_GENERAL_ERROR, output_rv=CKR_OK)
+        with pytest.raises(CkrAssertionError, match=r"^C_Encrypt size query:"):
+            _two_call_output(raw, "C_Encrypt", 1, None, 16)
+
+    def test_output_call_failure_names_call(self) -> None:
+        from pkcs11_check.raw.rv import CkrAssertionError
+        from pkcs11_check.raw.recipes import _two_call_output
+        from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_OK
+
+        raw = _FailingRaw(query_rv=CKR_OK, output_rv=CKR_GENERAL_ERROR)
+        with pytest.raises(CkrAssertionError, match=r"^C_Encrypt:"):
+            _two_call_output(raw, "C_Encrypt", 1, None, 16)
+
+    def test_init_failure_names_init(self) -> None:
+        from pkcs11_check.raw.rv import CkrAssertionError
+        from pkcs11_check.raw.types_std import CKM_AES_CTR, CKR_GENERAL_ERROR
+
+        raw = _FailingRaw(query_rv=CKR_GENERAL_ERROR, output_rv=CKR_GENERAL_ERROR)
+        with pytest.raises(CkrAssertionError, match=r"^C_EncryptInit:"):
+            encrypt_single(raw, 1, 1, CKM_AES_CTR, b"\x00" * 16)

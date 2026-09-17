@@ -21,6 +21,7 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
 )
 from pkcs11_check.testcases import _so_login
+from tests._skip_assert import assert_skips
 
 
 class _FakeRaw:
@@ -91,19 +92,22 @@ class TestGuardSoLockout:
     @pytest.mark.parametrize("explicit", [True, False])
     def test_locked_always_skips(self, explicit: bool) -> None:
         raw = _FakeRaw(token_flags=int(CKF_SO_PIN_LOCKED))
-        with pytest.raises(pytest.skip.Exception, match="CKF_SO_PIN_LOCKED"):
-            _so_login.guard_so_lockout(raw, 0, explicit=explicit)
+        assert_skips(
+            _so_login.guard_so_lockout, raw, 0, explicit=explicit, match="CKF_SO_PIN_LOCKED"
+        )
 
     @pytest.mark.parametrize("explicit", [True, False])
     def test_final_try_always_skips(self, explicit: bool) -> None:
         raw = _FakeRaw(token_flags=int(CKF_SO_PIN_FINAL_TRY))
-        with pytest.raises(pytest.skip.Exception, match="CKF_SO_PIN_FINAL_TRY"):
-            _so_login.guard_so_lockout(raw, 0, explicit=explicit)
+        assert_skips(
+            _so_login.guard_so_lockout, raw, 0, explicit=explicit, match="CKF_SO_PIN_FINAL_TRY"
+        )
 
     def test_count_low_skips_the_guess(self) -> None:
         raw = _FakeRaw(token_flags=int(CKF_SO_PIN_COUNT_LOW))
-        with pytest.raises(pytest.skip.Exception, match="CKF_SO_PIN_COUNT_LOW"):
-            _so_login.guard_so_lockout(raw, 0, explicit=False)
+        assert_skips(
+            _so_login.guard_so_lockout, raw, 0, explicit=False, match="CKF_SO_PIN_COUNT_LOW"
+        )
 
     def test_count_low_lets_explicit_proceed(self) -> None:
         raw = _FakeRaw(token_flags=int(CKF_SO_PIN_COUNT_LOW))
@@ -111,8 +115,14 @@ class TestGuardSoLockout:
 
     def test_count_low_skips_explicit_when_pristine_required(self) -> None:
         raw = _FakeRaw(token_flags=int(CKF_SO_PIN_COUNT_LOW))
-        with pytest.raises(pytest.skip.Exception, match="CKF_SO_PIN_COUNT_LOW"):
-            _so_login.guard_so_lockout(raw, 0, explicit=True, require_pristine=True)
+        assert_skips(
+            _so_login.guard_so_lockout,
+            raw,
+            0,
+            explicit=True,
+            require_pristine=True,
+            match="CKF_SO_PIN_COUNT_LOW",
+        )
 
     def test_clean_flags_proceed(self) -> None:
         _so_login.guard_so_lockout(_FakeRaw(token_flags=0), 0, explicit=False)  # no skip
@@ -126,8 +136,7 @@ class TestGuardSoLockout:
     ) -> None:
         monkeypatch.setattr(_so_login, "_SO_PIN_REJECTED", True)
         raw = _FakeRaw()
-        with pytest.raises(pytest.skip.Exception, match="already rejected"):
-            _so_login.guard_so_lockout(raw, 0, explicit=True)
+        assert_skips(_so_login.guard_so_lockout, raw, 0, explicit=True, match="already rejected")
         assert raw.info_calls == 0
 
 
@@ -137,13 +146,21 @@ class TestSkipIfSoPinRejected:
         assert _so_login._SO_PIN_REJECTED is False
 
     def test_guess_rejection_keeps_historical_message(self) -> None:
-        with pytest.raises(pytest.skip.Exception, match="SO PIN differs from user PIN"):
-            _so_login.skip_if_so_pin_rejected(int(CKR_PIN_INCORRECT), explicit=False)
+        assert_skips(
+            _so_login.skip_if_so_pin_rejected,
+            int(CKR_PIN_INCORRECT),
+            explicit=False,
+            match="SO PIN differs from user PIN",
+        )
         assert _so_login._SO_PIN_REJECTED is True
 
     def test_explicit_rejection_names_the_config_knob(self) -> None:
-        with pytest.raises(pytest.skip.Exception, match="configured SO PIN rejected"):
-            _so_login.skip_if_so_pin_rejected(int(CKR_PIN_INCORRECT), explicit=True)
+        assert_skips(
+            _so_login.skip_if_so_pin_rejected,
+            int(CKR_PIN_INCORRECT),
+            explicit=True,
+            match="configured SO PIN rejected",
+        )
         assert _so_login._SO_PIN_REJECTED is True
 
 
@@ -158,33 +175,43 @@ class TestSoSession:
 
     def test_no_pin_at_all_skips(self) -> None:
         rs = SimpleNamespace(raw=_FakeRaw(), slot_id=0)
-        with pytest.raises(pytest.skip.Exception, match="No PIN configured"):
+
+        def _enter() -> None:
             with _so_login.so_session(rs, _cfg()):
                 pass
+
+        assert_skips(_enter, match="No PIN configured")
 
     def test_pin_incorrect_skips_and_caches(self) -> None:
         raw = _FakeRaw(login_rv=int(CKR_PIN_INCORRECT))
         rs = SimpleNamespace(raw=raw, slot_id=0)
-        with pytest.raises(pytest.skip.Exception, match="configured SO PIN rejected"):
+
+        def _enter() -> None:
             with _so_login.so_session(rs, _cfg(so_pin="so123")):
                 pass
+
+        assert_skips(_enter, match="configured SO PIN rejected")
         # second use in the same process: skipped by the cache, no extra C_Login
-        with pytest.raises(pytest.skip.Exception, match="already rejected"):
-            with _so_login.so_session(rs, _cfg(so_pin="so123")):
-                pass
+        assert_skips(_enter, match="already rejected")
         assert raw.login_calls == [int(CKU_SO)]
 
     def test_another_user_logged_in_skips(self) -> None:
         raw = _FakeRaw(login_rv=int(CKR_USER_ANOTHER_ALREADY_LOGGED_IN))
         rs = SimpleNamespace(raw=raw, slot_id=0)
-        with pytest.raises(pytest.skip.Exception, match="Another user already logged in"):
+
+        def _enter() -> None:
             with _so_login.so_session(rs, _cfg(pin="u456")):
                 pass
+
+        assert_skips(_enter, match="Another user already logged in")
 
     def test_lockout_flag_blocks_before_any_login(self) -> None:
         raw = _FakeRaw(token_flags=int(CKF_SO_PIN_LOCKED))
         rs = SimpleNamespace(raw=raw, slot_id=0)
-        with pytest.raises(pytest.skip.Exception, match="CKF_SO_PIN_LOCKED"):
+
+        def _enter() -> None:
             with _so_login.so_session(rs, _cfg(so_pin="so123")):
                 pass
+
+        assert_skips(_enter, match="CKF_SO_PIN_LOCKED")
         assert raw.login_calls == []

@@ -11,9 +11,9 @@
 
 [wycheproof]
 repo = "C2SP/wycheproof"
-commit = "dac1dd4729fd1f8dd9e1e9f3dce51d783da6c166"
-commit_date = "2026-08-18T16:45:48Z"
-archive_sha256 = "51a436dd758b60dd0b5b4ba1b1a117a3b3f4d10cc73140351845fa125a4737f6"
+commit = "3fa63dd0344abb611f1fb1d77e119938603ea230"
+commit_date = "2026-09-02T15:59:32Z"
+archive_sha256 = "5dc00fae83575135c3147bfd4a04ee8889b1f0482ac6ca21aa486a8abccf2260"
 description = "Wycheproof edge-case cryptographic test vectors"
 include = ["testvectors_v1/", "LICENSE"]
 license = "Apache-2.0"
@@ -21,9 +21,9 @@ license_files = ["LICENSE"]
 
 [cctv]
 repo = "C2SP/CCTV"
-commit = "1e3d2860d46e94e777e1b17c7a6f2436387e3ecc"
-commit_date = "2026-06-05T19:14:06Z"
-archive_sha256 = "faa1a2f99c55376360e6229ebbad7d734686e42cebe73ac0adb90ea037d25c72"
+commit = "4448f2097b2daa812c91a26141f9f36c2096b9ca"
+commit_date = "2026-08-29T15:54:15Z"
+archive_sha256 = "3994978c6882b41afdaa8173fd33785680ea29a0cab680ea7834a915cae68578"
 description = "C2SP Comprehensive Cryptographic Test Vectors"
 include = ["ed25519/", "ML-DSA/", "ML-KEM/", "RFC6979/", "jq255/", "keygen/", "README.md", "LICENSE"]
 license = "BSD-3-Clause AND BSD-1-Clause"
@@ -41,9 +41,9 @@ license_files = ["README.md"]
 
 [x509-limbo]
 repo = "C2SP/x509-limbo"
-commit = "c6040f178a947b3fa4d4a5c118d5594f0e0ca6e2"
-commit_date = "2026-08-18T00:57:54Z"
-archive_sha256 = "7a98927a4d87dea28e5ac61e700d9753c6aa125f80d91d36516a30a744febd79"
+commit = "118721335e675edde10015df89b138cf292d7554"
+commit_date = "2026-09-14T16:21:28Z"
+archive_sha256 = "fe020e2b35fadabf7dd693bb4d49790454925f9165e1588d73d3e97b2041541b"
 description = "C2SP x509-limbo pathological X.509 certificates"
 # No include = extract everything
 license = "Apache-2.0"

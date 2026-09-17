@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
 )
 from pkcs11_check.testcases import test_errors
+from tests._skip_assert import assert_skips
 
 
 def _session_with_mechanisms(*mechanisms: str, raw: Any | None = None) -> SimpleNamespace:
@@ -40,8 +41,11 @@ def test_invalid_mechanism_param_skips_missing_cbc_pad(
     monkeypatch.setattr(test_errors, "gen_aes_key", _unexpected_keygen)
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
-    with pytest.raises(pytest.skip.Exception, match="AES_CBC_PAD not supported"):
-        test_errors.TestInvalidOperations().test_invalid_mechanism_param(rs)
+    assert_skips(
+        test_errors.TestInvalidOperations().test_invalid_mechanism_param,
+        rs,
+        match="AES_CBC_PAD not supported",
+    )
 
     # A capability skip is not a provider verdict; it must not leave a classification
     # record behind (a mutation that classified before checking the capability would
@@ -53,8 +57,11 @@ def test_invalid_key_size_skips_missing_aes_keygen() -> None:
     """Invalid-size AES keygen checks should skip modules without AES_KEY_GEN."""
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        test_errors.TestInvalidOperations().test_generate_key_invalid_size(rs)
+    assert_skips(
+        test_errors.TestInvalidOperations().test_generate_key_invalid_size,
+        rs,
+        match="AES_KEY_GEN not supported",
+    )
 
     assert C.get_records() == []
 
@@ -307,7 +314,8 @@ def test_digest_empty_data_skips_missing_sha256(
     monkeypatch.setattr(test_errors, "digest_single", _unexpected_digest)
     rs = _session_with_mechanisms()
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_errors.TestEmptyInputs().test_digest_empty_data(rs)
+    assert_skips(
+        test_errors.TestEmptyInputs().test_digest_empty_data, rs, match="SHA256 not supported"
+    )
 
     assert C.get_records() == []

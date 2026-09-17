@@ -10,6 +10,7 @@ import pytest
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_MECHANISM_INVALID
 from pkcs11_check.testcases import test_multipart
+from tests._skip_assert import assert_skips
 
 
 def _session(*mechanisms: str) -> SimpleNamespace:
@@ -26,8 +27,11 @@ def test_multipart_smoke_missing_digest_mechanism_is_counted_skip(
         lambda *_args, **_kwargs: pytest.fail("digest should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_multipart.TestMultiPartDigest().test_sha256_consistency(_session())
+    assert_skips(
+        test_multipart.TestMultiPartDigest().test_sha256_consistency,
+        _session(),
+        match="SHA256 not supported",
+    )
 
 
 def test_multipart_smoke_digest_runtime_reject_is_visible_xfail(
@@ -51,8 +55,11 @@ def test_multipart_smoke_missing_aes_ecb_is_counted_skip(
         lambda *_args, **_kwargs: pytest.fail("AES keygen should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_ECB not supported"):
-        test_multipart.TestMultiPartEncrypt().test_encrypt_16kb(_session("AES_KEY_GEN"))
+    assert_skips(
+        test_multipart.TestMultiPartEncrypt().test_encrypt_16kb,
+        _session("AES_KEY_GEN"),
+        match="AES_ECB not supported",
+    )
 
 
 def test_multipart_smoke_encrypt_runtime_reject_is_visible_xfail(
@@ -99,8 +106,11 @@ def test_multipart_smoke_missing_rsa_sign_mechanism_is_counted_skip(
         lambda *_args, **_kwargs: pytest.fail("RSA keygen should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_multipart.TestMultiPartSign().test_rsa_sign_1byte(_session("RSA_PKCS_KEY_PAIR_GEN"))
+    assert_skips(
+        test_multipart.TestMultiPartSign().test_rsa_sign_1byte,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_multipart_smoke_sign_runtime_reject_is_visible_xfail(

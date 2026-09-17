@@ -189,7 +189,7 @@ def test_missing_initial_trusted_read_keeps_setter_probe_and_omission_finding(
         "USER:setattr-CKA_TRUSTED initial readback (producer_mechanism=CKM_AES_KEY_GEN)"
     )
     assert records[0].operation == "C_GetAttributeValue"
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert records[0].mechanism is None
     assert records[0].detail == {

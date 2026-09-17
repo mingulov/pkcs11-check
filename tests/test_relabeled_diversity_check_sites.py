@@ -1,4 +1,4 @@
-"""F6 regression: diversity-check findings relabeled from C_GetAttributeValue to
+"""Readback-attribution regression: diversity-check findings relabeled from C_GetAttributeValue to
 C_DeriveKey.
 
 Two sites (flagged UNCLEAR by the pre-release audit alongside the 56 measured
@@ -28,6 +28,7 @@ than this pass safely covers and is reported as UNCLEAR rather than guessed.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -35,6 +36,7 @@ import pytest
 from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.testcases import test_misc_kdf as _misc_kdf
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
+from tests._readback_attribution_inventory import labeled_call_shapes
 
 
 @pytest.fixture(autouse=True)
@@ -77,9 +79,32 @@ def test_misc_kdf_assert_different_no_finding_when_values_differ() -> None:
     assert C.get_records() == []
 
 
+_SP800_LABEL = "CKM_SP800_108_COUNTER_KDF:distinct labels produce distinct outputs"
+
+
+def test_sp800_108_kdf_site_is_coupled_to_its_source_call() -> None:
+    """The replay below still names its live inline ``classify()`` source call."""
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src/pkcs11_check/testcases/test_sp800_108_kdf.py"
+    )
+    matches = [
+        shape
+        for shape in labeled_call_shapes(source, "classify")
+        if shape.kwargs.get("label") == _SP800_LABEL
+    ]
+    assert matches, "distinct-labels classify site missing from test_sp800_108_kdf.py"
+    for shape in matches:
+        assert shape.args and shape.args[0] == "wrong_result"
+        assert shape.kwargs.get("kind") == "crypto"
+        assert shape.kwargs.get("operation") == "C_DeriveKey"
+        assert shape.kwargs.get("mechanism") == "CKM_SP800_108_COUNTER_KDF"
+
+
 def test_sp800_108_kdf_distinct_labels_finding_is_attributed_to_c_derive_key() -> None:
     """Reproduces the exact (now-fixed) inline classify() call at
-    test_sp800_108_kdf.py's distinct-labels-produce-distinct-outputs check."""
+    test_sp800_108_kdf.py's distinct-labels-produce-distinct-outputs check
+    (coupled to that source call by the test above)."""
     with pytest.raises(pytest.fail.Exception):
         C.classify(
             "wrong_result",

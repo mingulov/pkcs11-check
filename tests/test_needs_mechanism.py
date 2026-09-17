@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from pkcs11_check.testcases.conftest import needs_mechanism, skip_unless_mechanism
+from tests._skip_assert import assert_skips
 
 
 def _mock_session(has: bool) -> MagicMock:
@@ -21,8 +20,9 @@ class TestNeedsMechanismDecorator:
         def test_func(p11_raw_session):
             raise AssertionError("should not reach here")
 
-        with pytest.raises(pytest.skip.Exception, match="FAKE_MECH not supported"):
-            test_func(p11_raw_session=_mock_session(False))
+        assert_skips(
+            test_func, p11_raw_session=_mock_session(False), match="FAKE_MECH not supported"
+        )
 
     def test_passes_when_mechanism_present(self) -> None:
         @needs_mechanism("FAKE_MECH")
@@ -37,8 +37,9 @@ class TestNeedsMechanismDecorator:
             def test_m(self, p11_raw_session):
                 raise AssertionError("should not reach here")
 
-        with pytest.raises(pytest.skip.Exception, match="FAKE_MECH not supported"):
-            T().test_m(p11_raw_session=_mock_session(False))
+        assert_skips(
+            T().test_m, p11_raw_session=_mock_session(False), match="FAKE_MECH not supported"
+        )
 
     def test_works_with_class_method_present(self) -> None:
         class T:
@@ -66,8 +67,7 @@ class TestNeedsMechanismDecorator:
 class TestSkipUnlessMechanism:
     def test_skips_when_mechanism_missing(self) -> None:
         rs = _mock_session(False)
-        with pytest.raises(pytest.skip.Exception, match="AES_GCM not supported"):
-            skip_unless_mechanism(rs, "AES_GCM")
+        assert_skips(skip_unless_mechanism, rs, "AES_GCM", match="AES_GCM not supported")
 
     def test_passes_when_mechanism_present(self) -> None:
         rs = _mock_session(True)

@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import test_mech_digest
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
+from tests._skip_assert import assert_skips
 
 
 def _digest_entry(
@@ -95,8 +96,9 @@ def test_aes_gcm_digest_advertisement_does_not_load_digest_fields(
         flags=int(CKF_DIGEST),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="not digest"):
-        test_mech_digest.TestMechDigestKAT().test_kat_vector(_session(), entry)
+    assert_skips(
+        test_mech_digest.TestMechDigestKAT().test_kat_vector, _session(), entry, match="not digest"
+    )
     assert get_records() == []
 
 

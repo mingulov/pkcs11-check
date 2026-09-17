@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_kat
+from tests._skip_assert import assert_skips
 
 
 def _session() -> SimpleNamespace:
@@ -48,14 +49,15 @@ def test_sha_kat_missing_digest_mechanism_is_counted_skip(
     )
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: False)
 
-    with pytest.raises(pytest.skip.Exception, match="CKM_SHA256 not supported"):
-        test_kat.TestSHA256KAT().test_sha256_kat(
-            rs,
-            {
-                "msg": "",
-                "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            },
-        )
+    assert_skips(
+        test_kat.TestSHA256KAT().test_sha256_kat,
+        rs,
+        {
+            "msg": "",
+            "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+        match="CKM_SHA256 not supported",
+    )
 
 
 def test_aes_kat_missing_ecb_mechanism_is_counted_skip(
@@ -68,8 +70,7 @@ def test_aes_kat_missing_ecb_mechanism_is_counted_skip(
     )
     rs = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda _name: False)
 
-    with pytest.raises(pytest.skip.Exception, match="CKM_AES_ECB not supported"):
-        test_kat._import_aes_key(rs, b"\x00" * 16)
+    assert_skips(test_kat._import_aes_key, rs, b"\x00" * 16, match="CKM_AES_ECB not supported")
 
 
 def test_aes_kat_import_reject_is_visible_xfail(

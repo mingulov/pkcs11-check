@@ -3330,10 +3330,16 @@ class _Analyzer:
     ) -> _Flow:
         current: _State | None = state
         exits: list[_Exit] = []
-        for statement in statements:
+        for index, statement in enumerate(statements):
             if current is None:
                 break
-            result = self._exec_stmt(statement, current, call_stack=call_stack, top_level=top_level)
+            result = self._exec_stmt(
+                statement,
+                current,
+                call_stack=call_stack,
+                top_level=top_level,
+                is_last=index == len(statements) - 1,
+            )
             current = result.state
             exits.extend(result.exits)
         return _Flow(current, exits)
@@ -3345,6 +3351,7 @@ class _Analyzer:
         *,
         call_stack: tuple[str, ...],
         top_level: bool,
+        is_last: bool = False,
     ) -> _Flow:
         if isinstance(node, ast.Return):
             value = self._eval_expr(node.value, state, call_stack=call_stack)
@@ -3428,7 +3435,9 @@ class _Analyzer:
             refined = self._refine(probe, node.test, truth=True)
             return _Flow(refined)
         if isinstance(node, ast.If):
-            return self._exec_if(node, state, call_stack=call_stack, top_level=top_level)
+            return self._exec_if(
+                node, state, call_stack=call_stack, top_level=top_level, is_last=is_last
+            )
         if isinstance(node, (ast.While, ast.For, ast.AsyncFor)):
             return self._exec_loop(node, state, call_stack=call_stack, top_level=top_level)
         if isinstance(node, ast.Match):
@@ -3534,8 +3543,9 @@ class _Analyzer:
         *,
         call_stack: tuple[str, ...],
         top_level: bool,
+        is_last: bool = False,
     ) -> _Flow:
-        self._check_absence_guard(node, state, call_stack=call_stack)
+        self._check_absence_guard(node, state, call_stack=call_stack, is_last=is_last)
         true_state = state.copy()
         test_value = self._eval_expr(node.test, true_state, call_stack=call_stack)
         if test_value.terminal:
@@ -3560,7 +3570,12 @@ class _Analyzer:
         return _Flow(alive, exits)
 
     def _check_absence_guard(
-        self, node: ast.If, state: _State, *, call_stack: tuple[str, ...]
+        self,
+        node: ast.If,
+        state: _State,
+        *,
+        call_stack: tuple[str, ...],
+        is_last: bool = False,
     ) -> None:
         membership = self._provider_membership(node.test, state)
         if membership is None and isinstance(node.test, ast.BoolOp):
@@ -3578,10 +3593,20 @@ class _Analyzer:
                 mapping,
             )
             return
+        # Single-arm positive-`in`: absence skips the body and continues past
+        # the if. A following statement in the same block owns the absence
+        # path (total-function `return None`, trailing `fail_as(...)`, ...),
+        # but last in its immediate block — even with a terminal body —
+        # absence falls off the block end unclassified. (Last-in-branch
+        # conservatively flags: handling past the branch exit is not visible
+        # here.)
         if (
             isinstance(operator, ast.In)
             and not node.orelse
-            and not self._all_paths_terminal(node.body, call_stack=call_stack)
+            and (
+                is_last
+                or not self._all_paths_terminal(node.body, call_stack=call_stack)
+            )
         ):
             self._emit(
                 node,
@@ -3982,6 +4007,10 @@ class _Analyzer:
     def _provider_membership(
         self, test: ast.expr, state: _State
     ) -> tuple[str, _Value, ast.cmpop] | None:
+        negated = False
+        while isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+            test = test.operand
+            negated = not negated
         if not (
             isinstance(test, ast.Compare)
             and len(test.ops) == 1
@@ -3992,7 +4021,14 @@ class _Analyzer:
         mapping = self._eval_expr(test.comparators[0], state, call_stack=())
         if not mapping.taint:
             return None
-        return _key_text(test.left), mapping, test.ops[0]
+        operator = test.ops[0]
+        if negated:
+            operator = self._negated_membership_op(operator)
+        return _key_text(test.left), mapping, operator
+
+    @staticmethod
+    def _negated_membership_op(operator: ast.cmpop) -> ast.cmpop:
+        return ast.NotIn() if isinstance(operator, ast.In) else ast.In()
 
     def _is_missing_sentinel(self, node: ast.expr, state: _State) -> bool:
         return isinstance(node, ast.Name) and state.bindings.get(node.id) == "sentinel"
@@ -4000,11 +4036,22 @@ class _Analyzer:
     def _first_provider_membership(
         self, test: ast.expr, state: _State
     ) -> tuple[str, _Value, ast.cmpop] | None:
-        for child in ast.walk(test):
-            if isinstance(child, ast.Compare):
-                membership = self._provider_membership(child, state)
+        # Breadth-first like ast.walk (first match wins), tracking `not`
+        # parity so a negated membership reports its effective operator.
+        queue: list[tuple[ast.AST, bool]] = [(test, False)]
+        while queue:
+            node, negated = queue.pop(0)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                queue.append((node.operand, not negated))
+                continue
+            if isinstance(node, ast.Compare):
+                membership = self._provider_membership(node, state)
                 if membership is not None:
+                    if negated:
+                        key, mapping, operator = membership
+                        return key, mapping, self._negated_membership_op(operator)
                     return membership
+            queue.extend((child, negated) for child in ast.iter_child_nodes(node))
         return None
 
     def _safe_presence_or(self, test: ast.BoolOp, state: _State) -> bool:
@@ -4015,6 +4062,8 @@ class _Analyzer:
             return False
         key = first[0]
         first_test = test.values[0]
+        while isinstance(first_test, ast.UnaryOp) and isinstance(first_test.op, ast.Not):
+            first_test = first_test.operand
         if not isinstance(first_test, ast.Compare) or not first_test.comparators:
             return False
         if not self._stable_key_expression(first_test.left):
@@ -4886,13 +4935,7 @@ class _Analyzer:
                 )
             builtin_results.append(_Value())
         if _UNKNOWN_CALLABLE in callable_kinds:
-            for argument, value, argument_state in evaluated_arguments:
-                optional_node = argument.value if isinstance(argument, ast.Starred) else argument
-                self._check_optional(optional_node, value, argument_state)
-                if value.taint:
-                    self._check_taint_escape(
-                        node, value, "passing provider-backed mapping to unknown call"
-                    )
+            self._check_call_arguments(node, evaluated_arguments, check_taint=True)
             token = f"unknown-call:{self.path}:{node.lineno}:{node.col_offset + 1}"
             builtin_results.append(_Value(taint=frozenset({token}), mapping=True, mapping_id=token))
 
@@ -4988,15 +5031,13 @@ class _Analyzer:
             return result
 
         if builtin_results:
+            if _UNKNOWN_CALLABLE not in callable_kinds:
+                # Builtin callees are sanctioned mapping consumers (no taint
+                # check), but an unchecked optional argument is still a bug.
+                self._check_call_arguments(node, evaluated_arguments, check_taint=False)
             return _value_union(builtin_results)
 
-        for argument, value, argument_state in evaluated_arguments:
-            optional_node = argument.value if isinstance(argument, ast.Starred) else argument
-            self._check_optional(optional_node, value, argument_state)
-            if value.taint:
-                self._check_taint_escape(
-                    node, value, "passing provider-backed mapping to unknown call"
-                )
+        self._check_call_arguments(node, evaluated_arguments, check_taint=True)
         return _Value()
 
     def _mapping_present(self, value: _Value, key_node: ast.expr, state: _State) -> bool:
@@ -5089,6 +5130,21 @@ class _Analyzer:
     def _check_taint_escape(self, node: ast.AST, value: _Value, action: str) -> None:
         if value.taint:
             self._emit(node, "taint_escape", action, value)
+
+    def _check_call_arguments(
+        self,
+        node: ast.Call,
+        evaluated_arguments: list[tuple[ast.expr, _Value, _State]],
+        *,
+        check_taint: bool,
+    ) -> None:
+        for argument, value, argument_state in evaluated_arguments:
+            optional_node = argument.value if isinstance(argument, ast.Starred) else argument
+            self._check_optional(optional_node, value, argument_state)
+            if check_taint and value.taint:
+                self._check_taint_escape(
+                    node, value, "passing provider-backed mapping to unknown call"
+                )
 
     def _emit(self, node: ast.AST, kind: str, detail: str, value: _Value) -> None:
         provenance = sorted(value.taint)[0] if value.taint else ""

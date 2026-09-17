@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.raw.recipes import ImplausibleModuleLengthError
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.testcases.acvp.aes.base_cts import (
     CtsDetectionResult as _CtsDetectionResult,
@@ -141,6 +142,16 @@ def _probe_cts_variant(config: pytest.Config) -> _CtsDetectionResult:
             _CtsDetectionStatus.SETUP_UNAVAILABLE,
             detail={"reason": str(exc)},
         )
+    except ImplausibleModuleLengthError as exc:
+        # A hostile length report from the encrypt probe is provider
+        # misbehavior, not a harness bug: contain it so collection survives
+        # (an uncaught raise here is a pytest INTERNALERROR that deletes the
+        # whole file). The process cache stays unprimed, so the runtime
+        # guard re-probes and the failure stays fail-visible per test.
+        return _CtsDetectionResult(
+            _CtsDetectionStatus.SETUP_UNAVAILABLE,
+            detail={"reason": str(exc)},
+        )
     except CkrAssertionError as exc:
         # Detection scaffolding (login, session, mechanism list) answers in
         # CKRs: provider answers, contained like any detector result. Only
@@ -191,13 +202,17 @@ def _detect_variant_via_pkcs11(config: pytest.Config) -> _CtsDetectionResult:
     from pkcs11_check.testcases.acvp.aes.base_cts import get_cts_detection
 
     module_path = config.getoption("p11_module")
-    interface = config.getoption("p11_interface", default="auto")
+    # The plugin default is None ("auto" is only documentation); every other
+    # consumer coerces None, so do the same instead of crashing load_module.
+    interface = config.getoption("p11_interface", default="auto") or "auto"
     slot_opt = config.getoption("p11_slot", default=None)
     pin = config.getoption("p11_pin", default=None)
 
     p11 = load_module(Path(module_path), interface=interface)
     raw = p11.raw
     slots = get_slot_ids(raw)
+    if not slots:
+        pytest.skip("module exposes no PKCS#11 slots")
     slot_idx = slot_opt if slot_opt is not None else 0
     slot_id = slots[slot_idx] if slot_idx < len(slots) else slots[0]
 

@@ -196,7 +196,8 @@ def test_enrich_xfail_not_operational_routes_to_capability_audit() -> None:
 
 
 def test_mechanism_sort_label_is_honest_about_missing_mechanism() -> None:
-    """F6 made readback records deliberately mechanism-free, so this is now common.
+    """Readback attribution made readback records deliberately mechanism-free, so this
+    is now common.
 
     Before the fix the sort key was ``str(e["mechanism"])``, which renders a mechanism-free
     record under the literal string "None" -- a dishonest label that also collides

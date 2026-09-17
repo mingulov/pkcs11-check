@@ -771,7 +771,7 @@ class TestAuthenticatedWrap:
                     )
                 )
             else:
-                # Valid leg (D4/D5): unwrap the UN-tampered blob and recover original.
+                # Valid leg (Pillar-2 D4/D5): unwrap the UN-tampered blob and recover original.
                 good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
                 good = 0
                 try:
@@ -821,7 +821,7 @@ class TestAuthenticatedWrap:
                     and good_bytes == original_bytes
                 )
 
-                # Invalid leg (D3): tamper the tag in-place via a shared pTag buffer.
+                # Invalid leg (Pillar-2 D3): tamper the tag in-place via a shared pTag buffer.
                 bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
                 tag_storage, _ = bad_mech.buffer_storage("tag")
                 tag_storage[0] ^= 0xFF
@@ -1019,7 +1019,7 @@ class TestAuthenticatedWrapAAD:
                     "AES-GCM authenticated wrap (AAD leg) rejected",
                 )
 
-            # Valid leg (D4/D5): unwrap with the SAME AAD and recover original.
+            # Valid leg (Pillar-2 D4/D5): unwrap with the SAME AAD and recover original.
             good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             good = 0
             try:
@@ -1071,7 +1071,7 @@ class TestAuthenticatedWrapAAD:
                     and good_bytes == original_bytes
                 )
 
-            # Invalid leg (D3): unwrap with a DIFFERENT AAD — AEAD must reject.
+            # Invalid leg (Pillar-2 D3): unwrap with a DIFFERENT AAD — AEAD must reject.
             bad_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
             invalid_outcome: Any
             try:
@@ -1200,7 +1200,7 @@ class TestWrapIntegrity:
                     CKA_SENSITIVE: False,
                 }
 
-                # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
+                # Valid leg (Pillar-2 D4/D5): unwrap the UN-tampered blob (negotiating the
                 # accepted template) and recover the original key bytes.
                 try:
                     good = unwrap_key_for_mechanism_roundtrip(
@@ -1249,7 +1249,7 @@ class TestWrapIntegrity:
                     and good_bytes == original_bytes
                 )
 
-                # Invalid leg (D3): flip a bit in a middle byte (avoiding the first
+                # Invalid leg (Pillar-2 D3): flip a bit in a middle byte (avoiding the first
                 # 8 bytes which carry the integrity ICV — flipping there is a
                 # different test) and attempt the same unwrap.
                 mid = len(wrapped) // 2
@@ -1386,7 +1386,7 @@ class TestWrapIntegrity:
                 )
 
             if wrapped_usable:
-                # Valid leg (D4/D5): unwrap the UN-tampered ciphertext, recover original.
+                # Valid leg (Pillar-2 D4/D5): unwrap the UN-tampered ciphertext, recover original.
                 good_mech = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap_mech)
                 try:
                     good = unwrap_key_authenticated(
@@ -1435,7 +1435,7 @@ class TestWrapIntegrity:
                     and good_bytes == original_bytes
                 )
 
-                # Invalid leg (D3): flip a bit in the ciphertext, NOT the tag.
+                # Invalid leg (Pillar-2 D3): flip a bit in the ciphertext, NOT the tag.
                 tampered_ct = bytearray(wrapped)
                 tampered_ct[0] ^= 0x01
                 tampered_bytes = bytes(tampered_ct)
@@ -1707,7 +1707,7 @@ class TestEcdhAesKeyWrap:
                     CKA_SENSITIVE: False,
                 }
 
-                # Valid leg (D4/D5): unwrap the UN-tampered blob (negotiating the
+                # Valid leg (Pillar-2 D4/D5): unwrap the UN-tampered blob (negotiating the
                 # accepted template) and recover the original key.
                 good = 0
                 try:
@@ -1757,7 +1757,7 @@ class TestEcdhAesKeyWrap:
                     and good_bytes == original_bytes
                 )
 
-                # Invalid leg (D3): flip a byte in the AES-KW ciphertext region.
+                # Invalid leg (Pillar-2 D3): flip a byte in the AES-KW ciphertext region.
                 tampered = bytearray(wrapped)
                 tampered[-2] ^= 0xFF
                 invalid_outcome: Any

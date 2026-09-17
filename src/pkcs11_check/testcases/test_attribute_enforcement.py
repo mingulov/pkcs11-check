@@ -943,7 +943,8 @@ class TestTokenAttributePromotion:
                 )
             # CKR_OK + readback shows True: spec-conformant promotion.
             # Persistence verification (open new session, find object)
-            # is out of scope for this baseline test — see CROSS-PROC-001
+            # is out of scope for this baseline test — see
+            # test_subprocess_safety.py TestSessionObjectProcessIsolation
             # for the cross-process visibility companion.
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

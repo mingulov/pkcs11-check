@@ -45,6 +45,7 @@ from pkcs11_check.testcases.mechanism_registry import (
     MechConfig,
     ParamRecipe,
 )
+from tests._skip_assert import assert_skips
 
 
 class _FakeMech:
@@ -189,8 +190,9 @@ def test_generate_key_from_recipe_skips_when_keygen_mechanism_absent() -> None:
         keygen_recipe=KeygenRecipe("symmetric"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="AES_KEY_GEN not supported"):
-        helpers.generate_key_from_recipe(rs, entry, config)
+    assert_skips(
+        helpers.generate_key_from_recipe, rs, entry, config, match="AES_KEY_GEN not supported"
+    )
 
     assert fake_raw.calls == []
 

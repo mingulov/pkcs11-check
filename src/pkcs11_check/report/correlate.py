@@ -17,9 +17,10 @@ from pkcs11_check.classification import HARNESS_REASONS
 
 ThemeKey = tuple[str, str | None, str | None]
 
-#: Sort-key label for a mechanism-free record. F6 made readback records deliberately
-#: mechanism-free (``inherit_mechanism=False``), so this bucket is now common; sorting
-#: on ``str(None)`` would render it under the literal, dishonest text "None".
+#: Sort-key label for a mechanism-free record. Readback attribution made readback
+#: records deliberately mechanism-free (``inherit_mechanism=False``), so this bucket
+#: is now common; sorting on ``str(None)`` would render it under the literal,
+#: dishonest text "None".
 _NO_MECHANISM_LABEL = "(no mechanism)"
 
 

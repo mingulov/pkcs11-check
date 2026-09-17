@@ -366,12 +366,14 @@ def test_no_teardown_leak():
     assert grouped_reasons["wrong_result"] == 1
     assert grouped_reasons["honest_deviation"] == 2
 
-    # --- property (M1): F11 attribution is not merely present but actually effective on
-    # this real, writer-produced stream (the exact cache/assembly pipeline under test here,
+    # --- property (BRANCH-REVIEW M1): F11 attribution is not merely present
+    # but actually effective on this real, writer-produced stream (the exact
+    # cache/assembly pipeline under test here,
     # crash-retry accumulation included) -- every classification occurrence must be
     # attributed to the isolation marker that precedes it. A marker that is written but
-    # immediately wiped by the reader's SessionStart reset (M1) leaves every occurrence
-    # unattributed while still passing every other assertion above; assert the positive
+    # immediately wiped by the reader's SessionStart reset (BRANCH-REVIEW M1)
+    # leaves every occurrence unattributed while still passing every other
+    # assertion above; assert the positive
     # claim directly rather than relying only on `_assert_observability_gate_accepts`
     # (which deliberately never thresholds `unclassified`, and would not catch this).
     for group in groups:

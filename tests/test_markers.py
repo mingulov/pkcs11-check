@@ -23,8 +23,26 @@ def test_allocation_amplifying_marker_selects_exact_probes() -> None:
         "::TestDecryptOutputLengthTruncation::test_decrypt_oversized_length_rejects_or_honors",
         "src/pkcs11_check/testcases/security/test_field_size_boundary.py"
         "::TestHkdfParamLengthTruncation::test_hkdf_salt_len_truncation",
+        "src/pkcs11_check/testcases/security/test_field_size_boundary.py"
+        "::TestHkdfParamLengthTruncation::test_hkdf_info_len_truncation",
         "src/pkcs11_check/testcases/test_attribute_fuzz.py"
         "::TestMalformedAttributes::test_negative_key_length",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestAesOFBOutputLengthTruncation::test_encrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestAesOFBOutputLengthTruncation::test_decrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestAesCFB128OutputLengthTruncation::test_encrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestAesCFB128OutputLengthTruncation::test_decrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestAesCFB8OutputLengthTruncation::test_encrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestAesCFB8OutputLengthTruncation::test_decrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestChaCha20OutputLengthTruncation::test_encrypt_oversized_length_rejects_or_honors",
+        "src/pkcs11_check/testcases/security/test_output_length_truncation.py"
+        "::TestChaCha20OutputLengthTruncation::test_decrypt_oversized_length_rejects_or_honors",
     ]
     proc = subprocess.run(
         [

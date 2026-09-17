@@ -16,6 +16,7 @@ from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
 )
 from pkcs11_check.testcases.acvp import test_acvp_rsa
+from tests._skip_assert import assert_skips
 
 
 def _session() -> SimpleNamespace:
@@ -95,12 +96,13 @@ def test_acvp_rsa_pkcs15_siggen_keygen_reject_is_setup_skip(
     monkeypatch.setattr(test_acvp_rsa, "gen_rsa_keypair", _attribute_value_invalid)
     monkeypatch.setattr(test_acvp_rsa, "destroy_quietly", lambda *_args: None)
 
-    with pytest.raises(pytest.skip.Exception, match="RSA 2048-bit key generation failed"):
-        test_acvp_rsa.TestRsaPkcs15().test_rsa_pkcs15_sign_verify(
-            _session(),
-            "SigGen-pkcs15-SHA2-256-tc31",
-            _pkcs15_vec(),
-        )
+    assert_skips(
+        test_acvp_rsa.TestRsaPkcs15().test_rsa_pkcs15_sign_verify,
+        _session(),
+        "SigGen-pkcs15-SHA2-256-tc31",
+        _pkcs15_vec(),
+        match="RSA 2048-bit key generation failed",
+    )
 
 
 def test_acvp_rsa_pss_siggen_sign_runtime_reject_is_xfail(

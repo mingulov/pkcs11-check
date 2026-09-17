@@ -1,11 +1,11 @@
-"""F6 zero-tolerance guard for mechanism-free ``attr_or_record`` readbacks.
+"""Readback-attribution zero-tolerance guard for mechanism-free ``attr_or_record`` readbacks.
 
 ``record_as()`` resolves ``mechanism`` as ``if mechanism is None and inherit_mechanism:
 mechanism = _active_mechanism``. A ``C_GetAttributeValue`` readback that omits
 ``inherit_mechanism=False`` therefore stamps whatever mechanism the calling test last made
 active onto a record that has nothing to do with it -- and because ``wrap_context_for()``
 memoises per session handle, *which* mechanism gets stamped depends on test ordering and
-``-k`` selection. That non-determinism was the release-blocking F6 defect.
+``-k`` selection. That non-determinism was the release-blocking readback-attribution defect.
 
 Every mechanism-free readback must pass ``inherit_mechanism=False`` at its source. This
 is a zero-tolerance guard: an unguarded site would silently stamp a stale mechanism onto
@@ -51,7 +51,9 @@ def test_no_mechanism_inheriting_attribute_reads() -> None:
     """Every ``attr_or_record`` site must pass ``inherit_mechanism=False``."""
     assert TESTCASES_ROOT.is_dir(), f"Testcase source root is missing: {TESTCASES_ROOT}"
     actual, seen_sites = _unguarded_sites()
-    assert seen_sites > 0, "Scanner saw no attr_or_record calls; F6 guard would be vacuous"
+    assert seen_sites > 0, (
+        "Scanner saw no attr_or_record calls; readback-attribution guard would be vacuous"
+    )
     assert seen_sites == EXPECTED_ATTR_OR_RECORD_SITES, (
         f"Scanner saw {seen_sites} attr_or_record calls; expected {EXPECTED_ATTR_OR_RECORD_SITES}"
     )

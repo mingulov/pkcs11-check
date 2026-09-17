@@ -13,6 +13,7 @@ from pkcs11_check.testcases.wycheproof import test_wycheproof_dsa as dsa
 from pkcs11_check.testcases.wycheproof import test_wycheproof_ecdsa as ecdsa
 from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa as rsa
 from pkcs11_check.testcases.wycheproof import test_wycheproof_rsa_pss as rsa_pss
+from tests._skip_assert import assert_skips
 
 
 class _SignatureSession:
@@ -48,8 +49,13 @@ def test_duplicate_ecdsa_p1363_vector_is_skipped(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(ecdsa, "import_ec_public_key_negotiated", _fail_if_called)
     vec_id = "ecdsa_brainpoolP224r1_sha224_p1363_test.json:tc183-valid"
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 ECDSA operation input"):
-        ecdsa.test_ecdsa_wycheproof(_SignatureSession(), vec_id, _find_ecdsa(vec_id))
+    assert_skips(
+        ecdsa.test_ecdsa_wycheproof,
+        _SignatureSession(),
+        vec_id,
+        _find_ecdsa(vec_id),
+        match="Duplicate PKCS#11 ECDSA operation input",
+    )
 
 
 def test_ecdsa_bitcoin_policy_duplicate_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,8 +63,13 @@ def test_ecdsa_bitcoin_policy_duplicate_is_skipped(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(ecdsa, "import_ec_public_key_negotiated", _fail_if_called)
     vec_id = "ecdsa_secp256k1_sha256_bitcoin_test.json:tc1-invalid"
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 ECDSA operation input"):
-        ecdsa.test_ecdsa_wycheproof(_SignatureSession(), vec_id, _find_ecdsa(vec_id))
+    assert_skips(
+        ecdsa.test_ecdsa_wycheproof,
+        _SignatureSession(),
+        vec_id,
+        _find_ecdsa(vec_id),
+        match="Duplicate PKCS#11 ECDSA operation input",
+    )
 
 
 def test_ecdsa_short_p1363_signature_size_vector_is_skipped(
@@ -68,8 +79,13 @@ def test_ecdsa_short_p1363_signature_size_vector_is_skipped(
     monkeypatch.setattr(ecdsa, "import_ec_public_key_negotiated", _fail_if_called)
     vec_id = "ecdsa_secp256r1_sha512_p1363_test.json:tc191-invalid"
 
-    with pytest.raises(pytest.skip.Exception, match="short ECDSA signature"):
-        ecdsa.test_ecdsa_wycheproof(_SignatureSession(), vec_id, _find_ecdsa(vec_id))
+    assert_skips(
+        ecdsa.test_ecdsa_wycheproof,
+        _SignatureSession(),
+        vec_id,
+        _find_ecdsa(vec_id),
+        match="short ECDSA signature",
+    )
 
 
 def test_ecdsa_p521_shake256_loader_hash_matches_valid_vector() -> None:
@@ -94,8 +110,13 @@ def test_duplicate_dsa_p1363_vector_is_skipped(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(dsa, "import_dsa_public_key", _fail_if_called)
     vec_id = "dsa_2048_224_sha224_p1363_test.json:tc3-invalid"
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 DSA operation input"):
-        dsa.test_dsa(_SignatureSession(), vec_id, _find_dsa(vec_id))
+    assert_skips(
+        dsa.test_dsa,
+        _SignatureSession(),
+        vec_id,
+        _find_dsa(vec_id),
+        match="Duplicate PKCS#11 DSA operation input",
+    )
 
 
 def test_dsa_der_metadata_duplicate_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,8 +124,13 @@ def test_dsa_der_metadata_duplicate_is_skipped(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(dsa, "import_dsa_public_key", _fail_if_called)
     vec_id = "dsa_2048_224_sha224_test.json:tc3-invalid"
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 DSA operation input"):
-        dsa.test_dsa(_SignatureSession(), vec_id, _find_dsa(vec_id))
+    assert_skips(
+        dsa.test_dsa,
+        _SignatureSession(),
+        vec_id,
+        _find_dsa(vec_id),
+        match="Duplicate PKCS#11 DSA operation input",
+    )
 
 
 def test_duplicate_rsa_pss_params_vector_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -112,8 +138,13 @@ def test_duplicate_rsa_pss_params_vector_is_skipped(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rsa_pss, "import_rsa_public_key_negotiated", _fail_if_called)
     vec_id = "rsa_pss_2048_sha1_mgf1_20_test.json:tc1-valid"
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 RSA-PSS operation input"):
-        rsa_pss.test_rsa_pss(_SignatureSession(), vec_id, _find_rsa_pss(vec_id))
+    assert_skips(
+        rsa_pss.test_rsa_pss,
+        _SignatureSession(),
+        vec_id,
+        _find_rsa_pss(vec_id),
+        match="Duplicate PKCS#11 RSA-PSS operation input",
+    )
 
 
 def test_duplicate_rsa_pkcs1_signature_vector_is_skipped(
@@ -123,5 +154,10 @@ def test_duplicate_rsa_pkcs1_signature_vector_is_skipped(
     monkeypatch.setattr(rsa, "import_rsa_public_key_negotiated", _fail_if_called)
     vec_id = "rsa_signature_2048_sha256_test.json:tc1-valid"
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 RSA operation input"):
-        rsa.test_rsa_wycheproof(_SignatureSession(), vec_id, _find_rsa(vec_id))
+    assert_skips(
+        rsa.test_rsa_wycheproof,
+        _SignatureSession(),
+        vec_id,
+        _find_rsa(vec_id),
+        match="Duplicate PKCS#11 RSA operation input",
+    )

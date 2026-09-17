@@ -330,6 +330,7 @@ class TestAesOFBOutputLengthTruncation:
     drives an oversize write, and a truncating provider under-fills the output.
     """
 
+    @pytest.mark.allocation_amplifying
     def test_encrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -373,6 +374,7 @@ class TestAesOFBOutputLengthTruncation:
             ),
         )
 
+    @pytest.mark.allocation_amplifying
     def test_decrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -430,6 +432,7 @@ class TestAesCFB128OutputLengthTruncation:
     identically: an oversize input drives an oversize write.
     """
 
+    @pytest.mark.allocation_amplifying
     def test_encrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -474,6 +477,7 @@ class TestAesCFB128OutputLengthTruncation:
             ),
         )
 
+    @pytest.mark.allocation_amplifying
     def test_decrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -532,6 +536,7 @@ class TestAesCFB8OutputLengthTruncation:
     demand-zero mmap oracle applies identically.
     """
 
+    @pytest.mark.allocation_amplifying
     def test_encrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -575,6 +580,7 @@ class TestAesCFB8OutputLengthTruncation:
             ),
         )
 
+    @pytest.mark.allocation_amplifying
     def test_decrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -633,6 +639,7 @@ class TestChaCha20OutputLengthTruncation:
     from AES key generation).  The demand-zero mmap oracle applies identically.
     """
 
+    @pytest.mark.allocation_amplifying
     def test_encrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,
@@ -672,6 +679,7 @@ class TestChaCha20OutputLengthTruncation:
             ),
         )
 
+    @pytest.mark.allocation_amplifying
     def test_decrypt_oversized_length_rejects_or_honors(
         self,
         p11_raw_session: Any,

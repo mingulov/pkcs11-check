@@ -152,8 +152,9 @@ def test_dual_function_fns_and_uninitialized_are_not_deviations(
         lambda *_args, **_kwargs: (0, f"{marker}:0x{int(ckr):08x}\n", ""),
     )
     if ckr == CKR_FUNCTION_NOT_SUPPORTED:
-        with pytest.raises(pytest.skip.Exception):
-            getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name)(_config())
+        assert_skips(
+            getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name), _config()
+        )
     else:
         getattr(test_remaining_gaps.TestDualFunctionRemaining(), method_name)(_config())
 

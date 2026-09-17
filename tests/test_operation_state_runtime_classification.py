@@ -26,6 +26,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import test_operation_state as tos
 from pkcs11_check.testcases._probes.runner import ProbeResult
+from tests._skip_assert import assert_skips
 
 _CROSS_DIGEST = hashlib.sha256(b"cross-session data" + b"cross-session continuation").hexdigest()
 _SAME_DIGEST = hashlib.sha256(b"Hello, " + b"PKCS#11 state!").hexdigest()
@@ -52,8 +53,11 @@ def test_get_only_operation_state_test_skips_when_get_pointer_is_missing() -> No
     raw = SimpleNamespace(available_function_names=lambda: {"C_SetOperationState"})
     session = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
 
-    with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
-        tos.TestGetOperationStateAPI().test_no_active_operation(session)
+    assert_skips(
+        tos.TestGetOperationStateAPI().test_no_active_operation,
+        session,
+        match="C_GetOperationState",
+    )
 
 
 def test_get_operation_state_function_not_supported_is_capability_skip() -> None:
@@ -63,8 +67,11 @@ def test_get_operation_state_function_not_supported_is_capability_skip() -> None
     )
     session = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
 
-    with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
-        tos.TestGetOperationStateAPI().test_no_active_operation(session)
+    assert_skips(
+        tos.TestGetOperationStateAPI().test_no_active_operation,
+        session,
+        match="C_GetOperationState",
+    )
 
     from pkcs11_check.classification import get_records
 
@@ -75,13 +82,15 @@ def test_set_only_operation_state_test_skips_when_set_pointer_is_missing() -> No
     raw = SimpleNamespace(available_function_names=lambda: {"C_GetOperationState"})
     session = SimpleNamespace(raw=raw, sh=1, has_mechanism=lambda _name: True)
 
-    with pytest.raises(pytest.skip.Exception, match="C_SetOperationState"):
-        tos.TestGetOperationStateAPI().test_garbage_state_raises_saved_state_invalid(session)
+    assert_skips(
+        tos.TestGetOperationStateAPI().test_garbage_state_raises_saved_state_invalid,
+        session,
+        match="C_SetOperationState",
+    )
 
 
 def test_set_operation_state_function_not_supported_is_capability_skip() -> None:
-    with pytest.raises(pytest.skip.Exception, match="C_SetOperationState"):
-        _run(int(CKR_FUNCTION_NOT_SUPPORTED))
+    assert_skips(_run, int(CKR_FUNCTION_NOT_SUPPORTED), match="C_SetOperationState")
 
     from pkcs11_check.classification import get_records
 
@@ -395,8 +404,12 @@ def test_cross_session_function_not_supported_is_capability_skip(
     )
     config = SimpleNamespace(module="x", slot=0, pin=None)
 
-    with pytest.raises(pytest.skip.Exception, match="C_SetOperationState"):
-        tos.TestDigestStateRoundTrip().test_digest_state_cross_session(config, None)
+    assert_skips(
+        tos.TestDigestStateRoundTrip().test_digest_state_cross_session,
+        config,
+        None,
+        match="C_SetOperationState",
+    )
 
     from pkcs11_check.classification import get_records
 
@@ -423,8 +436,12 @@ def test_same_session_function_not_supported_is_capability_skip(
     config = SimpleNamespace(module="x", slot=0, pin=None)
     session = SimpleNamespace(raw=object(), sh=1, has_mechanism=lambda name: name == "SHA256")
 
-    with pytest.raises(pytest.skip.Exception, match="C_GetOperationState"):
-        tos.TestDigestStateRoundTrip().test_digest_state_same_session(config, session)
+    assert_skips(
+        tos.TestDigestStateRoundTrip().test_digest_state_same_session,
+        config,
+        session,
+        match="C_GetOperationState",
+    )
 
     from pkcs11_check.classification import get_records
 

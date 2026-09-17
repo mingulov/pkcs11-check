@@ -37,7 +37,7 @@ def test_broken_valid_leg_fails() -> None:
 
 
 def test_non_ckr_assertion_reraises_not_treated_as_reject() -> None:
-    # D2: a harness AssertionError (no .rv) must re-raise, NOT count as detection
+    # Pillar-2 D2: a harness AssertionError (no .rv) must re-raise, NOT count as detection
     with pytest.raises(AssertionError):
         classify_discrimination(
             valid_accepted=True, invalid_outcome=AssertionError("ctypes bug"), label="t"

@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
 )
 from pkcs11_check.testcases import test_digest
+from tests._skip_assert import assert_skips
 
 
 def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
@@ -32,8 +33,13 @@ def test_general_digest_skips_when_mechanism_is_absent(
     monkeypatch.setattr(test_digest, "digest_single", _unexpected_digest)
     rs = _session_with_mechanisms("SHA256")
 
-    with pytest.raises(pytest.skip.Exception, match="SHA224 not supported"):
-        test_digest.TestDigestLengths().test_digest_length(rs, CKM_SHA224, 28)
+    assert_skips(
+        test_digest.TestDigestLengths().test_digest_length,
+        rs,
+        CKM_SHA224,
+        28,
+        match="SHA224 not supported",
+    )
 
 
 def test_general_digest_runtime_reject_is_xfail(
@@ -80,5 +86,8 @@ def test_digest_key_skips_when_sha256_is_absent(
     monkeypatch.setattr(test_digest, "gen_aes_key", _unexpected_keygen)
     rs = _session_with_mechanisms("AES_KEY_GEN")
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_digest.TestDigestKey().test_digest_key_matches_hashlib(rs)
+    assert_skips(
+        test_digest.TestDigestKey().test_digest_key_matches_hashlib,
+        rs,
+        match="SHA256 not supported",
+    )

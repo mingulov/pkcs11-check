@@ -23,6 +23,7 @@ from pkcs11_check.testcases.wycheproof._key_decoders import (
     decode_ec_public_point,
     ecdh_cofactor1_shared_x,
 )
+from tests._skip_assert import assert_skips
 
 # NIST P-256 generator (SEC 2).
 _P256_GX = 0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296
@@ -102,8 +103,14 @@ def test_duplicate_ecdh_container_vector_is_skipped(
     vec_id = "ecdh_secp256r1_pem_test.json:tc70-valid"
     vec = next(vec for candidate_id, vec in ecdh._ALL_ECDH_VECTORS if candidate_id == vec_id)
 
-    with pytest.raises(pytest.skip.Exception, match="Duplicate PKCS#11 ECDH operation input"):
-        ecdh.test_ecdh(_EcdhSession(), None, vec_id, vec)
+    assert_skips(
+        ecdh.test_ecdh,
+        _EcdhSession(),
+        None,
+        vec_id,
+        vec,
+        match="Duplicate PKCS#11 ECDH operation input",
+    )
 
 
 def test_ecdh_curve_mapping_bug_propagates(
@@ -425,8 +432,14 @@ def test_invalid_ecdh_curve_setup_still_skips(monkeypatch: pytest.MonkeyPatch) -
         ),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC private key"):
-        ecdh.test_ecdh(_EcdhSession(), None, "synthetic:tc0-invalid", _synthetic_vector("invalid"))
+    assert_skips(
+        ecdh.test_ecdh,
+        _EcdhSession(),
+        None,
+        "synthetic:tc0-invalid",
+        _synthetic_vector("invalid"),
+        match="Cannot import EC private key",
+    )
 
 
 @pytest.mark.parametrize("result", ["invalid", "acceptable"])

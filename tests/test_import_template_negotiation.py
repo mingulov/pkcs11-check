@@ -36,6 +36,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import conftest as tc
 from pkcs11_check.testcases._negotiation import negotiate_request
 from tests._attribute_access_guard import analyze_paths
+from tests._skip_assert import assert_skips
 
 
 class _Session:
@@ -464,8 +465,9 @@ def test_ec_import_coherence_clean_reject_is_skip(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(coherence, "import_ec_public_key_negotiated", _reject)
     monkeypatch.setattr(coherence, "skip_unless_create_object_supported", lambda *_a, **_k: None)
 
-    with pytest.raises(pytest.skip.Exception, match="cleanly rejects"):
-        coherence.test_ec_public_key_import_is_coherent(_Rs(), "secp256k1")
+    assert_skips(
+        coherence.test_ec_public_key_import_is_coherent, _Rs(), "secp256k1", match="cleanly rejects"
+    )
 
 
 def test_wycheproof_ecdsa_uses_negotiated_import() -> None:

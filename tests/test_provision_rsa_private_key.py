@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_USER_TYPE_INVALID,
 )
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # RSA-2048 test key (generated once; used across all tests for payload checks)
@@ -417,22 +418,23 @@ def test_multiprime_pkcs8_no_path_skips_and_records_event(
     _prov.clear_provisioning_events()
 
     multiprime_n = (int.from_bytes(RSA_N, "big") + 1).to_bytes(len(RSA_N), "big")
-    with pytest.raises(pytest.skip.Exception, match="no wrapping path"):
-        _prov.provision_rsa_private_key(
-            _make_rs(sh=307),
-            _make_cfg("unwrap"),
-            n=multiprime_n,
-            e=RSA_E,
-            d=RSA_D,
-            p=RSA_P,
-            q=RSA_Q,
-            dmp1=RSA_DMP1,
-            dmq1=RSA_DMQ1,
-            iqmp=RSA_IQMP,
-            pkcs8=b"trusted-multiprime-pkcs8",
-            attrs=_RSA_ATTRS,
-            label="multiprime",
-        )
+    assert_skips(
+        _prov.provision_rsa_private_key,
+        _make_rs(sh=307),
+        _make_cfg("unwrap"),
+        n=multiprime_n,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        pkcs8=b"trusted-multiprime-pkcs8",
+        attrs=_RSA_ATTRS,
+        label="multiprime",
+        match="no wrapping path",
+    )
 
     assert _prov.get_provisioning_events()[-1].method == "skipped_no_path"
 
@@ -681,23 +683,23 @@ def test_off_create_absent_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=302)
     cfg = _make_cfg("off")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_rsa_private_key(
-            rs,
-            cfg,
-            n=RSA_N,
-            e=RSA_E,
-            d=RSA_D,
-            p=RSA_P,
-            q=RSA_Q,
-            dmp1=RSA_DMP1,
-            dmq1=RSA_DMQ1,
-            iqmp=RSA_IQMP,
-            attrs=_RSA_ATTRS,
-            label="t",
-        )
+    skipped = assert_skips(
+        provision_rsa_private_key,
+        rs,
+        cfg,
+        n=RSA_N,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        attrs=_RSA_ATTRS,
+        label="t",
+    )
 
-    assert "C_CreateObject" in str(exc_info.value)
+    assert "C_CreateObject" in str(skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -714,23 +716,23 @@ def test_no_wrap_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=303, has_mech=True)
     cfg = _make_cfg("force-unwrap")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_rsa_private_key(
-            rs,
-            cfg,
-            n=RSA_N,
-            e=RSA_E,
-            d=RSA_D,
-            p=RSA_P,
-            q=RSA_Q,
-            dmp1=RSA_DMP1,
-            dmq1=RSA_DMQ1,
-            iqmp=RSA_IQMP,
-            attrs=_RSA_ATTRS,
-            label="t",
-        )
+    skipped = assert_skips(
+        provision_rsa_private_key,
+        rs,
+        cfg,
+        n=RSA_N,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        attrs=_RSA_ATTRS,
+        label="t",
+    )
 
-    assert "no wrapping path" in str(exc_info.value)
+    assert "no wrapping path" in str(skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -843,23 +845,23 @@ def test_force_unwrap_no_ctx_external_not_configured_skips(
     clear_provisioning_events()
     rs = _make_rs(sh=401, has_mech=True)
     cfg = _make_cfg_external("force-unwrap", allow_external=False)
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_rsa_private_key(
-            rs,
-            cfg,
-            n=RSA_N,
-            e=RSA_E,
-            d=RSA_D,
-            p=RSA_P,
-            q=RSA_Q,
-            dmp1=RSA_DMP1,
-            dmq1=RSA_DMQ1,
-            iqmp=RSA_IQMP,
-            attrs=_RSA_ATTRS,
-            label="t-f2",
-        )
+    skipped = assert_skips(
+        provision_rsa_private_key,
+        rs,
+        cfg,
+        n=RSA_N,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        attrs=_RSA_ATTRS,
+        label="t-f2",
+    )
 
-    assert "no wrapping path" in str(exc_info.value), "skip message must mention 'no wrapping path'"
+    assert "no wrapping path" in str(skipped), "skip message must mention 'no wrapping path'"
     events = get_provisioning_events()
     assert any(e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must be recorded when external also fails"

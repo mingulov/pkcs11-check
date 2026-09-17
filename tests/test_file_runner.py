@@ -4468,7 +4468,7 @@ def test_cache_attempt_checkpoint_keeps_all_attempt_sources(tmp_path: Path) -> N
     cached = _load_cached_report_records_by_unit(state_file, ["test_a.py"])["test_a.py"]
     # The second source's first record is a SessionStart: the marker is written AFTER it
     # (not before), so a reader resetting attribution provenance on SessionStart resets
-    # BEFORE the marker establishes it, not after (M1 fix) -- see
+    # BEFORE the marker establishes it, not after (BRANCH-REVIEW M1 fix) -- see
     # `_write_unit_report_record_cache_from_jsonl_paths`.
     assert [record["$report_type"] for record in cached] == [
         "IsolatedUnitReport",
@@ -4859,7 +4859,7 @@ def test_run_isolated_pytest_units_persists_report_records_into_state(
     assert list(records_by_unit) == ["test_a.py"]
     # The source's first record is a SessionStart: the marker is written AFTER it (not
     # before), so a reader resetting attribution provenance on SessionStart resets BEFORE
-    # the marker establishes it, not after (M1 fix) -- see
+    # the marker establishes it, not after (BRANCH-REVIEW M1 fix) -- see
     # `_write_unit_report_record_cache_from_jsonl_paths`.
     assert [record["$report_type"] for record in records_by_unit["test_a.py"]] == [
         "SessionStart",

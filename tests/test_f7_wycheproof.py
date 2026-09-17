@@ -5,9 +5,8 @@ Exercises the migrated call sites in ``src/pkcs11_check/testcases/wycheproof/``
 directly (not through pytest collection of those files, which needs a real
 PKCS#11 module) by monkeypatching each file's collaborator functions and
 invoking the parametrized test function with a synthetic session and vector.
-Each test proves a specific behavior contract from
-``.superpowers/sdd/2026-09-08-v020-reporting-integrity-fixes/f7-migration-contract.md``:
-a missing ``CKA_VALUE`` produces a structured, mechanism-free record instead of
+Each test proves a specific behavior contract: a missing ``CKA_VALUE``
+produces a structured, mechanism-free record instead of
 a ``KeyError``/crash; independent work in the same test still runs (including a
 crypto self-contradiction that does not depend on the missing value); handles
 are still destroyed; and a present-but-wrong value still fails hard.

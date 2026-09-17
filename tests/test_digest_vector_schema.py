@@ -13,6 +13,7 @@ from pkcs11_check.raw.types_std import CKM_SHA224
 from pkcs11_check.testcases import mechanism_vectors, test_mech_digest
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import MechConfig
+from tests._skip_assert import assert_skips
 
 
 def _entry() -> MechEntry:
@@ -130,8 +131,12 @@ def test_other_mechanism_vectors_are_filtered_before_validation(
     }
     monkeypatch.setattr(mechanism_vectors, "load_positive_vectors", lambda _path: [unrelated])
 
-    with pytest.raises(pytest.skip.Exception, match="No compatible digest vectors"):
-        test_mech_digest.TestMechDigestKAT().test_kat_vector(_session(), _entry())
+    assert_skips(
+        test_mech_digest.TestMechDigestKAT().test_kat_vector,
+        _session(),
+        _entry(),
+        match="No compatible digest vectors",
+    )
 
     assert get_records() == []
 
@@ -141,7 +146,11 @@ def test_no_matching_digest_vectors_is_unavailable_coverage(
 ) -> None:
     monkeypatch.setattr(mechanism_vectors, "load_positive_vectors", lambda _path: [])
 
-    with pytest.raises(pytest.skip.Exception, match="No compatible digest vectors"):
-        test_mech_digest.TestMechDigestKAT().test_kat_vector(_session(), _entry())
+    assert_skips(
+        test_mech_digest.TestMechDigestKAT().test_kat_vector,
+        _session(),
+        _entry(),
+        match="No compatible digest vectors",
+    )
 
     assert get_records() == []

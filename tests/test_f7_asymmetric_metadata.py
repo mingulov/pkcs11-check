@@ -4,9 +4,8 @@ Exercises the migrated call sites in ``test_dsa_complete.py``, ``test_eddsa.py``
 ``test_pqc_sign.py`` and ``test_provisioned_sign_coherence.py`` directly (not through
 pytest collection of those files, which needs a real PKCS#11 module) by monkeypatching
 their collaborator functions and invoking the test functions/methods with a fake
-session. Each test proves a specific behavior contract from
-``.superpowers/sdd/2026-09-08-v020-reporting-integrity-fixes/f7-migration-contract.md``:
-a missing attribute produces a structured, mechanism-free record instead of a
+session. Each test proves a specific behavior contract: a missing attribute
+produces a structured, mechanism-free record instead of a
 ``KeyError``/``TypeError`` crash; independent work in the same test still runs; handles
 are still destroyed; and a present-but-wrong value still fails hard.
 """
@@ -41,6 +40,7 @@ from pkcs11_check.testcases import test_dsa_complete as dsa
 from pkcs11_check.testcases import test_eddsa as eddsa
 from pkcs11_check.testcases import test_pqc_sign as pqc
 from pkcs11_check.testcases import test_provisioned_sign_coherence as coh
+from tests._skip_assert import assert_skips
 
 
 @pytest.fixture(autouse=True)
@@ -489,8 +489,7 @@ def test_provisioned_sign_missing_sign_flag_skips_key_and_records(
     monkeypatch.setattr(coh, "find_objects", lambda *_a, **_k: [201])
     monkeypatch.setattr(coh, "read_attributes", lambda *_a, **_k: {})
 
-    with pytest.raises(pytest.skip.Exception):
-        coh.test_provisioned_signing_keys_are_coherent(_session())
+    assert_skips(coh.test_provisioned_signing_keys_are_coherent, _session())
 
     records = C.get_records()
     assert len(records) == 1
@@ -521,8 +520,7 @@ def test_provisioned_sign_loop_continues_past_two_independent_omissions(
     monkeypatch.setattr(coh, "find_objects", _find_objects)
     monkeypatch.setattr(coh, "read_attributes", _by_handle(attrs_by_handle))
 
-    with pytest.raises(pytest.skip.Exception):
-        coh.test_provisioned_signing_keys_are_coherent(_session())
+    assert_skips(coh.test_provisioned_signing_keys_are_coherent, _session())
 
     records = C.get_records()
     assert len(records) == 2
@@ -558,8 +556,7 @@ def test_provisioned_sign_missing_ec_params_skips_key_without_crashing(
     monkeypatch.setattr(coh, "read_attributes", _read)
     monkeypatch.setattr(coh, "sign_single", _sign_boom)
 
-    with pytest.raises(pytest.skip.Exception):
-        coh.test_provisioned_signing_keys_are_coherent(_session())
+    assert_skips(coh.test_provisioned_signing_keys_are_coherent, _session())
 
     records = C.get_records()
     assert len(records) == 1

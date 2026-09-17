@@ -6,6 +6,16 @@ test_initialize_args, ckr/test_ckr_null_params, etc.).
 
 Invariants honoured:
 
+Probe-invariant legend (I1–I12): bare ``(I#)`` cites across the framework resolve
+here — NOT June-gap I1–I7 or FABLE I-1–I-5. I1 crash isolation (crash-is-a-finding);
+I2 honeypot (demand-zero mmap) semantics; I3 no PIN leakage (child gets the PIN via
+_P11CHECK_PIN only); I4 classification stays parent-side (child prints data, never
+classify/fail_as/xfail_as); I5 each family's output protocol unchanged; I6 coverage
+preserved; I7 rv-trace preserved; I8 hang → rc 124 + timeout marker (crash-class
+finding); I9 pytest markers unchanged; I10 behavioral equivalence via
+compare-results; I11 Windows ABI (argv list, no shell quoting); I12 vendor-neutral
+probes.
+
 I3  — PIN is never read or embedded here (no C_Login; the raw CDLL path is pre-auth).
 I4  — a clean C_GetFunctionList setup refusal prints SETUP_XFAIL:<reason> to stdout
       and returns 0.  A non-SEH CDLL-load OSError emits HARNESS_ERROR instead; an

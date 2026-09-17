@@ -28,6 +28,7 @@ from pkcs11_check.raw.types_std import (
     CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.wycheproof import test_wycheproof as wy
+from tests._skip_assert import assert_skips
 
 
 class _NoMechanismSession:
@@ -183,11 +184,13 @@ def test_generic_wycheproof_skips_when_mechanism_missing(
     session = _NoMechanismSession()
     method = getattr(case_factory(), method_name)
 
-    with pytest.raises(pytest.skip.Exception, match="not supported"):
+    def _call() -> None:
         if needs_cfg:
             method(session, _STUB_CFG, vector_factory()[0])
         else:
             method(session, vector_factory()[0])
+
+    assert_skips(_call, match="not supported")
 
     assert session.checked == [expected_mechanism]
 
@@ -243,8 +246,12 @@ def test_generic_ecdsa_p384_curve_unsupported_still_skips(
     session = _EcdsaSession()
     vec = wy._load_ecdsa_p384_vectors()[0]
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key on this module"):
-        wy.TestECDSAP384Wycheproof().test_ecdsa_p384_sha384_verify(session, vec)
+    assert_skips(
+        wy.TestECDSAP384Wycheproof().test_ecdsa_p384_sha384_verify,
+        session,
+        vec,
+        match="Cannot import EC public key on this module",
+    )
 
     assert session.checked == ["ECDSA"]
 
@@ -328,10 +335,13 @@ def test_generic_hmac_sha256_truncated_skips_when_general_is_absent(
         lambda *_a, **_k: pytest.fail("key provisioning reached after missing GENERAL"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_HMAC_GENERAL not supported"):
-        wy.TestHMACSHA256Wycheproof().test_hmac_sha256(
-            session, _STUB_CFG, _sha256_truncated_vector()
-        )
+    assert_skips(
+        wy.TestHMACSHA256Wycheproof().test_hmac_sha256,
+        session,
+        _STUB_CFG,
+        _sha256_truncated_vector(),
+        match="SHA256_HMAC_GENERAL not supported",
+    )
 
     assert session.checked == ["SHA256_HMAC_GENERAL"]
 

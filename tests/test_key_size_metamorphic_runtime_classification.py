@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
 )
 from pkcs11_check.testcases import test_key_sizes, test_metamorphic
+from tests._skip_assert import assert_skips
 
 
 def _session(*mechanisms: str) -> SimpleNamespace:
@@ -79,11 +80,12 @@ def test_key_size_rsa_sign_missing_mechanism_is_counted_skip(
         lambda *_args, **_kwargs: pytest.fail("RSA keygen should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_key_sizes.TestRSAKeySizes().test_rsa_sign_verify(
-            _session("RSA_PKCS_KEY_PAIR_GEN"),
-            2048,
-        )
+    assert_skips(
+        test_key_sizes.TestRSAKeySizes().test_rsa_sign_verify,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        2048,
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_key_size_rsa_sign_runtime_reject_is_xfail(
@@ -136,10 +138,11 @@ def test_metamorphic_rsa_roundtrip_missing_sign_mechanism_is_skip(
         lambda *_args, **_kwargs: pytest.fail("RSA keygen should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_metamorphic.TestRoundTripInvariants().test_rsa_sign_verify_roundtrip(
-            _session("RSA_PKCS_KEY_PAIR_GEN"),
-        )
+    assert_skips(
+        test_metamorphic.TestRoundTripInvariants().test_rsa_sign_verify_roundtrip,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_metamorphic_rsa_wrong_data_missing_sign_mechanism_is_skip(
@@ -151,10 +154,11 @@ def test_metamorphic_rsa_wrong_data_missing_sign_mechanism_is_skip(
         lambda *_args, **_kwargs: pytest.fail("RSA keygen should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256_RSA_PKCS not supported"):
-        test_metamorphic.TestRoundTripInvariants().test_rsa_wrong_data_verify_fails(
-            _session("RSA_PKCS_KEY_PAIR_GEN"),
-        )
+    assert_skips(
+        test_metamorphic.TestRoundTripInvariants().test_rsa_wrong_data_verify_fails,
+        _session("RSA_PKCS_KEY_PAIR_GEN"),
+        match="SHA256_RSA_PKCS not supported",
+    )
 
 
 def test_metamorphic_sha256_missing_mechanism_is_skip(
@@ -166,8 +170,11 @@ def test_metamorphic_sha256_missing_mechanism_is_skip(
         lambda *_args, **_kwargs: pytest.fail("digest should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_metamorphic.TestDeterminismInvariants().test_digest_deterministic(_session())
+    assert_skips(
+        test_metamorphic.TestDeterminismInvariants().test_digest_deterministic,
+        _session(),
+        match="SHA256 not supported",
+    )
 
 
 def test_metamorphic_sha_family_missing_mechanism_is_skip(
@@ -179,7 +186,8 @@ def test_metamorphic_sha_family_missing_mechanism_is_skip(
         lambda *_args, **_kwargs: pytest.fail("digest should not be called"),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="SHA256 not supported"):
-        test_metamorphic.TestDigestProperties().test_sha_family_different_outputs(
-            _session("SHA_1", "SHA512"),
-        )
+    assert_skips(
+        test_metamorphic.TestDigestProperties().test_sha_family_different_outputs,
+        _session("SHA_1", "SHA512"),
+        match="SHA256 not supported",
+    )

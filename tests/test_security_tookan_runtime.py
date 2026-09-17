@@ -19,6 +19,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_UNEXTRACTABLE,
 )
 from pkcs11_check.testcases.security import test_tookan
+from tests._skip_assert import assert_skips
 
 
 def _session(*mechanisms: str) -> SimpleNamespace:
@@ -92,14 +93,15 @@ def _run_key_type_confusion_until_wrap(
 def test_key_type_confusion_skips_explicit_key_not_wrappable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(pytest.skip.Exception, match="cannot wrap AES-128 key"):
-        _run_key_type_confusion_until_wrap(
-            monkeypatch,
-            CkrAssertionError(
-                "Unexpected CK_RV CKR_KEY_NOT_WRAPPABLE",
-                int(CKR_KEY_NOT_WRAPPABLE),
-            ),
-        )
+    assert_skips(
+        _run_key_type_confusion_until_wrap,
+        monkeypatch,
+        CkrAssertionError(
+            "Unexpected CK_RV CKR_KEY_NOT_WRAPPABLE",
+            int(CKR_KEY_NOT_WRAPPABLE),
+        ),
+        match="cannot wrap AES-128 key",
+    )
 
 
 def test_key_type_confusion_xfails_generic_wrap_runtime_error(

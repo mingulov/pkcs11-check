@@ -572,7 +572,7 @@ def test_kem_missing_claim_is_structured_when_operation_is_accepted(
     records = C.get_records()
     assert records
     assert records[0].operation == "C_GetAttributeValue"
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert records[0].mechanism is None
     assert "producer_mechanism=CKM_ML_KEM" in records[0].label

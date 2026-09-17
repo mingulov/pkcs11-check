@@ -25,6 +25,7 @@ from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases.security import test_operation_state_uaf as uaf
 from tests._attribute_access_guard import analyze_file
+from tests._skip_assert import assert_skips
 
 
 def _config() -> SimpleNamespace:
@@ -453,12 +454,12 @@ def test_digest_hard_contradiction_precedes_positive_exit_and_capability_skip() 
 
 
 def test_digest_capability_skip_is_preserved_without_higher_priority_evidence() -> None:
-    with pytest.raises(pytest.skip.Exception):
-        _check_digest(
-            "",
-            rc=1,
-            stderr="AttributeError: C_DigestKey not available in this module\n",
-        )
+    assert_skips(
+        _check_digest,
+        "",
+        rc=1,
+        stderr="AttributeError: C_DigestKey not available in this module\n",
+    )
 
     assert C.get_records() == []
 
@@ -680,12 +681,12 @@ def test_protocol_error_precedes_capability_skip() -> None:
 
 
 def test_capability_skip_is_preserved_without_higher_priority_evidence() -> None:
-    with pytest.raises(pytest.skip.Exception):
-        _check(
-            _target(0, int(CKR_KEY_HANDLE_INVALID)),
-            rc=1,
-            stderr="AttributeError: C_DeriveKey not available in this module\n",
-        )
+    assert_skips(
+        _check,
+        _target(0, int(CKR_KEY_HANDLE_INVALID)),
+        rc=1,
+        stderr="AttributeError: C_DeriveKey not available in this module\n",
+    )
 
     assert C.get_records() == []
 

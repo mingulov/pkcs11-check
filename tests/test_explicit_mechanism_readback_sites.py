@@ -1,4 +1,5 @@
-"""F6 regression: the 56 measured ``attr_or_record(..., mechanism=<explicit>)`` sites.
+"""Readback-attribution regression: the 56 measured
+``attr_or_record(..., mechanism=<explicit>)`` sites.
 
 An audit ahead of the v0.2.0 release found 56 call sites across ``testcases/`` where
 ``attr_or_record()`` -- whose emitted record is always a plain ``C_GetAttributeValue``
@@ -15,9 +16,15 @@ Every test here sets an *active* mechanism (``CKM_STALE``) before driving the fi
 call. This is required, not decorative: ``classification.clear()`` already zeroes the
 active mechanism, so ``assert record.mechanism is None`` would hold trivially even
 without the fix if nothing were active to inherit. Setting an active mechanism first
-means the assertion is actually exercising ``inherit_mechanism=False`` -- reverting a
-site to omit that flag (or to reinstate the removed ``mechanism="..."`` literal) turns
-each corresponding test red.
+means the assertion is actually exercising ``inherit_mechanism=False``.
+
+Reverting a site (dropping the flag or reinstating a ``mechanism="..."`` literal)
+turns its test red through two independent paths: Group A drives the real helper,
+so the replay itself fails; Group B couples each replay entry to its source call
+(``test_group_b_site_is_coupled_to_its_source_call``), so the coupling test fails
+on a regressed, renamed, or deleted site. Entries that share one loop call (same
+producer marker) couple at pool level: deleting a single twin escapes, while a
+whole-pool delete, rename, or regress still fails.
 
 Two call shapes appear among the 56:
 
@@ -34,11 +41,13 @@ Two call shapes appear among the 56:
   ML-KEM encapsulation, RSA/AES capability matrices, ...) is impractical without
   hardware; each Group B test instead reproduces that exact site's ``attr_or_record``
   invocation verbatim (the identical ``label``/``reason``/``kind`` literals now in the
-  source) with a synthetic missing-attribute ``attrs`` mapping. This is a faithful
-  characterization test of the call actually made at that source location: the fix is
-  entirely about which arguments reach ``attr_or_record``, not about surrounding
-  control flow, so reproducing the call is a valid regression against exactly the
-  change made.
+  source) with a synthetic missing-attribute ``attrs`` mapping. The replay alone
+  would pass against a stale copy, so each entry is additionally coupled to its
+  source call (same label, no explicit ``mechanism=``, ``inherit_mechanism=False``):
+  the fix is entirely about which arguments reach ``attr_or_record``, not about
+  surrounding control flow, so replay + coupling is a valid regression against
+  exactly the change made. Site IDs name the file and site, never a line number
+  (line numbers go stale on any edit above the site).
 
 A 57th test (``test_acvp_ecdh_off_curve_point_finding_is_mechanism_free``) covers the
 one additional STRIP resolved outside the measured 56: ``acvp/test_acvp_ecdh.py``'s
@@ -46,11 +55,14 @@ off-curve ``CKA_EC_POINT`` finding, which raises via ``classification.fail_as`` 
 than returning through ``attr_or_record``. ``pytest.raises(pytest.fail.Exception)`` is
 used there (not ``pytest.xfail``, which pytest exits 0 on and which
 ``pytest.raises(pytest.fail.Exception)`` would not catch) because this specific finding
-is a real ``fail`` (kind="crypto", reason="wrong_result").
+is a real ``fail`` (kind="crypto", reason="wrong_result"). Like Group B, the replay
+hardcodes one curve value and is coupled to its source call
+(``test_acvp_ecdh_off_curve_site_is_coupled_to_its_source_call``).
 """
 
 from __future__ import annotations
 
+import inspect
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,7 +90,12 @@ from pkcs11_check.testcases import test_wtls as _wtls
 from pkcs11_check.testcases import test_x942_dh as _x942
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.acvp import test_acvp_ecdh as _acvp_ecdh
-from tests._f6_readback_inventory import STATUS_EXPLICIT_MECHANISM_READBACK, scan_tree
+from tests._readback_attribution_inventory import (
+    DYNAMIC_ARG,
+    STATUS_EXPLICIT_MECHANISM_READBACK,
+    labeled_call_shapes,
+    scan_tree,
+)
 
 _BARE_C_GET_ATTRIBUTE_VALUE = "PKCS#11 v3.2 · C_GetAttributeValue"
 _STALE_MECHANISM = "CKM_STALE"
@@ -293,9 +310,38 @@ def test_ike_get_value_is_mechanism_free(monkeypatch: pytest.MonkeyPatch) -> Non
 # the exact attr_or_record() invocation now present at that source location.
 # ---------------------------------------------------------------------------
 
+_TESTCASES_DIR = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
+
+_GROUP_B_FILES = {
+    "access_levels": "test_access_levels.py",
+    "always_authenticate": "test_always_authenticate.py",
+    "attribute_invariants": "test_attribute_invariants.py",
+    "key_usage_policy": "test_key_usage_policy.py",
+    "mech_derive": "test_mech_derive.py",
+    "sensitivity": "test_sensitivity.py",
+}
+
+_ATTR_OR_RECORD_DEFAULTS = {
+    name: param.default
+    for name, param in inspect.signature(attr_or_record).parameters.items()
+    if param.default is not inspect.Parameter.empty
+}
+
+
+_AGREE_NAMES = ("reason", "kind", "sensitive_is_conformant")
+
+
+def _kwargs_agree(shape_kwargs: dict[str, object], entry: dict[str, Any]) -> bool:
+    """Defaults-filled equality (either side may spell a default implicitly)."""
+    return all(
+        shape_kwargs.get(name, _ATTR_OR_RECORD_DEFAULTS[name])
+        == entry.get(name, _ATTR_OR_RECORD_DEFAULTS[name])
+        for name in _AGREE_NAMES
+    )
+
 _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
     (
-        "access_levels/SO-create-CKA_TRUSTED:1020",
+        "access_levels/SO-create-CKA_TRUSTED",
         dict(
             label="SO:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -304,7 +350,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "access_levels/USER-create-CKA_TRUSTED:1113",
+        "access_levels/USER-create-CKA_TRUSTED",
         dict(
             label="USER:create-CKA_TRUSTED readback (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -313,7 +359,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "access_levels/USER-setattr-CKA_TRUSTED-initial:1205",
+        "access_levels/USER-setattr-CKA_TRUSTED-initial",
         dict(
             label=(
                 "USER:setattr-CKA_TRUSTED initial readback (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -324,7 +370,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "access_levels/CKA_WRAP_WITH_TRUSTED-setup:1366",
+        "access_levels/CKA_WRAP_WITH_TRUSTED-setup",
         dict(
             label="CKA_WRAP_WITH_TRUSTED setup readback (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -333,7 +379,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "access_levels/CKA_WRAP_WITH_TRUSTED-enforcement-setup:1510",
+        "access_levels/CKA_WRAP_WITH_TRUSTED-enforcement-setup",
         dict(
             label=(
                 "CKA_WRAP_WITH_TRUSTED enforcement setup readback "
@@ -345,7 +391,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "access_levels/CKA_ALWAYS_AUTHENTICATE-setup:1704",
+        "access_levels/CKA_ALWAYS_AUTHENTICATE-setup",
         dict(
             label=(
                 "CKA_ALWAYS_AUTHENTICATE setup readback "
@@ -357,7 +403,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "access_levels/CKA_ALWAYS_AUTHENTICATE-context-login-setup:1839",
+        "access_levels/CKA_ALWAYS_AUTHENTICATE-context-login-setup",
         dict(
             label=(
                 "CKA_ALWAYS_AUTHENTICATE context-login setup readback "
@@ -369,7 +415,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "access_levels/public-CKA_PRIVATE-token-object:2329",
+        "access_levels/public-CKA_PRIVATE-token-object",
         dict(
             label=(
                 "public CKA_PRIVATE=True token object readback (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -380,7 +426,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/CKA_EXTRACTABLE-never-extractable:643",
+        "attribute_invariants/CKA_EXTRACTABLE-never-extractable",
         dict(
             label=(
                 "CKA_EXTRACTABLE:never-extractable-invariant (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -391,7 +437,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/CKA_NEVER_EXTRACTABLE:649",
+        "attribute_invariants/CKA_NEVER_EXTRACTABLE",
         dict(
             label=(
                 "CKA_NEVER_EXTRACTABLE:never-extractable-invariant "
@@ -403,7 +449,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/CKA_LOCAL-generated-key-origin:759",
+        "attribute_invariants/CKA_LOCAL-generated-key-origin",
         dict(
             label="CKA_LOCAL:generated-key-origin (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -412,7 +458,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/CKA_KEY_GEN_MECHANISM-generated-key-origin:765",
+        "attribute_invariants/CKA_KEY_GEN_MECHANISM-generated-key-origin",
         dict(
             label=(
                 "CKA_KEY_GEN_MECHANISM:generated-key-origin (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -423,7 +469,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/CKA_SENSITIVE-always-sensitive:789",
+        "attribute_invariants/CKA_SENSITIVE-always-sensitive",
         dict(
             label=("CKA_SENSITIVE:always-sensitive-invariant (producer_mechanism=CKM_AES_KEY_GEN)"),
             reason="honest_deviation",
@@ -432,7 +478,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/CKA_ALWAYS_SENSITIVE:795",
+        "attribute_invariants/CKA_ALWAYS_SENSITIVE",
         dict(
             label=(
                 "CKA_ALWAYS_SENSITIVE:always-sensitive-invariant "
@@ -444,7 +490,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "attribute_invariants/faithful-readback-loop:910",
+        "attribute_invariants/faithful-readback-loop",
         dict(
             label="probe:attribute 5 (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -453,7 +499,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "key_usage_policy/CKA_DECRYPT-decrypt-only-AES:277",
+        "key_usage_policy/CKA_DECRYPT-decrypt-only-AES",
         dict(
             label="CKA_DECRYPT on decrypt-only AES key (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -462,7 +508,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "key_usage_policy/CKA_SIGN-sign-only-RSA-private:392",
+        "key_usage_policy/CKA_SIGN-sign-only-RSA-private",
         dict(
             label=(
                 "CKA_SIGN on sign-only RSA private key "
@@ -474,7 +520,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "key_usage_policy/CKA_VERIFY-sign-only-RSA-public:413",
+        "key_usage_policy/CKA_VERIFY-sign-only-RSA-public",
         dict(
             label=(
                 "CKA_VERIFY on sign-only RSA public key "
@@ -486,7 +532,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "key_usage_policy/CKA_ENCRYPT-encrypt-only-RSA-public:471",
+        "key_usage_policy/CKA_ENCRYPT-encrypt-only-RSA-public",
         dict(
             label=(
                 "CKA_ENCRYPT on encrypt-only RSA public key "
@@ -498,7 +544,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "key_usage_policy/CKA_DECRYPT-encrypt-only-RSA-private:491",
+        "key_usage_policy/CKA_DECRYPT-encrypt-only-RSA-private",
         dict(
             label=(
                 "CKA_DECRYPT on encrypt-only RSA private key "
@@ -510,7 +556,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "key_usage_policy/AES-capability-loop:560",
+        "key_usage_policy/AES-capability-loop",
         dict(
             label="CKA_ENCRYPT on AES capability key (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="honest_deviation",
@@ -519,7 +565,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "key_usage_policy/RSA-public-capability-loop:601",
+        "key_usage_policy/RSA-public-capability-loop",
         dict(
             label=(
                 "CKA_ENCRYPT on RSA capability public key "
@@ -531,7 +577,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "key_usage_policy/RSA-private-capability-loop:625",
+        "key_usage_policy/RSA-private-capability-loop",
         dict(
             label=(
                 "CKA_DECRYPT on RSA capability private key "
@@ -543,7 +589,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "key_usage_policy/CKA_ENCAPSULATE-ML-KEM-public:1106",
+        "key_usage_policy/CKA_ENCAPSULATE-ML-KEM-public",
         dict(
             label=(
                 "CKA_ENCAPSULATE=False on ML-KEM public key "
@@ -555,7 +601,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_ML_KEM",
     ),
     (
-        "key_usage_policy/CKA_DECAPSULATE-ML-KEM-private:1401",
+        "key_usage_policy/CKA_DECAPSULATE-ML-KEM-private",
         dict(
             label=(
                 "CKA_DECAPSULATE=False on ML-KEM private key "
@@ -567,7 +613,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_ML_KEM",
     ),
     (
-        "sensitivity/CKA_SENSITIVE-True-policy-claim:399",
+        "sensitivity/CKA_SENSITIVE-True-policy-claim",
         dict(
             label=("CKA_SENSITIVE=True on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"),
             reason="not_operational",
@@ -576,7 +622,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_VALUE-on-sensitive-AES:427",
+        "sensitivity/CKA_VALUE-on-sensitive-AES",
         dict(
             label=(
                 "CKA_VALUE on a CKA_SENSITIVE=True AES key (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -588,7 +634,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_VALUE-non-sensitive-AES:705",
+        "sensitivity/CKA_VALUE-non-sensitive-AES",
         dict(
             label=(
                 "CKA_VALUE on a CKA_SENSITIVE=False AES key (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -599,7 +645,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_SENSITIVE-True-RSA-private:738",
+        "sensitivity/CKA_SENSITIVE-True-RSA-private",
         dict(
             label=(
                 "CKA_SENSITIVE=True on RSA private key "
@@ -611,7 +657,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "sensitivity/CKA_PRIVATE_EXPONENT-sensitive-RSA:765",
+        "sensitivity/CKA_PRIVATE_EXPONENT-sensitive-RSA",
         dict(
             label=(
                 "CKA_PRIVATE_EXPONENT on a CKA_SENSITIVE=True RSA private key "
@@ -624,7 +670,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "sensitivity/CKA_EXTRACTABLE-default:839",
+        "sensitivity/CKA_EXTRACTABLE-default",
         dict(
             label=(
                 "CKA_EXTRACTABLE default on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -635,7 +681,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_EXTRACTABLE-True:911",
+        "sensitivity/CKA_EXTRACTABLE-True",
         dict(
             label=(
                 "CKA_EXTRACTABLE=True on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -646,7 +692,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_VALUE-extractable-AES:931",
+        "sensitivity/CKA_VALUE-extractable-AES",
         dict(
             label="CKA_VALUE on extractable AES key (producer_mechanism=CKM_AES_KEY_GEN)",
             reason="not_operational",
@@ -655,7 +701,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_SENSITIVE-True-flag-check:964",
+        "sensitivity/CKA_SENSITIVE-True-flag-check",
         dict(
             label=("CKA_SENSITIVE=True on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"),
             reason="not_operational",
@@ -664,7 +710,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_SENSITIVE-False-flag-check:991",
+        "sensitivity/CKA_SENSITIVE-False-flag-check",
         dict(
             label=("CKA_SENSITIVE=False on generated AES key (producer_mechanism=CKM_AES_KEY_GEN)"),
             reason="not_operational",
@@ -673,7 +719,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_ALWAYS_SENSITIVE-sensitive-key:1031",
+        "sensitivity/CKA_ALWAYS_SENSITIVE-sensitive-key",
         dict(
             label=(
                 "CKA_ALWAYS_SENSITIVE on sensitive AES key (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -684,7 +730,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "sensitivity/CKA_ALWAYS_SENSITIVE-non-sensitive-key:1052",
+        "sensitivity/CKA_ALWAYS_SENSITIVE-non-sensitive-key",
         dict(
             label=(
                 "CKA_ALWAYS_SENSITIVE on non-sensitive AES key (producer_mechanism=CKM_AES_KEY_GEN)"
@@ -695,7 +741,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_AES_KEY_GEN",
     ),
     (
-        "always_authenticate/setup-readback:173",
+        "always_authenticate/setup-readback",
         dict(
             label=(
                 "CKA_ALWAYS_AUTHENTICATE setup readback "
@@ -707,7 +753,7 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
         "producer_mechanism=CKM_RSA_PKCS_KEY_PAIR_GEN",
     ),
     (
-        "mech_derive/derived-object-class:863",
+        "mech_derive/derived-object-class",
         dict(
             label="CKM_TEST_DERIVE: derived object class",
             reason="not_operational",
@@ -718,6 +764,70 @@ _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
 ]
 
 assert len(_GROUP_B_SITES) == 39, len(_GROUP_B_SITES)
+
+
+@pytest.mark.parametrize(
+    "site_id,kwargs,producer_marker",
+    _GROUP_B_SITES,
+    ids=[site[0] for site in _GROUP_B_SITES],
+)
+def test_group_b_site_is_coupled_to_its_source_call(
+    site_id: str, kwargs: dict[str, Any], producer_marker: str
+) -> None:
+    """Each replay entry still names a live source call with the fixed shape.
+
+    The replay test below pins call semantics; this pins the entry to its
+    source site, so deleting, renaming, or regressing (re-adding an explicit
+    ``mechanism=`` to) a site turns its test red instead of passing against
+    a stale copy. Loop/f-string labels match by producer marker instead of
+    the exact literal; entries sharing one loop call couple at pool level.
+    """
+    file_key = site_id.split("/")[0]
+    shapes = labeled_call_shapes(_TESTCASES_DIR / _GROUP_B_FILES[file_key], "attr_or_record")
+    # Tier 1: exact static label. Same label means the same logical site, so
+    # every twin must carry the fix; at least one twin must match the replay.
+    static = [shape for shape in shapes if shape.kwargs.get("label") == kwargs["label"]]
+    if static:
+        for shape in static:
+            assert shape.kwargs.get("mechanism") is None, site_id
+            assert shape.kwargs.get("inherit_mechanism") is False, site_id
+        agree = [s for s in static if _kwargs_agree(s.kwargs, kwargs)]
+        assert agree, f"{site_id}: label exists but no call matches the replayed kwargs"
+        return
+    # Tier 2: dynamic (f-string/Name) label carrying the producer marker.
+    # Static literals are excluded even when they contain the marker: a
+    # renamed static label must fall through and fail, not hide behind a
+    # sibling call that happens to share the marker.
+    dynamic = [
+        shape
+        for shape in shapes
+        if shape.kwargs.get("label") is DYNAMIC_ARG and producer_marker in shape.label_source
+    ]
+    if dynamic:
+        for shape in dynamic:
+            assert shape.kwargs.get("mechanism") is None, site_id
+            assert shape.kwargs.get("inherit_mechanism") is False, site_id
+        agree = [s for s in dynamic if _kwargs_agree(s.kwargs, kwargs)]
+        assert agree, f"{site_id}: marker matches but no call matches the replayed kwargs"
+        return
+    # Tier 3: label forwarded from a caller (bare Name) — no label identity,
+    # so couple by shape: a fix-shaped call with the replayed kwargs must
+    # exist. (The label VALUE is caller-driven and uncoupleable here; the
+    # relational inventory tracks that flow instead. The match is pool-level:
+    # sibling forwarded calls with dynamic mechanisms are tolerated here and
+    # resolved by the inventory instead.)
+    forwarded = [
+        shape
+        for shape in shapes
+        if shape.label_source.isidentifier() and _kwargs_agree(shape.kwargs, kwargs)
+    ]
+    fix_shaped = [
+        shape
+        for shape in forwarded
+        if shape.kwargs.get("mechanism") is None
+        and shape.kwargs.get("inherit_mechanism") is False
+    ]
+    assert fix_shaped, f"{site_id}: no source call with this entry's shape"
 
 
 @pytest.mark.parametrize(
@@ -761,6 +871,23 @@ def test_acvp_ecdh_off_curve_point_finding_is_mechanism_free() -> None:
     assert "producer_mechanism=CKM_EC_KEY_PAIR_GEN" in record.label
 
 
+def test_acvp_ecdh_off_curve_site_is_coupled_to_its_source_call() -> None:
+    """The off-curve replay above still names its live ``fail_as`` source call.
+
+    The source label is an f-string over the loop curve, so the coupling
+    matches the producer marker; the replay hardcodes one curve value.
+    """
+    shapes = labeled_call_shapes(_TESTCASES_DIR / "acvp/test_acvp_ecdh.py", "fail_as")
+    marker = "producer_mechanism=CKM_EC_KEY_PAIR_GEN"
+    matches = [shape for shape in shapes if marker in shape.label_source]
+    assert matches, "off-curve fail_as site missing from test_acvp_ecdh.py"
+    for shape in matches:
+        assert shape.args and shape.args[0] == "wrong_result"
+        assert shape.kwargs.get("kind") == "crypto"
+        assert shape.kwargs.get("operation") == "C_GetAttributeValue"
+        assert shape.kwargs.get("inherit_mechanism") is False
+
+
 # ---------------------------------------------------------------------------
 # Mutation proof: confirm the assertion methodology above is not vacuous by
 # reproducing the *pre-fix* shape of a representative site (explicit mechanism,
@@ -795,7 +922,7 @@ def test_pre_fix_shape_would_fail_the_mechanism_free_assertion() -> None:
 # with one shared mechanism, even where the checked value was produced by a
 # different operation (keypair-generated public values checked inside derive
 # tests were stamped ``CKM_X9_42_DH_DERIVE``). Like the misc_kdf/sp800_108
-# diversity findings (see tests/test_f6_relabeled_diversity_check_sites.py),
+# diversity findings (see tests/test_relabeled_diversity_check_sites.py),
 # the mechanism here already names the producer, so the fix relabels the
 # operation to the per-call-site producer (``C_DeriveKey`` /
 # ``C_GenerateKeyPair`` / ``C_GenerateKey``) rather than stripping the

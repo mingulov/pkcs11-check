@@ -775,7 +775,7 @@ _WRAP_STRENGTH_RUNTIME_SKIP_RVS = (
 
 
 class TestWrapStrengthDowngrade:
-    """G5.4: Wrap-strength downgrade posture (note-only, never fail).
+    """hardening G5.4: Wrap-strength downgrade posture (note-only, never fail).
 
     NIST SP 800-57 Part 1 §5.6.3 recommends wrapping keys under a key of at
     least equal strength.  Wrapping an AES-256 key under an AES-128 key (or

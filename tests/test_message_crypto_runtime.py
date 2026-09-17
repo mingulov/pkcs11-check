@@ -92,8 +92,14 @@ def test_message_sign_init_mechanism_invalid_is_xfail(
 def test_message_sign_init_function_not_supported_is_skip() -> None:
     rs = SimpleNamespace(raw=_MessageSignInitRaw(int(CKR_FUNCTION_NOT_SUPPORTED)), sh=1)
 
-    with pytest.raises(pytest.skip.Exception, match="C_MessageSignInit not supported"):
-        test_message_crypto._message_sign(rs, 1, 1, b"data")
+    assert_skips(
+        test_message_crypto._message_sign,
+        rs,
+        1,
+        1,
+        b"data",
+        match="C_MessageSignInit not supported",
+    )
 
 
 def test_message_sign_init_unexpected_rv_is_failure(

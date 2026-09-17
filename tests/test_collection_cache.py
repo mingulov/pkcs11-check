@@ -64,11 +64,30 @@ def test_digest_changes_when_input_file_changes(
 ) -> None:
     probe = tmp_path / "probe.py"
     probe.write_text("x = 1\n", encoding="utf-8")
-    monkeypatch.setattr(col, "_iter_input_files", lambda: [probe])
+    monkeypatch.setattr(col, "_iter_input_files", lambda _override=None: [probe])
     before = _collection_inputs_digest(_SMALL_TARGET, _ARGS)
     probe.write_text("x = 2  # changed size + mtime\n", encoding="utf-8")
     after = _collection_inputs_digest(_SMALL_TARGET, _ARGS)
     assert before is not None and before != after
+
+
+def test_digest_changes_with_child_data_dir(tmp_path: Path) -> None:
+    """The collecting child's PKCS11_CHECK_DATA_DIR is a digest input.
+
+    The digest runs in the parent but collection runs in the child: without
+    this, two children with different data dirs alias to one cache entry and
+    fetch-then-test ordering goes stale (regression: the published-artifact
+    fetch-then-test ordering test).
+    """
+    empty = tmp_path / "empty-data"
+    empty.mkdir()
+    fetched = tmp_path / "fetched-data"
+    fetched.mkdir()
+    base = _collection_inputs_digest(_SMALL_TARGET, _ARGS)
+    assert base != _collection_inputs_digest(_SMALL_TARGET, _ARGS, str(empty))
+    assert _collection_inputs_digest(_SMALL_TARGET, _ARGS, str(empty)) != _collection_inputs_digest(
+        _SMALL_TARGET, _ARGS, str(fetched)
+    )
 
 
 # -- round-trip correctness --

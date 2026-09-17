@@ -85,7 +85,7 @@ def test_missing_nonce_outputs_are_visible_and_do_not_stop_second_derivation(
     records = C.get_records()
     assert [record.reason for record in records] == ["not_operational", "not_operational"]
     assert all(record.operation == "C_GetAttributeValue" for record in records)
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer already lives in the label (set by every
     # caller of _get_value).
     assert all(record.mechanism is None for record in records)

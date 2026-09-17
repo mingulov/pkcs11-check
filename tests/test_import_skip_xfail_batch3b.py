@@ -2,7 +2,7 @@
 
 Audit reference: import-skip-audit §4 "Batch 3" + rows A13, A15, and
 the A9 EC-private leg.  RSA sites (A9 RSA legs, A10-A12) were Batch 3a; the
-EC/Montgomery *private* derive sites (D2) were a separate determination.
+EC/Montgomery *private* derive sites (import-audit D2) were a separate determination.
 
 Batch 3b moves the EC *public*-key raw importers onto the existing negotiated
 importer (``import_ec_public_key_negotiated``) and then converts the setup-stage
@@ -23,7 +23,7 @@ Sites:
   ``test_ecdsa_p384_sha384_verify`` (negotiated EC public import);
 * A15 -- test_cctv_rfc6979.py public-key site (negotiated) + private-key site
   (raw single-template ``import_ec_private_key`` -- no negotiated EC-private
-  importer; the canonical raw import IS the spec path, D2, b56c3f8c);
+  importer; the canonical raw import IS the spec path, import-audit D2, b56c3f8c);
 * A9 EC-private leg -- test_mech_sign.py ``_run_asymmetric_sign_kat`` EC branch
   (raw ``import_ec_private_key`` -> ``_xfail_ec_kat_import_not_operational``).
 
@@ -57,6 +57,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases import conftest as tc
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # Shared CKR fixtures
@@ -126,16 +127,24 @@ def test_a13_classify_helper_curve_unsupported_skips() -> None:
     """A13: a curve-absence CKR keeps the genuine-absence skip (split preserved)."""
     from pkcs11_check.testcases.wycheproof import test_wycheproof as wy
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key on this module"):
-        wy._classify_ec_public_import_reject(_CURVE_NOT_SUPPORTED, "secp256r1")
+    assert_skips(
+        wy._classify_ec_public_import_reject,
+        _CURVE_NOT_SUPPORTED,
+        "secp256r1",
+        match="Cannot import EC public key on this module",
+    )
 
 
 def test_a13_classify_helper_domain_params_skips() -> None:
     """A13: CKR_DOMAIN_PARAMS_INVALID also keeps the genuine-absence skip."""
     from pkcs11_check.testcases.wycheproof import test_wycheproof as wy
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key on this module"):
-        wy._classify_ec_public_import_reject(_DOMAIN_PARAMS_INVALID, "secp384r1")
+    assert_skips(
+        wy._classify_ec_public_import_reject,
+        _DOMAIN_PARAMS_INVALID,
+        "secp384r1",
+        match="Cannot import EC public key on this module",
+    )
 
 
 def test_a13_classify_helper_propagates_non_ckr() -> None:
@@ -177,8 +186,12 @@ def test_a13_p256_curve_unsupported_real_function_skips(monkeypatch: pytest.Monk
     monkeypatch.setattr(wy, "import_ec_public_key_negotiated", _raiser(_DOMAIN_PARAMS_INVALID))
 
     vec = _first_valid_ecdsa_p256_vec(wy)
-    with pytest.raises(pytest.skip.Exception, match="Cannot import EC public key on this module"):
-        wy.TestECDSAP256Wycheproof().test_ecdsa_p256_sha256_verify(_session(), vec)
+    assert_skips(
+        wy.TestECDSAP256Wycheproof().test_ecdsa_p256_sha256_verify,
+        _session(),
+        vec,
+        match="Cannot import EC public key on this module",
+    )
 
 
 def test_a13_negotiation_genuinely_exhausts_before_xfail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,16 +262,24 @@ def test_a15_helper_curve_unsupported_skips() -> None:
     """A15: a curve-absence CKR keeps the genuine-absence skip (split preserved)."""
     from pkcs11_check.testcases import test_cctv_rfc6979 as cctv
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import P-256 public-key"):
-        cctv._skip_or_xfail_cctv_ec_import_reject(_CURVE_NOT_SUPPORTED, "P-256 public-key")
+    assert_skips(
+        cctv._skip_or_xfail_cctv_ec_import_reject,
+        _CURVE_NOT_SUPPORTED,
+        "P-256 public-key",
+        match="Cannot import P-256 public-key",
+    )
 
 
 def test_a15_helper_domain_params_skips() -> None:
     """A15: CKR_DOMAIN_PARAMS_INVALID also keeps the genuine-absence skip."""
     from pkcs11_check.testcases import test_cctv_rfc6979 as cctv
 
-    with pytest.raises(pytest.skip.Exception, match="Cannot import P-256 private-key"):
-        cctv._skip_or_xfail_cctv_ec_import_reject(_DOMAIN_PARAMS_INVALID, "P-256 private-key")
+    assert_skips(
+        cctv._skip_or_xfail_cctv_ec_import_reject,
+        _DOMAIN_PARAMS_INVALID,
+        "P-256 private-key",
+        match="Cannot import P-256 private-key",
+    )
 
 
 def test_a15_helper_propagates_non_ckr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,20 +381,26 @@ def test_a9ec_helper_curve_unsupported_skips() -> None:
     """A9 EC: a curve-absence CKR keeps the genuine-absence skip (split preserved)."""
     from pkcs11_check.testcases import test_mech_sign as tms
 
-    with pytest.raises(pytest.skip.Exception, match="cannot import EC private key"):
-        tms._xfail_ec_kat_import_not_operational(
-            _CURVE_NOT_SUPPORTED, _kat_ec_entry(), "EC private key"
-        )
+    assert_skips(
+        tms._xfail_ec_kat_import_not_operational,
+        _CURVE_NOT_SUPPORTED,
+        _kat_ec_entry(),
+        "EC private key",
+        match="cannot import EC private key",
+    )
 
 
 def test_a9ec_helper_domain_params_skips() -> None:
     """A9 EC: CKR_DOMAIN_PARAMS_INVALID also keeps the genuine-absence skip."""
     from pkcs11_check.testcases import test_mech_sign as tms
 
-    with pytest.raises(pytest.skip.Exception, match="cannot import EC private key"):
-        tms._xfail_ec_kat_import_not_operational(
-            _DOMAIN_PARAMS_INVALID, _kat_ec_entry(), "EC private key"
-        )
+    assert_skips(
+        tms._xfail_ec_kat_import_not_operational,
+        _DOMAIN_PARAMS_INVALID,
+        _kat_ec_entry(),
+        "EC private key",
+        match="cannot import EC private key",
+    )
 
 
 def test_a9ec_helper_propagates_non_ckr() -> None:

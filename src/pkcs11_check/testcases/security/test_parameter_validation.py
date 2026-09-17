@@ -272,7 +272,7 @@ class TestGcmTagSize:
 
 
 # ---------------------------------------------------------------------------
-# GCM full-tag enforcement on decryption (G2.4)
+# GCM full-tag enforcement on decryption (hardening G2.4)
 # ---------------------------------------------------------------------------
 
 # CKRs that a conformant module returns when GCM tag verification fails.
@@ -358,7 +358,7 @@ class TestGcmFullTagEnforcedOnVerify:
 
 
 # ---------------------------------------------------------------------------
-# CCM NULL nonce with non-zero length (subprocess -- crash risk) (G2.5)
+# CCM NULL nonce with non-zero length (subprocess -- crash risk) (hardening G2.5)
 # ---------------------------------------------------------------------------
 
 

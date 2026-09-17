@@ -256,7 +256,7 @@ def test_lifecycle_claimed_effect_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
-# M3 — substring CKR matching must not match an EXPECTED name in the message
+# source-audit M3 — substring CKR matching must not match an EXPECTED name in the message
 # ---------------------------------------------------------------------------
 
 # A CkrAssertionError carries the offending rv as .rv; expect_rv builds a

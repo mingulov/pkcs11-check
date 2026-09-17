@@ -22,6 +22,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_hkdf_data_kat as kat
+from tests._skip_assert import assert_skips
 
 
 @pytest.fixture(autouse=True)
@@ -45,8 +46,11 @@ def test_rfc5869_sha256_oracle_is_fixed_and_independent() -> None:
 
 
 def test_missing_hkdf_data_mechanism_is_skip(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(pytest.skip.Exception, match="HKDF_DATA not supported"):
-        kat.TestHKDFDataKAT().test_rfc5869_sha256(_session(advertised=False))
+    assert_skips(
+        kat.TestHKDFDataKAT().test_rfc5869_sha256,
+        _session(advertised=False),
+        match="HKDF_DATA not supported",
+    )
 
 
 def test_base_provisioning_refusal_is_xfail_with_consumer_detail(

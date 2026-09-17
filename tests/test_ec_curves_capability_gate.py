@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.types_std import CKA_KEY_TYPE, CKF_SIGN
 from pkcs11_check.testcases import test_ec_curves as mod
+from tests._skip_assert import assert_skips
 
 
 @pytest.fixture(autouse=True)
@@ -35,10 +36,14 @@ def test_ecdsa_gate_uses_skip_unless_capability_with_ckf_sign(
     monkeypatch.setattr(mod, "skip_unless_capability", _skip_unless)
     rs = SimpleNamespace(raw=object(), sh=1, slot_id=0, has_mechanism=lambda _n: True)
 
-    with pytest.raises(pytest.skip.Exception):
-        mod.TestECDSACrossVerify().test_ecdsa_sign_p11_verify_crypto(
-            rs, "secp256r1", 32, ec.SECP256R1(), hashes.SHA256()
-        )
+    assert_skips(
+        mod.TestECDSACrossVerify().test_ecdsa_sign_p11_verify_crypto,
+        rs,
+        "secp256r1",
+        32,
+        ec.SECP256R1(),
+        hashes.SHA256(),
+    )
     assert calls and calls[0][1].get("operation") == CKF_SIGN
 
 

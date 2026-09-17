@@ -50,7 +50,7 @@ def test_missing_always_auth_readback_is_visible_and_nonterminal(
     assert rec.reason == "honest_deviation"
     assert rec.outcome == "xfail"
     assert rec.operation == "C_GetAttributeValue"
-    # F6: a plain C_GetAttributeValue readback is never stamped with the mechanism
+    # Readback attribution: a plain C_GetAttributeValue readback is never stamped with the mechanism
     # that produced the object being read; the producer still survives in detail
     # (post-hoc merge) and in the label.
     assert rec.mechanism is None

@@ -21,11 +21,10 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import CKR_ATTRIBUTE_VALUE_INVALID
 from pkcs11_check.testcases.security import test_parameter_validation as tpv
+from tests._skip_assert import assert_skips
 
 
 def _exc(rv: int, ckr_name: str) -> CkrAssertionError:
@@ -41,8 +40,7 @@ def _expect_skip(monkeypatch: Any, run: Callable[[Any], None]) -> None:
     monkeypatch.setattr(tpv, "gen_rsa_keypair", _bad_keygen)
     monkeypatch.setattr(tpv, "gen_ec_keypair", _bad_keygen)
     monkeypatch.setattr(tpv, "destroy_quietly", lambda *_a, **_kw: None)
-    with pytest.raises(pytest.skip.Exception):
-        run(rs)
+    assert_skips(run, rs)
 
 
 def test_rsa_pss_md5_hash_skips_when_keygen_rejects(monkeypatch: Any) -> None:

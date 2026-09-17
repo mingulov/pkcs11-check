@@ -861,7 +861,7 @@ class TestECDSATimingBasic:
             # only* -- a real Minerva-class leak (CVE-2019-13627, CVE-2023-6135)
             # needs thousands of signatures + bimodal-distribution analysis. A
             # high CV here is a flag for further investigation, not proof of a
-            # leak, so it must not gate the suite (catalog CR-6).
+            # leak, so it must not gate the suite (catalog §F Timing tests).
             if cv >= 1.0:
                 from pkcs11_check.compliance import ComplianceLevel, note
 

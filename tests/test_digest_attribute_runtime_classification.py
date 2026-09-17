@@ -57,8 +57,9 @@ def test_missing_digest_key_value_is_visible_and_keeps_digest_result_and_cleanup
     assert records[0].reason == "not_operational"
     assert records[0].outcome == "xfail"
     assert records[0].operation == "C_GetAttributeValue"
-    # F6: the key's CKA_VALUE was produced by C_GenerateKey(CKM_AES_KEY_GEN), not by
-    # the CKM_SHA256 digest mechanism this readback feeds into as a KAT reference.
+    # Readback attribution: the key's CKA_VALUE was produced by
+    # C_GenerateKey(CKM_AES_KEY_GEN), not by the CKM_SHA256 digest mechanism this
+    # readback feeds into as a KAT reference.
     assert records[0].mechanism is None
     assert "producer_operation=C_GenerateKey" in records[0].label
     assert "producer_mechanism=CKM_AES_KEY_GEN" in records[0].label

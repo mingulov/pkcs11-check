@@ -23,6 +23,7 @@ from pkcs11_check.testcases import mechanism_vectors
 from pkcs11_check.testcases import test_mech_sign as mech_sign
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
+from tests._skip_assert import assert_skips
 
 
 def _aes_entry() -> MechEntry:
@@ -208,5 +209,10 @@ def test_kat_ec_private_import_curve_unsupported_skips(
     _patch_ec_kat_vector(monkeypatch)
     monkeypatch.setattr(mech_sign, "provision_ec_private_key", _import_reject)
 
-    with pytest.raises(pytest.skip.Exception, match="cannot import EC private key"):
-        mech_sign.TestMechSignKAT().test_kat_vector(_session(), _ec_entry(), None)
+    assert_skips(
+        mech_sign.TestMechSignKAT().test_kat_vector,
+        _session(),
+        _ec_entry(),
+        None,
+        match="cannot import EC private key",
+    )

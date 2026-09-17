@@ -20,6 +20,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import _capability
 from pkcs11_check.testcases import conftest as ct
+from tests._skip_assert import assert_skips
 
 
 @pytest.fixture(autouse=True)
@@ -51,8 +52,7 @@ def test_out_of_range_skips(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_mechanism_info",
         lambda *_a, **_k: {"min_key_size": 2048, "max_key_size": 4096, "flags": int(CKF_SIGN)},
     )
-    with pytest.raises(pytest.skip.Exception):
-        ct.skip_unless_capability(rs, CKM_RSA_PKCS, key_size=1024, operation=CKF_SIGN)
+    assert_skips(ct.skip_unless_capability, rs, CKM_RSA_PKCS, key_size=1024, operation=CKF_SIGN)
 
 
 def test_in_range_fns_routes_to_xfail() -> None:

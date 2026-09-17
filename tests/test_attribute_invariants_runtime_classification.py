@@ -156,7 +156,7 @@ def test_never_extractable_absent_records_exact_attribute(
     records = C.get_records()
     assert len(records) == 1
     assert records[0].operation == "C_GetAttributeValue"
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert records[0].mechanism is None
     assert "producer_mechanism=CKM_AES_KEY_GEN" in records[0].label

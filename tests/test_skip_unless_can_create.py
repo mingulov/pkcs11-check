@@ -14,6 +14,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from tests._skip_assert import assert_skips
 
 
 def _make_rs(sh: int) -> object:
@@ -107,8 +108,7 @@ def test_skip_unless_can_create_absent_data(monkeypatch: pytest.MonkeyPatch) -> 
     _prov.clear_provisioning_events()
 
     rs = _make_rs(sh=303)
-    with pytest.raises(pytest.skip.Exception):
-        _prov.skip_unless_can_create(rs, "data")
+    assert_skips(_prov.skip_unless_can_create, rs, "data")
 
     events = _prov.get_provisioning_events()
     assert any(e.obj_class == "data" and e.method == "skipped_no_path" for e in events), (
@@ -130,8 +130,7 @@ def test_skip_unless_can_create_prohibited_data(monkeypatch: pytest.MonkeyPatch)
     _prov.clear_provisioning_events()
 
     rs = _make_rs(sh=304)
-    with pytest.raises(pytest.skip.Exception):
-        _prov.skip_unless_can_create(rs, "data")
+    assert_skips(_prov.skip_unless_can_create, rs, "data")
 
     events = _prov.get_provisioning_events()
     assert any(e.obj_class == "data" and e.method == "skipped_no_path" for e in events), (
@@ -152,5 +151,4 @@ def test_skip_unless_can_create_prohibited_public(monkeypatch: pytest.MonkeyPatc
     _prov.clear_provisioning_events()
 
     rs = _make_rs(sh=305)
-    with pytest.raises(pytest.skip.Exception):
-        _prov.skip_unless_can_create(rs, "public")
+    assert_skips(_prov.skip_unless_can_create, rs, "public")

@@ -1,7 +1,7 @@
 """TDD meta-tests for Batch 4 import-skip -> xfail conversion (HKDF IKM + ChaCha key).
 
 Audit reference: import-skip-audit §4 "Batch 4" + rows A16 (SLH-DSA --
-already DONE via D3/9a040f98), A17 (DSA -- DEFERRED, no provider hits the leak),
+already DONE via import-audit D3/9a040f98), A17 (DSA -- DEFERRED, no provider hits the leak),
 A18 (HKDF IKM secret-key import), A19 (ChaCha20 key import).
 
 Batch 4 moves the two remaining *secret-key* raw ``create_object`` import sites
@@ -43,6 +43,7 @@ from pkcs11_check.testcases import conftest as tc
 # against any future ordering-induced WYCHEPROOF_DIR pollution.
 from pkcs11_check.testcases.wycheproof import test_wycheproof_chacha as _chacha_mod  # noqa: F401
 from pkcs11_check.testcases.wycheproof import test_wycheproof_hkdf as _hkdf_mod  # noqa: F401
+from tests._skip_assert import assert_skips
 
 _ATTR_INVALID = CkrAssertionError(
     "Unexpected CK_RV CKR_ATTRIBUTE_VALUE_INVALID", int(CKR_ATTRIBUTE_VALUE_INVALID)
@@ -118,8 +119,9 @@ def test_a18_hkdf_gate_not_advertised_skips(monkeypatch: pytest.MonkeyPatch) -> 
     # Importer must never be reached when the gate skip fires.
     monkeypatch.setattr(hk, "import_secret_key_negotiated", _raiser(_ATTR_INVALID))
 
-    with pytest.raises(pytest.skip.Exception, match="HKDF_DERIVE not supported"):
-        hk.test_hkdf(_session(has_mech=False), vec_id, vec)
+    assert_skips(
+        hk.test_hkdf, _session(has_mech=False), vec_id, vec, match="HKDF_DERIVE not supported"
+    )
 
 
 # ===========================================================================
@@ -169,8 +171,13 @@ def test_a19_chacha_gate_not_advertised_skips(monkeypatch: pytest.MonkeyPatch) -
     vec_id, vec = _first_valid_chacha_vector(ch)
     monkeypatch.setattr(ch, "import_secret_key_negotiated", _raiser(_ATTR_INVALID))
 
-    with pytest.raises(pytest.skip.Exception, match="CHACHA20_POLY1305 not supported"):
-        ch.test_chacha20_poly1305(_session(has_mech=False), vec_id, vec)
+    assert_skips(
+        ch.test_chacha20_poly1305,
+        _session(has_mech=False),
+        vec_id,
+        vec,
+        match="CHACHA20_POLY1305 not supported",
+    )
 
 
 # ===========================================================================

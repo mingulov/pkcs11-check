@@ -1,4 +1,4 @@
-"""F6 regression: shared-helper readbacks must never inherit a caller's mechanism.
+"""Readback-attribution regression: shared-helper readbacks must never inherit a caller's mechanism.
 
 ``_provisioning.py``, ``_ec_export.py``, ``_rsa_export.py`` and ``_aes_operability.py``
 are reached from ACVP/Wycheproof tests *after* those tests call ``set_mechanism()``.

@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import conftest, test_token_flags
 from pkcs11_check.testcases.wycheproof import test_wycheproof_ecdsa
+from tests._skip_assert import assert_skips
 
 
 def _rng_session(flags: int) -> SimpleNamespace:
@@ -86,8 +87,9 @@ def test_rng_quality_gate_exposes_advertised_failure() -> None:
 
 def test_rng_quality_gate_skips_clean_unadvertised_absence() -> None:
     session = SimpleNamespace(raw=_RngRaw(0, int(CKR_RANDOM_NO_RNG)), sh=1, slot_id=0)
-    with pytest.raises(pytest.skip.Exception, match="does not advertise"):
-        conftest.skip_unless_generate_random_supported(session)
+    assert_skips(
+        conftest.skip_unless_generate_random_supported, session, match="does not advertise"
+    )
 
 
 def _ecdsa_vec() -> dict[str, Any]:
@@ -119,8 +121,9 @@ def test_first_ecdsa_binding_defect_fails_then_cached_vectors_skip(
 
     with pytest.raises(pytest.fail.Exception, match="self-contradiction"):
         mod.test_ecdsa_wycheproof(_ecdsa_session(), "tc1", _ecdsa_vec())
-    with pytest.raises(pytest.skip.Exception, match="already reported"):
-        mod.test_ecdsa_wycheproof(_ecdsa_session(), "tc2", _ecdsa_vec())
+    assert_skips(
+        mod.test_ecdsa_wycheproof, _ecdsa_session(), "tc2", _ecdsa_vec(), match="already reported"
+    )
 
 
 def test_coherent_ecdsa_import_reaches_verification(monkeypatch: pytest.MonkeyPatch) -> None:

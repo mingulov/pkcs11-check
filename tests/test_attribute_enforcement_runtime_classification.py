@@ -39,6 +39,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases import test_attribute_enforcement as tae
 from tests._attribute_access_guard import analyze_paths
+from tests._skip_assert import assert_skips
 
 
 def _session() -> SimpleNamespace:
@@ -359,8 +360,11 @@ def test_kcv_absent_on_both_identical_keys_is_optional_capability_skip(
     _setup(monkeypatch, reads=lambda *_a, **_k: {})
     monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
 
-    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
-        tae.TestCheckValue().test_same_key_material_same_kcv(_session())
+    assert_skips(
+        tae.TestCheckValue().test_same_key_material_same_kcv,
+        _session(),
+        match="CKA_CHECK_VALUE is not supported",
+    )
 
     assert _records() == []
 
@@ -454,8 +458,11 @@ def test_generated_kcv_absence_is_optional_capability_skip(
     classification.clear()
     _setup(monkeypatch, reads=lambda *_a, **_k: {})
 
-    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
-        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+    assert_skips(
+        tae.TestCheckValue().test_generated_key_has_check_value,
+        _session(),
+        match="CKA_CHECK_VALUE is not supported",
+    )
 
     assert _records() == []
 
@@ -470,8 +477,11 @@ def test_generated_kcv_attribute_type_invalid_is_optional_capability_skip(
 
     _setup(monkeypatch, reads=reject)
 
-    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
-        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+    assert_skips(
+        tae.TestCheckValue().test_generated_key_has_check_value,
+        _session(),
+        match="CKA_CHECK_VALUE is not supported",
+    )
 
     assert _records() == []
 
@@ -484,8 +494,11 @@ def test_generated_kcv_per_attribute_type_invalid_is_optional_capability_skip(
     attrs.refusals[int(CKA_CHECK_VALUE)] = AttrRefusal(int(CKR_ATTRIBUTE_TYPE_INVALID))
     _setup(monkeypatch, reads=lambda *_a, **_k: attrs)
 
-    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
-        tae.TestCheckValue().test_generated_key_has_check_value(_session())
+    assert_skips(
+        tae.TestCheckValue().test_generated_key_has_check_value,
+        _session(),
+        match="CKA_CHECK_VALUE is not supported",
+    )
 
     assert _records() == []
 
@@ -653,8 +666,11 @@ def test_kcv_absent_with_both_encrypt_policies_is_optional_skip(
     _setup(monkeypatch, reads=lambda *_a, **_k: {})
     monkeypatch.setattr(tae, "import_secret_key_negotiated", lambda *_a, **_k: next(handles))
 
-    with pytest.raises(pytest.skip.Exception, match="CKA_CHECK_VALUE is not supported"):
-        tae.TestCheckValue().test_check_value_present_when_encrypt_false(_session())
+    assert_skips(
+        tae.TestCheckValue().test_check_value_present_when_encrypt_false,
+        _session(),
+        match="CKA_CHECK_VALUE is not supported",
+    )
 
     assert _records() == []
 

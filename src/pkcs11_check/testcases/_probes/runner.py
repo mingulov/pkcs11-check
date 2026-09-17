@@ -6,6 +6,16 @@ to the correct accumulator by the ``coverage`` argument (I6).  The rv-trace is
 recorded by ``record_subprocess_rv_trace`` (I7).  Timeouts are converted to rc
 124 + ``SUBPROCESS_TIMEOUT_MARKER`` on stderr (I8).  The child is launched via
 ``python -u -m pkcs11_check.testcases._probes.<probe>`` (I11, no shell).
+
+Probe-invariant legend (I1–I12): bare ``(I#)`` cites across the framework resolve
+here — NOT June-gap I1–I7 or FABLE I-1–I-5. I1 crash isolation (crash-is-a-finding);
+I2 honeypot (demand-zero mmap) semantics; I3 no PIN leakage (child gets the PIN via
+_P11CHECK_PIN only); I4 classification stays parent-side (child prints data, never
+classify/fail_as/xfail_as); I5 each family's output protocol unchanged; I6 coverage
+preserved; I7 rv-trace preserved; I8 hang → rc 124 + timeout marker (crash-class
+finding); I9 pytest markers unchanged; I10 behavioral equivalence via
+compare-results; I11 Windows ABI (argv list, no shell quoting); I12 vendor-neutral
+probes.
 """
 
 from __future__ import annotations

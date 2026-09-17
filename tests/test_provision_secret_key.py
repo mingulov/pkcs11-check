@@ -7,7 +7,8 @@ wrap mechs.  Covers:
   (c) create_absent   + key_inject=off   -> pytest.skip("...C_CreateObject...")
   (d) create_absent   + key_inject=unwrap -> unwrap path, integrity readback runs
   (e) force-unwrap                        -> never calls import_secret_key
-  (f) force-unwrap + wrap_ctx=None        -> pytest.skip("no wrapping path")
+  (f) force-unwrap + all bootstraps refused -> xfail (refusals recorded as
+      not_operational evidence; None->skip only when no strategy is usable (h))
   (g) unwrap path + value mismatch        -> wrong_result failure
   (h) no usable strategy                  -> pytest.skip("no wrapping path: no usable...")
 
@@ -36,6 +37,7 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKO_SECRET_KEY,
 )
+from tests._skip_assert import assert_skips, assert_xfails
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -186,10 +188,11 @@ def test_create_absent_off_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=202)
     cfg = _make_cfg("off")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+    skipped = assert_skips(
+        provision_secret_key, rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t"
+    )
 
-    assert "C_CreateObject" in str(exc_info.value)
+    assert "C_CreateObject" in str(skipped)
 
 
 def test_create_prohibited_user_type_invalid_skip_keeps_probe_reason(
@@ -210,10 +213,11 @@ def test_create_prohibited_user_type_invalid_skip_keeps_probe_reason(
 
     rs = _make_rs(sh=203)
     cfg = _make_cfg("off")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+    skipped = assert_skips(
+        provision_secret_key, rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t"
+    )
 
-    message = str(exc_info.value)
+    message = str(skipped)
     assert "CKR_USER_TYPE_INVALID" in message
     assert "create_prohibited" in message
     assert "does not implement C_CreateObject" not in message
@@ -389,12 +393,18 @@ def test_force_unwrap_skips_import(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# (f) force-unwrap + build_wrap_context returns None -> skip("no wrapping path")
+# (f) force-unwrap + every bootstrap refused -> xfail (evidence preserved)
 # ---------------------------------------------------------------------------
 
 
-def test_force_unwrap_no_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """force-unwrap when build_wrap_context returns None must skip."""
+def test_force_unwrap_all_bootstraps_refused_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """force-unwrap when every bootstrap is refused must xfail, not skip.
+
+    Since evidence preservation (eb744183), refused bootstraps are recorded
+    as not_operational findings via classify(), which raises xfail before
+    build_wrap_context can return None. The None -> skip("no wrapping path")
+    contract only holds when NO strategy is usable at all (case h).
+    """
     from pkcs11_check.raw.rv import CkrAssertionError
     from pkcs11_check.raw.types_std import CKR_KEY_SIZE_RANGE, CKR_MECHANISM_INVALID
 
@@ -414,10 +424,11 @@ def test_force_unwrap_no_ctx_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 
     rs = _make_rs(sh=205, has_mech=True)
     cfg = _make_cfg("force-unwrap")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+    xfailed = assert_xfails(
+        provision_secret_key, rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t"
+    )
 
-    assert "no wrapping path" in str(exc_info.value)
+    assert "AES-KWP bootstrap was refused" in str(xfailed)
 
 
 # ---------------------------------------------------------------------------
@@ -514,10 +525,11 @@ def test_no_strategy_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     # provision_secret_key then skips with "no wrapping path".
     rs = _make_rs(sh=207, has_mech=False)
     cfg = _make_cfg("unwrap")
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+    skipped = assert_skips(
+        provision_secret_key, rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t"
+    )
 
-    assert "no wrapping path" in str(exc_info.value)
+    assert "no wrapping path" in str(skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,10 +1069,11 @@ def test_force_unwrap_no_ctx_external_not_configured_skips(
     clear_provisioning_events()
     rs = _make_rs(sh=401, has_mech=True)
     cfg = _make_cfg_external("force-unwrap", allow_external=False)
-    with pytest.raises(pytest.skip.Exception) as exc_info:
-        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-q")
+    skipped = assert_skips(
+        provision_secret_key, rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t-q"
+    )
 
-    assert "no wrapping path" in str(exc_info.value), "skip message must mention 'no wrapping path'"
+    assert "no wrapping path" in str(skipped), "skip message must mention 'no wrapping path'"
     events = get_provisioning_events()
     assert any(e.method == "skipped_no_path" for e in events), (
         "skipped_no_path must be recorded when external also fails"

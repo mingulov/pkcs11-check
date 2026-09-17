@@ -380,6 +380,27 @@ def check(raw, session, handle):
     assert _violations(source) == []
 
 
+def test_single_arm_positive_in_at_block_end_flags_fallthrough() -> None:
+    """Nothing follows the if, so absence falls off the block end.
+
+    A terminal body does not save this shape: presence returns from the
+    body while absence alone reaches the end unclassified. (When a
+    statement follows — total-function ``return None``, trailing
+    ``fail_as(...)`` — the rest owns the absence path; see
+    test_membership_guard_proves_subscript_present.)
+    """
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if CKA_VALUE in attrs:
+        return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
 def test_negative_membership_early_return_proves_subscript_present() -> None:
     source = """
 from pkcs11_check.raw.recipes import read_attributes
@@ -389,6 +410,119 @@ def check(raw, session, handle):
     if CKA_VALUE not in attrs:
         return None
     return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_negated_membership_spellings_match_plain_spellings() -> None:
+    """``not (K in m)`` is ``K not in m``; ``not (K not in m)`` is ``K in m``.
+
+    The guard must see through the negation instead of missing the
+    membership shape (and the absence path it governs).
+    """
+    negated_absence = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if not (CKA_VALUE in attrs):
+        return None
+    return attrs[CKA_VALUE]
+"""
+    # Same shape as test_negative_membership_early_return_proves_subscript_present.
+    assert _kinds(negated_absence) == ["unstructured_absence"]
+
+    negated_presence = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if not (CKA_VALUE not in attrs):
+        return attrs[CKA_VALUE]
+"""
+    # Same shape as test_single_arm_positive_in_at_block_end_flags_fallthrough.
+    assert _kinds(negated_presence) == ["unstructured_absence"]
+
+
+def test_builtin_call_flags_unchecked_optional_argument() -> None:
+    """Builtin-kind callees return early but must still check their arguments.
+
+    An unchecked attr_or_record() optional passed to fail_as() is the same
+    bug as one passed to an unknown call; the early return must not hide it.
+    (Tainted mappings stay legal for sanctioned callees — only the optional
+    check applies here.)
+    """
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+from pkcs11_check.classification import fail_as
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="probe")
+    fail_as("wrong_result", detail=value)
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_single_arm_positive_in_last_in_branch_flags_conservatively() -> None:
+    """``is_last`` is last-in-immediate-block: handling past the branch exit
+    is not visible, so a last-in-branch guard flags (conservative)."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle, condition):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if condition:
+        if CKA_VALUE in attrs:
+            return attrs[CKA_VALUE]
+    return None
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_double_negation_reports_effective_operator() -> None:
+    """``not (not (K in m))`` toggles back to a positive-``in`` guard."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if not (not (CKA_VALUE in attrs)):
+        return attrs[CKA_VALUE]
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_negated_membership_assertion_matches_plain_assertion() -> None:
+    """``assert not (K in m)`` is a raw membership assertion like the plain
+    spelling: it classifies nothing (and vanishes under ``-O``)."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    assert not (CKA_VALUE in attrs)
+"""
+
+    assert _kinds(source) == ["unstructured_absence"]
+
+
+def test_unknown_call_checks_optional_argument_exactly_once() -> None:
+    """The shared argument-check helper must not double-emit: one unchecked
+    optional into an unknown callee is exactly one violation."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import attr_or_record
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    value = attr_or_record(attrs, CKA_VALUE, label="probe")
+    unknown_sink(value)
 """
 
     assert _kinds(source) == ["unstructured_absence"]
@@ -2478,7 +2612,7 @@ def check(raw, session, handle):
 
 
 def test_non_terminal_else_v_none_absence_branch_is_flagged() -> None:
-    """M4 guard-bypass fix: ``if K in attrs: v = attrs[K] else: v = None`` is the
+    """BRANCH-REVIEW M4 guard-bypass fix: ``if K in attrs: v = attrs[K] else: v = None`` is the
     exact shape verified to silently bypass the guard before the fix (the
     early return on a non-terminal absence branch skipped emission entirely).
     """
@@ -2498,7 +2632,7 @@ def check(raw, session, handle):
 
 
 def test_non_terminal_else_v_none_absence_branch_is_flagged_not_in_order() -> None:
-    """Same M4 bypass shape with the membership test inverted (`not in`), so the
+    """Same BRANCH-REVIEW M4 bypass shape with the membership test inverted (`not in`), so the
     fabricated default lives in the if-body rather than the else-clause.
     """
     source = """
@@ -2517,7 +2651,7 @@ def check(raw, session, handle):
 
 
 def test_non_terminal_else_pass_absence_branch_is_flagged() -> None:
-    """M4 guard-bypass fix: ``else: pass`` is a non-terminal absence branch that
+    """BRANCH-REVIEW M4 guard-bypass fix: ``else: pass`` is a non-terminal absence branch that
     silently falls through without recording anything; it must be flagged the
     same as ``else: v = None``.
     """
@@ -2538,7 +2672,7 @@ def check(raw, session, handle):
 
 
 def test_non_terminal_bare_record_as_else_is_flagged() -> None:
-    """M4 guard-bypass fix: a bare ``record_as(...)`` call in the else-clause that
+    """BRANCH-REVIEW M4 guard-bypass fix: a bare ``record_as(...)`` call in the else-clause that
     does not terminate is still a non-terminal absence branch -- recording the
     observation is not enough on its own; the guard requires the record_as call
     to be followed by terminal code (``_structured_absence``), not silence.
@@ -2607,7 +2741,7 @@ def check(raw, session, handle):
 
 def test_nonterminating_record_as_does_not_prove_presence() -> None:
     """A record_as() call that does not terminate is itself unstructured absence
-    handling (see the M4 guard-bypass fix): it no longer silently exempts the
+    handling (see the BRANCH-REVIEW M4 guard-bypass fix): it no longer silently exempts the
     if-statement, and the later unconditional subscript is still unsafe too."""
     source = """
 from pkcs11_check.classification import record_as
@@ -3867,6 +4001,20 @@ from pkcs11_check.raw.recipes import read_attributes
 def check(raw, session, handle):
     attrs = read_attributes(raw, session, handle, [CKA_VALUE])
     if CKA_VALUE not in attrs or attrs[CKA_VALUE]:
+        return None
+"""
+
+    assert _violations(source) == []
+
+
+def test_negated_presence_or_matches_plain_spelling() -> None:
+    """``not (K in m) or m[K]`` is the safe-presence-or shape, negated."""
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    if not (CKA_VALUE in attrs) or attrs[CKA_VALUE]:
         return None
 """
 

@@ -8,6 +8,7 @@ import pytest
 
 from pkcs11_check.raw.types_std import CKM_ECDSA_SHA256
 from pkcs11_check.testcases.acvp import test_acvp_ecdsa as ecdsa
+from tests._skip_assert import assert_skips
 
 
 class _Session:
@@ -36,5 +37,10 @@ def test_deterministic_ecdsa_siggen_skips_standard_pkcs11_mechanism(
         "msg": b"message",
     }
 
-    with pytest.raises(pytest.skip.Exception, match="Deterministic ECDSA ACVP"):
-        ecdsa.TestDetEcdsa().test_det_ecdsa_siggen(_Session(), "DetECDSA-tc1", vec)
+    assert_skips(
+        ecdsa.TestDetEcdsa().test_det_ecdsa_siggen,
+        _Session(),
+        "DetECDSA-tc1",
+        vec,
+        match="Deterministic ECDSA ACVP",
+    )

@@ -37,6 +37,7 @@ from pkcs11_check.testcases._provisioning import (
     get_provisioning_events,
     record_provisioning_event,
 )
+from tests._skip_assert import assert_skips
 
 # ---------------------------------------------------------------------------
 # RSA-2048 test key (reused across RSA private-key tests)
@@ -289,8 +290,7 @@ def test_secret_off_create_absent_records_skipped_no_path(
     rs = _make_rs(sh=402)
     cfg = _make_cfg("off")
 
-    with pytest.raises(pytest.skip.Exception):
-        provision_secret_key(rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
+    assert_skips(provision_secret_key, rs, cfg, CKK_AES, _AES_VALUE, _AES_ATTRS, label="t")
 
     events = get_provisioning_events()
     assert ProvisioningEvent("secret", "skipped_no_path") in events, (

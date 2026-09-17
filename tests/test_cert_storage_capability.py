@@ -13,6 +13,7 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_TYPE_INVALID,
 )
 from pkcs11_check.testcases.x509 import conftest as x509conftest
+from tests._skip_assert import assert_skips
 
 
 def _fake_module(monkeypatch, *, accept_on: int | None, raise_rv: int) -> tuple[Any, list[int]]:
@@ -80,8 +81,7 @@ def test_skip_gate_records_general_error_as_not_operational(monkeypatch):
 
 def test_skip_helper_skips_when_unsupported(monkeypatch):
     rs, _ = _fake_module(monkeypatch, accept_on=None, raise_rv=int(CKR_KEY_HANDLE_INVALID))
-    with pytest.raises(pytest.skip.Exception):
-        x509conftest.skip_unless_cert_storage(rs)
+    assert_skips(x509conftest.skip_unless_cert_storage, rs)
 
 
 def test_cert_support_fixture_reuses_strict_storage_gate(monkeypatch):

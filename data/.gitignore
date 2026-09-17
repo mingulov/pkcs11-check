@@ -4,3 +4,5 @@ wycheproof/
 cctv/
 acvp/
 x509-limbo/
+# Generated fetch record (fetch-data stamps it; never commit).
+versions.json

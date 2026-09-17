@@ -72,7 +72,7 @@ def test_missing_unwrapped_value_is_structured_and_cleanup_runs(
     assert len(records) == 1
     assert records[0].reason == "not_operational"
     assert records[0].operation == "C_GetAttributeValue"
-    # F6: a plain readback is never stamped with the mechanism that produced the
+    # Readback attribution: a plain readback is never stamped with the mechanism that produced the
     # object being read; the producer survives in the label instead.
     assert records[0].mechanism is None
     assert "producer_mechanism=CKM_AES_KEY_WRAP_PKCS7" in records[0].label

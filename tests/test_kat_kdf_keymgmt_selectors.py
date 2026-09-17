@@ -1,4 +1,4 @@
-"""Regression tests for F6 ECDH consumers in KAT/KDF/key-management tests."""
+"""Regression tests for readback-attribution ECDH consumers in KAT/KDF/key-management tests."""
 
 from __future__ import annotations
 

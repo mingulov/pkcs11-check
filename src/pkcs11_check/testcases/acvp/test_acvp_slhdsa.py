@@ -85,7 +85,7 @@ _PARAM_SET_MAP: dict[str, int] = {
     "SLH-DSA-SHAKE-256f": CKP_SLH_DSA_SHAKE_256F,
 }
 
-# D3 boundary: SLH-DSA is advertised when these sites run (has_mechanism gate
+# import-audit D3 boundary: SLH-DSA is advertised when these sites run (has_mechanism gate
 # precedes every import). For PQC the genuine-absence signal IS mechanism
 # advertisement -- there is no curve-absence CKR analogue. So once advertised,
 # ANY clean import reject is "advertised but not operational" -> xfail (mirrors
