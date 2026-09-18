@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -329,7 +330,10 @@ def test_rsa_pkcs_decrypt_ckr_ok_end_to_end_is_xfail_not_fail() -> None:
 
 
 def test_rsa_protocol_accepts_native_width_vendor_ckr() -> None:
-    output = _rsa_complete_decrypt_output(rv=0x1_0000_0001)
+    # CK_ULONG is 64-bit on LP64 but 32-bit on Windows: clamp the vendor-range
+    # probe to the platform's native max so it stays in the accept region.
+    vendor_rv = min(0x1_0000_0001, test_error_path_rsa._NATIVE_CKR_MAX)
+    output = _rsa_complete_decrypt_output(rv=vendor_rv)
     with pytest.raises(pytest.xfail.Exception, match="rejected invalid RSA input"):
         test_error_path_rsa._check_protocol(
             0,
@@ -343,7 +347,7 @@ def test_rsa_protocol_accepts_native_width_vendor_ckr() -> None:
         )
     records = C.get_records()
     assert [record.reason for record in records] == ["nonspec_reject"]
-    assert records[0].actual_ckr == "0x100000001"
+    assert records[0].actual_ckr == hex(vendor_rv)
 
 
 def test_rsa_protocol_rejects_case_mismatch_as_harness_error() -> None:
@@ -846,6 +850,7 @@ def test_rsa_setup_marker_is_recorded_when_rsa_markers_are_mixed() -> None:
     assert [record.reason for record in C.get_records()] == ["not_operational", "harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_rsa_done_before_cleanup_crash_is_validated_before_crash() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         test_error_path_rsa._check_protocol(
@@ -1008,6 +1013,7 @@ def test_rsa_impossible_interrupted_transition_is_harness_error(output: str) -> 
     assert any(record.reason == "harness_error" for record in C.get_records())
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 @pytest.mark.parametrize("state", ["missing", "malformed", "inconsistent"])
 def test_rsa_attribute_terminal_state_rejects_decrypt_tail_on_crash(state: str) -> None:
     case = "decrypt:pkcs:random"
@@ -1188,6 +1194,7 @@ def test_rsa_protocol_missing_downstream_stage_is_harness_error() -> None:
     assert [record.reason for record in C.get_records()] == ["harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_rsa_setup_marker_survives_later_signal_crash() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         test_error_path_rsa._check_protocol(
@@ -1452,6 +1459,7 @@ def test_rsa_missing_modulus_does_not_hide_independent_rv_evidence() -> None:
     assert not any(record.reason == "accepted_invalid" for record in records)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_rsa_crash_retains_bounded_parsed_measurements() -> None:
     case = "decrypt:pkcs:random"
     output = _rsa_marker(
@@ -1749,6 +1757,10 @@ def test_ffi_length_aes_child_script_marks_setup_reject(
 def test_unbackable_length_setup_marker_never_hides_crash_or_timeout(
     rc: int, stderr: str, expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if rc == -11 and sys.platform == "win32":
+        # On Windows the real platform already renders rc=-11 as the 0xFFFFFFF5
+        # NTSTATUS form, so the POSIX "signal 11" text never appears there.
+        expected = "module crashed with Windows exception"
     if rc >= 0:
         monkeypatch.setattr("pkcs11_check.core.process_observation.sys.platform", "win32")
     try:

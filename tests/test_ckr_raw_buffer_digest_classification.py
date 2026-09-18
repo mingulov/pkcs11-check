@@ -12,6 +12,7 @@ retry evidence.
 from __future__ import annotations
 
 import inspect
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -134,6 +135,7 @@ def test_buffer_measurement_missing_guard_is_incomplete(monkeypatch: pytest.Monk
     assert get_records()[-1].reason == "harness_error"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_setup_marker_is_retained_before_later_crash() -> None:
     """A clean setup refusal printed before a crash remains provider evidence."""
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
@@ -159,6 +161,7 @@ def test_pure_setup_marker_does_not_fabricate_missing_measurements() -> None:
     assert [record.reason for record in get_records()] == ["not_operational"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_crash_without_markers_records_only_crash() -> None:
     """A crashed child with no protocol fields must not fabricate harness fields."""
     with pytest.raises(pytest.fail.Exception, match="signal 11"):

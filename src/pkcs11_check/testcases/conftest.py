@@ -669,6 +669,7 @@ def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) 
         label="EC public key CKA_EC_PARAMS",
         reason="honest_deviation",
         kind="metadata",
+        inherit_mechanism=False,
     )
     if got is _MISSING_ATTRIBUTE:
         record = _classification.get_records()[-1]

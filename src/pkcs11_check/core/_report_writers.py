@@ -6,6 +6,7 @@ Moved verbatim from file_runner.py (god-module split, 2026-07-17).
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -584,12 +585,21 @@ def _recovery_events_from_state(state: FileRunState) -> list[dict[str, Any]]:
 
 
 def _junit_case_identity(target: str) -> tuple[str, str]:
+    # Normalize both separators: Path renders os.sep ("\" on Windows) and
+    # owner-alias targets can mix styles. On POSIX os.sep == "/", so output
+    # there is byte-identical to before; on Windows classnames stay dotted.
+    def _dotted(part: str) -> str:
+        dotted = part.replace(os.sep, ".")
+        if os.sep != "/":
+            dotted = dotted.replace("/", ".")
+        return dotted.strip(".") or "pkcs11-check"
+
     if "::" not in target:
         path = Path(target)
-        return (str(path.parent).replace("/", ".").strip(".") or "pkcs11-check", path.name)
+        return (_dotted(str(path.parent)), path.name)
 
     file_part, node_part = target.split("::", 1)
-    class_name = str(Path(file_part).with_suffix("")).replace("/", ".").strip(".") or "pkcs11-check"
+    class_name = _dotted(str(Path(file_part).with_suffix("")))
     return (class_name, node_part)
 
 

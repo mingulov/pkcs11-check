@@ -9,6 +9,7 @@ corresponding C_*Init still returned CKR_OK -> fail; not claimed -> xfail.
 from __future__ import annotations
 
 import ctypes
+import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -326,6 +327,7 @@ def test_child_emits_structured_marker_for_present_malformed_value(
     assert '"attribute":{"name":"CKA_ENCRYPT","id":260}' in output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_omission_is_retained_before_real_crash_disposition() -> None:
     out = f"{_ENC_OMITTED}\nCKR:0x00000000\nOK\n"
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
@@ -356,6 +358,7 @@ def test_omission_is_retained_before_real_timeout_disposition() -> None:
     assert [record.reason for record in C.get_records()] == ["honest_deviation", "crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_event_without_ckr_before_real_crash_is_not_synthetic_harness_error() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tra._check_permission_probe(
@@ -369,6 +372,7 @@ def test_event_without_ckr_before_real_crash_is_not_synthetic_harness_error() ->
     assert [record.reason for record in C.get_records()] == ["honest_deviation", "crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_crash_before_any_marker_is_only_a_crash() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tra._check_permission_probe(
@@ -395,6 +399,7 @@ def test_setup_refusal_is_handled_by_shared_helper_without_synthetic_protocol_er
     assert [record.reason for record in C.get_records()] == ["not_operational"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_setup_only_then_crash_preserves_setup_and_terminal_crash() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tra._check_permission_probe(
@@ -445,6 +450,7 @@ def test_valid_ckr_is_preserved_when_event_json_is_invalid(
     ]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_boolean_true_readback_survives_signal_before_ckr() -> None:
     with pytest.raises(pytest.fail.Exception, match="signal 11"):
         tra._check_permission_probe(
@@ -497,6 +503,7 @@ def test_setup_mixed_with_malformed_event_preserves_both_findings() -> None:
     assert {record.reason for record in C.get_records()} == {"wrong_result", "not_operational"}
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_setup_mixed_with_omission_and_crash_preserves_all_observations() -> None:
     out = (
         "SETUP_XFAIL:C_GenerateKey for CKA_ENCRYPT=False failed: CKR_FUNCTION_NOT_SUPPORTED\n"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import inspect
 import json
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -186,6 +187,7 @@ def test_missing_marker_with_positive_exit_remains_probe_incomplete() -> None:
     assert [item.reason for item in classification.get_records()] == ["probe_incomplete"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_crash_before_marker_remains_crash() -> None:
     with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
         assert_subprocess_completed(
@@ -247,6 +249,7 @@ def test_toxic_length_marker_keeps_producer_operation_in_label_and_detail() -> N
     assert "C_DeriveKey" in finding.detail["child_detail"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_terminal_finding_preserves_following_signal_crash() -> None:
     with pytest.raises(pytest.fail.Exception, match="module crashed with signal 11"):
         handle_child_provider_finding(

@@ -32,6 +32,9 @@ Every successful TestPyPI run triggers the **TestPyPI gate** (`.github/workflows
    baseline (~39 skipped), not the empty-`data/` baseline (~330 skipped); the terminal summary
    also prints a `vector data coverage` warning whenever any module was skipped for missing
    data, which must be absent from a release-qualifying run.
+   Resync the environment after the step-1 version bump (`uv sync --frozen`)
+   before this run: the version-stamp test compares the source version against
+   installed dist-info and fails on a stale venv by design.
 3. Push to `main` and wait for CI to go green. The release refuses to run otherwise.
 4. Dispatch **Release** with the version and `dry_run` left ticked. Read the job summary: it prints the commit, the tag it would create, and the exact release notes.
 5. Dispatch again with `dry_run` unticked.

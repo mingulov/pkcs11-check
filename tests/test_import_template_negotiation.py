@@ -336,7 +336,9 @@ def test_binding_defect_missing_params_records_exact_read_omission(
     assert record.reason == "honest_deviation"
     assert record.outcome == "xfail"
     assert record.operation == "C_GetAttributeValue"
-    assert record.mechanism == "CKM_ECDSA"
+    # F6: the readback must not inherit the ambient CKM_ECDSA mechanism even
+    # though one is active (set above); a bare C_GetAttributeValue carries none.
+    assert record.mechanism is None
     assert record.source == "ec-import.json"
     assert record.vector_id == "curve=secp256r1"
     assert record.actual_ckr is None

@@ -52,6 +52,11 @@ def test_invalid_mechanism_param_skips_missing_cbc_pad(
     # still raise pytest.skip.Exception -- outcome-type alone would not catch it).
     assert C.get_records() == []
 
+    # A capability skip is not a provider verdict; it must not leave a classification
+    # record behind (a mutation that classified before checking the capability would
+    # still raise pytest.skip.Exception -- outcome-type alone would not catch it).
+    assert C.get_records() == []
+
 
 def test_invalid_key_size_skips_missing_aes_keygen() -> None:
     """Invalid-size AES keygen checks should skip modules without AES_KEY_GEN."""
@@ -62,6 +67,8 @@ def test_invalid_key_size_skips_missing_aes_keygen() -> None:
         rs,
         match="AES_KEY_GEN not supported",
     )
+
+    assert C.get_records() == []
 
     assert C.get_records() == []
 
