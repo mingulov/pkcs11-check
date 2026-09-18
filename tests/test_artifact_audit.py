@@ -182,7 +182,7 @@ class _FakeDistribution:
         self,
         prefix: Path,
         *,
-        version: str = "0.2.0",
+        version: str = "0.2.1",
         include_package: bool = True,
         include_pyc: bool = False,
         archive_hash: str | None = None,
@@ -571,7 +571,7 @@ def test_built_wheel_standard_pip_install_runs_isolated_cli(
             "--install-prefix",
             str(venv_dir),
             "--expected-version",
-            "0.2.0",
+            "0.2.1",
             "--expected-archive-sha256",
             archive_hash,
             str(artifact_dir),
@@ -591,7 +591,7 @@ def test_built_wheel_standard_pip_install_runs_isolated_cli(
     assert installation["archive_sha256"] == archive_hash
     assert installation["integrity_binding"] == ("installed-distribution-record+pep610-direct-url")
     unverified = installation["record_unverified_paths"]
-    assert "pkcs11_check-0.2.0.dist-info/RECORD" in unverified
+    assert "pkcs11_check-0.2.1.dist-info/RECORD" in unverified
     assert any(
         path.startswith("pkcs11_check/__pycache__/") and path.endswith(".pyc")
         for path in unverified
@@ -655,9 +655,9 @@ def test_receipt_proves_record_and_relative_noneditable_origin(
         module, "__file__", str(distribution.locate_file(distribution._package_relative))
     )
 
-    receipt = build_installation_receipt(install_prefix=tmp_path, expected_version="0.2.0")
+    receipt = build_installation_receipt(install_prefix=tmp_path, expected_version="0.2.1")
 
-    assert receipt["version"] == "0.2.0"
+    assert receipt["version"] == "0.2.1"
     assert receipt["metadata_name"] == "pkcs11-check"
     assert len(receipt["distribution_record_sha256"]) == 64
     assert len(receipt["installed_files_sha256"]) == 64
@@ -665,7 +665,7 @@ def test_receipt_proves_record_and_relative_noneditable_origin(
         receipt["package_origin"] == "lib/python3.12/site-packages/pkcs11_check/artifact_audit.py"
     )
     assert receipt["archive_sha256"] is None
-    assert receipt["record_unverified_paths"] == ["pkcs11_check-0.2.0.dist-info/RECORD"]
+    assert receipt["record_unverified_paths"] == ["pkcs11_check-0.2.1.dist-info/RECORD"]
 
 
 def test_receipt_hashes_pycache_bytes_and_exposes_sorted_unverified_paths(
@@ -683,7 +683,7 @@ def test_receipt_hashes_pycache_bytes_and_exposes_sorted_unverified_paths(
 
     assert receipt["record_unverified_paths"] == sorted(
         [
-            "pkcs11_check-0.2.0.dist-info/RECORD",
+            "pkcs11_check-0.2.1.dist-info/RECORD",
             "pkcs11_check/__pycache__/artifact_audit.cpython-313.pyc",
         ]
     )
@@ -700,7 +700,7 @@ def test_receipt_hashes_pycache_bytes_and_exposes_sorted_unverified_paths(
                 len(b"pyc bytes"),
             ),
             (
-                "pkcs11_check-0.2.0.dist-info/RECORD",
+                "pkcs11_check-0.2.1.dist-info/RECORD",
                 hashlib.sha256(
                     distribution.locate_file(distribution._record_relative).read_bytes()
                 ).hexdigest(),

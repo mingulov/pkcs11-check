@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.2.1] - 2026-09-18
+
+A correctness follow-up: message-mode AEAD init packs the right params, harness
+provenance travels with every report, and CTS/teardown diagnostics name their
+cause. Vector datasets are repinned to current upstream.
+
+### Added
+
+- **Message-mode init for CCM, ChaCha20-Poly1305, and Salsa20-Poly1305.**
+  The message-init legs pack `CK_CCM_MESSAGE_PARAMS` / the ChaCha20 and Salsa20
+  message params (caller- and generated-nonce), with nonce-length bytes-vs-bits
+  semantics verified against the spec text and pinned by characterization tests.
+
+- **Harness provenance in every report.** `pytest_sessionfinish` stamps a
+  `ProvenanceReport` into `report.jsonl`, and `pkcs11-check-report` fills a
+  missing framework block from the JSONL log; the extractor survives corrupt
+  bytes via the binary-decode iterator.
+
+- **CTS KAT failures attributed by call stage** (Init vs Update vs Final) in
+  diagnostics, alongside the existing CKR + operability classification.
+
+- **`allocation_amplifying` marking finished**: the HKDF info probe and the
+  OFB/CFB8/CFB128/ChaCha20 oracle tests carry the marker (pin test grows
+  5 → 14 probes).
+
+- **Vector datasets repinned** (wycheproof, cctv, acvp, x509-limbo) with
+  zero finding-flips on the re-run diffs; `fetch-data` now stamps a
+  `versions.json` into each data dir.
+
+### Fixed
+
+- **KMAC tests labeled vendor-range, not v3.2.** Vendor modules expose KMAC in
+  their vendor range and need the tests, so the suite keeps them with honest
+  labels plus a repo-guard test (every `has_mechanism("LITERAL")` resolves or
+  is documented).
+
+- **Hostile module length reports contained at collection.** An absurd length
+  from `_alloc_module_output` can no longer INTERNALERROR the whole collection
+  run; the file fails visibly in isolation instead.
+
+- **Teardown quirks fail the file honestly, pinned.** A lone
+  `C_Finalize(NULL)` rejection (SoftKMS `CKR_ARGUMENTS_BAD`) and wolfTPM
+  finalize hangs keep failing the file with dedicated regression tests, and a
+  slotless provider yields contained skips instead of an INTERNALERROR.
+
+- **Skip-assert migration**: raw `pytest.raises(pytest.skip.Exception)` blocks
+  now use `_skip_assert` helpers, so a skip→xfail mutation can no longer escape
+  as a silent xfail.
+
+- **Readback-attribution ratchet tightened**: inventory blind spots shrink
+  802 → 595, gate failures print the HEAD-vs-worktree delta, corpus-digest
+  scans are cached, and replay tests couple to their source calls.
+
+- **Attribute-guard precision**: three scanner gaps closed (positive-`in`
+  fallthrough, double-negation check, unchecked optionals via early return);
+  probes confirm no live in-tree instances.
+
+- **UTF-8 named on git subprocess text calls**, fixing locale-dependent
+  collection on non-UTF-8 systems.
+
 ## [0.2.0] - 2026-09-16
 
 A reporting-integrity release: a finding is never hidden, never silently downgraded,

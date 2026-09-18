@@ -3603,10 +3603,7 @@ class _Analyzer:
         if (
             isinstance(operator, ast.In)
             and not node.orelse
-            and (
-                is_last
-                or not self._all_paths_terminal(node.body, call_stack=call_stack)
-            )
+            and (is_last or not self._all_paths_terminal(node.body, call_stack=call_stack))
         ):
             self._emit(
                 node,

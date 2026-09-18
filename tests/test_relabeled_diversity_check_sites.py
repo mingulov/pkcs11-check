@@ -85,8 +85,7 @@ _SP800_LABEL = "CKM_SP800_108_COUNTER_KDF:distinct labels produce distinct outpu
 def test_sp800_108_kdf_site_is_coupled_to_its_source_call() -> None:
     """The replay below still names its live inline ``classify()`` source call."""
     source = (
-        Path(__file__).resolve().parents[1]
-        / "src/pkcs11_check/testcases/test_sp800_108_kdf.py"
+        Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases/test_sp800_108_kdf.py"
     )
     matches = [
         shape

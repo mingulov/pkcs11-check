@@ -14,7 +14,7 @@ Phase B remaining:
 - CKO_OTP_KEY object attributes
 
 Phase D remaining:
-- CKM_KMAC_128 / CKM_KMAC_256
+- CKM_KMAC_128 / CKM_KMAC_256 (vendor range; no OASIS code point)
 - Standalone SHAKE XOF
 - CKM_ML_DSA_EXTERNAL_MU / EXTERNAL_MU_GEN
 
@@ -1321,7 +1321,9 @@ class TestRsaPkcsNull:
 
 
 class TestKmac:
-    """CKM_KMAC_128 and CKM_KMAC_256 - NIST SP 800-185 KECCAK MAC."""
+    """CKM_KMAC_128 and CKM_KMAC_256 (vendor range; no OASIS code point)
+    - NIST SP 800-185 KECCAK MAC.
+    """
 
     def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
         if not p11_raw_session.has_mechanism("KMAC_128"):

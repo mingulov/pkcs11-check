@@ -1908,12 +1908,12 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "34173a1d432f8ef7bdfd1f6b77028a3d2c4506c7f79a7b7e6074d26e47c09a6b",
+            "281b1eb6c711494767529d995380446b9ae1cfd4ceea5a699f377248031df4c4",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "4c81c4513f6ab9aab267682a0bfc6aea8957a5534ec9f656abf8a5ae742c2a5e",
+            "5d65b980ec79c34a8636767dcc60aeb93983dff822b6777fb05ed4103ed2ec94",
             characterization.candidate_digest,
         ),
         (
@@ -1931,7 +1931,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ("mixed_unsafe_states", 25, characterization.mixed_unsafe_states),
         (
             "corpus_digest",
-            "56861e3c4bd502a80ba6cc889fd8e90347e2f6de1b0790bf144342e82c27f8c2",
+            "e7adcf2aa22ce31682f4f6f5f3c88eb674058d691fc77e577bdf912d9207aeeb",
             characterization.corpus_digest,
         ),
         (
@@ -2679,7 +2679,9 @@ def test_git_head_tree_sources_reads_a_toplevel_tree(tmp_path: Path) -> None:
         ["-c", "user.email=t@t", "-c", "user.name=t", "add", "."],
         ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "t"],
     ):
-        proc = subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True)
+        proc = subprocess.run(
+            ["git", *args], cwd=tmp_path, capture_output=True, text=True, encoding="utf-8"
+        )
         assert proc.returncode == 0, proc.stderr
 
     sources = git_head_tree_sources(tmp_path)

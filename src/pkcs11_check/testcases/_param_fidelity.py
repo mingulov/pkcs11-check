@@ -3,8 +3,8 @@
 Recover the ACTUAL structural parameter a module used for an operation and
 classify it against what was requested. Pure software (no PKCS#11 calls).
 
-See docs/superpowers/specs/2026-06-15-parameter-fidelity-design.md at the workspace
-root (outside this repo).
+See docs/superpowers/specs/2026-06-15-parameter-fidelity-design.md in the sibling
+dev-material repo (outside this repo).
 """
 
 from __future__ import annotations

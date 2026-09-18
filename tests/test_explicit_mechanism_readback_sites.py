@@ -339,6 +339,7 @@ def _kwargs_agree(shape_kwargs: dict[str, object], entry: dict[str, Any]) -> boo
         for name in _AGREE_NAMES
     )
 
+
 _GROUP_B_SITES: list[tuple[str, dict[str, Any], str]] = [
     (
         "access_levels/SO-create-CKA_TRUSTED",
@@ -824,8 +825,7 @@ def test_group_b_site_is_coupled_to_its_source_call(
     fix_shaped = [
         shape
         for shape in forwarded
-        if shape.kwargs.get("mechanism") is None
-        and shape.kwargs.get("inherit_mechanism") is False
+        if shape.kwargs.get("mechanism") is None and shape.kwargs.get("inherit_mechanism") is False
     ]
     assert fix_shaped, f"{site_id}: no source call with this entry's shape"
 

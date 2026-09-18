@@ -506,8 +506,8 @@ class TestTwoCallStageAttribution:
     """Single-shot failures name the failing stage (Init vs size query vs call)."""
 
     def test_size_query_failure_names_size_query(self) -> None:
-        from pkcs11_check.raw.rv import CkrAssertionError
         from pkcs11_check.raw.recipes import _two_call_output
+        from pkcs11_check.raw.rv import CkrAssertionError
         from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_OK
 
         raw = _FailingRaw(query_rv=CKR_GENERAL_ERROR, output_rv=CKR_OK)
@@ -515,8 +515,8 @@ class TestTwoCallStageAttribution:
             _two_call_output(raw, "C_Encrypt", 1, None, 16)
 
     def test_output_call_failure_names_call(self) -> None:
-        from pkcs11_check.raw.rv import CkrAssertionError
         from pkcs11_check.raw.recipes import _two_call_output
+        from pkcs11_check.raw.rv import CkrAssertionError
         from pkcs11_check.raw.types_std import CKR_GENERAL_ERROR, CKR_OK
 
         raw = _FailingRaw(query_rv=CKR_OK, output_rv=CKR_GENERAL_ERROR)

@@ -79,6 +79,9 @@ from pkcs11_check.core._jsonl_extract import (
     extract_coverage_from_jsonl as extract_coverage_from_jsonl,
 )
 from pkcs11_check.core._jsonl_extract import (
+    extract_provenance_from_jsonl as extract_provenance_from_jsonl,
+)
+from pkcs11_check.core._jsonl_extract import (
     extract_provisioning_from_jsonl as extract_provisioning_from_jsonl,
 )
 from pkcs11_check.core._jsonl_extract import (
