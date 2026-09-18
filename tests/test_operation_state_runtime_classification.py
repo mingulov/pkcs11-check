@@ -11,6 +11,7 @@ C_SetOperationState with a garbage blob must reject. Converted from a flat
 from __future__ import annotations
 
 import hashlib
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -224,6 +225,7 @@ def test_cross_session_unexpected_clean_reject_is_structured_xfail(
         tos.TestDigestStateRoundTrip().test_digest_state_cross_session(config, None)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_cross_session_rejection_is_recorded_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -247,6 +249,7 @@ def test_cross_session_rejection_is_recorded_before_signal(
     assert [record.reason for record in records] == ["crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_cross_session_wrong_restored_digest_is_recorded_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -448,6 +451,7 @@ def test_same_session_function_not_supported_is_capability_skip(
     assert get_records() == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_state_function_not_supported_does_not_hide_outer_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -838,6 +842,7 @@ def test_cross_session_update_and_final_failures_are_one_harness_error(
     assert [record.reason for record in get_records()] == ["harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_cross_session_malformed_followup_precedes_signal_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -951,6 +956,7 @@ def test_same_session_wrong_reference_and_restored_accumulate(
     assert [record.reason for record in records] == ["harness_error", "wrong_result"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_same_session_wrong_restored_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1145,6 +1151,7 @@ def test_same_session_duplicate_singleshot_ok_preserves_unique_wrong_restored(
     assert records[1].kind == "crypto"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_same_session_missing_singleshot_ok_correct_restored_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1168,7 +1175,16 @@ def test_same_session_missing_singleshot_ok_correct_restored_before_signal(
     assert [record.reason for record in get_records()] == ["harness_error", "crash"]
 
 
-@pytest.mark.parametrize("returncode", [0, -11])
+@pytest.mark.parametrize(
+    "returncode",
+    [
+        0,
+        pytest.param(
+            -11,
+            marks=pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics"),
+        ),
+    ],
+)
 def test_same_session_missing_singleshot_ok_wrong_restored_preserves_all_evidence(
     monkeypatch: pytest.MonkeyPatch,
     returncode: int,
@@ -1458,6 +1474,7 @@ def test_cross_session_wrong_partial_reference_accumulates_before_early_ckr(
     assert records[1].operation == "DigestInit"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_cross_session_wrong_partial_reference_accumulates_before_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1554,6 +1571,7 @@ def test_cross_session_bootstrap_setup_xfail_is_not_operational_only(
     assert not any(record.reason == "harness_error" for record in records)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_cross_session_bootstrap_setup_xfail_precedes_cleanup_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -24,6 +24,13 @@ def _clear_classifications() -> Generator[None, None, None]:
     C.clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_classifications() -> Generator[None, None, None]:
+    C.clear()
+    yield
+    C.clear()
+
+
 def test_ecdsa_gate_uses_skip_unless_capability_with_ckf_sign(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

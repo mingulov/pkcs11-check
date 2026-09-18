@@ -529,7 +529,12 @@ def test_cleanup_access_violation_wins_after_all_handles_are_attempted(
 @pytest.mark.usefixtures("classification_report_plugin_enabled")
 def test_strict_and_operational_ec_nodes_are_independent_in_report(
     pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Failure summaries carry non-ASCII spec_refs (U+00B7): force the inner
+    # interpreter to UTF-8 pipes, else pytester's UTF-8 decode of the child's
+    # Windows cp1252 output raises UnicodeDecodeError.
+    monkeypatch.setenv("PYTHONUTF8", "1")
     pytester.makepyfile(
         test_ec_report="""
 from types import SimpleNamespace

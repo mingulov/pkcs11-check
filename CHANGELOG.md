@@ -18,8 +18,9 @@ cause. Vector datasets are repinned to current upstream.
   missing framework block from the JSONL log; the extractor survives corrupt
   bytes via the binary-decode iterator.
 
-- **CTS KAT failures attributed by call stage** (Init vs Update vs Final) in
-  diagnostics, alongside the existing CKR + operability classification.
+- **CTS KAT failures attributed by call stage** (Init vs size query vs
+  output call) in single-shot-path diagnostics, alongside the existing CKR +
+  operability classification.
 
 - **`allocation_amplifying` marking finished**: the HKDF info probe and the
   OFB/CFB8/CFB128/ChaCha20 oracle tests carry the marker (pin test grows

@@ -679,10 +679,17 @@ def test_fresh_unwrap_keys_invalidity_preserves_exact_lifecycle_code(
 
 
 @pytest.mark.usefixtures("classification_report_plugin_enabled")
-def test_cleanup_crash_survives_later_error_in_attached_report(pytester: pytest.Pytester) -> None:
+def test_cleanup_crash_survives_later_error_in_attached_report(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
 
     from pkcs11_check.core.file_runner import postprocess_jsonl_to_unified
+
+    # The inner run's failure output is non-ASCII: force UTF-8 pipes, else
+    # pytester's UTF-8 decode of the child's Windows cp1252 output raises
+    # UnicodeDecodeError.
+    monkeypatch.setenv("PYTHONUTF8", "1")
 
     pytester.makeconftest("""
 def pytest_configure():

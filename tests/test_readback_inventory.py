@@ -1908,12 +1908,12 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "281b1eb6c711494767529d995380446b9ae1cfd4ceea5a699f377248031df4c4",
+            "bf3e8b820a70418279ac7ccfd25819196ec61e317a5bab6d9f20f74efaf10d34",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "5d65b980ec79c34a8636767dcc60aeb93983dff822b6777fb05ed4103ed2ec94",
+            "d14e513bf8414d3af7985d1a94e98a2ed5d4e65a404f4214ed9415614ba716b8",
             characterization.candidate_digest,
         ),
         (
@@ -1922,16 +1922,16 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 1231),
                 ("explicit_mechanism_readback", 358),
                 ("non_readback", 352),
-                ("safe_mechanism_free_readback", 1356),
+                ("safe_mechanism_free_readback", 1359),
                 ("unresolved", 2516),
-                ("unsafe_inherited_readback", 257),
+                ("unsafe_inherited_readback", 254),
             ),
             characterization.state_statuses,
         ),
-        ("mixed_unsafe_states", 25, characterization.mixed_unsafe_states),
+        ("mixed_unsafe_states", 22, characterization.mixed_unsafe_states),
         (
             "corpus_digest",
-            "e7adcf2aa22ce31682f4f6f5f3c88eb674058d691fc77e577bdf912d9207aeeb",
+            "d64bb8a883d6b8bcf00c2ad04fafe38d47806c1852d1286202c08f20eebe4986",
             characterization.corpus_digest,
         ),
         (
@@ -1995,13 +1995,13 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     ]
     assert conftest
     assert any(
-        finding.line == 1286
+        finding.line == 1287
         and finding.status == STATUS_UNRESOLVED
         and finding.operations == (UNKNOWN_OPERATION,)
         for finding in conftest
     )
     assert any(
-        finding.line == 1286
+        finding.line == 1287
         and finding.emitter == "classify"
         and finding.forwarded_parameters == ("mechanism", "operation")
         for finding in conftest

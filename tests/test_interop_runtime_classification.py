@@ -12,6 +12,8 @@ from tests._skip_assert import assert_skips
 
 pytest_plugins = ["pytester"]
 
+pytest_plugins = ["pytester"]
+
 
 class _Session:
     raw = object()

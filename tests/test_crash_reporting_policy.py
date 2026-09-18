@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,7 @@ def test_provider_crashes_are_not_skipped() -> None:
     assert offenders == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_null_param_subprocess_signal_is_failure() -> None:
     with pytest.raises(pytest.fail.Exception, match="C_GetInfo.*signal 11"):
         _check_null_result("C_GetInfo", -11, "", "segfault")

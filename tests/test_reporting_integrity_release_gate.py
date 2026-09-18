@@ -30,6 +30,7 @@ Two halves:
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from io import StringIO
 
@@ -294,19 +295,24 @@ def test_no_teardown_leak():
     # missing marker is never falsely reported as a crash -----------------------------------
     process_reports = [r for r in records if r.get("$report_type") == "ProcessReport"]
     assert len(process_reports) == 3, "crashed attempt + confirmation + retry"
+    # The gate's crasher dies by SIGSEGV on POSIX and by TerminateProcess with
+    # 0xC0000005 on Windows; both are the genuine crash, only the kind differs.
+    crash_kind = "exception" if sys.platform == "win32" else "signal"
     signal_terminations = [
-        r for r in process_reports if r["observation"]["termination"]["kind"] == "signal"
+        r for r in process_reports if r["observation"]["termination"]["kind"] == crash_kind
     ]
     clean_terminations = [
         r for r in process_reports if r["observation"]["termination"]["kind"] == "exit"
     ]
-    assert len(signal_terminations) == 1, "only the genuine SIGSEGV counts as a crash"
+    assert len(signal_terminations) == 1, "only the genuine crash counts as a crash"
     assert len(clean_terminations) == 2, (
         "the confirmation and retry runs both exited cleanly (exit code 0) and must "
         "never be reported as crashes"
     )
     assert all(r["observation"]["termination"]["raw_code"] == 0 for r in clean_terminations)
-    assert signal_terminations[0]["observation"]["termination"]["raw_code"] == -11
+    # SIGSEGV's -11 on POSIX; the TerminateProcess NTSTATUS code on Windows.
+    expected_raw = 0xC0000005 if sys.platform == "win32" else -11
+    assert signal_terminations[0]["observation"]["termination"]["raw_code"] == expected_raw
 
     # Reuse the existing file-runner helpers directly on the boundary values they exist to
     # classify, rather than re-deriving crash detection here.

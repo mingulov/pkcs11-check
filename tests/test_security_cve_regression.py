@@ -30,6 +30,8 @@ from tests._skip_assert import assert_skips
 
 _MISSING = object()
 
+_MISSING = object()
+
 
 class _EncryptStateRaw:
     def __init__(self) -> None:

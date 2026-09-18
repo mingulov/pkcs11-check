@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from types import SimpleNamespace
 from typing import cast
 
@@ -98,6 +99,7 @@ def test_cross_process_duplicate_setup_is_harness_only(
     assert [item.reason for item in get_records()] == ["harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_cross_process_duplicate_setup_preserves_outer_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1183,6 +1185,7 @@ def test_session_undefined_high_width_ckr_is_provider_failure(
     assert records[0].expected_ckr == ["CKR_OK"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
 def test_fork_emits_child_disposition_before_parent_finalize(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1261,6 +1264,7 @@ def test_session_reversed_result_transcript_is_harness(
     assert [item.reason for item in get_records()] == ["harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_fork_child_exit_harness_is_preserved_before_outer_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1301,6 +1305,7 @@ def test_fork_child_signal_crash_is_preserved_before_cleanup_harness(
     assert [item.reason for item in get_records()] == ["crash", "harness_error"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_fork_child_signal_and_outer_signal_are_both_crashes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1321,6 +1326,7 @@ def test_fork_child_signal_and_outer_signal_are_both_crashes(
     assert [item.reason for item in get_records()] == ["crash", "crash"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
 def test_fork_missing_status_with_outer_signal_is_crash_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

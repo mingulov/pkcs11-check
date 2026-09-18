@@ -56,6 +56,7 @@ def test_unavailable_carries_setup_xfail_reason(monkeypatch: pytest.MonkeyPatch)
     assert "POSIX" in str(exc.value)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 def test_overflow_error_falls_back_and_caches_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
     real_mmap = mmap.mmap
     calls: list[int] = []
@@ -78,6 +79,7 @@ def test_overflow_error_falls_back_and_caches_mapping(monkeypatch: pytest.Monkey
     assert ptr2[0] == 0xA5
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 def test_overflow_error_exhaustion_reports_last_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
 
@@ -95,6 +97,7 @@ def test_overflow_error_exhaustion_reports_last_failure(monkeypatch: pytest.Monk
     assert "allocation exhausted" in str(exc.value)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 def test_unrelated_mmap_error_propagates_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     error = RuntimeError("unexpected mmap failure")
 

@@ -749,7 +749,6 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
                     label=f"{entry.mech_name}: derive returned handle",
                     operation="C_DeriveKey",
                     mechanism=entry.mech_name,
-                    inherit_mechanism=False,
                     spec_ref=f"PKCS#11 v3.2 · C_DeriveKey · {entry.mech_name}",
                     expected="non-zero object handle",
                     actual=derived_key,
@@ -1110,7 +1109,6 @@ def _check_cipher_derived_value_shape(
         label=label,
         operation="C_GetAttributeValue",
         mechanism=entry.mech_name,
-        inherit_mechanism=False,
         summary=(f"{label}: provider returned malformed value; expected {expected_length} bytes"),
         detail={
             "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
