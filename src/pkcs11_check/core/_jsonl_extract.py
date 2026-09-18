@@ -323,6 +323,20 @@ def extract_provisioning_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     return {"by_class": by_class, "totals": totals}
 
 
+def extract_provenance_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
+    """Return the framework block of the first ProvenanceReport record."""
+    # Streamed via the shared binary-decode iterator (report_log.iter_report_log_records)
+    # rather than a text-mode `for line in fh` loop, so a single undecodable byte anywhere
+    # in the file only drops that one line instead of raising UnicodeDecodeError and losing
+    # every remaining record.
+    for rec in _iter_report_log_records(jsonl_path):
+        if rec.get("$report_type") != "ProvenanceReport":
+            continue
+        framework = rec.get("framework")
+        return dict(framework) if isinstance(framework, dict) else None
+    return None
+
+
 def _emit_external_provision_banner(n: int) -> None:
     """Print a prominent warning when external key provisioning was active."""
     from rich.panel import Panel

@@ -636,9 +636,7 @@ def test_cts_probe_coerces_missing_interface_to_auto(
     # The plugin defines --p11-interface with default None, so getoption
     # returns None (its `default` kwarg only applies to unknown options).
     config = SimpleNamespace(
-        getoption=lambda name, default=None: (
-            "/fake/module.so" if name == "p11_module" else None
-        )
+        getoption=lambda name, default=None: "/fake/module.so" if name == "p11_module" else None
     )
 
     result = aes_conftest._detect_variant_via_pkcs11(config)

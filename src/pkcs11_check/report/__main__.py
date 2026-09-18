@@ -321,6 +321,13 @@ def main(argv: list[str] | None = None) -> int:
         groups = extract_groups(report_path, crashes=crashes)
         enrich(groups, module_issues_text=module_issues, provider=provider)
         provider_groups[provider] = groups
+        provenance = payload.get("provenance") or None
+        if provenance is None or "framework" not in provenance:
+            from pkcs11_check.core.file_runner import extract_provenance_from_jsonl
+
+            harness = extract_provenance_from_jsonl(report_path)
+            if harness is not None:
+                provenance = {**(provenance or {}), "framework": harness}
         _write_provider(
             provider,
             groups,
@@ -329,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             coverage=payload.get("coverage"),
             units=payload.get("units") or [],
             quality=_quality_for(results_json),
-            provenance=payload.get("provenance") or None,
+            provenance=provenance,
         )
 
     if len(provider_groups) > 1:

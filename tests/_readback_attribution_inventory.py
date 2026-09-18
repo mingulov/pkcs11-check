@@ -2215,6 +2215,7 @@ def git_head_tree_sources(tree_root: Path) -> dict[str, str]:
         ["git", "-C", str(tree_root), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     ).stdout.strip()
     prefix = tree_root.resolve().relative_to(Path(toplevel).resolve()).as_posix()

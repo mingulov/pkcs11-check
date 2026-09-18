@@ -228,14 +228,36 @@ def _message_init_mech_or_skip(entry: MechEntry) -> Any:
         )
 
     if config.param_required and config.param_recipe.style == "ccm":
-        from pkcs11_check.raw.pack_mechanisms import mech_ccm
+        from pkcs11_check.raw.pack_mechanisms import mech_ccm_message
 
         defaults = config.param_recipe.defaults
-        return mech_ccm(
+        return mech_ccm_message(
             CKM(entry.mech_id),
             os.urandom(int(defaults.get("nonce_len", 12))),
             data_len=int(defaults.get("data_len", 32)),
             mac_len=int(defaults.get("mac_len", 16)),
+        )
+
+    if config.param_required and config.param_recipe.style == "chacha20_poly1305":
+        from pkcs11_check.raw.pack_mechanisms import mech_chacha20_poly1305_message
+
+        defaults = config.param_recipe.defaults
+        # Tag is fixed at 16 bytes by the spec (pkcs11-curr v3.0 §2.61.2), so no
+        # recipe default applies; the packer's tag_len default carries it.
+        return mech_chacha20_poly1305_message(
+            CKM(entry.mech_id),
+            os.urandom(int(defaults.get("nonce_len", 12))),
+        )
+
+    if config.param_required and config.param_recipe.style == "salsa20_poly1305":
+        from pkcs11_check.raw.pack_mechanisms import mech_salsa20_poly1305_message
+
+        defaults = config.param_recipe.defaults
+        # Tag is fixed at 16 bytes by the spec (pkcs11-curr v3.0 §2.61.2), so no
+        # recipe default applies; the packer's tag_len default carries it.
+        return mech_salsa20_poly1305_message(
+            CKM(entry.mech_id),
+            os.urandom(int(defaults.get("nonce_len", 8))),
         )
 
     mech_param = make_mech_param_or_skip(entry)
@@ -1322,7 +1344,10 @@ class TestMessageEncrypt:
         from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 
         from pkcs11_check.compliance import ComplianceLevel, note
-        from pkcs11_check.raw.pack_mechanisms import mech_ccm, mech_ccm_message_generated_nonce
+        from pkcs11_check.raw.pack_mechanisms import (
+            mech_ccm_message,
+            mech_ccm_message_generated_nonce,
+        )
         from pkcs11_check.raw.recipes import destroy_quietly, get_mechanism_info
         from pkcs11_check.raw.types_std import (
             CK_ULONG,
@@ -1360,7 +1385,9 @@ class TestMessageEncrypt:
             attrs={CKA_TOKEN: False, CKA_ENCRYPT: True, CKA_DECRYPT: True},
         )
         try:
-            init_mech = mech_ccm(CKM_AES_CCM, b"\x00" * 12, data_len=len(plaintext), mac_len=16)
+            init_mech = mech_ccm_message(
+                CKM_AES_CCM, b"\x00" * 12, data_len=len(plaintext), mac_len=16
+            )
             rv = rs.raw.C_MessageEncryptInit(rs.sh, init_mech.byref(), key)
             _xfail_if_message_init_rejected(rv, label="C_MessageEncryptInit (CKM_AES_CCM)")
             assert rv == CKR_OK, f"C_MessageEncryptInit failed: 0x{rv:08x}"

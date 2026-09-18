@@ -49,6 +49,7 @@ from .types_std import (
     CK_RSA_AES_KEY_WRAP_PARAMS,
     CK_RSA_PKCS_OAEP_PARAMS,
     CK_RSA_PKCS_PSS_PARAMS,
+    CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS,
     CK_SALSA20_CHACHA20_POLY1305_PARAMS,
     CK_SALSA20_PARAMS,
     CK_SIGN_ADDITIONAL_CONTEXT,
@@ -490,6 +491,45 @@ def mech_ccm(
     )
 
 
+def mech_ccm_message(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    *,
+    data_len: int = 0,
+    nonce_fixed_bits: int = 0,
+    nonce_generator: CKG | int = 0,
+    mac_len: int = 16,
+) -> PackedMechanism:
+    """Pack CK_CCM_MESSAGE_PARAMS for v3.0 message-based AEAD with caller nonce.
+
+    The ``pMAC`` field is a pre-allocated output buffer (mac_len bytes)
+    that the token writes the authentication MAC to.
+    """
+    if data_len < 0:
+        raise ValueError("data_len must be non-negative")
+    if mac_len < 0:
+        raise ValueError("mac_len must be non-negative")
+    # NOTE: no 7..13 nonce-range check here on purpose — negative tests
+    # must be able to pack out-of-range lengths for the module to reject.
+    ka: list[Any] = []
+    params = CK_CCM_MESSAGE_PARAMS()
+    params.ulDataLen = data_len
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    params.ulNonceFixedBits = nonce_fixed_bits
+    params.nonceGenerator = nonce_generator
+    mac_buf = _alloc_writable_pointer(params, "pMAC", mac_len)
+    params.ulMACLen = mac_len
+    result = _mech_struct(
+        mechanism_type,
+        params,
+        "mech_ccm_message",
+        ka,
+        sub_mechanisms={"macLen": mac_len, "nonceLen": len(nonce)},
+    )
+    result.add_buffer("mac", mac_buf, mac_len)
+    return result
+
+
 def mech_pss(
     mechanism_type: CKM | int,
     *,
@@ -766,6 +806,34 @@ def mech_chacha20_poly1305(
     return _mech_struct(mechanism_type, params, "mech_chacha20_poly1305", ka)
 
 
+def mech_chacha20_poly1305_message(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    *,
+    tag_len: int = 16,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS for v3.0 message-based AEAD.
+
+    The ``pTag`` field is a pre-allocated output buffer (tag_len bytes)
+    that the token writes the authentication tag to.
+    """
+    if tag_len < 0:
+        raise ValueError("tag_len must be non-negative")
+    ka: list[Any] = []
+    params = CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS()
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    tag_buf = _alloc_writable_pointer(params, "pTag", tag_len)
+    result = _mech_struct(
+        mechanism_type,
+        params,
+        "mech_chacha20_poly1305_message",
+        ka,
+        sub_mechanisms={"tagLen": tag_len, "nonceLen": len(nonce)},
+    )
+    result.add_buffer("tag", tag_buf, tag_len)
+    return result
+
+
 def mech_salsa20_poly1305(
     mechanism_type: CKM | int,
     nonce: bytes,
@@ -777,6 +845,34 @@ def mech_salsa20_poly1305(
     params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
     params.pAAD, params.ulAADLen = _pack_bytes(aad, ka)
     return _mech_struct(mechanism_type, params, "mech_salsa20_poly1305", ka)
+
+
+def mech_salsa20_poly1305_message(
+    mechanism_type: CKM | int,
+    nonce: bytes,
+    *,
+    tag_len: int = 16,
+) -> PackedMechanism:
+    """Pack CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS for v3.0 message-based AEAD.
+
+    The ``pTag`` field is a pre-allocated output buffer (tag_len bytes)
+    that the token writes the authentication tag to.
+    """
+    if tag_len < 0:
+        raise ValueError("tag_len must be non-negative")
+    ka: list[Any] = []
+    params = CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS()
+    params.pNonce, params.ulNonceLen = _pack_bytes(nonce, ka)
+    tag_buf = _alloc_writable_pointer(params, "pTag", tag_len)
+    result = _mech_struct(
+        mechanism_type,
+        params,
+        "mech_salsa20_poly1305_message",
+        ka,
+        sub_mechanisms={"tagLen": tag_len, "nonceLen": len(nonce)},
+    )
+    result.add_buffer("tag", tag_buf, tag_len)
+    return result
 
 
 def mech_rc2(
@@ -1548,11 +1644,13 @@ def mech_sign_context(
 __all__ = [
     "mech_cbc_pad",
     "mech_ccm",
+    "mech_ccm_message",
     "mech_ccm_message_generated_nonce",
     "mech_ccm_wrap",
     "mech_ccm_wrap_generated_nonce",
     "mech_chacha20",
     "mech_chacha20_poly1305",
+    "mech_chacha20_poly1305_message",
     "mech_ctr",
     "mech_ecdh",
     "mech_eddsa",

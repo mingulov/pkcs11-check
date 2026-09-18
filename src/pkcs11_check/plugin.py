@@ -756,6 +756,13 @@ def _accumulate_mechanism_rv_counts(
             target[mechanism].update(counts)
 
 
+def _framework_repo_root() -> Path | None:
+    import pkcs11_check
+
+    root = Path(pkcs11_check.__file__).resolve().parent.parent.parent
+    return root if (root / ".git").exists() else None
+
+
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
     """Clear per-item state after each test to prevent cross-item leakage."""
     if _is_testcase_item(item):
@@ -1083,6 +1090,16 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
         report_log_plugin._write_json_data(
             {"$report_type": "ProvisioningReport", **provisioning_data}
+        )
+
+        # Emit ProvenanceReport to JSONL (harness version for archived reports).
+        from pkcs11_check.provenance import build_provenance_record
+
+        report_log_plugin._write_json_data(
+            {
+                "$report_type": "ProvenanceReport",
+                **build_provenance_record(env=os.environ, repo_root=_framework_repo_root()),
+            }
         )
 
     # Release per-process module resources after every ordinary test verdict and

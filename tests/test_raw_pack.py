@@ -1414,3 +1414,125 @@ def test_mech_gcm_message_inherit_tag_shares_buffer_with_source() -> None:
     unwrap = mech_gcm_message_inherit_tag(CKM_AES_GCM, iv, source=wrap)
     assert unwrap.buffer_bytes("tag") == wrap.buffer_bytes("tag")
     assert unwrap.buffer_bytes("tag")[0] == 0x7E
+
+
+def test_mech_ccm_message_packs_caller_nonce_and_mac_buffer() -> None:
+    from pkcs11_check.raw.pack import mech_ccm_message
+    from pkcs11_check.raw.types_std import CK_CCM_MESSAGE_PARAMS, CKM_AES_CCM
+
+    nonce = bytes(range(12))
+    mech = mech_ccm_message(CKM_AES_CCM, nonce, data_len=32, mac_len=16)
+
+    params = mech.params
+    assert isinstance(params, CK_CCM_MESSAGE_PARAMS)
+    assert params.ulDataLen == 32
+    assert params.ulNonceLen == 12
+    assert params.ulNonceFixedBits == 0
+    assert params.ulMACLen == 16
+    assert mech.buffer_bytes("mac") == b"\x00" * 16
+
+
+def test_mech_ccm_message_mac_buffer_reflects_provider_writes() -> None:
+    import ctypes
+
+    from pkcs11_check.raw.pack import mech_ccm_message
+    from pkcs11_check.raw.types_std import CKM_AES_CCM
+
+    mech = mech_ccm_message(CKM_AES_CCM, bytes(range(12)), data_len=32, mac_len=16)
+    mac = b"written-mac-1234"
+    ctypes.memmove(mech.params.pMAC, mac, len(mac))
+    assert mech.buffer_bytes("mac") == mac
+
+
+def test_mech_ccm_message_rejects_negative_lengths() -> None:
+    import pytest
+
+    from pkcs11_check.raw.pack import mech_ccm_message
+    from pkcs11_check.raw.types_std import CKM_AES_CCM
+
+    with pytest.raises(ValueError):
+        mech_ccm_message(CKM_AES_CCM, b"\x00" * 12, data_len=-1)
+    with pytest.raises(ValueError):
+        mech_ccm_message(CKM_AES_CCM, b"\x00" * 12, mac_len=-1)
+
+
+def test_mech_chacha20_poly1305_message_packs_caller_nonce_and_tag_buffer() -> None:
+    from pkcs11_check.raw.pack import mech_chacha20_poly1305_message
+    from pkcs11_check.raw.types_std import (
+        CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS,
+        CKM_CHACHA20_POLY1305,
+    )
+
+    nonce = bytes(range(12))
+    mech = mech_chacha20_poly1305_message(CKM_CHACHA20_POLY1305, nonce)
+
+    params = mech.params
+    assert isinstance(params, CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS)
+    assert params.ulNonceLen == 12
+    assert mech.buffer_bytes("tag") == b"\x00" * 16
+
+
+def test_mech_chacha20_poly1305_message_tag_buffer_reflects_provider_writes() -> None:
+    import ctypes
+
+    from pkcs11_check.raw.pack import mech_chacha20_poly1305_message
+    from pkcs11_check.raw.types_std import CKM_CHACHA20_POLY1305
+
+    mech = mech_chacha20_poly1305_message(CKM_CHACHA20_POLY1305, bytes(range(12)))
+    tag = b"written-tag-1234"
+    ctypes.memmove(mech.params.pTag, tag, len(tag))
+    assert mech.buffer_bytes("tag") == tag
+
+
+def test_mech_chacha20_poly1305_message_rejects_negative_tag_len() -> None:
+    import pytest
+
+    from pkcs11_check.raw.pack import mech_chacha20_poly1305_message
+    from pkcs11_check.raw.types_std import CKM_CHACHA20_POLY1305
+
+    with pytest.raises(ValueError):
+        mech_chacha20_poly1305_message(CKM_CHACHA20_POLY1305, b"\x00" * 12, tag_len=-1)
+
+
+def test_chacha_nonce_len_is_bytes_not_bits() -> None:
+    """ulNonceLen is bytes in both AEAD packers (v3.0 section 2.28 classic,
+    section 2.61.2 message); only the ulNonceBits stream-cipher fields are bits."""
+    from pkcs11_check.raw.pack import (
+        mech_chacha20_poly1305,
+        mech_chacha20_poly1305_message,
+    )
+    from pkcs11_check.raw.types_std import CKM_CHACHA20_POLY1305
+
+    nonce = b"\x11" * 12
+    classic = mech_chacha20_poly1305(CKM_CHACHA20_POLY1305, nonce)
+    message = mech_chacha20_poly1305_message(CKM_CHACHA20_POLY1305, nonce)
+    assert classic.params.ulNonceLen == 12
+    assert message.params.ulNonceLen == 12
+
+
+def test_mech_salsa20_poly1305_message_packs_msg_struct() -> None:
+    from pkcs11_check.raw.pack import mech_salsa20_poly1305_message
+    from pkcs11_check.raw.types_std import (
+        CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS,
+        CKM_SALSA20_POLY1305,
+    )
+
+    nonce = b"\x22" * 8
+    m = mech_salsa20_poly1305_message(CKM_SALSA20_POLY1305, nonce)
+
+    assert m.ck.mechanism == CKM_SALSA20_POLY1305
+    params = m.params
+    assert isinstance(params, CK_SALSA20_CHACHA20_POLY1305_MSG_PARAMS)
+    assert params.ulNonceLen == 8
+    assert params.pNonce is not None
+    assert m.buffer_bytes("tag") == b"\x00" * 16
+
+
+def test_mech_salsa20_poly1305_message_rejects_negative_tag_len() -> None:
+    import pytest
+
+    from pkcs11_check.raw.pack import mech_salsa20_poly1305_message
+    from pkcs11_check.raw.types_std import CKM_SALSA20_POLY1305
+
+    with pytest.raises(ValueError):
+        mech_salsa20_poly1305_message(CKM_SALSA20_POLY1305, b"\x00" * 8, tag_len=-1)

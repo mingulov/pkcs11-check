@@ -4,7 +4,7 @@ Phase 4.1: High-priority mechanism roundtrip tests for:
 - CKM_SHAKE_128 / CKM_SHAKE_256 -- XOF digest (requires C_DigestXof* functions)
 - CKM_SHA512_224 / CKM_SHA512_256 -- Truncated SHA-512 variants
 - CKM_AES_KEY_WRAP_KWP -- AES Key Wrap with Padding
-- CKM_KMAC_128 / CKM_KMAC_256 -- Keccak MAC (v3.2)
+- CKM_KMAC_128 / CKM_KMAC_256 -- Keccak MAC (vendor range; no OASIS code point)
 - CKM_ML_DSA_EXTERNAL_MU -- External message update PQC sign
 """
 
@@ -452,13 +452,15 @@ class TestAESKeyWrapKWP:
 
 
 class TestKMAC:
-    """CKM_KMAC_128 / CKM_KMAC_256 -- Keccak MAC (v3.2, NIST SP 800-185).
+    """CKM_KMAC_128 / CKM_KMAC_256 -- Keccak MAC (vendor range, NIST SP 800-185).
 
     KMAC mechanisms require CK_KMAC_PARAMS with a key handle, output length,
     and optional customization string. These are XOF-capable: output can be
     any length when ulMacLength is 0.
 
     Most current modules do not yet support KMAC. Tests skip cleanly.
+    KMAC has no OASIS-assigned code point (framework issue #22); these tests
+    run only against modules exposing vendor-range KMAC.
     """
 
     def _mechanism_or_skip(self, name: str) -> CKM:

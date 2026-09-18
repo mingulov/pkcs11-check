@@ -62,6 +62,11 @@ def framework_version(
     return _version_dict(__version__, "package")
 
 
+def build_provenance_record(*, env: Mapping[str, str], repo_root: Path | None) -> dict[str, Any]:
+    """Build the ProvenanceReport payload stamped into report.jsonl."""
+    return {"framework": framework_version(env=env, repo_root=repo_root)}
+
+
 def read_build_provenance(path: Path) -> dict[str, Any]:
     """Load the build-baked provenance JSON (provider + crypto), or {} if absent/bad."""
     try:
