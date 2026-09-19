@@ -76,6 +76,20 @@ def test_health_includes_error_when_nonzero() -> None:
     assert "error 4" in line
 
 
+def test_health_includes_harness_error_when_nonzero() -> None:
+    """F-035: the computed harness subtotal is visible in the header, and the
+    header states it is not part of the provider fail total."""
+    groups = [*GROUPS, _g("harness_error", "fail", "HIGH", 4)]
+    line = health_lines({"passed": 100, "total": 200}, None, groups)[0]
+    assert "harness-error 4 (not provider failures)" in line
+    assert "fail 16 (CRITICAL 2" in line
+
+
+def test_health_omits_harness_error_when_zero() -> None:
+    line = health_lines({"passed": 100, "total": 200}, None, GROUPS)[0]
+    assert "harness" not in line
+
+
 def test_health_zero_total_does_not_divide_by_zero() -> None:
     line = health_lines({"passed": 0, "total": 0}, None, [])[0]
     assert line.startswith("passed 0/0 (0%)")

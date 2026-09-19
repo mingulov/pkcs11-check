@@ -121,7 +121,14 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
         raise AssertionError("unreachable: undefined CK_RV classification must fail")
 
 
-def _xfail_generated_local_false(mech_name: str, label: str) -> NoReturn:
+def _fail_generated_local_false(mech_name: str, label: str) -> NoReturn:
+    """Fail a present CKA_LOCAL=False readback after successful generation.
+
+    N-005: generated keys must report CKA_LOCAL=True; a present False is
+    contradictory output after the module already claimed generation
+    success -- a self-contradiction with metadata attribution. Missing /
+    refused readbacks never reach here (handled upstream).
+    """
     from pkcs11_check.compliance import ComplianceLevel, note
 
     note(
@@ -129,8 +136,8 @@ def _xfail_generated_local_false(mech_name: str, label: str) -> NoReturn:
         ComplianceLevel.NOT_RECOMMENDED,
         reference="PKCS#11 v3.2: CKA_LOCAL True if key generated on token",
     )
-    xfail_as(
-        "honest_deviation",
+    fail_as(
+        "self_contradiction",
         kind="metadata",
         label=f"{mech_name} {label} CKA_LOCAL",
         mechanism=mech_name,
@@ -220,7 +227,7 @@ class TestKeyAttributes:
                     local = _read_attr_safe(rs, handle, CKA_LOCAL, f"CKA_LOCAL on {label}")
                     local = require_bool_attr(local, f"{entry.mech_name} {label} CKA_LOCAL")
                     if local is False:
-                        _xfail_generated_local_false(entry.mech_name, f"{label} key")
+                        _fail_generated_local_false(entry.mech_name, f"{label} key")
                     assert local is True, (
                         f"{entry.mech_name} {label} key: CKA_LOCAL is {local!r}, expected True"
                     )
@@ -233,7 +240,7 @@ class TestKeyAttributes:
                 local = _read_attr_safe(rs, key, CKA_LOCAL, "CKA_LOCAL")
                 local = require_bool_attr(local, f"{entry.mech_name} CKA_LOCAL")
                 if local is False:
-                    _xfail_generated_local_false(entry.mech_name, "key")
+                    _fail_generated_local_false(entry.mech_name, "key")
                 assert local is True, f"{entry.mech_name}: CKA_LOCAL is {local!r}, expected True"
             finally:
                 destroy_quietly(rs.raw, rs.sh, key)

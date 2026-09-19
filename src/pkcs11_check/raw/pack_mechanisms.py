@@ -765,7 +765,11 @@ def mech_chacha20(
     nonce: bytes,
     counter: int = 0,
 ) -> PackedMechanism:
-    """Pack CK_CHACHA20_PARAMS with a counter and nonce."""
+    """Pack CK_CHACHA20_PARAMS with a counter and nonce.
+
+    The 32-bit block counter packs little-endian: it is ChaCha20 state
+    word 12, defined LE by RFC 8439 s2.3.
+    """
     ka: list[Any] = []
     params = CK_CHACHA20_PARAMS()
     counter_bytes = counter.to_bytes(4, "little")

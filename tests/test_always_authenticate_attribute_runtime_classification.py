@@ -10,7 +10,16 @@ from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKA_ALWAYS_AUTHENTICATE, CKR_ATTRIBUTE_TYPE_INVALID
+from pkcs11_check.raw.types_std import (
+    CKA_ALWAYS_AUTHENTICATE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_TYPE_INVALID,
+)
 from pkcs11_check.testcases import test_always_authenticate as taa
 from tests._attribute_access_guard import analyze_file
 
@@ -191,3 +200,61 @@ def test_always_authenticate_attribute_access_is_analyzer_clean() -> None:
         "src/pkcs11_check/testcases/test_always_authenticate.py",
     )
     assert violations == []
+
+
+# --- N-004: context-specific login oracle ------------------------------------
+# Spec identifies CKR_OPERATION_NOT_INITIALIZED for improper context-specific
+# login; C_Login's return list has no CKR_USER_NOT_LOGGED_IN here. The probe
+# stays; NLI and other clean rejects are classified deviations, never passes
+# and never raw asserts.
+
+
+def _run_context_login(monkeypatch: pytest.MonkeyPatch, login_rv: int) -> None:
+    monkeypatch.setattr(taa, "_context_specific_login", lambda *_a, **_k: int(login_rv))
+    config = SimpleNamespace(pin=SimpleNamespace(get_secret_value=lambda: "1234"))
+    taa.TestAlwaysAuthenticateEnforcement().test_context_specific_login_without_active_op_rejected(
+        _session(), config
+    )
+
+
+def test_context_login_not_logged_in_is_deviation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """N-004: NLI is not in spec's return list here -> xfail, never pass."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(monkeypatch, int(CKR_USER_NOT_LOGGED_IN))
+    rec = _record()
+    assert rec.reason == "nonspec_reject"
+    assert rec.outcome == "xfail"
+
+
+def test_context_login_unexpected_reject_is_classified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N-004: other rejects get an explicit record, never a raw assert."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(monkeypatch, int(CKR_FUNCTION_FAILED))
+    rec = _record()
+    assert rec.reason == "nonspec_reject"
+    assert rec.kind == "lifecycle"
+    assert rec.operation == "C_Login"
+    assert rec.actual_ckr == "CKR_FUNCTION_FAILED"
+
+
+def test_context_login_not_initialized_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_context_login(monkeypatch, int(CKR_OPERATION_NOT_INITIALIZED))
+    assert classification.get_records() == []
+
+
+def test_context_login_accepted_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(Failed) as ei:
+        _run_context_login(monkeypatch, int(CKR_OK))
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_context_login_not_supported_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(monkeypatch, int(CKR_FUNCTION_NOT_SUPPORTED))
+
+
+def test_context_login_user_type_invalid_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(monkeypatch, int(CKR_USER_TYPE_INVALID))

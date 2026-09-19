@@ -435,8 +435,9 @@ class TestAlwaysAuthenticateEnforcement:
 
         Spec: re-auth is only meaningful in the context of an active
         operation on an always-auth key.  Calling it standalone must
-        return CKR_OPERATION_NOT_INITIALIZED (or
-        CKR_USER_NOT_LOGGED_IN).
+        return CKR_OPERATION_NOT_INITIALIZED.  Any other clean rejection
+        (including CKR_USER_NOT_LOGGED_IN, which is not in the spec's
+        C_Login return list for this context) is a classified deviation.
         """
         rs = p11_raw_session
         pin = _pin_bytes(p11_config)
@@ -477,12 +478,22 @@ class TestAlwaysAuthenticateEnforcement:
                     "non-spec rejection."
                 ),
             )
-        # CKR_OPERATION_NOT_INITIALIZED is spec-mandated; some modules
-        # return CKR_USER_NOT_LOGGED_IN which is also defensible.
-        assert rv in (
-            int(CKR_OPERATION_NOT_INITIALIZED),
-            int(CKR_USER_NOT_LOGGED_IN),
-        ), (
-            f"CKU_CONTEXT_SPECIFIC login without active op returned "
-            f"{ckr_name(rv)}; expected CKR_OPERATION_NOT_INITIALIZED"
+        if rv == int(CKR_OPERATION_NOT_INITIALIZED):
+            return
+        # N-004: spec-mandated code is CKR_OPERATION_NOT_INITIALIZED only;
+        # CKR_USER_NOT_LOGGED_IN is not in the spec's C_Login return list
+        # for improper context-specific login. Keep the probe: any other
+        # clean rejection is an explicit classified deviation, never a
+        # pass and never a raw assert.
+        xfail_as(
+            "nonspec_reject",
+            kind="lifecycle",
+            label="CKU_CONTEXT_SPECIFIC login outside active operation",
+            operation="C_Login",
+            expected=int(CKR_OPERATION_NOT_INITIALIZED),
+            actual=rv,
+            summary=(
+                "CKU_CONTEXT_SPECIFIC login without active op returned "
+                f"{ckr_name(rv)}; spec requires CKR_OPERATION_NOT_INITIALIZED"
+            ),
         )

@@ -1801,9 +1801,10 @@ def test_mech_keygen_local_read_value_invalid_is_xfail(
         test_mech_keygen.TestMechKeygen().test_local_flag(rs, entry)
 
 
-def test_mech_keygen_local_false_is_xfail(
+def test_mech_keygen_local_false_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """N-005: present CKA_LOCAL=False after successful generation -> fail."""
     entry = SimpleNamespace(
         mech_name="AES_KEY_GEN",
         config=SimpleNamespace(is_param_gen=False, is_keypair=False),
@@ -1818,13 +1819,18 @@ def test_mech_keygen_local_false_is_xfail(
         lambda *_args, **_kwargs: {test_mech_keygen.CKA_LOCAL: False},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL=False"):
+    with pytest.raises(pytest.fail.Exception, match="CKA_LOCAL=False"):
         test_mech_keygen.TestMechKeygen().test_local_flag(rs, entry)
 
+    record = C.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.outcome == "fail"
 
-def test_mechanism_attribute_local_false_is_xfail(
+
+def test_mechanism_attribute_local_false_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """N-005: present CKA_LOCAL=False after successful generation -> fail."""
     entry = SimpleNamespace(
         mech_name="AES_KEY_GEN",
         config=SimpleNamespace(is_param_gen=False, is_keypair=False, key_type=None),
@@ -1840,11 +1846,15 @@ def test_mechanism_attribute_local_false_is_xfail(
         lambda *_args, **_kwargs: {test_mech_attribute.CKA_LOCAL: False},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="CKA_LOCAL=False"):
+    with pytest.raises(pytest.fail.Exception, match="CKA_LOCAL=False"):
         test_mech_attribute.TestKeyAttributes().test_local_flag_on_generated_key(rs, entry)
 
+    record = C.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.outcome == "fail"
 
-def test_mechanism_attribute_malformed_ulong_is_xfail(
+
+def test_mechanism_attribute_malformed_ulong_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry = SimpleNamespace(
@@ -1866,8 +1876,12 @@ def test_mechanism_attribute_malformed_ulong_is_xfail(
         lambda *_args, **_kwargs: {test_mech_attribute.CKA_KEY_TYPE: b""},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_ULONG"):
+    with pytest.raises(pytest.fail.Exception, match="malformed CK_ULONG"):
         test_mech_attribute.TestKeyAttributes().test_key_type_matches_template(rs, entry)
+
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
 
 
 def test_key_gen_mechanism_malformed_ulong_is_hard_failure(
@@ -2057,7 +2071,7 @@ def test_attribute_enforcement_always_auth_malformed_bool_is_hard_failure(
     }
 
 
-def test_attribute_defaults_malformed_read_bool_is_xfail(
+def test_attribute_defaults_malformed_read_bool_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -2066,11 +2080,15 @@ def test_attribute_defaults_malformed_read_bool_is_xfail(
         lambda *_args, **_kwargs: {test_attribute_defaults.CKA_PRIVATE: b""},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+    with pytest.raises(pytest.fail.Exception, match="malformed CK_BBOOL"):
         test_attribute_defaults._read_attr(object(), 1, 2, test_attribute_defaults.CKA_PRIVATE)
 
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
 
-def test_attribute_defaults_direct_malformed_bool_is_xfail(
+
+def test_attribute_defaults_direct_malformed_bool_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rs = SimpleNamespace(raw=object(), sh=1)
@@ -2080,8 +2098,12 @@ def test_attribute_defaults_direct_malformed_bool_is_xfail(
         lambda *_args, **_kwargs: {test_attribute_defaults.CKA_TOKEN: b""},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+    with pytest.raises(pytest.fail.Exception, match="malformed CK_BBOOL"):
         test_attribute_defaults.TestDataObjectDefaults().test_token_is_false((rs, 1))
+
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
 
 
 def test_attribute_defaults_aes_keygen_reject_is_xfail(
@@ -2119,7 +2141,7 @@ def test_attribute_defaults_rsa_keygen_reject_is_xfail(
         next(fixture(test_attribute_defaults.TestKeyPairDefaults(), rs))
 
 
-def test_mechanism_attribute_local_malformed_bool_is_xfail(
+def test_mechanism_attribute_local_malformed_bool_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry = SimpleNamespace(
@@ -2137,11 +2159,15 @@ def test_mechanism_attribute_local_malformed_bool_is_xfail(
         lambda *_args, **_kwargs: {test_mech_attribute.CKA_LOCAL: b""},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+    with pytest.raises(pytest.fail.Exception, match="malformed CK_BBOOL"):
         test_mech_attribute.TestKeyAttributes().test_local_flag_on_generated_key(rs, entry)
 
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
 
-def test_mechanism_attribute_token_malformed_bool_is_xfail(
+
+def test_mechanism_attribute_token_malformed_bool_is_hard_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry = SimpleNamespace(
@@ -2159,8 +2185,12 @@ def test_mechanism_attribute_token_malformed_bool_is_xfail(
         lambda *_args, **_kwargs: {test_mech_attribute.CKA_TOKEN: b""},
     )
 
-    with pytest.raises(pytest.xfail.Exception, match="malformed CK_BBOOL"):
+    with pytest.raises(pytest.fail.Exception, match="malformed CK_BBOOL"):
         test_mech_attribute.TestKeyAttributes().test_token_flag_matches_template(rs, entry)
+
+    record = C.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.outcome == "fail"
 
 
 def test_interop_malformed_rsa_public_attrs_are_xfail(

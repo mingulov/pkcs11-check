@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check.classification import get_records
 from pkcs11_check.raw.recipes import AttrRefusal, read_attributes
@@ -343,30 +344,32 @@ def test_require_ulong_attr_rejects_bool() -> None:
     """bool is an int subclass; require_ulong_attr must not accept it as CK_ULONG.
 
     Mutation used: dropped ``and not isinstance(value, bool)`` from the guard -- this
-    test then observed a plain return of ``True`` instead of an xfail (red).
+    test then observed a plain return of ``True`` instead of a fail (red).
     """
-    with pytest.raises(pytest.xfail.Exception):
+    with pytest.raises(Failed) as ei:
         require_ulong_attr(True, label="malformed ulong")
-    assert get_records()[-1].reason == "not_operational"
+    assert not isinstance(ei.value, XFailed)
+    assert get_records()[-1].reason == "wrong_result"
 
 
 def test_require_ulong_attr_rejects_non_int() -> None:
-    with pytest.raises(pytest.xfail.Exception):
+    with pytest.raises(Failed) as ei:
         require_ulong_attr("not-an-int", label="malformed ulong")
-    assert get_records()[-1].reason == "not_operational"
+    assert not isinstance(ei.value, XFailed)
+    assert get_records()[-1].reason == "wrong_result"
 
 
-def test_require_ulong_attr_fed_missing_attribute_unguarded_emits_xfail_with_object_repr() -> None:
-    """Documents current behaviour: an unguarded MISSING_ATTRIBUTE sentinel produces a
-    misleading second record whose summary embeds the sentinel's ``<object object at
-    ...>`` repr rather than a clean "attribute absent" message. Locked in as a
-    regression since this helper had zero test coverage.
+def test_require_ulong_attr_missing_unguarded_xfails_absent() -> None:
+    """F-006: an unguarded MISSING_ATTRIBUTE sentinel xfails with a clean
+    "attribute absent" message (the absence itself was already recorded
+    upstream); only present-malformed values fail.
     """
     with pytest.raises(pytest.xfail.Exception):
         require_ulong_attr(MISSING_ATTRIBUTE, label="fed MISSING_ATTRIBUTE unguarded")
     record = get_records()[-1]
     assert record.reason == "not_operational"
-    assert "<object object at" in record.summary
+    assert "attribute absent" in record.summary
+    assert "<object object at" not in record.summary
 
 
 def test_require_bool_attr_returns_valid_bool() -> None:
@@ -378,20 +381,44 @@ def test_require_bool_attr_rejects_int() -> None:
     """1/0 are not CK_BBOOL True/False in this codebase's decoding -- only real bool.
 
     Mutation used: changed the guard to ``isinstance(value, int)`` -- this test's
-    ``pytest.raises(pytest.xfail.Exception)`` then failed to see any exception (red,
+    ``pytest.raises(Failed)`` then failed to see any exception (red,
     since 1 is an int).
     """
-    with pytest.raises(pytest.xfail.Exception):
+    with pytest.raises(Failed) as ei:
         require_bool_attr(1, label="malformed bool")
-    assert get_records()[-1].reason == "not_operational"
+    assert not isinstance(ei.value, XFailed)
+    assert get_records()[-1].reason == "wrong_result"
 
 
-def test_require_bool_attr_fed_missing_attribute_unguarded_emits_xfail_with_object_repr() -> None:
+def test_require_bool_attr_missing_unguarded_xfails_absent() -> None:
+    """F-006: missing stays not_operational/xfail with a clean absent message."""
     with pytest.raises(pytest.xfail.Exception):
         require_bool_attr(MISSING_ATTRIBUTE, label="fed MISSING_ATTRIBUTE unguarded")
     record = get_records()[-1]
     assert record.reason == "not_operational"
-    assert "<object object at" in record.summary
+    assert "attribute absent" in record.summary
+    assert "<object object at" not in record.summary
+
+
+def test_require_ulong_attr_present_malformed_fails() -> None:
+    """F-006: a present value with the wrong ABI shape is wrong_result (fail).
+
+    Same rule as the enforcement analog (``_record_malformed_attribute``) and
+    the access-levels validator: successfully returned malformed metadata
+    differs from a clean refusal or a missing value.
+    """
+    with pytest.raises(Failed) as ei:
+        require_ulong_attr(b"\x01\x02", label="malformed ulong")
+    assert not isinstance(ei.value, XFailed)
+    assert get_records()[-1].reason == "wrong_result"
+
+
+def test_require_bool_attr_present_malformed_fails() -> None:
+    """F-006: a present value with the wrong ABI shape is wrong_result (fail)."""
+    with pytest.raises(Failed) as ei:
+        require_bool_attr(b"\x01\x02", label="malformed bool")
+    assert not isinstance(ei.value, XFailed)
+    assert get_records()[-1].reason == "wrong_result"
 
 
 def test_attr_refusal_equality_and_defaults() -> None:

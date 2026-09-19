@@ -60,6 +60,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
+    CKR_OPERATION_NOT_VALIDATED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -113,6 +114,11 @@ def _vector_reproducer_context(request: pytest.FixtureRequest) -> None:
     set_vector_context_from_node(request.node)
 
 
+# F-036: CKR_OPERATION_NOT_VALIDATED (the v3.2 sanctioned validation-policy
+# refusal) is a setup-time xfail here, not a bare re-raise to the plugin's
+# reserved backlog gate. The shared helper must NOT pass on it: when
+# generation is merely setup, the downstream test was not exercised. Only
+# the claim layer (claim_refusal_passes) passes on a sanctioned refusal.
 AES_KEYGEN_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -123,6 +129,7 @@ AES_KEYGEN_RUNTIME_REJECT_RVS = (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_NOT_VALIDATED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
@@ -137,6 +144,7 @@ KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OPERATION_NOT_VALIDATED,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )

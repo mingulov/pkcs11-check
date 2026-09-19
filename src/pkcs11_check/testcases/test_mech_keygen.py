@@ -15,7 +15,7 @@ Key types covered:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -107,7 +107,14 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
         raise AssertionError("unreachable: undefined CK_RV classification must fail")
 
 
-def _xfail_generated_local_false(mech_name: str, label: str) -> None:
+def _fail_generated_local_false(mech_name: str, label: str) -> NoReturn:
+    """Fail a present CKA_LOCAL=False readback after successful generation.
+
+    N-005: generated keys must report CKA_LOCAL=True; a present False is
+    contradictory output after the module already claimed generation
+    success -- a self-contradiction with metadata attribution. Missing /
+    refused readbacks never reach here (handled upstream).
+    """
     from pkcs11_check.compliance import ComplianceLevel, note
 
     note(
@@ -115,8 +122,8 @@ def _xfail_generated_local_false(mech_name: str, label: str) -> None:
         ComplianceLevel.NOT_RECOMMENDED,
         reference="PKCS#11 v3.2: CKA_LOCAL True if key generated on token",
     )
-    classify(
-        "honest_deviation",
+    fail_as(
+        "self_contradiction",
         kind="metadata",
         label=f"{mech_name}:{label}:CKA_LOCAL",
         mechanism=mech_name,
@@ -170,7 +177,7 @@ class TestMechKeygen:
                 for label, handle in (("public", pub), ("private", priv)):
                     local = _read_local_flag(rs, handle, f"{entry.mech_name} {label} key")
                     if local is False:
-                        _xfail_generated_local_false(entry.mech_name, f"{label} key")
+                        _fail_generated_local_false(entry.mech_name, f"{label} key")
                     assert local is True, (
                         f"{entry.mech_name}: CKA_LOCAL should be True on generated "
                         f"{label} key (got {local!r})"
@@ -183,7 +190,7 @@ class TestMechKeygen:
             try:
                 local = _read_local_flag(rs, key, f"{entry.mech_name} key")
                 if local is False:
-                    _xfail_generated_local_false(entry.mech_name, "key")
+                    _fail_generated_local_false(entry.mech_name, "key")
                 assert local is True, (
                     f"{entry.mech_name}: CKA_LOCAL should be True on generated key (got {local!r})"
                 )

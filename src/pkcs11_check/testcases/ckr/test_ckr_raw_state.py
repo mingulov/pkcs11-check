@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.core.process_observation import record_process_observation
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import CKR_OPERATION_ACTIVE
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
@@ -26,6 +28,22 @@ from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 from pkcs11_check.testcases.conftest import classify_negative_rv
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
+
+
+def _extract_child_ckr(out: str) -> tuple[int | None, bool]:
+    """Parse the child's ``CKR:0x...`` line.
+
+    Returns ``(rv, first_init_failed)``: ``rv`` is None when no CKR line is
+    present; ``first_init_failed`` is True when the child reported its first
+    init failed (no state-conflict outcome exists to classify or retain).
+    """
+    for line in out.splitlines():
+        if line.startswith("CKR:0x"):
+            token = line.removeprefix("CKR:").split(":", 1)
+            if len(token) > 1 and token[1] == "first_init_failed":
+                return None, True
+            return int(token[0], 16), False
+    return None, False
 
 
 def _classify_state_ckr(out: str, *, label: str) -> None:
@@ -42,16 +60,34 @@ def _classify_state_ckr(out: str, *, label: str) -> None:
     there is no state-conflict result to classify; the probe simply passes
     (it proved no crash).
     """
-    rv: int | None = None
-    for line in out.splitlines():
-        if line.startswith("CKR:0x"):
-            token = line.removeprefix("CKR:").split(":", 1)
-            if len(token) > 1 and token[1] == "first_init_failed":
-                return
-            rv = int(token[0], 16)
-            break
+    rv, first_init_failed = _extract_child_ckr(out)
+    if first_init_failed:
+        return
     assert rv is not None, f"{label}: no CKR line in child output: {out!r}"
     classify_negative_rv(rv, (CKR_OPERATION_ACTIVE,), label=label, allow_ok=True)
+
+
+def _record_cross_operation_ckr(out: str) -> None:
+    """Retain the cross-operation probe's child CKR as a durable observation.
+
+    F-003: this probe is a crash-survival probe -- any clean outcome passes
+    and this function never changes the verdict. But the observed second-init
+    CKR is useful evidence, so keep it on the call report (via the process
+    observations channel) instead of dropping it. Nothing is recorded when
+    there is no state-conflict outcome (missing line or first-init failure).
+    """
+    rv, first_init_failed = _extract_child_ckr(out)
+    if rv is None or first_init_failed:
+        return
+    record_process_observation(
+        {
+            "target": "ckr_raw_state",
+            "role": "probe-ckr",
+            "probe": "encrypt_then_sign_init",
+            "ckr": f"0x{rv:08x}",
+            "ckr_name": ckr_name(rv),
+        }
+    )
 
 
 def _run_probe(p11_config: Any, probe: str) -> tuple[int, str, str]:
@@ -82,6 +118,7 @@ class TestOperationActive:
         """C_EncryptInit then C_SignInit -> CKR_OPERATION_ACTIVE (if no dual-crypto)."""
         rc, out, err = _run_probe(p11_config, "encrypt_then_sign_init")
         _assert_probe_completed(rc, out, err)
+        _record_cross_operation_ckr(out)
 
     def test_double_digest_init(self, p11_config: Any) -> None:
         """Double C_DigestInit -> CKR_OPERATION_ACTIVE."""

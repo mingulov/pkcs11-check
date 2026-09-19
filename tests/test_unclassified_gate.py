@@ -273,3 +273,25 @@ def test_every_failed_phase_is_classified(when: str) -> None:
     records = _classification_prop(report)
     assert records is not None
     assert [record["reason"] for record in records] == ["unclassified"]
+
+
+def test_output_length_overrun_yields_synthetic_wrong_result() -> None:
+    """N-003: a typed output overrun is a provider wrong_result, not unclassified."""
+    from pkcs11_check.raw import recipes as raw_recipes
+
+    exc_type = getattr(raw_recipes, "OutputLengthOverrunError", None)
+    assert exc_type is not None, "N-003 typed observation missing"
+    exc = exc_type(call="C_Encrypt", capacity=2, reported=99)
+    report = _call_report("failed", message=str(exc))
+
+    _attach_classification_to_report(_testcase_item(), report, call=_call_info(exc))
+
+    records = _classification_prop(report)
+    assert records is not None
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["reason"] == "wrong_result"
+    assert rec["outcome"] == "fail"
+    assert rec["kind"] == "metadata"
+    assert rec["operation"] == "C_Encrypt"
+    assert rec["detail"] == {"capacity": 2, "reported": 99}

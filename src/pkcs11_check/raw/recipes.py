@@ -124,6 +124,29 @@ class ImplausibleModuleLengthError(ValueError):
     misbehavior without masking true harness bugs."""
 
 
+class OutputLengthOverrunError(ImplausibleModuleLengthError):
+    """A module returned CKR_OK claiming more output bytes than buffer capacity.
+
+    Raised by the two-call output helpers when the final successful call
+    reports a length beyond the allocated buffer (N-003). Subclasses
+    :class:`ImplausibleModuleLengthError` so existing generic handlers keep
+    working; carries the call name plus both lengths so the report boundary
+    can classify it as provider malformed output instead of an unexplained
+    exception. This post-call check cannot prevent a native provider from
+    already having written out of bounds; such a crash or corruption remains
+    provider evidence.
+    """
+
+    def __init__(self, *, call: str, capacity: int, reported: int) -> None:
+        self.call = call
+        self.capacity = capacity
+        self.reported = reported
+        super().__init__(
+            f"{call}: module returned CKR_OK claiming {reported} output bytes "
+            f"but buffer capacity was {capacity}"
+        )
+
+
 def _alloc_module_output(size: int, *, what: str) -> ctypes.Array[ctypes.c_ubyte]:
     """Allocate a ``CK_BYTE * size`` output buffer sized from a module-reported length.
 
@@ -327,6 +350,13 @@ def _two_call_output(
             out_len = CK_ULONG(size)
             rv = fn(*args, out_buf, byref(out_len))
         expect_rv(rv, CKR_OK, context=call_fn)
+        if out_len.value > len(out_buf):
+            # N-003: CKR_OK claiming more bytes than capacity -- malformed
+            # provider output. Surface it typed (with both lengths) instead
+            # of silently slicing to capacity.
+            raise OutputLengthOverrunError(
+                call=call_fn, capacity=len(out_buf), reported=out_len.value
+            )
         return bytes(out_buf[: out_len.value])
     # Standard two-call pattern: query size with NULL, then allocate and call again.
     out_len = CK_ULONG(0)
@@ -344,6 +374,11 @@ def _two_call_output(
         out_len = CK_ULONG(size)
         rv = fn(*args, out_buf, byref(out_len))
     expect_rv(rv, CKR_OK, context=call_fn)
+    if out_len.value > len(out_buf):
+        # N-003: CKR_OK claiming more bytes than capacity -- malformed
+        # provider output. Surface it typed (with both lengths) instead
+        # of silently slicing to capacity.
+        raise OutputLengthOverrunError(call=call_fn, capacity=len(out_buf), reported=out_len.value)
     return bytes(out_buf[: out_len.value])
 
 

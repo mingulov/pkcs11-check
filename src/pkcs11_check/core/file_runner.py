@@ -1484,6 +1484,323 @@ def _requeue_units_after_recovery(
     return min(positions)
 
 
+def _exit_code_for_no_pending_units(
+    *,
+    state: FileRunState,
+    state_file: Path,
+    report_config: IsolatedReportConfig | None,
+    collected_items: Sequence[CollectedPytestItem] | None,
+    units: list[str],
+    resume: bool,
+    collection_failure_present: bool,
+    console: Console,
+    provenance: dict[str, Any] | None,
+    parent_provenance_record: dict[str, Any],
+) -> int:
+    """Report and exit when no units are pending (fresh empty run or full resume).
+
+    F-026 extraction from :func:`run_isolated_pytest_units`: byte-identical
+    behavior -- writes the same reports from durable state and returns the
+    same exit code. Separated for reviewability; no oracle changes.
+    """
+    resume_exit_code = max(
+        _NO_TESTS_COLLECTED_EXIT if not units else 0,
+        1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
+        1 if collection_failure_present else 0,
+    )
+    if report_config is not None:
+        coverage_data: dict[str, Any] | None = None
+        quality_records: list[dict[str, Any]] = []
+        quality_report_evidence: QualityReportEvidence | None = None
+        inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
+        for unit, records in state.report_records_by_unit.items():
+            inline_report_records_by_unit.setdefault(unit, records)
+        output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
+            state_file,
+            state,
+            inline_report_records_by_unit,
+        )
+        owner_aliases = _build_report_owner_aliases(
+            list(
+                dict.fromkeys(
+                    [
+                        *output_state.units,
+                        *(result.target for result in output_state.results),
+                    ]
+                )
+            ),
+            collected_items or (),
+        )
+        if resume and report_config.jsonl_path is not None and report_config.jsonl_path.exists():
+            candidate_targets = set(output_state.units) | {
+                result.target for result in output_state.results
+            }
+            _seed_missing_report_record_caches_from_jsonl(
+                state_file,
+                report_config.jsonl_path,
+                candidate_targets=candidate_targets,
+                skip_units=set(state.report_records_by_unit) | set(inline_report_records_by_unit),
+                owner_aliases=owner_aliases,
+            )
+        merged_details = _build_per_unit_details_from_record_sources(
+            state_file,
+            units=output_state.units,
+            inline_records_by_unit=inline_report_records_by_unit,
+        )
+        for result in state.results:
+            if result.status not in {"crashed", "timeout"}:
+                continue
+            resume_detail = merged_details.setdefault(
+                result.target,
+                {"counts": _empty_counts(), "tests": []},
+            )
+            counts = resume_detail.setdefault("counts", _empty_counts())
+            counts[result.status] = max(counts.get(result.status, 0), 1)
+        resume_exit_code = _final_state_exit_code(state, resume_exit_code, merged_details)
+        if report_config.jsonl_path is not None:
+            wrote_report_jsonl = _write_report_jsonl_from_record_sources(
+                state_file,
+                units=output_state.units,
+                inline_records_by_unit=inline_report_records_by_unit,
+                output_path=report_config.jsonl_path,
+                attempt_history=state.attempt_history,
+                recovery_events=state.recovery_events,
+                collection_failure_path=collection_failure_sidecar_path(state_file),
+                provenance_record=parent_provenance_record,
+            )
+            if wrote_report_jsonl or report_config.jsonl_path.exists():
+                coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                quality_records = extract_quality_report_records_from_jsonl(
+                    report_config.jsonl_path
+                )
+                # The single-run raw report.jsonl IS the declared authoritative source for
+                # this run's classification observability (never sum shard quality.json
+                # counts -- there is only one source here).
+                quality_report_evidence = extract_quality_report_evidence_from_jsonl(
+                    [report_config.jsonl_path]
+                )
+                coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
+                    coverage_data,
+                    output_state,
+                    per_unit_details=merged_details,
+                    owner_aliases=owner_aliases,
+                )
+                if coverage_data:
+                    coverage_path = report_config.jsonl_path.parent / "coverage.json"
+                    coverage_path.write_text(
+                        json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
+                    )
+                provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
+                if provisioning_data is not None:
+                    provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
+                    provisioning_path.write_text(
+                        json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
+                    )
+                    if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                        _emit_external_provision_banner(
+                            provisioning_data["totals"]["ran_via_external"]
+                        )
+        if report_config.output_format == "json":
+            results_payload = write_isolated_json_report(
+                report_config.output_path,
+                output_state,
+                per_unit_details=merged_details,
+                coverage=coverage_data,
+                provenance=provenance,
+                owner_aliases=owner_aliases,
+                selection=report_config.selection if report_config else None,
+            )
+            quality_path = report_config.output_path.parent / "quality.json"
+            write_quality_json_report(
+                quality_path,
+                results_payload,
+                coverage=coverage_data,
+                report_log_records=quality_records,
+                quality_report_evidence=quality_report_evidence,
+            )
+        else:
+            write_isolated_report(
+                report_config,
+                output_state,
+                per_unit_details=merged_details,
+                owner_aliases=owner_aliases,
+            )
+    else:
+        inline_report_records_by_unit = {
+            unit: records for unit, records in state.report_records_by_unit.items()
+        }
+        merged_details = _build_per_unit_details_from_record_sources(
+            state_file,
+            units=state.units,
+            inline_records_by_unit=inline_report_records_by_unit,
+        )
+        for result in state.results:
+            if result.status not in {"crashed", "timeout"}:
+                continue
+            resume_detail = merged_details.setdefault(
+                result.target,
+                {"counts": _empty_counts(), "tests": []},
+            )
+            counts = resume_detail.setdefault("counts", _empty_counts())
+            counts[result.status] = max(counts.get(result.status, 0), 1)
+        resume_exit_code = _final_state_exit_code(state, resume_exit_code, merged_details)
+    if units:
+        if resume_exit_code:
+            console.print(
+                "[red]Nothing to do[/red] - durable isolated state is not green; "
+                "review the recorded failures before accepting this run."
+            )
+        else:
+            console.print("[green]Nothing to do[/green] - all isolated units already completed.")
+    return resume_exit_code
+
+
+def _write_final_reports(
+    *,
+    per_unit_details: dict[str, dict[str, Any]],
+    report_config: IsolatedReportConfig | None,
+    state: FileRunState,
+    state_file: Path,
+    collected_items: Sequence[CollectedPytestItem] | None,
+    resume: bool,
+    executed_units: set[str],
+    provenance: dict[str, Any] | None,
+    parent_provenance_record: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Write report.jsonl/coverage/quality/results from durable record sources.
+
+    F-026 extraction from :func:`run_isolated_pytest_units` (its ``finally``
+    suite): byte-identical behavior -- same artifacts from the same state,
+    returning the merged per-unit details. Separated for reviewability; no
+    oracle changes.
+    """
+    coverage_data = None
+    quality_records = []
+    quality_report_evidence = None
+    merged_details = dict(per_unit_details)
+    if report_config is not None:
+        inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
+        for unit, records in state.report_records_by_unit.items():
+            inline_report_records_by_unit.setdefault(unit, records)
+        output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
+            state_file,
+            state,
+            inline_report_records_by_unit,
+        )
+        owner_aliases = _build_report_owner_aliases(
+            list(
+                dict.fromkeys(
+                    [
+                        *output_state.units,
+                        *(result.target for result in output_state.results),
+                    ]
+                )
+            ),
+            collected_items or (),
+        )
+        if report_config.jsonl_path is not None:
+            if resume and report_config.jsonl_path.exists():
+                candidate_targets = set(output_state.units) | {
+                    result.target for result in output_state.results
+                }
+                for unit in executed_units:
+                    inline_report_records_by_unit.pop(unit, None)
+                _seed_missing_report_record_caches_from_jsonl(
+                    state_file,
+                    report_config.jsonl_path,
+                    candidate_targets=candidate_targets,
+                    skip_units=set(state.report_records_by_unit)
+                    | set(inline_report_records_by_unit)
+                    | executed_units,
+                    owner_aliases=owner_aliases,
+                )
+            wrote_report_jsonl = _write_report_jsonl_from_record_sources(
+                state_file,
+                units=output_state.units,
+                inline_records_by_unit=inline_report_records_by_unit,
+                output_path=report_config.jsonl_path,
+                attempt_history=state.attempt_history,
+                recovery_events=state.recovery_events,
+                collection_failure_path=collection_failure_sidecar_path(state_file),
+                provenance_record=parent_provenance_record,
+            )
+            if wrote_report_jsonl or report_config.jsonl_path.exists():
+                merged_details = _build_per_unit_details_from_record_sources(
+                    state_file,
+                    units=output_state.units,
+                    inline_records_by_unit=inline_report_records_by_unit,
+                )
+                merged_details = _merge_supplemental_special_details(
+                    merged_details,
+                    per_unit_details,
+                )
+                coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                quality_records = extract_quality_report_records_from_jsonl(
+                    report_config.jsonl_path
+                )
+                # The single-run raw report.jsonl IS the declared authoritative source for
+                # this run's classification observability (never sum shard quality.json
+                # counts -- there is only one source here).
+                quality_report_evidence = extract_quality_report_evidence_from_jsonl(
+                    [report_config.jsonl_path]
+                )
+                coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
+                    coverage_data,
+                    output_state,
+                    per_unit_details=merged_details,
+                    owner_aliases=owner_aliases,
+                )
+            if coverage_data:
+                coverage_path = report_config.jsonl_path.parent / "coverage.json"
+                coverage_path.write_text(
+                    json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
+                )
+            provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
+            if provisioning_data is not None:
+                provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
+                provisioning_path.write_text(
+                    json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
+                )
+                if provisioning_data["totals"].get("ran_via_external", 0) > 0:
+                    _emit_external_provision_banner(provisioning_data["totals"]["ran_via_external"])
+        else:
+            merged_details = _build_per_unit_details_from_record_sources(
+                state_file,
+                units=output_state.units,
+                inline_records_by_unit=inline_report_records_by_unit,
+            )
+            merged_details = _merge_supplemental_special_details(
+                merged_details,
+                per_unit_details,
+            )
+        if report_config.output_format == "json":
+            results_payload = write_isolated_json_report(
+                report_config.output_path,
+                output_state,
+                per_unit_details=merged_details,
+                coverage=coverage_data,
+                provenance=provenance,
+                owner_aliases=owner_aliases,
+                selection=report_config.selection if report_config else None,
+            )
+            quality_path = report_config.output_path.parent / "quality.json"
+            write_quality_json_report(
+                quality_path,
+                results_payload,
+                coverage=coverage_data,
+                report_log_records=quality_records,
+                quality_report_evidence=quality_report_evidence,
+            )
+        else:
+            write_isolated_report(
+                report_config,
+                output_state,
+                per_unit_details=merged_details,
+                owner_aliases=owner_aliases,
+            )
+    return merged_details
+
+
 def run_isolated_pytest_units(
     units: list[str],
     pytest_args: list[str],
@@ -1625,163 +1942,18 @@ def run_isolated_pytest_units(
     recovery_assessed = len(state.results)
 
     if not pending_units:
-        resume_exit_code = max(
-            _NO_TESTS_COLLECTED_EXIT if not units else 0,
-            1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
-            1 if collection_failure_present else 0,
+        return _exit_code_for_no_pending_units(
+            state=state,
+            state_file=state_file,
+            report_config=report_config,
+            collected_items=collected_items,
+            units=units,
+            resume=resume,
+            collection_failure_present=collection_failure_present,
+            console=console,
+            provenance=provenance,
+            parent_provenance_record=parent_provenance_record,
         )
-        if report_config is not None:
-            coverage_data: dict[str, Any] | None = None
-            quality_records: list[dict[str, Any]] = []
-            quality_report_evidence: QualityReportEvidence | None = None
-            inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
-            for unit, records in state.report_records_by_unit.items():
-                inline_report_records_by_unit.setdefault(unit, records)
-            output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
-                state_file,
-                state,
-                inline_report_records_by_unit,
-            )
-            owner_aliases = _build_report_owner_aliases(
-                list(
-                    dict.fromkeys(
-                        [
-                            *output_state.units,
-                            *(result.target for result in output_state.results),
-                        ]
-                    )
-                ),
-                collected_items or (),
-            )
-            if (
-                resume
-                and report_config.jsonl_path is not None
-                and report_config.jsonl_path.exists()
-            ):
-                candidate_targets = set(output_state.units) | {
-                    result.target for result in output_state.results
-                }
-                _seed_missing_report_record_caches_from_jsonl(
-                    state_file,
-                    report_config.jsonl_path,
-                    candidate_targets=candidate_targets,
-                    skip_units=set(state.report_records_by_unit)
-                    | set(inline_report_records_by_unit),
-                    owner_aliases=owner_aliases,
-                )
-            merged_details = _build_per_unit_details_from_record_sources(
-                state_file,
-                units=output_state.units,
-                inline_records_by_unit=inline_report_records_by_unit,
-            )
-            for result in state.results:
-                if result.status not in {"crashed", "timeout"}:
-                    continue
-                resume_detail = merged_details.setdefault(
-                    result.target,
-                    {"counts": _empty_counts(), "tests": []},
-                )
-                counts = resume_detail.setdefault("counts", _empty_counts())
-                counts[result.status] = max(counts.get(result.status, 0), 1)
-            resume_exit_code = _final_state_exit_code(state, resume_exit_code, merged_details)
-            if report_config.jsonl_path is not None:
-                wrote_report_jsonl = _write_report_jsonl_from_record_sources(
-                    state_file,
-                    units=output_state.units,
-                    inline_records_by_unit=inline_report_records_by_unit,
-                    output_path=report_config.jsonl_path,
-                    attempt_history=state.attempt_history,
-                    recovery_events=state.recovery_events,
-                    collection_failure_path=collection_failure_sidecar_path(state_file),
-                    provenance_record=parent_provenance_record,
-                )
-                if wrote_report_jsonl or report_config.jsonl_path.exists():
-                    coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
-                    quality_records = extract_quality_report_records_from_jsonl(
-                        report_config.jsonl_path
-                    )
-                    # The single-run raw report.jsonl IS the declared authoritative source for
-                    # this run's classification observability (never sum shard quality.json
-                    # counts -- there is only one source here).
-                    quality_report_evidence = extract_quality_report_evidence_from_jsonl(
-                        [report_config.jsonl_path]
-                    )
-                    coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
-                        coverage_data,
-                        output_state,
-                        per_unit_details=merged_details,
-                        owner_aliases=owner_aliases,
-                    )
-                    if coverage_data:
-                        coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                        coverage_path.write_text(
-                            json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
-                        )
-                    provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
-                    if provisioning_data is not None:
-                        provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
-                        provisioning_path.write_text(
-                            json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
-                        )
-                        if provisioning_data["totals"].get("ran_via_external", 0) > 0:
-                            _emit_external_provision_banner(
-                                provisioning_data["totals"]["ran_via_external"]
-                            )
-            if report_config.output_format == "json":
-                results_payload = write_isolated_json_report(
-                    report_config.output_path,
-                    output_state,
-                    per_unit_details=merged_details,
-                    coverage=coverage_data,
-                    provenance=provenance,
-                    owner_aliases=owner_aliases,
-                    selection=report_config.selection if report_config else None,
-                )
-                quality_path = report_config.output_path.parent / "quality.json"
-                write_quality_json_report(
-                    quality_path,
-                    results_payload,
-                    coverage=coverage_data,
-                    report_log_records=quality_records,
-                    quality_report_evidence=quality_report_evidence,
-                )
-            else:
-                write_isolated_report(
-                    report_config,
-                    output_state,
-                    per_unit_details=merged_details,
-                    owner_aliases=owner_aliases,
-                )
-        else:
-            inline_report_records_by_unit = {
-                unit: records for unit, records in state.report_records_by_unit.items()
-            }
-            merged_details = _build_per_unit_details_from_record_sources(
-                state_file,
-                units=state.units,
-                inline_records_by_unit=inline_report_records_by_unit,
-            )
-            for result in state.results:
-                if result.status not in {"crashed", "timeout"}:
-                    continue
-                resume_detail = merged_details.setdefault(
-                    result.target,
-                    {"counts": _empty_counts(), "tests": []},
-                )
-                counts = resume_detail.setdefault("counts", _empty_counts())
-                counts[result.status] = max(counts.get(result.status, 0), 1)
-            resume_exit_code = _final_state_exit_code(state, resume_exit_code, merged_details)
-        if units:
-            if resume_exit_code:
-                console.print(
-                    "[red]Nothing to do[/red] - durable isolated state is not green; "
-                    "review the recorded failures before accepting this run."
-                )
-            else:
-                console.print(
-                    "[green]Nothing to do[/green] - all isolated units already completed."
-                )
-        return resume_exit_code
 
     exit_code = max(
         1 if _state_recovery_events(state) or _state_attempt_history(state) else 0,
@@ -3131,132 +3303,17 @@ def run_isolated_pytest_units(
                 if prior_cache_snapshot is not None:
                     prior_cache_snapshot.unlink(missing_ok=True)
     finally:
-        coverage_data = None
-        quality_records = []
-        quality_report_evidence = None
-        merged_details = dict(per_unit_details)
-        if report_config is not None:
-            inline_report_records_by_unit = {}
-            for unit, records in state.report_records_by_unit.items():
-                inline_report_records_by_unit.setdefault(unit, records)
-            output_state, inline_report_records_by_unit = _collection_failure_reporting_copy(
-                state_file,
-                state,
-                inline_report_records_by_unit,
-            )
-            owner_aliases = _build_report_owner_aliases(
-                list(
-                    dict.fromkeys(
-                        [
-                            *output_state.units,
-                            *(result.target for result in output_state.results),
-                        ]
-                    )
-                ),
-                collected_items or (),
-            )
-            if report_config.jsonl_path is not None:
-                if resume and report_config.jsonl_path.exists():
-                    candidate_targets = set(output_state.units) | {
-                        result.target for result in output_state.results
-                    }
-                    for unit in executed_units:
-                        inline_report_records_by_unit.pop(unit, None)
-                    _seed_missing_report_record_caches_from_jsonl(
-                        state_file,
-                        report_config.jsonl_path,
-                        candidate_targets=candidate_targets,
-                        skip_units=set(state.report_records_by_unit)
-                        | set(inline_report_records_by_unit)
-                        | executed_units,
-                        owner_aliases=owner_aliases,
-                    )
-                wrote_report_jsonl = _write_report_jsonl_from_record_sources(
-                    state_file,
-                    units=output_state.units,
-                    inline_records_by_unit=inline_report_records_by_unit,
-                    output_path=report_config.jsonl_path,
-                    attempt_history=state.attempt_history,
-                    recovery_events=state.recovery_events,
-                    collection_failure_path=collection_failure_sidecar_path(state_file),
-                    provenance_record=parent_provenance_record,
-                )
-                if wrote_report_jsonl or report_config.jsonl_path.exists():
-                    merged_details = _build_per_unit_details_from_record_sources(
-                        state_file,
-                        units=output_state.units,
-                        inline_records_by_unit=inline_report_records_by_unit,
-                    )
-                    merged_details = _merge_supplemental_special_details(
-                        merged_details,
-                        per_unit_details,
-                    )
-                    coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
-                    quality_records = extract_quality_report_records_from_jsonl(
-                        report_config.jsonl_path
-                    )
-                    # The single-run raw report.jsonl IS the declared authoritative source for
-                    # this run's classification observability (never sum shard quality.json
-                    # counts -- there is only one source here).
-                    quality_report_evidence = extract_quality_report_evidence_from_jsonl(
-                        [report_config.jsonl_path]
-                    )
-                    coverage_data = _augment_mechanism_coverage_from_unit_outcomes(
-                        coverage_data,
-                        output_state,
-                        per_unit_details=merged_details,
-                        owner_aliases=owner_aliases,
-                    )
-                if coverage_data:
-                    coverage_path = report_config.jsonl_path.parent / "coverage.json"
-                    coverage_path.write_text(
-                        json.dumps(coverage_data, indent=2) + "\n", encoding="utf-8"
-                    )
-                provisioning_data = extract_provisioning_from_jsonl(report_config.jsonl_path)
-                if provisioning_data is not None:
-                    provisioning_path = report_config.jsonl_path.parent / "provisioning.json"
-                    provisioning_path.write_text(
-                        json.dumps(provisioning_data, indent=2) + "\n", encoding="utf-8"
-                    )
-                    if provisioning_data["totals"].get("ran_via_external", 0) > 0:
-                        _emit_external_provision_banner(
-                            provisioning_data["totals"]["ran_via_external"]
-                        )
-            else:
-                merged_details = _build_per_unit_details_from_record_sources(
-                    state_file,
-                    units=output_state.units,
-                    inline_records_by_unit=inline_report_records_by_unit,
-                )
-                merged_details = _merge_supplemental_special_details(
-                    merged_details,
-                    per_unit_details,
-                )
-            if report_config.output_format == "json":
-                results_payload = write_isolated_json_report(
-                    report_config.output_path,
-                    output_state,
-                    per_unit_details=merged_details,
-                    coverage=coverage_data,
-                    provenance=provenance,
-                    owner_aliases=owner_aliases,
-                    selection=report_config.selection if report_config else None,
-                )
-                quality_path = report_config.output_path.parent / "quality.json"
-                write_quality_json_report(
-                    quality_path,
-                    results_payload,
-                    coverage=coverage_data,
-                    report_log_records=quality_records,
-                    quality_report_evidence=quality_report_evidence,
-                )
-            else:
-                write_isolated_report(
-                    report_config,
-                    output_state,
-                    per_unit_details=merged_details,
-                    owner_aliases=owner_aliases,
-                )
+        merged_details = _write_final_reports(
+            per_unit_details=per_unit_details,
+            report_config=report_config,
+            state=state,
+            state_file=state_file,
+            collected_items=collected_items,
+            resume=resume,
+            executed_units=executed_units,
+            provenance=provenance,
+            parent_provenance_record=parent_provenance_record,
+        )
 
     return _final_state_exit_code(state, exit_code, merged_details)
 

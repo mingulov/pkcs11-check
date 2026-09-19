@@ -76,10 +76,15 @@ _TEMPLATE_ERROR_RVS = {
 
 _SET_ATTR_ERROR_RVS = {
     CKR_ATTRIBUTE_READ_ONLY,
-    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_ACTION_PROHIBITED,
 }
+# NOTE (F-010): CKR_ATTRIBUTE_TYPE_INVALID is deliberately NOT in the
+# accepted mutation-rejection set. Call sites read the attribute first, so
+# the module has already proven it recognises the type; a TYPE_INVALID on
+# the mutation is unjustified by that read. Reading and changing are
+# different operations -- the rejection proves no bypass and falls through
+# to the visible nonspec_reject deviation path instead of passing.
 
 
 def _is_template_error(e: BaseException) -> bool:
