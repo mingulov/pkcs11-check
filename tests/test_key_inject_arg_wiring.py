@@ -39,7 +39,6 @@ def _default_args(**overrides: object) -> dict[str, object]:
         "wrap_key_source": "bootstrap",
         "wrap_key_label": None,
         "wrap_key_handle": None,
-        "wrap_key_value": None,
         "wrap_mech": None,
         "wrap_rsa_bits": 2048,
         "wrap_oaep_hash": "auto",
@@ -128,11 +127,11 @@ class TestBuildPytestArgsNoneDefaults:
         idx = args.index("--p11-wrap-key-handle")
         assert args[idx + 1] == "7"
 
-    def test_wrap_key_value_emits_when_set(self) -> None:
-        args = _build_pytest_args(**_default_args(wrap_key_value="deadbeef"))  # type: ignore[arg-type]
-        assert "--p11-wrap-key-value" in args
-        idx = args.index("--p11-wrap-key-value")
-        assert args[idx + 1] == "deadbeef"
+    def test_wrap_key_value_never_emitted(self) -> None:
+        # F-002: KEK transport is env-only (P11TEST_WRAP_KEY_VALUE); the builder
+        # takes no KEK parameter and the flag must never appear on a child line.
+        args = _build_pytest_args(**_default_args())  # type: ignore[arg-type]
+        assert "--p11-wrap-key-value" not in args
 
     def test_wrap_mech_emits_when_set(self) -> None:
         args = _build_pytest_args(**_default_args(wrap_mech="CKM_RSA_AES_KEY_WRAP"))  # type: ignore[arg-type]

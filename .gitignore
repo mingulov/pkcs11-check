@@ -15,6 +15,14 @@ artifacts/
 artifacts*/
 .pkcs11-check-isolation-state.json
 .pkcs11-check-isolation-policy.json
+.pkcs11-check-isolation-state.json.lock
+.pkcs11-check-isolation-policy.json.lock
+pkcs11-check-results.json.lock
+pkcs11-check-results.xml.lock
+report.jsonl.lock
+quality.json.lock
+coverage.json.lock
+provisioning.json.lock
 .worktrees/
 .superpowers/
 *.report-records/

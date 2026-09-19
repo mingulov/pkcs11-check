@@ -163,6 +163,7 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
+from pkcs11_check.core._secrets import redact_secret_args
 from pkcs11_check.core.preflight import load_manifest
 
 # The fingerprint detects when the run's effective configuration changed, so
@@ -180,7 +181,7 @@ _DEFAULT_FINGERPRINT_ENV_KEYS = ("P11TEST_PIN", "P11TEST_SO_PIN")
 
 _DEFAULT_FINGERPRINT_ENV_PREFIXES = ("P11TEST_", "PKCS11_")
 
-_REDACTED_ENV_KEYS = {"P11TEST_PIN", "P11TEST_SO_PIN"}
+_REDACTED_ENV_KEYS = {"P11TEST_PIN", "P11TEST_SO_PIN", "P11TEST_WRAP_KEY_VALUE"}
 
 _POLICY_IGNORED_ENV_KEYS = {
     "P11TEST_ISOLATION",
@@ -622,20 +623,24 @@ def build_state_fingerprint(
     selection_digest: str | None = None,
 ) -> str:
     """Build a stable fingerprint for resume validation."""
-    redacted_args: list[str] = []
-    redact_next = False
     manifest_digest = _manifest_digest(pytest_args)
-    for arg in pytest_args:
+    # Secrets first (central policy: values must not invalidate resume), then
+    # manifest paths (stability across renames — a different reason, kept local).
+    redacted_args = redact_secret_args(pytest_args)
+    stable_args: list[str] = []
+    redact_next = False
+    for arg in redacted_args:
         if redact_next:
-            redacted_args.append("<redacted>")
+            stable_args.append("<redacted>")
             redact_next = False
             continue
         if arg.startswith("--p11-manifest="):
-            redacted_args.append("--p11-manifest=<manifest>")
+            stable_args.append("--p11-manifest=<manifest>")
             continue
-        redacted_args.append(arg)
-        if arg in {"--p11-pin", "--p11-manifest"}:
+        stable_args.append(arg)
+        if arg == "--p11-manifest":
             redact_next = True
+    redacted_args = stable_args
 
     module_snapshot = None
     module_path = _extract_option_value(pytest_args, "--p11-module")

@@ -21,6 +21,7 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from pkcs11_check.core._secrets import redact_secret_args
 from pkcs11_check.core.report_log import SessionCompletionTracker
 
 _MAX_STREAM = 4000
@@ -219,7 +220,7 @@ def collection_failure_message(
         "targets:",
         *target_lines,
         "",
-        f"pytest args: {list(pytest_args)}",
+        f"pytest args: {redact_secret_args(pytest_args)}",
         f"interpreter: {sys.executable}",
         f"cwd: {Path.cwd()}",
         "",

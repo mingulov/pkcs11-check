@@ -90,6 +90,8 @@ def test_child_exit_124_preserves_partial_report_records(
     ) -> tuple[int, str, str]:
         del env, timeout
         # The child completed one test, then hit its own per-test timeout and exited.
+        # F-012: a genuine watchdog kill emits the harness-owned TimeoutExpired
+        # record, which is what promotes the 124 exit to the timeout path.
         for i, arg in enumerate(cmd):
             if arg == "--report-log" and i + 1 < len(cmd):
                 Path(cmd[i + 1]).write_text(
@@ -100,6 +102,13 @@ def test_child_exit_124_preserves_partial_report_records(
                             "when": "call",
                             "outcome": "passed",
                             "duration": 0.01,
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "$report_type": "TimeoutExpired",
+                            "nodeid": "test_a.py::test_slow",
                         }
                     )
                     + "\n",

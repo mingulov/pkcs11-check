@@ -292,6 +292,14 @@ UNIT_CHILD_ENV = "PKCS11_CHECK_UNIT_CHILD"
 _TIMEOUT_EXIT_CODE = 124
 
 
+# Guards the timer disarm transition (F-018): threading.Timer.cancel() only
+# stops a callback that has not started, so a just-fired timer would still run
+# _on_timeout_expired and kill a completed test with os._exit. The cancel path
+# sets the disarmed flag under this lock and the callback checks it under the
+# same lock -- a disarm that lands first always suppresses the exit.
+_timeout_disarm_lock = threading.Lock()
+
+
 def _on_timeout_expired(item: Any) -> None:
     """Dump every thread's stack, then exit with the framework's timeout code.
 
@@ -300,6 +308,20 @@ def _on_timeout_expired(item: Any) -> None:
     unwound, so a clean shutdown is not available. Records already written to the report
     log survive, because pytest-reportlog opens line-buffered and flushes per record.
     """
+    with _timeout_disarm_lock:
+        if getattr(item, "_pkcs11_check_timeout_disarmed", False):
+            return
+    # F-012 evidence: a harness-owned TimeoutExpired record, written before any
+    # diagnosis, so the parent can tell a watchdog kill from a provider that
+    # merely exited 124. Best-effort -- never let it block the exit.
+    try:
+        report_log_plugin = getattr(getattr(item, "config", None), "_report_log_plugin", None)
+        if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
+            report_log_plugin._write_json_data(
+                {"$report_type": "TimeoutExpired", "nodeid": item.nodeid}
+            )
+    except Exception as exc:  # noqa: BLE001 - diagnosis is best-effort; the exit is not
+        sys.stderr.write(f"(timeout record unavailable: {exc!r})\n")
     # Suspend pytest's capture FIRST. It redirects stdout/stderr at the fd level, and
     # os._exit discards the capture buffer, so anything written while capture is active
     # is lost -- verified against a real native hang, where the exit code was correct but
@@ -344,7 +366,12 @@ def pytest_timeout_cancel_timer(item: Any) -> bool | None:
     if timer is None:
         return None
     timer.cancel()
-    del item._pkcs11_check_timeout_timer
+    with _timeout_disarm_lock:
+        item._pkcs11_check_timeout_disarmed = True
+        try:
+            del item._pkcs11_check_timeout_timer
+        except AttributeError:
+            pass
     return True
 
 
@@ -453,7 +480,7 @@ def pytest_addoption(parser: Any) -> None:
         "--p11-wrap-key-value",
         dest="p11_wrap_key_value",
         default=None,
-        help="Hex value of a symmetric configured KEK",
+        help="Hex value of a symmetric configured KEK (prefer P11TEST_WRAP_KEY_VALUE env var)",
     )
     group.addoption(
         "--p11-wrap-mech",
@@ -1008,7 +1035,14 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
         pass
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    # N-006 ordering: finalization (and its records) must precede reportlog's
+    # SessionFinish bookend, so a death inside C_Finalize leaves the bookend
+    # absent and the abrupt-exit path attributes it to the module. This does
+    # NOT align the exitstatus: reportlog receives the original argument, so a
+    # failed finalize still yields SessionFinish(0) + exit 1 -- that mismatch
+    # is accepted by the narrow completion rule (F-044), never by hook order.
     config = session.config
     if config.getoption("p11_module", default=None) is None:
         return

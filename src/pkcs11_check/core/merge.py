@@ -241,13 +241,60 @@ def _stamp_selection_batch_id(
             unit.setdefault("selection_batch_id", batch_id)
 
 
+def _split_coverage_selector(selector: str) -> tuple[str, str | None]:
+    """Split a coverage selector into ``(file, node)`` (node ``None`` = whole file)."""
+    file_part, sep, node_part = selector.partition("::")
+    return file_part, (node_part if sep else None)
+
+
+def _selectors_overlap(first: str, second: str) -> bool:
+    """Whether two coverage selectors claim overlapping execution (N-002/F-015).
+
+    A bare file claims the whole file; a node claims itself and its ``::``
+    children. Containment is checked at separator boundaries so ``test_1``
+    never "contains" ``test_10``.
+    """
+    file_a, node_a = _split_coverage_selector(first)
+    file_b, node_b = _split_coverage_selector(second)
+    if file_a != file_b:
+        return False
+    if node_a is None or node_b is None:
+        return True
+    if node_a == node_b:
+        return True
+    return node_a.startswith(node_b + "::") or node_b.startswith(node_a + "::")
+
+
+def _unit_coverage_selectors(payload: dict[str, Any]) -> set[str]:
+    """Unit-target coverage of an ordinary (selection-free) payload.
+
+    Session-global pseudo-units (``<collection>``, ``<lifecycle>``) legitimately
+    repeat in every shard, as do ``::daemon-recovery-`` synthetics (one per
+    confirmed daemon death, never part of a case batch), so all are excluded;
+    every other duplicate target is a double-count.
+    """
+    selectors: set[str] = set()
+    for unit in payload.get("units", []) or []:
+        if not isinstance(unit, dict):
+            continue
+        target = str(unit.get("target", ""))
+        if (
+            not target
+            or target in {"<collection>", "<lifecycle>"}
+            or "::daemon-recovery-" in target
+        ):
+            continue
+        selectors.add(target)
+    return selectors
+
+
 def _validate_selection_payloads(
     payloads: list[dict[str, Any]],
     *,
     testcases_root: Path | None = None,
 ) -> list[CaseSelection]:
     """Validate selection metadata consistency across shard payloads."""
-    selections: list[CaseSelection] = []
+    payload_selections: list[CaseSelection | None] = []
     for payload in payloads:
         raw_selection = payload.get("selection")
         if raw_selection is not None:
@@ -256,19 +303,21 @@ def _validate_selection_payloads(
                     f"invalid selection payload: expected dict, got {type(raw_selection).__name__}"
                 )
             selection = CaseSelection.from_dict(raw_selection, testcases_root=testcases_root)
-            selections.append(selection)
+            payload_selections.append(selection)
             _stamp_selection_batch_id(
                 payload.get("units"),
                 selection.batch_id,
                 conflict_label="payload batch_id",
             )
         else:
+            payload_selections.append(None)
             for unit in payload.get("units", []) or []:
                 if isinstance(unit, dict) and unit.get("selection_batch_id"):
                     raise ValueError(
                         "unit has selection_batch_id but payload has no selection manifest"
                     )
 
+    selections = [s for s in payload_selections if s is not None]
     if selections:
         plan_ids = {s.plan_id for s in selections}
         if len(plan_ids) > 1:
@@ -276,48 +325,65 @@ def _validate_selection_payloads(
                 f"conflicting selection plan IDs across merged shards: {sorted(plan_ids)}"
             )
         seen_batch_ids: set[str] = set()
-        seen_nodeids: set[str] = set()
         for s in selections:
             if s.batch_id in seen_batch_ids:
                 raise ValueError(f"duplicate selection batch ID in merge: {s.batch_id}")
             seen_batch_ids.add(s.batch_id)
-            overlap = seen_nodeids.intersection(s.nodeids)
-            if overlap:
-                raise ValueError(
-                    f"overlapping node IDs across selection batches in merge: {sorted(overlap)}"
-                )
-            seen_nodeids.update(s.nodeids)
-    else:
-        # F19: without selection manifests there is no node-level overlap check,
-        # so a shard merged twice (or two overlapping --shard ranges) would
-        # silently double-count summaries. Guard on unit targets instead. The
-        # session-global pseudo-units (<collection>, <lifecycle>) legitimately
-        # repeat in every shard, as do ::daemon-recovery- synthetics (one per
-        # confirmed daemon death, never part of a case batch), so all are
-        # excluded; every other duplicate target is a double-count.
-        seen_targets: set[str] = set()
-        for payload in payloads:
-            shard_targets: set[str] = set()
-            for unit in payload.get("units", []) or []:
-                if not isinstance(unit, dict):
-                    continue
-                target = str(unit.get("target", ""))
-                if (
-                    not target
-                    or target in {"<collection>", "<lifecycle>"}
-                    or "::daemon-recovery-" in target
-                ):
-                    continue
-                shard_targets.add(target)
-            overlap = seen_targets.intersection(shard_targets)
-            if overlap:
-                raise ValueError(
-                    "duplicate unit targets across merged shards "
-                    f"(summaries would double-count): {sorted(overlap)}"
-                )
-            seen_targets.update(shard_targets)
+
+    # Unified coverage-overlap check (F19, extended by N-002/F-015): a payload
+    # contributes its selection nodeids when it has a manifest (the
+    # authoritative membership — per-file units in selection payloads
+    # legitimately repeat across disjoint batches), else its unit targets.
+    # The mere presence of a selection must not disable the ordinary checks.
+    seen_coverage: set[str] = set()
+    for payload, manifest in zip(payloads, payload_selections):
+        if manifest is not None:
+            coverage = set(manifest.nodeids)
+        else:
+            coverage = _unit_coverage_selectors(payload)
+        overlap = {s for s in coverage if any(_selectors_overlap(s, t) for t in seen_coverage)}
+        if overlap:
+            raise ValueError(
+                "overlapping execution coverage across merged shards "
+                f"(summaries would double-count): {sorted(overlap)}"
+            )
+        seen_coverage.update(coverage)
 
     return selections
+
+
+def _merged_shard_provenance(
+    payloads: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, bool]:
+    """Decide merged provenance without borrowing identity (F-025).
+
+    Returns (merged_provenance, mixed). Every dict-valued provenance must
+    agree, else ValueError; payloads without one (missing or malformed) make
+    the merge mixed instead of inheriting the first-known stamp. The mixed
+    marker keeps the shared known value subordinate for diagnosis -- readers
+    must treat status:mixed as unattributed, never as identity.
+    """
+    known = [p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)]
+    unknown = len(payloads) - len(known)
+    if known and any(provenance != known[0] for provenance in known[1:]):
+        raise ValueError("shard provenance differs; refusing to merge mismatched test inputs")
+    if not known:
+        return None, False
+    if unknown == 0:
+        return known[0], False
+    return (
+        {
+            "status": "mixed",
+            "reason": (
+                f"{unknown} of {len(payloads)} merged payloads carry no "
+                "provenance; refusing to stamp the merge with one shard's"
+            ),
+            "shards_with_provenance": len(known),
+            "shards_without_provenance": unknown,
+            "known_provenance": known[0],
+        },
+        True,
+    )
 
 
 def merge_results_payloads(
@@ -330,6 +396,7 @@ def merge_results_payloads(
 ) -> dict[str, Any]:
     """Combine N ``results.json`` payloads (summary summed, units concatenated)."""
     _validate_selection_payloads(payloads, testcases_root=testcases_root)
+    merged_provenance, provenance_mixed = _merged_shard_provenance(payloads)
 
     summary: dict[str, int] = {key: 0 for key in _SUMMARY_KEYS}
     units: list[dict[str, Any]] = []
@@ -344,15 +411,11 @@ def merge_results_payloads(
     child_crash, child_timeout = compute_child_subprocess_counts(units)
     summary["child_crash"] = child_crash
     summary["child_timeout"] = child_timeout
-    summary["incomplete"] = incoming_incomplete or incomplete_evidence
+    # Mixed provenance cannot prove a complete run: unattributed inputs make
+    # the merge incomplete even when every counted test passed (F-025).
+    summary["incomplete"] = incoming_incomplete or incomplete_evidence or provenance_mixed
     summary["incomplete"] = run_is_incomplete(summary, units)
 
-    shard_provenance = [p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)]
-    merged_provenance = shard_provenance[0] if shard_provenance else None
-    if merged_provenance is not None and any(
-        provenance != merged_provenance for provenance in shard_provenance[1:]
-    ):
-        raise ValueError("shard provenance differs; refusing to merge mismatched test inputs")
     merged: dict[str, Any] = {
         "tool": "pkcs11-check",
         "kind": "test-run",
@@ -508,6 +571,17 @@ def _load_shard_payload(
                         raise ValueError(
                             f"results.json selection is not a dict in {shard_dir.name}"
                         )
+                # F-013: valid results but no report stream — the merged JSONL and
+                # the coverage extracted from it will be short. Say so loudly and
+                # mark the payload incomplete (flows into the merged summary).
+                if not report_path.exists():
+                    warnings.append(
+                        f"{shard_dir.name}: report.jsonl missing; merged JSONL, coverage, "
+                        "and quality evidence will be short"
+                    )
+                    summary = data.setdefault("summary", {})
+                    if isinstance(summary, dict):
+                        summary["incomplete"] = True
                 return data
             warnings.append(
                 f"{shard_dir.name}: results.json is not an object; "
@@ -561,6 +635,32 @@ def _load_shard_payload(
     return None
 
 
+def _reject_output_alias(shard_dirs: list[Path], output_dir: Path) -> None:
+    """Refuse a merge whose output would overwrite one of its inputs (N-001).
+
+    Checked before any read or write: an ``output_dir`` resolving to (or
+    aliasing via symlink/hardlink) an input shard would truncate that shard's
+    ``report.jsonl``/``results.json`` while the merged summary still claimed
+    its outcomes.
+    """
+    resolved_output = output_dir.resolve()
+    for shard_dir in shard_dirs:
+        if shard_dir.resolve() == resolved_output:
+            raise ValueError(
+                f"merge output {output_dir} aliases its input shard dir "
+                f"{shard_dir}: refusing to overwrite raw evidence"
+            )
+        try:
+            aliased = shard_dir.exists() and output_dir.exists() and shard_dir.samefile(output_dir)
+        except OSError:
+            aliased = False
+        if aliased:
+            raise ValueError(
+                f"merge output {output_dir} aliases its input shard dir "
+                f"{shard_dir}: refusing to overwrite raw evidence"
+            )
+
+
 def merge_shard_dirs(
     shard_dirs: list[Path],
     output_dir: Path,
@@ -573,6 +673,7 @@ def merge_shard_dirs(
     (as produced by ``pkcs11-check test --output json``). Returns the merged
     ``results.json`` payload.
     """
+    _reject_output_alias(shard_dirs, output_dir)
     payloads: list[dict[str, Any]] = []
     files_per_shard: list[int] = []
     warnings: list[str] = []
@@ -587,12 +688,14 @@ def merge_shard_dirs(
     # Cross-shard validation BEFORE any output writes or concatenation:
     _validate_selection_payloads(payloads, testcases_root=testcases_root)
 
-    shard_provenance = [p["provenance"] for p in payloads if isinstance(p.get("provenance"), dict)]
-    merged_provenance = shard_provenance[0] if shard_provenance else None
-    if merged_provenance is not None and any(
-        provenance != merged_provenance for provenance in shard_provenance[1:]
-    ):
-        raise ValueError("shard provenance differs; refusing to merge mismatched test inputs")
+    # Same gate as merge_results_payloads (shared helper, same verdict), run
+    # before any output writes; a mixed merge also warns loudly here.
+    _, shard_provenance_mixed = _merged_shard_provenance(payloads)
+    if shard_provenance_mixed:
+        warnings.append(
+            "shard provenance is mixed: some shards carry no provenance, so "
+            "the merged run is marked incomplete and unattributed"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

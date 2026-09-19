@@ -15,7 +15,10 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from pkcs11_check.core._report_records import _report_record_cache_dir
+from pkcs11_check.core._report_records import (
+    _report_record_cache_dir,
+    _write_report_jsonl_from_record_sources,
+)
 from pkcs11_check.core.collection_errors import collection_failure_sidecar_path
 from pkcs11_check.core.file_runner import (
     _NO_TESTS_COLLECTED_EXIT,
@@ -163,6 +166,25 @@ def test_empty_units_writes_zero_total_report(tmp_path: Path) -> None:
     payload = json.loads(results_path.read_text(encoding="utf-8"))
     assert payload["summary"]["total"] == 0
     assert payload["units"] == []
+
+
+def test_provenance_only_stream_writes_no_jsonl(tmp_path: Path) -> None:
+    """A stream with no records is no stream: provenance must not conjure one.
+
+    Pins the writer contract behind test_fresh_empty_units_clear_stale_run_artifacts:
+    a run that recorded nothing leaves no report.jsonl (a missing shard stream
+    is the merge's designed partial signal), instead of a provenance-only file.
+    """
+    output_path = tmp_path / "report.jsonl"
+    wrote = _write_report_jsonl_from_record_sources(
+        tmp_path / "state.json",
+        units=[],
+        inline_records_by_unit={},
+        output_path=output_path,
+        provenance_record={"$report_type": "ProvenanceReport"},
+    )
+    assert wrote is False
+    assert not output_path.exists()
 
 
 def test_fresh_empty_units_clear_stale_run_artifacts(tmp_path: Path) -> None:

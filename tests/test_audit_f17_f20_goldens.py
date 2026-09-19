@@ -212,7 +212,7 @@ def _payload(target: str, status: str = "passed") -> dict[str, Any]:
 
 def test_merge_rejects_duplicate_unit_target_across_shards() -> None:
     """Merging the same target twice would silently double-count summaries."""
-    with pytest.raises(ValueError, match="duplicate unit targets"):
+    with pytest.raises(ValueError, match="overlapping execution coverage"):
         merge_results_payloads([_payload("test_a.py"), _payload("test_a.py")], coverage=None)
 
 

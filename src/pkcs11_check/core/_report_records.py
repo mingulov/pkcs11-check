@@ -696,9 +696,12 @@ def _write_report_jsonl_from_record_sources(
             for record in collection_records:
                 out_fh.write(json.dumps(record) + "\n")
                 wrote = True
-            if provenance_record is not None and not provenance_seen:
+            # Provenance rides along with real records, never alone: a stream
+            # containing only the framework version would conjure a report.jsonl
+            # for a run that recorded nothing. Absence is the designed signal
+            # (a missing shard stream reads as partial at merge time).
+            if provenance_record is not None and not provenance_seen and wrote:
                 out_fh.write(json.dumps(dict(provenance_record)) + "\n")
-                wrote = True
         if wrote:
             tmp_path.replace(output_path)
         else:

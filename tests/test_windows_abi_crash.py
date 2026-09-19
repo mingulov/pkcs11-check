@@ -32,7 +32,9 @@ def test_status_from_returncode_windows_crash(monkeypatch: pytest.MonkeyPatch) -
     assert file_runner._status_from_returncode(0xC0000005) == "crashed"
     assert file_runner._status_from_returncode(1) == "failed"
     assert file_runner._status_from_returncode(0) == "passed"
-    assert file_runner._status_from_returncode(124) == "timeout"
+    # F-012: a bare 124 is an abrupt self-exit on every platform; genuine
+    # watchdog kills take the TimeoutExpired path on TimeoutExpired evidence.
+    assert file_runner._status_from_returncode(124) == "failed"
 
 
 def test_status_from_returncode_posix_unaffected(monkeypatch: pytest.MonkeyPatch) -> None:

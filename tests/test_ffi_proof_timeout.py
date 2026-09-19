@@ -56,7 +56,6 @@ def _default_args(**overrides: object) -> dict[str, object]:
         "wrap_key_source": "bootstrap",
         "wrap_key_label": None,
         "wrap_key_handle": None,
-        "wrap_key_value": None,
         "wrap_mech": None,
         "wrap_rsa_bits": 2048,
         "wrap_oaep_hash": "auto",
@@ -159,3 +158,61 @@ class TestTimeoutMethodNotForced:
     def test_timeout_value_still_passed(self) -> None:
         args = _build_pytest_args(**_default_args(timeout=42))  # type: ignore[arg-type]
         assert args[args.index("--timeout") + 1] == "42"
+
+
+class TestStaleTimerCannotKillACompletedTest:
+    """F-018: a timer that fires as its test completes must not exit the process.
+
+    threading.Timer.cancel() only stops a callback that has not started; a
+    just-fired timer still runs _on_timeout_expired, which unconditionally
+    os._exit(124)s -- killing a completed run with its own stale timer. The
+    cancel path and the callback share a synchronized disarm transition, so a
+    disarm that lands first always suppresses the exit. These tests drive the
+    raced order directly (disarm, then invoke the callback) without killing
+    the test process.
+    """
+
+    def test_disarmed_timer_callback_does_not_exit(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv(plugin_mod.UNIT_CHILD_ENV, "1")
+        exits: list[int] = []
+        monkeypatch.setattr(plugin_mod.os, "_exit", lambda code: exits.append(code))
+
+        item = _FakeItem()
+        cancelled: list[bool] = []
+
+        class _Timer:
+            def cancel(self) -> None:
+                cancelled.append(True)
+
+        item._pkcs11_check_timeout_timer = _Timer()  # type: ignore[attr-defined]
+        assert plugin_mod.pytest_timeout_cancel_timer(item) is True
+        assert cancelled == [True]
+
+        plugin_mod._on_timeout_expired(item)  # type: ignore[attr-defined]
+
+        assert exits == [], (
+            "the callback ran after cancel() disarmed it; exiting here kills a "
+            "completed test with its own stale timer (F-018)"
+        )
+
+    def test_undisarmed_timer_callback_still_exits(self, monkeypatch: Any) -> None:
+        """The guard must not break genuine timeouts: no disarm, still exit 124."""
+        monkeypatch.setenv(plugin_mod.UNIT_CHILD_ENV, "1")
+        exits: list[int] = []
+        monkeypatch.setattr(plugin_mod.os, "_exit", lambda code: exits.append(code))
+
+        plugin_mod._on_timeout_expired(_FakeItem())  # type: ignore[attr-defined]
+
+        assert exits == [_TIMEOUT_RETURN_CODE]
+
+    def test_cancel_is_idempotent(self) -> None:
+        """A second cancel finds no timer and delegates (None), never explodes."""
+        item = _FakeItem()
+
+        class _Timer:
+            def cancel(self) -> None:
+                pass
+
+        item._pkcs11_check_timeout_timer = _Timer()  # type: ignore[attr-defined]
+        assert plugin_mod.pytest_timeout_cancel_timer(item) is True
+        assert plugin_mod.pytest_timeout_cancel_timer(item) is None

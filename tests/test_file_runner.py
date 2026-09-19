@@ -95,10 +95,12 @@ def test_unit_status_priority_is_the_overall_status_set() -> None:
     )
 
 
-def test_status_from_returncode_classifies_timeout_sentinel() -> None:
-    assert (
-        file_runner_mod._status_from_returncode(file_runner_mod._TIMEOUT_RETURN_CODE) == "timeout"
-    )
+def test_status_from_returncode_does_not_infer_timeout_from_124() -> None:
+    # F-012: a bare 124 is a self-exit, not a timeout. Genuine watchdog exits
+    # carry a TimeoutExpired record and take the TimeoutExpired path before
+    # this mapping is consulted, so this mapping must never claim "timeout"
+    # from the return code alone (a provider exiting 124 was misreported).
+    assert file_runner_mod._status_from_returncode(file_runner_mod._TIMEOUT_RETURN_CODE) == "failed"
 
 
 def test_crash_classification_prefers_structured_observation() -> None:
@@ -10834,6 +10836,7 @@ def test_runner_selected_batch_produces_single_outer_tee_and_overrides_timeout(
         state_file: Path,
         target: str,
         role: str,
+        timeout_evidence: object = None,
     ) -> tuple[int, str, str]:
         outer_tee_calls.append(
             {

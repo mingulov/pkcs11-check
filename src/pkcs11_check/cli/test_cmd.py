@@ -7,7 +7,7 @@ import os
 import tempfile
 import tomllib
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -24,6 +24,7 @@ from pkcs11_check.core._report_records import (
     _seed_missing_report_record_caches_from_jsonl,
     _write_report_jsonl_from_record_sources,
 )
+from pkcs11_check.core._run_guard import RunArtifactsLockedError, run_artifact_guard
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
@@ -38,6 +39,7 @@ from pkcs11_check.core.file_runner import (
     _emit_external_provision_banner,
     _reset_fresh_run_artifacts,
     _resume_exit_code,
+    _run_artifact_guard_paths,
     discover_auto_isolation_units,
     discover_pytest_units,
     extract_coverage_from_jsonl,
@@ -151,7 +153,8 @@ def _build_pytest_args(
     wrap_key_source: str,
     wrap_key_label: str | None,
     wrap_key_handle: int | None,
-    wrap_key_value: str | None,
+    # NOTE: no wrap_key_value — KEK transport is env-only (P11TEST_WRAP_KEY_VALUE,
+    # F-002). It must never appear on a child command line.
     wrap_mech: str | None,
     wrap_rsa_bits: int,
     wrap_oaep_hash: str,
@@ -192,8 +195,7 @@ def _build_pytest_args(
         args.extend(["--p11-wrap-key-label", wrap_key_label])
     if wrap_key_handle is not None:
         args.extend(["--p11-wrap-key-handle", str(wrap_key_handle)])
-    if wrap_key_value is not None:
-        args.extend(["--p11-wrap-key-value", wrap_key_value])
+    # F-002: --p11-wrap-key-value is never emitted; children read P11TEST_WRAP_KEY_VALUE.
     if wrap_mech is not None:
         args.extend(["--p11-wrap-mech", wrap_mech])
     if wrap_rsa_bits != 2048:
@@ -584,7 +586,7 @@ def test_command(
     wrap_key_value: str | None = typer.Option(
         None,
         "--wrap-key-value",
-        help="Hex value of a symmetric configured KEK",
+        help="Hex value of a symmetric configured KEK (prefer P11TEST_WRAP_KEY_VALUE env)",
         rich_help_panel="Key provisioning",
     ),
     wrap_mech: str | None = typer.Option(
@@ -711,6 +713,8 @@ def test_command(
     had_original_pin = "P11TEST_PIN" in os.environ
     original_so_pin = os.environ.get("P11TEST_SO_PIN")
     had_original_so_pin = "P11TEST_SO_PIN" in os.environ
+    original_wrap_key = os.environ.get("P11TEST_WRAP_KEY_VALUE")
+    had_original_wrap_key = "P11TEST_WRAP_KEY_VALUE" in os.environ
 
     original_no_collection_cache = os.environ.get("PKCS11_CHECK_NO_COLLECTION_CACHE")
     had_no_collection_cache = "PKCS11_CHECK_NO_COLLECTION_CACHE" in os.environ
@@ -725,6 +729,9 @@ def test_command(
     jsonl_path: Path | None = None
     jsonl_fd: int | None = None
     deselect_path: Path | None = None
+    # F-038: holds the run-artifact guards from the first reset to run end;
+    # entered once the outputs are known, released in cleanup_owned_resources.
+    artifact_guard_stack = ExitStack()
 
     def restore_caller_environment() -> None:
         if had_original_pin:
@@ -735,6 +742,10 @@ def test_command(
             os.environ["P11TEST_SO_PIN"] = original_so_pin or ""
         else:
             os.environ.pop("P11TEST_SO_PIN", None)
+        if had_original_wrap_key:
+            os.environ["P11TEST_WRAP_KEY_VALUE"] = original_wrap_key or ""
+        else:
+            os.environ.pop("P11TEST_WRAP_KEY_VALUE", None)
         if had_no_collection_cache:
             os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = original_no_collection_cache or ""
         else:
@@ -791,6 +802,8 @@ def test_command(
             if path is not None:
                 with suppress(Exception):
                     path.unlink(missing_ok=True)
+        with suppress(Exception):
+            artifact_guard_stack.close()
 
     try:
         manifest_fd, manifest_raw_path = tempfile.mkstemp(
@@ -818,6 +831,9 @@ def test_command(
             os.environ["P11TEST_PIN"] = pin
         if so_pin:
             os.environ["P11TEST_SO_PIN"] = so_pin
+        # F-002: KEK likewise travels by env only, never on a command line.
+        if wrap_key_value:
+            os.environ["P11TEST_WRAP_KEY_VALUE"] = wrap_key_value
 
         assert manifest_path is not None
         manifest = run_preflight_subprocess(
@@ -914,7 +930,6 @@ def test_command(
             wrap_key_source=wrap_key_source,
             wrap_key_label=wrap_key_label,
             wrap_key_handle=wrap_key_handle,
-            wrap_key_value=wrap_key_value,
             wrap_mech=wrap_mech,
             wrap_rsa_bits=wrap_rsa_bits,
             wrap_oaep_hash=wrap_oaep_hash,
@@ -930,6 +945,18 @@ def test_command(
         )
 
         target_args = targets or [_TESTCASES_DIR]
+        if isolation in {"auto", "file", "test"}:
+            # F-038: hold every artifact guard from the first reset to run end
+            # (released in cleanup_owned_resources via the outer finally). A run
+            # sharing any artifact with a live run refuses here, before it can
+            # reset or write anything.
+            try:
+                artifact_guard_stack.enter_context(
+                    run_artifact_guard(*_run_artifact_guard_paths(state_file, report_config))
+                )
+            except RunArtifactsLockedError as exc:
+                console.print(f"[red]Error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
         if isolation in {"auto", "file", "test"} and not resume:
             # Remove stale output/state before any metadata collection can fail. The
             # isolated runner repeats this reset when execution starts; keeping it
@@ -946,7 +973,7 @@ def test_command(
                 wrap_key_source=cast(Literal["bootstrap", "configured"], wrap_key_source),
                 wrap_key_label=wrap_key_label,
                 wrap_key_handle=wrap_key_handle,
-                wrap_key_value=wrap_key_value,
+                wrap_key_value=SecretStr(wrap_key_value) if wrap_key_value is not None else None,
                 wrap_mech=wrap_mech,
                 wrap_rsa_bits=wrap_rsa_bits,
                 wrap_oaep_hash=wrap_oaep_hash,
@@ -1110,6 +1137,27 @@ def test_command(
         results_path = Path(output_file or "pkcs11-check-results.json")
         if output == "json":
             results_path.parent.mkdir(parents=True, exist_ok=True)
+        # F-038: same guard discipline as the isolated path. The json layout
+        # matches the isolated one exactly, so enumerate via a synthetic
+        # config; junit writes only its xml; rich writes no shared artifact.
+        none_guard_paths: list[Path] = []
+        if output == "json":
+            none_guard_paths = _run_artifact_guard_paths(
+                None,
+                IsolatedReportConfig(
+                    "json",
+                    results_path,
+                    jsonl_path=results_path.parent / "report.jsonl",
+                ),
+            )
+        elif output == "junit":
+            none_guard_paths = [Path(output_file or "pkcs11-check-results.xml")]
+        if none_guard_paths:
+            try:
+                artifact_guard_stack.enter_context(run_artifact_guard(*none_guard_paths))
+            except RunArtifactsLockedError as exc:
+                console.print(f"[red]Error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
         jsonl_fd, jsonl_raw = tempfile.mkstemp(
             prefix="pkcs11-check-jsonl-",
             suffix=".jsonl",

@@ -469,6 +469,77 @@ class TestTestCommand:
         assert result.exit_code == 0
         assert os.environ["P11TEST_SO_PIN"] == "outer-so"
 
+    def test_test_exports_and_restores_wrap_key_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # F-002: the KEK travels by env only; the outer environment is restored.
+        module = tmp_path / "dummy.so"
+        module.write_text("", encoding="utf-8")
+        monkeypatch.setenv("P11TEST_WRAP_KEY_VALUE", "outer-kek")
+
+        def fake_run(
+            units: list[str],
+            pytest_args: list[str],
+            *,
+            timeout: int,
+            state_file: Path,
+            policy_file: Path | None,
+            report_config: object | None,
+            resume: bool,
+            stop_on_failure: bool,
+            console: object,
+            granularity: str,
+            max_crashes_per_file: int,
+            deselect_by_file: dict[str, set[str]] | None = None,
+            baseline_fingerprint: str | None = None,
+            provenance: object = None,
+            recovery_config: object = None,
+        ) -> int:
+            del (
+                units,
+                timeout,
+                state_file,
+                policy_file,
+                report_config,
+                resume,
+                stop_on_failure,
+                console,
+                granularity,
+                max_crashes_per_file,
+                deselect_by_file,
+                baseline_fingerprint,
+            )
+            assert os.environ["P11TEST_WRAP_KEY_VALUE"] == "ab" * 16
+            assert "--p11-wrap-key-value" not in pytest_args
+            return 0
+
+        monkeypatch.setattr(test_cmd, "run_isolated_pytest_units", fake_run)  # type: ignore[arg-type]
+        monkeypatch.setattr(
+            test_cmd,
+            "discover_pytest_units",
+            lambda targets, default_root, *, granularity, pytest_args: [  # type: ignore[arg-type]
+                str(default_root / "test_alpha.py")
+            ],
+        )
+        monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+        result = runner.invoke(
+            app,
+            [
+                "test",
+                "--module",
+                str(module),
+                "--wrap-key-value",
+                "ab" * 16,
+                "--isolation",
+                "file",
+                "--ignore-disabled-tests",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert os.environ["P11TEST_WRAP_KEY_VALUE"] == "outer-kek"
+
     def test_test_test_isolation_invokes_runner(self, tmp_path: Path, monkeypatch: object) -> None:
         module = tmp_path / "dummy.so"
         module.write_text("", encoding="utf-8")
