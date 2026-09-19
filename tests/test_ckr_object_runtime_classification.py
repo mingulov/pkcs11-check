@@ -98,10 +98,17 @@ def test_sensitive_missing_readback_but_value_readable_fails(
 # --- lifecycle: use-after-destroy (C_GetAttributeValue) -----------------------
 
 
-def _run_destroyed_handle(monkeypatch: pytest.MonkeyPatch, *, getattr_rv: int) -> None:
+def _run_destroyed_handle(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    getattr_rv: int,
+    destroy_rv: int = int(CKR_OK),
+    session_rv: int = int(CKR_OK),
+) -> None:
     monkeypatch.setattr(raw_recipes, "gen_aes_key", lambda *_a, **_k: 1)
     raw = SimpleNamespace(
-        C_DestroyObject=lambda *_a, **_k: int(CKR_OK),
+        C_DestroyObject=lambda *_a, **_k: int(destroy_rv),
+        C_GetSessionInfo=lambda *_a, **_k: int(session_rv),
         C_GetAttributeValue=lambda *_a, **_k: int(getattr_rv),
     )
     test_ckr_object.TestGetAttributeErrors().test_destroyed_handle(
@@ -123,13 +130,50 @@ def test_destroyed_handle_object_handle_invalid_passes(monkeypatch: pytest.Monke
     _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_OBJECT_HANDLE_INVALID))
 
 
-def test_destroyed_handle_session_handle_invalid_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_SESSION_HANDLE_INVALID))
+def test_destroyed_handle_session_handle_invalid_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    # F-004: a SESSION_HANDLE_INVALID verdict on the read is unverifiable
+    # (session premise unproven) -> xfail, never pass.
+    with pytest.raises(pytest.xfail.Exception):
+        _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_SESSION_HANDLE_INVALID))
 
 
 def test_destroyed_handle_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(pytest.xfail.Exception):
         _run_destroyed_handle(monkeypatch, getattr_rv=int(CKR_FUNCTION_FAILED))
+
+
+def test_destroyed_handle_destroy_declined_read_ok_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F-004: destroy declined -> destruction not established -> xfail, never fail.
+
+    A stale-handle factory collision (destroy declined, read on the live
+    original handle succeeds) must not fail a healthy provider.
+    """
+    with pytest.raises(pytest.xfail.Exception):
+        _run_destroyed_handle(
+            monkeypatch,
+            getattr_rv=int(CKR_OK),
+            destroy_rv=int(CKR_FUNCTION_FAILED),
+        )
+
+
+def test_destroyed_handle_destroy_declined_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F-004: destroy declined -> no use-after-destroy claim even on reject."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_destroyed_handle(
+            monkeypatch,
+            getattr_rv=int(CKR_OBJECT_HANDLE_INVALID),
+            destroy_rv=int(CKR_FUNCTION_FAILED),
+        )
+
+
+def test_destroyed_handle_session_dead_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F-004: session liveness unproven -> xfail, never pass."""
+    with pytest.raises(pytest.xfail.Exception):
+        _run_destroyed_handle(
+            monkeypatch,
+            getattr_rv=int(CKR_OBJECT_HANDLE_INVALID),
+            session_rv=int(CKR_SESSION_HANDLE_INVALID),
+        )
 
 
 # --- lifecycle: copy destroyed handle -----------------------------------------

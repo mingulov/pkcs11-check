@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
 )
@@ -62,6 +62,8 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
+    CKS_RO_PUBLIC_SESSION,
+    CKS_RW_PUBLIC_SESSION,
     CKU_SO,
     CKU_USER,
 )
@@ -168,10 +170,37 @@ class TestLoginStateTransitions:
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
+            # F-008: login is token-wide and the fixture may hold one, so a
+            # fresh handle does not imply public state. Settle to logged-out
+            # first (safe: this fixture is function-scoped and its teardown
+            # logout tolerates the logged-out state)...
+            _logout_safe(rs.raw, test_sh)
+            # ...and prove it with an explicit state observation.
+            state = int(get_session_info(rs.raw, test_sh)["state"])
+            if state not in (int(CKS_RO_PUBLIC_SESSION), int(CKS_RW_PUBLIC_SESSION)):
+                xfail_as(
+                    "honest_deviation",
+                    kind="lifecycle",
+                    label="public session precondition",
+                    detail={"session_state": state},
+                    summary=(
+                        "session still reports non-public state "
+                        f"{state:#x} after settling logout; cannot probe "
+                        "public-state visibility"
+                    ),
+                )
             # Without login, private objects should be invisible
             tmpl = template_from_dict({CKA_CLASS: CKO_PRIVATE_KEY})
             found = find_objects(rs.raw, test_sh, tmpl)
-            assert len(found) == 0, "Private keys visible without login - not public state"
+            if found:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="private objects visible in a public session",
+                    summary=(
+                        f"{len(found)} private key(s) visible in a session reporting public state"
+                    ),
+                )
         finally:
             close_session_quietly(rs.raw, test_sh)
 

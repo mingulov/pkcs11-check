@@ -261,6 +261,19 @@ def extract_groups(
             ingest(finalize, "C_Finalize::teardown")
 
     for crash in crashes:
-        ingest(crash, None)
+        ingest(crash, _crash_nodeid(crash))
 
     return [_finalize(group) for group in groups.values()]
+
+
+def _crash_nodeid(crash: dict[str, Any]) -> str | None:
+    """Recover a known culprit nodeid from a synthesized crash finding.
+
+    F-037: per-test unit targets already contain the nodeid
+    (``file::test``) -- keep it. File-level targets name no culprit;
+    return None to retain uncertainty rather than inventing precision.
+    """
+    label = crash.get("label")
+    if isinstance(label, str) and "::" in label:
+        return label
+    return None

@@ -17,6 +17,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
+    CKR_OPERATION_NOT_VALIDATED,
     CKR_PIN_INCORRECT,
     CKR_USER_NOT_LOGGED_IN,
     CKR_VENDOR_DEFINED,
@@ -384,6 +385,63 @@ def test_rsa_setup_listed_ckr_stays_structured_xfail(monkeypatch: Any) -> None:
     assert record.mechanism == "CKM_RSA_PKCS_KEY_PAIR_GEN"
     assert record.expected_ckr == ["CKR_OK"]
     assert record.actual_ckr == "CKR_FUNCTION_FAILED"
+
+
+def test_rsa_setup_sanctioned_refusal_xfails_with_record(monkeypatch: Any) -> None:
+    """F-036: NOT_VALIDATED on keypair setup -> classified xfail, never bare raise.
+
+    The shared setup helper must emit an at-source record; it must not pass
+    (the downstream test was not exercised -- only the claim layer passes on
+    a sanctioned refusal, via claim_refusal_passes).
+    """
+    from pkcs11_check import classification as C
+    from pkcs11_check.raw import recipes
+    from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
+
+    error = CkrAssertionError(
+        "C_GenerateKeyPair: Unexpected CK_RV CKR_OPERATION_NOT_VALIDATED",
+        int(CKR_OPERATION_NOT_VALIDATED),
+    )
+
+    def _raise(*_args: object, **_kwargs: object) -> tuple[int, int]:
+        raise error
+
+    monkeypatch.setattr(recipes, "gen_rsa_keypair", _raise)
+
+    with pytest.raises(pytest.xfail.Exception):
+        gen_rsa_keypair_or_xfail(_fake_keygen_rs("RSA_PKCS_KEY_PAIR_GEN"))
+
+    [record] = C.get_records()
+    assert record.reason == "not_operational"
+    assert record.operation == "C_GenerateKeyPair"
+    assert record.expected_ckr == ["CKR_OK"]
+    assert record.actual_ckr == "CKR_OPERATION_NOT_VALIDATED"
+
+
+def test_aes_setup_sanctioned_refusal_xfails_with_record(monkeypatch: Any) -> None:
+    """F-036: NOT_VALIDATED on AES setup -> classified xfail, never bare raise."""
+    from pkcs11_check import classification as C
+    from pkcs11_check.raw import recipes
+    from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail
+
+    error = CkrAssertionError(
+        "C_GenerateKey: Unexpected CK_RV CKR_OPERATION_NOT_VALIDATED",
+        int(CKR_OPERATION_NOT_VALIDATED),
+    )
+
+    def _raise(*_args: object, **_kwargs: object) -> int:
+        raise error
+
+    monkeypatch.setattr(recipes, "gen_aes_key", _raise)
+
+    with pytest.raises(pytest.xfail.Exception):
+        gen_aes_key_or_xfail(_fake_keygen_rs("AES_KEY_GEN"))
+
+    [record] = C.get_records()
+    assert record.reason == "not_operational"
+    assert record.operation == "C_GenerateKey"
+    assert record.expected_ckr == ["CKR_OK"]
+    assert record.actual_ckr == "CKR_OPERATION_NOT_VALIDATED"
 
 
 def test_ec_setup_unlisted_clean_ckr_fails_instead_of_xfail(monkeypatch: Any) -> None:

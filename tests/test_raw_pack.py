@@ -766,6 +766,26 @@ def test_mech_chacha20_default_counter() -> None:
     assert m.params.pBlockCounter is not None
 
 
+def test_mech_chacha20_counter_bytes_are_little_endian() -> None:
+    """F-031: the 32-bit block counter packs little-endian.
+
+    Rationale: ChaCha20's block counter is state word 12, a 32-bit
+    little-endian word (RFC 8439 s2.3); CK_CHACHA20_PARAMS carries it via
+    pBlockCounter/blockCounterBits. 0x01020304 discriminates LE
+    (04 03 02 01) from BE (01 02 03 04).
+    """
+    from pkcs11_check.raw.pack import mech_chacha20
+    from pkcs11_check.raw.types_std import CK_CHACHA20_PARAMS, CKM_CHACHA20
+
+    m = mech_chacha20(CKM_CHACHA20, b"\x00" * 12, counter=0x01020304)
+    assert m.ck.mechanism == CKM_CHACHA20
+    params = m.params
+    assert isinstance(params, CK_CHACHA20_PARAMS)
+    assert params.blockCounterBits == 32
+    assert params.pBlockCounter is not None
+    assert ctypes.string_at(params.pBlockCounter, 4) == b"\x04\x03\x02\x01"
+
+
 def test_mech_salsa20_sets_64_bit_counter_and_nonce_bits() -> None:
     from pkcs11_check.raw.pack import mech_salsa20
     from pkcs11_check.raw.types_std import CK_SALSA20_PARAMS, CKM_SALSA20

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -138,3 +139,58 @@ def test_raw_slot_mechanism_info_failure_preserves_exact_ckr() -> None:
         RawSlot(0, raw).get_mechanism_info(1)
 
     assert caught.value.rv == int(CKR_FUNCTION_FAILED)
+
+
+def _raw_with_token_info(label: bytes, manufacturer: bytes, model: bytes) -> MagicMock:
+    """Fake ``C_GetTokenInfo`` filling the struct with the given field bytes."""
+    import ctypes
+
+    from pkcs11_check.raw.types_std import CK_TOKEN_INFO
+
+    raw = _mock_raw()
+
+    def _fill(_slot_id: int, info_ptr: Any) -> int:
+        info = ctypes.cast(info_ptr, ctypes.POINTER(CK_TOKEN_INFO)).contents
+        for dest, value, size in (
+            (info.label, label, 32),
+            (info.manufacturerID, manufacturer, 32),
+            (info.model, model, 16),
+        ):
+            padded = value.ljust(size, b" ")
+            ctypes.memmove(dest, padded, size)
+        return 0  # CKR_OK
+
+    raw.C_GetTokenInfo.side_effect = _fill
+    return raw
+
+
+class TestRawTokenFieldDecoding:
+    """F-024: malformed UTF-8 in token fields must not interrupt diagnostics."""
+
+    def test_valid_fields_unchanged(self) -> None:
+        from pkcs11_check.core.loader import RawToken
+
+        raw = _raw_with_token_info(b"valid-token", b"vendor", b"model-1")
+        token = RawToken(0, raw)
+        assert token.label == "valid-token"
+        assert token.manufacturer_id == "vendor"
+        assert token.model == "model-1"
+
+    @pytest.mark.parametrize("field", ["label", "manufacturer_id", "model"])
+    def test_malformed_field_renders_escaped_bytes(self, field: str) -> None:
+        """Offending bytes surface as escapes in strict-encodable output.
+
+        RED proof: the pre-fix strict ``.decode("utf-8")`` raises
+        ``UnicodeDecodeError`` here instead of rendering anything.
+        """
+        from pkcs11_check.core.loader import RawToken
+
+        bad = b"tok\xffen"
+        fields = {"label": b"ok-label", "manufacturer_id": b"ok-vendor", "model": b"ok-model"}
+        fields[field] = bad
+        raw = _raw_with_token_info(fields["label"], fields["manufacturer_id"], fields["model"])
+        rendered = getattr(RawToken(0, raw), field)
+        assert isinstance(rendered, str)
+        assert "\\xff" in rendered, f"offending byte lost from {field}: {rendered!r}"
+        rendered.encode("utf-8")  # strict-encodable: no surrogates
+        assert "tok" in rendered and "en" in rendered

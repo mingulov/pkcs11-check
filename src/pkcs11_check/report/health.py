@@ -116,6 +116,10 @@ def health_lines(
     ]
     if counts["unclassified"]:
         parts.append(f"unclassified {counts['unclassified']} (migration backlog)")
+    if counts["harness_error"]:
+        # F-035: the computed subtotal is header-visible, explicitly outside
+        # the provider fail total (see outcome_counts partition).
+        parts.append(f"harness-error {counts['harness_error']} (not provider failures)")
     error = int(summary.get("error", 0))
     if error:
         parts.append(f"error {error}")

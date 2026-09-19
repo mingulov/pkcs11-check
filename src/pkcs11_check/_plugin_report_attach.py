@@ -401,10 +401,25 @@ def _synthetic_unclassified_record(
     are instead emitted as crash findings.
     """
     from pkcs11_check.classification import Classification
+    from pkcs11_check.raw.recipes import OutputLengthOverrunError
 
     excinfo = getattr(call, "excinfo", None)
     exc_type = getattr(excinfo, "type", None)
     exc = getattr(excinfo, "value", None)
+    if isinstance(exc, OutputLengthOverrunError):
+        # N-003: the module returned CKR_OK claiming more output bytes than
+        # buffer capacity -- provider malformed output (wrong_result), never
+        # an unexplained unclassified failure.
+        return Classification(
+            reason="wrong_result",
+            outcome="fail",
+            severity="MEDIUM",
+            kind="metadata",
+            label=item_nodeid(item),
+            operation=exc.call,
+            summary=str(exc),
+            detail={"capacity": exc.capacity, "reported": exc.reported},
+        )
     if isinstance(exc_type, type) and issubclass(exc_type, OSError):
         windows_status = _ctypes_access_violation_code(exc)
         if windows_status is not None:

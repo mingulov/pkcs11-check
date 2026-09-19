@@ -119,6 +119,37 @@ def test_false_like_copyable_is_present_and_allows_independent_set_check(
     assert _records() == []
 
 
+def test_copyable_mutation_type_invalid_after_successful_read_is_deviation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-010: read-then-TYPE_INVALID-on-mutate is a deviation, not a pass.
+
+    The module read CKA_COPYABLE successfully (so it recognises the
+    attribute type); rejecting the mutation with CKR_ATTRIBUTE_TYPE_INVALID
+    is unjustified by that read. Reading and changing are different
+    operations -- the rejection proves no bypass and must stay visible.
+    """
+    classification.clear()
+
+    def reject(*_args: object, **_kwargs: object) -> None:
+        raise CkrAssertionError("type invalid", int(CKR_ATTRIBUTE_TYPE_INVALID))
+
+    _setup(
+        monkeypatch,
+        reads=lambda *_a, **_k: {CKA_COPYABLE: False},
+        set_attributes=reject,
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        tae.TestCopyableOneWay().test_copyable_false_cannot_be_set_true(_session())
+
+    rec = _records()[-1]
+    assert rec.outcome == "xfail"
+    assert rec.reason == "nonspec_reject"
+    assert rec.kind == "policy"
+    assert rec.actual_ckr == "CKR_ATTRIBUTE_TYPE_INVALID"
+
+
 def test_valid_copyable_downgrade_rejection_is_visible_as_positive_xfail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

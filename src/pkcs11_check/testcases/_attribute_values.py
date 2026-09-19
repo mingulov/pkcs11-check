@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Final, Literal
 
-from pkcs11_check.classification import record_as, xfail_as
+from pkcs11_check.classification import fail_as, record_as, xfail_as
 from pkcs11_check.raw.metadata_std import ATTR_NAMES
 from pkcs11_check.raw.recipes import AttrRefusal
 from pkcs11_check.raw.rv import ckr_name
@@ -165,11 +165,25 @@ def attr_or_record(
 
 
 def require_ulong_attr(value: Any, label: str) -> int:
-    """Return a CK_ULONG-valued attribute or xfail malformed readback."""
+    """Return a CK_ULONG-valued attribute or classify a malformed readback.
+
+    F-006: a missing value (already recorded upstream by ``attr_or_record``)
+    xfails ``not_operational`` -- the test cannot proceed without a value. A
+    *present* value with the wrong ABI shape is provider-malformed metadata
+    and fails ``wrong_result``, matching the enforcement analog
+    (``_record_malformed_attribute``) and the access-levels validator.
+    """
     if isinstance(value, int) and not isinstance(value, bool):
         return value
-    xfail_as(
-        "not_operational",
+    if value is MISSING_ATTRIBUTE:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: attribute absent (cannot proceed without a value)",
+        )
+    fail_as(
+        "wrong_result",
         kind="metadata",
         label=label,
         summary=f"{label}: malformed CK_ULONG attribute value: {value!r}",
@@ -177,11 +191,21 @@ def require_ulong_attr(value: Any, label: str) -> int:
 
 
 def require_bool_attr(value: Any, label: str) -> bool:
-    """Return a CK_BBOOL-valued attribute or xfail malformed readback."""
+    """Return a CK_BBOOL-valued attribute or classify a malformed readback.
+
+    F-006: same missing-vs-present-malformed split as ``require_ulong_attr``.
+    """
     if isinstance(value, bool):
         return value
-    xfail_as(
-        "not_operational",
+    if value is MISSING_ATTRIBUTE:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            summary=f"{label}: attribute absent (cannot proceed without a value)",
+        )
+    fail_as(
+        "wrong_result",
         kind="metadata",
         label=label,
         summary=f"{label}: malformed CK_BBOOL attribute value: {value!r}",

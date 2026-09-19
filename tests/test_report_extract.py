@@ -140,6 +140,46 @@ def test_crashes_are_merged_as_findings(tmp_path: Path) -> None:
     assert crash_grp["test_file"] == "tests/test_overflow.py"
 
 
+def _crash(label: str) -> dict[str, object]:
+    return {
+        "schema": 1,
+        "reason": "crash",
+        "outcome": "fail",
+        "severity": "HIGH",
+        "kind": None,
+        "label": label,
+        "summary": f"{label}: process crashed",
+        "operation": None,
+        "mechanism": None,
+        "expected_ckr": None,
+        "actual_ckr": None,
+        "spec_ref": "",
+        "source": None,
+        "vector_id": None,
+        "detail": {"signal": "SIGSEGV", "returncode": -11},
+    }
+
+
+def test_crash_with_per_test_target_recovers_nodeid(tmp_path: Path) -> None:
+    """F-037: a per-test crash target already names the culprit -- keep it."""
+    path = tmp_path / "report.jsonl"
+    path.write_text("", encoding="utf-8")
+    groups = extract_groups(path, crashes=[_crash("tests/test_overflow.py::test_boom")])
+    (crash_grp,) = [g for g in groups if g["reason"] == "crash"]
+    assert crash_grp["test_file"] == "tests/test_overflow.py"
+    assert crash_grp["nodeids"] == ["tests/test_overflow.py::test_boom"]
+
+
+def test_crash_with_file_target_retains_uncertainty(tmp_path: Path) -> None:
+    """F-037: a file-level crash names no culprit -- do not invent one."""
+    path = tmp_path / "report.jsonl"
+    path.write_text("", encoding="utf-8")
+    groups = extract_groups(path, crashes=[_crash("tests/test_overflow.py")])
+    (crash_grp,) = [g for g in groups if g["reason"] == "crash"]
+    assert crash_grp["test_file"] == "tests/test_overflow.py"
+    assert crash_grp["nodeids"] == []
+
+
 def test_non_test_phase_reports_ignored(tmp_path: Path) -> None:
     path = tmp_path / "report.jsonl"
     custom = {

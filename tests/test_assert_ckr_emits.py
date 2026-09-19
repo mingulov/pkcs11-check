@@ -8,7 +8,7 @@ with the correct reason and metadata, while preserving the existing outcome.
 from __future__ import annotations
 
 import pytest
-from _pytest.outcomes import Failed
+from _pytest.outcomes import Failed, XFailed
 
 from pkcs11_check import classification as C
 from pkcs11_check.raw.types_std import (
@@ -18,6 +18,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_PIN_INCORRECT,
+    CKR_VENDOR_DEFINED,
 )
 from pkcs11_check.testcases.ckr._ckr_spec import CkrExpectation, assert_ckr
 
@@ -68,19 +69,40 @@ def test_spec_correct_rejection_emits_no_record() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Compat mode: not in acceptable set -> fail
+# F-023: compat outside-set aligns with the directional rule
 # ---------------------------------------------------------------------------
 
 
-def test_outside_acceptable_set_is_fail() -> None:
-    """A defined standard code not in compat set -> fail (outcome preserved)."""
+def test_outside_set_standard_clean_is_xfail() -> None:
+    """F-023: a clean standard code outside the set -> xfail, like conftest."""
     C.clear()
-    with pytest.raises(Failed):
+    with pytest.raises(pytest.xfail.Exception):
         assert_ckr(EXP, CKR_PIN_INCORRECT, strict=False)
-    # A record must have been emitted; outcome must be fail.
-    recs = C.get_records()
-    assert recs, "expected a Classification record on outside-set fail"
-    assert recs[-1].outcome == "fail"
+    rec = C.get_records()[-1]
+    assert rec.reason == "nonspec_reject"
+    assert rec.outcome == "xfail"
+
+
+def test_outside_set_vendor_defined_is_xfail() -> None:
+    """F-023: a vendor-defined code outside the set -> xfail, like conftest."""
+    C.clear()
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr(EXP, int(CKR_VENDOR_DEFINED) + 1, strict=False)
+    rec = C.get_records()[-1]
+    assert rec.reason == "nonspec_reject"
+    assert rec.outcome == "xfail"
+
+
+def test_outside_set_undefined_is_fail() -> None:
+    """F-023: an arbitrary non-CKR integer is NOT a clean code -> fail."""
+    C.clear()
+    with pytest.raises(Failed) as ei:
+        assert_ckr(EXP, 0x12345678, strict=False)
+    assert not isinstance(ei.value, XFailed)
+    rec = C.get_records()[-1]
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "metadata"
+    assert rec.outcome == "fail"
 
 
 # ---------------------------------------------------------------------------

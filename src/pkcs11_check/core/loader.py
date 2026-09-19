@@ -71,6 +71,21 @@ class MechValue(int):
         return f"<MechValue {self.name}>"
 
 
+def decode_token_field(raw: bytes) -> str:
+    """Decode a fixed-width token string field without losing malformed bytes.
+
+    F-024: provider bytes are not guaranteed UTF-8, and diagnostics (``info``,
+    reports) must not die on them -- nor silently substitute U+FFFD. Valid
+    input decodes exactly as before; otherwise each offending byte surfaces
+    as a ``\\xNN`` escape. The result is always strict-UTF-8-encodable and
+    the offending byte values stay recoverable from the rendered text.
+    """
+    try:
+        return raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", errors="backslashreplace").strip()
+
+
 class RawToken:
     """Minimal token info wrapper (replaces python-pkcs11 Token)."""
 
@@ -90,15 +105,15 @@ class RawToken:
 
     @property
     def label(self) -> str:
-        return bytes(self._get_info().label).decode("utf-8").strip()
+        return decode_token_field(bytes(self._get_info().label))
 
     @property
     def manufacturer_id(self) -> str:
-        return bytes(self._get_info().manufacturerID).decode("utf-8").strip()
+        return decode_token_field(bytes(self._get_info().manufacturerID))
 
     @property
     def model(self) -> str:
-        return bytes(self._get_info().model).decode("utf-8").strip()
+        return decode_token_field(bytes(self._get_info().model))
 
     def open(self, rw: bool = False) -> Any:
         """Not implemented in the raw loader -- use fixtures.py raw bootstrap."""

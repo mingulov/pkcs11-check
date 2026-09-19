@@ -39,11 +39,15 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_SESSION_COUNT,
     CKR_SESSION_READ_ONLY,
-    CKR_SESSION_READ_ONLY_EXISTS,
     CKR_USER_NOT_LOGGED_IN,
     CKU_USER,
 )
-from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, get_pin_bytes, is_known_error
+from pkcs11_check.testcases.conftest import (
+    classify_negative_rv,
+    gen_aes_key_or_xfail,
+    get_pin_bytes,
+    is_known_error,
+)
 
 pytestmark = pytest.mark.access
 
@@ -115,8 +119,13 @@ class TestSessionInfo:
         flags = CKF_SERIAL_SESSION
         test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
         pin_bytes = get_pin_bytes(p11_config)
+        # F-007: login_user raises unless the login holds, so reaching the
+        # probe with a PIN proves authentication -- the precondition for
+        # claiming the R/O restriction was the deciding condition.
+        logged_in = False
         if pin_bytes is not None:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
+            logged_in = True
         try:
             # Session (non-token) object must succeed on RO session
             session_key_h = gen_aes_key_or_xfail(rs, 128, sh=test_sh)
@@ -133,10 +142,20 @@ class TestSessionInfo:
             mech = mech_simple(CKM_AES_KEY_GEN)
             key_h = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
-            assert rv in (
-                CKR_SESSION_READ_ONLY,
-                CKR_USER_NOT_LOGGED_IN,
-                CKR_SESSION_READ_ONLY_EXISTS,
-            ), f"Expected CKR_SESSION_READ_ONLY, got {ckr_name(rv)}"
+            # F-007: without a PIN, CKR_USER_NOT_LOGGED_IN is a legitimate
+            # deciding condition alongside the R/O restriction; when
+            # authenticated, only the R/O restriction decides. The
+            # SO-login-specific CKR_SESSION_READ_ONLY_EXISTS is never an
+            # acceptable pass here -- it stays a visible deviation (xfail).
+            expected = (
+                (CKR_SESSION_READ_ONLY,)
+                if logged_in
+                else (CKR_SESSION_READ_ONLY, CKR_USER_NOT_LOGGED_IN)
+            )
+            classify_negative_rv(
+                rv,
+                expected,
+                label="C_GenerateKey with CKA_TOKEN=True on a read-only session",
+            )
         finally:
             close_session_quietly(rs.raw, test_sh)

@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.bootstrap import close_session_quietly
 from pkcs11_check.raw.bootstrap import open_session as _raw_open_session
 from pkcs11_check.raw.rv import ckr_name
@@ -135,13 +135,36 @@ class TestLogoutErrors:
             CKF_SERIAL_SESSION,  # R/O, no RW flag
         )
         try:
+            # F-005: login state is token-wide and the fixture may already
+            # have logged in, so establish the logged-out state first with a
+            # settling logout (OK = was logged in, now out; NOT_LOGGED_IN =
+            # already out). Safe: this fixture is function-scoped and its
+            # teardown logout tolerates the logged-out state.
+            setup_rv = rs.raw.C_Logout(sh)
+            if setup_rv not in (CKR_OK, CKR_USER_NOT_LOGGED_IN):
+                xfail_as(
+                    "honest_deviation",
+                    kind="lifecycle",
+                    label="C_Logout precondition (logged-out state)",
+                    actual=int(setup_rv),
+                    summary=(
+                        "settling C_Logout returned "
+                        f"{ckr_name(setup_rv)}; cannot establish logged-out state"
+                    ),
+                )
             rv = rs.raw.C_Logout(sh)
-            # Some modules don't error on logout without login
-            # But CKR_USER_NOT_LOGGED_IN is correct
-            if rv != CKR_OK:
-                assert rv in (
-                    CKR_USER_NOT_LOGGED_IN,
-                    CKR_USER_ALREADY_LOGGED_IN,
-                ), f"Unexpected CKR {ckr_name(rv)} from C_Logout"
+            if rv == CKR_USER_NOT_LOGGED_IN:
+                return
+            # Any other clean code (including CKR_OK: some modules do not
+            # error on logout without login) is a recorded deviation --
+            # never a silent pass, never a provider-bug fail.
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="C_Logout without login",
+                expected=int(CKR_USER_NOT_LOGGED_IN),
+                actual=int(rv),
+                summary=(f"C_Logout without login returned {ckr_name(rv)} (tolerated deviation)"),
+            )
         finally:
             close_session_quietly(rs.raw, sh)

@@ -32,6 +32,7 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
+    CK_SESSION_INFO,
     CK_ULONG,
     CKA_ALLOWED_MECHANISMS,
     CKA_CLASS,
@@ -52,7 +53,6 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
-    CKR_SESSION_HANDLE_INVALID,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
@@ -462,7 +462,29 @@ class TestGetAttributeErrors:
         """Using a destroyed object's handle -> CKR_OBJECT_HANDLE_INVALID."""
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 128)
-        rs.raw.C_DestroyObject(rs.sh, key)
+        destroy_rv = rs.raw.C_DestroyObject(rs.sh, key)
+        if destroy_rv != CKR_OK:
+            # F-004: destruction not established -- the handle may still be
+            # live (e.g. a stale-handle factory collision), so no
+            # use-after-destroy probe ran.
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="C_GetAttributeValue via a destroyed object handle (use-after-destroy)",
+                summary=(
+                    f"C_DestroyObject returned {ckr_name(destroy_rv)}; destruction not established"
+                ),
+            )
+        info = CK_SESSION_INFO()
+        if rs.raw.C_GetSessionInfo(rs.sh, byref(info)) != CKR_OK:
+            # F-004: session liveness unproven -- a later
+            # CKR_SESSION_HANDLE_INVALID would be unverifiable.
+            xfail_as(
+                "honest_deviation",
+                kind="lifecycle",
+                label="C_GetAttributeValue via a destroyed object handle (use-after-destroy)",
+                summary="session not live after C_DestroyObject; cannot probe use-after-destroy",
+            )
         # Negative op on a destroyed handle. Issue C_GetAttributeValue *directly*
         # (not via read_attributes, which would re-raise the correct
         # CKR_OBJECT_HANDLE_INVALID rejection as a setup error). Sizing call only.
@@ -473,10 +495,11 @@ class TestGetAttributeErrors:
         rv = rs.raw.C_GetAttributeValue(rs.sh, key, tmpl, 1)
         # CKR_OK -> the read succeeded on a destroyed handle (use-after-destroy)
         # -> fail. A handle-invalid rejection is spec-correct -> pass. Any other
-        # clean reject code -> xfail (honest non-spec deviation).
+        # clean reject code (including CKR_SESSION_HANDLE_INVALID, whose session
+        # premise is unverifiable here) -> xfail (honest non-spec deviation).
         classify_negative_rv(
             rv,
-            (CKR_OBJECT_HANDLE_INVALID, CKR_SESSION_HANDLE_INVALID),
+            (CKR_OBJECT_HANDLE_INVALID,),
             label="C_GetAttributeValue via a destroyed object handle (use-after-destroy)",
         )
 

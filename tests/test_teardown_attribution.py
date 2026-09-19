@@ -205,6 +205,95 @@ def test_abrupt_exit_without_bookend_is_provider_crash_not_harness(
     assert "[abrupt-exit]" in merged
 
 
+def _write_finalize_child(tmp_path: Path, finalize_body: str) -> Path:
+    """Real-child fixture: fake Raw installed in the plugin stash (no .so loaded).
+
+    Mirrors the validation doc's F-044/N-006 repro: the conftest's
+    ``pytest_sessionstart`` runs after the plugin's configure (which stashes
+    None), so the fake survives to sessionfinish, where the tryfirst hook
+    calls ``C_Finalize`` on it.
+    """
+    (tmp_path / "conftest.py").write_text(
+        "import pkcs11_check.plugin as plugin\n"
+        "\n"
+        "class Raw:\n"
+        "    def available_function_names(self):\n"
+        "        return set()\n"
+        "\n"
+        "    def C_Finalize(self, _):\n"
+        f"        {finalize_body}\n"
+        "\n"
+        "def pytest_sessionstart(session):\n"
+        "    session.config.stash[plugin._RAW_INSTANCE] = Raw()\n",
+        encoding="utf-8",
+    )
+    unit = tmp_path / "test_finalize_child.py"
+    unit.write_text("def test_ok():\n    pass\n", encoding="utf-8")
+    return unit
+
+
+def _run_unit(unit: Path, tmp_path: Path) -> tuple[str, str]:
+    """Run one real file unit; return (status, merged report.jsonl text)."""
+    state_file = tmp_path / "state.json"
+    report_jsonl_path = tmp_path / "report.jsonl"
+    run_isolated_pytest_units(
+        [str(unit)],
+        ["--p11-module", "/tmp/unused.so"],
+        timeout=30,
+        state_file=state_file,
+        policy_file=None,
+        report_config=IsolatedReportConfig(
+            "json", tmp_path / "results.json", jsonl_path=report_jsonl_path
+        ),
+        resume=False,
+        stop_on_failure=False,
+        console=Console(file=StringIO(), force_terminal=False),
+        granularity="file",
+    )
+    saved = load_run_state(state_file)
+    assert saved is not None
+    status = {r.target: r.status for r in saved.results}[str(unit)]
+    return status, report_jsonl_path.read_text(encoding="utf-8")
+
+
+def test_failed_finalize_real_child_yields_finding_not_harness_error(
+    tmp_path: Path,
+) -> None:
+    """F-044 real child: C_Finalize returns 5 -> failed TeardownFinalize, exit 1.
+
+    reportlog still writes SessionFinish(0) (it receives the original
+    exitstatus); the narrow completion rule accepts the 0-to-1 mismatch only
+    because the failed TeardownFinalize is in the same attempt. No
+    HarnessError may be invented.
+    """
+    unit = _write_finalize_child(tmp_path, "return 5  # CKR_GENERAL_ERROR")
+    status, merged = _run_unit(unit, tmp_path)
+    assert status == "failed"
+    assert '"$report_type": "HarnessError"' not in merged
+    assert '"$report_type": "TeardownFinalize"' in merged
+    assert '"exitstatus": 0' in merged  # the accepted mismatch
+    assert "test_finalize_child.py::test_ok" in merged  # completed test preserved
+
+
+def test_exit_during_finalize_real_child_is_provider_crash(tmp_path: Path) -> None:
+    """N-006 real child: os._exit(7) inside C_Finalize is a provider crash.
+
+    Finalization precedes the SessionFinish bookend (tryfirst), so the death
+    leaves SessionFinish absent and the abrupt-exit path attributes it to the
+    module -- never the harness.
+    """
+    unit = _write_finalize_child(tmp_path, "import os as _os\n        _os._exit(7)")
+    status, merged = _run_unit(unit, tmp_path)
+    assert '"$report_type": "HarnessError"' not in merged
+    assert '"$report_type": "SessionFinish"' not in merged
+    assert "[abrupt-exit]" in merged
+    assert "test_finalize_child.py::test_ok" in merged  # completed test preserved
+    # "failed", not "crashed": crashed is reserved for signals/Windows crash
+    # codes; a positive abrupt rc takes failed status with provider-side
+    # [abrupt-exit] attribution (same contract as the exit-124 real child).
+    assert status == "failed"
+
+
 def test_sessionfinish_runs_before_reportlog_bookend() -> None:
     """N-006 ordering: our sessionfinish must precede reportlog's SessionFinish.
 
