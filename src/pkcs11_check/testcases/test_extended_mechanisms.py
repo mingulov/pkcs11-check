@@ -77,6 +77,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
+    require_mechanism_or_skip,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
@@ -460,19 +461,27 @@ class TestKMAC:
 
     Most current modules do not yet support KMAC. Tests skip cleanly.
     KMAC has no OASIS-assigned code point (framework issue #22); these tests
-    run only against modules exposing vendor-range KMAC.
+    run only against modules exposing vendor-range KMAC, with the module's code
+    points supplied via ``--p11-vendor-mechanism KMAC_128=0x...``.
     """
 
     def _mechanism_or_skip(self, name: str) -> CKM:
+        from pkcs11_check.raw.extensions import lookup_mechanism_id
+
         ckm_name = f"CKM_{name}"
         for mechanism_id, mechanism_name in MECHANISM_NAMES.items():
             if mechanism_name == ckm_name:
                 return CKM(mechanism_id, ckm_name)
-        pytest.skip(f"{ckm_name} numeric value not available in standard metadata")
+        vendor_id = lookup_mechanism_id(ckm_name)
+        if vendor_id is not None:
+            return CKM(vendor_id, ckm_name)
+        pytest.skip(
+            f"{ckm_name}: no code point known to pkcs11-check "
+            f"(pass --p11-vendor-mechanism {name}=0x... for a vendor mechanism)"
+        )
 
     def _run_roundtrip(self, rs: Any, name: str, mac_len: int) -> None:
-        if not rs.has_mechanism(name):
-            pytest.skip(f"CKM_{name} not supported")
+        require_mechanism_or_skip(rs, name)
         mechanism = self._mechanism_or_skip(name)
         key = 0
         try:
@@ -578,14 +587,10 @@ class TestKMAC:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("KMAC_128"):
-            pytest.skip("CKM_KMAC_128 not supported")
+        require_mechanism_or_skip(p11_raw_session, "KMAC_128")
 
     def test_kmac_256_availability(self, p11_raw_session: Any) -> None:
-        rs = p11_raw_session
-        if not rs.has_mechanism("KMAC_256"):
-            pytest.skip("CKM_KMAC_256 not supported")
+        require_mechanism_or_skip(p11_raw_session, "KMAC_256")
 
     def test_kmac_128_sign_roundtrip(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session

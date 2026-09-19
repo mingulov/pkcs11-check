@@ -157,6 +157,7 @@ def _build_pytest_args(
     wrap_oaep_hash: str,
     allow_external_provision: bool,
     external_provision_cmd: str | None,
+    vendor_mechanism: list[str] | None,
 ) -> list[str]:
     args: list[str] = []
     args.extend(["--p11-module", str(module)])
@@ -183,6 +184,8 @@ def _build_pytest_args(
 
     if key_inject != "off":
         args.extend(["--p11-key-inject", key_inject])
+    for spec in vendor_mechanism or []:
+        args.extend(["--p11-vendor-mechanism", spec])
     if wrap_key_source != "bootstrap":
         args.extend(["--p11-wrap-key-source", wrap_key_source])
     if wrap_key_label is not None:
@@ -641,6 +644,13 @@ def test_command(
         help="Path to an exact case batch selection manifest",
         rich_help_panel="Selection",
     ),
+    vendor_mechanism: list[str] | None = typer.Option(
+        None,
+        "--vendor-mechanism",
+        metavar="NAME=0xID",
+        help="Vendor mechanism code point, e.g. KMAC_128=0x80001234 (repeatable)",
+        rich_help_panel="Selection",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
@@ -910,6 +920,7 @@ def test_command(
             wrap_oaep_hash=wrap_oaep_hash,
             allow_external_provision=allow_external_provision,
             external_provision_cmd=external_provision_cmd,
+            vendor_mechanism=vendor_mechanism,
         )
         pytest_args.extend(["--p11-manifest", str(manifest_path)])
         report_config = (

@@ -124,10 +124,13 @@ def assert_ckr_subprocess_ok(
 
     if not complete:
         # A CKR child with neither a semantic terminal marker nor an exact completion
-        # marker delivered no trustworthy protocol result. This is a harness defect,
-        # never a provider crash finding.
+        # marker delivered no trustworthy protocol result. Attribution is unresolved --
+        # the missing line is as likely a module observation as our own bug -- so this
+        # stays a loud provider-side fail, never a provider crash finding and never an
+        # inferred harness defect (classification.py: HARNESS_REASONS is positive-claim
+        # only).
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=(
                 f"{context}: child subprocess did not emit an OK marker "

@@ -118,6 +118,116 @@ def test_sessionfinish_emits_provenance_report(monkeypatch) -> None:  # type: ig
     assert provenance[0]["framework"]["source"] == "env"
 
 
+def test_sessionfinish_skips_provenance_report_in_unit_child(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A parent-managed child emits no ProvenanceReport; the parent owns one (F4)."""
+    import pytest
+
+    import pkcs11_check.plugin as plugin
+    from pkcs11_check.plugin import pytest_sessionfinish
+
+    monkeypatch.setenv("PKCS11_CHECK_FRAMEWORK_VERSION", "9.9.9-test")
+    monkeypatch.setenv("PKCS11_CHECK_UNIT_CHILD", "1")
+    monkeypatch.setattr(plugin, "_finalize_on_teardown", lambda config, raw: "ok")
+
+    written: list[dict] = []  # type: ignore[type-arg]
+
+    class _ReportLog:
+        def _write_json_data(self, record):  # type: ignore[no-untyped-def]
+            written.append(record)
+
+    class _Raw:
+        def available_function_names(self):  # type: ignore[no-untyped-def]
+            return set()
+
+    class _Config:
+        stash = {
+            plugin._CUMULATIVE_FUNCTIONS: set(),
+            plugin._RAW_INSTANCE: _Raw(),
+        }
+        _report_log_plugin = _ReportLog()
+
+        def getoption(self, name, default=None):  # type: ignore[no-untyped-def]
+            if name == "p11_module":
+                return "/tmp/fake-module.so"
+            return default
+
+    class _Session:
+        config = _Config()
+        exitstatus = pytest.ExitCode.OK
+
+    pytest_sessionfinish(_Session(), int(pytest.ExitCode.OK))  # type: ignore[arg-type]
+
+    assert [r for r in written if r.get("$report_type") == "ProvenanceReport"] == []
+
+
+def test_parent_provenance_record_shells_git_once(
+    monkeypatch,
+    tmp_path: Path,  # type: ignore[no-untyped-def]
+) -> None:
+    """Parent version resolution costs exactly one git describe (F4)."""
+    import pkcs11_check.core.file_runner as file_runner_mod
+    import pkcs11_check.provenance as provenance_mod
+
+    calls: list[list[str]] = []
+
+    def _counting_git(args: list[str], cwd: Path) -> str | None:
+        calls.append(args)
+        return "v9.9.9-1-gdeadbee"
+
+    real_framework_version = provenance_mod.framework_version
+
+    def _counting_version(**kwargs):  # type: ignore[no-untyped-def]
+        return real_framework_version(**kwargs, run_git=_counting_git)
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.delenv("PKCS11_CHECK_FRAMEWORK_VERSION", raising=False)
+    monkeypatch.setattr(provenance_mod, "framework_version", _counting_version)
+    monkeypatch.setattr(provenance_mod, "framework_repo_root", lambda: tmp_path)
+
+    record = file_runner_mod._parent_provenance_record()
+
+    assert calls == [["describe", "--tags", "--always", "--dirty"]]
+    assert record["$report_type"] == "ProvenanceReport"
+    assert record["framework"]["version"] == "v9.9.9-1-gdeadbee"
+    assert record["framework"]["source"] == "git-describe"
+
+
+def test_parent_provenance_record_prefers_env_without_git(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """A pinned parent env needs no git call at all (F4)."""
+    import pkcs11_check.core.file_runner as file_runner_mod
+    import pkcs11_check.provenance as provenance_mod
+
+    def _failing_git(args: list[str], cwd: Path) -> str | None:
+        raise AssertionError("git must not run when the version is pinned")
+
+    real_framework_version = provenance_mod.framework_version
+
+    def _guarded_version(**kwargs):  # type: ignore[no-untyped-def]
+        return real_framework_version(**kwargs, run_git=_failing_git)
+
+    monkeypatch.setenv("PKCS11_CHECK_FRAMEWORK_VERSION", "9.9.9-test")
+    monkeypatch.setattr(provenance_mod, "framework_version", _guarded_version)
+
+    record = file_runner_mod._parent_provenance_record()
+
+    assert record["framework"]["version"] == "9.9.9-test"
+    assert record["framework"]["source"] == "env"
+
+
+def test_subprocess_plugin_env_preserves_version_pin() -> None:
+    """The child env inherits the parent's version pin (F4)."""
+    import pkcs11_check.core.file_runner as file_runner_mod
+
+    env = file_runner_mod._subprocess_plugin_env(
+        {"PKCS11_CHECK_FRAMEWORK_VERSION": "9.9.9-test"}, "a.py"
+    )
+
+    assert env["PKCS11_CHECK_FRAMEWORK_VERSION"] == "9.9.9-test"
+    assert env["PKCS11_CHECK_UNIT_CHILD"] == "1"
+
+
 def test_report_output_surfaces_jsonl_harness_provenance(tmp_path: Path) -> None:
     from pkcs11_check.report.__main__ import main
 

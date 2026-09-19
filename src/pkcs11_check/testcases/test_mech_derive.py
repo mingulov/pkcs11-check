@@ -749,6 +749,7 @@ def _derive_hkdf(rs: RawSession, entry: MechEntry) -> None:
                     label=f"{entry.mech_name}: derive returned handle",
                     operation="C_DeriveKey",
                     mechanism=entry.mech_name,
+                    inherit_mechanism=False,
                     spec_ref=f"PKCS#11 v3.2 · C_DeriveKey · {entry.mech_name}",
                     expected="non-zero object handle",
                     actual=derived_key,
@@ -1092,7 +1093,6 @@ def _check_cipher_derived_value_shape(
         label=label,
         reason="not_operational",
         kind="metadata",
-        mechanism=entry.mech_name,
         inherit_mechanism=False,
     )
     if value is MISSING_ATTRIBUTE:
@@ -1108,7 +1108,7 @@ def _check_cipher_derived_value_shape(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
-        mechanism=entry.mech_name,
+        inherit_mechanism=False,
         summary=(f"{label}: provider returned malformed value; expected {expected_length} bytes"),
         detail={
             "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
@@ -1336,7 +1336,7 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
                 kind="metadata",
                 label=f"{entry.mech_name}: derived object class",
                 operation="C_GetAttributeValue",
-                mechanism=entry.mech_name,
+                inherit_mechanism=False,
                 summary=(
                     f"{entry.mech_name}: missing derived object class produced no classification"
                 ),
@@ -1347,7 +1347,7 @@ def _derive_pub_from_priv(rs: RawSession, entry: MechEntry) -> None:
                 kind="metadata",
                 label=f"{entry.mech_name}: derived object class",
                 operation="C_GetAttributeValue",
-                mechanism=entry.mech_name,
+                inherit_mechanism=False,
                 detail={
                     "attribute": int(CKA_CLASS),
                     "expected": "strict int equal to CKO_PUBLIC_KEY",

@@ -175,7 +175,7 @@ def _digest_key_reference_or_record(
             kind="metadata",
             label=f"{label}:CKA_VALUE",
             operation="C_GetAttributeValue",
-            mechanism="CKM_SHA256",
+            inherit_mechanism=False,
             summary=(
                 f"{label}: provider returned malformed CKA_VALUE; "
                 f"expected bytes, got {repr(key_bytes)}"

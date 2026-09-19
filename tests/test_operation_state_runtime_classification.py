@@ -1401,7 +1401,7 @@ def test_cross_session_partial_reference_is_checked_before_early_ckr(
     assert records[0].operation == "DigestInit"
 
 
-def test_cross_session_partial_reference_without_result_is_harness_error(
+def test_cross_session_partial_reference_without_result_is_probe_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A partial child oracle cannot turn a missing cross-session result into pass."""
@@ -1421,7 +1421,7 @@ def test_cross_session_partial_reference_without_result_is_harness_error(
     from pkcs11_check.classification import get_records
 
     records = get_records()
-    assert [record.reason for record in records] == ["harness_error"]
+    assert [record.reason for record in records] == ["probe_incomplete"]
 
 
 def test_cross_session_missing_partial_reference_accumulates_before_early_ckr(

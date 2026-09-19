@@ -6,6 +6,7 @@ from contextvars import copy_context
 import pytest
 
 from pkcs11_check.core.process_observation import (
+    SUBPROCESS_ABRUPT_EXIT_MARKER,
     build_process_observation,
     drain_process_observations,
     record_process_observation,
@@ -107,6 +108,33 @@ def test_external_kill_owns_termination_kind_but_keeps_raw_code() -> None:
     assert termination_from_returncode(-9, platform="linux", external_kill=True) == {
         "kind": "external-kill",
         "raw_code": -9,
+        "signal_name": None,
+        "windows_status": None,
+    }
+
+
+@pytest.mark.parametrize("returncode", [0, 1, 17])
+def test_abrupt_exit_marker_classifies_non_negative_exit_as_abrupt(returncode: int) -> None:
+    """A C exit(0) from inside a PKCS#11 call skips finalization like exit(n).
+
+    The launcher appends the abrupt marker only when the child's own finalizer
+    never ran, so the marker plus any non-negative code is an abrupt exit --
+    including a clean-looking 0.
+    """
+    stderr = f"noise\n{SUBPROCESS_ABRUPT_EXIT_MARKER}:{returncode}\n"
+    assert termination_from_returncode(returncode, platform="linux", stderr=stderr) == {
+        "kind": "abrupt_exit",
+        "raw_code": returncode,
+        "signal_name": None,
+        "windows_status": None,
+    }
+
+
+def test_zero_exit_without_abrupt_marker_is_a_plain_exit() -> None:
+    """The marker is the only evidence of abruptness; a bare 0 is not."""
+    assert termination_from_returncode(0, platform="linux", stderr="") == {
+        "kind": "exit",
+        "raw_code": 0,
         "signal_name": None,
         "windows_status": None,
     }

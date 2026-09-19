@@ -287,6 +287,35 @@ def _validate_selection_payloads(
                     f"overlapping node IDs across selection batches in merge: {sorted(overlap)}"
                 )
             seen_nodeids.update(s.nodeids)
+    else:
+        # F19: without selection manifests there is no node-level overlap check,
+        # so a shard merged twice (or two overlapping --shard ranges) would
+        # silently double-count summaries. Guard on unit targets instead. The
+        # session-global pseudo-units (<collection>, <lifecycle>) legitimately
+        # repeat in every shard, as do ::daemon-recovery- synthetics (one per
+        # confirmed daemon death, never part of a case batch), so all are
+        # excluded; every other duplicate target is a double-count.
+        seen_targets: set[str] = set()
+        for payload in payloads:
+            shard_targets: set[str] = set()
+            for unit in payload.get("units", []) or []:
+                if not isinstance(unit, dict):
+                    continue
+                target = str(unit.get("target", ""))
+                if (
+                    not target
+                    or target in {"<collection>", "<lifecycle>"}
+                    or "::daemon-recovery-" in target
+                ):
+                    continue
+                shard_targets.add(target)
+            overlap = seen_targets.intersection(shard_targets)
+            if overlap:
+                raise ValueError(
+                    "duplicate unit targets across merged shards "
+                    f"(summaries would double-count): {sorted(overlap)}"
+                )
+            seen_targets.update(shard_targets)
 
     return selections
 

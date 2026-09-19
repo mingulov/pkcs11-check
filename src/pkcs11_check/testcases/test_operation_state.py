@@ -721,7 +721,7 @@ def _require_complete(
     if any(line == "OK" or line.startswith("OK:") for line in stdout.splitlines()):
         return
     fail_as(
-        "harness_error",
+        "probe_incomplete",
         label=context,
         summary=f"{context}: child subprocess did not emit a complete result",
         detail={"probe_incomplete": True, "protocol": "missing_result"},
@@ -970,7 +970,7 @@ class TestDigestStateRoundTrip:
         if same_protocol.singleshot is not None:
             if same_protocol.reference is None:
                 fail_as(
-                    "harness_error",
+                    "probe_incomplete",
                     label="digest-state-roundtrip",
                     summary=f"Missing REFERENCE in output: {stdout!r}",
                     detail={"probe_incomplete": True, "protocol": "missing_result"},
@@ -978,7 +978,7 @@ class TestDigestStateRoundTrip:
             return
         if same_protocol.restored is not None and same_protocol.singleshot_ok_count == 0:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="digest-state-roundtrip",
                 summary=(
                     "digest-state-roundtrip: Malformed result; restored digest "
@@ -995,14 +995,14 @@ class TestDigestStateRoundTrip:
 
         if same_protocol.reference is None:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="digest-state-roundtrip",
                 summary=f"Missing REFERENCE in output: {stdout!r}",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},
             )
         if same_protocol.restored is None:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="digest-state-roundtrip",
                 summary=f"Missing RESTORED in output: {stdout!r}",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},
@@ -1076,7 +1076,7 @@ class TestDigestStateRoundTrip:
             pytest.skip(f"Module skipped cross-session test: {lines_map['SKIP']}")
         if cross_protocol is None:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="cross-session-state",
                 summary=f"Missing cross-session result in output: {stdout!r}",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},
@@ -1088,7 +1088,7 @@ class TestDigestStateRoundTrip:
             and not measurements
         ):
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="cross-session-state",
                 summary=(
                     "cross-session-state: child emitted REFERENCE without a terminal "
@@ -1185,14 +1185,14 @@ class TestEncryptStateRoundTrip:
         )
         if "REFERENCE" not in lines_map:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="encrypt-state-roundtrip",
                 summary=f"Missing REFERENCE in output: {stdout!r}",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},
             )
         if "RESTORED" not in lines_map:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="encrypt-state-roundtrip",
                 summary=f"Missing RESTORED in output: {stdout!r}",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},

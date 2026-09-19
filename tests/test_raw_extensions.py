@@ -475,3 +475,51 @@ def test_extension_register_rejects_helper_overwrite_with_different_value() -> N
 
     with pytest.raises(ValueError, match="existing namespace entry differs"):
         register_extension(namespace="ibm", packers={0x8001555A: lambda value: value + 1})
+
+
+def test_lookup_mechanism_id_resolves_vendor_name_both_forms() -> None:
+    from pkcs11_check.raw.extensions import (
+        clear_extensions,
+        lookup_mechanism_id,
+        register_extension,
+    )
+
+    clear_extensions("rev")
+    register_extension(namespace="rev", mechanisms={0x8000E001: "CKM_REV_FOO"})
+    try:
+        assert lookup_mechanism_id("CKM_REV_FOO") == 0x8000E001
+        assert lookup_mechanism_id("REV_FOO") == 0x8000E001
+        assert lookup_mechanism_id("CKM_REV_FOO", namespace="rev") == 0x8000E001
+        assert lookup_mechanism_id("CKM_REV_FOO", namespace="other") is None
+    finally:
+        clear_extensions("rev")
+
+
+def test_lookup_mechanism_id_returns_none_for_unknown_and_ambiguous() -> None:
+    from pkcs11_check.raw.extensions import (
+        clear_extensions,
+        lookup_mechanism_id,
+        register_extension,
+    )
+
+    clear_extensions("rev-a")
+    clear_extensions("rev-b")
+    register_extension(namespace="rev-a", mechanisms={0x8000E002: "CKM_REV_BAR"})
+    register_extension(namespace="rev-b", mechanisms={0x8000E003: "CKM_REV_BAR"})
+    try:
+        assert lookup_mechanism_id("CKM_REV_NOPE") is None
+        # Same name in two namespaces: no unique global match, no guessing.
+        assert lookup_mechanism_id("CKM_REV_BAR") is None
+        assert lookup_mechanism_id("CKM_REV_BAR", namespace="rev-a") == 0x8000E002
+        assert lookup_mechanism_id("CKM_REV_BAR", namespace="rev-b") == 0x8000E003
+    finally:
+        clear_extensions("rev-a")
+        clear_extensions("rev-b")
+
+
+def test_lookup_mechanism_id_ignores_standard_mechanisms() -> None:
+    from pkcs11_check.raw.extensions import lookup_mechanism_id
+
+    # Standard names resolve via types_std, never the vendor registry.
+    assert lookup_mechanism_id("CKM_AES_ECB") is None
+    assert lookup_mechanism_id("AES_ECB") is None

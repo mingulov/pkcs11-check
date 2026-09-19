@@ -62,6 +62,27 @@ from pkcs11_check.core.report_log import iter_classification_occurrences
 from pkcs11_check.report.extract import extract_groups
 
 
+@pytest.fixture(autouse=True)
+def _pin_framework_version_for_determinism(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the parent ProvenanceReport version for exact-record goldens.
+
+    run_isolated_pytest_units merges one parent record per run; without a pin
+    its version would be the checkout's git describe (correct, but checkout-
+    dependent). Tests asserting exact report.jsonl record lists need the
+    deterministic value. The pin is excluded from run fingerprints, so resume
+    validation is unaffected.
+    """
+    monkeypatch.setenv("PKCS11_CHECK_FRAMEWORK_VERSION", "9.9.9-test")
+
+
+def _expected_parent_provenance() -> dict[str, Any]:
+    """The deterministic parent ProvenanceReport under the pinned version fixture."""
+    return {
+        "$report_type": "ProvenanceReport",
+        "framework": {"version": "9.9.9-test", "dirty": False, "source": "env"},
+    }
+
+
 def test_unit_status_priority_is_the_overall_status_set() -> None:
     assert UNIT_STATUS_PRIORITY == (
         "timeout",
@@ -115,6 +136,87 @@ def test_supplemental_special_merge_preserves_nested_execution_once() -> None:
     )
 
     assert merged["test.py"]["executions"] == [observation]
+
+
+def test_special_merge_dedupes_typed_against_untyped_same_event() -> None:
+    """A missing evidence_type matches anything on (nodeid, outcome) (F14).
+
+    The abrupt-exit marker is rebuilt from durable JSONL without provenance
+    but merged in-memory with evidence_type=provider-crash; both describe the
+    same synthetic TestReport and must collapse to one entry counted once.
+    """
+    merged = unit_details_mod._merge_special_entries_into_detail(
+        {
+            "counts": {"failed": 1},
+            "tests": [{"nodeid": "test.py::marker", "outcome": "failed"}],
+        },
+        [
+            {
+                "nodeid": "test.py::marker",
+                "outcome": "failed",
+                "evidence_type": "provider-crash",
+                "returncode": 3,
+            }
+        ],
+    )
+
+    assert len(merged["tests"]) == 1
+    assert merged["tests"][0]["evidence_type"] == "provider-crash"
+    assert merged["tests"][0]["returncode"] == 3
+    assert merged["counts"]["failed"] == 1
+
+
+def test_special_merge_keeps_distinct_present_evidence_types() -> None:
+    """Two PRESENT evidence types for one event are distinct evidence (F14)."""
+    merged = unit_details_mod._merge_special_entries_into_detail(
+        {
+            "counts": {"failed": 1},
+            "tests": [
+                {
+                    "nodeid": "test.py::marker",
+                    "outcome": "failed",
+                    "evidence_type": "provider-crash",
+                }
+            ],
+        },
+        [
+            {
+                "nodeid": "test.py::marker",
+                "outcome": "failed",
+                "evidence_type": "harness",
+            }
+        ],
+    )
+
+    assert len(merged["tests"]) == 2
+    assert merged["counts"]["failed"] == 2
+
+
+def test_supplemental_merge_counts_rebuilt_abrupt_marker_once() -> None:
+    """End-to-end F14 shape: rebuilt detail + in-memory provider-crash detail."""
+    merged = unit_details_mod._merge_supplemental_special_details(
+        {
+            "test.py": {
+                "counts": {"failed": 1},
+                "tests": [{"nodeid": "test.py::marker", "outcome": "failed"}],
+            }
+        },
+        {
+            "test.py": {
+                "counts": {"failed": 1},
+                "tests": [
+                    {
+                        "nodeid": "test.py::marker",
+                        "outcome": "failed",
+                        "evidence_type": "provider-crash",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert len(merged["test.py"]["tests"]) == 1
+    assert merged["test.py"]["tests"][0]["evidence_type"] == "provider-crash"
 
 
 def test_attempt_detail_merge_reduces_retry_pass_and_keeps_synthetic_timeout() -> None:
@@ -293,8 +395,9 @@ def test_collect_pytest_nodeids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         text: bool,
         env: dict[str, str],
         encoding: str | None = None,
+        errors: str | None = None,
     ) -> SimpleNamespace:
-        del check, capture_output, text, env, encoding
+        del check, capture_output, text, env, encoding, errors
         assert cmd[-2:] == ["--collect-only", "-qq"]
         return SimpleNamespace(
             returncode=0,
@@ -350,8 +453,9 @@ def test_collect_pytest_nodeids_reports_collection_failure(
         text: bool,
         env: dict[str, str],
         encoding: str | None = None,
+        errors: str | None = None,
     ) -> SimpleNamespace:
-        del cmd, check, capture_output, text, env, encoding
+        del cmd, check, capture_output, text, env, encoding, errors
         return SimpleNamespace(returncode=4, stdout="", stderr="usage error")
 
     monkeypatch.setattr(subprocess, "run", fake_run)  # type: ignore[arg-type]
@@ -1298,13 +1402,14 @@ def _abrupt_stream(target: Path, *, with_finish: bool, traceback: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-@pytest.mark.parametrize("returncode", [1, 5])
+@pytest.mark.parametrize("returncode", [0, 1, 5])
 def test_module_self_termination_is_a_provider_crash_not_harness_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int
 ) -> None:
     """A module exit() mid-run (test records present, no SessionFinish, no
     traceback) is a provider crash finding and must never be inferred as a
-    harness defect."""
+    harness defect. A C exit(0) skips SessionFinish exactly like exit(n), so a
+    clean-looking 0 with test records but no finish is the same crash."""
 
     target = tmp_path / "test_abrupt.py"
     target.write_text("def test_case():\n    assert True\n", encoding="utf-8")
@@ -3445,8 +3550,13 @@ def test_resume_keeps_global_collection_failure_outside_ordinary_unit_cache(
             json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
         ]
         assert [
-            record for record in output_records if record["$report_type"] != "IsolatedUnitReport"
+            record
+            for record in output_records
+            if record["$report_type"] not in {"IsolatedUnitReport", "ProvenanceReport"}
         ] == source_records
+        assert [
+            record for record in output_records if record["$report_type"] == "ProvenanceReport"
+        ] == [_expected_parent_provenance()]
         assert [
             record for record in output_records if record["$report_type"] == "IsolatedUnitReport"
         ][-1] == {
@@ -3568,13 +3678,15 @@ def test_cacheless_resume_preserves_empty_nodeid_passing_collect_report(
     )
 
     assert source_report.read_bytes() == source_bytes
-    assert report_path.read_bytes().endswith(source_bytes)
+    provenance_suffix = (json.dumps(_expected_parent_provenance()) + "\n").encode("utf-8")
+    assert report_path.read_bytes().endswith(source_bytes + provenance_suffix)
     output_records = [
         json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()
     ]
     assert output_records == [
         {"$report_type": "IsolatedUnitReport", "target": unit, "attempt": 0},
         *records,
+        _expected_parent_provenance(),
     ]
 
 
@@ -3642,6 +3754,7 @@ def test_explicit_file_resume_without_collection_metadata_requires_complete_cach
         ] == [
             {"$report_type": "IsolatedUnitReport", "target": unit, "attempt": 0},
             report_record,
+            _expected_parent_provenance(),
         ]
     else:
         assert report_path.read_bytes() == original
@@ -9731,6 +9844,10 @@ def test_unit_timeout_seconds_with_num_tests() -> None:
     assert _unit_timeout_seconds(120, "file") == 3600  # 120*30
     assert _unit_timeout_seconds(120, "file", num_tests=0) == 3600  # same as no num_tests
 
+    # The 4h cap applies to the final budget, including the fallback half (F16).
+    assert _unit_timeout_seconds(600, "file") == 14400  # was 600*30 = 18000
+    assert _unit_timeout_seconds(600, "file", num_tests=10) == 14400
+
 
 def test_file_unit_timeout_uses_collected_item_count(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -10286,7 +10403,8 @@ def test_file_skip_counts_collected_tests_as_skipped(
             "attempt": 0,
             "reason": "AES_CCM not supported by module",
             "skipped": 2,
-        }
+        },
+        _expected_parent_provenance(),
     ]
     observability = quality["classification_observability"]
     assert observability["status"] == "complete"

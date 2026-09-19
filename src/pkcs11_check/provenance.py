@@ -29,6 +29,9 @@ def _run_git(args: list[str], cwd: Path) -> str | None:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            # Same class as F18: non-UTF-8 names/paths must not crash this
+            # helper (UnicodeDecodeError is a ValueError, uncaught below).
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -41,6 +44,14 @@ def _run_git(args: list[str], cwd: Path) -> str | None:
 
 def _version_dict(version: str, source: str) -> dict[str, Any]:
     return {"version": version, "dirty": version.endswith("-dirty"), "source": source}
+
+
+def framework_repo_root() -> Path | None:
+    """Checkout root when running from a git working tree, else None."""
+    import pkcs11_check
+
+    root = Path(pkcs11_check.__file__).resolve().parent.parent.parent
+    return root if (root / ".git").exists() else None
 
 
 def framework_version(

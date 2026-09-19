@@ -1144,18 +1144,22 @@ class AttrReadResult(dict[int, Any]):
     """``read_attributes``' return type.
 
     A plain ``dict[int, Any]`` -- unchanged external shape, so existing
-    callers keep working -- plus an additive ``refusals`` channel.
+    callers keep working -- plus additive ``refusals`` and
+    ``unavailable_without_ckr`` channels.
 
     ``refusals`` maps an attribute type absent from this mapping to the
     :class:`AttrRefusal` describing the module's refusal, *when one was
-    actually observed*. An attribute type absent from both this mapping and
-    ``refusals`` is a plain absence with no CK_RV observed for it -- callers
-    must never invent a CKR for that case.
+    actually observed*. ``unavailable_without_ckr`` holds attribute types for
+    which the CK_UNAVAILABLE_INFORMATION sentinel was observed but no refusal
+    CKR was -- CKR_OK with no value delivered. An attribute type absent from
+    the mapping and both channels is a plain absence with nothing observed
+    for it at all -- callers must never invent a CKR for that case.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.refusals: dict[int, AttrRefusal] = {}
+        self.unavailable_without_ckr: set[int] = set()
 
 
 # CK_RVs that mean "this attribute's value was not returned", per spec --
@@ -1245,6 +1249,12 @@ def read_attributes(
             # record a refusal when one was actually observed on this call.
             if _observed_refusal_ckr is not None:
                 result.refusals[at] = AttrRefusal(ckr=_observed_refusal_ckr)
+            else:
+                # F20: the sentinel was observed but the calls returned CKR_OK --
+                # success claimed, no value delivered. No CKR is invented, but
+                # the observation is kept so attr_or_record can tell this
+                # spec-shape deviation from a plain omission.
+                result.unavailable_without_ckr.add(at)
             continue
         raw_bytes = bytes(buffers[i][:size])
         if _observed_refusal_ckr is not None and count == 1:

@@ -53,8 +53,18 @@ def _raise_strongest(records: list[C.Classification]) -> None:
         C.raise_for_record(strongest)
 
 
-def _protocol_error(label: str, summary: str, *, detail: dict[str, Any]) -> C.Classification:
-    return C.record_as("harness_error", label=label, summary=f"{label}: {summary}", detail=detail)
+def _protocol_error(
+    label: str,
+    summary: str,
+    *,
+    detail: dict[str, Any],
+    reason: str = "harness_error",
+) -> C.Classification:
+    # reason is "probe_incomplete" only for pure absence (a marker never arrived):
+    # unresolved attribution stays a loud provider-side fail. Malformed, mismatched,
+    # or duplicated emissions keep "harness_error": the child observably emitted wire
+    # bytes our own protocol forbids.
+    return C.record_as(reason, label=label, summary=f"{label}: {summary}", detail=detail)
 
 
 def _parse_event(
@@ -152,10 +162,17 @@ def _parse_ckr(
     ckr_lines = [line for line in lines if line.startswith("CKR:")]
     if not ckr_lines and not completed:
         return None, None
+    if not ckr_lines:
+        return None, _protocol_error(
+            label,
+            "CKR marker is missing",
+            detail={"protocol": "permission_claim", "ckr_markers": 0},
+            reason="probe_incomplete",
+        )
     if len(ckr_lines) != 1:
         return None, _protocol_error(
             label,
-            "CKR marker is missing or duplicated",
+            "CKR marker is duplicated",
             detail={"protocol": "permission_claim", "ckr_markers": len(ckr_lines)},
         )
     match = _CKR_LINE_RE.fullmatch(ckr_lines[0])
@@ -223,11 +240,21 @@ def _collect_permission_observations(
     event: dict[str, Any] | None
     if not event_lines and not completed:
         event = None
+    elif not event_lines:
+        semantic.append(
+            _protocol_error(
+                label,
+                "ATTRIBUTE_EVENT marker is missing",
+                detail={"protocol": "permission_claim", "event_markers": 0},
+                reason="probe_incomplete",
+            )
+        )
+        event = None
     elif len(event_lines) != 1:
         semantic.append(
             _protocol_error(
                 label,
-                "ATTRIBUTE_EVENT marker is missing or duplicated",
+                "ATTRIBUTE_EVENT marker is duplicated",
                 detail={"protocol": "permission_claim", "event_markers": len(event_lines)},
             )
         )

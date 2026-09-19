@@ -79,7 +79,7 @@ def _assert_probe_completed(rc: int, stdout: str, stderr: str, *, context: str) 
     output = f"{stdout}\n{stderr}"
     if not any(line == "OK" or line.startswith("OK:") for line in output.splitlines()):
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: child emitted no complete OK marker (incomplete protocol)",
             detail={"probe_incomplete": True, "protocol": "missing_terminal_marker"},
@@ -87,9 +87,28 @@ def _assert_probe_completed(rc: int, stdout: str, stderr: str, *, context: str) 
     return True
 
 
-def _harness_record(context: str, summary: str, protocol: str) -> Classification:
+# Child protocols that report ABSENCE (a marker never arrived) or an in-process
+# exception raised while driving the provider, rather than a malformed or
+# self-contradictory emission. Attribution there is unresolved -- the missing data is
+# as likely a module observation as our own bug -- so these stay loud provider-side
+# fails instead of inferred harness defects (classification.py: HARNESS_REASONS is
+# positive-claim only). Malformed/duplicate/conflicting emissions below keep
+# "harness_error": the child observably emitted wire bytes our own protocol forbids.
+_INCOMPLETE_PROTOCOLS = frozenset(
+    {
+        "missing_child_status",
+        "missing_parent_label",
+        "missing_child_found",
+        "child_exit_failure",
+        "child_exception",
+    }
+)
+
+
+def _protocol_record(context: str, summary: str, protocol: str) -> Classification:
+    reason = "probe_incomplete" if protocol in _INCOMPLETE_PROTOCOLS else "harness_error"
     return Classification(
-        reason="harness_error",
+        reason=reason,
         outcome="fail",
         severity="HIGH",
         label=context,
@@ -234,7 +253,7 @@ _SESSION_MARKER_ORDERS = (
 
 
 def _protocol_error(context: str, summary: str, protocol: str) -> Classification:
-    return _harness_record(context, summary, protocol)
+    return _protocol_record(context, summary, protocol)
 
 
 def _parse_status_marker(
@@ -979,7 +998,7 @@ class TestForkSafety:
         if parsed.provider:
             raise_for_record(parsed.provider[0])
         if parsed.outcome == "exception":
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: child reported an in-process exception "
                 f"(incomplete protocol): {output}",
@@ -991,7 +1010,7 @@ class TestForkSafety:
             # A refusal marker with no exit is incomplete; the parser deliberately
             # deferred this check so a real outer crash is never relabeled.
             if parsed.child_exit is None:
-                error = _harness_record(
+                error = _protocol_record(
                     context,
                     f"{context}: child refusal missing child status "
                     f"(incomplete protocol): {output}",
@@ -1000,7 +1019,7 @@ class TestForkSafety:
                 record(error)
                 raise_for_record(error)
         if parsed.child_exit is None:
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: child missing child status (incomplete protocol): {output}",
                 "missing_child_status",
@@ -1008,7 +1027,7 @@ class TestForkSafety:
             record(error)
             raise_for_record(error)
         if parsed.child_exit != 0 and parsed.outcome is None:
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: child exited with status {parsed.child_exit} without a result marker "
                 f"(incomplete protocol): {output}",
@@ -1077,7 +1096,7 @@ class TestSessionObjectProcessIsolation:
             and parsed.child_signal is not None
             and parsed.label_count == 0
         ):
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: missing parent label (incomplete protocol)",
                 "missing_parent_label",
@@ -1110,7 +1129,7 @@ class TestSessionObjectProcessIsolation:
         if parsed.harness:
             raise_for_record(parsed.harness[0])
         if not parsed.setup_valid and parsed.label_count == 0:
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: missing parent label (incomplete protocol)",
                 "missing_parent_label",
@@ -1123,7 +1142,7 @@ class TestSessionObjectProcessIsolation:
             return
         if parsed.outcome == "exception":
             if parsed.child_exit is None:
-                error = _harness_record(
+                error = _protocol_record(
                     context,
                     f"{context}: child exception missing child status (incomplete protocol)",
                     "missing_child_status",
@@ -1133,7 +1152,7 @@ class TestSessionObjectProcessIsolation:
             return
         if parsed.outcome == "fatal":
             if parsed.child_exit is None:
-                error = _harness_record(
+                error = _protocol_record(
                     context,
                     f"{context}: child refusal missing child status (incomplete protocol)",
                     "missing_child_status",
@@ -1145,7 +1164,7 @@ class TestSessionObjectProcessIsolation:
             return
         if parsed.outcome == "found" and parsed.found is not None:
             if parsed.child_exit is None:
-                error = _harness_record(
+                error = _protocol_record(
                     context,
                     f"{context}: child-found result missing child status (incomplete protocol)",
                     "missing_child_status",
@@ -1164,7 +1183,7 @@ class TestSessionObjectProcessIsolation:
                 raise_for_record(parsed.provider[0])
             return
         if parsed.child_exit is None:
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: child missing child status (incomplete protocol)",
                 "missing_child_status",
@@ -1172,7 +1191,7 @@ class TestSessionObjectProcessIsolation:
             record(error)
             raise_for_record(error)
         if parsed.child_exit != 0:
-            error = _harness_record(
+            error = _protocol_record(
                 context,
                 f"{context}: child exited with status {parsed.child_exit} without a result marker "
                 "(incomplete protocol)",
@@ -1181,7 +1200,7 @@ class TestSessionObjectProcessIsolation:
             record(error)
             raise_for_record(error)
         # CHILD_EXIT:0 without CHILD_FOUND:0 is not a success branch.
-        error = _harness_record(
+        error = _protocol_record(
             context,
             f"{context}: child exit 0 lacked an exact CHILD_FOUND:0 result (incomplete protocol)",
             "missing_child_found",

@@ -511,3 +511,54 @@ def test_keypair_helper_does_not_classify_plain_assertion_with_ckr_name() -> Non
                 AssertionError("binding assertion mentions CKR_ARGUMENTS_BAD")
             ),
         )
+
+
+def _skip_text(excinfo: pytest.ExceptionInfo[BaseException]) -> str:
+    return str(excinfo.value)
+
+
+def test_require_mechanism_passes_when_advertised() -> None:
+    from pkcs11_check.testcases.conftest import require_mechanism_or_skip
+
+    session = SimpleNamespace(has_mechanism=lambda _name: True)
+    require_mechanism_or_skip(session, "KMAC_128")  # must not raise
+
+
+def test_require_mechanism_unknown_code_point_skip_names_the_feed() -> None:
+    """Unresolvable names skip as a harness limitation, not a module gap (F3)."""
+    from pkcs11_check.raw.extensions import clear_extensions
+    from pkcs11_check.testcases.conftest import require_mechanism_or_skip
+
+    clear_extensions("cli")
+    session = SimpleNamespace(has_mechanism=lambda _name: False)
+    with pytest.raises(pytest.skip.Exception) as excinfo:
+        require_mechanism_or_skip(session, "KMAC_128")
+    text = _skip_text(excinfo)
+    assert "no code point known to pkcs11-check" in text
+    assert "--p11-vendor-mechanism KMAC_128=0x..." in text
+    assert "not supported" not in text
+
+
+def test_require_mechanism_registered_but_unadvertised_is_not_supported() -> None:
+    """A known code point the module lacks skips as genuine lack of support (F3)."""
+    from pkcs11_check.raw.extensions import clear_extensions, register_extension
+    from pkcs11_check.testcases.conftest import require_mechanism_or_skip
+
+    clear_extensions("cli")
+    register_extension(namespace="cli", mechanisms={0x8000F010: "CKM_KMAC_128"})
+    try:
+        session = SimpleNamespace(has_mechanism=lambda _name: False)
+        with pytest.raises(pytest.skip.Exception, match="not supported"):
+            require_mechanism_or_skip(session, "KMAC_128")
+    finally:
+        clear_extensions("cli")
+
+
+def test_require_mechanism_standard_name_keeps_plain_skip() -> None:
+    """Standard names keep the historical 'not supported' text (F3)."""
+    from pkcs11_check.testcases.conftest import require_mechanism_or_skip
+
+    session = SimpleNamespace(has_mechanism=lambda _name: False)
+    with pytest.raises(pytest.skip.Exception) as excinfo:
+        require_mechanism_or_skip(session, "AES_GCM")
+    assert _skip_text(excinfo) == "CKM_AES_GCM not supported"

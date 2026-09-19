@@ -1219,6 +1219,9 @@ def test_derived_public_class_readback_is_strictly_classified(
         derive_case._derive_pub_from_priv(rs, _entry(1))
     assert destroyed == [11, 12, 21]
     assert C.get_records()[0].reason == "wrong_result"
+    # Readback attribution: the class readback carries no borrowed derive
+    # mechanism; the producer stays in label/detail only.
+    assert C.get_records()[0].mechanism is None
 
 
 def test_derived_public_class_missing_is_not_operational(
@@ -1239,3 +1242,4 @@ def test_derived_public_class_missing_is_not_operational(
         derive_case._derive_pub_from_priv(rs, _entry(1))
     assert destroyed == [11, 12, 21]
     assert C.get_records()[0].reason == "not_operational"
+    assert C.get_records()[0].mechanism is None

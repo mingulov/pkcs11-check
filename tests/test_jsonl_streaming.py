@@ -208,6 +208,39 @@ def test_postprocess_jsonl_requires_every_concatenated_session_to_finish(
     assert payload["units"][0]["incomplete"] is True
 
 
+def test_postprocess_jsonl_routes_finalize_teardown_to_lifecycle_unit(tmp_path: Path) -> None:
+    """The synthetic C_Finalize record is session lifecycle, not a file (F15)."""
+    path = tmp_path / "report.jsonl"
+    _write_jsonl(
+        path,
+        [
+            {"$report_type": "SessionStart"},
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::test_a",
+                "when": "call",
+                "outcome": "passed",
+            },
+            {
+                "$report_type": "TeardownFinalize",
+                "rv": 7,
+                "rv_name": "CKR_FUNCTION_FAILED",
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+
+    payload = postprocess_jsonl_to_unified(path, tmp_path / "results.json")
+
+    targets = [unit["target"] for unit in payload["units"]]
+    assert "C_Finalize" not in targets
+    lifecycle = [unit for unit in payload["units"] if unit["target"] == "<lifecycle>"]
+    assert len(lifecycle) == 1
+    assert lifecycle[0]["status"] == "failed"
+    assert lifecycle[0]["counts"]["error"] == 1
+    assert payload["summary"]["error"] == 1
+
+
 def test_postprocess_jsonl_accepts_concatenated_complete_sessions(tmp_path: Path) -> None:
     path = tmp_path / "report.jsonl"
     _write_jsonl(
@@ -509,6 +542,84 @@ def test_resume_rebuild_keeps_prior_records_before_new_records(tmp_path: Path) -
         "old.py::test_old",
         "new.py::test_new",
     ]
+
+
+def _provenance(version: str) -> dict[str, object]:
+    return {
+        "$report_type": "ProvenanceReport",
+        "framework": {"version": version, "dirty": False, "source": "env"},
+    }
+
+
+def _provenance_versions(path: Path) -> list[str]:
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    return [
+        str(record["framework"]["version"])
+        for record in records
+        if record.get("$report_type") == "ProvenanceReport"
+    ]
+
+
+def test_write_merged_jsonl_appends_parent_provenance_once(tmp_path: Path) -> None:
+    """No shard provenance + parent record => exactly one, the parent's (F4)."""
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    call = {
+        "$report_type": "TestReport",
+        "nodeid": "a.py::test_a",
+        "when": "call",
+        "outcome": "passed",
+    }
+
+    assert _write_report_jsonl_from_record_sources(
+        state_file,
+        units=["a.py"],
+        inline_records_by_unit={"a.py": [call]},
+        output_path=report_path,
+        provenance_record=_provenance("parent-1.0"),
+    )
+
+    assert _provenance_versions(report_path) == ["parent-1.0"]
+
+
+def test_write_merged_jsonl_keeps_first_shard_provenance(tmp_path: Path) -> None:
+    """Legacy per-child shard records collapse to the first; parent's skipped (F4)."""
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+
+    assert _write_report_jsonl_from_record_sources(
+        state_file,
+        units=["a.py", "b.py"],
+        inline_records_by_unit={
+            "a.py": [_provenance("first-1.0")],
+            "b.py": [_provenance("second-2.0")],
+        },
+        output_path=report_path,
+        provenance_record=_provenance("parent-1.0"),
+    )
+
+    assert _provenance_versions(report_path) == ["first-1.0"]
+
+
+def test_write_merged_jsonl_without_provenance_record_is_unchanged(tmp_path: Path) -> None:
+    """Default None appends nothing (non-isolated keeps the plugin's own) (F4)."""
+    state_file = tmp_path / "state.json"
+    report_path = tmp_path / "report.jsonl"
+    call = {
+        "$report_type": "TestReport",
+        "nodeid": "a.py::test_a",
+        "when": "call",
+        "outcome": "passed",
+    }
+
+    assert _write_report_jsonl_from_record_sources(
+        state_file,
+        units=["a.py"],
+        inline_records_by_unit={"a.py": [call]},
+        output_path=report_path,
+    )
+
+    assert _provenance_versions(report_path) == []
 
 
 def test_resume_saved_process_history_is_ordered_and_not_duplicated(tmp_path: Path) -> None:

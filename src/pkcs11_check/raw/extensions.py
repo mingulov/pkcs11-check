@@ -286,6 +286,41 @@ def lookup_symbol_name(category: str, value: int, *, namespace: str | None = Non
     return _lookup_single_namespace(matches)
 
 
+def lookup_mechanism_id(name: str, *, namespace: str | None = None) -> int | None:
+    """Return the numeric id for a vendor-registered mechanism name.
+
+    Reverse of :func:`lookup_symbol_name` for the mechanisms category: matches the
+    ``CKM_``-prefixed and bare forms, namespaced or by unique global match. Standard
+    mechanisms are NOT consulted (``types_std`` owns those); unknown or ambiguous
+    names return None rather than guessing across vendors.
+    """
+    bare = name[4:] if name.startswith("CKM_") else name
+    forms = {name, bare, f"CKM_{bare}"}
+
+    def _search(vendor: ExtensionNamespace) -> int | None:
+        found: int | None = None
+        for mech_id, mech_name in vendor.names["mechanisms"].items():
+            if mech_name in forms:
+                if found is not None:
+                    return None
+                found = mech_id
+        return found
+
+    if namespace is not None:
+        vendor = _vendor_or_none(namespace)
+        if vendor is None:
+            return None
+        return _search(vendor)
+    matches = [
+        (vendor_name, mech_id)
+        for vendor_name, vendor in _EXTENSIONS.items()
+        if (mech_id := _search(vendor)) is not None
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0][1]
+
+
 def lookup_struct(name: str, *, namespace: str | None = None) -> Any | None:
     """Return a registered extension struct by namespace or by unique global match."""
     if namespace is not None:
@@ -361,6 +396,7 @@ __all__ = [
     "ExtensionNamespace",
     "clear_extensions",
     "lookup_inspector",
+    "lookup_mechanism_id",
     "lookup_packer",
     "lookup_struct",
     "lookup_symbol_name",

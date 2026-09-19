@@ -350,10 +350,19 @@ def _check_protocol(
 
     for item in semantic:
         record(item)
+    # Pure absence (no result at all, or full results but no terminal line) is
+    # unresolved attribution -- the missing bytes are as likely a module observation
+    # as our own bug -- so it stays a loud provider-side fail. Every other protocol
+    # error is an observably malformed or self-contradictory emission: ours.
+    protocol_reason = (
+        "probe_incomplete"
+        if protocol_error in ("missing_result", "missing_terminal_marker")
+        else "harness_error"
+    )
     protocol: Classification | None = None
     if protocol_error is not None:
         protocol = Classification(
-            reason="harness_error",
+            reason=protocol_reason,
             outcome="fail",
             severity="HIGH",
             label=func,
@@ -362,7 +371,7 @@ def _check_protocol(
         )
         # If a valid result was followed by a crash before the optional completion
         # marker, the crash is the outer disposition; do not invent a second
-        # harness defect for the marker the crash prevented.
+        # protocol record for the marker the crash prevented.
         if protocol_error != "missing_terminal_marker":
             record(protocol)
     termination, explicit_harness_seen = assert_subprocess_completed(
@@ -376,7 +385,7 @@ def _check_protocol(
         if protocol is not None:
             raise_for_record(protocol)
         fail_as(
-            "harness_error",
+            protocol_reason,
             label=func,
             summary=f"{func}: invalid child result protocol",
             detail={"probe_incomplete": True, "protocol": protocol_error},
@@ -393,7 +402,7 @@ def _check_protocol(
         pytest.skip(unimplemented[0])
     if terminal is None:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=func,
             summary=f"{func}: child emitted no complete terminal marker",
             detail={

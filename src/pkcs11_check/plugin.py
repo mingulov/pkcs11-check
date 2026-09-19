@@ -493,12 +493,75 @@ def pytest_addoption(parser: Any) -> None:
             "placeholders {keyfile} {label} {key_type} {key_class}"
         ),
     )
+    group.addoption(
+        "--p11-vendor-mechanism",
+        "--vendor-mechanism",
+        dest="p11_vendor_mechanism",
+        action="append",
+        default=None,
+        metavar="NAME=0xID",
+        help=(
+            "Vendor mechanism code point, e.g. KMAC_128=0x80001234 "
+            "(repeatable; feeds has_mechanism for vendor-range mechanisms "
+            "with no OASIS code point)"
+        ),
+    )
+
+
+def parse_vendor_mechanism_specs(specs: list[str] | None) -> dict[int, str]:
+    """Parse ``--p11-vendor-mechanism NAME=0xID`` specs into an id->name mapping.
+
+    Names normalize to the canonical ``CKM_`` form. Raises ``ValueError`` with a
+    CLI-ready message on any malformed spec; standard ids/names are rejected by
+    the extension registry at registration time.
+    """
+    mapping: dict[int, str] = {}
+    for spec in specs or []:
+        name, sep, value = spec.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError(f"malformed --p11-vendor-mechanism spec {spec!r}: expected NAME=0xID")
+        try:
+            mech_id = int(value.strip(), 0)
+        except ValueError:
+            raise ValueError(
+                f"malformed --p11-vendor-mechanism spec {spec!r}: "
+                f"{value.strip()!r} is not an integer id"
+            ) from None
+        if mech_id < 0:
+            raise ValueError(f"malformed --p11-vendor-mechanism spec {spec!r}: id must be >= 0")
+        ckm_name = name if name.startswith("CKM_") else f"CKM_{name}"
+        if mech_id in mapping and mapping[mech_id] != ckm_name:
+            raise ValueError(
+                f"conflicting --p11-vendor-mechanism specs for 0x{mech_id:08x}: "
+                f"{mapping[mech_id]} vs {ckm_name}"
+            )
+        mapping[mech_id] = ckm_name
+    return mapping
+
+
+def register_cli_vendor_mechanisms(specs: list[str] | None) -> dict[int, str]:
+    """Register CLI-supplied vendor mechanisms; return the id->name mapping."""
+    from pkcs11_check.raw.extensions import register_extension
+
+    mapping = parse_vendor_mechanism_specs(specs)
+    if mapping:
+        register_extension(namespace="cli", mechanisms=mapping)
+    return mapping
 
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register pkcs11-check custom markers and inject --report-log for non-isolated runs."""
     for marker in MARKER_DEFINITIONS:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
+    # Vendor mechanism code points must register before the first session builds
+    # its (cached) mechanism set, so this runs unconditionally at configure time.
+    specs = config.getoption("p11_vendor_mechanism", default=None)
+    if specs:
+        try:
+            register_cli_vendor_mechanisms(specs)
+        except ValueError as exc:
+            raise pytest.UsageError(str(exc)) from exc
     config.stash[_MANIFEST_KEY] = None
     config.stash[_MECHANISM_CATALOG_KEY] = None
     config.stash[_CUMULATIVE_FUNCTIONS] = set()
@@ -757,10 +820,9 @@ def _accumulate_mechanism_rv_counts(
 
 
 def _framework_repo_root() -> Path | None:
-    import pkcs11_check
+    from pkcs11_check.provenance import framework_repo_root
 
-    root = Path(pkcs11_check.__file__).resolve().parent.parent.parent
-    return root if (root / ".git").exists() else None
+    return framework_repo_root()
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
@@ -1093,14 +1155,18 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         )
 
         # Emit ProvenanceReport to JSONL (harness version for archived reports).
-        from pkcs11_check.provenance import build_provenance_record
+        # A parent-managed unit child skips it: the parent merges exactly one
+        # per run, so per-child emission would only multiply git shell-outs
+        # (one per unit) and noise in the stream.
+        if not os.environ.get(UNIT_CHILD_ENV):
+            from pkcs11_check.provenance import build_provenance_record
 
-        report_log_plugin._write_json_data(
-            {
-                "$report_type": "ProvenanceReport",
-                **build_provenance_record(env=os.environ, repo_root=_framework_repo_root()),
-            }
-        )
+            report_log_plugin._write_json_data(
+                {
+                    "$report_type": "ProvenanceReport",
+                    **build_provenance_record(env=os.environ, repo_root=_framework_repo_root()),
+                }
+            )
 
     # Release per-process module resources after every ordinary test verdict and
     # coverage read. A lifecycle finding is additive, but the process must still

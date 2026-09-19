@@ -19,11 +19,11 @@ def test_mutex_missing_rv_is_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
         "run_probe",
         lambda *_a, **_k: ProbeResult(returncode=0, stdout="OK\n", stderr=""),
     )
-    with pytest.raises(pytest.fail.Exception, match="harness"):
+    with pytest.raises(pytest.fail.Exception, match="missing RV"):
         mutex.TestMutexCallbackErrorHandling().test_create_mutex_callback_returning_general_error(
             SimpleNamespace(module="x", slot=0, pin=None)
         )
-    assert get_records()[-1].reason == "harness_error"
+    assert get_records()[-1].reason == "probe_incomplete"
 
 
 def test_mutex_missing_rv_after_signal_is_not_harness(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,4 +466,4 @@ def test_mutex_python_exception_requires_exact_result_marker(
         mutex.TestMutexCallbackErrorHandling().test_python_exception_in_create_mutex_callback(
             SimpleNamespace(module="x", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["harness_error"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete"]

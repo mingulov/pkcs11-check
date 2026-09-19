@@ -56,14 +56,23 @@ _EXPECTED_DONE_STATUSES = {
 }
 
 
+# Child protocol codes that report ABSENCE (a required marker never arrived) rather
+# than a malformed or contradictory emission. Attribution there is unresolved, so
+# these stay loud provider-side fails instead of inferred harness defects
+# (classification.py: HARNESS_REASONS is positive-claim only).
+_ABSENT_PROTOCOL_CODES = frozenset({"missing_attribute", "missing_done"})
+
+
 def _protocol_error(label: str, code: str, summary: str) -> C.Classification:
-    outcome, severity = C.derive_verdict("harness_error", None)
+    reason = "probe_incomplete" if code in _ABSENT_PROTOCOL_CODES else "harness_error"
+    outcome, severity = C.derive_verdict(reason, None)
+    shape = "incomplete" if code in _ABSENT_PROTOCOL_CODES else "malformed"
     return C.Classification(
-        reason="harness_error",
+        reason=reason,
         outcome=outcome,
         severity=severity,
         label=label,
-        summary=f"{label}: malformed RSA child protocol ({code}): {summary}",
+        summary=f"{label}: {shape} RSA child protocol ({code}): {summary}",
         detail={"protocol": code, "probe_incomplete": True},
     )
 
@@ -1099,8 +1108,10 @@ def _check_protocol(
             detail={"protocol": "setup_xfail"},
         )
 
-    # Collapse several malformed lines from one child into one harness record;
-    # valid observations from other markers remain independent.
+    # Collapse several protocol defects from one child into one record; valid
+    # observations from other markers remain independent. Absence records
+    # (missing_attribute/missing_done) are appended after every emission defect, so a
+    # mixed collapse keeps the first -- harness-owned -- reason.
     if len(protocol_records) > 1:
         first = protocol_records[0]
         if first.detail is not None:

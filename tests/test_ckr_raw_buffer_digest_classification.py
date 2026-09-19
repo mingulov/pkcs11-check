@@ -119,7 +119,7 @@ def test_buffer_measurement_missing_ckr_is_incomplete(monkeypatch: pytest.Monkey
     config = SimpleNamespace(module="x", slot=0, pin=None)
     with pytest.raises(pytest.fail.Exception, match="missing CKR"):
         raw_buffer.TestBufferTooSmall().test_encrypt_buffer_too_small(config)
-    assert get_records()[-1].reason == "harness_error"
+    assert get_records()[-1].reason == "probe_incomplete"
 
 
 def test_buffer_measurement_missing_guard_is_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,7 +132,7 @@ def test_buffer_measurement_missing_guard_is_incomplete(monkeypatch: pytest.Monk
     config = SimpleNamespace(module="x", slot=0, pin=None)
     with pytest.raises(pytest.fail.Exception, match="GUARD_OVERWRITTEN"):
         raw_buffer.TestBufferTooSmall().test_encrypt_buffer_too_small(config)
-    assert get_records()[-1].reason == "harness_error"
+    assert get_records()[-1].reason == "probe_incomplete"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
@@ -174,7 +174,7 @@ def test_crash_without_markers_records_only_crash() -> None:
     assert [record.reason for record in get_records()] == ["crash"]
 
 
-def test_missing_retry_field_on_normal_exit_is_harness_error() -> None:
+def test_missing_retry_field_on_normal_exit_is_probe_incomplete() -> None:
     """A normal BUFFER_TOO_SMALL result without retry evidence is incomplete."""
     with pytest.raises(pytest.fail.Exception, match="RETRY_CKR"):
         raw_buffer._check_buffer_probe(
@@ -189,7 +189,7 @@ def test_missing_retry_field_on_normal_exit_is_harness_error() -> None:
             expected_count=16,
             require_retry=True,
         )
-    assert [record.reason for record in get_records()] == ["harness_error"]
+    assert [record.reason for record in get_records()] == ["probe_incomplete"]
 
 
 def test_encrypt_and_sign_protocol_measures_real_guards() -> None:
@@ -258,7 +258,7 @@ def test_cbc_one_shot_decrypt_rejects_count_outside_range(returned_count: int) -
     assert get_records()[-1].kind == "metadata"
 
 
-def test_missing_terminal_harness_controls_provider_deviation() -> None:
+def test_missing_terminal_incomplete_controls_provider_deviation() -> None:
     """Provider deviation evidence cannot mask a missing terminal OK marker."""
     with pytest.raises(pytest.fail.Exception, match="complete OK measurement"):
         raw_buffer._check_buffer_probe(
@@ -274,4 +274,4 @@ def test_missing_terminal_harness_controls_provider_deviation() -> None:
         )
     records = get_records()
     assert any(record.reason == "honest_deviation" for record in records)
-    assert records[-1].reason == "harness_error"
+    assert records[-1].reason == "probe_incomplete"

@@ -351,6 +351,11 @@ def _emit_external_provision_banner(n: int) -> None:
     )
 
 
+# Pseudo-unit owning session-global lifecycle records (C_Finalize teardown),
+# which belong to no file. Same tradition as the <collection> pseudo-unit.
+_LIFECYCLE_UNIT = "<lifecycle>"
+
+
 def postprocess_jsonl_to_unified(
     jsonl_path: Path, output_path: Path, provenance: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -364,8 +369,11 @@ def postprocess_jsonl_to_unified(
     completion = _SessionCompletionTracker()
 
     def _accumulate_file_count(rec: Mapping[str, Any]) -> None:
-        nodeid = str(rec.get("nodeid", ""))
-        file_part = nodeid.split("::")[0] or "<collection>"
+        if rec.get("lifecycle") == "session-teardown":
+            file_part = _LIFECYCLE_UNIT
+        else:
+            nodeid = str(rec.get("nodeid", ""))
+            file_part = nodeid.split("::")[0] or "<collection>"
         if file_part not in file_counts:
             file_counts[file_part] = _empty_counts()
         outcome = _map_record_outcome(rec)
@@ -387,10 +395,14 @@ def postprocess_jsonl_to_unified(
     if detail is None:
         detail = {"counts": _empty_counts(), "tests": []}
 
-    # Group tests by file
+    # Group tests by file; session-teardown lifecycle records group under the
+    # <lifecycle> pseudo-unit (same tradition as <collection>), never a phantom file.
     by_file: dict[str, list[dict[str, Any]]] = {}
     for test in detail["tests"]:
-        file_part = test.get("nodeid", "").split("::")[0]
+        if isinstance(test, Mapping) and test.get("lifecycle") == "session-teardown":
+            file_part = _LIFECYCLE_UNIT
+        else:
+            file_part = test.get("nodeid", "").split("::")[0]
         by_file.setdefault(file_part, []).append(test)
 
     compliance_notes_by_file: dict[str, list[dict[str, Any]]] = {}

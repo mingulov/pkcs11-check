@@ -1086,10 +1086,18 @@ def test_rsa_mutation_unexpected_defined_rv_is_oracle_disabled_without_baseline(
 
 
 @pytest.mark.parametrize(
-    "defect", ["unknown", "missing_done", "wrong_status", "duplicate_done", "malformed_done"]
+    ("defect", "reason"),
+    [
+        ("unknown", "harness_error"),
+        ("missing_done", "probe_incomplete"),
+        ("wrong_status", "harness_error"),
+        ("duplicate_done", "harness_error"),
+        ("malformed_done", "harness_error"),
+    ],
 )
 def test_rsa_valid_baseline_keeps_mutation_finding_with_unrelated_protocol_defect(
     defect: str,
+    reason: str,
 ) -> None:
     case = "verify:sha256_rsa_pkcs:bitflip"
     output = _rsa_verify_output(baseline_rv=0, mutated_rv=0)
@@ -1116,7 +1124,7 @@ def test_rsa_valid_baseline_keeps_mutation_finding_with_unrelated_protocol_defec
             requires_attribute=False,
         )
     records = C.get_records()
-    assert [record.reason for record in records] == ["accepted_invalid", "harness_error"]
+    assert [record.reason for record in records] == ["accepted_invalid", reason]
 
 
 def test_rsa_valid_baseline_keeps_mutation_finding_before_timeout() -> None:

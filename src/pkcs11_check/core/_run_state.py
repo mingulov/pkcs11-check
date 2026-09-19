@@ -188,7 +188,15 @@ _POLICY_IGNORED_ENV_KEYS = {
     "P11TEST_RESUME",
     "P11TEST_STATE_FILE",
     "P11TEST_STOP_ON_FAILURE",
+    # Derived from the checkout, not operator-selected: committing between a run
+    # and its resume must not invalidate the state file.
+    "PKCS11_CHECK_FRAMEWORK_VERSION",
 }
+
+# Same exclusion for the resume-validation fingerprint: resuming across
+# framework versions was always allowed, and the version pin must not newly
+# forbid it (the merged report still stamps the current version honestly).
+_STATE_IGNORED_ENV_KEYS = frozenset({"PKCS11_CHECK_FRAMEWORK_VERSION"})
 
 
 def _recovery_attempts_path(path: Path) -> Path:
@@ -397,7 +405,15 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         # escape hatch for offline state inspection and for A/B perf measurement;
         # it is OFF by default and never needed for resume.
         payload["report_records_by_unit"] = state.report_records_by_unit
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # F19: atomic write — a kill mid-write must not corrupt state.json (resume
+    # would then fail loudly on a truncated file). Same tmp+replace idiom as
+    # collection_errors / merge; os.replace is atomic on one filesystem.
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp_path.replace(path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
     _recovery_attempts_path(path).unlink(missing_ok=True)
 
 
@@ -629,7 +645,7 @@ def build_state_fingerprint(
     payload = json.dumps(
         {
             "baseline_fingerprint": baseline_fingerprint,
-            "env": _fingerprint_env(env or os.environ),
+            "env": _fingerprint_env(env or os.environ, ignored_keys=_STATE_IGNORED_ENV_KEYS),
             "manifest_digest": manifest_digest,
             "module": module_snapshot,
             "pytest_args": redacted_args,
