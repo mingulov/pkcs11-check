@@ -65,8 +65,17 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
         mechanisms = sorted(_mechanism_name(mech) for mech in raw_mechs)
         mech_info: dict[str, dict[str, Any]] = {}
         for mech in raw_mechs:
-            info = slots[slot].get_mechanism_info(mech)
-            mech_info[_mechanism_name(mech)] = {
+            name = _mechanism_name(mech)
+            try:
+                info = slots[slot].get_mechanism_info(mech)
+            except Exception as exc:
+                # One hostile mechanism must not void the whole manifest:
+                # record the failure against that mechanism and continue.
+                # Downstream (MechanismCatalog.from_manifest) tolerates the
+                # missing flags/min/max keys via .get() defaults.
+                mech_info[name] = {"error": f"{type(exc).__name__}: {exc}"}
+                continue
+            mech_info[name] = {
                 "flags": int(info.flags),
                 "min_key_size": int(info.min_key_length),
                 "max_key_size": int(info.max_key_length),

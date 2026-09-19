@@ -51,6 +51,7 @@ def _default_args(**overrides: object) -> dict[str, object]:
         "wrap_oaep_hash": "auto",
         "allow_external_provision": False,
         "external_provision_cmd": None,
+        "vendor_mechanism": None,
     }
     defaults.update(overrides)
     return defaults

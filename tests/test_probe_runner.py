@@ -259,3 +259,50 @@ def test_run_probe_retains_params_temp_file_when_debug_env_set(
     retained = list(tmp_path.glob("p11probe-*.json"))
     assert len(retained) == 1, f"expected exactly one retained params file, got {retained}"
     assert not list(tmp_path.glob("p11cov-*.json")), "coverage temp file must still be removed"
+
+
+def test_run_probe_marks_zero_exit_without_finalizer_as_abrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A C exit(0) from inside a PKCS#11 call is an abrupt termination.
+
+    The fake child exits 0 but never wrote its coverage file (mkstemp leaves it
+    empty) and printed no traceback -- exactly what a module exit(0) looks like.
+    The launcher must publish the abrupt marker so downstream classifiers report
+    a crash instead of falling through to a missing-marker branch.
+    """
+    drain_process_observations()
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *a, **k: _fake_completed(0),
+    )
+
+    result = run_probe("_echo", {"module_path": "/x.so"})
+
+    assert result.returncode == 0
+    assert process_observation.SUBPROCESS_ABRUPT_EXIT_MARKER in result.stderr
+    _assert_probe_observation(result, returncode=0, kind="abrupt_exit")
+    assert drain_process_observations() == [result.observation]
+
+
+def test_run_probe_zero_exit_with_traceback_is_not_abrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Python-level death that exits 0 keeps its traceback-based exclusion.
+
+    The traceback half of the conjunction still applies at rc 0: only a silent
+    exit without the finalizer counts as module termination.
+    """
+    drain_process_observations()
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            [], 0, "", "Traceback (most recent call last)\nValueError: boom\n"
+        ),
+    )
+
+    result = run_probe("_echo", {"module_path": "/x.so"})
+
+    assert result.returncode == 0
+    assert process_observation.SUBPROCESS_ABRUPT_EXIT_MARKER not in result.stderr
+    _assert_probe_observation(result, returncode=0, kind="exit")

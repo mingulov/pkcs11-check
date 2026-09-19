@@ -12,6 +12,9 @@ Ported verbatim from scripts/compare-results.py with these targeted hardening ch
 3. ``lost_coverage`` tracks ``status_class(base_status) == "pass"`` only (``"xfail"``
    class removed; no change for any real unit status).
 4. No ``print`` / ``sys.exit`` — this is pure logic; the CLI task wires exit codes.
+5. F21: targets are keyed testcases-root-relative, so runs from different
+   checkouts compare cleanly instead of reporting every absolute-path target
+   as simultaneously a new failure and lost coverage.
 """
 
 from __future__ import annotations
@@ -44,16 +47,34 @@ def status_class(status: str) -> StatusClass:
     return "unknown"
 
 
+def normalize_target(target: str) -> str:
+    """Key a unit target testcases-root-relative for cross-checkout comparison.
+
+    Unit targets embed the absolute source path (and ``::daemon-recovery-N``
+    synthetics embed the trigger path), so two runs of identical code from
+    different checkouts key every target differently. When the file part of a
+    target passes through a ``testcases`` directory, the comparison key is the
+    path relative to that root (``test_x.py``, ``sub/test_y.py``); anything
+    else (pseudo-units, unknown layouts) keys unchanged.
+    """
+    head, sep, rest = target.partition("::")
+    segments = head.replace("\\", "/").split("/")
+    if "testcases" in segments:
+        head = "/".join(segments[segments.index("testcases") + 1 :])
+    return head + sep + rest if sep else head
+
+
 def load_results(path: Path) -> tuple[dict[str, str], dict[str, int]]:
     """Load a results JSON file; return ``(target→status map, summary dict)``.
 
-    Verbatim port of ``_load_results`` from ``scripts/compare-results.py``.
+    Verbatim port of ``_load_results`` from ``scripts/compare-results.py``,
+    plus F21 target normalisation (see :func:`normalize_target`).
     """
     data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     units: list[dict[str, Any]] = data.get("units", [])
     target_map: dict[str, str] = {}
     for unit in units:
-        target = str(unit.get("target", ""))
+        target = normalize_target(str(unit.get("target", "")))
         status = str(unit.get("status", "unknown"))
         target_map[target] = status
     raw_summary: dict[str, Any] = data.get("summary", {})

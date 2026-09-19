@@ -260,23 +260,24 @@ def test_undefined_ckr_is_hard_metadata_finding(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.parametrize(
-    "out",
+    ("out", "reason"),
     [
-        f"{_ENC_FALSE}\nOK",
-        f"{_ENC_FALSE}\nCKR:0x00000068\nCKR:0x00000068\nOK",
-        f"{_ENC_FALSE}\nCKR:0x0000000g\nOK",
+        (f"{_ENC_FALSE}\nOK", "probe_incomplete"),
+        (f"{_ENC_FALSE}\nCKR:0x00000068\nCKR:0x00000068\nOK", "harness_error"),
+        (f"{_ENC_FALSE}\nCKR:0x0000000g\nOK", "harness_error"),
     ],
     ids=["missing", "duplicate", "non-hex"],
 )
-def test_ckr_protocol_cardinality_and_syntax_are_harness_errors(
+def test_ckr_protocol_cardinality_and_syntax_reasons(
     monkeypatch: pytest.MonkeyPatch,
     out: str,
+    reason: str,
 ) -> None:
     _patch_run(monkeypatch, out)
 
     with pytest.raises(pytest.fail.Exception, match="CKR"):
         tra.TestKeyFunctionNotPermitted().test_encrypt_not_permitted(_cfg())
-    assert C.get_records()[-1].reason == "harness_error"
+    assert C.get_records()[-1].reason == reason
 
 
 def test_child_emits_omission_marker_for_absent_permission_flag(

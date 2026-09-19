@@ -2002,16 +2002,28 @@ def _canonical_finding(finding: EmitterFinding) -> dict[str, object]:
     }
 
 
-def inventory_digest(findings: Iterable[EmitterFinding]) -> str:
-    """Return a stable SHA-256 over the complete canonical finding inventory."""
-    payload = [_canonical_finding(finding) for finding in sorted(findings)]
-    encoded = json.dumps(
-        payload,
+def _coordinate_free_finding_payload(finding: EmitterFinding) -> str:
+    """Serialize one finding with every line/column zeroed for move-proof hashing."""
+    return json.dumps(
+        _coordinate_free_finding(finding),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
+    )
+
+
+def inventory_digest(findings: Iterable[EmitterFinding]) -> str:
+    """Return a stable SHA-256 over the complete canonical finding inventory.
+
+    Identity is coordinate-free: findings hash by (path, function, emitter,
+    expression, states) with lines/columns zeroed, and entries sort by
+    serialized payload rather than source order. Inserting, deleting, or
+    reordering unrelated code therefore leaves the digest untouched; only
+    added/removed findings and status/content changes drift it. Coordinate
+    moves remain visible in :func:`format_inventory_diff` for review.
+    """
+    payload = sorted(_coordinate_free_finding_payload(finding) for finding in findings)
+    return hashlib.sha256("\n".join(payload).encode()).hexdigest()
 
 
 def flatten_effective_states(

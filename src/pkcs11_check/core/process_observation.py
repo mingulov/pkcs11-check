@@ -63,12 +63,17 @@ def termination_from_returncode(
         else:
             termination["kind"] = "signal"
             termination["signal_name"] = signal_name
-    elif returncode > 0 and stderr is not None and SUBPROCESS_ABRUPT_EXIT_MARKER in stderr:
+    elif (
+        returncode is not None
+        and returncode >= 0
+        and stderr is not None
+        and SUBPROCESS_ABRUPT_EXIT_MARKER in stderr
+    ):
         # The child process ended without running its own exit path. Only the module can
-        # do that on a positive exit code: a C ``exit()``/``_exit()`` from inside a
-        # PKCS#11 call bypasses CPython finalization entirely. A positive exit is NOT by
-        # itself evidence of this -- the marker is appended only when the launcher
-        # observed that the child's own finalizer never ran.
+        # do that on a non-negative exit code: a C ``exit()``/``_exit()`` from inside a
+        # PKCS#11 call bypasses CPython finalization entirely, including ``exit(0)``.
+        # A non-negative exit is NOT by itself evidence of this -- the marker is appended
+        # only when the launcher observed that the child's own finalizer never ran.
         termination["kind"] = "abrupt_exit"
     else:
         termination["kind"] = "exit"

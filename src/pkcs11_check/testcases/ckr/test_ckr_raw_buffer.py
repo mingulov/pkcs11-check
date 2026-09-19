@@ -694,7 +694,7 @@ def _collect_buffer_measurement(
         value = fields.get(name)
         if value is None:
             if required and validate_required:
-                add("harness_error", summary=f"{context}: missing {name} measurement")
+                add("probe_incomplete", summary=f"{context}: missing {name} measurement")
             return None
         try:
             parsed = int(value, 0)
@@ -929,28 +929,41 @@ def _collect_buffer_measurement(
                 kind="lifecycle",
                 summary=f"{context}: final operation returned CKR 0x{final_ckr:08x}",
             )
-    harness = [item for item in failures if item.reason == "harness_error"]
-    if len(harness) > 1:
-        details = "; ".join(item.summary for item in harness)
-        first = failures.index(harness[0])
+    # Collapse repeated measurement-schema defects within each reason group. Missing
+    # fields (unresolved attribution) merge separately from malformed ones (our own
+    # emission defect) so the collapse never moves a record across the
+    # harness/provider attribution boundary.
+    for reason in ("harness_error", "probe_incomplete"):
+        group = [item for item in failures if item.reason == reason]
+        if len(group) <= 1:
+            continue
+        details = "; ".join(item.summary for item in group)
+        first = failures.index(group[0])
         failures[first] = replace(
-            harness[0],
+            group[0],
             summary=details,
             detail={"protocol": "measurement_schema", "probe_incomplete": True},
         )
         failures = [
-            item
-            for index, item in enumerate(failures)
-            if item.reason != "harness_error" or index == first
+            item for index, item in enumerate(failures) if item.reason != reason or index == first
         ]
     return failures
 
 
 def _raise_strongest(failures: list[Classification]) -> Classification | None:
-    """Return provider failures before harness failures, preserving all records."""
+    """Return concrete provider failures first, harness failures last.
+
+    All records are preserved; only the raised headline is ordered. Unresolved
+    attribution (``probe_incomplete``) sorts between the two: a concrete provider
+    verdict drawn from observed bytes outranks a missing measurement, which still
+    outranks a defect in our own emission.
+    """
     for outcome in ("fail", "xfail"):
         for item in failures:
-            if item.outcome == outcome and item.reason != "harness_error":
+            if item.outcome == outcome and item.reason not in ("harness_error", "probe_incomplete"):
+                return item
+        for item in failures:
+            if item.outcome == outcome and item.reason == "probe_incomplete":
                 return item
         for item in failures:
             if item.outcome == outcome:
@@ -1202,7 +1215,7 @@ def _check_buffer_probe(
     ):
         protocol.append(
             _ec_record(
-                "harness_error",
+                "probe_incomplete",
                 context=context,
                 operation="EC_SETUP",
                 mechanism=None,
@@ -1270,7 +1283,7 @@ def _check_buffer_probe(
         raise_for_record(malformed)
     if fields and not has_terminal_marker:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: buffer probe did not emit a complete OK measurement",
             detail={"probe_incomplete": True, "termination": termination},
@@ -1280,7 +1293,7 @@ def _check_buffer_probe(
         raise_for_record(strongest)
     if not any(line == "OK" or line.startswith("OK:") for line in output.splitlines()):
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: buffer probe did not emit a complete OK measurement",
             detail={"probe_incomplete": True, "termination": termination},

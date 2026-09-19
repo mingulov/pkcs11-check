@@ -353,6 +353,7 @@ _CKM_ALIAS_MAP: dict[int, list[str]] | None = None
 # and reused by all subsequent RawSession instances in the same process.
 # The mechanism list is a slot property that does not change between tests.
 _MECHANISM_CACHE: frozenset[str] | None = None
+_MECHANISM_ID_CACHE: frozenset[int] | None = None
 
 # Per-(slot, mechanism) cache of C_GetMechanismInfo results, mirroring
 # _MECHANISM_CACHE: module-level, populated once, reused across the per-test
@@ -381,6 +382,7 @@ class RawSession:
     sh: int
     slot_id: int
     _mechanisms: frozenset[str] | None = field(default=None, repr=False)
+    _mechanism_ids: frozenset[int] | None = field(default=None, repr=False)
     bootstrap_call_counts: dict[str, int] = field(default_factory=dict, repr=False)
     module_session_health_metrics: dict[str, int | float] = field(
         default_factory=_empty_module_session_health_metrics,
@@ -396,13 +398,15 @@ class RawSession:
         subsequent RawSession instances (one per test function) skip the
         C_GetMechanismList round-trips entirely.
         """
-        global _MECHANISM_CACHE
+        global _MECHANISM_CACHE, _MECHANISM_ID_CACHE
         if self._mechanisms is None:
             if _MECHANISM_CACHE is not None:
                 self._mechanisms = _MECHANISM_CACHE
+                self._mechanism_ids = _MECHANISM_ID_CACHE
             else:
                 import importlib as _importlib
 
+                from pkcs11_check.raw.extensions import lookup_symbol_name
                 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
                 from pkcs11_check.raw.recipes import get_mechanism_list
 
@@ -410,7 +414,12 @@ class RawSession:
                 mechs = get_mechanism_list(self.raw, self.slot_id)
                 names: set[str] = set()
                 for m in mechs:
-                    mname = MECHANISM_NAMES.get(m, "")
+                    # Vendor-registered names (e.g. --p11-vendor-mechanism) advertise
+                    # alongside standard ones; an id known to no table, or claimed by
+                    # two vendors, stays unnamed rather than misattributed.
+                    mname = (
+                        MECHANISM_NAMES.get(m, "") or lookup_symbol_name("mechanisms", int(m)) or ""
+                    )
                     if mname:
                         names.add(mname)
                         if mname.startswith("CKM_"):
@@ -420,7 +429,9 @@ class RawSession:
                         if alias.startswith("CKM_"):
                             names.add(alias[4:])
                 self._mechanisms = frozenset(names)
+                self._mechanism_ids = frozenset(int(m) for m in mechs)
                 _MECHANISM_CACHE = self._mechanisms
+                _MECHANISM_ID_CACHE = self._mechanism_ids
         return self._mechanisms
 
     def has_mechanism(self, name: str) -> bool:
@@ -440,14 +451,26 @@ class RawSession:
             if not self.has_mechanism(mechanism):
                 return False
             from pkcs11_check.raw import types_std
+            from pkcs11_check.raw.extensions import lookup_mechanism_id
 
             name = mechanism if mechanism.startswith("CKM_") else "CKM_" + mechanism
             mech_int_opt = getattr(types_std, name, None)
+            if mech_int_opt is None:
+                # Vendor-registered name (e.g. --p11-vendor-mechanism): resolve via
+                # the extension registry instead of the standard constants.
+                mech_int_opt = lookup_mechanism_id(name)
             if mech_int_opt is None:
                 return False
             mech_int = int(mech_int_opt)
         else:
             mech_int = int(mechanism)
+            if self._mechanisms is None:
+                _ = self.mechanisms  # populate the id set alongside names
+            advertised = getattr(self, "_mechanism_ids", None)
+            if advertised is not None and mech_int not in advertised:
+                # Same advertisement check the str branch performs; a reverse
+                # name lookup would wrongly exclude advertised vendor ids.
+                return False
 
         key = (self.slot_id, mech_int)
         if key not in _MECH_INFO_CACHE:
@@ -465,11 +488,33 @@ class RawSession:
 
         Returns:
             bytes of length bits // 8.
+
+        Raises:
+            ValueError: *bits* is not a multiple of 8 (caller bug, rejected
+                instead of silently truncated).
         """
         from pkcs11_check.raw.recipes import generate_random as _generate_random
 
+        if bits % 8 != 0:
+            raise ValueError(f"bits must be a multiple of 8, got {bits}")
         length = bits // 8
-        return _generate_random(self.raw, self.sh, length)
+        data = _generate_random(self.raw, self.sh, length)
+        if len(data) != length:
+            from pkcs11_check import classification as _classification
+
+            _classification.classify(
+                "wrong_result",
+                kind="metadata",
+                label="C_GenerateRandom output length",
+                operation="C_GenerateRandom",
+                inherit_mechanism=False,
+                expected=length,
+                actual=len(data),
+                summary=(
+                    f"C_GenerateRandom returned {len(data)} bytes for a {length}-byte request"
+                ),
+            )
+        return data
 
     def seed_random(self, seed: bytes, *, extra_ok: tuple[int, ...] = ()) -> int:
         """Seed the RNG via C_SeedRandom.  Returns the raw CK_RV."""

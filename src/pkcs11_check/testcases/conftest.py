@@ -418,6 +418,32 @@ def require_operational_aes_keygen(rs: Any) -> None:
             destroy_quietly(rs.raw, rs.sh, key)
 
 
+def require_mechanism_or_skip(session: Any, name: str) -> None:
+    """Skip unless the module advertises *name*, naming the reason honestly.
+
+    A skip on an unresolvable name is indistinguishable in reports from genuine
+    lack of support (issue #22), so the two cases get different texts: when no
+    code point is known to pkcs11-check at all -- neither standard metadata nor
+    a vendor registration -- the skip says so and names the
+    ``--p11-vendor-mechanism NAME=0xID`` feed instead of blaming the module.
+    """
+    if session.has_mechanism(name):
+        return
+    from pkcs11_check.raw.extensions import lookup_mechanism_id
+
+    display = name if name.startswith("CKM_") else f"CKM_{name}"
+    bare = name[4:] if name.startswith("CKM_") else name
+    if lookup_mechanism_id(name) is None:
+        from pkcs11_check.raw import types_std
+
+        if getattr(types_std, display, None) is None:
+            pytest.skip(
+                f"{display}: no code point known to pkcs11-check "
+                f"(pass --p11-vendor-mechanism {bare}=0x... for a vendor mechanism)"
+            )
+    pytest.skip(f"{display} not supported")
+
+
 def gen_aes_key_or_xfail(
     rs: Any,
     bits: int = 128,

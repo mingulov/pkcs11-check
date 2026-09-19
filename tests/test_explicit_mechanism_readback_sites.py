@@ -71,6 +71,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import CKA_VALUE, CKR_ATTRIBUTE_TYPE_INVALID
 from pkcs11_check.testcases import test_aead_wrap_outputs as _aead_wrap_outputs
 from pkcs11_check.testcases import test_aes_modes as _aes_modes
 from pkcs11_check.testcases import test_authenticated_wrap as _authenticated_wrap
@@ -80,6 +82,8 @@ from pkcs11_check.testcases import test_double_ratchet as _double_ratchet
 from pkcs11_check.testcases import test_ike as _ike
 from pkcs11_check.testcases import test_kem as _kem
 from pkcs11_check.testcases import test_keypair_consistency as _keypair_consistency
+from pkcs11_check.testcases import test_mech_derive as _mech_derive
+from pkcs11_check.testcases import test_misc_kdf as _misc_kdf
 from pkcs11_check.testcases import test_nested_template_enforcement_extended as _nte
 from pkcs11_check.testcases import test_pbe as _pbe
 from pkcs11_check.testcases import test_setattr_restricted as _setattr_restricted
@@ -90,6 +94,7 @@ from pkcs11_check.testcases import test_wtls as _wtls
 from pkcs11_check.testcases import test_x942_dh as _x942
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.acvp import test_acvp_ecdh as _acvp_ecdh
+from pkcs11_check.testcases.mechanism_catalog import MechEntry
 from tests._readback_attribution_inventory import (
     DYNAMIC_ARG,
     STATUS_EXPLICIT_MECHANISM_READBACK,
@@ -1217,3 +1222,125 @@ def test_x942_param_and_keytype_comparisons_carry_producer_operation() -> None:
         assert {(state.operation, state.mechanism) for state in finding.states} == {
             expected[finding.function]
         }
+
+
+# ---------------------------------------------------------------------------
+# Group P1 -- refusal/malformed branches restored to bare readbacks.
+# ---------------------------------------------------------------------------
+
+
+def _derive_entry() -> MechEntry:
+    return MechEntry(
+        mech_id=0x00001090,
+        mech_name="CKM_TEST_DERIVE",
+        flags=0,
+        min_key_size=0,
+        max_key_size=0,
+        config=None,
+    )
+
+
+def test_keypair_read_leg_refusal_is_mechanism_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_read_leg``'s refusal branch records a bare readback (STRIP rule)."""
+
+    def _raise(*_a: Any, **_kw: Any) -> Any:
+        raise CkrAssertionError("refused", CKR_ATTRIBUTE_TYPE_INVALID)
+
+    monkeypatch.setattr(_keypair_consistency, "read_attributes", _raise)
+    _set_stale_mechanism()
+    value, record = _keypair_consistency._read_leg(
+        _rs(), 1, 0, leg="public", label="probe readback", mechanism="CKM_TEST_PRODUCER"
+    )
+    assert value is MISSING_ATTRIBUTE
+    assert record is not None
+    _assert_bare_readback(record)
+    assert record.detail is not None
+    assert record.detail.get("producer_mechanism") == "CKM_TEST_PRODUCER"
+
+
+def test_nested_template_claimed_refusal_is_mechanism_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_read_claimed_template``'s refusal branch is a bare readback."""
+
+    def _raise(*_a: Any, **_kw: Any) -> Any:
+        raise CkrAssertionError("refused", CKR_ATTRIBUTE_TYPE_INVALID)
+
+    monkeypatch.setattr(_nte, "read_attributes", _raise)
+    _set_stale_mechanism()
+    claimed, record = _nte._read_claimed_template(
+        _rs(), 1, 0, label="probe readback", mechanism="CKM_TEST_PRODUCER"
+    )
+    assert claimed is True
+    assert record is not None
+    _assert_bare_readback(record)
+
+
+def test_nested_template_claimed_malformed_is_mechanism_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_read_claimed_template``'s malformed branch is a bare readback."""
+    monkeypatch.setattr(_nte, "read_attributes", lambda *_a, **_kw: {0: b"short"})
+    _set_stale_mechanism()
+    claimed, record = _nte._read_claimed_template(
+        _rs(), 1, 0, label="probe readback", mechanism="CKM_TEST_PRODUCER"
+    )
+    assert claimed is False
+    assert record is not None
+    _assert_bare_readback(record)
+
+
+def test_cipher_derived_missing_value_is_mechanism_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_check_cipher_derived_value_shape``'s missing branch is bare."""
+    monkeypatch.setattr(_mech_derive, "read_attributes", lambda *_a, **_kw: {})
+    _set_stale_mechanism()
+    _mech_derive._check_cipher_derived_value_shape(
+        _rs(), 1, entry=_derive_entry(), expected_length=16
+    )
+    record = _last_record()
+    _assert_bare_readback(record)
+    assert "CKM_TEST_DERIVE" in record.label
+
+
+def test_cipher_derived_malformed_value_is_mechanism_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_check_cipher_derived_value_shape``'s malformed branch is bare."""
+    monkeypatch.setattr(
+        _mech_derive, "read_attributes", lambda *_a, **_kw: {CKA_VALUE: "not-bytes"}
+    )
+    _set_stale_mechanism()
+    with pytest.raises(pytest.fail.Exception, match="malformed value"):
+        _mech_derive._check_cipher_derived_value_shape(
+            _rs(), 1, entry=_derive_entry(), expected_length=16
+        )
+    record = _last_record()
+    _assert_bare_readback(record)
+    assert record.detail is not None
+    assert record.detail.get("producer_mechanism") == "CKM_TEST_DERIVE"
+
+
+def test_misc_bytes_non_bytes_is_derivekey_operation() -> None:
+    """``_assert_misc_bytes_length`` non-bytes finding is about C_DeriveKey."""
+    with pytest.raises(pytest.fail.Exception, match="non-byte value"):
+        _misc_kdf._assert_misc_bytes_length(
+            "nope", expected_len=4, label="probe", mechanism="CKM_TEST_PRODUCER"
+        )
+    record = _last_record()
+    assert record.operation == "C_DeriveKey"
+    assert record.mechanism == "CKM_TEST_PRODUCER"
+
+
+def test_misc_bytes_wrong_length_is_derivekey_operation() -> None:
+    """``_assert_misc_bytes_length`` length finding is about C_DeriveKey."""
+    with pytest.raises(pytest.fail.Exception):
+        _misc_kdf._assert_misc_bytes_length(
+            b"short", expected_len=16, label="probe", mechanism="CKM_TEST_PRODUCER"
+        )
+    record = _last_record()
+    assert record.operation == "C_DeriveKey"
+    assert record.mechanism == "CKM_TEST_PRODUCER"

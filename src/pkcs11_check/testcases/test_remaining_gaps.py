@@ -123,6 +123,7 @@ from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
+    require_mechanism_or_skip,
     xfail_if_known_ckr,
 )
 
@@ -387,12 +388,12 @@ def _probe_ckr(
     *,
     context: str,
 ) -> int:
-    """Parse one dual-function CKR marker, treating malformed output as harness error."""
+    """Parse one dual-function CKR marker, treating a missing line as incomplete."""
     marker = f"{prefix}:"
     lines = [line for line in stdout.splitlines() if line.startswith(marker)]
     if not lines:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: missing {prefix} result",
             detail={"probe_incomplete": True, "protocol": "missing_result"},
@@ -1323,15 +1324,14 @@ class TestRsaPkcsNull:
 class TestKmac:
     """CKM_KMAC_128 and CKM_KMAC_256 (vendor range; no OASIS code point)
     - NIST SP 800-185 KECCAK MAC.
+    - Supply the module's code points via ``--p11-vendor-mechanism KMAC_128=0x...``.
     """
 
     def test_kmac_128_availability(self, p11_raw_session: Any) -> None:
-        if not p11_raw_session.has_mechanism("KMAC_128"):
-            pytest.skip("CKM_KMAC_128 not supported")
+        require_mechanism_or_skip(p11_raw_session, "KMAC_128")
 
     def test_kmac_256_availability(self, p11_raw_session: Any) -> None:
-        if not p11_raw_session.has_mechanism("KMAC_256"):
-            pytest.skip("CKM_KMAC_256 not supported")
+        require_mechanism_or_skip(p11_raw_session, "KMAC_256")
 
 
 # ---------------------------------------------------------------------------
@@ -1475,7 +1475,7 @@ class TestDualFunctionRemaining:
             pytest.skip(stdout.strip())
         if rv is None:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="C_SignEncryptUpdate",
                 summary="C_SignEncryptUpdate: missing parsed CKR result",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},
@@ -1502,7 +1502,7 @@ class TestDualFunctionRemaining:
             pytest.skip(stdout.strip())
         if rv is None:
             fail_as(
-                "harness_error",
+                "probe_incomplete",
                 label="C_DecryptVerifyUpdate",
                 summary="C_DecryptVerifyUpdate: missing parsed CKR result",
                 detail={"probe_incomplete": True, "protocol": "missing_result"},

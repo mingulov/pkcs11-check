@@ -193,7 +193,7 @@ def _read_claimed_template(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
-            mechanism=mechanism,
+            inherit_mechanism=False,
             expected=CKR_OK,
             actual=exc.rv,
             detail={"attribute": int(attr)},
@@ -226,7 +226,7 @@ def _read_claimed_template(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
-        mechanism=mechanism,
+        inherit_mechanism=False,
         detail={
             "attribute": int(attr),
             "expected_shape": "bytes containing complete CK_ATTRIBUTE records",

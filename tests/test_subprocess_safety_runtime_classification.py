@@ -130,7 +130,7 @@ def test_cross_process_duplicate_setup_preserves_outer_crash(
         ("PARENT_LABEL:parent\nCHILD_EXIT:1\n", "status 1"),
     ],
 )
-def test_cross_process_incomplete_child_status_is_harness(
+def test_cross_process_incomplete_child_status_is_probe_incomplete(
     monkeypatch: pytest.MonkeyPatch,
     stdout: str,
     match: str,
@@ -144,7 +144,7 @@ def test_cross_process_incomplete_child_status_is_harness(
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["harness_error"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete"]
 
 
 def test_cross_process_child_signal_is_crash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,7 +206,9 @@ def test_cross_process_duplicate_child_fatal_is_harness_only(
     assert [item.reason for item in get_records()] == ["harness_error"]
 
 
-def test_cross_process_child_exception_is_harness(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cross_process_child_exception_is_probe_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         test_subprocess_safety,
         "run_probe",
@@ -220,7 +222,7 @@ def test_cross_process_child_exception_is_harness(monkeypatch: pytest.MonkeyPatc
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["harness_error"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete"]
 
 
 def test_cross_process_duplicate_parent_label_is_one_harness_record(
@@ -328,7 +330,7 @@ def test_fork_positive_child_exit_is_not_crash(monkeypatch: pytest.MonkeyPatch) 
         test_subprocess_safety.TestForkSafety().test_fork_after_initialize(
             SimpleNamespace(module="/tmp/provider.so")
         )
-    assert get_records()[-1].reason == "harness_error"
+    assert get_records()[-1].reason == "probe_incomplete"
 
 
 def test_fork_child_exception_with_success_exit_is_harness(
@@ -576,7 +578,7 @@ def test_session_noncanonical_found_decimal_is_harness(
     assert [item.reason for item in get_records()] == ["harness_error"]
 
 
-def test_session_missing_parent_label_with_child_signal_records_harness_and_crash(
+def test_session_missing_parent_label_with_child_signal_records_incomplete_and_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -592,7 +594,7 @@ def test_session_missing_parent_label_with_child_signal_records_harness_and_cras
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["harness_error", "crash"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete", "crash"]
 
 
 @pytest.mark.parametrize(
@@ -666,7 +668,9 @@ def test_session_child_found_one_is_policy_failure(monkeypatch: pytest.MonkeyPat
     assert [item.reason for item in get_records()] == ["self_contradiction"]
 
 
-def test_session_child_found_without_exit_is_harness(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_session_child_found_without_exit_is_probe_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         test_subprocess_safety,
         "run_probe",
@@ -680,7 +684,7 @@ def test_session_child_found_without_exit_is_harness(monkeypatch: pytest.MonkeyP
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["self_contradiction", "harness_error"]
+    assert [item.reason for item in get_records()] == ["self_contradiction", "probe_incomplete"]
 
 
 def test_session_found_then_cleanup_signal_preserves_policy_and_crash(
@@ -702,7 +706,7 @@ def test_session_found_then_cleanup_signal_preserves_policy_and_crash(
     assert [item.reason for item in get_records()] == ["self_contradiction", "crash"]
 
 
-def test_session_found_then_cleanup_exception_preserves_policy_and_harness(
+def test_session_found_then_cleanup_exception_preserves_policy_and_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -720,7 +724,7 @@ def test_session_found_then_cleanup_exception_preserves_policy_and_harness(
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["self_contradiction", "harness_error"]
+    assert [item.reason for item in get_records()] == ["self_contradiction", "probe_incomplete"]
 
 
 @pytest.mark.parametrize(
@@ -747,7 +751,9 @@ def test_session_found_policy_survives_cleanup_exception_protocol_errors(
         )
     reasons = [item.reason for item in get_records()]
     assert reasons[0] == "self_contradiction"
-    assert "harness_error" in reasons
+    assert reasons[1:] and all(
+        reason in ("harness_error", "probe_incomplete") for reason in reasons[1:]
+    )
 
 
 def test_session_found_zero_then_cleanup_signal_is_crash_only(
@@ -769,7 +775,7 @@ def test_session_found_zero_then_cleanup_signal_is_crash_only(
     assert [item.reason for item in get_records()] == ["crash"]
 
 
-def test_session_found_zero_then_cleanup_exception_is_harness_only(
+def test_session_found_zero_then_cleanup_exception_is_incomplete_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -787,7 +793,7 @@ def test_session_found_zero_then_cleanup_exception_is_harness_only(
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["harness_error"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete"]
 
 
 def test_session_found_policy_survives_outer_crash_without_child_status(
@@ -1048,7 +1054,7 @@ def test_session_signal_and_exit_conflict_is_harness_not_crash(
     assert [item.reason for item in get_records()] == ["harness_error"]
 
 
-def test_session_child_success_without_parent_label_is_harness(
+def test_session_child_success_without_parent_label_is_probe_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -1064,7 +1070,7 @@ def test_session_child_success_without_parent_label_is_harness(
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["harness_error"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete"]
 
 
 def test_session_setup_and_child_signal_is_harness_not_crash(
@@ -1265,7 +1271,7 @@ def test_session_reversed_result_transcript_is_harness(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
-def test_fork_child_exit_harness_is_preserved_before_outer_signal(
+def test_fork_child_exit_incomplete_is_preserved_before_outer_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -1282,7 +1288,7 @@ def test_fork_child_exit_harness_is_preserved_before_outer_signal(
             SimpleNamespace(module="/tmp/provider.so")
         )
 
-    assert [item.reason for item in get_records()] == ["harness_error", "crash"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete", "crash"]
 
 
 def test_fork_child_signal_crash_is_preserved_before_cleanup_harness(
@@ -1368,10 +1374,17 @@ def test_fork_outer_windows_seh_is_crash_without_missing_status_harness(
     assert [item.reason for item in get_records()] == ["crash"]
 
 
-@pytest.mark.parametrize("output", ["OK:fork\n", "CHILD_EXIT:not-an-int\nOK:fork\n"])
+@pytest.mark.parametrize(
+    ("output", "reason"),
+    [
+        ("OK:fork\n", "probe_incomplete"),
+        ("CHILD_EXIT:not-an-int\nOK:fork\n", "harness_error"),
+    ],
+)
 def test_fork_missing_or_malformed_status_is_incomplete(
     monkeypatch: pytest.MonkeyPatch,
     output: str,
+    reason: str,
 ) -> None:
     monkeypatch.setattr(
         test_subprocess_safety,
@@ -1382,7 +1395,7 @@ def test_fork_missing_or_malformed_status_is_incomplete(
         test_subprocess_safety.TestForkSafety().test_fork_after_initialize(
             SimpleNamespace(module="/tmp/provider.so")
         )
-    assert get_records()[-1].reason == "harness_error"
+    assert get_records()[-1].reason == reason
 
 
 def test_fork_timeout_marker_is_crash(monkeypatch: pytest.MonkeyPatch) -> None:

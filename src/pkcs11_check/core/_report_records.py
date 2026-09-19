@@ -547,8 +547,14 @@ def _write_report_jsonl_from_record_sources(
     attempt_history: Sequence[Mapping[str, Any]] = (),
     recovery_events: Sequence[Mapping[str, Any]] = (),
     collection_failure_path: Path | None = None,
+    provenance_record: Mapping[str, Any] | None = None,
 ) -> bool:
-    """Write merged report.jsonl from per-unit cache shards without loading all records."""
+    """Write merged report.jsonl from per-unit cache shards without loading all records.
+
+    ProvenanceReport records from shards keep first-wins (matching the
+    extractor); when none is present and ``provenance_record`` is given, it is
+    appended once, so a run carries exactly one framework version record.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_suffix(".jsonl.tmp")
     wrote = False
@@ -659,6 +665,7 @@ def _write_report_jsonl_from_record_sources(
                     + "\n"
                 )
                 wrote = True
+            provenance_seen = False
             for unit in _ordered_report_record_units(units, inline_records_by_unit):
                 source_started = False
                 for record in _iter_unit_report_record_source(
@@ -666,6 +673,10 @@ def _write_report_jsonl_from_record_sources(
                 ):
                     if record.get("$report_type") in {"ProcessReport", "RecoveryEvent"}:
                         continue
+                    if record.get("$report_type") == "ProvenanceReport":
+                        if provenance_seen:
+                            continue
+                        provenance_seen = True
                     if (
                         collection_keys
                         and json.dumps(record, sort_keys=True, separators=(",", ":"))
@@ -684,6 +695,9 @@ def _write_report_jsonl_from_record_sources(
                 wrote = True
             for record in collection_records:
                 out_fh.write(json.dumps(record) + "\n")
+                wrote = True
+            if provenance_record is not None and not provenance_seen:
+                out_fh.write(json.dumps(dict(provenance_record)) + "\n")
                 wrote = True
         if wrote:
             tmp_path.replace(output_path)
@@ -1583,6 +1597,10 @@ def _build_detail_from_report_records(
                 "outcome": finalize_effective_outcome,
                 "duration": 0.0,
                 "longrepr": error,
+                # Session-global teardown: not attributable to any file. The
+                # marker routes this record to the <lifecycle> pseudo-unit
+                # instead of a phantom per-file unit.
+                "lifecycle": "session-teardown",
             }
             counts[finalize_effective_outcome] = counts.get(finalize_effective_outcome, 0) + 1
             diagnostic_counts[finalize_effective_outcome] += 1

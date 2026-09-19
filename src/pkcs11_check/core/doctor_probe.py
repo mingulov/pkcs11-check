@@ -120,6 +120,8 @@ def run_login_probe_subprocess(
             capture_output=True,
             text=True,
             encoding="utf-8",
+            # F18: provider bytes on the pipe must not lose the login verdict.
+            errors="replace",
             timeout=timeout,
             env=env,
         )

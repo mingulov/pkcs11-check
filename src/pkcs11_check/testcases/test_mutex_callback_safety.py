@@ -339,9 +339,9 @@ def _assert_normal_probe(
         raise_for_record(protocol_errors[0])
     if mode == "lock" and values.init_rv is None:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
-            summary=f"{context}: harness incomplete: missing INIT_RV marker",
+            summary=f"{context}: probe incomplete: missing INIT_RV marker",
             detail={"probe_incomplete": True, "protocol": "missing_init_rv"},
         )
     if mode == "lock" and values.init_rv == CKR_CANT_LOCK:
@@ -351,16 +351,16 @@ def _assert_normal_probe(
         )
     if mode == "lock" and values.init_rv == CKR_OK and values.call_rv is None:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: missing CALL_RV marker after CKR_OK INIT_RV",
             detail={"probe_incomplete": True, "protocol": "missing_call_rv"},
         )
     if mode == "rv" and values.rv is None and not setup_lines:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
-            summary=f"{context}: harness incomplete: missing RV marker",
+            summary=f"{context}: probe incomplete: missing RV marker",
             detail={"probe_incomplete": True, "protocol": "missing_rv"},
         )
     if provider_record is not None:

@@ -290,12 +290,12 @@ def test_v3_result_protocol_classifies_ckr_ok_as_provider_failure() -> None:
     assert records[0].actual_ckr == "CKR_OK"
 
 
-def test_v3_hollow_ok_without_result_is_harness_error() -> None:
+def test_v3_hollow_ok_without_result_is_probe_incomplete() -> None:
     with pytest.raises(pytest.fail.Exception, match="missing_result"):
         test_ckr_v30_raw._check(0, "OK:C_MessageEncryptInit\n", "", "C_MessageEncryptInit")
 
     records = get_records()
-    assert [record.reason for record in records] == ["harness_error"]
+    assert [record.reason for record in records] == ["probe_incomplete"]
     assert records[0].detail is not None
     assert records[0].detail["protocol"] == "missing_result"
 
@@ -750,7 +750,7 @@ def test_zero_exit_missing_terminal_marker_is_incomplete() -> None:
         assert_ckr_subprocess_ok(0, "CKR:0x00000007\n", "", context="C_Test CKR probe")
 
     records = get_records()
-    assert [record.reason for record in records] == ["harness_error"]
+    assert [record.reason for record in records] == ["probe_incomplete"]
     assert records[0].detail is not None
     assert records[0].detail["probe_incomplete"] is True
     assert records[0].detail["termination"]["kind"] == "exit"
@@ -766,7 +766,7 @@ def test_incidental_ok_substring_is_not_completion() -> None:
             context="C_Test CKR probe",
         )
 
-    assert [record.reason for record in get_records()] == ["harness_error"]
+    assert [record.reason for record in get_records()] == ["probe_incomplete"]
 
 
 def test_break_survives_earlier_setup_xfail() -> None:
@@ -953,12 +953,12 @@ def test_v3_duplicate_semantic_marker_is_one_harness_record(check: RawCheck) -> 
     assert [record.reason for record in get_records()] == ["harness_error"]
 
 
-def test_malformed_terminal_marker_is_harness_evidence() -> None:
+def test_malformed_terminal_marker_is_probe_incomplete() -> None:
     with pytest.raises(pytest.fail.Exception, match="terminal marker"):
         assert_ckr_subprocess_ok(0, "OKAY:almost complete\n", "", context="C_Test CKR probe")
 
     record = get_records()[-1]
-    assert record.reason == "harness_error"
+    assert record.reason == "probe_incomplete"
     assert record.detail is not None
     assert record.detail["protocol"] == "missing_terminal_marker"
     assert record.detail["termination"]["kind"] == "exit"

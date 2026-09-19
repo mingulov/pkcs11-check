@@ -106,8 +106,12 @@ def _module_terminated_process(rc: int, stderr: str, cov_path: str) -> bool:
 
     A module that writes its own diagnostics to stderr before exiting is still caught: the
     test is for a traceback specifically, not for silence.
+
+    The exit code is deliberately ``>= 0`` rather than ``> 0``: a C ``exit(0)`` from
+    inside a PKCS#11 call skips the finalizer exactly like ``exit(n)`` does, so a clean
+    code with no finalizer and no traceback is the same abrupt termination, not a pass.
     """
-    return rc > 0 and not _finalizer_ran(cov_path) and _PYTHON_TRACEBACK not in stderr
+    return rc >= 0 and not _finalizer_ran(cov_path) and _PYTHON_TRACEBACK not in stderr
 
 
 def run_probe(
@@ -166,6 +170,8 @@ def run_probe(
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                # F18: provider bytes on the pipe must not cost the markers.
+                errors="replace",
                 env=env,
                 timeout=timeout,
             )
@@ -178,9 +184,10 @@ def run_probe(
             err = _as_text(exc.stderr) + f"\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout}s\n"  # I8
             rc = SUBPROCESS_TIMEOUT_RC
 
-        # A positive exit code alone cannot tell "the module called exit() from inside the
-        # PKCS#11 call" apart from "Python raised and died normally" -- both arrive as
-        # rc>0. The discriminator is the coverage file: probe_main writes it from its
+        # A non-negative exit code alone cannot tell "the module called exit() from inside
+        # the PKCS#11 call" apart from "Python raised and died normally" -- both arrive
+        # as rc>=0 (a C exit(0) looks exactly like a pass). The discriminator is the
+        # coverage file: probe_main writes it from its
         # own `finally` AND from atexit, so every Python-level termination leaves
         # parseable JSON there, while a C exit()/_exit() bypasses CPython finalization
         # and leaves it empty. Publish that observation on stderr so it reaches every

@@ -474,10 +474,11 @@ def _module_terminated_process(
 
     Requires the full conjunction, mirroring the probe layer:
 
-    * a positive exit code that is not operator interruption (signals take
-      the crash path before this is consulted);
+    * a non-negative exit code that is not operator interruption (signals take
+      the crash path before this is consulted; a C ``exit(0)`` from inside a
+      PKCS#11 call skips SessionFinish exactly like ``exit(n)`` does);
     * no SessionFinish record (orderly pytest always writes one, including
-      genuine no-tests-collected exit 5);
+      genuine no-tests-collected exit 5 and every all-pass exit 0);
     * no Python traceback in captured output (every Python-level death,
       including pytest internal errors, leaves one);
     * at least one test-phase record (the provider only loads inside test
@@ -485,7 +486,7 @@ def _module_terminated_process(
     """
 
     return (
-        returncode > 0
+        returncode >= 0
         and returncode not in _OPERATOR_EXIT_CODES
         and returncode not in _RESERVED_PYTEST_EXIT_CODES
         and session_exitstatus is None
@@ -633,6 +634,11 @@ def _cache_attempt_report(
     return detail, completion_verified
 
 
+# Per-file subprocess timeout ceiling (4h): the documented cap applies to the
+# final budget, not only to the count-derived half of it.
+_UNIT_TIMEOUT_CAP_SECONDS = 14400
+
+
 def _unit_timeout_seconds(
     test_timeout: int,
     granularity: IsolationGranularity,
@@ -643,10 +649,10 @@ def _unit_timeout_seconds(
         return max(test_timeout + 60, 120)
     fallback = max(test_timeout * 30, 900)
     if num_tests > 0:
-        # 5s per test + 60s startup overhead, floor 300s, cap 14400s (4h)
-        count_budget = min(max(num_tests * 5 + 60, 300), 14400)
-        return max(fallback, count_budget)
-    return fallback
+        # 5s per test + 60s startup overhead, floor 300s.
+        count_budget = max(num_tests * 5 + 60, 300)
+        return min(max(fallback, count_budget), _UNIT_TIMEOUT_CAP_SECONDS)
+    return min(fallback, _UNIT_TIMEOUT_CAP_SECONDS)
 
 
 # Plugins the per-unit pytest subprocess actually needs. Disabling autoload of
@@ -678,6 +684,20 @@ def _unit_plugin_addopts(file_path: str) -> str | None:
 # Kept as a literal rather than imported from plugin.py: the runner must not import
 # the pytest plugin, which is loaded inside the children it launches.
 _UNIT_CHILD_ENV = "PKCS11_CHECK_UNIT_CHILD"
+
+
+def _parent_provenance_record() -> dict[str, Any]:
+    """Compute the run's single ProvenanceReport record.
+
+    Called once per isolated run; children inherit the version via
+    PKCS11_CHECK_FRAMEWORK_VERSION and skip their own emission.
+    """
+    from pkcs11_check.provenance import build_provenance_record, framework_repo_root
+
+    return {
+        "$report_type": "ProvenanceReport",
+        **build_provenance_record(env=os.environ, repo_root=framework_repo_root()),
+    }
 
 
 def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, str]:
@@ -956,7 +976,12 @@ def _reset_fresh_run_artifacts(
     collection_failure_sidecar_path(state_file).unlink(missing_ok=True)
     _recovery_attempts_path(state_file).unlink(missing_ok=True)
     report_cache_dir = _report_record_cache_dir(state_file)
-    if report_cache_dir.is_symlink() or report_cache_dir.exists():
+    if report_cache_dir.is_symlink():
+        # A relocated cache dir: drop the link only. rmtree would raise on a
+        # link, and deleting through it could wipe an unrelated tree; the cache
+        # is recreated fresh at its canonical path on demand.
+        report_cache_dir.unlink()
+    elif report_cache_dir.exists():
         shutil.rmtree(report_cache_dir)
     if report_config is None:
         return
@@ -1284,6 +1309,11 @@ def run_isolated_pytest_units(
     default run is byte-identical. See core/recovery.py.
     """
     env = os.environ.copy()
+    # Framework version, computed once per run: children inherit the pin (no
+    # per-unit git shell-out) and skip their own ProvenanceReport; the parent
+    # merges exactly one into report.jsonl at the writer calls below.
+    parent_provenance_record = _parent_provenance_record()
+    env["PKCS11_CHECK_FRAMEWORK_VERSION"] = parent_provenance_record["framework"]["version"]
     deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
     file_test_counts: dict[str, int] = {}
     for item in collected_items or ():
@@ -1458,6 +1488,7 @@ def run_isolated_pytest_units(
                     attempt_history=state.attempt_history,
                     recovery_events=state.recovery_events,
                     collection_failure_path=collection_failure_sidecar_path(state_file),
+                    provenance_record=parent_provenance_record,
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
@@ -2930,6 +2961,7 @@ def run_isolated_pytest_units(
                     attempt_history=state.attempt_history,
                     recovery_events=state.recovery_events,
                     collection_failure_path=collection_failure_sidecar_path(state_file),
+                    provenance_record=parent_provenance_record,
                 )
                 if wrote_report_jsonl or report_config.jsonl_path.exists():
                     merged_details = _build_per_unit_details_from_record_sources(

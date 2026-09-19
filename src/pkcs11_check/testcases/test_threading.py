@@ -67,7 +67,12 @@ def _mint_throwaway_token(tmp_path: Path) -> str | None:
     tokens.mkdir(parents=True, exist_ok=True)
     mint_cmd = mint_cmd_tmpl.format(token_dir=str(tmp_path), conf_path=str(conf))
     proc = subprocess.run(
-        shell_invocation(mint_cmd), capture_output=True, text=True, encoding="utf-8"
+        shell_invocation(mint_cmd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        # Same class as F18: the mint tool may print non-UTF-8 bytes.
+        errors="replace",
     )
     return str(conf) if proc.returncode == 0 else None
 
@@ -188,6 +193,8 @@ def _run_threaded_workload(
             capture_output=True,
             text=True,
             encoding="utf-8",
+            # Same class as F18: child output may carry provider bytes.
+            errors="replace",
             timeout=timeout,
             env=env,
         )

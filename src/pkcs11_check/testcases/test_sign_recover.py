@@ -225,7 +225,7 @@ def _require_result_fields(
         _raise_provider_disposition(semantic, measurements)
     if not any(line == "OK" or line.startswith("OK:") for line in stdout.splitlines()):
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: child subprocess did not emit a complete result",
             detail={"probe_incomplete": True, "protocol": "missing_terminal_marker"},
@@ -233,7 +233,7 @@ def _require_result_fields(
     missing = [name for name in required if name not in fields]
     if missing:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: missing result field(s): {', '.join(missing)}",
             detail={"probe_incomplete": True, "protocol": "missing_result"},

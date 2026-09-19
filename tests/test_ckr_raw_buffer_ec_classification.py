@@ -1658,7 +1658,7 @@ def test_ready_cleanup_then_measurement_is_phase_invalid() -> None:
     assert any(record.reason == "harness_error" for record in records)
 
 
-def test_ready_cleanup_without_terminal_measurement_is_harness_incomplete() -> None:
+def test_ready_cleanup_without_terminal_measurement_is_probe_incomplete() -> None:
     """Cleanup lifecycle xfails cannot make ready-without-measurement complete."""
     output = (
         _setup(
@@ -1700,7 +1700,7 @@ def test_ready_cleanup_without_terminal_measurement_is_harness_incomplete() -> N
     assert any(
         record.reason == "not_operational" and record.kind == "lifecycle" for record in records
     )
-    assert any(record.reason == "harness_error" for record in records)
+    assert any(record.reason == "probe_incomplete" for record in records)
 
 
 def test_ready_cleanup_then_setup_refusal_is_phase_invalid() -> None:

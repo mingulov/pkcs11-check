@@ -10,7 +10,14 @@ from pkcs11_check.raw.types_std import CKF_SIGN, CKF_VERIFY, CKM_RSA_PKCS
 from tests._skip_assert import assert_skips
 
 
-def _session(monkeypatch, *, flags: int, mechanisms=("CKM_RSA_PKCS", "RSA_PKCS"), raises=False):
+def _session(
+    monkeypatch,
+    *,
+    flags: int,
+    mechanisms=("CKM_RSA_PKCS", "RSA_PKCS"),
+    mech_ids=(int(CKM_RSA_PKCS),),
+    raises=False,
+):
     """Build a RawSession without a real module and stub C_GetMechanismInfo."""
     fixtures._MECH_INFO_CACHE.clear()
     rs = fixtures.RawSession.__new__(fixtures.RawSession)
@@ -18,6 +25,7 @@ def _session(monkeypatch, *, flags: int, mechanisms=("CKM_RSA_PKCS", "RSA_PKCS")
     object.__setattr__(rs, "sh", 0)
     object.__setattr__(rs, "slot_id", 0)
     object.__setattr__(rs, "_mechanisms", frozenset(mechanisms))
+    object.__setattr__(rs, "_mechanism_ids", frozenset(mech_ids))
 
     calls = {"n": 0}
 
@@ -47,9 +55,26 @@ def test_int_mechanism_accepted(monkeypatch):
 
 
 def test_unadvertised_mechanism_returns_false(monkeypatch):
-    rs, calls = _session(monkeypatch, flags=int(CKF_VERIFY), mechanisms=())
+    rs, calls = _session(monkeypatch, flags=int(CKF_VERIFY), mechanisms=(), mech_ids=())
     assert rs.has_mechanism_flag("RSA_PKCS", int(CKF_VERIFY)) is False
     assert calls["n"] == 0  # never queried C_GetMechanismInfo
+
+
+def test_unadvertised_int_mechanism_returns_false(monkeypatch):
+    rs, calls = _session(
+        monkeypatch,
+        flags=int(CKF_VERIFY),
+        mechanisms=("CKM_RSA_PKCS",),
+        mech_ids=(0xDEAD,),
+    )
+    assert rs.has_mechanism_flag(int(CKM_RSA_PKCS), int(CKF_VERIFY)) is False
+    assert calls["n"] == 0  # never queried C_GetMechanismInfo
+
+
+def test_advertised_vendor_int_mechanism_is_queried(monkeypatch):
+    rs, calls = _session(monkeypatch, flags=int(CKF_VERIFY), mechanisms=(), mech_ids=(0x80000001,))
+    assert rs.has_mechanism_flag(0x80000001, int(CKF_VERIFY)) is True
+    assert calls["n"] == 1
 
 
 def test_unknown_name_returns_false(monkeypatch):

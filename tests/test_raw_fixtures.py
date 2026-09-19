@@ -130,3 +130,106 @@ def test_module_session_report_hook_marks_call_failures() -> None:
 
     _remember_module_session_call_outcome(item, SimpleNamespace(when="call", outcome="failed"))
     assert getattr(item, MODULE_SESSION_CALL_FAILED_ATTR) is True
+
+
+def test_generate_random_rejects_non_multiple_of_8() -> None:
+    """The bits contract is enforced, not silently truncated."""
+    rs = RawSession(object(), 0, 0)
+    with pytest.raises(ValueError, match="multiple of 8"):
+        rs.generate_random(7)
+
+
+def test_generate_random_returns_requested_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Happy path returns exactly bits // 8 bytes."""
+    monkeypatch.setattr("pkcs11_check.raw.recipes.generate_random", lambda _r, _s, n: b"\xab" * n)
+    rs = RawSession(object(), 0, 0)
+    assert rs.generate_random(128) == b"\xab" * 16
+
+
+def test_generate_random_short_provider_read_is_wrong_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short provider read fails at the source with a wrong_result verdict."""
+    from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.generate_random", lambda _r, _s, _n: b"\xab" * 4)
+    rs = RawSession(object(), 0, 0)
+    C.clear()
+    with pytest.raises(pytest.fail.Exception, match="C_GenerateRandom"):
+        rs.generate_random(128)
+    assert C.get_records()[-1].reason == "wrong_result"
+
+
+def _reset_mechanism_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    import pkcs11_check.fixtures as fixtures_mod
+    from pkcs11_check.raw.extensions import clear_extensions
+
+    monkeypatch.setattr(fixtures_mod, "_MECHANISM_CACHE", None)
+    monkeypatch.setattr(fixtures_mod, "_MECHANISM_ID_CACHE", None)
+    monkeypatch.setattr(fixtures_mod, "_MECH_INFO_CACHE", {})
+    clear_extensions("cli")
+
+
+def test_vendor_mechanism_registration_advertises_in_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered vendor id advertises under both name forms (F3)."""
+    from pkcs11_check.raw.extensions import clear_extensions, register_extension
+
+    _reset_mechanism_caches(monkeypatch)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.get_mechanism_list",
+        lambda _raw, _slot: [0x8000F001],
+    )
+    register_extension(namespace="cli", mechanisms={0x8000F001: "CKM_FOO_KMAC"})
+    try:
+        rs = RawSession(object(), 0, 0)
+        assert rs.has_mechanism("CKM_FOO_KMAC")
+        assert rs.has_mechanism("FOO_KMAC")
+    finally:
+        clear_extensions("cli")
+
+
+def test_unregistered_vendor_id_stays_unadvertised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An id known to no table never appears under a guessed name (F3)."""
+    _reset_mechanism_caches(monkeypatch)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.get_mechanism_list",
+        lambda _raw, _slot: [0x8000F002],
+    )
+
+    rs = RawSession(object(), 0, 0)
+    assert not rs.has_mechanism("CKM_FOO_KMAC")
+    assert not rs.has_mechanism("FOO_KMAC")
+
+
+def test_has_mechanism_flag_resolves_registered_vendor_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """has_mechanism_flag queries info by the registered vendor id (F3)."""
+    from pkcs11_check.raw.extensions import clear_extensions, register_extension
+
+    _reset_mechanism_caches(monkeypatch)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.recipes.get_mechanism_list",
+        lambda _raw, _slot: [0x8000F003],
+    )
+    seen: list[int] = []
+
+    def _fake_info(_raw: object, _slot: int, mech: int) -> dict[str, int]:
+        seen.append(mech)
+        return {"flags": 0x100}
+
+    monkeypatch.setattr("pkcs11_check.raw.recipes.get_mechanism_info", _fake_info)
+    register_extension(namespace="cli", mechanisms={0x8000F003: "CKM_FOO_SIGN"})
+    try:
+        rs = RawSession(object(), 0, 0)
+        assert rs.has_mechanism_flag("FOO_SIGN", 0x100) is True
+        assert rs.has_mechanism_flag("FOO_SIGN", 0x200) is False
+        assert seen == [0x8000F003]
+    finally:
+        clear_extensions("cli")

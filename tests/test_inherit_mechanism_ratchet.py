@@ -19,7 +19,7 @@ import collections
 import pathlib
 
 TESTCASES_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
-EXPECTED_ATTR_OR_RECORD_SITES = 376
+EXPECTED_ATTR_OR_RECORD_SITES = 377
 
 
 def _unguarded_sites() -> tuple[dict[str, list[int]], int]:
@@ -28,12 +28,18 @@ def _unguarded_sites() -> tuple[dict[str, list[int]], int]:
     seen_sites = 0
     for path in sorted(TESTCASES_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        aliases = {"attr_or_record"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for name in node.names:
+                    if name.name == "attr_or_record":
+                        aliases.add(name.asname or name.name)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-            if name != "attr_or_record":
+            if name not in aliases:
                 continue
             seen_sites += 1
             guarded = any(

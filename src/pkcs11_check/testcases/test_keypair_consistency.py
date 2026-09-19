@@ -86,7 +86,7 @@ def _read_leg(
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
-            mechanism=mechanism,
+            inherit_mechanism=False,
             expected=CKR_OK,
             actual=exc.rv,
             detail=_with_producer(_provider_detail(attr, leg=leg), mechanism=mechanism),

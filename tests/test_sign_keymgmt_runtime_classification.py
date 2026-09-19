@@ -171,7 +171,7 @@ def test_sign_recover_missing_result_is_incomplete(
 
     from pkcs11_check.classification import get_records
 
-    assert get_records()[-1].reason == "harness_error"
+    assert get_records()[-1].reason == "probe_incomplete"
 
 
 @pytest.mark.parametrize(

@@ -88,7 +88,9 @@ def test_probe_capabilities_does_not_mark_later_slot_failure_as_unloadable(
     assert manifest.reason is None
 
 
-def test_advertised_mechanism_info_failure_makes_preflight_non_green(tmp_path: Path) -> None:
+def test_advertised_mechanism_info_failure_is_recorded_per_mechanism(
+    tmp_path: Path,
+) -> None:
     module_path = tmp_path / "module.so"
     module_path.touch()
     mock_mech = MagicMock()
@@ -104,10 +106,51 @@ def test_advertised_mechanism_info_failure_makes_preflight_non_green(tmp_path: P
     with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
         manifest = probe_capabilities(module_path, interface="auto", slot=0)
 
-    assert manifest.status == "error"
-    assert manifest.error is not None
-    assert "CKM_AES_ECB" in manifest.error
-    assert "CKR_FUNCTION_FAILED" in manifest.error
+    assert manifest.status == "ok"
+    assert manifest.mechanisms == ["CKM_AES_ECB"]
+    assert set(manifest.mechanism_info.keys()) == {"CKM_AES_ECB"}
+    assert "CKR_FUNCTION_FAILED" in manifest.mechanism_info["CKM_AES_ECB"]["error"]
+
+
+def test_mechanism_info_failure_does_not_void_sibling_mechanisms(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+
+    def _mech(name: str) -> MagicMock:
+        mock_mech = MagicMock()
+        mock_mech.name = name
+        return mock_mech
+
+    mock_slot = MagicMock()
+    mock_slot.get_mechanisms.return_value = [
+        _mech("CKM_AES_ECB"),
+        _mech("CKM_RSA_PKCS"),
+        _mech("CKM_SHA256"),
+    ]
+
+    def _info(mech: MagicMock) -> MagicMock:
+        if mech.name == "CKM_RSA_PKCS":
+            raise RuntimeError("C_GetMechanismInfo(CKM_RSA_PKCS): CKR_FUNCTION_FAILED")
+        info = MagicMock()
+        info.flags = 1
+        info.min_key_length = 0
+        info.max_key_length = 0
+        return info
+
+    mock_slot.get_mechanism_info.side_effect = _info
+    mock_module = MagicMock(interface_version="3.2")
+    mock_module.get_slots.return_value = [mock_slot]
+
+    with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
+        manifest = probe_capabilities(module_path, interface="auto", slot=0)
+
+    assert manifest.status == "ok"
+    assert manifest.mechanisms == ["CKM_AES_ECB", "CKM_RSA_PKCS", "CKM_SHA256"]
+    assert manifest.mechanism_info["CKM_AES_ECB"]["flags"] == 1
+    assert manifest.mechanism_info["CKM_SHA256"]["flags"] == 1
+    assert "CKR_FUNCTION_FAILED" in manifest.mechanism_info["CKM_RSA_PKCS"]["error"]
 
 
 def test_preflight_classifies_translated_access_violation_as_crash(tmp_path: Path) -> None:

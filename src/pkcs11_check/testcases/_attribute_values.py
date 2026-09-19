@@ -29,6 +29,23 @@ def _refusal_for(attrs: Mapping[Any, Any], attr: Any) -> AttrRefusal | None:
     return result if isinstance(result, AttrRefusal) else None
 
 
+def _sentinel_without_ckr(attrs: Mapping[Any, Any], attr: Any) -> bool:
+    """Whether the CK_UNAVAILABLE_INFORMATION sentinel was observed for ``attr``.
+
+    True only when ``read_attributes`` saw the sentinel on a CKR_OK read (its
+    additive ``unavailable_without_ckr`` channel); a plain ``Mapping`` with no
+    such channel -- e.g. a test double modelling an unsupported attribute --
+    reports ``False``.
+    """
+    observed = getattr(attrs, "unavailable_without_ckr", None)
+    if not observed:
+        return False
+    try:
+        return attr in observed
+    except TypeError:
+        return False
+
+
 def attr_or_record(
     attrs: Mapping[Any, Any],
     attr: Any,
@@ -60,9 +77,14 @@ def attr_or_record(
     they opt in.
 
     ``optional_if_absent=True`` is reserved for attributes the specification
-    explicitly makes optional. A plain omission or CKR_ATTRIBUTE_TYPE_INVALID
-    then returns ``MISSING_ATTRIBUTE`` without recording a deviation. Other
-    refusal codes remain visible, and a refusal-with-data remains a finding.
+    explicitly makes optional. Two shapes then return ``MISSING_ATTRIBUTE``
+    without recording a deviation: an affirmative CKR_ATTRIBUTE_TYPE_INVALID
+    refusal (the module positively states it has no such attribute) and a
+    plain omission with nothing observed at all (an unsupported attribute).
+    But CKR_OK plus the CK_UNAVAILABLE_INFORMATION sentinel -- success
+    claimed, no value delivered -- is a spec-shape deviation and is recorded
+    exactly as the default path records it. Other refusal codes remain
+    visible, and a refusal-with-data remains a finding.
 
     A refusal-with-data (the module answered a refusal CKR but still wrote real
     attribute bytes into the template) is always a self-contradiction and is
@@ -106,7 +128,12 @@ def attr_or_record(
         )
         return MISSING_ATTRIBUTE
 
-    if optional_if_absent and (refusal is None or refusal.ckr == CKR_ATTRIBUTE_TYPE_INVALID):
+    if optional_if_absent and refusal is not None and refusal.ckr == CKR_ATTRIBUTE_TYPE_INVALID:
+        return MISSING_ATTRIBUTE
+    if optional_if_absent and refusal is None and not _sentinel_without_ckr(attrs, attr):
+        # Plain omission: nothing was observed for this attribute at all. A
+        # CKR_OK-plus-sentinel observation falls through and is recorded like
+        # the default path (F20).
         return MISSING_ATTRIBUTE
 
     if sensitive_is_conformant and refusal is not None and refusal.ckr == CKR_ATTRIBUTE_SENSITIVE:

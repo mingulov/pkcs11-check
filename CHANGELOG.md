@@ -51,8 +51,15 @@ cause. Vector datasets are repinned to current upstream.
   as a silent xfail.
 
 - **Readback-attribution ratchet tightened**: inventory blind spots shrink
-  802 → 595, gate failures print the HEAD-vs-worktree delta, corpus-digest
-  scans are cached, and replay tests couple to their source calls.
+  802 → 592, gate failures print the HEAD-vs-worktree delta, corpus-digest
+  scans are cached, replay tests couple to their source calls, and the
+  inherit-mechanism guard resolves `as`-aliases (377 sites, up from 376).
+  Rule, decided once: a `C_GetAttributeValue` readback record carries no
+  borrowed mechanism (`inherit_mechanism=False`); producer context stays in
+  label/detail. Eight call sites across five files that regressed to explicit
+  stamping during the v0.2.1 merge are restored to mechanism-free (plus two
+  misc-KDF findings re-attributed to `C_DeriveKey`), with goldens pinning the
+  bare form at each branch.
 
 - **Attribute-guard precision**: three scanner gaps closed (positive-`in`
   fallthrough, double-negation check, unchecked optionals via early return);
@@ -60,6 +67,49 @@ cause. Vector datasets are repinned to current upstream.
 
 - **UTF-8 named on git subprocess text calls**, fixing locale-dependent
   collection on non-UTF-8 systems.
+
+- **Missing child output ruled `probe_incomplete`, not `harness_error`.**
+  Rule, decided once: a child that never emitted a marker (no OK line, no
+  result field, no RV) is unresolved attribution -- the missing bytes are as
+  likely a module observation as our own bug -- so it stays a loud
+  provider-side fail. Only an observably malformed, duplicated, or
+  self-contradictory emission keeps `harness_error`, alongside explicit
+  `HARNESS_ERROR` markers and parent-side defects (bad vectors, reference
+  mismatches, cleanup failures). Thirteen testcase files relabeled; goldens
+  pin each side of the boundary.
+- **A module `exit(0)` is an abrupt exit, not a pass.** The probe, observation,
+  and file-runner gates keyed on `rc > 0`; a C `exit(0)` from inside a PKCS#11
+  call skipped the finalizer/SessionFinish exactly like `exit(n)` but was never
+  classified as module termination. All three gates now use `rc >= 0` with the
+  traceback/no-finalizer conjunction unchanged.
+
+- **Vendor mechanism code points are user-suppliable.** `--vendor-mechanism
+  NAME=0xID` (repeatable; also as `pkcs11-check test --vendor-mechanism`)
+  registers vendor-range ids so `has_mechanism`/`has_mechanism_flag` resolve
+  them. The retained KMAC tests run once code points are supplied; without
+  them the skip says "no code point known to pkcs11-check" instead of blaming
+  the module, and the mechanism-name guard drops its KMAC exemptions.
+
+- **Readback ratchet no longer trips on line moves.** Inventory digests hash
+  coordinate-free finding identity, sentinels anchor on (path, function,
+  emitter) instead of absolute lines, and counts redundant with live
+  cross-checks are dropped. Inserting code now leaves the gate green; only
+  added/removed emitters and status/content changes drift pins (verified both
+  directions). The corpus-byte pin is retired as pure churn.
+
+- **Abrupt-exit marker counted once; teardown attributed to lifecycle.**
+  Special-entry dedupe matches on (nodeid, outcome) when either side lacks
+  `evidence_type` (rebuilt-from-JSONL vs in-memory twins), while two present
+  types still count as distinct evidence. The synthetic `C_Finalize`
+  teardown record routes to a `<lifecycle>` pseudo-unit instead of a phantom
+  per-file unit in `--isolation none` artifacts.
+
+- **One `ProvenanceReport` per run, one `git describe`.** The isolated-run
+  parent resolves the framework version once, pins it into child envs (unit
+  children skip their own emission and shell-out), and merges exactly one
+  record into `report.jsonl` (first-wins over legacy shards). The version pin
+  is excluded from run fingerprints so committing between a run and its
+  resume stays valid.
 
 ## [0.2.0] - 2026-09-16
 

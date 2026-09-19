@@ -8,6 +8,7 @@ from pkcs11_check.core.compare_results import (
     ResultsComparison,
     compare_results,
     load_results,
+    normalize_target,
     status_class,
 )
 from pkcs11_check.core.file_runner import UNIT_STATUS_PRIORITY
@@ -148,3 +149,92 @@ def test_load_results_reads_statuses_the_writer_produces(tmp_path: Path) -> None
     # Every produced unit status classifies to a non-"unknown" bucket.
     for s in produced:
         assert status_class(s) != "unknown", f"writer produced unhandled status: {s}"
+
+
+# ---------------------------------------------------------------------------
+# F21: compare-results keys testcases-root-relative
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_target_cases() -> None:
+    assert normalize_target("/x/main/src/pkcs11_check/testcases/test_a.py") == "test_a.py"
+    assert (
+        normalize_target("C:\\w\\v020\\src\\pkcs11_check\\testcases\\sub\\test_b.py")
+        == "sub/test_b.py"
+    )
+    assert (
+        normalize_target("/x/main/src/pkcs11_check/testcases/test_a.py::daemon-recovery-0")
+        == "test_a.py::daemon-recovery-0"
+    )
+    assert normalize_target("<collection>") == "<collection>"
+    assert normalize_target("test_a.py") == "test_a.py"
+
+
+def test_compare_across_checkouts_is_clean(tmp_path: Path) -> None:
+    """Identical runs from different checkouts compare with no crossings.
+
+    Regression: absolute-path targets keyed every target differently, so the
+    audit's own two runs reported 15 "new failures" and 266 "lost coverage"
+    with every node id identical.
+    """
+    base = {
+        "summary": {"passed": 1},
+        "units": [
+            {
+                "target": "/co/main/src/pkcs11_check/testcases/test_a.py",
+                "status": "passed",
+            },
+            {"target": "<collection>", "status": "passed"},
+        ],
+    }
+    curr = {
+        "summary": {"passed": 1},
+        "units": [
+            {
+                "target": "/co/v020/src/pkcs11_check/testcases/test_a.py",
+                "status": "passed",
+            },
+            {"target": "<collection>", "status": "passed"},
+        ],
+    }
+    base_path = tmp_path / "base.json"
+    curr_path = tmp_path / "curr.json"
+    base_path.write_text(json.dumps(base), encoding="utf-8")
+    curr_path.write_text(json.dumps(curr), encoding="utf-8")
+    base_map, base_summary = load_results(base_path)
+    curr_map, curr_summary = load_results(curr_path)
+    cmp = compare_results(base_map, base_summary, curr_map, curr_summary)
+    assert cmp.new_failures == []
+    assert cmp.lost_coverage == []
+    assert cmp.has_regressions is False
+
+
+def test_compare_still_detects_a_real_status_change(tmp_path: Path) -> None:
+    """Normalisation must not hide a genuine pass→fail crossing."""
+    base = {
+        "summary": {"passed": 1},
+        "units": [
+            {
+                "target": "/co/main/src/pkcs11_check/testcases/test_a.py",
+                "status": "passed",
+            }
+        ],
+    }
+    curr = {
+        "summary": {"failed": 1},
+        "units": [
+            {
+                "target": "/co/v020/src/pkcs11_check/testcases/test_a.py",
+                "status": "failed",
+            }
+        ],
+    }
+    base_path = tmp_path / "base.json"
+    curr_path = tmp_path / "curr.json"
+    base_path.write_text(json.dumps(base), encoding="utf-8")
+    curr_path.write_text(json.dumps(curr), encoding="utf-8")
+    base_map, base_summary = load_results(base_path)
+    curr_map, curr_summary = load_results(curr_path)
+    cmp = compare_results(base_map, base_summary, curr_map, curr_summary)
+    assert cmp.new_failures == ["test_a.py"]
+    assert cmp.has_regressions is True

@@ -333,7 +333,7 @@ def _normal_probe_rv(
         raise_for_record(provider_record)
     if rv is None and not setup_records and not protocol_errors:
         fail_as(
-            "harness_error",
+            "probe_incomplete",
             label=context,
             summary=f"{context}: child emitted no RV marker (incomplete protocol)",
             detail={"probe_incomplete": True, "protocol": "missing_rv"},

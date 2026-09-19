@@ -80,6 +80,8 @@ def _run(
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # Same class as F18: tool output may carry non-UTF-8 provider bytes.
+        errors="replace",
         timeout=timeout,
         env=full_env,
         input=input_text,

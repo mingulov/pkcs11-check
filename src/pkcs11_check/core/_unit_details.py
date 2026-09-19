@@ -696,44 +696,54 @@ def _special_test_entry_from_result(result: FileRunResult) -> dict[str, Any] | N
     return entry
 
 
+def _special_entry_matches(
+    record: Mapping[str, Any], nodeid: str, outcome: str, evidence_type: str
+) -> bool:
+    """Return whether a stored record and an incoming entry describe one event.
+
+    (nodeid, outcome) is the event identity; evidence_type is provenance, and
+    entries rebuilt from durable JSONL lack it while their in-memory twins
+    carry it. A missing type therefore matches anything -- but two PRESENT
+    types must agree, else distinct evidence (provider-crash vs harness for
+    the same marker) would collapse into one entry.
+    """
+    if str(record.get("nodeid", "")) != nodeid:
+        return False
+    if str(record.get("outcome", "")) != outcome:
+        return False
+    record_evidence = str(record.get("evidence_type", ""))
+    if record_evidence and evidence_type and record_evidence != evidence_type:
+        return False
+    return True
+
+
 def _merge_special_entries_into_detail(
     detail: Mapping[str, Any] | None,
     entries: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     merged = _copy_detail(detail)
-    existing = {
-        (
-            str(record.get("nodeid", "")),
-            str(record.get("outcome", "")),
-            str(record.get("evidence_type", "")),
-        )
-        for record in merged["tests"]
-        if isinstance(record, Mapping)
-    }
 
     for entry in entries:
         nodeid = str(entry.get("nodeid", "")).strip()
         outcome = str(entry.get("outcome", "")).strip()
         if not nodeid or not outcome:
             continue
-        key = (nodeid, outcome, str(entry.get("evidence_type", "")))
-        if key in existing:
-            for record in merged["tests"]:
-                if not isinstance(record, dict):
-                    continue
-                if (
-                    str(record.get("nodeid", "")),
-                    str(record.get("outcome", "")),
-                    str(record.get("evidence_type", "")),
-                ) != key:
-                    continue
-                for field, value in entry.items():
-                    if field not in record:
-                        record[field] = value
-                break
+        evidence_type = str(entry.get("evidence_type", ""))
+        match = next(
+            (
+                record
+                for record in merged["tests"]
+                if isinstance(record, dict)
+                and _special_entry_matches(record, nodeid, outcome, evidence_type)
+            ),
+            None,
+        )
+        if match is not None:
+            for field, value in entry.items():
+                if field not in match:
+                    match[field] = value
             continue
         merged["tests"].append(dict(entry))
-        existing.add(key)
         if outcome in {"crashed", "timeout", "crash_limited", "failed", "error"}:
             _increment_diagnostic_count(merged, outcome)
 

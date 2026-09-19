@@ -26,10 +26,12 @@ KNOWN_UNRESOLVED = frozenset(
         "SHAKE_256",  # test_remaining_gaps.py — only KEY_DERIVE variants exist
         "PKCS12_PBE_EXPORT",  # test_remaining_gaps.py — no constant in tree
         "PKCS12_PBE_IMPORT",  # test_remaining_gaps.py — no constant in tree
-        "KMAC_128",  # vendor-range KMAC, tests retained (user decision 2026-09-18)
-        "KMAC_256",  # vendor-range KMAC, tests retained (user decision 2026-09-18)
     }
 )
+# KMAC_128/KMAC_256 were removed from the set above: the KMAC tests now resolve
+# through require_mechanism_or_skip + --p11-vendor-mechanism instead of a bare
+# has_mechanism() literal, so the skips distinguish "no code point known" from
+# genuine lack of support (no stale-entry trip: no such literals remain).
 
 
 def _resolvable_names() -> set[str]:

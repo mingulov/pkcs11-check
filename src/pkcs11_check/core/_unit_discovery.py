@@ -279,6 +279,8 @@ def collect_pytest_nodeids(
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # F18: a stray provider byte must not lose the collected nodeids.
+        errors="replace",
         env=dict(env or os.environ),
     )
 

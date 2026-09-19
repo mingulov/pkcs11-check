@@ -46,6 +46,7 @@ def _default_args(**overrides: object) -> dict[str, object]:
         # external-tool provisioning (Phase 6)
         "allow_external_provision": False,
         "external_provision_cmd": None,
+        "vendor_mechanism": None,
     }
     defaults.update(overrides)
     return defaults
