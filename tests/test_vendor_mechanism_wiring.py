@@ -37,7 +37,6 @@ def _default_args(**overrides: object) -> dict[str, object]:
         "wrap_key_source": "bootstrap",
         "wrap_key_label": None,
         "wrap_key_handle": None,
-        "wrap_key_value": None,
         "wrap_mech": None,
         "wrap_rsa_bits": 2048,
         "wrap_oaep_hash": "auto",

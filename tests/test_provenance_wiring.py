@@ -34,12 +34,17 @@ def test_postprocess_omits_provenance_when_none(tmp_path: Path) -> None:
     assert "provenance" not in payload
 
 
-def test_merge_carries_provenance_from_first_payload() -> None:
+def test_merge_marks_mixed_provenance_from_first_payload() -> None:
+    # F-025: the previous expectation (the first-known stamp covers an
+    # unattributed shard, with incomplete=false) is the defect this fixes.
+    # Mixed merges carry an explicit marker and report incomplete.
     prov = {"framework": {"version": "v1"}, "provider": {"name": "softhsm2"}}
     p1 = {"summary": {"passed": 1}, "units": [], "provenance": prov}
     p2 = {"summary": {"passed": 2}, "units": []}
     merged = merge_results_payloads([p1, p2], coverage=None)
-    assert merged["provenance"] == prov
+    assert merged["provenance"]["status"] == "mixed"
+    assert merged["provenance"]["known_provenance"] == prov
+    assert merged["summary"]["incomplete"] is True
 
 
 def test_merge_omits_provenance_when_absent_in_all_payloads() -> None:

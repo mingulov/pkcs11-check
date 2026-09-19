@@ -142,6 +142,7 @@ from pkcs11_check.core._report_writers import (
 from pkcs11_check.core._report_writers import (
     write_isolated_report as write_isolated_report,
 )
+from pkcs11_check.core._run_guard import RunArtifactsLockedError, run_artifact_guard
 from pkcs11_check.core._run_state import (
     _DEFAULT_FINGERPRINT_ENV_KEYS as _DEFAULT_FINGERPRINT_ENV_KEYS,
 )
@@ -353,31 +354,44 @@ def _promote_crashing_unit(
     if policy_file is None:
         return
 
-    policies = load_isolation_policy(policy_file)
-    fingerprint = build_policy_fingerprint(pytest_args, env)
-    policy = policies.get(
-        fingerprint,
-        BackendIsolationPolicy(fingerprint=fingerprint, promoted_files=[], crashed_tests=[]),
-    )
+    # F-038: the policy file is shared across runs; serialize the
+    # load-modify-save so concurrent promotes cannot lose each other's
+    # updates. A starved update degrades to a warning, never a run failure.
+    try:
+        with run_artifact_guard(policy_file, timeout=30):
+            policies = load_isolation_policy(policy_file)
+            fingerprint = build_policy_fingerprint(pytest_args, env)
+            policy = policies.get(
+                fingerprint,
+                BackendIsolationPolicy(
+                    fingerprint=fingerprint, promoted_files=[], crashed_tests=[]
+                ),
+            )
 
-    file_key = _unit_file_key(unit)
-    changed = False
+            file_key = _unit_file_key(unit)
+            changed = False
 
-    if file_key not in policy.promoted_files:
-        policy.promoted_files.append(file_key)
-        policy.promoted_files.sort()
-        changed = True
+            if file_key not in policy.promoted_files:
+                policy.promoted_files.append(file_key)
+                policy.promoted_files.sort()
+                changed = True
 
-    if unit_granularity == "test" and unit not in policy.crashed_tests:
-        policy.crashed_tests.append(unit)
-        policy.crashed_tests.sort()
-        changed = True
+            if unit_granularity == "test" and unit not in policy.crashed_tests:
+                policy.crashed_tests.append(unit)
+                policy.crashed_tests.sort()
+                changed = True
 
-    if not changed:
+            if not changed:
+                return
+
+            policies[fingerprint] = policy
+            save_isolation_policy(policy_file, policies)
+    except RunArtifactsLockedError:
+        console.print(
+            "[yellow]Warning:[/yellow] adaptive-isolation policy is locked by "
+            "another run; skipping this update."
+        )
         return
-
-    policies[fingerprint] = policy
-    save_isolation_policy(policy_file, policies)
 
     if unit_granularity == "file":
         console.print(

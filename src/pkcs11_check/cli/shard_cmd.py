@@ -84,10 +84,19 @@ def merge_shards_command(
         )
         raise typer.Exit(code=2)
 
-    merged = merge_shard_dirs(existing, output)
+    # F-014: pass every requested dir through to validation. Pre-filtering here
+    # silently dropped mistyped paths with a clean exit; the merge layer warns
+    # per skipped dir and marks the summary incomplete instead.
+    merged = merge_shard_dirs(shard_dirs, output)
     summary = merged.get("summary", {})
+    skipped = len(shard_dirs) - len(existing)
+    scope = (
+        f"{len(existing)} of {len(shard_dirs)} shards ({skipped} skipped, see warnings)"
+        if skipped
+        else f"{len(existing)} shards"
+    )
     console.print(
-        f"[green]Merged[/green] {len(existing)} shards -> {output}  "
+        f"[green]Merged[/green] {scope} -> {output}  "
         f"total={summary.get('total', 0)} "
         f"passed={summary.get('passed', 0)} failed={summary.get('failed', 0)} "
         f"crashed={summary.get('crashed', 0)} timeout={summary.get('timeout', 0)}"

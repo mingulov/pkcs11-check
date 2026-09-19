@@ -165,27 +165,54 @@ def save_collection_manifest(path: Path, items: list[CollectedPytestItem]) -> No
 
 
 def load_collection_manifest(path: Path) -> list[CollectedPytestItem]:
-    """Load collected pytest item metadata from JSON."""
+    """Load collected pytest item metadata from JSON.
+
+    Strict (F-016): any malformed entry raises ValueError. For the cache that
+    reads as a miss and triggers fresh collection; for fresh helper output it
+    fails collection visibly. Unknown extra keys stay tolerated for
+    forward compatibility.
+    """
     raw = json.loads(path.read_text(encoding="utf-8"))
-    raw_items = raw.get("items", raw)
+    raw_items = raw.get("items", raw) if isinstance(raw, dict) else raw
     if not isinstance(raw_items, list):
         msg = f"invalid collection manifest: {path}"
         raise ValueError(msg)
     items: list[CollectedPytestItem] = []
-    for item in raw_items:
+    for index, item in enumerate(raw_items):
         if not isinstance(item, dict):
-            continue
+            raise ValueError(
+                f"invalid collection manifest entry #{index} in {path}: "
+                f"expected an object, got {type(item).__name__}"
+            )
         nodeid = item.get("nodeid")
         file_path = item.get("file_path")
         markers = item.get("markers", [])
-        if not isinstance(nodeid, str) or not isinstance(file_path, str):
-            continue
-        marker_names = [str(marker) for marker in markers if isinstance(marker, str)]
+        if not isinstance(nodeid, str):
+            raise ValueError(
+                f"invalid collection manifest entry #{index} in {path}: "
+                f"nodeid must be a string, got {type(nodeid).__name__}"
+            )
+        if not isinstance(file_path, str):
+            raise ValueError(
+                f"invalid collection manifest entry #{index} in {path}: "
+                f"file_path must be a string, got {type(file_path).__name__}"
+            )
+        if not isinstance(markers, list):
+            raise ValueError(
+                f"invalid collection manifest entry #{index} in {path}: "
+                f"markers must be a list, got {type(markers).__name__}"
+            )
+        for marker in markers:
+            if not isinstance(marker, str):
+                raise ValueError(
+                    f"invalid collection manifest entry #{index} in {path}: "
+                    f"marker must be a string, got {type(marker).__name__}"
+                )
         items.append(
             CollectedPytestItem(
                 nodeid=nodeid,
                 file_path=file_path,
-                markers=marker_names,
+                markers=list(markers),
             )
         )
     return items

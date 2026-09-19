@@ -402,6 +402,7 @@ def test_teardown_finalize_finding_is_additive_once(
             "duration": 0.0,
             "longrepr": finalize.get("error")
             or "C_Finalize returned CKR_GENERAL_ERROR (0x00000005)",
+            "lifecycle": "session-teardown",
         }
     ]
 

@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa as _crypto_rsa
 from cryptography.hazmat.primitives.serialization import Encoding as _Encoding
 from cryptography.hazmat.primitives.serialization import PublicFormat as _PublicFormat
 from cryptography.x509 import ObjectIdentifier as _CryptoObjectIdentifier
+from pydantic import SecretStr
 
 from pkcs11_check.classification import classify, raise_for_record, record_as
 from pkcs11_check.raw import sw_wrap
@@ -1115,12 +1116,20 @@ def _configured_rsa_material(
     )
 
 
+def _kek_bytes_or_none(value: SecretStr | str | None) -> bytes | None:
+    """Decode configured-KEK hex (SecretStr from real configs, str from doubles)."""
+    if value is None:
+        return None
+    hexstr = value.get_secret_value() if isinstance(value, SecretStr) else value
+    return bytes.fromhex(hexstr)
+
+
 def _configured_secret_material(rs: Any, cfg: Any, handle: int, _fail: Any) -> WrapContext | None:
     from pkcs11_check.raw.recipes import read_attributes
 
     wkv = getattr(cfg, "wrap_key_value", None)
     if wkv is not None:
-        sym_kek: bytes | None = bytes.fromhex(wkv)  # validated at config construction
+        sym_kek: bytes | None = _kek_bytes_or_none(wkv)  # validated at config construction
     else:
         try:
             val_attrs = read_attributes(rs.raw, rs.sh, handle, (CKA_VALUE,))

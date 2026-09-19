@@ -186,9 +186,6 @@ from pkcs11_check.core._run_units import (
     _SPECIAL_DETAIL_OUTCOMES as _SPECIAL_DETAIL_OUTCOMES,
 )
 from pkcs11_check.core._run_units import (
-    _TIMEOUT_RETURN_CODE as _TIMEOUT_RETURN_CODE,
-)
-from pkcs11_check.core._run_units import (
     UNIT_STATUS_PRIORITY as UNIT_STATUS_PRIORITY,
 )
 from pkcs11_check.core._run_units import (
@@ -324,8 +321,9 @@ def _status_from_returncode(returncode: int) -> str:
         return "passed"
     if returncode == 5:
         return "empty"
-    if returncode == _TIMEOUT_RETURN_CODE:
-        return "timeout"
+    # F-012: no 124 arm. Genuine watchdog exits take the TimeoutExpired path
+    # before this mapping is consulted; a bare 124 reaching here has no
+    # watchdog evidence and is an abrupt self-exit like any other code.
     if returncode < 0:
         return "crashed"
     if sys.platform == "win32" and _is_windows_crash_code(returncode):

@@ -102,7 +102,8 @@ class TestWrapKeyValueValidation:
     def test_valid_hex_lengths_accepted(self, tmp_path: Path) -> None:
         for hexstr in ("00" * 16, "11" * 24, "ab" * 32):
             config = P11TestConfig(module=tmp_path / "m.so", wrap_key_value=hexstr)
-            assert config.wrap_key_value == hexstr
+            assert config.wrap_key_value is not None
+            assert config.wrap_key_value.get_secret_value() == hexstr
 
     def test_non_hex_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(Exception, match="hex"):

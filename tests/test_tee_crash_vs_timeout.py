@@ -95,7 +95,13 @@ def test_genuinely_hung_child_still_times_out() -> None:
         assert observation["termination"]["raw_code"] == -signal.SIGKILL  # type: ignore[index]
 
 
-def test_child_exit_124_is_timeout_evidence() -> None:
+def test_child_exit_124_reports_raw_exit_without_timeout_claim() -> None:
+    # F-012: the previous expectation (bare 124 implies timeout) is the defect
+    # this fixes -- a provider exiting 124 was misreported as a timeout. The
+    # tee layer reports raw facts only (a self-exit is never "our kill"), so
+    # kind is never timeout here; the 124 -> timeout upgrade lives in
+    # _run_outer_tee and requires TimeoutExpired evidence (see
+    # tests/test_timeout_evidence.py).
     rc, _out, _err, observation = _run_subprocess_tee(
         [sys.executable, "-c", "raise SystemExit(124)"],
         env=dict(os.environ),
@@ -103,7 +109,7 @@ def test_child_exit_124_is_timeout_evidence() -> None:
     )
 
     assert rc == 124
-    assert observation["termination"]["kind"] == "timeout"  # type: ignore[index]
+    assert observation["termination"]["kind"] != "timeout"  # type: ignore[index]
     assert observation["termination"]["raw_code"] == 124  # type: ignore[index]
 
 

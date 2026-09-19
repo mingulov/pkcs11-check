@@ -421,9 +421,9 @@ def postprocess_jsonl_to_unified(
     ]
     executions_by_file: dict[str, list[dict[str, Any]]] = {}
     for execution in _canonical_executions(raw_executions):
-        file_part = _execution_owner_file(execution)
-        if file_part is not None:
-            executions_by_file.setdefault(file_part, []).append(execution)
+        owner_file = _execution_owner_file(execution)
+        if owner_file is not None:
+            executions_by_file.setdefault(owner_file, []).append(execution)
 
     summary: dict[str, int] = _empty_counts()
     units: list[dict[str, Any]] = []

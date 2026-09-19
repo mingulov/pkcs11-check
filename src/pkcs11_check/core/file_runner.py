@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections import deque
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
@@ -400,7 +401,7 @@ from pkcs11_check.core.recovery import (
     probe_provider_liveness,
     run_recover_cmd,
 )
-from pkcs11_check.core.report_log import QualityReportEvidence
+from pkcs11_check.core.report_log import QualityReportEvidence, iter_report_log_records
 from pkcs11_check.core.test_selection import extract_required_mechanisms, write_deselect_file
 
 _MAX_TIMEOUT_RETRIES = 3
@@ -496,6 +497,50 @@ def _module_terminated_process(
     )
 
 
+def _stream_has_failed_teardown_finalize(jsonl_path: Path | None) -> bool:
+    """Whether the attempt stream carries a failed TeardownFinalize record.
+
+    F-044 evidence: a failed C_Finalize is recorded with outcome error, timeout
+    or crashed. Malformed lines and a missing stream never verify (False).
+    """
+    if jsonl_path is None:
+        return False
+    for record in iter_report_log_records(jsonl_path):
+        if record.get("$report_type") != "TeardownFinalize":
+            continue
+        if record.get("outcome") not in (None, "ok"):
+            return True
+    return False
+
+
+_TIMEOUT_EXPIRED_NEEDLE = b'"$report_type": "TimeoutExpired"'
+
+
+def _stream_has_timeout_expired(jsonl_path: Path | None) -> bool:
+    """Whether the attempt stream carries the watchdog's TimeoutExpired record.
+
+    F-012 evidence: the harness-owned event the per-test watchdog emits before
+    exiting 124. A byte needle suffices -- providers cannot inject a raw JSONL
+    record key (their text lands escaped inside string fields) -- and the scan
+    runs only for children that actually exited 124.
+    """
+    if jsonl_path is None:
+        return False
+    needle = _TIMEOUT_EXPIRED_NEEDLE
+    try:
+        with jsonl_path.open("rb") as handle:
+            carry = b""
+            while True:
+                chunk = handle.read(65536)
+                if not chunk:
+                    return False
+                if needle in carry + chunk:
+                    return True
+                carry = (carry + chunk)[-(len(needle) - 1) :]
+    except OSError:
+        return False
+
+
 def _completion_verified_for_attempt(
     jsonl_path: Path | None,
     status: str,
@@ -505,7 +550,17 @@ def _completion_verified_for_attempt(
     """Verify normal pytest completion when an attempt emitted a report stream."""
     if status in {"crashed", "timeout"} or jsonl_path is None:
         return True
-    return returncode in {0, 1, 5} and session_exitstatus == returncode
+    if returncode in {0, 1, 5} and session_exitstatus == returncode:
+        return True
+    # F-044 narrow 0-to-1 rule: reportlog writes SessionFinish(0) from the
+    # original exitstatus argument, then a failed C_Finalize flips the process
+    # to 1. That mismatch verifies ONLY with a failed TeardownFinalize record
+    # in the same attempt -- never from the codes alone.
+    return (
+        returncode == 1
+        and session_exitstatus == 0
+        and _stream_has_failed_teardown_finalize(jsonl_path)
+    )
 
 
 def _cache_attempt_report(
@@ -732,6 +787,98 @@ def _join_readers_bounded(threads: list[threading.Thread], *, grace: float) -> N
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
+_CAPTURE_MAX_BYTES = 1024 * 1024
+_CAPTURE_HEAD_BYTES = 512 * 1024
+
+
+class _BoundedCapture:
+    """Retain at most ``max_bytes`` of a child stream: head + tail (F-021).
+
+    The pump keeps draining (a capped reader must never block the child), but
+    retention is the first ``head_bytes`` plus the last ``max_bytes -
+    head_bytes``. Past the cap, ``getvalue`` splices in a marker with explicit
+    omitted/total counts. The diagnostic tail -- the evidence that explains a
+    timeout -- always survives.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        max_bytes: int = _CAPTURE_MAX_BYTES,
+        head_bytes: int = _CAPTURE_HEAD_BYTES,
+    ) -> None:
+        self._label = label
+        self._max_bytes = max_bytes
+        self._head_bytes = min(head_bytes, max_bytes)
+        self._head = bytearray()
+        self._tail: deque[bytes] = deque()
+        self._tail_bytes = 0
+        self._total = 0
+
+    def write(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._total += len(chunk)
+        if len(self._head) < self._head_bytes:
+            room = self._head_bytes - len(self._head)
+            self._head += chunk[:room]
+            chunk = chunk[room:]
+            if not chunk:
+                return
+        self._tail.append(chunk)
+        self._tail_bytes += len(chunk)
+        tail_cap = self._max_bytes - self._head_bytes
+        while self._tail_bytes > tail_cap:
+            self._tail_bytes -= len(self._tail.popleft())
+
+    def getvalue(self) -> bytes:
+        if self._total <= self._max_bytes:
+            return bytes(self._head) + b"".join(self._tail)
+        tail = b"".join(self._tail)
+        shown = len(self._head) + len(tail)
+        marker = (
+            f"\n... [pkcs11-check: {self._label} truncated, "
+            f"{self._total - shown} bytes omitted "
+            f"(showing {shown} of {self._total} bytes)] ...\n"
+        ).encode("ascii")
+        return bytes(self._head) + marker + tail
+
+
+def _kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
+    """SIGKILL a unit child's whole process group/tree (F-022).
+
+    POSIX children run in their own session (see below), so one killpg covers
+    the child plus orphaned probe grandchildren. Windows has no POSIX groups:
+    taskkill walks the parent chain (/T). Best-effort throughout -- an already
+    reaped root (notably on the abnormal-exit path, where taskkill has no live
+    PID to walk from) is silence, and a missing taskkill falls back to killing
+    the direct child. A deliberately daemonized (setsid/reparented) descendant
+    escapes on both platforms; that stays a documented residual.
+    """
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        # Already gone (ESRCH) or reaped mid-call: nothing to contain.
+        pass
+
+
 def _run_subprocess_tee(
     cmd: list[str],
     *,
@@ -748,9 +895,12 @@ def _run_subprocess_tee(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        # F-022: own process group on POSIX so abnormal exits can contain the
+        # whole tree (Windows walks the tree via taskkill instead).
+        start_new_session=sys.platform != "win32",
     )
-    stdout_buf = io.BytesIO()
-    stderr_buf = io.BytesIO()
+    stdout_buf = _BoundedCapture("stdout")
+    stderr_buf = _BoundedCapture("stderr")
 
     # Drain each pipe in its own thread rather than selecting over the pipe fds:
     # selectors.select() on an OS pipe is POSIX-only (Windows select() accepts
@@ -759,7 +909,7 @@ def _run_subprocess_tee(
     # pipe buffer cannot deadlock the child.
     console_lock = threading.Lock()
 
-    def _pump(stream: IO[bytes], buf: io.BytesIO, is_stdout: bool) -> None:
+    def _pump(stream: IO[bytes], buf: _BoundedCapture, is_stdout: bool) -> None:
         try:
             while True:
                 chunk = stream.read1(8192) if hasattr(stream, "read1") else stream.read(8192)
@@ -796,12 +946,19 @@ def _run_subprocess_tee(
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         # The child is still running at the deadline -- a genuine timeout. Kill
-        # and reap it (never leave a zombie behind, R5), retaining the final
-        # return code in structured evidence.
+        # the whole tree (F-022) and reap it (never leave a zombie behind, R5),
+        # retaining the final return code in structured evidence.
         timed_out = True
-        proc.kill()
+        _kill_process_tree(proc)
         proc.wait()
         _join_readers_bounded(threads, grace=max(0.0, deadline + 0.5 - time.monotonic()))
+    except KeyboardInterrupt:
+        # The child is detached (own session), so our SIGINT did not reach it:
+        # contain the tree before propagating, or it orphans.
+        _kill_process_tree(proc)
+        proc.wait()
+        _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
+        raise
     else:
         # The child exited on its own -- cleanly OR via a crash signal (negative
         # returncode). Drain the readers, but only for a short grace: the child is
@@ -810,7 +967,15 @@ def _run_subprocess_tee(
         # full residual timeout (issue #3 Windows hang); abandon a stuck reader after
         # the grace and report the child's real returncode.
         _join_readers_bounded(threads, grace=_POST_EXIT_DRAIN_GRACE_S)
-        timed_out = proc.returncode == _TIMEOUT_RETURN_CODE
+        # F-012: the child exited on its own -- timed_out means WE killed it
+        # (the branch above). A self-exit 124 is upgraded to a timeout by the
+        # caller only with positive watchdog evidence, never here.
+        timed_out = False
+        if proc.returncode not in {0, 1, 5}:
+            # F-022: abnormal exits (crash, abrupt self-exit) contain the group
+            # so stragglers cannot hold sessions or token state across units.
+            # Clean exits are left alone. Best-effort: the child is reaped.
+            _kill_process_tree(proc)
 
     proc.wait()
     returncode = proc.returncode
@@ -853,6 +1018,12 @@ def _append_process_observation(
     state.process_observations.append(entry)
 
 
+def _observation_claims_timeout(observation: Mapping[str, object]) -> bool:
+    """Whether a process observation already carries a timeout verdict."""
+    termination = observation.get("termination")
+    return isinstance(termination, Mapping) and termination.get("kind") == "timeout"
+
+
 def _run_outer_tee(
     cmd: list[str],
     *,
@@ -862,8 +1033,15 @@ def _run_outer_tee(
     state_file: Path,
     target: str,
     role: str,
+    timeout_evidence: Callable[[], bool] | None = None,
 ) -> tuple[int, str, str]:
-    """Run one outer process, append its evidence, and preserve timeout flow."""
+    """Run one outer process, append its evidence, and preserve timeout flow.
+
+    ``timeout_evidence`` reports whether the child's stream carries the
+    watchdog's TimeoutExpired record. A self-exit 124 becomes a timeout only
+    then (F-012); without evidence it stays an abrupt exit. Consulted lazily,
+    only for children that exited 124 without a timeout verdict already.
+    """
     try:
         tee_result = _run_subprocess_tee(cmd, env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -880,15 +1058,20 @@ def _run_outer_tee(
     captured_stdout = tee_result[1]
     captured_stderr = tee_result[2]
     if len(tee_result) > 3 and isinstance(tee_result[3], dict):
+        # A provided verdict (mock oracle or real tee observation) is trusted.
         observation = tee_result[3]
     else:
-        observation = build_process_observation(
-            target,
-            role,
-            0,
-            returncode,
-            timed_out=returncode == _TIMEOUT_RETURN_CODE,
-        )
+        # Synthesized from the code alone: a bare 124 is NOT a timeout here --
+        # the evidence upgrade below decides that (F-012).
+        observation = build_process_observation(target, role, 0, returncode)
+    if returncode == _TIMEOUT_RETURN_CODE and not _observation_claims_timeout(observation):
+        # F-012 upgrade: the child exited 124 on its own with no timeout
+        # verdict yet. Only positive watchdog evidence (the TimeoutExpired
+        # record in its stream) promotes this to a timeout; a provider that
+        # merely exits 124 keeps its abrupt-exit evidence.
+        has_evidence = timeout_evidence is not None and timeout_evidence()
+        if has_evidence:
+            observation = build_process_observation(target, role, 0, returncode, timed_out=True)
     _append_process_observation(
         state,
         observation,
@@ -896,8 +1079,7 @@ def _run_outer_tee(
         role=role,
     )
     save_run_state(state_file, state)
-    termination = observation.get("termination")
-    if isinstance(termination, Mapping) and termination.get("kind") == "timeout":
+    if _observation_claims_timeout(observation):
         raise subprocess.TimeoutExpired(cmd, timeout)
     return returncode, captured_stdout, captured_stderr
 
@@ -967,6 +1149,35 @@ def _recovery_attempts_path(state_file: Path) -> Path:
     return state_file.with_name(f"{state_file.name}.recovery.jsonl")
 
 
+# Report sidecars reset (and therefore guarded) beside the outputs. The jsonl
+# parent omits report.jsonl/quality.json (quality lives with the output; the
+# jsonl itself is named explicitly) -- mirrored exactly by the guard set.
+_OUTPUT_SIDECAR_NAMES = ("report.jsonl", "quality.json", "coverage.json", "provisioning.json")
+_JSONL_SIDECAR_NAMES = ("coverage.json", "provisioning.json")
+
+
+def _run_artifact_guard_paths(
+    state_file: Path | None, report_config: IsolatedReportConfig | None
+) -> list[Path]:
+    """Every independently-named durable path a run may reset or write (F-038).
+
+    Two runs sharing ANY of these paths must not overlap. State-derived
+    siblings (collection sidecar, recovery journal, report cache) need no
+    separate entry: they are pure functions of the state path, so the state
+    guard already covers them. Report outputs and their sidecars are named
+    independently of the state, hence listed explicitly. Either root may be
+    None when the mode does not touch it (non-isolated runs use no state).
+    """
+    paths = [state_file] if state_file is not None else []
+    if report_config is not None:
+        paths.append(report_config.output_path)
+        paths.extend(report_config.output_path.parent / name for name in _OUTPUT_SIDECAR_NAMES)
+        if report_config.jsonl_path is not None:
+            paths.append(report_config.jsonl_path)
+            paths.extend(report_config.jsonl_path.parent / name for name in _JSONL_SIDECAR_NAMES)
+    return paths
+
+
 def _reset_fresh_run_artifacts(
     state_file: Path,
     report_config: IsolatedReportConfig | None,
@@ -985,17 +1196,11 @@ def _reset_fresh_run_artifacts(
         shutil.rmtree(report_cache_dir)
     if report_config is None:
         return
-    sidecar_paths = {
-        report_config.output_path.parent / name
-        for name in ("report.jsonl", "quality.json", "coverage.json", "provisioning.json")
-    }
+    sidecar_paths = {report_config.output_path.parent / name for name in _OUTPUT_SIDECAR_NAMES}
     if report_config.jsonl_path is not None:
         report_config.jsonl_path.unlink(missing_ok=True)
         sidecar_paths.update(
-            {
-                report_config.jsonl_path.parent / "coverage.json",
-                report_config.jsonl_path.parent / "provisioning.json",
-            }
+            {report_config.jsonl_path.parent / name for name in _JSONL_SIDECAR_NAMES}
         )
     report_config.output_path.unlink(missing_ok=True)
     for sidecar_path in sidecar_paths:
@@ -1744,6 +1949,7 @@ def run_isolated_pytest_units(
                         state_file=state_file,
                         target=unit,
                         role="unit",
+                        timeout_evidence=lambda: _stream_has_timeout_expired(unit_jsonl_path),
                     )
                     status = _status_from_returncode(returncode)
                     if unit_jsonl_path is not None:
@@ -1861,6 +2067,9 @@ def run_isolated_pytest_units(
                                             state_file=state_file,
                                             target=unit,
                                             role="confirmation",
+                                            timeout_evidence=lambda: _stream_has_timeout_expired(
+                                                confirm_jsonl_path
+                                            ),
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
                                         ensure_failed_collection_report(
@@ -2031,6 +2240,9 @@ def run_isolated_pytest_units(
                                         state_file=state_file,
                                         target=unit,
                                         role="retry",
+                                        timeout_evidence=lambda: _stream_has_timeout_expired(
+                                            retry_jsonl_path
+                                        ),
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
                                     ensure_failed_collection_report(
@@ -2429,6 +2641,9 @@ def run_isolated_pytest_units(
                                             state_file=state_file,
                                             target=unit,
                                             role="confirmation",
+                                            timeout_evidence=lambda: _stream_has_timeout_expired(
+                                                confirm_jsonl_path
+                                            ),
                                         )
                                         confirm_status = _status_from_returncode(confirm_rc)
                                         ensure_failed_collection_report(
@@ -2699,6 +2914,9 @@ def run_isolated_pytest_units(
                                         state_file=state_file,
                                         target=unit,
                                         role="retry",
+                                        timeout_evidence=lambda: _stream_has_timeout_expired(
+                                            retry_jsonl_path
+                                        ),
                                     )
                                     retry_status = _status_from_returncode(retry_rc)
                                     ensure_failed_collection_report(

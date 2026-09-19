@@ -849,7 +849,7 @@ def test_merge_shard_dirs_rejects_overlapping_nodeids(tmp_path: Path) -> None:
     )
 
     out = tmp_path / "merged"
-    with pytest.raises(ValueError, match="overlapping node IDs"):
+    with pytest.raises(ValueError, match="overlapping execution coverage"):
         merge_shard_dirs([s1, s2], out)
 
 

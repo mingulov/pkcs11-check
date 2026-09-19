@@ -56,6 +56,9 @@ class P11TestConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="P11TEST_",
         toml_file="pkcs11_check.toml",
+        # Secrets (PINs, KEK) must never echo in tracebacks: pydantic renders
+        # raw input_value in error strings even for SecretStr fields.
+        hide_input_in_errors=True,
     )
 
     module: Path
@@ -89,7 +92,7 @@ class P11TestConfig(BaseSettings):
     wrap_key_source: Literal["bootstrap", "configured"] = "bootstrap"
     wrap_key_label: str | None = None
     wrap_key_handle: int | None = None
-    wrap_key_value: str | None = None  # hex; only for a symmetric configured KEK
+    wrap_key_value: SecretStr | None = None  # hex; only for a symmetric configured KEK
     # override auto-selected unwrap mechanism (e.g. "CKM_RSA_AES_KEY_WRAP")
     wrap_mech: str | None = None
     wrap_rsa_bits: int = 2048
@@ -104,12 +107,12 @@ class P11TestConfig(BaseSettings):
 
     @field_validator("wrap_key_value")
     @classmethod
-    def _validate_wrap_key_value(cls, v: str | None) -> str | None:
+    def _validate_wrap_key_value(cls, v: SecretStr | None) -> SecretStr | None:
         """Fail fast on a malformed configured-KEK hex value (never degrade to a skip)."""
         if v is None:
             return v
         try:
-            raw = bytes.fromhex(v)
+            raw = bytes.fromhex(v.get_secret_value())
         except ValueError as exc:
             raise ValueError("wrap_key_value must be a hex string") from exc
         if len(raw) not in (16, 24, 32):
