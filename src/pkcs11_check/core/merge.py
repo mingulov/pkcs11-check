@@ -41,6 +41,7 @@ from pkcs11_check.core.file_runner import (
     postprocess_jsonl_to_unified,
     write_quality_json_report,
 )
+from pkcs11_check.core.nodeids import normalize_nodeid
 from pkcs11_check.core.report_log import (
     iter_report_log_records as _iter_report_log_records,
 )
@@ -247,24 +248,6 @@ def _split_coverage_selector(selector: str) -> tuple[str, str | None]:
     return file_part, (node_part if sep else None)
 
 
-def _selectors_overlap(first: str, second: str) -> bool:
-    """Whether two coverage selectors claim overlapping execution (N-002/F-015).
-
-    A bare file claims the whole file; a node claims itself and its ``::``
-    children. Containment is checked at separator boundaries so ``test_1``
-    never "contains" ``test_10``.
-    """
-    file_a, node_a = _split_coverage_selector(first)
-    file_b, node_b = _split_coverage_selector(second)
-    if file_a != file_b:
-        return False
-    if node_a is None or node_b is None:
-        return True
-    if node_a == node_b:
-        return True
-    return node_a.startswith(node_b + "::") or node_b.startswith(node_a + "::")
-
-
 def _unit_coverage_selectors(payload: dict[str, Any]) -> set[str]:
     """Unit-target coverage of an ordinary (selection-free) payload.
 
@@ -288,12 +271,110 @@ def _unit_coverage_selectors(payload: dict[str, Any]) -> set[str]:
     return selectors
 
 
+def _coverage_file_part(selector: str) -> str:
+    """Normalized file part of a coverage selector (bare file or node)."""
+    return normalize_nodeid(selector).partition("::")[0]
+
+
+def _executed_nodeids(shard_dir: Path) -> set[str] | None:
+    """Normalized ``::``-bearing TestReport nodeids executed by one shard.
+
+    Returns None when the sidecar is missing, unreadable, or holds a
+    malformed line: disjointness is then unprovable and the caller must
+    fail closed. File-level synthetic records (abrupt markers whose nodeid
+    is a bare file) are excluded — they mark every shard, not tests.
+    """
+    path = shard_dir / "report.jsonl"
+    if not path.is_file():
+        return None
+    executed: set[str] = set()
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    return None
+                if not isinstance(record, dict):
+                    return None
+                if record.get("$report_type") != "TestReport":
+                    continue
+                nodeid = record.get("nodeid")
+                if not isinstance(nodeid, str) or "::" not in nodeid:
+                    continue
+                executed.add(normalize_nodeid(nodeid))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return executed
+
+
+def _executed_coverage_excuses_overlap(
+    payloads: list[dict[str, Any]],
+    payload_selections: list[CaseSelection | None],
+    overlap: set[str],
+    shard_dirs: list[Path] | None,
+    executed_cache: dict[int, set[str] | None],
+) -> bool:
+    """Whether executed-node evidence excuses a unit-target collision.
+
+    Manifest-less merges only: when every payload claiming an overlapping
+    file proves (via its own report.jsonl) a pairwise-disjoint executed
+    node set, the file claims are per-node batches, not double execution.
+    Any manifest covering the collision, any missing/unreadable/corrupt
+    sidecar, or any shared node keeps the refusal.
+
+    ``executed_cache`` (payload index -> executed set) persists across the
+    overlap loop's repeated calls so each sidecar is parsed at most once.
+    """
+    if shard_dirs is None or len(shard_dirs) != len(payloads):
+        return False
+    overlap_files = {_coverage_file_part(s) for s in overlap}
+    for manifest in payload_selections:
+        if manifest is None:
+            continue
+        manifest_files = {_coverage_file_part(n) for n in manifest.nodeids}
+        if manifest_files & overlap_files:
+            return False
+    executed_sets: list[set[str]] = []
+    for idx, (payload, manifest, shard_dir) in enumerate(
+        zip(payloads, payload_selections, shard_dirs)
+    ):
+        if manifest is not None:
+            continue
+        claimant_files = {_coverage_file_part(s) for s in _unit_coverage_selectors(payload)}
+        if not (claimant_files & overlap_files):
+            continue
+        if idx not in executed_cache:
+            executed_cache[idx] = _executed_nodeids(shard_dir)
+        executed = executed_cache[idx]
+        if executed is None:
+            return False
+        executed_sets.append(executed)
+    if len(executed_sets) < 2:
+        return False
+    union: set[str] = set()
+    for executed in executed_sets:
+        if executed & union:
+            return False
+        union |= executed
+    return True
+
+
 def _validate_selection_payloads(
     payloads: list[dict[str, Any]],
     *,
     testcases_root: Path | None = None,
+    shard_dirs: list[Path] | None = None,
 ) -> list[CaseSelection]:
-    """Validate selection metadata consistency across shard payloads."""
+    """Validate selection metadata consistency across shard payloads.
+
+    ``shard_dirs`` (parallel to ``payloads``) enables the executed-coverage
+    fallback: same-file collisions between manifest-less payloads merge
+    when every colliding shard proves disjoint executed nodes. The pure
+    payload layer passes none and keeps refusing unconditionally.
+    """
     payload_selections: list[CaseSelection | None] = []
     for payload in payloads:
         raw_selection = payload.get("selection")
@@ -335,19 +416,62 @@ def _validate_selection_payloads(
     # authoritative membership — per-file units in selection payloads
     # legitimately repeat across disjoint batches), else its unit targets.
     # The mere presence of a selection must not disable the ordinary checks.
-    seen_coverage: set[str] = set()
-    for payload, manifest in zip(payloads, payload_selections):
+    #
+    # Ownership-indexed: selectors can only overlap within one normalized
+    # file (a bare file claims the whole file; a node claims itself and its
+    # ``::`` children at separator boundaries), so per-file owner sets plus
+    # a ``::``-prefix walk decide every rule pairwise comparison did, in
+    # O(selectors) instead of O(selectors^2).
+    bare_owners: dict[str, set[int]] = {}
+    node_owners: dict[str, dict[str, set[int]]] = {}
+    raw_selector: dict[tuple[str, str], str] = {}
+    for idx, (payload, manifest) in enumerate(zip(payloads, payload_selections)):
         if manifest is not None:
-            coverage = set(manifest.nodeids)
+            selectors = set(manifest.nodeids)
         else:
-            coverage = _unit_coverage_selectors(payload)
-        overlap = {s for s in coverage if any(_selectors_overlap(s, t) for t in seen_coverage)}
-        if overlap:
-            raise ValueError(
-                "overlapping execution coverage across merged shards "
-                f"(summaries would double-count): {sorted(overlap)}"
-            )
-        seen_coverage.update(coverage)
+            selectors = _unit_coverage_selectors(payload)
+        for sel in selectors:
+            file_part, node_part = _split_coverage_selector(normalize_nodeid(sel))
+            if node_part is None:
+                bare_owners.setdefault(file_part, set()).add(idx)
+                raw_selector.setdefault((file_part, ""), sel)
+            else:
+                node_owners.setdefault(file_part, {}).setdefault(node_part, set()).add(idx)
+                raw_selector.setdefault((file_part, node_part), sel)
+    overlap: dict[str, set[str]] = {}
+    for file_part, owners in bare_owners.items():
+        claimants = set(owners)
+        for other in node_owners.get(file_part, {}).values():
+            claimants |= other
+        if len(claimants) > 1:
+            overlap.setdefault(file_part, set()).add(raw_selector[(file_part, "")])
+    for file_part, nodes in node_owners.items():
+        if file_part in overlap:
+            continue
+        offenders = overlap.setdefault(file_part, set())
+        for node_part, owners in nodes.items():
+            if len(owners) > 1:
+                offenders.add(raw_selector[(file_part, node_part)])
+                continue
+            ancestor, sep, _ = node_part.rpartition("::")
+            while sep:
+                ancestor_owners = nodes.get(ancestor)
+                if ancestor_owners is not None and not ancestor_owners <= owners:
+                    offenders.add(raw_selector[(file_part, node_part)])
+                    break
+                ancestor, sep, _ = ancestor.rpartition("::")
+        if not offenders:
+            del overlap[file_part]
+    executed_cache: dict[int, set[str] | None] = {}
+    for file_part in sorted(overlap):
+        if _executed_coverage_excuses_overlap(
+            payloads, payload_selections, {file_part}, shard_dirs, executed_cache
+        ):
+            continue
+        raise ValueError(
+            "overlapping execution coverage across merged shards "
+            f"(summaries would double-count): {sorted(overlap[file_part])}"
+        )
 
     return selections
 
@@ -393,9 +517,10 @@ def merge_results_payloads(
     shard_meta: dict[str, Any] | None = None,
     incomplete_evidence: bool = False,
     testcases_root: Path | None = None,
+    shard_dirs: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Combine N ``results.json`` payloads (summary summed, units concatenated)."""
-    _validate_selection_payloads(payloads, testcases_root=testcases_root)
+    _validate_selection_payloads(payloads, testcases_root=testcases_root, shard_dirs=shard_dirs)
     merged_provenance, provenance_mixed = _merged_shard_provenance(payloads)
 
     summary: dict[str, int] = {key: 0 for key in _SUMMARY_KEYS}
@@ -675,6 +800,7 @@ def merge_shard_dirs(
     """
     _reject_output_alias(shard_dirs, output_dir)
     payloads: list[dict[str, Any]] = []
+    payload_dirs: list[Path] = []
     files_per_shard: list[int] = []
     warnings: list[str] = []
     for d in shard_dirs:
@@ -683,10 +809,11 @@ def merge_shard_dirs(
             files_per_shard.append(0)
             continue
         payloads.append(payload)
+        payload_dirs.append(d)
         files_per_shard.append(len(payload.get("units", []) or []))
 
     # Cross-shard validation BEFORE any output writes or concatenation:
-    _validate_selection_payloads(payloads, testcases_root=testcases_root)
+    _validate_selection_payloads(payloads, testcases_root=testcases_root, shard_dirs=payload_dirs)
 
     # Same gate as merge_results_payloads (shared helper, same verdict), run
     # before any output writes; a mixed merge also warns loudly here.
@@ -741,6 +868,7 @@ def merge_shard_dirs(
         shard_meta=shard_meta,
         incomplete_evidence=bool(warnings),
         testcases_root=testcases_root,
+        shard_dirs=payload_dirs,
     )
     (output_dir / "results.json").write_text(
         json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
