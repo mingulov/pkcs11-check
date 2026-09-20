@@ -374,3 +374,107 @@ def test_merge_shards_cli_rejects_all_unknown_dirs(tmp_path: Path) -> None:
     res = runner.invoke(app, ["merge-shards", str(bad), "-o", str(tmp_path / "out")])
 
     assert res.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# Executed-coverage fallback: manifest-less per-node batches of one file
+# ---------------------------------------------------------------------------
+
+
+def test_merge_allows_disjoint_node_batches_without_manifests(tmp_path: Path) -> None:
+    """Same whole-file unit target, disjoint executed nodeids: merge, don't refuse."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    units = [{"target": "test_a.py", "status": "passed", "returncode": 0}]
+    _write_shard(a, units, {"passed": 1}, ["test_a.py::t1"])
+    _write_shard(b, units, {"passed": 1}, ["test_a.py::t2"])
+
+    merged = merge_shard_dirs([a, b], tmp_path / "out")
+
+    assert merged["summary"]["passed"] == 2
+
+
+def test_merge_refuses_overlapping_node_batches_without_manifests(tmp_path: Path) -> None:
+    """Same whole-file unit target, shared executed nodeid: refuse (no double-count)."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    units = [{"target": "test_a.py", "status": "passed", "returncode": 0}]
+    _write_shard(a, units, {"passed": 1}, ["test_a.py::t1"])
+    _write_shard(b, units, {"passed": 1}, ["test_a.py::t1"])
+
+    with pytest.raises(ValueError, match="overlapping execution coverage"):
+        merge_shard_dirs([a, b], tmp_path / "out")
+
+
+def test_merge_refuses_collision_when_sidecar_missing(tmp_path: Path) -> None:
+    """No report.jsonl on a colliding shard: disjointness is unprovable, refuse."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    units = [{"target": "test_a.py", "status": "passed", "returncode": 0}]
+    _write_shard(a, units, {"passed": 1}, ["test_a.py::t1"])
+    _write_shard(b, units, {"passed": 1}, ["test_a.py::t2"])
+    (b / "report.jsonl").unlink()
+
+    with pytest.raises(ValueError, match="overlapping execution coverage"):
+        merge_shard_dirs([a, b], tmp_path / "out")
+
+
+def test_merge_refuses_aliased_spelling_across_batches(tmp_path: Path) -> None:
+    """Win vs posix spelling of the same test is the same test: refuse."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_shard(
+        a,
+        [{"target": "sub\\test_a.py", "status": "passed", "returncode": 0}],
+        {"passed": 1},
+        ["sub\\test_a.py::t1"],
+    )
+    _write_shard(
+        b,
+        [{"target": "sub/test_a.py", "status": "passed", "returncode": 0}],
+        {"passed": 1},
+        ["sub/test_a.py::t1"],
+    )
+
+    with pytest.raises(ValueError, match="overlapping execution coverage"):
+        merge_shard_dirs([a, b], tmp_path / "out")
+
+
+def test_merge_ignores_file_level_synthetic_records_in_fallback(tmp_path: Path) -> None:
+    """Bare-file abrupt records on both shards must not block disjoint batches."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    units = [{"target": "test_a.py", "status": "failed", "returncode": 1}]
+    _write_shard(a, units, {"passed": 1}, ["test_a.py::t1", "test_a.py"])
+    _write_shard(b, units, {"passed": 1}, ["test_a.py::t2", "test_a.py"])
+
+    merged = merge_shard_dirs([a, b], tmp_path / "out")
+
+    assert merged["summary"]["passed"] == 2
+
+
+def test_merge_refuses_mixed_manifest_and_plain_batches_with_disjoint_proof(
+    tmp_path: Path,
+) -> None:
+    """A manifest batch plus a manifest-less batch of one file always refuses."""
+    root = _selection_root(tmp_path)
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_shard(
+        a,
+        [{"target": "test_a.py", "status": "passed", "returncode": 0}],
+        {"passed": 1},
+        ["test_a.py::t1"],
+    )
+    results_a = json.loads((a / "results.json").read_text(encoding="utf-8"))
+    results_a["selection"] = _make_selection("test_a.py", ["test_a.py::t1"]).to_dict()
+    (a / "results.json").write_text(json.dumps(results_a), encoding="utf-8")
+    _write_shard(
+        b,
+        [{"target": "test_a.py", "status": "passed", "returncode": 0}],
+        {"passed": 1},
+        ["test_a.py::t2"],
+    )
+
+    with pytest.raises(ValueError, match="overlapping execution coverage"):
+        merge_shard_dirs([a, b], tmp_path / "out", testcases_root=root)
