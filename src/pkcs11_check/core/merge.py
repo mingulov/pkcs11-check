@@ -193,7 +193,8 @@ def _promote_rv_traces_to_outcome_reports(jsonl_path: Path) -> None:
 
     tmp_path = jsonl_path.with_suffix(jsonl_path.suffix + ".tmp")
     changed = False
-    with tmp_path.open("w", encoding="utf-8") as out_fh:
+    # newline="\n": shard jsonl keeps LF-exact bytes on every platform.
+    with tmp_path.open("w", encoding="utf-8", newline="\n") as out_fh:
         for record in _stream_records(jsonl_path):
             if _apply_trace_promotion(record, trace_by_node):
                 changed = True

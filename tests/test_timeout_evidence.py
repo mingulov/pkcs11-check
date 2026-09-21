@@ -138,7 +138,11 @@ def test_provider_self_exit_124_is_not_a_timeout(tmp_path: Path) -> None:
     assert status == "failed"
     assert '"$report_type": "HarnessError"' not in merged
     assert "[abrupt-exit]" in merged
-    assert "test_exit124.py::test_ok" in merged  # completed test preserved
+    # `::test` form: cross-drive pytest emits an empty path part on Windows
+    # (checkout on D:, %TEMP% on C: -- see core/nodeids.py); `location`
+    # keeps the file identity on both platforms.
+    assert "::test_ok" in merged  # completed test preserved
+    assert "test_exit124.py" in merged  # file identity via location
 
 
 def test_genuine_watchdog_timeout_keeps_record_and_status(tmp_path: Path) -> None:
@@ -154,4 +158,8 @@ def test_genuine_watchdog_timeout_keeps_record_and_status(tmp_path: Path) -> Non
 
     assert status == "timeout"
     assert '"$report_type": "TimeoutExpired"' in merged
-    assert "test_hang.py::test_hang" in merged
+    # `::test` form: cross-drive pytest emits an empty path part on Windows
+    # (checkout on D:, %TEMP% on C: -- see core/nodeids.py); `location`
+    # keeps the file identity on both platforms.
+    assert "::test_hang" in merged
+    assert "test_hang.py" in merged  # file identity via location

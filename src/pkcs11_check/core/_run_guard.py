@@ -51,6 +51,11 @@ def _try_lock(fh: BinaryIO) -> bool:
     """Attempt one non-blocking lock; True when held."""
     fileno = fh.fileno()
     if sys.platform == "win32":
+        # Byte-range locks are positional: always contend on byte 0 so every
+        # holder and waiter serializes on the same byte. Locking at the
+        # current (EOF) offset lets concurrent creators each lock a different
+        # byte -- no mutual exclusion at all.
+        fh.seek(0)
         try:
             msvcrt.locking(fileno, msvcrt.LK_NBLCK, 1)
         except OSError:
@@ -66,7 +71,10 @@ def _try_lock(fh: BinaryIO) -> bool:
 def _unlock(fh: BinaryIO) -> None:
     fileno = fh.fileno()
     if sys.platform == "win32":
+        # Mirror _try_lock: the held byte is byte 0 regardless of where the
+        # file position moved while the lock was held.
         with contextlib.suppress(OSError):
+            fh.seek(0)
             msvcrt.locking(fileno, msvcrt.LK_UNLCK, 1)
     else:
         with contextlib.suppress(OSError):
@@ -81,12 +89,6 @@ def _locked_guard(guard_path: Path, target: Path, *, timeout: float) -> Iterator
     # refused run may leave an empty directory behind; that litter is benign.
     guard_path.parent.mkdir(parents=True, exist_ok=True)
     with guard_path.open("a+b") as fh:
-        fh.seek(0, 2)
-        if fh.tell() == 0:
-            # Byte-range locks need a byte to lock (Windows); harmless on POSIX.
-            # A rare concurrent double-write only duplicates a marker line.
-            fh.write(b"pkcs11-check run-artifact guard\n")
-            fh.flush()
         deadline = time.monotonic() + timeout
         while True:
             if _try_lock(fh):
@@ -95,6 +97,16 @@ def _locked_guard(guard_path: Path, target: Path, *, timeout: float) -> Iterator
                 raise RunArtifactsLockedError(guard_path, target)
             time.sleep(_POLL_SECONDS)
         try:
+            # The marker write happens under the lock: on Windows a
+            # concurrent creator's append could otherwise land on a byte
+            # another handle already locked (ERROR_LOCK_VIOLATION, surfacing
+            # as PermissionError), and locking first also removes the
+            # concurrent double-write. (Locking byte 0 of the still-empty
+            # file is legal: byte-range locks may cover bytes past EOF.)
+            fh.seek(0, 2)
+            if fh.tell() == 0:
+                fh.write(b"pkcs11-check run-artifact guard\n")
+                fh.flush()
             yield
         finally:
             _unlock(fh)

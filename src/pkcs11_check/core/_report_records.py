@@ -570,7 +570,9 @@ def _write_report_jsonl_from_record_sources(
                 seen_events.add(event_key)
                 durable_events.append(dict(event))
     try:
-        with tmp_path.open("w", encoding="utf-8") as out_fh:
+        # newline="\n": report.jsonl is a machine artifact with LF-exact
+        # bytes on every platform (no CRLF smudge on Windows checkouts).
+        with tmp_path.open("w", encoding="utf-8", newline="\n") as out_fh:
             collection_records = (
                 _load_report_log_records(collection_failure_path)
                 if collection_failure_path is not None
@@ -1281,7 +1283,9 @@ def _write_report_jsonl_from_record_map(
     tmp_path = output_path.with_suffix(".jsonl.tmp")
     written_units: set[str] = set()
     try:
-        with tmp_path.open("w", encoding="utf-8") as out_fh:
+        # newline="\n": report.jsonl is a machine artifact with LF-exact
+        # bytes on every platform (no CRLF smudge on Windows checkouts).
+        with tmp_path.open("w", encoding="utf-8", newline="\n") as out_fh:
             for unit in units:
                 for record in report_records_by_unit.get(unit, []):
                     out_fh.write(json.dumps(record) + "\n")

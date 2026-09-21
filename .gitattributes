@@ -1,0 +1,4 @@
+# The disabled-tests baseline is pinned by byte-exact sha256
+# (tests/test_disabled_baseline_pin.py): force LF in every checkout so the
+# pin holds on Windows (core.autocrlf=true) as well as POSIX.
+data/disabled-tests.txt text eol=lf

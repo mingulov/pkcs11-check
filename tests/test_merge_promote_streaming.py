@@ -87,3 +87,32 @@ def test_passing_reports_are_not_touched(tmp_path: Path) -> None:
     before = p.read_bytes()
     _promote_rv_traces_to_outcome_reports(p)
     assert p.read_bytes() == before
+
+
+def test_rewrite_keeps_lf_exact_bytes(tmp_path: Path) -> None:
+    """A promotion rewrite must not smudge LF to CRLF on Windows checkouts.
+
+    Passes either way on POSIX (no CR is ever emitted there); it pins the
+    LF-exact writer so a Windows regression turns red in CI.
+    """
+    p = _write(
+        tmp_path,
+        [
+            {
+                "$report_type": "TestReport",
+                "nodeid": "t::d",
+                "when": "call",
+                "outcome": "failed",
+                "user_properties": [],
+            },
+            {
+                "$report_type": "TestReport",
+                "nodeid": "t::d",
+                "when": "teardown",
+                "outcome": "passed",
+                "user_properties": [["pkcs11_rv_trace", _TRACE]],
+            },
+        ],
+    )
+    _promote_rv_traces_to_outcome_reports(p)
+    assert b"\r" not in p.read_bytes()

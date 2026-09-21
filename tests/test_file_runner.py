@@ -3649,9 +3649,13 @@ def test_cacheless_resume_preserves_empty_nodeid_passing_collect_report(
             results=[FileRunResult(unit, "failed", 1, 0.1)],
         ),
     )
+    # newline="\n": resume output is LF-exact on every platform and the byte
+    # assert below compares against these exact bytes (write_text alone
+    # would smudge the fixture to CRLF on Windows).
     source_report.write_text(
         "".join(json.dumps(record) + "\n" for record in records),
         encoding="utf-8",
+        newline="\n",
     )
     source_bytes = source_report.read_bytes()
 

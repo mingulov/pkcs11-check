@@ -2247,7 +2247,9 @@ def git_head_tree_sources(tree_root: Path) -> dict[str, str]:
             extracted = tar.extractfile(member)
             if extracted is None:
                 continue
-            sources[name] = extracted.read().decode("utf-8")
+            # `git archive` smudges LF to CRLF under core.autocrlf=true: undo it so
+            # HEAD bytes compare identically on every platform.
+            sources[name] = extracted.read().decode("utf-8").replace("\r\n", "\n")
     if not sources:
         raise RuntimeError(f"no HEAD sources found for {tree_root}")
     return sources

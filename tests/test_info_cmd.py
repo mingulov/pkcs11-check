@@ -28,7 +28,19 @@ def _probe_boom() -> None:
 
 def _probe_segfault() -> None:
     import ctypes
+    import sys
 
+    if sys.platform == "win32":
+        # A null dereference never kills the child on Windows: SEH
+        # translates it into a catchable OSError, so the child would answer
+        # instead of dying. Terminate with the AV status code -- the same
+        # shape as the crashing-child probes elsewhere -- to exercise the
+        # died-without-answering path. (os._exit cannot carry this code:
+        # CPython parses the status as a C int and raises OverflowError.)
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel.TerminateProcess(kernel.GetCurrentProcess(), 0xC0000005)
     ctypes.string_at(0)
 
 
