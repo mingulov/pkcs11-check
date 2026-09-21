@@ -105,6 +105,31 @@ class TestOwnedTimeoutTimer:
             "self-exiting timer that would kill the CLI before results are written"
         )
 
+    def test_child_unit_arms_owned_timer_and_claims_hook(self, monkeypatch: Any) -> None:
+        """M-36: the child path must claim the firstresult hook with exactly True.
+
+        pytest_timeout_set_timer is firstresult=True: returning None (or any
+        falsy lookalike) silently hands the timer to pytest-timeout's own
+        implementation, which exits 1 on fire -- a native deadlock would then be
+        recorded as ordinary failures with no failing test, while every timeout
+        test above stays green. A previous mutation (None instead of True)
+        survived the whole suite; this pins the claim.
+        """
+        monkeypatch.setenv(plugin_mod.UNIT_CHILD_ENV, "1")
+        item = _FakeItem()
+        armed = plugin_mod.pytest_timeout_set_timer(item, _FakeSettings(30))
+        try:
+            assert armed is True, (
+                "child units must claim the hook (True); None delegates to "
+                "pytest-timeout, which exits 1 and misattributes native deadlocks"
+            )
+            timer = getattr(item, "_pkcs11_check_timeout_timer", None)
+            assert timer is not None, "claiming the hook without arming a timer hangs the unit"
+        finally:
+            timer = getattr(item, "_pkcs11_check_timeout_timer", None)
+            if timer is not None:
+                timer.cancel()
+
 
 class TestTimeoutDiagnosticsReachTheLog:
     def test_capture_is_suspended_before_dumping(self, monkeypatch: Any) -> None:

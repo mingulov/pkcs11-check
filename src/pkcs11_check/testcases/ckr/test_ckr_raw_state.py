@@ -19,9 +19,10 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import xfail_as
 from pkcs11_check.core.process_observation import record_process_observation
 from pkcs11_check.raw.rv import ckr_name
-from pkcs11_check.raw.types_std import CKR_OPERATION_ACTIVE
+from pkcs11_check.raw.types_std import CKR_OK, CKR_OPERATION_ACTIVE
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
@@ -49,12 +50,12 @@ def _extract_child_ckr(out: str) -> tuple[int | None, bool]:
 def _classify_state_ckr(out: str, *, label: str) -> None:
     """Parent-side tolerant 3-way classifier over a child's ``CKR:0x...`` line.
 
-    A second C_*Init while one is active may legitimately return
-    CKR_OPERATION_ACTIVE *or* CKR_OK (the module may cancel the first op and
-    start a new one) -- both are accepted passes (``allow_ok=True``). Any other
-    clean code is a noted deviation (``xfail``), not a crash. Classification
-    happens here (not via an in-child ``assert``) so a third clean code is no
-    longer mislabeled as a child crash.
+    A second C_*Init while one is active must return CKR_OPERATION_ACTIVE. A
+    module that silently cancels the first op and restarts (CKR_OK) is
+    tolerated but recorded (M-35 honest_deviation xfail), never passed
+    silently. Any other clean code is a noted deviation (``xfail``), not a
+    crash. Classification happens here (not via an in-child ``assert``) so a
+    third clean code is no longer mislabeled as a child crash.
 
     If the child reported the first init itself failed (``...:first_init_failed``),
     there is no state-conflict result to classify; the probe simply passes
@@ -64,7 +65,19 @@ def _classify_state_ckr(out: str, *, label: str) -> None:
     if first_init_failed:
         return
     assert rv is not None, f"{label}: no CKR line in child output: {out!r}"
-    classify_negative_rv(rv, (CKR_OPERATION_ACTIVE,), label=label, allow_ok=True)
+    if rv == CKR_OK:
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            actual=rv,
+            expected=(CKR_OPERATION_ACTIVE,),
+            summary=(
+                f"{label}: second init returned CKR_OK (silent restart); "
+                "spec requires CKR_OPERATION_ACTIVE"
+            ),
+        )
+    classify_negative_rv(rv, (CKR_OPERATION_ACTIVE,), label=label)
 
 
 def _record_cross_operation_ckr(out: str) -> None:
@@ -115,7 +128,12 @@ class TestOperationActive:
         _classify_state_ckr(out, label="double C_EncryptInit (operation-active state)")
 
     def test_encrypt_then_sign_init(self, p11_config: Any) -> None:
-        """C_EncryptInit then C_SignInit -> CKR_OPERATION_ACTIVE (if no dual-crypto)."""
+        """C_EncryptInit then C_SignInit: cross-type Inits hold independent state.
+
+        F-14: cross-type Inits do not conflict (dual-function operations need
+        digest+encrypt simultaneously active), so no CKR is asserted here --
+        the probe only survives the pair and retains the observed child CKR.
+        """
         rc, out, err = _run_probe(p11_config, "encrypt_then_sign_init")
         _assert_probe_completed(rc, out, err)
         _record_cross_operation_ckr(out)

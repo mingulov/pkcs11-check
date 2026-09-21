@@ -7,6 +7,7 @@ never from file_runner, so the re-export surface in file_runner stays cycle-free
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -100,6 +101,9 @@ class IsolatedReportConfig:
     output_path: Path
     jsonl_path: Path | None = None
     selection: CaseSelection | None = None
+    # H-7 loud deselected-count reporting: machine-auditable baseline block
+    # (fingerprint + excluded/deselected counts), or None when no baseline.
+    disabled_baseline: Mapping[str, Any] | None = None
 
 
 def _absolute_nodeid(file_key: str, nodeid: str) -> str:

@@ -83,6 +83,14 @@ class CkrExpectation:
     allow_success: bool = False
     """True if permissive modules may accept the operation."""
 
+    record_leniency: bool = False
+    """With allow_success: record CKR_OK as honest_deviation xfail, not silent pass.
+
+    M-14 recorded leniency: tolerance stays, but the evidence shows it. Only
+    entries that opt in emit; all other allow_success entries keep the legacy
+    silent pass until their own slice converts them.
+    """
+
     kind: str = "policy"
     """'crypto' (correctness) | 'policy' (attribute/permission) | 'lifecycle' (state) |
     'metadata'."""

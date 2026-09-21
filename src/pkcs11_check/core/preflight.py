@@ -17,6 +17,7 @@ from pkcs11_check.core.crash_codes import (
 )
 from pkcs11_check.core.loader import load_module
 from pkcs11_check.core.process_observation import build_process_observation
+from pkcs11_check.raw.bootstrap import resolve_slot_id
 
 
 @dataclass(frozen=True)
@@ -58,16 +59,17 @@ def probe_capabilities(module: Path, interface: str, slot: int) -> CapabilityMan
             load_failure = True
             raise
         slots = p11.get_slots(token_present=True)
-        if slot >= len(slots):
-            msg = f"slot {slot} not found (token-present slots: {len(slots)})"
-            raise IndexError(msg)
-        raw_mechs = slots[slot].get_mechanisms()
+        # Single slot resolver (H-9): the old `slot >= len(slots)` guard let a
+        # negative index wrap to the last slot. Out-of-range now raises
+        # IndexError, caught below as an error manifest -- never a wrong slot.
+        slot_obj = resolve_slot_id(slots, slot)
+        raw_mechs = slot_obj.get_mechanisms()
         mechanisms = sorted(_mechanism_name(mech) for mech in raw_mechs)
         mech_info: dict[str, dict[str, Any]] = {}
         for mech in raw_mechs:
             name = _mechanism_name(mech)
             try:
-                info = slots[slot].get_mechanism_info(mech)
+                info = slot_obj.get_mechanism_info(mech)
             except Exception as exc:
                 # One hostile mechanism must not void the whole manifest:
                 # record the failure against that mechanism and continue.

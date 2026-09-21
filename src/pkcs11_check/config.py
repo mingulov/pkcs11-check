@@ -88,7 +88,9 @@ class P11TestConfig(BaseSettings):
 
     # Key-provisioning injection (see docs/.../key-provisioning-injection-design.md).
     # off: create->skip. unwrap: create->unwrap->skip. force-unwrap: unwrap->skip (no create).
-    key_inject: str = "off"
+    # H-12: Literal, not str -- provisioning treats any other value as unwrap,
+    # so a typo must fail validation here, never silently enable injection.
+    key_inject: Literal["off", "unwrap", "force-unwrap"] = "off"
     wrap_key_source: Literal["bootstrap", "configured"] = "bootstrap"
     wrap_key_label: str | None = None
     wrap_key_handle: int | None = None

@@ -234,3 +234,124 @@ def test_xfail_record_carries_key_function_not_permitted() -> None:
     assert rec.reason == "nonspec_reject"
     assert rec.kind == "policy"
     assert rec.operation == "C_EncryptInit"
+
+
+# ---------------------------------------------------------------------------
+# M-14: recorded leniency -- allow_success + record_leniency emits honest_deviation
+# ---------------------------------------------------------------------------
+
+
+def _leniency_exp() -> CkrExpectation:
+    return CkrExpectation(
+        function="C_GetAttributeValue",
+        condition="destroyed_object_handle",
+        spec_ckr=CKR_DATA_INVALID,
+        compat_tuple=(CKR_DATA_INVALID,),
+        spec_ref="r",
+        allow_success=True,
+        record_leniency=True,
+        kind="lifecycle",
+    )
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_recorded_leniency_ok_is_honest_deviation_xfail(strict: bool) -> None:
+    """M-14: tolerated CKR_OK on a recorded-leniency entry xfails, never passes silently."""
+    C.clear()
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr(_leniency_exp(), CKR_OK, strict=strict)
+    rec = C.get_records()[-1]
+    assert rec.reason == "honest_deviation"
+    assert rec.outcome == "xfail"
+    assert rec.operation == "C_GetAttributeValue"
+    assert rec.label == "destroyed_object_handle"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_unrecorded_allow_success_still_passes_silently(strict: bool) -> None:
+    """Entries without record_leniency keep the legacy silent pass (other slices)."""
+    exp = CkrExpectation(
+        function="C_Decrypt",
+        condition="cbc_pad",
+        spec_ckr=CKR_DATA_INVALID,
+        compat_tuple=(CKR_DATA_INVALID,),
+        spec_ref="r",
+        allow_success=True,
+        kind="crypto",
+    )
+    C.clear()
+    assert_ckr(exp, CKR_OK, strict=strict)
+    assert C.get_records() == []
+
+
+def test_destroyed_handle_entries_carry_recorded_leniency() -> None:
+    """M-14 slice pin: the four UAF-blinding entries record leniency, not silent pass."""
+    from pkcs11_check.raw.types_std import CKR_OBJECT_HANDLE_INVALID
+    from pkcs11_check.testcases.ckr._ckr_spec import CKR_OBJECT
+
+    for key in (
+        "get_attr_destroyed",
+        "destroy_already_destroyed",
+        "copy_destroyed_handle",
+        "get_size_handle_invalid",
+    ):
+        exp = CKR_OBJECT[key]
+        assert exp.spec_ckr == CKR_OBJECT_HANDLE_INVALID, key
+        assert exp.allow_success is True, key
+        assert exp.record_leniency is True, key
+
+
+# ---------------------------------------------------------------------------
+# H-4 starter: every assert_ckr record carries the judging mode
+# ---------------------------------------------------------------------------
+
+
+def _last_record_detail() -> dict[str, object] | None:
+    recs = C.get_records()
+    assert recs, "expected a Classification record"
+    detail = recs[-1].detail
+    assert detail is not None
+    return detail  # type: ignore[return-value]
+
+
+def test_compat_accepted_invalid_records_compat_mode() -> None:
+    C.clear()
+    with pytest.raises(Failed):
+        assert_ckr(EXP, CKR_OK, strict=False)
+    assert _last_record_detail()["ckr_mode"] == "compat"
+
+
+def test_compat_nonspec_records_compat_mode() -> None:
+    C.clear()
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr(EXP, CKR_DEVICE_ERROR, strict=False)
+    assert _last_record_detail()["ckr_mode"] == "compat"
+
+
+def test_compat_outside_set_records_compat_mode() -> None:
+    C.clear()
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr(EXP, CKR_PIN_INCORRECT, strict=False)
+    assert _last_record_detail()["ckr_mode"] == "compat"
+
+
+def test_strict_failure_records_strict_mode() -> None:
+    C.clear()
+    with pytest.raises(Failed):
+        assert_ckr(EXP, CKR_FUNCTION_FAILED, strict=True)
+    assert _last_record_detail()["ckr_mode"] == "strict"
+
+
+def test_strict_accepted_invalid_records_strict_mode() -> None:
+    C.clear()
+    with pytest.raises(Failed):
+        assert_ckr(EXP, CKR_OK, strict=True)
+    assert _last_record_detail()["ckr_mode"] == "strict"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_recorded_leniency_records_judging_mode(strict: bool) -> None:
+    C.clear()
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr(_leniency_exp(), CKR_OK, strict=strict)
+    assert _last_record_detail()["ckr_mode"] == ("strict" if strict else "compat")

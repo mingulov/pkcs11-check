@@ -14,6 +14,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.core.loader import load_module
 
 
@@ -178,7 +179,9 @@ def _render_module_info(info: ModuleInfo) -> None:
 
 def info_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
-    interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
+    interface: InterfaceChoice = typer.Option(
+        "auto", "--interface", "-i", help="Interface version"
+    ),
 ) -> None:
     """Show PKCS#11 module information: version, slots, mechanisms."""
     if not module.exists():

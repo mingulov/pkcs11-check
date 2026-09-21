@@ -21,7 +21,7 @@ from pkcs11_check.raw.pack import mech_bytes, mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_ENCRYPT,
@@ -37,6 +37,40 @@ from pkcs11_check.testcases.ckr._ckr_spec import CKR_ENCRYPT, assert_ckr
 from pkcs11_check.testcases.conftest import gen_aes_key_or_xfail, gen_rsa_keypair_or_xfail
 
 pytestmark = pytest.mark.access
+
+
+def _xfail_on_valid_input_reject(
+    rv: int, *, label: str, operation: str, mechanism: str, input_desc: str
+) -> None:
+    """Classify a clean refusal of well-defined valid input as xfail.
+
+    Mirrors testcases/test_errors.py::_xfail_on_empty_input_reject (H-2):
+    empty ECB plaintext and non-aligned CBC_PAD input are valid, so CKR_OK
+    with the correct output length is the only correct outcome. A clean
+    refusal deviates (xfail) -- no reject code passes here. An undefined
+    CK_RV is a return-value-contract violation (fail).
+    """
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            actual=rv,
+            expected=("CKR_OK",),
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}, expected CKR_OK",
+        )
+        return  # classify() raises; defensive
+    classify(
+        "nonspec_reject",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        actual=rv,
+        expected=("CKR_OK",),
+        summary=f"{label}: rejected well-defined {input_desc} with {ckr_name(rv)}, expected CKR_OK",
+    )
 
 
 class TestEncryptInitErrors:
@@ -168,11 +202,15 @@ class TestEncryptDataErrors:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_empty_data(self, p11_raw_session: Any, ckr_strict: bool) -> None:
-        """AES-ECB with empty data - reject or return empty ciphertext."""
+        """AES-ECB with empty data must return empty ciphertext (positive test).
+
+        H-2: 0 bytes are block-aligned, so empty plaintext is valid input and
+        CKR_OK with 0-byte output is the only correct outcome. A clean
+        refusal is a deviation (xfail); nonzero output is wrong output (fail).
+        """
         rs = p11_raw_session
         key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-ECB empty-data setup")
         try:
-            exp = CKR_ENCRYPT["data_empty"]
             mech = mech_simple(CKM_AES_ECB)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv != CKR_OK:
@@ -181,10 +219,25 @@ class TestEncryptDataErrors:
             out_buf = (ctypes.c_ubyte * 16)()
             rv = rs.raw.C_Encrypt(rs.sh, None, 0, out_buf, byref(out_len))
             if rv == CKR_OK:
-                # Some modules accept empty -> empty (spec doesn't forbid it)
-                assert out_len.value == 0
+                if out_len.value != 0:
+                    classify(
+                        "wrong_result",
+                        kind="crypto",
+                        label="C_Encrypt of empty data under AES-ECB",
+                        operation="C_Encrypt",
+                        mechanism="AES_ECB",
+                        actual=f"{out_len.value} bytes",
+                        summary="ECB encryption of empty input must yield empty "
+                        f"ciphertext, got {out_len.value} bytes",
+                    )
             else:
-                assert_ckr(exp, rv, ckr_strict)
+                _xfail_on_valid_input_reject(
+                    rv,
+                    label="C_Encrypt of empty data under AES-ECB",
+                    operation="C_Encrypt",
+                    mechanism="AES_ECB",
+                    input_desc="empty input",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -218,13 +271,18 @@ class TestEncryptDataErrors:
             destroy_quietly(rs.raw, rs.sh, _priv)
 
     def test_cbc_pad_non_aligned(self, p11_raw_session: Any, ckr_strict: bool) -> None:
-        """AES-CBC-PAD with 15 bytes - should succeed (padding handles it)."""
+        """AES-CBC-PAD with 15 bytes must yield one 16-byte block (positive test).
+
+        H-2: padding handles non-aligned input by design, so 15 bytes are
+        valid input and CKR_OK with 16-byte output is the only correct
+        outcome. A clean refusal is a deviation (xfail); any other length
+        is wrong output (fail).
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("AES_CBC_PAD"):
             pytest.skip("AES_CBC_PAD not supported")
         key = gen_aes_key_or_xfail(rs, 256, purpose="CKR AES-CBC-PAD setup")
         try:
-            exp = CKR_ENCRYPT["data_invalid_cbc_padding"]
             mech = mech_bytes(CKM_AES_CBC_PAD, b"\x00" * 16)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv != CKR_OK:
@@ -234,9 +292,25 @@ class TestEncryptDataErrors:
             out_buf = (ctypes.c_ubyte * 32)()
             rv = rs.raw.C_Encrypt(rs.sh, data, 15, out_buf, byref(out_len))
             if rv == CKR_OK:
-                assert out_len.value == 16  # Padded to one block
+                if out_len.value != 16:
+                    classify(
+                        "wrong_result",
+                        kind="crypto",
+                        label="C_Encrypt of 15-byte data under AES-CBC-PAD",
+                        operation="C_Encrypt",
+                        mechanism="AES_CBC_PAD",
+                        actual=f"{out_len.value} bytes",
+                        summary="CBC_PAD encryption of 15-byte input must yield one "
+                        f"16-byte block, got {out_len.value} bytes",
+                    )
             else:
-                assert_ckr(exp, rv, ckr_strict)
+                _xfail_on_valid_input_reject(
+                    rv,
+                    label="C_Encrypt of 15-byte data under AES-CBC-PAD",
+                    operation="C_Encrypt",
+                    mechanism="AES_CBC_PAD",
+                    input_desc="15-byte input",
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 

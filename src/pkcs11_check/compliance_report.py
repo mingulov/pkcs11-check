@@ -941,30 +941,62 @@ def _merge_compliance_notes(
     return notes
 
 
+def collect_compliance_module_probe(
+    module_path: str, interface: str, slot_index: int = 0
+) -> dict[str, Any]:
+    """Load the module and collect the plain-data probe a report needs.
+
+    Top-level (picklable) so the CLI can run it in a spawned child: native
+    module code must not be able to take down the parent process (H-11). The
+    returned dict is JSON-serializable and accepted as ``module_probe`` by
+    :func:`generate_report`.
+    """
+    from pkcs11_check.core.loader import load_module
+
+    module = load_module(Path(module_path), interface=interface)
+    return {
+        "interface_version": getattr(module, "interface_version", "2.40"),
+        "mechanisms": _collect_mechanisms(module, slot_index=slot_index),
+    }
+
+
 def generate_report(
     module_path: str,
-    module: Any,
+    module: Any = None,
     test_results_path: Path | None = None,
     slot_index: int = 0,
+    *,
+    module_probe: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate a compliance report dictionary.
 
     Args:
         module_path: Path string of the PKCS#11 module.
-        module: A loaded P11Module instance.
+        module: A loaded P11Module instance. Ignored when ``module_probe`` is
+            given; required otherwise.
         test_results_path: Optional path to a JSON test results file
             (pytest-json-report or pkcs11-check isolated run format).
-        slot_index: Which slot to probe for mechanisms (default 0).
+        slot_index: Which slot to probe for mechanisms (default 0). Only used
+            with a live ``module``; a probe already carries its slot's data.
+        module_probe: Plain-data probe from :func:`collect_compliance_module_probe`
+            (collected in an isolated child by the CLI). Preferred over a live
+            module: callers holding untrusted native code must not pass it in.
 
     Returns:
         A dictionary suitable for JSON serialization containing mechanism
         support, function coverage, CKR coverage, compliance notes, and
         aggregate scores.
     """
-    interface_version = getattr(module, "interface_version", "2.40")
+    if module_probe is not None:
+        interface_version = str(module_probe.get("interface_version", "2.40"))
+        mechanisms = dict(module_probe.get("mechanisms", {}))
+    else:
+        if module is None:
+            raise TypeError("generate_report() requires module or module_probe")
+        interface_version = getattr(module, "interface_version", "2.40")
 
-    # Mechanism support
-    mechanisms = _collect_mechanisms(module, slot_index=slot_index)
+        # Mechanism support
+        mechanisms = _collect_mechanisms(module, slot_index=slot_index)
 
     # Function coverage from test results
     test_counts: dict[str, dict[str, int]] | None = None
@@ -1033,9 +1065,11 @@ def generate_report(
 
 def generate_report_json(
     module_path: str,
-    module: Any,
+    module: Any = None,
     test_results_path: Path | None = None,
     slot_index: int = 0,
+    *,
+    module_probe: Mapping[str, Any] | None = None,
 ) -> str:
     """Generate a compliance report as a JSON string.
 
@@ -1046,5 +1080,6 @@ def generate_report_json(
         module=module,
         test_results_path=test_results_path,
         slot_index=slot_index,
+        module_probe=module_probe,
     )
     return json.dumps(report, indent=2)

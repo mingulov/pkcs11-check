@@ -3461,7 +3461,7 @@ class TestFetchDisabledCommand:
             "# One exact pytest nodeid per line.\n"
             "#src/pkcs11_check/testcases/acvp/aes/test_cfb128.py::test_x[tc1]\n"
         )
-        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url: io.BytesIO(baseline.encode()))
+        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url, **_kw: io.BytesIO(baseline.encode()))
 
         result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
 
@@ -3478,7 +3478,7 @@ class TestFetchDisabledCommand:
             "src/pkcs11_check/testcases/test_x.py::test_a\n"
             "src/pkcs11_check/testcases/test_x.py::test_b\n"
         )
-        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url: io.BytesIO(baseline.encode()))
+        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url, **_kw: io.BytesIO(baseline.encode()))
 
         result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
 
@@ -3494,7 +3494,7 @@ class TestFetchDisabledCommand:
         from pkcs11_check.cli import fetch_cmd
 
         html = "<html><body>404: Not Found</body></html>\n"
-        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url: io.BytesIO(html.encode()))
+        monkeypatch.setattr(fetch_cmd, "urlopen", lambda _url, **_kw: io.BytesIO(html.encode()))
 
         result = runner.invoke(app, ["fetch-disabled", "--data-dir", str(tmp_path)])
 

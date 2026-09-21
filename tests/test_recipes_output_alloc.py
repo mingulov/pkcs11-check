@@ -3,7 +3,8 @@
 A misbehaving module can report a garbage required-output length; the two-call output
 pattern would then allocate ``CK_BYTE * that`` and raise an opaque OverflowError/MemoryError,
 masking the finding behind a cryptic harness error. `_alloc_module_output` re-raises it as a
-clear ValueError naming the size, and never caps a legitimate size.
+clear ValueError naming the size, and caps module-reported sizes at 1 GiB by default
+(H-6; ``PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES`` overrides).
 """
 
 from __future__ import annotations
@@ -47,10 +48,94 @@ def test_alloc_module_output_implausible_size_raises_typed_subclass() -> None:
 
 
 def test_alloc_module_output_does_not_cap_large_but_valid_sizes() -> None:
-    # a large-but-allocatable size (1 MiB) must succeed -- no upper cap / false reject
+    # a large-but-allocatable size (1 MiB, under the 1 GiB cap) must succeed
     buf = _alloc_module_output(1 << 20, what="C_WrapKey")
     assert len(buf) == 1 << 20
     assert isinstance(buf, ctypes.Array)
+
+
+# ---------------------------------------------------------------------------
+# H-6: 1 GiB default cap + PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES override
+# ---------------------------------------------------------------------------
+
+
+def test_alloc_module_output_rejects_over_1gib_without_allocating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-6: a module-reported size over 1 GiB fails closed before allocating."""
+    monkeypatch.delenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", raising=False)
+    with pytest.raises(ImplausibleModuleLengthError, match="implausible output length"):
+        _alloc_module_output((1 << 30) + 1, what="C_Encrypt")
+
+
+def test_alloc_module_output_cap_error_names_size_and_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-6: the cap rejection names the reported size and the escape hatch."""
+    monkeypatch.delenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", raising=False)
+    with pytest.raises(ImplausibleModuleLengthError) as ei:
+        _alloc_module_output(1 << 31, what="C_Decrypt")
+    assert "C_Decrypt" in str(ei.value)
+    assert str(1 << 31) in str(ei.value)
+    assert "PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES" in str(ei.value)
+
+
+def test_alloc_module_output_env_override_is_honored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-6: the env override replaces the default cap (lowered here; no big alloc)."""
+    monkeypatch.setenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", "1024")
+    buf = _alloc_module_output(1024, what="C_Sign")
+    assert len(buf) == 1024
+    with pytest.raises(ImplausibleModuleLengthError, match="implausible output length"):
+        _alloc_module_output(1025, what="C_Sign")
+
+
+def test_alloc_module_output_env_override_accepts_large_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-6: the override parses as plain bytes, so a raised cap is expressible."""
+    monkeypatch.setenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", str(1 << 31))
+    assert raw_recipes._max_module_output_bytes() == 1 << 31
+
+
+def test_alloc_module_output_invalid_env_falls_back_to_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-6: garbage/empty/non-positive overrides fail closed to the 1 GiB default."""
+    for bad in ("not-a-number", "", "0", "-5", "1.5"):
+        monkeypatch.setenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", bad)
+        assert raw_recipes._max_module_output_bytes() == 1 << 30
+    monkeypatch.delenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", raising=False)
+    assert raw_recipes._max_module_output_bytes() == 1 << 30
+
+
+def test_encapsulate_key_routes_size_query_through_capped_allocator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H-6: C_EncapsulateKey's size-query allocation is capped, not a raw ctypes alloc."""
+    from pkcs11_check.raw.recipes import encapsulate_key
+
+    monkeypatch.delenv("PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES", raising=False)
+
+    class _Mech:
+        def byref(self):  # noqa: ANN202
+            return None
+
+    calls = {"n": 0}
+
+    def _fake_encapsulate(*args: Any) -> int:
+        # args: session, mech, pub_key, tmpl_ptr, tmpl_count, ct_buf, ct_len, key_handle
+        ct_len = args[-2]
+        ct_len._obj.value = (1 << 30) + 1
+        calls["n"] += 1
+        return int(CKR_BUFFER_TOO_SMALL)
+
+    raw = SimpleNamespace(C_EncapsulateKey=_fake_encapsulate)
+    monkeypatch.setattr(raw_recipes, "_resolve_mech", lambda mechanism, mech_param: _Mech())
+    with pytest.raises(ImplausibleModuleLengthError, match="C_EncapsulateKey"):
+        encapsulate_key(raw, 1, 2, 0x1055)  # type: ignore[arg-type]
+    assert calls["n"] == 1
 
 
 # ---------------------------------------------------------------------------

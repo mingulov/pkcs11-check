@@ -9,35 +9,43 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from pkcs11_check.cli._choices import InterfaceChoice
+from pkcs11_check.cli.info_cmd import InfoQueryCrashError, InfoQueryError, _run_isolated
+from pkcs11_check.compliance_report import collect_compliance_module_probe, generate_report
+
 console = Console()
 
 
 def compliance_report_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
-    interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
+    interface: InterfaceChoice = typer.Option(
+        "auto", "--interface", "-i", help="Interface version"
+    ),
     output: str = typer.Option("json", "--output", "-o", help="Output format: json|summary"),
     results: Path | None = typer.Option(None, "--results", help="JSON test results file"),
     slot: int = typer.Option(0, "--slot", "-s", help="Slot index to probe"),
 ) -> None:
     """Generate machine-readable PKCS#11 compliance report."""
-    from pkcs11_check.compliance_report import generate_report
-    from pkcs11_check.core.loader import load_module
-
     if not module.exists():
         console.print(f"[red]Error:[/red] Module not found: {module}")
         raise typer.Exit(code=3)
 
+    # H-11: probe via info's spawn helper, like every sibling command. The
+    # untrusted module is loaded only in the child; a segfault there is a
+    # reported finding (exit 3), never a dead CLI process.
     try:
-        p11 = load_module(module, interface=interface)
-    except Exception as exc:
+        probe = _run_isolated(collect_compliance_module_probe, str(module), interface, slot)
+    except InfoQueryCrashError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=3) from exc
+    except InfoQueryError as exc:
         console.print(f"[red]Error loading module:[/red] {exc}")
         raise typer.Exit(code=3) from exc
 
     report = generate_report(
         module_path=str(module),
-        module=p11,
+        module_probe=probe,
         test_results_path=results,
-        slot_index=slot,
     )
 
     if output == "json":

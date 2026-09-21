@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import tomllib
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, suppress
+from dataclasses import replace as _dataclass_replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -15,9 +17,16 @@ import pytest
 import typer
 from pydantic import SecretStr
 from rich.console import Console
+from rich.table import Table
 
 from pkcs11_check import provenance as provenance_mod
+from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.config import P11TestConfig
+from pkcs11_check.config_layers import (
+    find_ignored_settings,
+    read_toml_settings,
+    resolve_config_rows,
+)
 from pkcs11_check.core._report_records import (
     _build_detail_from_report_records,
     _build_per_unit_details_from_record_sources,
@@ -30,7 +39,11 @@ from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
     ensure_failed_collection_report,
 )
-from pkcs11_check.core.disabled_baseline import resolve_disabled_nodeids
+from pkcs11_check.core.disabled_baseline import (
+    build_disabled_baseline_block,
+    format_disabled_baseline_banner,
+    resolve_disabled_nodeids,
+)
 from pkcs11_check.core.file_runner import (
     FileRunResult,
     FileRunState,
@@ -74,9 +87,33 @@ console = Console(stderr=True)
 
 _TESTCASES_DIR = str(Path(__file__).parent.parent / "testcases")
 
+# H-12: mirrors P11TestConfig.key_inject's Literal. Provisioning treats any
+# other value as unwrap, so the CLI rejects typos before anything runs.
+_KEY_INJECT_MODES = frozenset({"off", "unwrap", "force-unwrap"})
+
 
 def _preflight_timeout_seconds(test_timeout: int) -> int:
     return max(10, min(test_timeout, 60))
+
+
+def _print_show_config(cli_values: dict[str, Any]) -> None:
+    """Print effective value + source per config key (H-10, ``--show-config``).
+
+    Goes to stdout (the deliverable), unlike the stderr diagnostics console.
+    Secrets render as set/unset, never values.
+    """
+    rows = resolve_config_rows(
+        cli_values=cli_values,
+        env=os.environ,
+        toml=read_toml_settings(),
+    )
+    table = Table(show_header=True)
+    table.add_column("Setting", style="cyan")
+    table.add_column("Effective value")
+    table.add_column("Source")
+    for row in rows:
+        table.add_row(row.key, row.effective, row.source)
+    Console().print(table)
 
 
 def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
@@ -378,6 +415,7 @@ def _persist_collection_failure(
             per_unit_details=details,
             provenance=provenance,
             selection=report_config.selection,
+            disabled_baseline=report_config.disabled_baseline,
         )
         write_quality_json_report(
             report_config.output_path.parent / "quality.json",
@@ -469,7 +507,9 @@ def _assemble_json_artifacts_from_jsonl(
 
 def test_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
-    interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
+    interface: InterfaceChoice = typer.Option(
+        "auto", "--interface", "-i", help="Interface version"
+    ),
     sessions: int = typer.Option(
         1, "--sessions", "-s", help="Concurrent sessions", rich_help_panel="Advanced"
     ),
@@ -653,9 +693,49 @@ def test_command(
         help="Vendor mechanism code point, e.g. KMAC_128=0x80001234 (repeatable)",
         rich_help_panel="Selection",
     ),
+    show_config: bool = typer.Option(
+        False,
+        "--show-config",
+        help="Print effective config (value + source per key) and exit",
+    ),
     targets: list[str] = typer.Argument(None, help="Optional pytest paths or nodeids"),
 ) -> None:
     """Run the PKCS#11 test suite against a module."""
+    if show_config:
+        # H-10: report-only; exits before validation, module checks, preflight.
+        # log_level belongs to the global callback, so read back its effective
+        # value from the root logger the callback already configured.
+        _print_show_config(
+            {
+                "module": str(module),
+                "slot": slot,
+                "interface": interface,
+                "pin": pin,
+                "so_pin": so_pin,
+                "destructive": destructive,
+                "log_level": logging.getLevelName(logging.getLogger().getEffectiveLevel()),
+                "output": output,
+                "rv_trace": rv_trace,
+                "rv_trace_compact": rv_trace_compact,
+                "key_inject": key_inject,
+                "wrap_key_source": wrap_key_source,
+                "wrap_key_label": wrap_key_label,
+                "wrap_key_handle": wrap_key_handle,
+                "wrap_key_value": wrap_key_value,
+                "wrap_mech": wrap_mech,
+                "wrap_rsa_bits": wrap_rsa_bits,
+                "wrap_oaep_hash": wrap_oaep_hash,
+                "allow_external_provision": allow_external_provision,
+                "external_provision_cmd": external_provision_cmd,
+            }
+        )
+        raise typer.Exit(code=0)
+    if key_inject not in _KEY_INJECT_MODES:
+        console.print(
+            "[red]Error:[/red] invalid --key-inject "
+            f"{key_inject!r}: expected off, unwrap, or force-unwrap"
+        )
+        raise typer.Exit(code=2)
     case_selection: CaseSelection | None = None
     if selection_manifest is not None:
         if output != "json":
@@ -708,6 +788,11 @@ def test_command(
         console.print("[red]Error:[/red] --skip-slow and --only-slow are mutually exclusive")
         raise typer.Exit(code=_resume_exit_code(state_file, 2) if resume else 2)
     marker = _combine_marker(marker, skip_slow=skip_slow, only_slow=only_slow)
+
+    # H-10: a provided-but-dead setting (documented layer that never applies)
+    # warns instead of silently mis-scoping the run.
+    for ignored in find_ignored_settings(env=os.environ, toml=read_toml_settings()):
+        console.print(f"[yellow]Warning:[/yellow] {ignored}")
 
     original_pin = os.environ.get("P11TEST_PIN")
     had_original_pin = "P11TEST_PIN" in os.environ
@@ -969,7 +1054,8 @@ def test_command(
                 slot=slot,
                 destructive=destructive,
                 pin=SecretStr(pin) if pin is not None else None,
-                key_inject=key_inject,
+                # Validated against _KEY_INJECT_MODES at command entry (H-12).
+                key_inject=cast(Literal["off", "unwrap", "force-unwrap"], key_inject),
                 wrap_key_source=cast(Literal["bootstrap", "configured"], wrap_key_source),
                 wrap_key_label=wrap_key_label,
                 wrap_key_handle=wrap_key_handle,
@@ -1076,6 +1162,34 @@ def test_command(
                         deselect_by_file={},
                         baseline_fingerprint=baseline_fingerprint,
                     )
+                if disabled_nodeids:
+                    # H-7 loud deselected-count reporting: excluded units never
+                    # run and per-file deselections hide in child output, so
+                    # print the banner and attach the machine-auditable block
+                    # to results.json (via report_config; paths unchanged).
+                    excluded_units = len(units) - len(selection_plan.units)
+                    per_file_deselected = sum(
+                        len(nodeids) for nodeids in selection_plan.deselect_by_file.values()
+                    )
+                    console.print(
+                        "[yellow]"
+                        + format_disabled_baseline_banner(
+                            nodeid_count=len(disabled_nodeids),
+                            excluded_units=excluded_units,
+                            per_file_deselected=per_file_deselected,
+                            fingerprint=selection_plan.baseline_fingerprint,
+                        )
+                        + "[/yellow]"
+                    )
+                    if report_config is not None:
+                        report_config = _dataclass_replace(
+                            report_config,
+                            disabled_baseline=build_disabled_baseline_block(
+                                fingerprint=selection_plan.baseline_fingerprint,
+                                deselect_by_file=selection_plan.deselect_by_file,
+                                excluded_units=excluded_units,
+                            ),
+                        )
                 collection_phase = False
                 try:
                     recovery_config = build_recovery_config(
@@ -1170,6 +1284,18 @@ def test_command(
         if disabled_nodeids:
             deselect_path = write_deselect_file(disabled_nodeids)
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
+            # H-7 loud deselected-count reporting (non-isolated path: every
+            # baseline nodeid rides one deselect file; nothing pre-excluded).
+            console.print(
+                "[yellow]"
+                + format_disabled_baseline_banner(
+                    nodeid_count=len(disabled_nodeids),
+                    excluded_units=0,
+                    per_file_deselected=len(disabled_nodeids),
+                    fingerprint=baseline_fingerprint,
+                )
+                + "[/yellow]"
+            )
         exit_code = pytest.main(args)
         restore_caller_environment()
         if deselect_path is not None:

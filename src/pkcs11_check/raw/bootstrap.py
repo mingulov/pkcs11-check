@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from collections.abc import Sequence
 from ctypes import byref
 
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
@@ -35,34 +36,44 @@ def get_slot_ids(raw: RawPKCS11, token_present: bool = True, label: str | None =
     if label is None:
         return found_slots
 
-    # Filter by label
+    # Filter by label. M-13: decode via the shared token-field helper so
+    # non-UTF-8 label bytes degrade the measurement instead of raising.
+    # Local import: core/loader.py imports this module (cycle at top level).
+    from pkcs11_check.core.loader import decode_token_field
+
     matching = []
     for slot_id in found_slots:
         info = CK_TOKEN_INFO()
         if raw.C_GetTokenInfo(slot_id, byref(info)) == CKR_OK:
-            token_label = bytes(info.label).decode("utf-8").strip()
+            token_label = decode_token_field(bytes(info.label))
             if label in token_label:
                 matching.append(slot_id)
     return matching
 
 
-def resolve_slot_id(slots: list[int], slot_index: int | None) -> int:
-    """Resolve a slot *index* (``config.slot`` / ``--slot`` semantics) to a real slot ID.
+def resolve_slot_id[T](slots: Sequence[T], slot_index: int | None) -> T:
+    """Resolve a slot *index* (``config.slot`` / ``--slot`` semantics) to one list entry.
 
     ``config.slot`` is an index into the present-token slot list, not a raw PKCS#11 slot ID
     (which can be a large dynamic value on SoftHSM2/kryoptic/tpm2/wolfPKCS11). The session
-    fixtures and the probe harness MUST resolve it identically; keeping the logic here is the
-    single source both call, so a probe can never again pass the raw index to ``C_OpenSession``
-    and crash with ``CKR_SLOT_ID_INVALID``.
+    fixtures, the probe harness, preflight, and ``P11Module.get_token`` MUST resolve it
+    identically; keeping the logic here is the single source they all call, so a probe can
+    never again pass the raw index to ``C_OpenSession`` and crash with
+    ``CKR_SLOT_ID_INVALID`` -- and no consumer can silently test the wrong slot.
+
+    Generic over the list element so slot-ID lists and slot-object lists share it.
 
     Raises ``ValueError`` on an empty slot list (no present-token slot) instead of an opaque
-    ``IndexError``. A negative index is out of range and clamps to the first slot (it must not
-    fall through to Python's negative indexing and silently pick the *last* slot).
+    ``IndexError``. A negative or out-of-range index raises ``IndexError``: silently falling
+    back to the first slot (or wrapping to the last via Python negative indexing) would run
+    the suite against a token the operator never asked for.
     """
     if not slots:
         raise ValueError("no present-token slot to resolve config.slot against")
     idx = slot_index if slot_index is not None else 0
-    return slots[idx] if 0 <= idx < len(slots) else slots[0]
+    if not 0 <= idx < len(slots):
+        raise IndexError(f"slot {idx} not found (token-present slots: {len(slots)})")
+    return slots[idx]
 
 
 def open_session(raw: RawPKCS11, slot_id: int, flags: int) -> int:
@@ -165,4 +176,5 @@ __all__ = [
     "logout",
     "logout_quietly",
     "open_session",
+    "resolve_slot_id",
 ]

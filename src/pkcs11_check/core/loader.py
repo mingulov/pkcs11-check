@@ -13,7 +13,7 @@ from typing import Any
 
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
-from pkcs11_check.raw.bootstrap import get_slot_ids
+from pkcs11_check.raw.bootstrap import get_slot_ids, resolve_slot_id
 from pkcs11_check.raw.rv import expect_rv
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM_INFO,
@@ -229,12 +229,14 @@ class P11Module:
         return get_slot_ids(self._raw, token_present=token_present)
 
     def get_token(self, slot_index: int = 0) -> RawToken:
-        """Return the token at the given slot index."""
+        """Return the token at the given slot index.
+
+        Resolved through the single slot resolver (H-9): the old ``>=`` guard
+        let a negative index wrap to the last slot. Negative and out-of-range
+        indices now raise ``IndexError``.
+        """
         slots = self.get_slots(token_present=True)
-        if slot_index >= len(slots):
-            msg = f"Slot {slot_index} not found (available: {len(slots)})"
-            raise IndexError(msg)
-        return slots[slot_index].get_token()
+        return resolve_slot_id(slots, slot_index).get_token()
 
     def get_interface_list(self) -> list[tuple[str, int, int]]:
         """Return supported interfaces when the module exposes C_GetInterfaceList.

@@ -7,6 +7,7 @@ PKCS#11 operations. A recipe must be mentally expandable to its raw calls.
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 from collections.abc import Callable, Mapping
 from ctypes import byref
@@ -147,6 +148,33 @@ class OutputLengthOverrunError(ImplausibleModuleLengthError):
         )
 
 
+# Default ceiling for a single module-reported output allocation (H-6). No PKCS#11
+# single-shot output legitimately approaches this; a module reporting more is
+# either handing back an error sentinel or probing the harness's allocator.
+DEFAULT_MAX_MODULE_OUTPUT_BYTES = 1 << 30  # 1 GiB
+MAX_MODULE_OUTPUT_BYTES_ENV = "PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES"
+
+
+def _max_module_output_bytes() -> int:
+    """Return the effective module-output allocation cap in bytes.
+
+    ``PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES`` (plain integer bytes) overrides the
+    1 GiB default for deployments with genuinely huge outputs. A missing, empty,
+    unparsable, or non-positive value fails closed to the default: a typo'd
+    override must not silently disable the cap.
+    """
+    raw_value = os.environ.get(MAX_MODULE_OUTPUT_BYTES_ENV)
+    if raw_value is None or not raw_value.strip():
+        return DEFAULT_MAX_MODULE_OUTPUT_BYTES
+    try:
+        parsed = int(raw_value.strip())
+    except ValueError:
+        return DEFAULT_MAX_MODULE_OUTPUT_BYTES
+    if parsed <= 0:
+        return DEFAULT_MAX_MODULE_OUTPUT_BYTES
+    return parsed
+
+
 def _alloc_module_output(size: int, *, what: str) -> ctypes.Array[ctypes.c_ubyte]:
     """Allocate a ``CK_BYTE * size`` output buffer sized from a module-reported length.
 
@@ -155,9 +183,16 @@ def _alloc_module_output(size: int, *, what: str) -> ctypes.Array[ctypes.c_ubyte
     raise an opaque ``OverflowError``/``MemoryError`` that surfaces as a cryptic harness
     error and masks the real finding.  Re-raise it as a legible
     ``ImplausibleModuleLengthError`` naming the reported size and call so the module's
-    bad length report stays diagnosable.  No upper cap is imposed, so a
-    genuinely-large legitimate output is never rejected.
+    bad length report stays diagnosable.  Sizes over the cap (1 GiB by default,
+    ``PKCS11_CHECK_MAX_MODULE_OUTPUT_BYTES`` to override) are rejected before
+    allocating, so a garbage length cannot OOM the runner.
     """
+    cap = _max_module_output_bytes()
+    if size > cap:
+        raise ImplausibleModuleLengthError(
+            f"{what}: module reported an implausible output length ({size} bytes; "
+            f"cap is {cap} bytes, override with {MAX_MODULE_OUTPUT_BYTES_ENV})"
+        )
     try:
         return (ctypes.c_ubyte * size)()
     except (OverflowError, MemoryError) as exc:
@@ -1978,7 +2013,9 @@ def encapsulate_key(
     first_call_handle = key_handle.value
     if rv == CKR_BUFFER_TOO_SMALL:
         key_handle = CK_OBJECT_HANDLE(0)  # key not yet created
-    ct_buf = (ctypes.c_ubyte * ct_len.value)()
+    # H-6: route the module-reported size through the capped allocator -- a raw
+    # ctypes alloc here let a garbage ct_len OOM the runner with no diagnosis.
+    ct_buf = _alloc_module_output(ct_len.value, what="C_EncapsulateKey")
     rv = raw.C_EncapsulateKey(
         session,
         mech.byref(),

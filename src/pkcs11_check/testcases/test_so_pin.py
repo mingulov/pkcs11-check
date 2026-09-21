@@ -47,7 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKR_PIN_LOCKED,
     CKR_SESSION_READ_ONLY,
     CKR_TOKEN_WRITE_PROTECTED,
-    CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_ANOTHER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_PIN_NOT_INITIALIZED,
     CKR_USER_TYPE_INVALID,
@@ -122,9 +122,11 @@ class TestSOLogin:
         guard_so_lockout(rs.raw, rs.slot_id, explicit=explicit)
         pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
         rv = rs.raw.C_Login(rs.sh, CKU_SO, pin_buf, len(so_pin))
+        # M-19: a *different* user type already logged in -> ANOTHER_ALREADY
+        # (ALREADY is same-type double login; see CKR_SESSION table entry).
         classify_negative_rv(
             rv,
-            (CKR_USER_ALREADY_LOGGED_IN,),
+            (CKR_USER_ANOTHER_ALREADY_LOGGED_IN,),
             label="C_Login(SO) while already logged in as USER on the same session",
         )
 

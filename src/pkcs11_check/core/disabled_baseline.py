@@ -8,7 +8,9 @@ One resolver, used by both, so they cannot drift again.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from pkcs11_check.core.test_selection import (
     auto_discover_disabled_baseline,
@@ -48,3 +50,49 @@ def resolve_disabled_nodeids(
     if baseline is None:
         return set(), NO_BASELINE_FINGERPRINT
     return set(baseline.disabled_nodeids), baseline.fingerprint
+
+
+def format_disabled_baseline_banner(
+    *,
+    nodeid_count: int,
+    excluded_units: int,
+    per_file_deselected: int,
+    fingerprint: str,
+) -> str:
+    """Format the loud one-line summary of what the baseline removed (H-7).
+
+    Excluded units never run and per-file deselections hide inside child
+    output, so both counts are printed on the console for every run with a
+    non-empty baseline -- including the suspicious all-zeros case of a stale
+    baseline that matches nothing. The short fingerprint correlates the line
+    with the ``disabled_baseline`` block in results.json.
+    """
+    return (
+        f"Disabled baseline [{fingerprint[:12]}]: {nodeid_count} nodeids, "
+        f"{excluded_units} unit(s) fully excluded, "
+        f"{per_file_deselected} deselected in scheduled units"
+    )
+
+
+def build_disabled_baseline_block(
+    *,
+    fingerprint: str | None,
+    deselect_by_file: Mapping[str, set[str]],
+    excluded_units: int,
+) -> dict[str, Any] | None:
+    """Build the machine-auditable ``disabled_baseline`` results.json block (H-7).
+
+    Returns ``None`` when no baseline is active so the key stays absent (existing
+    payload shape unchanged); otherwise reports the fingerprint, the fully
+    excluded unit count, and per-file deselection counts -- zeroed but present
+    when the baseline matched nothing, so staleness is visible, not silent.
+    """
+    if fingerprint is None or fingerprint == NO_BASELINE_FINGERPRINT:
+        return None
+    per_file = {unit: len(nodeids) for unit, nodeids in deselect_by_file.items()}
+    return {
+        "fingerprint": fingerprint,
+        "excluded_units": excluded_units,
+        "per_file_deselected": per_file,
+        "total_per_file_deselected": sum(per_file.values()),
+    }
