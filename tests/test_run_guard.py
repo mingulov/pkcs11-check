@@ -257,10 +257,9 @@ def test_concurrent_policy_promotes_keep_both_updates(tmp_path: Path) -> None:
     from pkcs11_check.core._escalation import _promote_crashing_unit
     from pkcs11_check.core._unit_discovery import load_isolation_policy
 
-    policy_file = tmp_path / "policy.json"
     console = Console(file=StringIO(), force_terminal=False)
 
-    def _promote(unit: str) -> None:
+    def _promote(policy_file: Path, unit: str) -> None:
         _promote_crashing_unit(
             policy_file,
             ["--p11-module", "/tmp/module.so"],
@@ -271,16 +270,23 @@ def test_concurrent_policy_promotes_keep_both_updates(tmp_path: Path) -> None:
             console,
         )
 
-    threads = [
-        threading.Thread(target=_promote, args=(f"test_{i}.py::test_boom",), daemon=True)
-        for i in range(8)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30)
+    # Several rounds on fresh files: the racy window is guard creation
+    # (concurrent first-writes to an empty guard file), so each round
+    # replays it. A lost update in any round fails the count below.
+    for round_index in range(6):
+        policy_file = tmp_path / f"policy-{round_index}.json"
+        threads = [
+            threading.Thread(
+                target=_promote, args=(policy_file, f"test_{i}.py::test_boom"), daemon=True
+            )
+            for i in range(8)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
 
-    policies = load_isolation_policy(policy_file)
-    assert len(policies) == 1
-    policy = next(iter(policies.values()))
-    assert len(policy.crashed_tests) == 8
+        policies = load_isolation_policy(policy_file)
+        assert len(policies) == 1
+        policy = next(iter(policies.values()))
+        assert len(policy.crashed_tests) == 8

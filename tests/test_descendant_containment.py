@@ -220,6 +220,7 @@ def test_kill_tree_windows_falls_back_to_direct_kill(
     assert killed == [True]
 
 
+@needs_posix
 def test_kill_tree_posix_never_shells_out(monkeypatch: pytest.MonkeyPatch) -> None:
     """POSIX containment is a single killpg; no subprocess is spawned."""
     calls: list[list[str]] = []
@@ -241,6 +242,7 @@ def test_kill_tree_posix_never_shells_out(monkeypatch: pytest.MonkeyPatch) -> No
     assert groups == [(4242, signal.SIGKILL)]
 
 
+@needs_posix
 def test_kill_tree_tolerates_already_gone_group(monkeypatch: pytest.MonkeyPatch) -> None:
     """ESRCH from a reaped group is silence, not an error."""
 

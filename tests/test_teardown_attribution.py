@@ -272,7 +272,11 @@ def test_failed_finalize_real_child_yields_finding_not_harness_error(
     assert '"$report_type": "HarnessError"' not in merged
     assert '"$report_type": "TeardownFinalize"' in merged
     assert '"exitstatus": 0' in merged  # the accepted mismatch
-    assert "test_finalize_child.py::test_ok" in merged  # completed test preserved
+    # `::test` form: cross-drive pytest emits an empty path part on Windows
+    # (checkout on D:, %TEMP% on C: -- see core/nodeids.py); `location`
+    # keeps the file identity on both platforms.
+    assert "::test_ok" in merged  # completed test preserved
+    assert "test_finalize_child.py" in merged  # file identity via location
 
 
 def test_exit_during_finalize_real_child_is_provider_crash(tmp_path: Path) -> None:
@@ -287,7 +291,11 @@ def test_exit_during_finalize_real_child_is_provider_crash(tmp_path: Path) -> No
     assert '"$report_type": "HarnessError"' not in merged
     assert '"$report_type": "SessionFinish"' not in merged
     assert "[abrupt-exit]" in merged
-    assert "test_finalize_child.py::test_ok" in merged  # completed test preserved
+    # `::test` form: cross-drive pytest emits an empty path part on Windows
+    # (checkout on D:, %TEMP% on C: -- see core/nodeids.py); `location`
+    # keeps the file identity on both platforms.
+    assert "::test_ok" in merged  # completed test preserved
+    assert "test_finalize_child.py" in merged  # file identity via location
     # "failed", not "crashed": crashed is reserved for signals/Windows crash
     # codes; a positive abrupt rc takes failed status with provider-side
     # [abrupt-exit] attribution (same contract as the exit-124 real child).

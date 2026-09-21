@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +182,38 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
         assert 'summary["failed"] == 0' in run_body, needle
 
 
+def _find_gnu_bash() -> str | None:
+    """First `bash` that is really GNU bash, not the WSL launcher stub.
+
+    On Windows `shutil.which("bash")` can resolve to the System32 WSL stub,
+    which exits 1 with its complaint on stdout. Probe every candidate with
+    `bash --version` and require the GNU banner, trying the Git for Windows
+    paths when PATH resolution fails the probe.
+    """
+    candidates = [
+        shutil.which("bash"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            probed = subprocess.run(
+                [candidate, "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+                check=False,
+            )
+        except OSError:
+            continue
+        if probed.returncode == 0 and "GNU bash" in probed.stdout:
+            return candidate
+    return None
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="gate scripts are bash")
 def test_gate_inline_bash_scripts_parse(tmp_path: Path) -> None:
     """Every bash `run:` block must be syntactically valid shell."""
@@ -197,18 +230,21 @@ def test_gate_inline_bash_scripts_parse(tmp_path: Path) -> None:
     # otherwise slip through with zero validation.
     shells = {str(step.get("shell", default_shell)) for step in _steps(job) if "run" in step}
     assert shells <= {"bash", "pwsh"}, shells
+    bash = _find_gnu_bash()
+    if bash is None:
+        pytest.skip("no GNU bash available")
     for name, script in scripts:
         stubbed = _EXPRESSION.sub("__GATE_EXPR__", script)
         probe = tmp_path / "probe.sh"
-        probe.write_text(stubbed, encoding="utf-8")
+        probe.write_text(stubbed, encoding="utf-8", newline="\n")
         checked = subprocess.run(
-            ["bash", "-n", str(probe)],
+            [bash, "-n", str(probe)],
             capture_output=True,
             text=True,
             encoding="utf-8",
             check=False,
         )
-        assert checked.returncode == 0, f"{name}: {checked.stderr}"
+        assert checked.returncode == 0, f"{name}: {checked.stdout}{checked.stderr}"
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="pwsh not installed")
@@ -222,17 +258,31 @@ def test_gate_inline_pwsh_scripts_parse(tmp_path: Path) -> None:
         if "run" in step and step.get("shell", default_shell) == "pwsh"
     ]
     assert len(scripts) >= 1
-    parser_probe = (
+    # The probe path travels as a `-File` argument: pwsh joins every token
+    # after `-Command` into the command text, so `$args` would be empty there
+    # and ParseFile would fail with "path is not valid" on every script.
+    parser = tmp_path / "parser.ps1"
+    parser.write_text(
         "$errs = $null; [void][System.Management.Automation.Language.Parser]::"
         "ParseFile($args[0], [ref]$null, [ref]$errs); "
-        "if ($errs.Count -gt 0) { $errs | ForEach-Object { $_.Message }; exit 1 }"
+        "if ($errs.Count -gt 0) { $errs | ForEach-Object { $_.Message }; exit 1 }\n",
+        encoding="utf-8",
     )
     for name, script in scripts:
         stubbed = _EXPRESSION.sub("__GATE_EXPR__", script)
         probe = tmp_path / "probe.ps1"
         probe.write_text(stubbed, encoding="utf-8")
         checked = subprocess.run(
-            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", parser_probe, str(probe)],
+            [
+                "pwsh",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(parser),
+                str(probe),
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -274,3 +324,16 @@ def test_gate_runs_the_committed_published_artifact_tests() -> None:
     assert "|| true" not in meta_run
     assert "continue-on-error" not in WORKFLOW_PATH.read_text(encoding="utf-8")
     assert meta_run.index('cd "$RUNNER_TEMP"') < meta_run.index("python -m pytest")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="simulates the WSL stub with a POSIX script")
+def test_find_gnu_bash_rejects_non_gnu_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stub `bash` (WSL-launcher-shaped) on PATH must not be accepted."""
+    stub = tmp_path / "bash"
+    stub.write_text('#!/bin/sh\necho "no usable bash here"\nexit 1\n', encoding="utf-8")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert shutil.which("bash") == str(stub)  # the trap: naive lookup takes it
+    assert _find_gnu_bash() is None
