@@ -170,3 +170,68 @@ def test_state_fingerprint_stable_across_secret_rotation() -> None:
         env=None,
     )
     assert third == fourth
+
+
+# ---------------------------------------------------------------------------
+# M-12: the policy snapshot allowlist derives from the central secret policy
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_value_flags_cover_every_secret_flag() -> None:
+    """Consistency pin: no secret flag can drift outside snapshot redaction."""
+    from pkcs11_check.core._run_state import _SNAPSHOT_VALUE_FLAGS
+
+    assert SECRET_ARGV_FLAGS <= _SNAPSHOT_VALUE_FLAGS
+
+
+def test_backend_args_snapshot_redacts_every_secret_flag() -> None:
+    """Every policy-listed secret flag snapshots redacted, in both arg forms."""
+    from pkcs11_check.core._run_state import _backend_args_snapshot
+
+    for flag in sorted(SECRET_ARGV_FLAGS):
+        assert _backend_args_snapshot([flag, "s3cret"]) == [flag, "<redacted>"]
+        assert _backend_args_snapshot([f"{flag}=s3cret"]) == [f"{flag}=<redacted>"]
+
+
+def test_backend_args_snapshot_keeps_plaintext_flags() -> None:
+    """Non-secret snapshot behavior is unchanged (module/slot/manifest/destructive)."""
+    from pkcs11_check.core._run_state import _backend_args_snapshot
+
+    assert _backend_args_snapshot(
+        [
+            "--p11-module",
+            "/tmp/m.so",
+            "--p11-slot",
+            "3",
+            "--p11-manifest",
+            "/tmp/m.json",
+            "--p11-destructive",
+            "--timeout",
+            "60",
+        ]
+    ) == [
+        "--p11-module",
+        "/tmp/m.so",
+        "--p11-slot",
+        "3",
+        "--p11-manifest",
+        "<manifest>",
+        "--p11-destructive",
+    ]
+
+
+def test_policy_fingerprint_stable_across_secret_rotation() -> None:
+    """Secret values must not invalidate policy fingerprints either."""
+    from pkcs11_check.core._run_state import build_policy_fingerprint
+
+    base = ["--p11-module", "/tmp/does-not-exist.so"]
+    first = build_policy_fingerprint([*base, "--p11-pin", "one"], env={})
+    second = build_policy_fingerprint([*base, "--p11-pin", "two"], env={})
+    assert first == second
+    third = build_policy_fingerprint(
+        [*base, "--p11-so-pin", "x", "--p11-wrap-key-value", "y"], env={}
+    )
+    fourth = build_policy_fingerprint(
+        [*base, "--p11-so-pin", "z", "--p11-wrap-key-value", "w"], env={}
+    )
+    assert third == fourth

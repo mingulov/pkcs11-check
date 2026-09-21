@@ -313,18 +313,20 @@ def test_ckr_coverage_does_not_count_unrelated_results_as_tested() -> None:
 
 
 def test_ckr_coverage_does_not_count_all_skipped_ckr_file_as_tested() -> None:
+    # Fixture counts mirror the CKR_ENCRYPT group size (37 after H-2 removed
+    # the 3 inverted empty-input entries); only the all-skipped shape matters.
     summary = _ckr_coverage_summary(
         {
             "test_ckr_encrypt": {
                 "passed": 0,
                 "failed": 0,
-                "skipped": 40,
+                "skipped": 37,
                 "xfailed": 0,
                 "xpassed": 0,
                 "error": 0,
                 "crashed": 0,
                 "timeout": 0,
-                "tests": 40,
+                "tests": 37,
             }
         }
     )
@@ -334,24 +336,26 @@ def test_ckr_coverage_does_not_count_all_skipped_ckr_file_as_tested() -> None:
 
 
 def test_ckr_coverage_counts_executed_ckr_file_spec_group_only() -> None:
+    # 37 = len(CKR_ENCRYPT) after H-2 removed the 3 inverted empty-input
+    # entries (data_empty, data_invalid_cbc_padding, data_gcm_aad_only).
     summary = _ckr_coverage_summary(
         {
             "test_ckr_encrypt": {
                 "passed": 1,
                 "failed": 0,
-                "skipped": 39,
+                "skipped": 36,
                 "xfailed": 0,
                 "xpassed": 0,
                 "error": 0,
                 "crashed": 0,
                 "timeout": 0,
-                "tests": 40,
+                "tests": 37,
             }
         }
     )
 
-    assert summary["tested"] == 40
-    assert summary["untested"] == summary["total_specs"] - summary["untestable"] - 40
+    assert summary["tested"] == 37
+    assert summary["untested"] == summary["total_specs"] - summary["untestable"] - 37
 
 
 class TestComplianceNoteIsolation:
@@ -596,3 +600,105 @@ def test_generate_report_includes_compliance_notes_from_report_jsonl(tmp_path: P
             "nodeid": "src/pkcs11_check/testcases/test_mech_encrypt.py::test_encrypt",
         }
     ]
+
+
+class TestComplianceReportIsolation:
+    """H-11: compliance-report must not load the untrusted module in-process.
+
+    Every sibling command (info, test, doctor) probes via spawned children; a
+    segfaulting module must surface as a reported finding (exit 3), never take
+    down the CLI process itself.
+    """
+
+    def test_probe_collector_returns_plain_json_data(self, monkeypatch) -> None:
+        """The isolation payload must be picklable plain data, not a module."""
+        import pkcs11_check.core.loader as loader_mod
+        from pkcs11_check.compliance_report import (
+            STANDARD_MECHANISMS,
+            collect_compliance_module_probe,
+        )
+
+        monkeypatch.setattr(loader_mod, "load_module", lambda *a, **k: _FakeModule())
+        probe = collect_compliance_module_probe("/fake-pkcs11.so", "auto", 0)
+
+        assert probe["interface_version"] == "3.2"
+        assert probe["mechanisms"] == {m: "NOT_SUPPORTED" for m in STANDARD_MECHANISMS}
+        json.dumps(probe)  # must survive the spawn boundary
+
+    def test_report_from_probe_matches_report_from_module(self, monkeypatch) -> None:
+        """generate_report(module_probe=...) is equivalent to the live module path."""
+        import pkcs11_check.core.loader as loader_mod
+        from pkcs11_check.compliance_report import collect_compliance_module_probe
+
+        monkeypatch.setattr(loader_mod, "load_module", lambda *a, **k: _FakeModule())
+        probe = collect_compliance_module_probe("/fake-pkcs11.so", "auto", 0)
+
+        from_probe = generate_report(module_path="/fake-pkcs11.so", module_probe=probe)
+        from_module = generate_report(module_path="/fake-pkcs11.so", module=_FakeModule())
+        from_probe.pop("timestamp")
+        from_module.pop("timestamp")
+        assert from_probe == from_module
+
+    def test_cli_never_loads_module_in_parent(self, tmp_path: Path, monkeypatch) -> None:
+        """The parent CLI process must not touch native module code at all."""
+        import pkcs11_check.cli.compliance_cmd as compliance_cmd_mod
+        import pkcs11_check.core.loader as loader_mod
+        from pkcs11_check.cli.app import app
+        from pkcs11_check.compliance_report import STANDARD_MECHANISMS
+        from tests._plain_cli_runner import PlainCliRunner
+
+        def _boom(*args: object, **kwargs: object) -> object:
+            raise AssertionError("load_module must not run in the CLI parent process")
+
+        monkeypatch.setattr(loader_mod, "load_module", _boom)
+        canned = {
+            "interface_version": "3.2",
+            "mechanisms": {m: "NOT_SUPPORTED" for m in STANDARD_MECHANISMS},
+        }
+        monkeypatch.setattr(compliance_cmd_mod, "_run_isolated", lambda *a, **k: canned)
+
+        module = tmp_path / "fake.so"
+        module.write_bytes(b"not a real module")
+        result = PlainCliRunner().invoke(app, ["compliance-report", "--module", str(module)])
+
+        assert result.exit_code == 0, result.output
+        assert '"interface_version": "3.2"' in result.output
+        assert '"mechanisms_supported": 0' in result.output
+
+    def test_cli_reports_child_crash_as_error(self, tmp_path: Path, monkeypatch) -> None:
+        """A segfaulting module is a clean exit-3 finding, not a dead CLI."""
+        import pkcs11_check.cli.compliance_cmd as compliance_cmd_mod
+        from pkcs11_check.cli.app import app
+        from pkcs11_check.cli.info_cmd import InfoQueryCrashError
+        from tests._plain_cli_runner import PlainCliRunner
+
+        def _crash(*args: object, **kwargs: object) -> object:
+            raise InfoQueryCrashError(-11)
+
+        monkeypatch.setattr(compliance_cmd_mod, "_run_isolated", _crash)
+
+        module = tmp_path / "fake.so"
+        module.write_bytes(b"not a real module")
+        result = PlainCliRunner().invoke(app, ["compliance-report", "--module", str(module)])
+
+        assert result.exit_code == 3, result.output
+        assert "crash" in result.output.lower()
+
+    def test_cli_reports_child_error_as_load_error(self, tmp_path: Path, monkeypatch) -> None:
+        """A child-side load failure keeps the historical exit-3 behavior."""
+        import pkcs11_check.cli.compliance_cmd as compliance_cmd_mod
+        from pkcs11_check.cli.app import app
+        from pkcs11_check.cli.info_cmd import InfoQueryError
+        from tests._plain_cli_runner import PlainCliRunner
+
+        def _fail(*args: object, **kwargs: object) -> object:
+            raise InfoQueryError("ValueError: bad-magic-marker")
+
+        monkeypatch.setattr(compliance_cmd_mod, "_run_isolated", _fail)
+
+        module = tmp_path / "fake.so"
+        module.write_bytes(b"not a real module")
+        result = PlainCliRunner().invoke(app, ["compliance-report", "--module", str(module)])
+
+        assert result.exit_code == 3, result.output
+        assert "bad-magic-marker" in result.output

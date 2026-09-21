@@ -11,6 +11,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.cli.test_cmd import _TESTCASES_DIR, _combine_marker
 from pkcs11_check.config import SelectionConfig
 from pkcs11_check.core.disabled_baseline import resolve_disabled_nodeids
@@ -109,7 +110,9 @@ def list_tests_command(
     module: Path | None = typer.Option(
         None, "--module", "-m", help="Optional module: enumerate mechanism-driven variants too"
     ),
-    interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
+    interface: InterfaceChoice = typer.Option(
+        "auto", "--interface", "-i", help="Interface version"
+    ),
     slot: int = typer.Option(0, "--slot", help="Slot index"),
     include_disabled: bool = typer.Option(
         False,

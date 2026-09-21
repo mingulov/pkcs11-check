@@ -761,9 +761,11 @@ def test_collection_modifyitems_ignores_comments_in_deselect_file(
     assert hook.deselected == [item_a]
 
 
-def test_collection_modifyitems_ignores_missing_deselect_file(
+def test_collection_modifyitems_fails_closed_on_missing_deselect_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # H-7: a named-but-unreadable deselect file must abort the run, not
+    # silently run the full suite with the operator's exclusions forgotten.
     item = _FakeItem(tmp_path / "testcases" / "test_a.py", {})
     hook = _FakeHook()
     config = SimpleNamespace(
@@ -776,7 +778,31 @@ def test_collection_modifyitems_ignores_missing_deselect_file(
     )
     monkeypatch.setenv("PKCS11_CHECK_DESELECT_FILE", str(tmp_path / "missing.txt"))
 
-    plugin_mod.pytest_collection_modifyitems(config, [item])
+    with pytest.raises(pytest.UsageError, match="PKCS11_CHECK_DESELECT_FILE"):
+        plugin_mod.pytest_collection_modifyitems(config, [item])
+
+    assert hook.deselected == []
+
+
+def test_collection_modifyitems_fails_closed_on_unreadable_deselect_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # H-7: same fail-closed contract for present-but-unreadable paths
+    # (a directory raises IsADirectoryError, an OSError, on read_text).
+    item = _FakeItem(tmp_path / "testcases" / "test_a.py", {})
+    hook = _FakeHook()
+    config = SimpleNamespace(
+        hook=hook,
+        getoption=lambda name, default=None: {
+            "p11_module": "/tmp/module.so",
+            "p11_destructive": False,
+            "p11_thread_safe": False,
+        }.get(name, default),
+    )
+    monkeypatch.setenv("PKCS11_CHECK_DESELECT_FILE", str(tmp_path))
+
+    with pytest.raises(pytest.UsageError, match="PKCS11_CHECK_DESELECT_FILE"):
+        plugin_mod.pytest_collection_modifyitems(config, [item])
 
     assert hook.deselected == []
 

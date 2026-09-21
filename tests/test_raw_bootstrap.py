@@ -260,3 +260,53 @@ def test_raw_package_exports_bootstrap_helpers() -> None:
     assert logout is not None
     assert logout_quietly is not None
     assert login_user_with_name is not None
+
+
+def _raw_with_label(label_bytes: bytes) -> object:
+    """One-slot raw double whose token label is exactly ``label_bytes``."""
+    from pkcs11_check.raw.types_std import (
+        CK_SLOT_ID,
+        CK_SLOT_ID_PTR,
+        CK_TOKEN_INFO,
+        CK_ULONG_PTR,
+        CKR_OK,
+    )
+
+    padded = label_bytes.ljust(32, b" ")[:32]
+
+    class FakeRaw:
+        def C_GetSlotList(  # noqa: N802
+            self, token_present: int, slot_list: CK_SLOT_ID_PTR | None, count: object
+        ) -> int:
+            count_ptr = ctypes.cast(count, CK_ULONG_PTR)
+            if slot_list is None:
+                count_ptr[0] = 1
+                return CKR_OK
+            ctypes.cast(slot_list, CK_SLOT_ID_PTR)[0] = CK_SLOT_ID(7)
+            count_ptr[0] = 1
+            return CKR_OK
+
+        def C_GetTokenInfo(self, slot_id: int, info_ptr: object) -> int:  # noqa: N802
+            info = ctypes.cast(info_ptr, ctypes.POINTER(CK_TOKEN_INFO)).contents
+            ctypes.memmove(info.label, padded, 32)
+            return CKR_OK
+
+    return FakeRaw()
+
+
+def test_get_slot_ids_label_filter_matches_valid_label() -> None:
+    from pkcs11_check.raw.bootstrap import get_slot_ids
+
+    assert get_slot_ids(_raw_with_label(b"mytoken"), label="mytoken") == [7]
+    assert get_slot_ids(_raw_with_label(b"mytoken"), label="other") == []
+
+
+def test_get_slot_ids_label_filter_survives_malformed_label_bytes() -> None:
+    """M-13: non-UTF-8 label bytes degrade the measurement, never raise."""
+    from pkcs11_check.raw.bootstrap import get_slot_ids
+
+    # No UnicodeDecodeError; the ASCII tail stays substring-matchable and the
+    # offending bytes surface as backslash escapes, as in core/loader.py.
+    assert get_slot_ids(_raw_with_label(b"\xff\xfetoken"), label="token") == [7]
+    assert get_slot_ids(_raw_with_label(b"\xff\xfetoken"), label="other") == []
+    assert get_slot_ids(_raw_with_label(b"\xff\xfetoken"), label="\\xff") == [7]

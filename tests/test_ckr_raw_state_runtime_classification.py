@@ -1,14 +1,13 @@
 """Runtime classification meta-tests for ckr/test_ckr_raw_state (Phase 4 N2).
 
 Double-Init / cross-operation state probes: a second C_*Init while one is active
-may legitimately return CKR_OPERATION_ACTIVE *or* CKR_OK (the module may cancel
-the first op and start a new one). Both are accepted passes; any *other* clean
-code is a noted deviation. Previously the in-child ``assert rv2 in
+must return CKR_OPERATION_ACTIVE. A module that silently cancels the first op
+and restarts (CKR_OK) is tolerated but recorded (M-35 honest_deviation xfail),
+never passed silently. Previously the in-child ``assert rv2 in
 (CKR_OPERATION_ACTIVE, CKR_OK)`` turned a third clean code into a false child
-crash. Classification now happens in the parent via ``_classify_state_ckr``
-(``allow_ok=True``):
+crash. Classification now happens in the parent via ``_classify_state_ckr``:
 
-- ``CKR_OK`` (module cancelled/restarted) -> ``pass``,
+- ``CKR_OK`` (module cancelled/restarted) -> ``xfail`` (honest_deviation),
 - ``CKR_OPERATION_ACTIVE`` (spec) -> ``pass``,
 - any other clean code -> ``xfail`` (noted deviation, not a crash).
 """
@@ -20,6 +19,7 @@ from typing import Any
 import pytest
 from _pytest.outcomes import XFailed
 
+from pkcs11_check import classification
 from pkcs11_check.core.process_observation import drain_process_observations
 from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
@@ -39,9 +39,13 @@ def _patch(monkeypatch: pytest.MonkeyPatch, rv: int) -> None:
     monkeypatch.setattr(trs, "_assert_probe_completed", lambda *_a, **_k: None)
 
 
-def test_state_ok_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_state_ok_xfails_as_honest_deviation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M-35: a silent double-Init restart (CKR_OK) is recorded, not passed."""
     _patch(monkeypatch, int(CKR_OK))
-    trs.TestOperationActive().test_double_encrypt_init(_cfg())
+    classification.clear()
+    with pytest.raises(XFailed):
+        trs.TestOperationActive().test_double_encrypt_init(_cfg())
+    assert classification.get_records()[-1].reason == "honest_deviation"
 
 
 def test_state_operation_active_passes(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -31,7 +31,12 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_CLASS,
@@ -51,12 +56,9 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
-    CKR_DATA_LEN_RANGE,
-    CKR_DEVICE_ERROR,
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_NOT_SUPPORTED,
-    CKR_GENERAL_ERROR,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
@@ -83,11 +85,12 @@ pytestmark = pytest.mark.security
 # Acceptable CKR sets per error category
 # ---------------------------------------------------------------------------
 
+# M-15: narrowed to the spec codes. A module reporting a crypto failure as
+# a generic error is a noted deviation (nonspec_reject xfail), not a
+# spec-correct pass. Pinned by tests/test_expected_rv_set_pins.py.
 _VERIFY_MISMATCH_RVS = {
     CKR_SIGNATURE_INVALID,
     CKR_SIGNATURE_LEN_RANGE,
-    CKR_GENERAL_ERROR,
-    CKR_DEVICE_ERROR,
 }
 
 _KEY_FUNCTION_RVS = {
@@ -99,17 +102,7 @@ _KEY_FUNCTION_RVS = {
 
 _DECRYPT_GARBAGE_RVS = {
     CKR_ENCRYPTED_DATA_INVALID,
-    CKR_DATA_LEN_RANGE,
-    CKR_GENERAL_ERROR,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
-    CKR_DEVICE_ERROR,
-}
-
-_EMPTY_DATA_RVS = {
-    CKR_DATA_LEN_RANGE,
-    CKR_ARGUMENTS_BAD,
-    CKR_MECHANISM_PARAM_INVALID,
-    CKR_KEY_FUNCTION_NOT_PERMITTED,
 }
 
 
@@ -174,6 +167,87 @@ def _xfail_if_advertised_function_unavailable(rv: int, mechanism: str, purpose: 
             actual=rv,
             summary=f"{mechanism} advertised but {purpose} is not operational: {ckr_name(rv)}",
         )
+
+
+def _xfail_on_empty_input_reject(rv: int, *, label: str, operation: str, mechanism: str) -> None:
+    """Classify a clean refusal of a well-defined empty-input op as xfail.
+
+    Empty input is valid for digest/sign/padded-encrypt: digest and
+    signatures over ``b""`` are well-defined, and CBC_PAD encryption of
+    empty input must yield one full padding block. A module that refuses
+    such an op deviates (xfail) -- no reject code passes here. An
+    undefined CK_RV is a return-value-contract violation (fail).
+    """
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            actual=rv,
+            expected=("CKR_OK",),
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}, expected CKR_OK",
+        )
+        return  # classify() raises; defensive
+    classify(
+        "nonspec_reject",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        actual=rv,
+        expected=("CKR_OK",),
+        summary=f"{label}: rejected well-defined empty input with {ckr_name(rv)}, expected CKR_OK",
+    )
+
+
+def _classify_accepted_invalid_size_key(rs: Any, handle: int) -> None:
+    """Usability probe for an invalid-size key the module accepted (F-11).
+
+    The caller established ``C_GenerateKey`` returned ``CKR_OK`` for a
+    1-byte AES key. Probe whether the handle actually encrypts: a
+    working 1-byte AES key is broken crypto (fail); a dangling handle
+    the module itself cannot use is a deviation (xfail).
+    """
+    try:
+        encrypt_single(
+            rs.raw,
+            rs.sh,
+            handle,
+            CKM_AES_ECB,
+            b"0123456789abcdef",
+        )
+    except CkrAssertionError as exc:
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label="1-byte AES key accepted but unusable",
+                operation="C_Encrypt",
+                mechanism="AES_ECB",
+                actual=exc.rv,
+                summary="module accepted a 1-byte AES key, then answered the "
+                f"usability probe with undefined CK_RV {ckr_name(exc.rv)}",
+            )
+            return  # classify() raises; defensive
+        classify(
+            "honest_deviation",
+            label="1-byte AES key accepted but unusable",
+            operation="C_Encrypt",
+            mechanism="AES_ECB",
+            actual=exc.rv,
+            summary=f"module accepted a 1-byte AES key it cannot encrypt with: {ckr_name(exc.rv)}",
+        )
+        return  # classify() raises; defensive
+    classify(
+        "accepted_invalid",
+        kind="crypto",
+        label="1-byte AES key accepted and usable",
+        operation="C_Encrypt",
+        mechanism="AES_ECB",
+        actual="CKR_OK",
+        summary="module generated a 1-byte AES key that encrypts (broken crypto)",
+    )
 
 
 class TestInvalidOperations:
@@ -250,8 +324,21 @@ class TestInvalidOperations:
             byref(key),
         )
         if rv == CKR_OK:
-            # Module accepted it -- destroy and move on
-            destroy_quietly(rs.raw, rs.sh, key.value)
+            # The module accepted an invalid 1-byte AES key: probe whether
+            # the handle is actually usable instead of passing silently.
+            try:
+                if not rs.has_mechanism("AES_ECB"):
+                    classify(
+                        "honest_deviation",
+                        label="1-byte AES key accepted; usability untestable",
+                        operation="C_GenerateKey",
+                        mechanism="AES_KEY_GEN",
+                        actual=rv,
+                        summary="module accepted a 1-byte AES key; no AES_ECB to probe it with",
+                    )
+                _classify_accepted_invalid_size_key(rs, key.value)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, key.value)
         else:
             _xfail_if_advertised_function_unavailable(
                 rv,
@@ -321,15 +408,14 @@ class TestInvalidOperations:
         try:
             mech = mech_simple(CKM_RSA_PKCS)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), priv)
-            if rv == CKR_OK:
-                # Module allowed init on a private key -- some do
-                pass
-            else:
-                classify_negative_rv(
-                    rv,
-                    (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT),
-                    label="C_EncryptInit with a sign-only private key",
-                )
+            # A private key without CKA_ENCRYPT must be rejected: CKR_OK
+            # bypasses the key-function gate (fail); the spec-preferred
+            # reject passes; any other clean reject xfails.
+            classify_negative_rv(
+                rv,
+                (CKR_KEY_FUNCTION_NOT_PERMITTED, CKR_KEY_TYPE_INCONSISTENT),
+                label="C_EncryptInit with a sign-only private key",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -368,8 +454,19 @@ class TestInvalidOperations:
                 byref(out_len),
             )
             if rv == CKR_OK:
-                # Decryption "succeeded" -- result is garbage, that is OK
-                pass
+                # RSA-PKCS unpadding of an all-zero block must fail: CKR_OK
+                # means the padding check was bypassed (crypto break) --
+                # fail, as the RSA-OAEP garbage probe does.
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="C_Decrypt of random garbage under RSA-PKCS",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS",
+                    actual=rv,
+                    summary="module decrypted invalid RSA-PKCS padding with CKR_OK "
+                    "(padding bypass)",
+                )
             else:
                 classify_negative_rv(
                     rv,
@@ -383,7 +480,12 @@ class TestInvalidOperations:
 
 class TestEmptyInputs:
     def test_encrypt_empty_data(self, p11_raw_session: Any) -> None:
-        """Encrypting empty data -- behavior is implementation-defined."""
+        """Encrypting empty data under AES-CBC-PAD must yield one padding block.
+
+        PKCS#7 pads empty input to a full 16-byte block, so success with a
+        16-byte ciphertext is the only correct outcome. A clean refusal is
+        a deviation (xfail); empty or short output is wrong output (fail).
+        """
         rs = p11_raw_session
         skip_unless_mechanism(rs, "AES_CBC_PAD")
         key = _gen_aes_key_or_xfail(rs, bits=128, purpose="empty-data encryption")
@@ -392,10 +494,11 @@ class TestEmptyInputs:
             mech = mech_bytes(CKM_AES_CBC_PAD, iv)
             rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv != CKR_OK:
-                classify_negative_rv(
+                _xfail_on_empty_input_reject(
                     rv,
-                    (CKR_DATA_LEN_RANGE,),
                     label="C_EncryptInit before empty-data encryption",
+                    operation="C_EncryptInit",
+                    mechanism="AES_CBC_PAD",
                 )
                 return
             # Try encrypting empty buffer
@@ -407,7 +510,7 @@ class TestEmptyInputs:
                 None,
                 byref(out_len),
             )
-            if rv == CKR_OK and out_len.value > 0:
+            if rv == CKR_OK and out_len.value == 16:
                 out_buf = (ctypes.c_ubyte * out_len.value)()
                 rv = rs.raw.C_Encrypt(
                     rs.sh,
@@ -417,18 +520,44 @@ class TestEmptyInputs:
                     byref(out_len),
                 )
                 if rv == CKR_OK:
+                    if out_len.value != 16:
+                        classify(
+                            "wrong_result",
+                            kind="crypto",
+                            label="C_Encrypt of empty data under AES-CBC-PAD",
+                            operation="C_Encrypt",
+                            mechanism="AES_CBC_PAD",
+                            actual=f"{out_len.value} bytes",
+                            summary="CBC_PAD encryption of empty input must yield one "
+                            f"16-byte block, got {out_len.value} bytes",
+                        )
                     assert isinstance(bytes(out_buf[: out_len.value]), bytes)
                 else:
-                    classify_negative_rv(
+                    _xfail_on_empty_input_reject(
                         rv,
-                        (CKR_DATA_LEN_RANGE,),
                         label="C_Encrypt of empty data under AES-CBC-PAD",
+                        operation="C_Encrypt",
+                        mechanism="AES_CBC_PAD",
                     )
-            elif rv != CKR_OK:
-                classify_negative_rv(
-                    rv,
-                    (CKR_DATA_LEN_RANGE,),
+            elif rv == CKR_OK:
+                # CKR_OK with a zero (or short) length query: the padding
+                # block was dropped -- wrong output, not a pass.
+                classify(
+                    "wrong_result",
+                    kind="crypto",
                     label="C_Encrypt (length query) of empty data under AES-CBC-PAD",
+                    operation="C_Encrypt",
+                    mechanism="AES_CBC_PAD",
+                    actual=f"{out_len.value} bytes",
+                    summary="CBC_PAD length query for empty input must report one "
+                    f"16-byte block, got {out_len.value} bytes",
+                )
+            else:
+                _xfail_on_empty_input_reject(
+                    rv,
+                    label="C_Encrypt (length query) of empty data under AES-CBC-PAD",
+                    operation="C_Encrypt",
+                    mechanism="AES_CBC_PAD",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
@@ -456,16 +585,17 @@ class TestEmptyInputs:
             mech = mech_simple(CKM_SHA256_RSA_PKCS)
             rv = rs.raw.C_SignInit(rs.sh, mech.byref(), priv)
             if rv != CKR_OK:
-                classify_negative_rv(
+                _xfail_on_empty_input_reject(
                     rv,
-                    tuple(_EMPTY_DATA_RVS | _KEY_FUNCTION_RVS),
                     label="C_SignInit before empty-data signing",
+                    operation="C_SignInit",
+                    mechanism="SHA256_RSA_PKCS",
                 )
                 return
             # Two-call pattern: query length, then sign
             out_len = CK_ULONG(0)
             rv = rs.raw.C_Sign(rs.sh, None, 0, None, byref(out_len))
-            if rv == CKR_OK and out_len.value > 0:
+            if rv == CKR_OK and out_len.value == 256:
                 out_buf = (ctypes.c_ubyte * out_len.value)()
                 rv = rs.raw.C_Sign(
                     rs.sh,
@@ -477,16 +607,31 @@ class TestEmptyInputs:
                 if rv == CKR_OK:
                     assert out_len.value == 256  # RSA-2048 signature
                 else:
-                    classify_negative_rv(
+                    _xfail_on_empty_input_reject(
                         rv,
-                        (CKR_DATA_LEN_RANGE,),
                         label="C_Sign of empty data under SHA256-RSA-PKCS",
+                        operation="C_Sign",
+                        mechanism="SHA256_RSA_PKCS",
                     )
-            elif rv != CKR_OK:
-                classify_negative_rv(
-                    rv,
-                    (CKR_DATA_LEN_RANGE,),
+            elif rv == CKR_OK:
+                # CKR_OK with a zero (or short) length query: an RSA-2048
+                # signature is exactly 256 bytes -- wrong output, not a pass.
+                classify(
+                    "wrong_result",
+                    kind="crypto",
                     label="C_Sign (length query) of empty data under SHA256-RSA-PKCS",
+                    operation="C_Sign",
+                    mechanism="SHA256_RSA_PKCS",
+                    actual=f"{out_len.value} bytes",
+                    summary="signature length query for empty input must report "
+                    f"256 bytes, got {out_len.value} bytes",
+                )
+            else:
+                _xfail_on_empty_input_reject(
+                    rv,
+                    label="C_Sign (length query) of empty data under SHA256-RSA-PKCS",
+                    operation="C_Sign",
+                    mechanism="SHA256_RSA_PKCS",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

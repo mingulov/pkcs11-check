@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -22,19 +23,15 @@ from pkcs11_check.raw.bootstrap import (
 from pkcs11_check.raw.bootstrap import (
     open_session as raw_open_session,
 )
-from pkcs11_check.raw.pack import template_from_dict
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
-    find_objects,
     gen_aes_key,
 )
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_UTF8CHAR,
-    CKA_CLASS,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
-    CKO_PRIVATE_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_OK,
     CKR_PIN_INCORRECT,
@@ -129,10 +126,15 @@ class TestWrongPIN:
         try:
             rv = _try_login(rs.raw, test_sh, b"WRONG_PIN_ABC")
             if rv == CKR_OK:
-                # If we somehow got logged in, there should be no private objects
-                tmpl = template_from_dict({CKA_CLASS: CKO_PRIVATE_KEY})
-                found = find_objects(rs.raw, test_sh, tmpl)
-                assert len(found) == 0, "Wrong PIN exposed private objects!"
+                # A wrong PIN that logs in is an authentication bypass:
+                # fail outright -- "no objects found" must not rescue it.
+                classify(
+                    "accepted_invalid",
+                    label="C_Login with a wrong PIN",
+                    operation="C_Login",
+                    actual=rv,
+                    summary="module accepted a wrong PIN (authentication bypass)",
+                )
             # Otherwise login failed - expected
         finally:
             close_session_quietly(rs.raw, test_sh)

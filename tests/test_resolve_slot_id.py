@@ -22,21 +22,32 @@ def test_none_index_means_first_slot() -> None:
     assert resolve_slot_id([500, 600], None) == 500
 
 
-def test_out_of_range_index_falls_back_to_first_slot() -> None:
-    # Mirrors fixtures.py: slots[idx] if idx < len(slots) else slots[0].
-    assert resolve_slot_id([500, 600], 9) == 500
+def test_out_of_range_index_raises_instead_of_silent_first_slot_fallback() -> None:
+    # H-9: silently testing slot 0 when the operator asked for slot 9 hides a
+    # misconfiguration behind green results from the wrong token. Reject loudly.
+    import pytest
+
+    with pytest.raises(IndexError, match=r"slot 9 not found"):
+        resolve_slot_id([500, 600], 9)
 
 
-def test_single_slot_any_index_resolves_to_it() -> None:
+def test_single_slot_rejects_any_nonzero_index() -> None:
+    import pytest
+
     assert resolve_slot_id([42], 0) == 42
-    assert resolve_slot_id([42], 1) == 42
+    with pytest.raises(IndexError, match=r"slot 1 not found"):
+        resolve_slot_id([42], 1)
 
 
-def test_negative_index_clamps_to_first_slot_not_python_negative_indexing() -> None:
-    # A negative config.slot must NOT silently select the last slot (Python's slots[-1]); it is
-    # out of range, so it clamps to the first present-token slot like any other out-of-range idx.
-    assert resolve_slot_id([500, 600, 700], -1) == 500
-    assert resolve_slot_id([500, 600, 700], -99) == 500
+def test_negative_index_raises_not_python_negative_indexing() -> None:
+    # H-9: a negative config.slot must NOT silently select the last slot
+    # (Python's slots[-1]) -- and no longer clamps to the first slot either.
+    import pytest
+
+    with pytest.raises(IndexError, match=r"slot -1 not found"):
+        resolve_slot_id([500, 600, 700], -1)
+    with pytest.raises(IndexError, match=r"slot -99 not found"):
+        resolve_slot_id([500, 600, 700], -99)
 
 
 def test_empty_slot_list_raises_a_clear_error_not_indexerror() -> None:
@@ -71,4 +82,19 @@ def test_fixture_and_probe_harness_share_the_slot_resolver() -> None:
     assert _calls_resolve_slot_id(probe.__file__), (
         "the probe harness (session.probe_main) must resolve config.slot via resolve_slot_id, "
         "not pass the raw index to C_OpenSession"
+    )
+
+
+def test_preflight_and_get_token_share_the_slot_resolver() -> None:
+    # H-9: preflight indexed slots[slot] with only a >= guard (negatives wrapped
+    # to the last slot) and P11Module.get_token did the same. Both must route
+    # through the single rejecting resolver so every consumer agrees.
+    import pkcs11_check.core.loader as loader
+    import pkcs11_check.core.preflight as preflight
+
+    assert _calls_resolve_slot_id(preflight.__file__), (
+        "pkcs11_check.core.preflight must resolve the slot via resolve_slot_id"
+    )
+    assert _calls_resolve_slot_id(loader.__file__), (
+        "pkcs11_check.core.loader (P11Module.get_token) must resolve the slot via resolve_slot_id"
     )

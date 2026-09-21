@@ -15,6 +15,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from pkcs11_check.cli._choices import InterfaceChoice
 from pkcs11_check.core.doctor_probe import run_login_probe_subprocess
 from pkcs11_check.core.preflight import run_preflight_subprocess
 
@@ -31,7 +32,9 @@ def _line(mark: str, label: str, detail: str = "") -> None:
 
 def doctor_command(
     module: Path = typer.Option(..., "--module", "-m", help="Path to PKCS#11 module"),
-    interface: str = typer.Option("auto", "--interface", "-i", help="Interface version"),
+    interface: InterfaceChoice = typer.Option(
+        "auto", "--interface", "-i", help="Interface version"
+    ),
     slot: int = typer.Option(0, "--slot", help="Slot index (0-based, NOT the provider's slot ID)"),
     pin: str | None = typer.Option(
         None, "--pin", help="PIN to verify login (prefer P11TEST_PIN env). Single attempt."

@@ -122,8 +122,17 @@ class TestP11Module:
         mock_raw = _mock_raw()
         module = P11Module(path=Path("/fake.so"), _raw=mock_raw)
         with patch("pkcs11_check.core.loader.get_slot_ids", return_value=[10]):
-            with pytest.raises(IndexError, match="Slot 5 not found"):
+            with pytest.raises(IndexError, match=r"slot 5 not found"):
                 module.get_token(slot_index=5)
+
+    def test_get_token_negative_slot_rejected_not_wrapped(self) -> None:
+        # H-9: get_token(-1) wrapped to the last slot (only a >= guard).
+        # The single resolver rejects negatives like any out-of-range index.
+        mock_raw = _mock_raw()
+        module = P11Module(path=Path("/fake.so"), _raw=mock_raw)
+        with patch("pkcs11_check.core.loader.get_slot_ids", return_value=[10, 20]):
+            with pytest.raises(IndexError, match=r"slot -1 not found"):
+                module.get_token(slot_index=-1)
 
     def test_loader_exports_rawpkcs11(self) -> None:
         from pkcs11_check.raw.api import RawPKCS11 as ApiRawPKCS11

@@ -1609,6 +1609,7 @@ def _exit_code_for_no_pending_units(
                 provenance=provenance,
                 owner_aliases=owner_aliases,
                 selection=report_config.selection if report_config else None,
+                disabled_baseline=report_config.disabled_baseline if report_config else None,
             )
             quality_path = report_config.output_path.parent / "quality.json"
             write_quality_json_report(
@@ -1782,6 +1783,7 @@ def _write_final_reports(
                 provenance=provenance,
                 owner_aliases=owner_aliases,
                 selection=report_config.selection if report_config else None,
+                disabled_baseline=report_config.disabled_baseline if report_config else None,
             )
             quality_path = report_config.output_path.parent / "quality.json"
             write_quality_json_report(

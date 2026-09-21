@@ -455,6 +455,7 @@ def pytest_addoption(parser: Any) -> None:
         "--p11-key-inject",
         dest="p11_key_inject",
         default="off",
+        choices=["off", "unwrap", "force-unwrap"],
         help="Key-provisioning injection mode: off, unwrap, force-unwrap (default: off)",
     )
     group.addoption(
@@ -666,12 +667,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
     deselect_nodeids: set[str] = set()
     if deselect_file:
+        # H-7 fail-closed: a named-but-unreadable deselect file must abort
+        # collection, not silently run the full suite with exclusions forgotten.
         try:
             deselect_nodeids = set(
                 parse_disabled_nodeids(Path(deselect_file).read_text(encoding="utf-8"))
             )
-        except (FileNotFoundError, OSError):
-            deselect_nodeids = set()
+        except (FileNotFoundError, OSError) as exc:
+            raise pytest.UsageError(
+                f"PKCS11_CHECK_DESELECT_FILE unreadable: {deselect_file}: {exc}"
+            ) from exc
 
     if selection_manifest:
         try:

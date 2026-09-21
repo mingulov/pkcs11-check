@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from pkcs11_check.raw.types_std import (
     CKR_ACTION_PROHIBITED,
+    CKR_AEAD_DECRYPT_FAILED,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_BUFFER_TOO_SMALL,
+    CKR_CANT_LOCK,
     CKR_CRYPTOKI_ALREADY_INITIALIZED,
     CKR_CRYPTOKI_NOT_INITIALIZED,
     CKR_CURVE_NOT_SUPPORTED,
@@ -27,8 +29,11 @@ from pkcs11_check.raw.types_std import (
     CKR_FIPS_SELF_TEST_FAILED,
     CKR_FUNCTION_CANCELED,
     CKR_FUNCTION_FAILED,
+    CKR_FUNCTION_NOT_PARALLEL,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_FUNCTION_REJECTED,
+    CKR_INFORMATION_SENSITIVE,
+    CKR_KEY_CHANGED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_HANDLE_INVALID,
     CKR_KEY_INDIGESTIBLE,
@@ -41,9 +46,11 @@ from pkcs11_check.raw.types_std import (
     CKR_LIBRARY_LOAD_FAILED,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_NEED_TO_CREATE_THREADS,
     CKR_NO_EVENT,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OPERATION_ACTIVE,
+    CKR_OPERATION_CANCEL_FAILED,
     CKR_OPERATION_NOT_INITIALIZED,
     CKR_OPERATION_NOT_VALIDATED,
     CKR_PARAMETER_SET_NOT_SUPPORTED,
@@ -58,6 +65,7 @@ from pkcs11_check.raw.types_std import (
     CKR_RANDOM_NO_RNG,
     CKR_RANDOM_SEED_NOT_SUPPORTED,
     CKR_SAVED_STATE_INVALID,
+    CKR_SEED_RANDOM_REQUIRED,
     CKR_SESSION_ASYNC_NOT_SUPPORTED,
     CKR_SESSION_COUNT,
     CKR_SESSION_EXISTS,
@@ -75,6 +83,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TOKEN_NOT_INITIALIZED,
     CKR_TOKEN_NOT_PRESENT,
     CKR_TOKEN_NOT_RECOGNIZED,
+    CKR_TOKEN_RESOURCE_EXCEEDED,
     CKR_TOKEN_WRITE_PROTECTED,
     CKR_UNWRAPPING_KEY_HANDLE_INVALID,
     CKR_UNWRAPPING_KEY_SIZE_RANGE,
@@ -169,14 +178,10 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         priority_note="Higher priority than CKR_DATA_INVALID",
         mechanisms=["AES_ECB"],
     ),
-    "data_empty": CkrExpectation(
-        function="C_Encrypt",
-        condition="empty_plaintext",
-        spec_ckr=(CKR_DATA_LEN_RANGE, CKR_DATA_INVALID),
-        compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.2",
-        allow_success=True,
-    ),
+    # H-2: no "data_empty" entry -- empty plaintext is VALID input (0 is
+    # block-aligned; CKR_OK with empty ciphertext is spec-correct), so a
+    # must-reject oracle entry here blessed rejection of valid input as a
+    # spec-preferred pass. The live test is a positive test now.
     "data_too_long_rsa": CkrExpectation(
         function="C_Encrypt",
         condition="RSA_PKCS_data_exceeds_k_minus_11",
@@ -199,24 +204,11 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
         compat_tuple=KEY_SIZE_ERRORS,
         spec_ref="PKCS#11 v3.2",
     ),
-    "data_invalid_cbc_padding": CkrExpectation(
-        function="C_Encrypt",
-        condition="AES_CBC_PAD_non_block_aligned_accepted",
-        spec_ckr=CKR_DATA_LEN_RANGE,
-        compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.2",
-        mechanisms=["AES_CBC_PAD"],
-        allow_success=True,  # CBC-PAD handles non-aligned data by design
-    ),
-    "data_gcm_aad_only": CkrExpectation(
-        function="C_Encrypt",
-        condition="AES_GCM_empty_plaintext_with_AAD",
-        spec_ckr=CKR_DATA_LEN_RANGE,
-        compat_tuple=DATA_ERRORS,
-        spec_ref="PKCS#11 v3.2",
-        mechanisms=["AES_GCM"],
-        allow_success=True,  # GCM can encrypt 0 bytes with just AAD
-    ),
+    # H-2: no "data_invalid_cbc_padding" / "data_gcm_aad_only" entries --
+    # non-aligned CBC_PAD input and empty GCM plaintext with AAD are VALID
+    # inputs (padding / AEAD handle them by design; CKR_OK is spec-correct),
+    # so must-reject oracle entries blessed rejection of valid input as a
+    # spec-preferred pass. The live CBC_PAD test is a positive test now.
     # --- C_EncryptUpdate errors ---
     "update_data_len_range": CkrExpectation(
         function="C_EncryptUpdate",
@@ -359,12 +351,11 @@ CKR_ENCRYPT: dict[str, CkrExpectation] = {
     "init_operation_cancel_failed": CkrExpectation(
         function="C_EncryptInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # OperationCancelFailed not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed by python-pkcs11
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
         function="C_EncryptInit",
@@ -705,12 +696,11 @@ CKR_DECRYPT: dict[str, CkrExpectation] = {
     "init_operation_cancel_failed": CkrExpectation(
         function="C_DecryptInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
         function="C_DecryptInit",
@@ -1236,12 +1226,11 @@ CKR_SIGN: dict[str, CkrExpectation] = {
     "init_operation_cancel_failed": CkrExpectation(
         function="C_SignInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
         function="C_SignInit",
@@ -1304,11 +1293,10 @@ CKR_SIGN: dict[str, CkrExpectation] = {
     "token_resource_exceeded": CkrExpectation(
         function="C_Sign",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "user_not_logged_in": CkrExpectation(
         function="C_Sign",
@@ -1346,11 +1334,10 @@ CKR_SIGN: dict[str, CkrExpectation] = {
     "update_token_resource_exceeded": CkrExpectation(
         function="C_SignUpdate",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "update_user_not_logged_in": CkrExpectation(
         function="C_SignUpdate",
@@ -1396,11 +1383,10 @@ CKR_SIGN: dict[str, CkrExpectation] = {
     "final_token_resource_exceeded": CkrExpectation(
         function="C_SignFinal",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "final_user_not_logged_in": CkrExpectation(
         function="C_SignFinal",
@@ -1493,12 +1479,11 @@ CKR_SIGN: dict[str, CkrExpectation] = {
     "recover_init_operation_cancel_failed": CkrExpectation(
         function="C_SignRecoverInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "recover_init_pin_expired": CkrExpectation(
         function="C_SignRecoverInit",
@@ -1561,11 +1546,10 @@ CKR_SIGN: dict[str, CkrExpectation] = {
     "recover_token_resource_exceeded": CkrExpectation(
         function="C_SignRecover",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "recover_user_not_logged_in": CkrExpectation(
         function="C_SignRecover",
@@ -1885,12 +1869,11 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
     "init_operation_cancel_failed": CkrExpectation(
         function="C_VerifyInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
         function="C_VerifyInit",
@@ -1937,11 +1920,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
     "token_resource_exceeded": CkrExpectation(
         function="C_Verify",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "update_arguments_bad": CkrExpectation(
         function="C_VerifyUpdate",
@@ -1971,11 +1953,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
     "update_token_resource_exceeded": CkrExpectation(
         function="C_VerifyUpdate",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "final_arguments_bad": CkrExpectation(
         function="C_VerifyFinal",
@@ -2021,11 +2002,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
     "final_token_resource_exceeded": CkrExpectation(
         function="C_VerifyFinal",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "recover_init_arguments_bad": CkrExpectation(
         function="C_VerifyRecoverInit",
@@ -2110,12 +2090,11 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
     "recover_init_operation_cancel_failed": CkrExpectation(
         function="C_VerifyRecoverInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "recover_init_pin_expired": CkrExpectation(
         function="C_VerifyRecoverInit",
@@ -2194,11 +2173,10 @@ CKR_VERIFY: dict[str, CkrExpectation] = {
     "recover_token_resource_exceeded": CkrExpectation(
         function="C_VerifyRecover",
         condition="token_storage_exhausted",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via stress test
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
 }
 
@@ -2380,12 +2358,11 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
     "init_operation_cancel_failed": CkrExpectation(
         function="C_DigestInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires active operation + cancel attempt - not exposed
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "init_pin_expired": CkrExpectation(
         function="C_DigestInit",
@@ -2595,12 +2572,11 @@ CKR_DIGEST: dict[str, CkrExpectation] = {
     "xof_init_operation_cancel_failed": CkrExpectation(
         function="C_DigestXofInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "xof_init_pin_expired": CkrExpectation(
         function="C_DigestXofInit",
@@ -4200,6 +4176,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules don't detect invalid handles
+        record_leniency=True,  # M-14: tolerated CKR_OK is a recorded deviation, not a pass
     ),
     "set_attr_readonly": CkrExpectation(
         function="C_SetAttributeValue",
@@ -4216,6 +4193,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.2",
         allow_success=True,  # Some modules silently accept double destroy
+        record_leniency=True,  # M-14: tolerated CKR_OK is a recorded deviation, not a pass
     ),
     # --- C_CreateObject additional errors ---
     "create_attr_type_invalid": CkrExpectation(
@@ -4255,6 +4233,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.2",
         allow_success=True,
+        record_leniency=True,  # M-14: tolerated CKR_OK is a recorded deviation, not a pass
     ),
     # --- C_GetObjectSize errors ---
     "get_size_handle_invalid": CkrExpectation(
@@ -4264,6 +4243,7 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
         compat_tuple=HANDLE_ERRORS,
         spec_ref="PKCS#11 v3.2",
         allow_success=True,
+        record_leniency=True,  # M-14: tolerated CKR_OK is a recorded deviation, not a pass
     ),
     # --- C_SetAttributeValue additional errors ---
     "set_attr_action_prohibited": CkrExpectation(
@@ -4566,11 +4546,10 @@ CKR_OBJECT: dict[str, CkrExpectation] = {
     "get_size_information_sensitive": CkrExpectation(
         function="C_GetObjectSize",
         condition="size_info_is_sensitive",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_INFORMATION_SENSITIVE not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_INFORMATION_SENSITIVE,
+        compat_tuple=(CKR_INFORMATION_SENSITIVE, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
-        spec_ckr_code="CKR_INFORMATION_SENSITIVE",
     ),
     "get_size_operation_active": CkrExpectation(
         function="C_GetObjectSize",
@@ -5100,12 +5079,11 @@ CKR_SESSION: dict[str, CkrExpectation] = {
     "session_cancel_operation_cancel_failed": CkrExpectation(
         function="C_SessionCancel",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     # --- C_GetSessionValidationFlags errors (v3.0+) ---
     "get_session_validation_flags_operation_active": CkrExpectation(
@@ -5237,11 +5215,10 @@ CKR_RANDOM: dict[str, CkrExpectation] = {
     "generate_seed_random_required": CkrExpectation(
         function="C_GenerateRandom",
         condition="token_requires_seeding_before_generation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_SEED_RANDOM_REQUIRED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_SEED_RANDOM_REQUIRED,
+        compat_tuple=(CKR_SEED_RANDOM_REQUIRED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
-        spec_ckr_code="CKR_SEED_RANDOM_REQUIRED",
     ),
     "generate_user_not_logged_in": CkrExpectation(
         function="C_GenerateRandom",
@@ -5335,11 +5312,10 @@ CKR_STATE: dict[str, CkrExpectation] = {
     "set_state_key_changed": CkrExpectation(
         function="C_SetOperationState",
         condition="key_changed_since_state_saved",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_KEY_CHANGED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_KEY_CHANGED,
+        compat_tuple=(CKR_KEY_CHANGED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
-        spec_ckr_code="CKR_KEY_CHANGED",
     ),
     "set_state_operation_active": CkrExpectation(
         function="C_SetOperationState",
@@ -5797,20 +5773,18 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
     "initialize_cant_lock": CkrExpectation(
         function="C_Initialize",
         condition="mutex_locking_not_supported",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_CANT_LOCK not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_CANT_LOCK,
+        compat_tuple=(CKR_CANT_LOCK, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
-        spec_ckr_code="CKR_CANT_LOCK",
     ),
     "initialize_need_to_create_threads": CkrExpectation(
         function="C_Initialize",
         condition="thread_creation_required",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_NEED_TO_CREATE_THREADS not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_NEED_TO_CREATE_THREADS,
+        compat_tuple=(CKR_NEED_TO_CREATE_THREADS, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable via RawPKCS11
-        spec_ckr_code="CKR_NEED_TO_CREATE_THREADS",
     ),
     "finalize_arguments_bad": CkrExpectation(
         function="C_Finalize",
@@ -5823,12 +5797,11 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
     "get_func_status_function_not_parallel": CkrExpectation(
         function="C_GetFunctionStatus",
         condition="parallel_execution_not_supported",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_FUNCTION_NOT_PARALLEL not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_FUNCTION_NOT_PARALLEL,
+        compat_tuple=(CKR_FUNCTION_NOT_PARALLEL, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Legacy v2.01 parallel function - not testable
         # Untestable: legacy deprecated function
-        spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
     ),
     "get_func_status_operation_active": CkrExpectation(
         function="C_GetFunctionStatus",
@@ -5841,12 +5814,11 @@ CKR_GENERAL: dict[str, CkrExpectation] = {
     "cancel_func_function_not_parallel": CkrExpectation(
         function="C_CancelFunction",
         condition="parallel_execution_not_supported",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_FUNCTION_NOT_PARALLEL not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_FUNCTION_NOT_PARALLEL,
+        compat_tuple=(CKR_FUNCTION_NOT_PARALLEL, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Legacy v2.01 parallel function - not testable
         # Untestable: legacy deprecated function
-        spec_ckr_code="CKR_FUNCTION_NOT_PARALLEL",
     ),
     "cancel_func_operation_active": CkrExpectation(
         function="C_CancelFunction",
@@ -5988,12 +5960,11 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
     "verify_signature_init_operation_cancel_failed": CkrExpectation(
         function="C_VerifySignatureInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2 Sec.5.11.7",
         testable=False,  # v3.2 - not widely implemented
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "verify_signature_init_pin_expired": CkrExpectation(
         function="C_VerifySignatureInit",
@@ -6081,11 +6052,10 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
     "verify_signature_token_resource_exceeded": CkrExpectation(
         function="C_VerifySignature",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2 Sec.5.11.8",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_VerifySignatureUpdate errors ---
     "verify_signature_update_arguments_bad": CkrExpectation(
@@ -6124,11 +6094,10 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
     "verify_signature_update_token_resource_exceeded": CkrExpectation(
         function="C_VerifySignatureUpdate",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2 Sec.5.11.9",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_VerifySignatureFinal errors ---
     "verify_signature_final_arguments_bad": CkrExpectation(
@@ -6183,11 +6152,10 @@ CKR_VERIFY_SIGNATURE: dict[str, CkrExpectation] = {
     "verify_signature_final_token_resource_exceeded": CkrExpectation(
         function="C_VerifySignatureFinal",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2 Sec.5.11.10",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "verify_signature_final_operation_not_validated": CkrExpectation(
         function="C_VerifySignatureFinal",
@@ -6291,12 +6259,11 @@ CKR_MSG_ENCRYPT: dict[str, CkrExpectation] = {
     "msg_encrypt_init_operation_cancel_failed": CkrExpectation(
         function="C_MessageEncryptInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "msg_encrypt_init_pin_expired": CkrExpectation(
         function="C_MessageEncryptInit",
@@ -6639,12 +6606,11 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
     "msg_decrypt_init_operation_cancel_failed": CkrExpectation(
         function="C_MessageDecryptInit",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "msg_decrypt_init_pin_expired": CkrExpectation(
         function="C_MessageDecryptInit",
@@ -6667,11 +6633,10 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
     "decrypt_message_aead_decrypt_failed": CkrExpectation(
         function="C_DecryptMessage",
         condition="AEAD_authentication_tag_invalid",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_AEAD_DECRYPT_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_AEAD_DECRYPT_FAILED,
+        compat_tuple=(CKR_AEAD_DECRYPT_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_AEAD_DECRYPT_FAILED",
     ),
     "decrypt_message_arguments_bad": CkrExpectation(
         function="C_DecryptMessage",
@@ -6746,12 +6711,11 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
     "decrypt_message_operation_cancel_failed": CkrExpectation(
         function="C_DecryptMessage",
         condition="cannot_cancel_active_operation",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_OPERATION_CANCEL_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_OPERATION_CANCEL_FAILED,
+        compat_tuple=(CKR_OPERATION_CANCEL_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=False,  # v3.0+ - not widely implemented
         # Untestable: requires active operation that refuses cancellation
-        spec_ckr_code="CKR_OPERATION_CANCEL_FAILED",
     ),
     "decrypt_message_operation_not_initialized": CkrExpectation(
         function="C_DecryptMessage",
@@ -6837,11 +6801,10 @@ CKR_MSG_DECRYPT: dict[str, CkrExpectation] = {
     "decrypt_message_next_aead_decrypt_failed": CkrExpectation(
         function="C_DecryptMessageNext",
         condition="AEAD_authentication_tag_invalid",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_AEAD_DECRYPT_FAILED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_AEAD_DECRYPT_FAILED,
+        compat_tuple=(CKR_AEAD_DECRYPT_FAILED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_AEAD_DECRYPT_FAILED",
     ),
     "decrypt_message_next_arguments_bad": CkrExpectation(
         function="C_DecryptMessageNext",
@@ -7167,11 +7130,10 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
     "sign_message_token_resource_exceeded": CkrExpectation(
         function="C_SignMessage",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "sign_message_user_not_logged_in": CkrExpectation(
         function="C_SignMessage",
@@ -7240,11 +7202,10 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
     "sign_message_begin_token_resource_exceeded": CkrExpectation(
         function="C_SignMessageBegin",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "sign_message_begin_user_not_logged_in": CkrExpectation(
         function="C_SignMessageBegin",
@@ -7328,11 +7289,10 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
     "sign_message_next_token_resource_exceeded": CkrExpectation(
         function="C_SignMessageNext",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "sign_message_next_user_not_logged_in": CkrExpectation(
         function="C_SignMessageNext",
@@ -7387,11 +7347,10 @@ CKR_MSG_SIGN: dict[str, CkrExpectation] = {
     "msg_sign_final_token_resource_exceeded": CkrExpectation(
         function="C_MessageSignFinal",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     "msg_sign_final_user_not_logged_in": CkrExpectation(
         function="C_MessageSignFinal",
@@ -7597,11 +7556,10 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
     "verify_message_token_resource_exceeded": CkrExpectation(
         function="C_VerifyMessage",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_VerifyMessageBegin errors ---
     "verify_message_begin_arguments_bad": CkrExpectation(
@@ -7741,11 +7699,10 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
     "verify_message_next_token_resource_exceeded": CkrExpectation(
         function="C_VerifyMessageNext",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
     # --- C_MessageVerifyFinal errors ---
     "msg_verify_final_arguments_bad": CkrExpectation(
@@ -7792,11 +7749,10 @@ CKR_MSG_VERIFY: dict[str, CkrExpectation] = {
     "msg_verify_final_token_resource_exceeded": CkrExpectation(
         function="C_MessageVerifyFinal",
         condition="token_resource_limit_reached",
-        spec_ckr=CKR_FUNCTION_FAILED,  # CKR_TOKEN_RESOURCE_EXCEEDED not in fork
-        compat_tuple=(CKR_FUNCTION_FAILED,),
+        spec_ckr=CKR_TOKEN_RESOURCE_EXCEEDED,
+        compat_tuple=(CKR_TOKEN_RESOURCE_EXCEEDED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
         testable=True,  # Testable on v3.0+ modules via RawPKCS11 + funclist3_ptr
-        spec_ckr_code="CKR_TOKEN_RESOURCE_EXCEEDED",
     ),
 }
 

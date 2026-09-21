@@ -163,7 +163,7 @@ from pkcs11_check.core._run_units import (
 from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
-from pkcs11_check.core._secrets import redact_secret_args
+from pkcs11_check.core._secrets import SECRET_ARGV_FLAGS, redact_secret_args
 from pkcs11_check.core.preflight import load_manifest
 
 # The fingerprint detects when the run's effective configuration changed, so
@@ -455,6 +455,28 @@ def _load_available_mechanisms(pytest_args: list[str]) -> frozenset[str] | None:
     return frozenset(names)
 
 
+# M-12: the snapshot allowlist derives its secret half from the central
+# SECRET_ARGV_FLAGS policy, so a future secret flag snapshots redacted
+# instead of being hand-added (possibly raw) or silently dropped.
+_SNAPSHOT_PLAINTEXT_FLAGS = frozenset(
+    {
+        "--p11-module",
+        "--p11-interface",
+        "--p11-slot",
+        "--p11-manifest",
+    }
+)
+_SNAPSHOT_VALUE_FLAGS = _SNAPSHOT_PLAINTEXT_FLAGS | SECRET_ARGV_FLAGS
+
+
+def _snapshot_value(flag: str, value: str) -> str:
+    if flag in SECRET_ARGV_FLAGS:
+        return "<redacted>"
+    if flag == "--p11-manifest":
+        return "<manifest>"
+    return value
+
+
 def _backend_args_snapshot(pytest_args: list[str]) -> list[str]:
     args: list[str] = []
     skip_next = False
@@ -463,38 +485,15 @@ def _backend_args_snapshot(pytest_args: list[str]) -> list[str]:
             skip_next = False
             continue
 
-        if arg in {
-            "--p11-module",
-            "--p11-interface",
-            "--p11-slot",
-            "--p11-pin",
-            "--p11-manifest",
-        }:
+        if arg in _SNAPSHOT_VALUE_FLAGS:
             value = pytest_args[index + 1] if index + 1 < len(pytest_args) else ""
-            if arg == "--p11-pin":
-                value = "<redacted>"
-            elif arg == "--p11-manifest":
-                value = "<manifest>"
-            args.extend([arg, value])
+            args.extend([arg, _snapshot_value(arg, value)])
             skip_next = True
             continue
 
-        if any(
-            arg.startswith(f"{option}=")
-            for option in {
-                "--p11-module",
-                "--p11-interface",
-                "--p11-slot",
-                "--p11-pin",
-                "--p11-manifest",
-            }
-        ):
+        if any(arg.startswith(f"{option}=") for option in _SNAPSHOT_VALUE_FLAGS):
             option, value = arg.split("=", 1)
-            if option == "--p11-pin":
-                value = "<redacted>"
-            elif option == "--p11-manifest":
-                value = "<manifest>"
-            args.append(f"{option}={value}")
+            args.append(f"{option}={_snapshot_value(option, value)}")
             continue
 
         if arg == "--p11-destructive":

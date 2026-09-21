@@ -60,6 +60,7 @@ def _classify_outside_acceptable_set(
     actual: int,
     spec_codes: tuple[int, ...],
     full: tuple[int, ...],
+    mode: str,
 ) -> None:
     """Emit a Classification for a code outside the full acceptable set.
 
@@ -85,6 +86,7 @@ def _classify_outside_acceptable_set(
             spec_ref=expectation.spec_ref,
             summary=f"{prefix}: rejected with undefined CK_RV {ckr_name(actual)}, "
             f"not in acceptable set {accepted} [{expectation.spec_ref}]",
+            detail={"ckr_mode": mode},
         )
         return
     # F-023: a recognized (vendor-defined or standard) code outside the
@@ -103,6 +105,31 @@ def _classify_outside_acceptable_set(
             f"not in acceptable set {accepted} "
             f"[{expectation.spec_ref}]"
         ),
+        detail={"ckr_mode": mode},
+    )
+
+
+def _classify_recorded_leniency(
+    expectation: CkrExpectation,
+    spec_codes: tuple[int, ...],
+    mode: str,
+) -> None:
+    """Emit honest_deviation for a tolerated CKR_OK (M-14 recorded leniency)."""
+    prefix = _ckr_summary_prefix(expectation)
+    C.classify(
+        "honest_deviation",
+        kind=expectation.kind,
+        label=expectation.condition,
+        operation=expectation.function,
+        actual=CKR_OK,
+        expected=spec_codes,
+        spec_ref=expectation.spec_ref,
+        summary=(
+            f"{prefix}: accepted (CKR_OK) but spec prefers "
+            f"{[ckr_name(c) for c in spec_codes]}; tolerated as a noted deviation "
+            f"[{expectation.spec_ref}]"
+        ),
+        detail={"ckr_mode": mode},
     )
 
 
@@ -118,7 +145,9 @@ def assert_ckr(
     - Strict mode: rv must match spec_ckr exactly. Deviation = test failure.
     - Compat mode (the provider-general classifier):
         * rv == CKR_OK            -> fail (accepted invalid; must reject),
-                                     unless allow_success is set -> pass.
+                                     unless allow_success is set -> pass, or
+                                     honest_deviation xfail when the entry also
+                                     sets record_leniency (M-14).
         * rv not in full_compat   -> xfail for a recognized (standard or
                                      vendor-defined) code (clean non-spec
                                      rejection; a noted deviation);
@@ -141,12 +170,17 @@ def assert_ckr(
         expectation.spec_ckr if isinstance(expectation.spec_ckr, tuple) else (expectation.spec_ckr,)
     )
     prefix = _ckr_summary_prefix(expectation)
+    # H-4: the judging mode is part of the record -- strict and compat disagree
+    # by design, so a record without its mode is unactionable evidence.
+    mode = "strict" if strict else "compat"
 
     if strict:
         # A permissive op (allow_success) returning CKR_OK is a pass in both modes;
         # CKR_OK is never in spec_codes, so this short-circuit is required for strict
         # mode to agree with the compat branch (audit M-CLASS-3).
         if actual == CKR_OK and expectation.allow_success:
+            if expectation.record_leniency:
+                _classify_recorded_leniency(expectation, spec_codes, mode)
             return
         if actual not in spec_codes:
             if actual == CKR_OK:
@@ -160,6 +194,7 @@ def assert_ckr(
                     expected=spec_codes,
                     spec_ref=expectation.spec_ref,
                     summary=f"{prefix}: accepted (CKR_OK) but must reject [{expectation.spec_ref}]",
+                    detail={"ckr_mode": mode},
                 )
             else:
                 # Non-CKR_OK deviation from spec in strict mode: preserve fail outcome.
@@ -178,10 +213,13 @@ def assert_ckr(
                         f"{prefix}: spec requires {[ckr_name(c) for c in spec_codes]}, "
                         f"got {ckr_name(actual)} [{expectation.spec_ref}]"
                     ),
+                    detail={"ckr_mode": mode},
                 )
     else:
         if actual == CKR_OK:
             if expectation.allow_success:
+                if expectation.record_leniency:
+                    _classify_recorded_leniency(expectation, spec_codes, mode)
                 return
             C.classify(
                 "accepted_invalid",
@@ -192,11 +230,12 @@ def assert_ckr(
                 expected=spec_codes,
                 spec_ref=expectation.spec_ref,
                 summary=f"{prefix}: accepted (CKR_OK) but must reject [{expectation.spec_ref}]",
+                detail={"ckr_mode": mode},
             )
             return
         full = full_compat(expectation.compat_tuple)
         if actual not in full:
-            _classify_outside_acceptable_set(expectation, actual, spec_codes, full)
+            _classify_outside_acceptable_set(expectation, actual, spec_codes, full, mode)
             return
         if actual not in spec_codes:
             C.classify(
@@ -212,6 +251,7 @@ def assert_ckr(
                     f"spec prefers {[ckr_name(c) for c in spec_codes]} "
                     f"[{expectation.spec_ref}]"
                 ),
+                detail={"ckr_mode": mode},
             )
 
 

@@ -320,6 +320,7 @@ def write_isolated_json_report(
     provenance: dict[str, Any] | None = None,
     owner_aliases: _ReportOwnerAliases | None = None,
     selection: CaseSelection | None = None,
+    disabled_baseline: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write an aggregated JSON report for an isolated run in unified format."""
     payload = _build_isolated_json_payload(
@@ -329,6 +330,7 @@ def write_isolated_json_report(
         provenance=provenance,
         owner_aliases=owner_aliases,
         selection=selection,
+        disabled_baseline=disabled_baseline,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -343,6 +345,7 @@ def _build_isolated_json_payload(
     provenance: dict[str, Any] | None = None,
     owner_aliases: _ReportOwnerAliases | None = None,
     selection: CaseSelection | None = None,
+    disabled_baseline: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     details = per_unit_details or {}
 
@@ -554,6 +557,8 @@ def _build_isolated_json_payload(
     }
     if selection is not None:
         payload["selection"] = selection.to_dict()
+    if disabled_baseline is not None:
+        payload["disabled_baseline"] = dict(disabled_baseline)
     if coverage:
         payload["coverage"] = coverage
     if provenance:

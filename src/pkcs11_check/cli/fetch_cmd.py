@@ -31,6 +31,10 @@ _DISABLED_BASELINE_URL = (
     "https://raw.githubusercontent.com/mingulov/pkcs11-check/main/data/disabled-tests.txt"
 )
 
+# M-20: socket timeout (connect + each recv) for urlopen. A stalled server must
+# fail loud instead of hanging fetch-data/fetch-disabled forever.
+_DOWNLOAD_TIMEOUT_S = 60
+
 # Record of what is actually fetched (sources.toml pins what to fetch; this
 # records what landed, so any data dir answers "which versions am I?").
 VERSIONS_FILE = "versions.json"
@@ -54,7 +58,7 @@ def _download_with_progress(url: str, dest: Path, label: str) -> None:
     """Download a URL to a file with a rich progress bar."""
     _validate_https_url(url)
     # _validate_https_url rejects local and non-HTTPS schemes before urlopen.
-    with urlopen(url) as resp:  # nosec B310
+    with urlopen(url, timeout=_DOWNLOAD_TIMEOUT_S) as resp:  # nosec B310
         total = int(resp.headers.get("Content-Length", 0))
         with Progress(
             TextColumn("[bold blue]{task.description}"),
@@ -352,7 +356,7 @@ def fetch_disabled_command(
     try:
         _validate_https_url(_DISABLED_BASELINE_URL)
         # _DISABLED_BASELINE_URL is an HTTPS constant and is validated above.
-        with urlopen(_DISABLED_BASELINE_URL) as resp:  # nosec B310
+        with urlopen(_DISABLED_BASELINE_URL, timeout=_DOWNLOAD_TIMEOUT_S) as resp:  # nosec B310
             content = resp.read().decode("utf-8")
     except Exception as exc:
         console.print(f"[red]Download failed:[/red] {exc}")

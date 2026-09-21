@@ -88,6 +88,40 @@ def test_probe_capabilities_does_not_mark_later_slot_failure_as_unloadable(
     assert manifest.reason is None
 
 
+def test_probe_capabilities_negative_slot_is_error_not_wrap(tmp_path: Path) -> None:
+    # H-9: slot=-1 must not wrap to the last slot (Python negative indexing);
+    # it is out of range and fails closed as an error manifest.
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    mock_slot = MagicMock()
+    mock_slot.get_mechanisms.return_value = []
+    mock_module = MagicMock(interface_version="3.2")
+    mock_module.get_slots.return_value = [mock_slot, mock_slot]
+
+    with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
+        manifest = probe_capabilities(module_path, interface="auto", slot=-1)
+
+    assert manifest.status == "error"
+    assert manifest.error is not None and "slot -1 not found" in manifest.error
+    mock_slot.get_mechanisms.assert_not_called()
+
+
+def test_probe_capabilities_out_of_range_slot_is_error(tmp_path: Path) -> None:
+    # H-9 regression pin: the out-of-range message is preserved verbatim
+    # (doctor + preflight consumers match on it).
+    module_path = tmp_path / "module.so"
+    module_path.touch()
+    mock_slot = MagicMock()
+    mock_module = MagicMock(interface_version="3.2")
+    mock_module.get_slots.return_value = [mock_slot, mock_slot]
+
+    with patch("pkcs11_check.core.preflight.load_module", return_value=mock_module):
+        manifest = probe_capabilities(module_path, interface="auto", slot=9)
+
+    assert manifest.status == "error"
+    assert manifest.error == "IndexError: slot 9 not found (token-present slots: 2)"
+
+
 def test_advertised_mechanism_info_failure_is_recorded_per_mechanism(
     tmp_path: Path,
 ) -> None:

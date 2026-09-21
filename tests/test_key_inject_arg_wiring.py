@@ -181,6 +181,28 @@ class TestPluginRegistersKeyInjectOption:
 
         assert "--p11-key-inject" in registered
 
+    def test_p11_key_inject_constrains_choices(self) -> None:
+        """H-12: the direct-pytest path must reject typos at option parse time.
+
+        Without choices=, `--p11-key-inject of` flows into fixtures and silently
+        enables injection (any non-off, non-force-unwrap value takes the unwrap
+        path in _provisioning.py).
+        """
+        seen: dict[str, object] = {}
+
+        class FakeGroup:
+            def addoption(self, *option_strings: str, **kw: object) -> None:
+                for name in option_strings:
+                    seen[name] = kw.get("choices")
+
+        class FakeParser:
+            def getgroup(self, name: str, description: str = "") -> FakeGroup:
+                return FakeGroup()
+
+        plugin_mod.pytest_addoption(FakeParser())
+
+        assert seen["--p11-key-inject"] == ["off", "unwrap", "force-unwrap"]
+
     def test_all_wrap_options_registered(self) -> None:
         """All 8 new options are registered in pytest_addoption."""
         registered: list[str] = []

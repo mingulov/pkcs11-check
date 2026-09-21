@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from pkcs11_check.cli._choices import LogLevelChoice
 from pkcs11_check.cli.compare_cmd import compare_coverage_command, compare_results_command
 from pkcs11_check.cli.compliance_cmd import compliance_report_command
 from pkcs11_check.cli.crash_calls_cmd import crash_calls_command
@@ -27,7 +28,9 @@ app = typer.Typer(
 
 @app.callback()
 def callback(
-    log_level: str = typer.Option("INFO", "--log-level", help="Log level"),
+    log_level: LogLevelChoice = typer.Option(
+        "INFO", "--log-level", help="Log level", case_sensitive=False
+    ),
     trace: bool = typer.Option(False, "--trace", help="Trace PKCS#11 calls"),
 ) -> None:
     """CLI-first PKCS#11 test suite."""
