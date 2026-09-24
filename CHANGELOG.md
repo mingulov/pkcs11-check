@@ -1,115 +1,114 @@
 # Changelog
 
-## [0.2.1] - 2026-09-18
+## [0.2.1] - 2026-09-24
 
-A correctness follow-up: message-mode AEAD init packs the right params, harness
-provenance travels with every report, and CTS/teardown diagnostics name their
-cause. Vector datasets are repinned to current upstream.
+A correctness follow-up: message-mode AEAD init packs the right params,
+generated keys must honestly report `CKA_LOCAL`, empty inputs fail instead
+of passing green, and merge/report plumbing keeps evidence intact end to
+end. Vector datasets are repinned to current upstream.
 
 ### Added
 
-- **Message-mode init for CCM, ChaCha20-Poly1305, and Salsa20-Poly1305.**
-  The message-init legs pack `CK_CCM_MESSAGE_PARAMS` / the ChaCha20 and Salsa20
-  message params (caller- and generated-nonce), with nonce-length bytes-vs-bits
-  semantics verified against the spec text and pinned by characterization tests.
+- **Message-mode init for CCM, ChaCha20-Poly1305, and Salsa20-Poly1305**
+  (caller- and generated-nonce), with nonce-length bytes-vs-bits semantics
+  verified against the spec and pinned by characterization tests.
 
-- **Harness provenance in every report.** `pytest_sessionfinish` stamps a
-  `ProvenanceReport` into `report.jsonl`, and `pkcs11-check-report` fills a
-  missing framework block from the JSONL log; the extractor survives corrupt
-  bytes via the binary-decode iterator.
+- **Harness provenance in every report.** `pytest_sessionfinish` stamps one
+  `ProvenanceReport` (parent resolves the framework version once;
+  first-wins over legacy shards); backfilled when missing, corrupt bytes
+  survived, version pin out of run fingerprints.
 
 - **CTS KAT failures attributed by call stage** (Init vs size query vs
-  output call) in single-shot-path diagnostics, alongside the existing CKR +
-  operability classification.
-
-- **`allocation_amplifying` marking finished**: the HKDF info probe and the
-  OFB/CFB8/CFB128/ChaCha20 oracle tests carry the marker (pin test grows
-  5 → 14 probes).
+  output call); the HKDF info probe and OFB/CFB8/CFB128/ChaCha20 oracles
+  carry the `allocation_amplifying` marker (pin test grows 5 → 14 probes).
 
 - **Vector datasets repinned** (wycheproof, cctv, acvp, x509-limbo) with
-  zero finding-flips on the re-run diffs; `fetch-data` now stamps a
-  `versions.json` into each data dir.
+  zero finding-flips; `fetch-data` stamps a `versions.json` per data dir.
+
+- **Configuration layer truth and `--show-config`.** TOML/CLI/env
+  resolution is documented and inspectable; CLI enumerations use typed
+  choices.
 
 ### Fixed
 
-- **KMAC tests labeled vendor-range, not v3.2.** Vendor modules expose KMAC in
-  their vendor range and need the tests, so the suite keeps them with honest
-  labels plus a repo-guard test (every `has_mechanism("LITERAL")` resolves or
-  is documented).
+- **KMAC kept with honest labels; vendor code points user-suppliable.**
+  Vendor-range labels with a repo guard (`has_mechanism("LITERAL")`
+  resolves or documented); `--vendor-mechanism NAME=0xID` registers ids
+  so the tests run, and the skip names the missing code point.
 
-- **Hostile module length reports contained at collection.** An absurd length
-  from `_alloc_module_output` can no longer INTERNALERROR the whole collection
-  run; the file fails visibly in isolation instead.
+- **Hostile module length reports contained at collection** -- an absurd
+  `_alloc_module_output` length fails the file visibly in isolation
+  instead of INTERNALERRORing collection.
 
-- **Teardown quirks fail the file honestly, pinned.** A lone
-  `C_Finalize(NULL)` rejection (SoftKMS `CKR_ARGUMENTS_BAD`) and wolfTPM
-  finalize hangs keep failing the file with dedicated regression tests, and a
-  slotless provider yields contained skips instead of an INTERNALERROR.
+- **Teardown quirks fail the file honestly, pinned.** Lone
+  `C_Finalize(NULL)` rejections, backend finalize hangs, and slotless
+  providers get regression tests / contained skips instead of an
+  INTERNALERROR.
 
-- **Skip-assert migration**: raw `pytest.raises(pytest.skip.Exception)` blocks
-  now use `_skip_assert` helpers, so a skip→xfail mutation can no longer escape
-  as a silent xfail.
+- **Skip-assert migration**: raw `pytest.raises(pytest.skip.Exception)`
+  blocks use `_skip_assert` helpers, closing the silent-xfail escape.
 
-- **Readback-attribution ratchet tightened**: inventory blind spots shrink
-  802 → 592, gate failures print the HEAD-vs-worktree delta, corpus-digest
-  scans are cached, replay tests couple to their source calls, and the
-  inherit-mechanism guard resolves `as`-aliases (377 sites, up from 376).
-  Rule, decided once: a `C_GetAttributeValue` readback record carries no
-  borrowed mechanism (`inherit_mechanism=False`); producer context stays in
-  label/detail. Eight call sites across five files that regressed to explicit
-  stamping during the v0.2.1 merge are restored to mechanism-free (plus two
-  misc-KDF findings re-attributed to `C_DeriveKey`), with goldens pinning the
-  bare form at each branch.
+- **Readback-attribution ratchet**: blind spots 802 → 592 with
+  HEAD-vs-worktree deltas; coordinate-free digests and (path, function,
+  emitter) sentinels keep line moves green, only real drift re-pins.
+  Rule, decided once: no borrowed mechanism on readback records; eight
+  regressed call sites restored to mechanism-free with goldens.
 
-- **Attribute-guard precision**: three scanner gaps closed (positive-`in`
-  fallthrough, double-negation check, unchecked optionals via early return);
-  probes confirm no live in-tree instances.
-
-- **UTF-8 named on git subprocess text calls**, fixing locale-dependent
-  collection on non-UTF-8 systems.
+- **Attribute-guard precision**: three scanner gaps closed
+  (positive-`in` fallthrough, double negation, unchecked optionals);
+  probes confirm no live in-tree instances. Git subprocess text calls
+  name UTF-8, fixing locale-dependent collection.
 
 - **Missing child output ruled `probe_incomplete`, not `harness_error`.**
-  Rule, decided once: a child that never emitted a marker (no OK line, no
-  result field, no RV) is unresolved attribution -- the missing bytes are as
-  likely a module observation as our own bug -- so it stays a loud
-  provider-side fail. Only an observably malformed, duplicated, or
-  self-contradictory emission keeps `harness_error`, alongside explicit
-  `HARNESS_ERROR` markers and parent-side defects (bad vectors, reference
-  mismatches, cleanup failures). Thirteen testcase files relabeled; goldens
-  pin each side of the boundary.
-- **A module `exit(0)` is an abrupt exit, not a pass.** The probe, observation,
-  and file-runner gates keyed on `rc > 0`; a C `exit(0)` from inside a PKCS#11
-  call skipped the finalizer/SessionFinish exactly like `exit(n)` but was never
-  classified as module termination. All three gates now use `rc >= 0` with the
-  traceback/no-finalizer conjunction unchanged.
+  Rule, decided once: a child that never emitted a marker is unresolved
+  attribution, so it stays a loud provider-side fail. Only malformed,
+  duplicated, or self-contradictory emissions (plus explicit markers and
+  parent-side defects) keep `harness_error`. Thirteen files relabeled.
 
-- **Vendor mechanism code points are user-suppliable.** `--vendor-mechanism
-  NAME=0xID` (repeatable; also as `pkcs11-check test --vendor-mechanism`)
-  registers vendor-range ids so `has_mechanism`/`has_mechanism_flag` resolve
-  them. The retained KMAC tests run once code points are supplied; without
-  them the skip says "no code point known to pkcs11-check" instead of blaming
-  the module, and the mechanism-name guard drops its KMAC exemptions.
-
-- **Readback ratchet no longer trips on line moves.** Inventory digests hash
-  coordinate-free finding identity, sentinels anchor on (path, function,
-  emitter) instead of absolute lines, and counts redundant with live
-  cross-checks are dropped. Inserting code now leaves the gate green; only
-  added/removed emitters and status/content changes drift pins (verified both
-  directions). The corpus-byte pin is retired as pure churn.
+- **A module `exit(0)` is an abrupt exit, not a pass.** Probe,
+  observation, and file-runner gates now use `rc >= 0`, catching C
+  `exit(0)` from inside PKCS#11 calls exactly like `exit(n)`.
 
 - **Abrupt-exit marker counted once; teardown attributed to lifecycle.**
-  Special-entry dedupe matches on (nodeid, outcome) when either side lacks
-  `evidence_type` (rebuilt-from-JSONL vs in-memory twins), while two present
-  types still count as distinct evidence. The synthetic `C_Finalize`
-  teardown record routes to a `<lifecycle>` pseudo-unit instead of a phantom
-  per-file unit in `--isolation none` artifacts.
+  Special-entry dedupe keys on (nodeid, outcome) for rebuilt twins, and
+  the synthetic `C_Finalize` record routes to `<lifecycle>` instead of a
+  phantom per-file unit.
 
-- **One `ProvenanceReport` per run, one `git describe`.** The isolated-run
-  parent resolves the framework version once, pins it into child envs (unit
-  children skip their own emission and shell-out), and merges exactly one
-  record into `report.jsonl` (first-wins over legacy shards). The version pin
-  is excluded from run fingerprints so committing between a run and its
-  resume stays valid.
+- **Generated `CKA_LOCAL=False` fails; preconditions established
+  explicitly.** Rule, decided once: a generated key reporting `CKA_LOCAL=False`
+  is a self-contradiction, so the probes fail instead of xfail. The same
+  pass establishes destruction/liveness, logged-out and observed-public
+  state, and pre-read-only authentication; malformed metadata fails,
+  compat/sanctioned refusals xfail with records, flag probes retry with
+  valid keys, and overruns surface typed.
+
+- **Evidence safety across merge, secrets, attribution, isolation, and
+  collection.** Aliased units rejected, coverage overlap gated, argv
+  redacted with env-only KEK, teardown completion rule-checked, run
+  artifacts guarded with bounded capture, manifests strict, and empty
+  JSONL refused.
+
+- **Audit hardening, sessions through harness.** Mechanism-free
+  readbacks, source-enforced `generate_random`, advertisement-aware flag
+  checks, contained preflight, capped timeouts, lossless pipe decoding,
+  atomic run state, refused merge double-counts, no invented CKRs --
+  and comparison keyed on testcases-relative targets.
+
+- **False-green batch 1: empty inputs fail, oracles tightened.** Empty
+  encrypt/decrypt inputs fail, CKR oracle empty-input entries removed;
+  accept paths fixed, slot indices validated, encapsulations capped and
+  routed, plus record-as-xfail and `ckr_mode` pins.
+
+- **Probe and loader fidelity.** Durable cross-operation child CKRs,
+  escaped malformed token bytes, isolated `info` collection without the
+  large-answer deadlock, correct ChaCha20 counter bytes, a harness
+  subtotal in the header, and crash-culprit recovery from durable
+  records.
+
+- **Merge coverage fallback, and fast.** Manifest-less batches merge via
+  executed coverage, and the linear overlap gate with cached sidecars
+  takes a 72-batch merge from past-480 s timeout to seconds with
+  identical verdicts.
 
 ## [0.2.0] - 2026-09-16
 
