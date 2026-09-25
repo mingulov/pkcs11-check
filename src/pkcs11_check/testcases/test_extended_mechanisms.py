@@ -696,7 +696,7 @@ def _external_mu_sign_verify_roundtrip(rs: Any) -> None:
 
 
 class TestMLDSAExternalMU:
-    """CKM_ML_DSA_EXTERNAL_MU -- ExternalMu PQC sign/verify (v3.2 draft).
+    """CKM_ML_DSA_EXTERNAL_MU -- ExternalMu PQC sign/verify (v3.3 draft).
 
     ExternalMu-ML-DSA accepts a precomputed 64-byte message representative mu
     instead of hashing the message on-token. The mu value is normally computed

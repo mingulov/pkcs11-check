@@ -33,6 +33,27 @@ the upstream repo records `public-domain/` as its public-domain subtree
 
 See also `third_party/pkcs11-headers/3.2/README.md` in the source tree.
 
+## Project-authored overlay (MIT OR Apache-2.0, same as pkcs11-check)
+
+`third_party/pkcs11-overlay/` holds project-authored generator inputs that
+`scripts/generate_raw_standard.py` parses after the public-domain header above
+(overlay entries win on name collision):
+
+- `mu_additions.h`: the ML-DSA ExternalMu mechanism pair
+  (`CKM_ML_DSA_EXTERNAL_MU_GEN = 0x403B`, `CKM_ML_DSA_EXTERNAL_MU = 0x403C`)
+  and the `CK_MU_GEN_PARAMS` struct, re-typed from the OASIS PKCS 11 TC
+  identifier allocation for the v3.3 working draft (issue #58). A
+  pre-ratification v3.2 draft carried these mechanisms at `0x1E`/`0x22`;
+  the ratified v3.2 OASIS Standard dropped them and the TC re-allocated
+  them at `0x403B`/`0x403C`.
+- `latchset_3_2_fixes.h`: the `CK_X9_42_MQV_DERIVE_PARAMS` struct with its
+  pointer fields spelled as in the ratified OASIS v3.2 text
+  (`pOtherInfo`/`pPublicData`/`pPublicData2`; latchset omits the `p`).
+
+No OASIS-copyrighted text is copied: mechanism names, code points, and field
+names are API facts. Full provenance is recorded in
+`third_party/pkcs11-overlay/README.md`.
+
 ## Downloaded at runtime by `pkcs11-check fetch-data`
 
 These archives are not bundled in the wheel. When you run `fetch-data`, each
