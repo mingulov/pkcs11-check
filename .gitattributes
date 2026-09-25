@@ -2,3 +2,6 @@
 # (tests/test_disabled_baseline_pin.py): force LF in every checkout so the
 # pin holds on Windows (core.autocrlf=true) as well as POSIX.
 data/disabled-tests.txt text eol=lf
+# The vendored header is pinned by byte-exact sha256
+# (tests/test_raw_generation.py::test_vendored_header_is_verbatim_upstream).
+third_party/pkcs11-headers/3.2/pkcs11.h text eol=lf

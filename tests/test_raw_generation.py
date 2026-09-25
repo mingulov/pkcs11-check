@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import importlib.util
 import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+# latchset/pkcs11-headers @ c5e61990c5621a9b955fc208644fe8145ac0a75d,
+# public-domain/3.2/pkcs11.h. The vendored copy must stay byte-identical so its
+# public-domain provenance is auditable; draft additions and upstream typo fixes
+# belong in third_party/pkcs11-overlay/ (consumed as generator overlay).
+_VENDORED_HEADER_SHA256 = "61e0b3f996fa9f095859d7d3b8e361d0b982de69fc8b6a4bf10291afbe7e24d8"
 
 
 def _field_map(fields: Any) -> dict[str, Any]:
@@ -15,6 +22,15 @@ def _field_map(fields: Any) -> dict[str, Any]:
 
 def test_vendored_header_exists() -> None:
     assert Path("third_party/pkcs11-headers/3.2/pkcs11.h").is_file()
+
+
+def test_vendored_header_is_verbatim_upstream() -> None:
+    header = Path("third_party/pkcs11-headers/3.2/pkcs11.h")
+    digest = hashlib.sha256(header.read_bytes()).hexdigest()
+    assert digest == _VENDORED_HEADER_SHA256, (
+        "vendored pkcs11.h differs from latchset c5e6199; put additions/fixes in "
+        "third_party/pkcs11-overlay/ instead of editing the vendored file"
+    )
 
 
 def test_vendored_header_local_dependencies_exist() -> None:
@@ -26,8 +42,10 @@ def test_vendored_header_local_dependencies_exist() -> None:
         assert (header.parent / include).is_file()
 
 
-def test_vendored_header_x942_mqv_pointer_field_names_match_oasis() -> None:
-    header = Path("third_party/pkcs11-headers/3.2/pkcs11.h")
+def test_overlay_x942_mqv_pointer_field_names_match_oasis() -> None:
+    # The vendored header stays verbatim upstream (latchset misspells these
+    # fields); the OASIS spellings live in the generator overlay.
+    header = Path("third_party/pkcs11-overlay/latchset_3_2_fixes.h")
     text = header.read_text(encoding="utf-8")
     match = re.search(
         r"struct CK_X9_42_MQV_DERIVE_PARAMS \{(?P<body>.*?)\};",

@@ -7,6 +7,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 HEADER = REPO_ROOT / "third_party/pkcs11-headers/3.2/pkcs11.h"
 OUT_TYPES = REPO_ROOT / "src/pkcs11_check/raw/types_std.py"
 OUT_METADATA = REPO_ROOT / "src/pkcs11_check/raw/metadata_std.py"
+# Project-authored overlay: v3.3-draft additions + latchset typo fixes.
+# Parsed after the base header; overlay entries win on name collision.
+# See third_party/pkcs11-overlay/README.md for provenance and license.
+OVERLAY_DIR = REPO_ROOT / "third_party/pkcs11-overlay"
+OVERLAY_HEADERS = ("mu_additions.h", "latchset_3_2_fixes.h")
 
 SYMBOL_PREFIXES = (
     "CKA_",
@@ -779,6 +784,14 @@ def generate_raw_standard(*, header: Path, out_types: Path, out_metadata: Path) 
     opaque_structs = _parse_opaque_structs(types_text)
     callbacks = _parse_callbacks(types_text)
     structs = _parse_structs(types_text)
+    for overlay_name in OVERLAY_HEADERS:
+        overlay_path = OVERLAY_DIR / overlay_name
+        if not overlay_path.is_file():
+            raise SystemExit(f"missing overlay header: {overlay_path}")
+        overlay_text = overlay_path.read_text(encoding="utf-8")
+        symbols.update(_parse_symbols(overlay_text))
+        aliases.update(_parse_aliases(overlay_text))
+        structs.update(_parse_structs(overlay_text))
     for name, fields in EXTRA_STRUCTS.items():
         structs.setdefault(name, fields)
     _generate_struct_ptr_aliases(opaque_structs, structs, aliases)

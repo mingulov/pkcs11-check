@@ -12,12 +12,27 @@ def test_external_mu_constants_are_exported() -> None:
     from pkcs11_check.raw import metadata_std
     from pkcs11_check.raw.types_std import CKM_ML_DSA_EXTERNAL_MU, CKM_ML_DSA_EXTERNAL_MU_GEN
 
-    assert int(CKM_ML_DSA_EXTERNAL_MU_GEN) == 0x0000001E
-    assert int(CKM_ML_DSA_EXTERNAL_MU) == 0x00000022
+    # OASIS TC v3.3 allocation (issue #58); the abandoned pre-ratification
+    # v3.2 draft values 0x1E/0x22 must not be reintroduced.
+    assert int(CKM_ML_DSA_EXTERNAL_MU_GEN) == 0x0000403B
+    assert int(CKM_ML_DSA_EXTERNAL_MU) == 0x0000403C
     assert metadata_std.MECHANISM_NAMES[int(CKM_ML_DSA_EXTERNAL_MU_GEN)] == (
         "CKM_ML_DSA_EXTERNAL_MU_GEN"
     )
     assert metadata_std.MECHANISM_NAMES[int(CKM_ML_DSA_EXTERNAL_MU)] == "CKM_ML_DSA_EXTERNAL_MU"
+
+
+def test_mu_gen_params_struct_is_exported() -> None:
+    from pkcs11_check.raw import types_std
+
+    fields = {name: ctype for name, ctype in types_std.CK_MU_GEN_PARAMS._fields_}
+
+    assert fields["hKey"] is types_std.CK_OBJECT_HANDLE
+    assert fields["pTR"] is types_std.CK_BYTE_PTR
+    assert fields["ulTRLen"] is types_std.CK_ULONG
+    assert fields["pctx"] is types_std.CK_BYTE_PTR
+    assert fields["ulctxLen"] is types_std.CK_ULONG
+    assert types_std.CK_MU_GEN_PARAMS_PTR._type_ is types_std.CK_MU_GEN_PARAMS
 
 
 def test_external_mu_roundtrip_helper_uses_64_byte_mu(
