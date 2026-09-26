@@ -30,11 +30,29 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes.honeypot import (
     SETUP_XFAIL_PREFIX,
+    ZeroRegion,
+    demand_zero_region,
+    hostile_unbacked_region,
 )
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.conftest import (
     is_known_error,
 )
+
+# Child->parent wire marker: the probe executed the provider call with an
+# explicitly unbacked (honest=0) huge length. The parent must route such
+# output as a non-normative hostile-caller robustness observation, never as
+# a conformance or security finding. Shared by the ffi_length arm groups;
+# the arithmetic_overflow family defines its own equal-valued constant
+# (pinned identical by tests/test_honest_region_contract.py).
+HOSTILE_CALLER_PREFIX = "HOSTILE_CALLER:"
+
+# Largest readable/writable byte range the demand-zero mapping can back.
+# Must equal honeypot._HONEYPOT_SIZES[0] exactly (pinned by
+# tests/test_honest_region_contract.py). Claimed lengths above this are
+# un-mappable magnitudes: the probe marks them hostile instead of executing
+# an under-backed provider call as a conformance probe.
+_MAX_HONEST_BYTES = 1 << 40
 
 
 class _SetupRejected(Exception):  # noqa: N818
@@ -49,6 +67,29 @@ class _SetupRejected(Exception):  # noqa: N818
 # ---------------------------------------------------------------------------
 # Child-side setup helpers (ports of the legacy f-string fragments)
 # ---------------------------------------------------------------------------
+
+
+def _demand_readable_or_hostile(claimed_len: int) -> tuple[ZeroRegion, Any]:
+    """Back a claimed readable byte range honestly, or mark it hostile.
+
+    Returns ``(region, keepalive)``: the caller passes ``region.ptr`` with
+    the claimed length and keeps ``keepalive`` referenced for the call.
+
+    * ``claimed_len <= _MAX_HONEST_BYTES``: ``demand_zero_region(claimed_len)``
+      (``keepalive`` is None; the process-lifetime mapping owns itself).
+      Raises :class:`HoneypotUnavailable` when this run cannot map the
+      range; the caller must print ``SETUP_XFAIL`` and never execute the
+      provider call.
+    * larger (un-mappable magnitudes): ``hostile_unbacked_region`` over a
+      fresh 16-byte buffer (``honest=0``, ``keepalive`` holds it); the
+      caller must print ``HOSTILE_CALLER:`` so the parent routes the
+      outcome as a non-normative hostile-caller robustness observation.
+    """
+    if claimed_len <= _MAX_HONEST_BYTES:
+        return demand_zero_region(claimed_len), None
+    small = (ctypes.c_ubyte * 16)(*range(16))
+    ptr = ctypes.cast(small, ctypes.POINTER(ctypes.c_ubyte))
+    return hostile_unbacked_region(ptr), small
 
 
 def _setup_reject_or_raise(

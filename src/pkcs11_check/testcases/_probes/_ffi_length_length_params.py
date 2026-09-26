@@ -1,7 +1,9 @@
 """ffi_length arm group: length-field boundary probes inside mechanism params.
 
 Moved verbatim from ffi_length.py (god-module split, 2026-07-17); dispatched via
-ffi_length._DISPATCH.  Output protocol unchanged (TARGET_RV/SETUP_XFAIL lines).
+ffi_length._DISPATCH.  Mappable lengths are honestly backed
+(``_demand_readable_or_hostile``); un-mappable magnitudes print
+``HOSTILE_CALLER:`` before the provider call (TARGET_RV/SETUP_XFAIL lines kept).
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from pkcs11_check.raw.types_std import (
     CK_AES_CCM_PARAMS,
     CK_AES_GCM_PARAMS,
     CK_ATTRIBUTE,
+    CK_DERIVED_KEY,
     CK_EDDSA_PARAMS,
     CK_MECHANISM,
     CK_OBJECT_HANDLE,
@@ -76,6 +79,8 @@ from pkcs11_check.raw.types_std import (
     CKZ_SALT_SPECIFIED,
 )
 from pkcs11_check.testcases._probes._ffi_length_base import (
+    HOSTILE_CALLER_PREFIX,
+    _demand_readable_or_hostile,
     _derived_aes_key_template,
     _derived_secret_key_template,
     _import_derive_base_key,
@@ -85,7 +90,6 @@ from pkcs11_check.testcases._probes._ffi_length_base import (
 from pkcs11_check.testcases._probes.honeypot import (
     SETUP_XFAIL_PREFIX,
     HoneypotUnavailable,
-    demand_zero_buffer,
 )
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.conftest import (
@@ -103,7 +107,17 @@ def _run_aes_cbc_encrypt_data_malformed(ctx: ProbeContext, extra: dict[str, Any]
     null_data = bool(extra["null_data"])
     data_len = int(extra["data_len"])
 
-    data_buf = (ctypes.c_ubyte * 16)(*range(16))
+    # The NULL case is sound as-is (explicit NULL with nonzero length needs no
+    # backing); only the tiny-buffer case must be honestly backed or hostile.
+    region = None
+    _keepalive: object = None
+    if not null_data:
+        try:
+            region, _keepalive = _demand_readable_or_hostile(data_len)
+        except HoneypotUnavailable as exc:
+            print(f"{SETUP_XFAIL_PREFIX}{exc}")
+            return
+
     try:
         base_key = import_secret_key(
             raw,
@@ -120,7 +134,11 @@ def _run_aes_cbc_encrypt_data_malformed(ctx: ProbeContext, extra: dict[str, Any]
         params = CK_AES_CBC_ENCRYPT_DATA_PARAMS()
         for idx in range(16):
             params.iv[idx] = idx
-        params.pData = None if null_data else ctypes.cast(data_buf, ctypes.c_void_p)
+        if null_data:
+            params.pData = None
+        else:
+            assert region is not None
+            params.pData = ctypes.cast(region.ptr, ctypes.c_void_p)
         params.length = data_len
 
         mech = CK_MECHANISM()
@@ -138,6 +156,12 @@ def _run_aes_cbc_encrypt_data_malformed(ctx: ProbeContext, extra: dict[str, Any]
         )
         derived = CK_OBJECT_HANDLE(0)
         print(f"TARGET_CALL:C_DeriveKey(AES_CBC_ENCRYPT_DATA,{case_label})", flush=True)
+        if region is not None and not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_DeriveKey(AES_CBC_ENCRYPT_DATA,length={data_len:#x}) "
+                "unbacked",
+                flush=True,
+            )
         rv = raw.C_DeriveKey(
             sh,
             ctypes.byref(mech),
@@ -199,17 +223,18 @@ def _run_rsa_pss_salt_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_gcm_aad_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_EncryptInit/C_Encrypt(AES_GCM) with a tiny (honeypot) pAAD + huge ulAADLen."""
+    """C_EncryptInit/C_Encrypt(AES_GCM) with an honest/hostile pAAD + huge ulAADLen."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     aad_len = int(extra["aad_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(aad_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         key = gen_aes_key(raw, sh, 256)
@@ -229,6 +254,11 @@ def _run_gcm_aad_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.mechanism = CKM_AES_GCM
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_EncryptInit(AES_GCM,ulAADLen={aad_len:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
         print(f"INIT_RV:0x{rv:08x}", flush=True)
         if rv == CKR_OK:
@@ -244,17 +274,18 @@ def _run_gcm_aad_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_ccm_aad_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_EncryptInit/C_Encrypt(AES_CCM) with a tiny (honeypot) pAAD + huge ulAADLen."""
+    """C_EncryptInit/C_Encrypt(AES_CCM) with an honest/hostile pAAD + huge ulAADLen."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     aad_len = int(extra["aad_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(aad_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         key = gen_aes_key(raw, sh, 256)
@@ -274,6 +305,11 @@ def _run_ccm_aad_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.mechanism = CKM_AES_CCM
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_EncryptInit(AES_CCM,ulAADLen={aad_len:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
         print(f"INIT_RV:0x{rv:08x}", flush=True)
         if rv == CKR_OK:
@@ -297,10 +333,11 @@ def _run_pbkdf2_nested_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     password_real = (ctypes.c_ubyte * 8)(*b"password")
     salt_real = (ctypes.c_ubyte * 8)(*b"salt1234")
@@ -336,6 +373,11 @@ def _run_pbkdf2_nested_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         attr_bool(CKA_EXTRACTABLE, True),
     )
     key = CK_OBJECT_HANDLE(0)
+    if not region.honest:
+        print(
+            f"{HOSTILE_CALLER_PREFIX}C_GenerateKey(PBKDF2,{field} length={data_len:#x}) unbacked",
+            flush=True,
+        )
     rv = raw.C_GenerateKey(sh, ctypes.byref(mech), tmpl.ptr, tmpl.count, ctypes.byref(key))
     print(f"TARGET_RV:0x{rv:08x}")
     print(f"TARGET_RV_NAME:{ckr_name(rv)}")
@@ -356,10 +398,11 @@ def _run_pbe_nested_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     init_vector = (ctypes.c_ubyte * iv_len)()
     password_real = (ctypes.c_ubyte * 8)(*b"password")
@@ -389,6 +432,11 @@ def _run_pbe_nested_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         attr_bool(CKA_VERIFY if sign_verify else CKA_DECRYPT, True),
     )
     key = CK_OBJECT_HANDLE(0)
+    if not region.honest:
+        print(
+            f"{HOSTILE_CALLER_PREFIX}C_GenerateKey(PBE,{field} length={data_len:#x}) unbacked",
+            flush=True,
+        )
     rv = raw.C_GenerateKey(sh, ctypes.byref(mech), tmpl.ptr, tmpl.count, ctypes.byref(key))
     print(f"TARGET_RV:0x{rv:08x}")
     print(f"TARGET_RV_NAME:{ckr_name(rv)}")
@@ -405,10 +453,11 @@ def _run_tls_kdf_random_length(ctx: ProbeContext, extra: dict[str, Any]) -> None
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     base_key = _import_derive_base_key(ctx, value_len=48, label="TLS KDF")
     try:
@@ -438,8 +487,14 @@ def _run_tls_kdf_random_length(ctx: ProbeContext, extra: dict[str, Any]) -> None
         mech.mechanism = CKM_TLS_KDF
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_DeriveKey(TLS_KDF,{field} random "
+                f"length={data_len:#x}) unbacked",
+                flush=True,
+            )
 
-        d_tmpl, _keepalive = _derived_secret_key_template()
+        d_tmpl, _keepalive2 = _derived_secret_key_template()
         derived = CK_OBJECT_HANDLE(0)
         rv = raw.C_DeriveKey(
             sh,
@@ -464,11 +519,16 @@ def _run_sp800_108_data_param_count(ctx: ProbeContext, extra: dict[str, Any]) ->
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
+    # A data-param count of N advertises N CK_PRF_DATA_PARAM structs as
+    # readable input; back the full byte extent honestly or mark hostile.
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(
+            data_len * ctypes.sizeof(CK_PRF_DATA_PARAM)
+        )
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     base_key = _import_derive_base_key(ctx, value_len=32, label="SP800-108")
     try:
@@ -483,8 +543,14 @@ def _run_sp800_108_data_param_count(ctx: ProbeContext, extra: dict[str, Any]) ->
         mech.mechanism = CKM_SP800_108_COUNTER_KDF
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_DeriveKey(SP800_108_COUNTER_KDF,data-param "
+                f"count={data_len:#x}) unbacked",
+                flush=True,
+            )
 
-        d_tmpl, _keepalive = _derived_aes_key_template()
+        d_tmpl, _keepalive2 = _derived_aes_key_template()
         derived = CK_OBJECT_HANDLE(0)
         rv = raw.C_DeriveKey(
             sh,
@@ -509,11 +575,14 @@ def _run_sp800_108_additional_derived_key_count(ctx: ProbeContext, extra: dict[s
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
+    # An additional-derived-key count of N advertises N CK_DERIVED_KEY
+    # structs; back the full byte extent honestly or mark hostile.
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len * ctypes.sizeof(CK_DERIVED_KEY))
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     base_key = _import_derive_base_key(ctx, value_len=32, label="SP800-108")
     try:
@@ -552,8 +621,14 @@ def _run_sp800_108_additional_derived_key_count(ctx: ProbeContext, extra: dict[s
         mech.mechanism = CKM_SP800_108_COUNTER_KDF
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_DeriveKey(SP800_108_COUNTER_KDF,additional-key "
+                f"count={data_len:#x}) unbacked",
+                flush=True,
+            )
 
-        d_tmpl, _keepalive = _derived_aes_key_template()
+        d_tmpl, _keepalive2 = _derived_aes_key_template()
         primary = CK_OBJECT_HANDLE(0)
         rv = raw.C_DeriveKey(
             sh,
@@ -604,17 +679,18 @@ def _run_sp800_108_additional_derived_key_count(ctx: ProbeContext, extra: dict[s
 
 
 def _run_rsa_oaep_source_data_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_EncryptInit/C_Encrypt(RSA_PKCS_OAEP) with honeypot pSourceData + huge ulSourceDataLen."""
+    """C_EncryptInit/C_Encrypt(RSA_PKCS_OAEP) with honest/hostile pSourceData + huge len."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         pub, priv = gen_rsa_keypair(
@@ -638,6 +714,12 @@ def _run_rsa_oaep_source_data_length(ctx: ProbeContext, extra: dict[str, Any]) -
         mech.mechanism = CKM_RSA_PKCS_OAEP
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_EncryptInit(RSA_PKCS_OAEP,ulSourceDataLen="
+                f"{data_len:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_EncryptInit(sh, ctypes.byref(mech), pub)
         print(f"INIT_RV:0x{rv:08x}", flush=True)
         if rv == CKR_OK:
@@ -657,17 +739,18 @@ def _run_rsa_oaep_source_data_length(ctx: ProbeContext, extra: dict[str, Any]) -
 
 
 def _run_gcm_iv_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_EncryptInit/C_Encrypt(AES_GCM) with honeypot pIv + huge ulIvLen."""
+    """C_EncryptInit/C_Encrypt(AES_GCM) with honest/hostile pIv + huge ulIvLen."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     iv_len = int(extra["iv_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(iv_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         key = gen_aes_key(raw, sh, 256)
@@ -686,6 +769,11 @@ def _run_gcm_iv_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.mechanism = CKM_AES_GCM
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_EncryptInit(AES_GCM,ulIvLen={iv_len:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
         print(f"INIT_RV:0x{rv:08x}", flush=True)
         if rv == CKR_OK:
@@ -740,17 +828,18 @@ def _run_gcm_tag_bits_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_ccm_nonce_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_EncryptInit/C_Encrypt(AES_CCM) with honeypot pNonce + huge ulNonceLen."""
+    """C_EncryptInit/C_Encrypt(AES_CCM) with honest/hostile pNonce + huge ulNonceLen."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     nonce_len = int(extra["nonce_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(nonce_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         key = gen_aes_key(raw, sh, 256)
@@ -769,6 +858,11 @@ def _run_ccm_nonce_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.mechanism = CKM_AES_CCM
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_EncryptInit(AES_CCM,ulNonceLen={nonce_len:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
         print(f"INIT_RV:0x{rv:08x}", flush=True)
         if rv == CKR_OK:
@@ -823,17 +917,18 @@ def _run_ccm_mac_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_eddsa_context_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_SignInit/C_Sign(EDDSA) with honeypot pContextData + huge ulContextDataLen."""
+    """C_SignInit/C_Sign(EDDSA) with honest/hostile pContextData + huge ulContextDataLen."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     ctx_len = int(extra["ctx_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(ctx_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     curve_oid = encode_named_curve_parameters("ed25519")
     try:
@@ -861,6 +956,11 @@ def _run_eddsa_context_length(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.mechanism = CKM_EDDSA
         mech.pParameter = ctypes.cast(ctypes.pointer(params), ctypes.c_void_p)
         mech.ulParameterLen = ctypes.sizeof(params)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_SignInit(EDDSA,ulContextDataLen={ctx_len:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_SignInit(sh, ctypes.byref(mech), priv)
         print(f"INIT_RV:0x{rv:08x}", flush=True)
         if rv == CKR_OK:

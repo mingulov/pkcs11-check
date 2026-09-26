@@ -25,6 +25,9 @@ Output protocol (preserved verbatim for parent classifier):
   CKR_UPDATE1:0x%08x       -- first C_DecryptUpdate rv (gcm_decrypt_update_accumulation)
   CKR_UPDATE2:0x%08x       -- second C_DecryptUpdate rv (if first was CKR_OK)
   SETUP_XFAIL:<reason>     -- setup rejected; parent xfails as not_operational
+  HOSTILE_CALLER:<op>      -- un-mappable huge length executed as an explicitly
+                              unbacked (honest=0) input; parent records a
+                              non-normative hostile-caller robustness observation
 """
 
 from __future__ import annotations
@@ -73,7 +76,13 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_768,
     CKR_OK,
 )
-from pkcs11_check.testcases._probes.honeypot import HoneypotUnavailable, demand_zero_buffer
+from pkcs11_check.testcases._probes.honeypot import (
+    HoneypotUnavailable,
+    ZeroRegion,
+    demand_zero_buffer,
+    demand_zero_region,
+    hostile_unbacked_region,
+)
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
@@ -87,10 +96,79 @@ _CK_ULONG_MAX: int = ctypes.c_ulong(-1).value
 # 32-bit boundary constant used in the GCM accumulation probe.
 _ULONG_32BIT_MAX = 0xFFFFFFFF
 
+# Child->parent wire marker: the probe executed the provider call with an
+# explicitly unbacked (honest=0) huge length. The parent must route such
+# output as a non-normative hostile-caller robustness observation, never as
+# a conformance or security finding. Equal-valued to the ffi_length family's
+# constant (pinned identical by tests/test_honest_region_contract.py).
+HOSTILE_CALLER_PREFIX = "HOSTILE_CALLER:"
+
+# Largest readable/writable byte range the demand-zero mapping can back.
+# Must equal honeypot._HONEYPOT_SIZES[0] exactly (pinned by
+# tests/test_honest_region_contract.py). Claimed lengths above this are
+# un-mappable magnitudes: the probe marks them hostile instead of executing
+# an under-backed provider call as a conformance probe.
+_MAX_HONEST_BYTES = 1 << 40
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _demand_readable_or_hostile(claimed_len: int) -> tuple[ZeroRegion, Any]:
+    """Back a claimed readable byte range honestly, or mark it hostile.
+
+    Returns ``(region, keepalive)``: the caller passes ``region.ptr`` with
+    the claimed length and keeps ``keepalive`` referenced for the call.
+
+    * ``claimed_len <= _MAX_HONEST_BYTES``: ``demand_zero_region(claimed_len)``
+      (``keepalive`` is None; the process-lifetime mapping owns itself).
+      Raises :class:`HoneypotUnavailable` when this run cannot map the
+      range; the caller must print ``SETUP_XFAIL`` and never execute the
+      provider call.
+    * larger (un-mappable magnitudes): ``hostile_unbacked_region`` over a
+      fresh 16-byte buffer (``honest=0``, ``keepalive`` holds it); the
+      caller must print ``HOSTILE_CALLER:`` so the parent routes the
+      outcome as a non-normative hostile-caller robustness observation.
+    """
+    if claimed_len <= _MAX_HONEST_BYTES:
+        return demand_zero_region(claimed_len), None
+    small = (ctypes.c_ubyte * 16)(*range(16))
+    ptr = ctypes.cast(small, ctypes.POINTER(ctypes.c_ubyte))
+    return hostile_unbacked_region(ptr), small
+
+
+def _honest_template_or_hostile(count: int, first: CK_ATTRIBUTE) -> tuple[Any, Any, bool]:
+    """Back a ``count``-attribute template honestly, or mark it hostile.
+
+    Returns ``(template_ptr, keepalive, hostile)``: the caller passes
+    ``template_ptr`` with ``count`` and keeps ``keepalive`` referenced.
+
+    * ``count * sizeof(CK_ATTRIBUTE) <= _MAX_HONEST_BYTES``: an honestly
+      mapped region with ``first`` copied to slot 0 (the tail stays
+      demand-zero, so every advertised byte is mapped). Raises
+      :class:`HoneypotUnavailable` when this run cannot map the extent;
+      the caller must print ``SETUP_XFAIL`` and never execute the call.
+    * larger (un-mappable magnitudes): the single real attribute wrapped
+      by ``hostile_unbacked_region`` (``honest=0``); the caller must print
+      ``HOSTILE_CALLER:`` so the parent routes the outcome as a
+      non-normative hostile-caller robustness observation.
+    """
+    extent = count * ctypes.sizeof(CK_ATTRIBUTE)
+    if extent <= _MAX_HONEST_BYTES:
+        region = demand_zero_region(extent)
+        tmpl = ctypes.cast(region.ptr, ctypes.POINTER(CK_ATTRIBUTE))
+        tmpl[0] = first
+        return tmpl, region, False
+    single = (CK_ATTRIBUTE * 1)()
+    single[0] = first
+    ptr = ctypes.cast(single, ctypes.POINTER(ctypes.c_ubyte))
+    return (
+        ctypes.cast(single, ctypes.POINTER(CK_ATTRIBUTE)),
+        hostile_unbacked_region(ptr),
+        True,
+    )
 
 
 def _create_data_object(ctx: ProbeContext) -> int | None:
@@ -228,16 +306,25 @@ def _run_data_length_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             ):
                 return
             raise
+        try:
+            region, _keepalive = _demand_readable_or_hostile(data_len)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
+        buf = region.ptr
         mech = CK_MECHANISM()
         mech.mechanism = CKM_AES_ECB
         mech.pParameter = None
         mech.ulParameterLen = 0
         rv = getattr(raw, init_func)(sh, ctypes.byref(mech), key)
         if rv == CKR_OK:
-            # Small real buffer, but claim huge length
-            buf = (ctypes.c_ubyte * 16)(*range(16))
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{func}(ulDataLen={data_len:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = getattr(raw, func)(sh, buf, data_len, out_buf, ctypes.byref(out_len))
             print(f"rv={rv2}")
         else:
@@ -268,7 +355,7 @@ def _run_gcm_decrypt_update_accumulation(ctx: ProbeContext, _extra: dict[str, An
             raise
 
         try:
-            honeypot_buf = demand_zero_buffer()
+            honeypot_buf = demand_zero_buffer(min_size=_ULONG_32BIT_MAX)
         except HoneypotUnavailable as exc:
             print(f"SETUP_XFAIL:{exc}", flush=True)
             return
@@ -313,7 +400,7 @@ def _run_gcm_decrypt_update_accumulation(ctx: ProbeContext, _extra: dict[str, An
 
 
 def _run_mechanism_param_length_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_EncryptInit with pParameter pointing to a small buffer but ulParameterLen=ULONG_MAX.
+    """C_EncryptInit with ulParameterLen=ULONG_MAX over an honest/hostile parameter buffer.
 
     Prints ``rv={int}`` unconditionally.
     """
@@ -321,7 +408,6 @@ def _run_mechanism_param_length_overflow(ctx: ProbeContext, extra: dict[str, Any
     assert ctx.sh is not None
     sh: int = ctx.sh
     mech_name: str = extra["mech_name"]  # e.g. "CKM_AES_CBC" or "CKM_AES_GCM"
-    real_size: int = int(extra["real_size"])
 
     mech_id = getattr(_types_std, mech_name)
 
@@ -335,11 +421,21 @@ def _run_mechanism_param_length_overflow(ctx: ProbeContext, extra: dict[str, Any
             ):
                 return
             raise
-        param_buf = (ctypes.c_ubyte * real_size)(*range(real_size))
+        try:
+            region, _keepalive = _demand_readable_or_hostile(_CK_ULONG_MAX)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
         mech = CK_MECHANISM()
         mech.mechanism = mech_id
-        mech.pParameter = ctypes.cast(param_buf, ctypes.c_void_p)
-        mech.ulParameterLen = _CK_ULONG_MAX  # Real buffer is only real_size bytes!
+        mech.pParameter = ctypes.cast(region.ptr, ctypes.c_void_p)
+        mech.ulParameterLen = _CK_ULONG_MAX
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_EncryptInit({mech_name},"
+                f"ulParameterLen={_CK_ULONG_MAX:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_EncryptInit(sh, ctypes.byref(mech), key)
         print(f"rv={rv}")
     finally:
@@ -431,7 +527,7 @@ def _run_pss_salt_length_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> N
 
 
 def _run_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """Template-accepting functions with a huge template count and 1 real CK_ATTRIBUTE.
+    """Template-accepting functions with a huge template count, honestly backed or hostile.
 
     Dispatches on extra["op"]:
       C_CreateObject / C_GenerateKey / C_FindObjectsInit / C_SetAttributeValue -- no keygen
@@ -451,8 +547,18 @@ def _run_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> No
         cls_val = CK_ULONG(CKO_DATA)
         attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
         attr.ulValueLen = ctypes.sizeof(cls_val)
+        try:
+            tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
         handle = CK_OBJECT_HANDLE(0)
-        rv = raw.C_CreateObject(sh, ctypes.byref(attr), count, ctypes.byref(handle))
+        if hostile:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                flush=True,
+            )
+        rv = raw.C_CreateObject(sh, tmpl, count, ctypes.byref(handle))
         print(f"rv={rv}")
 
     elif op == "C_GenerateKey":
@@ -465,10 +571,18 @@ def _run_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> No
         vlen = CK_ULONG(32)
         attr.pValue = ctypes.cast(ctypes.pointer(vlen), ctypes.c_void_p)
         attr.ulValueLen = ctypes.sizeof(vlen)
+        try:
+            tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
         key = CK_OBJECT_HANDLE(0)
-        rv = raw.C_GenerateKey(
-            sh, ctypes.byref(mech_gen), ctypes.byref(attr), count, ctypes.byref(key)
-        )
+        if hostile:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                flush=True,
+            )
+        rv = raw.C_GenerateKey(sh, ctypes.byref(mech_gen), tmpl, count, ctypes.byref(key))
         print(f"rv={rv}")
 
     elif op == "C_FindObjectsInit":
@@ -477,7 +591,17 @@ def _run_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> No
         cls_val = CK_ULONG(CKO_DATA)
         attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
         attr.ulValueLen = ctypes.sizeof(cls_val)
-        rv = raw.C_FindObjectsInit(sh, ctypes.byref(attr), count)
+        try:
+            tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
+        if hostile:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                flush=True,
+            )
+        rv = raw.C_FindObjectsInit(sh, tmpl, count)
         print(f"rv={rv}")
 
     elif op == "C_SetAttributeValue":
@@ -486,8 +610,18 @@ def _run_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> No
         cls_val = CK_ULONG(CKO_DATA)
         attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
         attr.ulValueLen = ctypes.sizeof(cls_val)
+        try:
+            tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
         # Use object handle 0 -- the huge count should be rejected first
-        rv = raw.C_SetAttributeValue(sh, 0, ctypes.byref(attr), count)
+        if hostile:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                flush=True,
+            )
+        rv = raw.C_SetAttributeValue(sh, 0, tmpl, count)
         print(f"rv={rv}")
 
     elif op == "C_UnwrapKey":
@@ -506,19 +640,29 @@ def _run_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> No
             cls_val = CK_ULONG(CKO_SECRET_KEY)
             attr.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
             attr.ulValueLen = ctypes.sizeof(cls_val)
+            try:
+                tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+            except HoneypotUnavailable as exc:
+                print(f"SETUP_XFAIL:{exc}", flush=True)
+                return
             mech_unwrap = CK_MECHANISM()
             mech_unwrap.mechanism = CKM_AES_ECB
             mech_unwrap.pParameter = None
             mech_unwrap.ulParameterLen = 0
             fake_wrapped = (ctypes.c_ubyte * 32)(*range(32))
             out_key = CK_OBJECT_HANDLE(0)
+            if hostile:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                    flush=True,
+                )
             rv = raw.C_UnwrapKey(
                 sh,
                 ctypes.byref(mech_unwrap),
                 wrap_key,
                 fake_wrapped,
                 32,
-                ctypes.byref(attr),
+                tmpl,
                 count,
                 ctypes.byref(out_key),
             )
@@ -554,7 +698,17 @@ def _run_template_count_overflow_valid_handles(ctx: ProbeContext, extra: dict[st
             attr.type = CKA_CLASS
             attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
             attr.ulValueLen = ctypes.sizeof(out_class)
-            rv = raw.C_GetAttributeValue(sh, base_object, ctypes.byref(attr), count)
+            try:
+                tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+            except HoneypotUnavailable as exc:
+                print(f"SETUP_XFAIL:{exc}", flush=True)
+                return
+            if hostile:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                    flush=True,
+                )
+            rv = raw.C_GetAttributeValue(sh, base_object, tmpl, count)
             print(f"rv={rv}")
         finally:
             destroy_quietly(raw, sh, base_object)
@@ -566,7 +720,17 @@ def _run_template_count_overflow_valid_handles(ctx: ProbeContext, extra: dict[st
             attr.type = CKA_LABEL
             attr.pValue = ctypes.cast(label, ctypes.c_void_p)
             attr.ulValueLen = 8
-            rv = raw.C_SetAttributeValue(sh, base_object, ctypes.byref(attr), count)
+            try:
+                tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+            except HoneypotUnavailable as exc:
+                print(f"SETUP_XFAIL:{exc}", flush=True)
+                return
+            if hostile:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                    flush=True,
+                )
+            rv = raw.C_SetAttributeValue(sh, base_object, tmpl, count)
             print(f"rv={rv}")
         finally:
             destroy_quietly(raw, sh, base_object)
@@ -579,10 +743,20 @@ def _run_template_count_overflow_valid_handles(ctx: ProbeContext, extra: dict[st
             attr.type = CKA_TOKEN
             attr.pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
             attr.ulValueLen = 1
+            try:
+                tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+            except HoneypotUnavailable as exc:
+                print(f"SETUP_XFAIL:{exc}", flush=True)
+                return
+            if hostile:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                    flush=True,
+                )
             rv = raw.C_CopyObject(
                 sh,
                 base_object,
-                ctypes.byref(attr),
+                tmpl,
                 count,
                 ctypes.byref(copy_object),
             )
@@ -659,12 +833,22 @@ def _run_derive_key_template_count_overflow(ctx: ProbeContext, extra: dict[str, 
         attr.type = CKA_CLASS
         attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
         attr.ulValueLen = ctypes.sizeof(out_class)
+        try:
+            tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+        except HoneypotUnavailable as exc:
+            print(f"SETUP_XFAIL:{exc}", flush=True)
+            return
 
+        if hostile:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_DeriveKey(template_count={count:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_DeriveKey(
             sh,
             ctypes.byref(mech),
             base_key.value,
-            ctypes.byref(attr),
+            tmpl,
             count,
             ctypes.byref(derived),
         )
@@ -705,11 +889,21 @@ def _run_kem_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -
         ct_len = CK_ULONG(0)
         secret = CK_OBJECT_HANDLE(0)
         try:
+            try:
+                tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+            except HoneypotUnavailable as exc:
+                print(f"SETUP_XFAIL:{exc}", flush=True)
+                return
+            if hostile:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                    flush=True,
+                )
             rv = raw.C_EncapsulateKey(
                 sh,
                 ctypes.byref(mech),
                 pub_h,
-                ctypes.byref(attr),
+                tmpl,
                 count,
                 None,
                 ctypes.byref(ct_len),
@@ -748,17 +942,27 @@ def _run_kem_template_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -
             attr.type = CKA_CLASS
             attr.pValue = ctypes.cast(ctypes.pointer(out_class), ctypes.c_void_p)
             attr.ulValueLen = ctypes.sizeof(out_class)
+            try:
+                tmpl, _keepalive, hostile = _honest_template_or_hostile(count, attr)
+            except HoneypotUnavailable as exc:
+                print(f"SETUP_XFAIL:{exc}", flush=True)
+                return
 
             mech = CK_MECHANISM()
             mech.mechanism = CKM_ML_KEM
             mech.pParameter = None
             mech.ulParameterLen = 0
             ct_buf = (ctypes.c_ubyte * len(ciphertext))(*ciphertext)
+            if hostile:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}{op}(template_count={count:#x}) unbacked",
+                    flush=True,
+                )
             rv = raw.C_DecapsulateKey(
                 sh,
                 ctypes.byref(mech),
                 priv_h,
-                ctypes.byref(attr),
+                tmpl,
                 count,
                 ct_buf,
                 len(ciphertext),
@@ -825,8 +1029,9 @@ def _run_key_value_len_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> Non
 def _run_attribute_value_len_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     """Attribute functions with CK_ATTRIBUTE.ulValueLen = ULONG_MAX.
 
-    Passes a CK_ATTRIBUTE whose pValue points to a small buffer but whose
-    ulValueLen claims ULONG_MAX bytes.
+    Passes a CK_ATTRIBUTE whose ulValueLen claims ULONG_MAX bytes over an
+    honestly mapped region when the magnitude is mappable, else over an
+    explicitly unbacked (honest=0) small buffer.
 
     Prints ``rv={int}`` unconditionally.
     """
@@ -835,31 +1040,50 @@ def _run_attribute_value_len_overflow(ctx: ProbeContext, extra: dict[str, Any]) 
     sh: int = ctx.sh
     op: str = extra["op"]
 
+    try:
+        region, _keepalive = _demand_readable_or_hostile(_CK_ULONG_MAX)
+    except HoneypotUnavailable as exc:
+        print(f"SETUP_XFAIL:{exc}", flush=True)
+        return
+    buf = region.ptr
+
     if op == "C_GetAttributeValue":
-        buf = (ctypes.c_ubyte * 8)()
         attr = CK_ATTRIBUTE()
         attr.type = CKA_CLASS
         attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
         attr.ulValueLen = _CK_ULONG_MAX
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(ulValueLen={_CK_ULONG_MAX:#x}) unbacked",
+                flush=True,
+            )
         # Object handle 0 -- module may reject handle before reading attr
         rv = raw.C_GetAttributeValue(sh, 0, ctypes.pointer(attr), 1)
         print(f"rv={rv}")
 
     elif op == "C_SetAttributeValue":
-        buf = (ctypes.c_ubyte * 8)()
         attr = CK_ATTRIBUTE()
         attr.type = CKA_TOKEN
         attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
         attr.ulValueLen = _CK_ULONG_MAX
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(ulValueLen={_CK_ULONG_MAX:#x}) unbacked",
+                flush=True,
+            )
         rv = raw.C_SetAttributeValue(sh, 0, ctypes.pointer(attr), 1)
         print(f"rv={rv}")
 
     elif op == "C_CreateObject":
-        buf = (ctypes.c_ubyte * 8)()
         attr = CK_ATTRIBUTE()
         attr.type = CKA_CLASS
         attr.pValue = ctypes.cast(buf, ctypes.c_void_p)
         attr.ulValueLen = _CK_ULONG_MAX
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}{op}(ulValueLen={_CK_ULONG_MAX:#x}) unbacked",
+                flush=True,
+            )
         handle = CK_OBJECT_HANDLE(0)
         rv = raw.C_CreateObject(sh, ctypes.pointer(attr), 1, ctypes.byref(handle))
         print(f"rv={rv}")
@@ -871,7 +1095,8 @@ def _run_attribute_value_len_overflow(ctx: ProbeContext, extra: dict[str, Any]) 
 def _run_generate_key_pair_count_overflow(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     """C_GenerateKeyPair with ULONG_MAX template count for the pub or priv template.
 
-    Prints ``rv={int}`` unconditionally.
+    Each template is honestly backed when its byte extent is mappable, else
+    explicitly hostile (honest=0). Prints ``rv={int}`` unconditionally.
     """
     raw = ctx.raw
     assert ctx.sh is not None
@@ -898,14 +1123,27 @@ def _run_generate_key_pair_count_overflow(ctx: ProbeContext, extra: dict[str, An
     priv_attr.pValue = ctypes.cast(ctypes.pointer(priv_token), ctypes.c_void_p)
     priv_attr.ulValueLen = 1
 
+    try:
+        pub_tmpl, _keep_pub, pub_hostile = _honest_template_or_hostile(pub_count, pub_attr)
+        priv_tmpl, _keep_priv, priv_hostile = _honest_template_or_hostile(priv_count, priv_attr)
+    except HoneypotUnavailable as exc:
+        print(f"SETUP_XFAIL:{exc}", flush=True)
+        return
+
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
+    if pub_hostile or priv_hostile:
+        print(
+            f"{HOSTILE_CALLER_PREFIX}C_GenerateKeyPair(pub_count={pub_count:#x},"
+            f"priv_count={priv_count:#x}) unbacked",
+            flush=True,
+        )
     rv = raw.C_GenerateKeyPair(
         sh,
         ctypes.byref(mech),
-        ctypes.byref(pub_attr),
+        pub_tmpl,
         pub_count,
-        ctypes.byref(priv_attr),
+        priv_tmpl,
         priv_count,
         ctypes.byref(pub_h),
         ctypes.byref(priv_h),

@@ -7,6 +7,7 @@ The allowlist (``tests/_raw_site_allowlist.py``) lists files not yet migrated to
 
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 
@@ -69,6 +70,50 @@ def test_no_test_site_emits_reserved_unclassified_reason() -> None:
         "'unclassified' is reserved for the plugin runtime gate; remove from testcases/:\n"
         + "\n".join(hits)
     )
+
+
+def test_no_raw_ckr_literals_in_field_size_expected_sets() -> None:
+    """Field-size expected-CKR tuples must use symbolic ``CKR_*`` names (HSK-P11C-002).
+
+    Every module-level ``*_RVS`` tuple in
+    ``testcases/security/test_field_size_boundary.py`` must be built only from
+    generated ``CKR_*`` symbols. Raw ``CK_RV`` int literals previously carried
+    misleading comments (``0x23``, ``0x10``, ``0x0d``, ``0x70``, ``0x31`` are
+    not the CKRs the comments claimed) and silently accepted unrelated codes.
+    """
+    path = REPO_ROOT / "src/pkcs11_check/testcases/security/test_field_size_boundary.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+    checked: dict[str, int] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        names = [
+            target.id
+            for target in node.targets
+            if isinstance(target, ast.Name) and target.id.endswith("_RVS")
+        ]
+        if not names:
+            continue
+        literals = [
+            sub.value
+            for sub in ast.walk(node.value)
+            if isinstance(sub, ast.Constant)
+            and isinstance(sub.value, int)
+            and not isinstance(sub.value, bool)
+        ]
+        symbols = [
+            sub.id
+            for sub in ast.walk(node.value)
+            if isinstance(sub, ast.Name) and sub.id.startswith("CKR_")
+        ]
+        for name in names:
+            assert not literals, (
+                f"{name}: raw CK_RV literal(s) "
+                f"{[hex(v) for v in literals]}; use generated CKR_* symbols"
+            )
+            assert symbols, f"{name}: no symbolic CKR_* entries; expected-set guard vacuous"
+            checked[name] = len(symbols)
+    assert checked, "guard is vacuous: no *_RVS tuples found in test_field_size_boundary.py"
 
 
 def test_allowlist_is_empty() -> None:

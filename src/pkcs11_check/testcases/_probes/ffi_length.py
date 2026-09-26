@@ -1,12 +1,13 @@
 """Probe: isize::MAX (2^63) boundary lengths for PKCS#11 data / output functions.
 
 Untrusted-caller probe.  On a 64-bit platform the largest valid byte count for a
-contiguous slice is ``0x7FFFFFFFFFFFFFFF`` (2**63 - 1); passing that value (or one past
-it) as a data/part/output length with a small real buffer must be rejected cleanly, never
-form an out-of-bounds slice (CWE-681).  Input-length probes back the claimed length with a
-demand-zero honeypot so a crash is unconditionally real (docs/probe-soundness.md); output-
-length probes pass small real buffers and put the un-honorable value in the length field.
-Output protocol is preserved verbatim for the parent classifiers in
+contiguous slice is ``0x7FFFFFFFFFFFFFFF`` (2**63 - 1).  Mappable claimed lengths
+are honestly backed by a demand-zero region carrying at least that many bytes, so a
+crash on honest input is unconditionally real (docs/probe-soundness.md).  Un-mappable
+magnitudes execute as explicitly unbacked (``honest=0``) hostile-caller inputs and
+print ``HOSTILE_CALLER:`` before the provider call; the parent routes those outcomes
+as non-normative ``EXTENDED`` robustness observations.  Output protocol is otherwise
+preserved verbatim for the parent classifiers in
 security/test_ffi_length_boundary.py.
 
 Dispatch on ``params.extra["probe"]``:

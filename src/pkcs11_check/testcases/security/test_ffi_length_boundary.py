@@ -10,6 +10,12 @@ A CK_ULONG length that exceeds the platform's maximum addressable slice size
 (or available memory) must be rejected with a clean CK_RV, never used to form
 an out-of-bounds slice or drive an unguarded allocation (CWE-197 / CWE-681 /
 CWE-789).
+
+Honest-region contract (P11C-0198-010): mappable claimed lengths are backed by
+an honestly mapped region carrying at least that many bytes. Un-mappable
+magnitudes (2^63) execute as explicitly unbacked (``honest=0``) hostile-caller
+inputs whose outcomes are non-normative ``EXTENDED`` robustness observations,
+never conformance or security findings.
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as, xfail_as
+from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.raw import types_std
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.rv import ckr_name
@@ -50,11 +58,15 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._probes._ffi_length_base import HOSTILE_CALLER_PREFIX
 from pkcs11_check.testcases._probes._ffi_length_message import (
     SETUP_CONTRADICTION_PREFIX,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
-from pkcs11_check.testcases._subprocess_preamble import pin_from_config
+from pkcs11_check.testcases._subprocess_preamble import (
+    SUBPROCESS_TIMEOUT_MARKER,
+    pin_from_config,
+)
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     destroy_returned_handles,
@@ -111,6 +123,94 @@ def _parse_prefixed_int(output: str, prefix: str) -> int:
     raise AssertionError(f"Missing {prefix!r} line in subprocess output: {output[-300:]}")
 
 
+# CPython traceback header (same line `runner._PYTHON_TRACEBACK` matches): a
+# hostile-path child exit carrying one is a probe bug, not provider behavior.
+_TRACEBACK_LINE = "Traceback (most recent call last)"
+
+
+def _is_hostile_caller(stdout: str) -> bool:
+    """Whether the child executed the provider call with an unbacked huge length."""
+    return any(line.startswith(HOSTILE_CALLER_PREFIX) for line in stdout.splitlines())
+
+
+def _observe_hostile_caller_robustness(
+    rc: int,
+    stdout: str,
+    stderr: str,
+    *,
+    label_op: str,
+    test_id: str,
+    rv_prefix: str = "TARGET_RV:",
+) -> None:
+    """Record a non-normative hostile-caller robustness observation; never fail.
+
+    The child passed an explicitly unbacked (``honest=0``) huge length that no
+    demand-zero mapping can back. Whatever the provider did -- crash, hang,
+    reject, or accept -- the caller owns the fault, so the outcome is an
+    ``EXTENDED`` compliance note, never a conformance or security finding.
+    The only loud path is a Python-traceback child exit, which is a probe bug.
+    """
+    if is_crash_returncode(rc):
+        note(
+            f"hostile-caller robustness observation (non-normative): {label_op} "
+            f"with an explicitly unbacked huge length terminated the child "
+            f"({crash_detail_name(rc)}); out-of-contract caller input -- the caller "
+            "owns the fault, not the provider; not a conformance or security finding",
+            ComplianceLevel.EXTENDED,
+            reference="P11C-0198-010",
+            test_id=test_id,
+        )
+        return
+    if SUBPROCESS_TIMEOUT_MARKER in stderr:
+        note(
+            f"hostile-caller robustness observation (non-normative): {label_op} "
+            "with an explicitly unbacked huge length timed out without returning; "
+            "out-of-contract caller input -- the caller owns the fault, not the "
+            "provider; not a conformance or security finding",
+            ComplianceLevel.EXTENDED,
+            reference="P11C-0198-010",
+            test_id=test_id,
+        )
+        return
+    if rc == 0:
+        rv: int | None = None
+        for line in stdout.splitlines():
+            if line.startswith(rv_prefix):
+                try:
+                    rv = int(line.removeprefix(rv_prefix), 0)
+                except ValueError:
+                    rv = None
+                break
+        outcome = f"returned {ckr_name(rv)}" if rv is not None else "completed"
+        note(
+            f"hostile-caller robustness observation (non-normative): {label_op} "
+            f"with an explicitly unbacked huge length {outcome}; out-of-contract "
+            "caller input -- the caller owns the fault, not the provider; not a "
+            "conformance or security finding",
+            ComplianceLevel.EXTENDED,
+            reference="P11C-0198-010",
+            test_id=test_id,
+        )
+        return
+    if _TRACEBACK_LINE in stderr:
+        # Our probe code raised after printing the marker: a probe bug, loud
+        # (AssertionError, like _parse_prefixed_int protocol failures).
+        raise AssertionError(
+            f"{label_op}: hostile-path probe bug -- child exited {rc} with a "
+            f"Python traceback after printing the {HOSTILE_CALLER_PREFIX} marker; "
+            f"not provider behavior:\n{stderr[-1500:]}"
+        )
+    note(
+        f"hostile-caller robustness observation (non-normative): {label_op} "
+        f"with an explicitly unbacked huge length ended with exit code {rc} and "
+        "no Python traceback; out-of-contract caller input -- the caller owns "
+        "the fault, not the provider; not a conformance or security finding",
+        ComplianceLevel.EXTENDED,
+        reference="P11C-0198-010",
+        test_id=test_id,
+    )
+
+
 # ---------------------------------------------------------------------------
 # TestIsizeMaxDataLength
 # ---------------------------------------------------------------------------
@@ -133,9 +233,16 @@ def _classify_unhonorable_length_outcome(
     """Classify the outcome of an un-honorable (2^63) length probe.
 
     Verdict matrix:
-    - Timeout/crash -> hard crash-class finding. The normal honeypot cannot map 2^63
-      bytes, so read-vs-write attribution remains pending an ASAN rerun; lack of that
-      evidence must not exonerate a provider crash or hang.
+    - HOSTILE_CALLER marker present -> non-normative hostile-caller robustness
+      observation (EXTENDED note, pass). The child executed the provider call
+      with an explicitly unbacked huge length no mapping can back, so the
+      caller owns whatever happened; never a conformance or security finding.
+      Checked first, before the crash path.
+    - Timeout/crash with no marker -> hard crash-class finding. For honestly
+      backed inputs the crash is unconditionally the provider's; for the
+      Task 2 message arms (which carry no marker) read-vs-write attribution
+      remains pending an ASAN rerun, and lack of that evidence must not
+      exonerate a provider crash or hang.
     - SETUP_XFAIL line present -> xfail (not_operational, setup didn't reach probe).
     - CKR_OK -> fail (accepted_invalid: silent truncation of an un-honorable length).
     - rv in reject_rvs -> pass.
@@ -143,6 +250,10 @@ def _classify_unhonorable_length_outcome(
     """
     from pkcs11_check.testcases._probes.honeypot import SETUP_XFAIL_PREFIX
     from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+
+    if _is_hostile_caller(stdout):
+        _observe_hostile_caller_robustness(rc, stdout, stderr, label_op=label_op, test_id=test_id)
+        return
 
     if rc != 0:
         assert_subprocess_completed(
@@ -221,11 +332,10 @@ class TestIsizeMaxDataLength:
     """Probe data functions with isize::MAX boundary lengths.
 
     On 64-bit platforms the largest valid byte count for a contiguous
-    slice is 0x7FFFFFFFFFFFFFFF (2**63 - 1).  Passing this value (or one
-    past it) as the data length to C_Encrypt / C_Decrypt / C_Sign /
-    C_Digest with a small real buffer must be rejected cleanly; forming a
-    slice of byte count beyond this boundary risks undefined behavior
-    (CWE-681).
+    slice is 0x7FFFFFFFFFFFFFFF (2**63 - 1). These magnitudes are
+    un-mappable, so the probes execute as explicitly unbacked (``honest=0``)
+    hostile-caller inputs: the outcomes are non-normative ``EXTENDED``
+    robustness observations, never conformance or security findings.
     """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -971,7 +1081,11 @@ _UPDATE_LENGTH_OPS = [
 
 @requires_64bit_ck_ulong
 class TestIsizeMaxUpdateLength:
-    """Initialized update APIs must reject huge claimed input lengths safely."""
+    """Initialized update APIs with un-mappable claimed lengths (hostile-caller robustness).
+
+    These magnitudes are un-mappable: explicitly unbacked (``honest=0``)
+    hostile-caller observations, never conformance or security findings.
+    """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("op", _UPDATE_LENGTH_OPS)
@@ -1033,7 +1147,11 @@ class TestIsizeMaxUpdateLength:
 
 @requires_64bit_ck_ulong
 class TestRandomIsizeLength:
-    """Random APIs must handle impossible claimed buffer lengths safely."""
+    """Random APIs with un-mappable claimed lengths (hostile-caller robustness).
+
+    These magnitudes are un-mappable: explicitly unbacked (``honest=0``)
+    hostile-caller observations, never conformance or security findings.
+    """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     def test_seed_random_isize_length_rejects_cleanly(
@@ -1041,7 +1159,7 @@ class TestRandomIsizeLength:
         p11_config: Any,
         data_len: int,
     ) -> None:
-        """``C_SeedRandom`` must reject an impossible claimed seed length cleanly."""
+        """``C_SeedRandom`` with an un-mappable claimed seed length (hostile-caller)."""
         result = run_probe(
             "ffi_length",
             {
@@ -1312,10 +1430,11 @@ class TestIsizeMaxOutputLength:
     """Probe OUTPUT buffer length parameters with isize::MAX boundary.
 
     Complementary to TestIsizeMaxDataLength which tests INPUT data length.
-    The same maximum-slice-size boundary applies to OUTPUT/signature
-    buffer-size parameters on sign / verify / digest and their *Final
-    variants.  A claimed output buffer size at the 64-bit boundary (or one
-    past it) with a small real buffer must be rejected, not cause UB.
+    Mappable capacities are backed by honestly writable regions (truthful
+    declared capacity, strict); these 2^63 magnitudes are un-mappable, so
+    they execute as explicitly unbacked (``honest=0``) hostile-caller
+    inputs: non-normative ``EXTENDED`` robustness observations, never
+    conformance or security findings.
     """
 
     @pytest.mark.parametrize("out_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -1343,11 +1462,17 @@ class TestIsizeMaxOutputLength:
             interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        label_op = f"C_Sign(HMAC_SHA256, sig_len={out_len:#x})"
+        if _is_hostile_caller(stdout):
+            _observe_hostile_caller_robustness(
+                rc, stdout, stderr, label_op=label_op, test_id="test_sign_isize_output"
+            )
+            return
         assert_subprocess_no_crash(
             rc,
             stdout,
             stderr,
-            context=f"C_Sign(HMAC_SHA256, sig_len={out_len:#x})",
+            context=label_op,
         )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1382,11 +1507,17 @@ class TestIsizeMaxOutputLength:
             interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        label_op = f"C_Digest(SHA256, digest_len={out_len:#x})"
+        if _is_hostile_caller(stdout):
+            _observe_hostile_caller_robustness(
+                rc, stdout, stderr, label_op=label_op, test_id="test_digest_isize_output"
+            )
+            return
         assert_subprocess_no_crash(
             rc,
             stdout,
             stderr,
-            context=f"C_Digest(SHA256, digest_len={out_len:#x})",
+            context=label_op,
         )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1421,11 +1552,17 @@ class TestIsizeMaxOutputLength:
             interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        label_op = f"C_Verify(HMAC_SHA256, sig_len={sig_len:#x})"
+        if _is_hostile_caller(stdout):
+            _observe_hostile_caller_robustness(
+                rc, stdout, stderr, label_op=label_op, test_id="test_verify_isize_sig_len"
+            )
+            return
         assert_subprocess_no_crash(
             rc,
             stdout,
             stderr,
-            context=f"C_Verify(HMAC_SHA256, sig_len={sig_len:#x})",
+            context=label_op,
         )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
@@ -1701,7 +1838,12 @@ _AES_CBC_ENCRYPT_DATA_PARAM_CASES = (
 
 @requires_64bit_ck_ulong
 class TestAesCbcEncryptDataMalformedParams:
-    """CKM_AES_CBC_ENCRYPT_DATA must reject malformed nested data safely."""
+    """CKM_AES_CBC_ENCRYPT_DATA must reject malformed nested data safely.
+
+    The NULL case stays strict (explicit NULL with nonzero length). The
+    tiny-buffer/un-mappable-length case is an explicitly unbacked
+    (``honest=0``) hostile-caller observation, never a finding.
+    """
 
     @pytest.mark.parametrize(
         ("case_label", "p_data_expr", "data_len"),
@@ -1735,17 +1877,27 @@ class TestAesCbcEncryptDataMalformedParams:
             interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        label_op = f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})"
+        if _is_hostile_caller(stdout):
+            _observe_hostile_caller_robustness(
+                rc,
+                stdout,
+                stderr,
+                label_op=label_op,
+                test_id="test_aes_cbc_encrypt_data_malformed_params",
+            )
+            return
         assert_subprocess_no_crash(
             rc,
             stdout,
             stderr,
-            context=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
+            context=label_op,
         )
         rv = _parse_prefixed_int(stdout, "TARGET_RV:")
         classify_negative_rv(
             rv,
             _PARAM_LENGTH_REJECT_RVS,
-            label=f"C_DeriveKey(AES_CBC_ENCRYPT_DATA, {case_label})",
+            label=label_op,
         )
 
 
@@ -1813,13 +1965,13 @@ class TestRsaPssSaltLengthBoundary:
 
 @requires_64bit_ck_ulong
 class TestGcmAadLengthBoundary:
-    """AES-GCM ulAADLen must not turn a tiny AAD buffer into a huge read.
+    """AES-GCM ulAADLen boundary (honest backing or hostile-caller robustness).
 
-    CK_AES_GCM_PARAMS.pAAD/ulAADLen are caller-controlled. A module that reads
-    ulAADLen bytes from pAAD without bounds-checking over-reads when the claimed
-    length is impossible. Drive C_EncryptInit + C_Encrypt with a tiny real AAD
-    buffer and isize::MAX / isize::MAX+1 claimed lengths; crash/hang is a finding
-    and CKR_OK accepts a nonsensical length.
+    CK_AES_GCM_PARAMS.pAAD/ulAADLen are caller-controlled. Mappable lengths
+    are honestly backed (strict); these isize::MAX / isize::MAX+1 magnitudes
+    are un-mappable, so they execute as explicitly unbacked (``honest=0``)
+    hostile-caller inputs: non-normative ``EXTENDED`` robustness
+    observations, never conformance or security findings.
     """
 
     @pytest.mark.parametrize("aad_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -1870,12 +2022,12 @@ class TestGcmAadLengthBoundary:
 
 @requires_64bit_ck_ulong
 class TestCcmAadLengthBoundary:
-    """AES-CCM ulAADLen must not turn a tiny AAD buffer into a huge read.
+    """AES-CCM ulAADLen boundary (honest backing or hostile-caller robustness).
 
-    Mirrors the GCM AAD-length probe for CK_AES_CCM_PARAMS.pAAD/ulAADLen: a tiny
-    real AAD buffer with an impossible claimed length must be rejected, not
-    over-read; crash/abnormal-exit is a finding and CKR_OK accepts a nonsensical
-    length.
+    Mirrors the GCM AAD-length probe for CK_AES_CCM_PARAMS.pAAD/ulAADLen.
+    Mappable lengths are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
     """
 
     @pytest.mark.parametrize("aad_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -1926,7 +2078,12 @@ class TestCcmAadLengthBoundary:
 
 @requires_64bit_ck_ulong
 class TestPbkdf2NestedLengthBoundary:
-    """PBKDF2 nested byte fields must reject impossible claimed lengths safely."""
+    """PBKDF2 nested byte fields (honest backing or hostile-caller robustness).
+
+    Mappable lengths are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
+    """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize(
@@ -1944,7 +2101,7 @@ class TestPbkdf2NestedLengthBoundary:
         field: str,
         data_len: int,
     ) -> None:
-        """C_GenerateKey(PBKDF2) must not read past tiny nested input buffers."""
+        """C_GenerateKey(PBKDF2) with honest/hostile nested input lengths."""
         rs = p11_raw_session
         if not rs.has_mechanism("PKCS5_PBKD2"):
             pytest.skip("CKM_PKCS5_PBKD2 not supported")
@@ -2013,7 +2170,12 @@ _PBE_LENGTH_MECHANISMS = (
 
 @requires_64bit_ck_ulong
 class TestPbeNestedLengthBoundary:
-    """PBE parameter byte fields must reject impossible claimed lengths safely."""
+    """PBE parameter byte fields (honest backing or hostile-caller robustness).
+
+    Mappable lengths are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
+    """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize("field", ("password", "salt"))
@@ -2026,7 +2188,7 @@ class TestPbeNestedLengthBoundary:
         field: str,
         data_len: int,
     ) -> None:
-        """C_GenerateKey(PBE) must not read past tiny password/salt buffers."""
+        """C_GenerateKey(PBE) with honest/hostile password/salt lengths."""
         rs = p11_raw_session
         mech_name, mech_const, key_type_const, iv_len, sign_verify = pbe_case
         if not rs.has_mechanism(mech_name):
@@ -2115,7 +2277,12 @@ class TestTlsKdfNullParams:
 
 @requires_64bit_ck_ulong
 class TestTlsKdfRandomLengthBoundary:
-    """TLS KDF nested random buffers must reject impossible claimed lengths."""
+    """TLS KDF nested random buffers (honest backing or hostile-caller robustness).
+
+    Mappable lengths are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
+    """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     @pytest.mark.parametrize(
@@ -2132,7 +2299,7 @@ class TestTlsKdfRandomLengthBoundary:
         field: str,
         data_len: int,
     ) -> None:
-        """C_DeriveKey(TLS_KDF) must not read past tiny random buffers."""
+        """C_DeriveKey(TLS_KDF) with honest/hostile random lengths."""
         rs = p11_raw_session
         if not rs.has_mechanism("TLS_KDF"):
             pytest.skip("CKM_TLS_KDF not supported")
@@ -2218,7 +2385,12 @@ class TestSp800108NullDataParams:
 
 @requires_64bit_ck_ulong
 class TestSp800108NestedCountBoundary:
-    """SP800-108 nested arrays must reject impossible counts safely."""
+    """SP800-108 nested arrays (honest backing or hostile-caller robustness).
+
+    Mappable count extents are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
+    """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
     def test_sp800_108_data_param_count_boundary(
@@ -2227,7 +2399,7 @@ class TestSp800108NestedCountBoundary:
         p11_config: Any,
         data_len: int,
     ) -> None:
-        """A real pDataParams array with a huge count must not be overread."""
+        """A pDataParams array with an honest/hostile huge count."""
         rs = p11_raw_session
         if not rs.has_mechanism("SP800_108_COUNTER_KDF"):
             pytest.skip("CKM_SP800_108_COUNTER_KDF not supported")
@@ -2261,7 +2433,7 @@ class TestSp800108NestedCountBoundary:
         p11_config: Any,
         data_len: int,
     ) -> None:
-        """A real additional-key array with a huge count must not be overread."""
+        """An additional-key array with an honest/hostile huge count."""
         rs = p11_raw_session
         if not rs.has_mechanism("SP800_108_COUNTER_KDF"):
             pytest.skip("CKM_SP800_108_COUNTER_KDF not supported")
@@ -2294,22 +2466,21 @@ class TestSp800108NestedCountBoundary:
 # ---------------------------------------------------------------------------
 # Wave 1: nested mechanism-parameter length-boundary probes
 # (RSA-OAEP source-data, GCM IV / tag-bits, CCM nonce / MAC, EdDSA context)
-# Each probe pairs a tiny real buffer with an impossible (isize::MAX /
-# isize::MAX+1) *claimed* length. Crash/hang is a finding; CKR_OK accepts a
-# nonsensical length; clean reject is the only passing verdict.
+# Buffer-length probes are honestly backed when mappable; the impossible
+# (isize::MAX / isize::MAX+1) magnitudes are explicitly unbacked hostile-
+# caller observations. Scalar probes (tag-bits, MAC length) stay strict:
+# crash/hang is a finding; CKR_OK accepts a nonsensical length.
 # ---------------------------------------------------------------------------
 
 
 @requires_64bit_ck_ulong
 class TestRsaOaepSourceDataLengthBoundary:
-    """RSA-OAEP ulSourceDataLen must not turn a tiny source buffer into a huge read.
+    """RSA-OAEP ulSourceDataLen boundary (honest backing or hostile-caller robustness).
 
-    CK_RSA_PKCS_OAEP_PARAMS.pSourceData/ulSourceDataLen are caller-controlled. A
-    module that reads ulSourceDataLen bytes from pSourceData without
-    bounds-checking over-reads when the claimed length is impossible. Drive
-    C_EncryptInit + C_Encrypt with a tiny real source buffer and isize::MAX /
-    isize::MAX+1 claimed lengths; crash/hang is a finding and CKR_OK accepts a
-    nonsensical length.
+    CK_RSA_PKCS_OAEP_PARAMS.pSourceData/ulSourceDataLen are caller-controlled.
+    Mappable lengths are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
     """
 
     @pytest.mark.parametrize("data_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2363,13 +2534,12 @@ class TestRsaOaepSourceDataLengthBoundary:
 
 @requires_64bit_ck_ulong
 class TestGcmIvLengthBoundary:
-    """AES-GCM ulIvLen must not turn a tiny IV buffer into a huge read.
+    """AES-GCM ulIvLen boundary (honest backing or hostile-caller robustness).
 
-    CK_AES_GCM_PARAMS.pIv/ulIvLen are caller-controlled. A module that reads
-    ulIvLen bytes from pIv without bounds-checking over-reads when the claimed
-    length is impossible. Drive C_EncryptInit + C_Encrypt with a tiny real IV
-    buffer and isize::MAX / isize::MAX+1 claimed lengths; crash/hang is a
-    finding and CKR_OK accepts a nonsensical length.
+    CK_AES_GCM_PARAMS.pIv/ulIvLen are caller-controlled. Mappable lengths
+    are honestly backed (strict); these isize::MAX / isize::MAX+1 magnitudes
+    are un-mappable: explicitly unbacked (``honest=0``) hostile-caller
+    observations, never findings.
     """
 
     @pytest.mark.parametrize("iv_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2478,14 +2648,13 @@ class TestGcmTagBitsLengthBoundary:
 
 @requires_64bit_ck_ulong
 class TestCcmNonceLengthBoundary:
-    """AES-CCM ulNonceLen must reject impossible values safely.
+    """AES-CCM ulNonceLen boundary (honest backing or hostile-caller robustness).
 
-    CK_AES_CCM_PARAMS.ulNonceLen is a caller-controlled CK_ULONG. NIST SP800-38C
-    restricts nonce size to the range [7, 13]; isize::MAX / isize::MAX+1 is
-    impossible. A module that uses the value without bounds-checking can
-    over-read or over-allocate. Drive C_EncryptInit + C_Encrypt with isize::MAX
-    / isize::MAX+1 ulNonceLen and a tiny real pNonce (13 bytes); crash is a
-    finding and CKR_OK accepts a nonsensical length.
+    CK_AES_CCM_PARAMS.pNonce/ulNonceLen are caller-controlled (NIST SP800-38C
+    restricts nonce size to [7, 13]). Mappable lengths are honestly backed
+    (strict); these isize::MAX / isize::MAX+1 magnitudes are un-mappable:
+    explicitly unbacked (``honest=0``) hostile-caller observations, never
+    findings.
     """
 
     @pytest.mark.parametrize("nonce_len", _ISIZE_BOUNDARY_LENGTHS)
@@ -2594,13 +2763,12 @@ class TestCcmMacLengthBoundary:
 
 @requires_64bit_ck_ulong
 class TestEddsaContextLengthBoundary:
-    """EdDSA ulContextDataLen must not turn a tiny context buffer into a huge read.
+    """EdDSA ulContextDataLen boundary (honest backing or hostile-caller robustness).
 
-    CK_EDDSA_PARAMS.pContextData/ulContextDataLen are caller-controlled. A module
-    that reads ulContextDataLen bytes from pContextData without bounds-checking
-    over-reads when the claimed length is impossible. Drive C_SignInit + C_Sign
-    with a tiny real context buffer and isize::MAX / isize::MAX+1 claimed
-    lengths; crash/hang is a finding and CKR_OK accepts a nonsensical length.
+    CK_EDDSA_PARAMS.pContextData/ulContextDataLen are caller-controlled.
+    Mappable lengths are honestly backed (strict); these isize::MAX /
+    isize::MAX+1 magnitudes are un-mappable: explicitly unbacked
+    (``honest=0``) hostile-caller observations, never findings.
     """
 
     @pytest.mark.parametrize("ctx_len", _ISIZE_BOUNDARY_LENGTHS)

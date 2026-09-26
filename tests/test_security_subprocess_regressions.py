@@ -2955,3 +2955,647 @@ def test_ffi_length_reject_rv_tuples_are_canonical_and_correct() -> None:
         assert CKR_MECHANISM_INVALID in tup
         assert CKR_KEY_SIZE_RANGE in tup
         assert CKR_TEMPLATE_INCONSISTENT in tup
+
+
+# ---------------------------------------------------------------------------
+# F2 (v0.2.2 correction release): honest-region contract for huge-length
+# probes (P11C-0198-010).
+#
+# New tests only, in clearly named TestF2* classes. F11 appends its own
+# section to this file later, so these hunks stay separable: nothing above
+# this line is modified for F2 (function-local imports throughout).
+# ---------------------------------------------------------------------------
+
+
+def _f2_extended_notes() -> list[str]:
+    """Drain and return EXTENDED compliance-note descriptions (F2-local)."""
+    from pkcs11_check import compliance
+
+    try:
+        return [
+            n.description
+            for n in compliance.get_notes()
+            if n.level is compliance.ComplianceLevel.EXTENDED
+        ]
+    finally:
+        compliance.clear_notes()
+
+
+def _f2_reset_notes() -> None:
+    from pkcs11_check import compliance
+
+    compliance.clear_notes()
+
+
+def _f2_recording_demand(
+    monkeypatch: pytest.MonkeyPatch, module: object, *, fail: bool = False
+) -> list[int]:
+    """Replace ``module.demand_zero_region`` with a recorder (F2-local).
+
+    Returns the list of requested minima. The fake region reports
+    ``mapped_length == minimum`` over a small real buffer (no huge backing).
+    With ``fail=True`` every demand raises ``HoneypotUnavailable``.
+    """
+    import ctypes
+
+    from pkcs11_check.testcases._probes import honeypot
+
+    calls: list[int] = []
+    keepalive: list[object] = []
+
+    def _fake(minimum_length: int = 0) -> honeypot.ZeroRegion:
+        calls.append(minimum_length)
+        if fail:
+            raise honeypot.HoneypotUnavailable("f2 fake: no mapping")
+        buf = (ctypes.c_ubyte * 64)()
+        keepalive.append(buf)
+        return honeypot.ZeroRegion(
+            ptr=ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)),
+            mapped_length=minimum_length,
+            honest=1,
+        )
+
+    monkeypatch.setattr(module, "demand_zero_region", _fake)
+    return calls
+
+
+class TestF2HostileCallerObservation:
+    """The hostile observer records EXTENDED robustness notes and never fails."""
+
+    def test_f2_ffi_hostile_crash_is_observation_not_finding(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            -11,
+            "HOSTILE_CALLER:C_Encrypt(ulDataLen=0x7fffffffffffffff) unbacked\n",
+            "",
+            label_op="C_Encrypt(ulDataLen=0x7fffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "non-normative" in note
+        assert "not a conformance" in note
+
+    def test_f2_ffi_hostile_windows_crash_is_observation(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            0xC0000005,
+            "HOSTILE_CALLER:C_Sign unbacked\n",
+            "",
+            label_op="C_Sign(ulDataLen=0x8000000000000000)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+
+    def test_f2_ffi_hostile_timeout_is_observation_not_hang_finding(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            124,
+            "HOSTILE_CALLER:C_Digest unbacked\n",
+            f"partial\n{SUBPROCESS_TIMEOUT_MARKER}:30s\n",
+            label_op="C_Digest(ulDataLen=0x7fffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "timed out" in note
+
+    def test_f2_ffi_hostile_clean_reject_is_observation(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            0,
+            "HOSTILE_CALLER:C_Encrypt unbacked\nTARGET_RV:0x00000007\n",
+            "",
+            label_op="C_Encrypt(ulDataLen=0x7fffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "CKR_ARGUMENTS_BAD" in note
+
+    def test_f2_ffi_hostile_ckr_ok_is_observation_not_accepted_invalid(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            0,
+            "HOSTILE_CALLER:C_Encrypt unbacked\nTARGET_RV:0x00000000\n",
+            "",
+            label_op="C_Encrypt(ulDataLen=0x7fffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "CKR_OK" in note
+
+    def test_f2_ffi_hostile_missing_rv_is_inconclusive_observation(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            0,
+            "HOSTILE_CALLER:C_Encrypt unbacked\n",
+            "",
+            label_op="C_Encrypt(ulDataLen=0x7fffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+
+    def test_f2_ffi_hostile_traceback_exit_stays_loud(self) -> None:
+        _f2_reset_notes()
+        with pytest.raises(AssertionError, match="hostile-path probe bug"):
+            test_ffi_length_boundary._observe_hostile_caller_robustness(
+                1,
+                "HOSTILE_CALLER:C_Encrypt unbacked\n",
+                "Traceback (most recent call last):\n  File ...\nValueError: f2 probe bug\n",
+                label_op="C_Encrypt(ulDataLen=0x7fffffffffffffff)",
+                test_id="TestF2.test",
+            )
+        assert _f2_extended_notes() == []
+
+    def test_f2_ffi_hostile_abrupt_exit_is_observation(self) -> None:
+        _f2_reset_notes()
+        test_ffi_length_boundary._observe_hostile_caller_robustness(
+            5,
+            "HOSTILE_CALLER:C_Encrypt unbacked\n",
+            "module stderr without traceback\n",
+            label_op="C_Encrypt(ulDataLen=0x7fffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+
+    def test_f2_ffi_is_hostile_caller_matches_marker_only(self) -> None:
+        assert test_ffi_length_boundary._is_hostile_caller("HOSTILE_CALLER:x\nTARGET_RV:0x5\n")
+        assert not test_ffi_length_boundary._is_hostile_caller("TARGET_RV:0x5\n")
+        assert not test_ffi_length_boundary._is_hostile_caller("SETUP_XFAIL:keygen rejected\n")
+        assert not test_ffi_length_boundary._is_hostile_caller("")
+        assert test_arithmetic_overflow._is_hostile_caller("HOSTILE_CALLER:x\nrv=5\n")
+        assert not test_arithmetic_overflow._is_hostile_caller("rv=5\n")
+
+    def test_f2_arith_hostile_crash_is_observation_not_finding(self) -> None:
+        _f2_reset_notes()
+        test_arithmetic_overflow._observe_hostile_caller_robustness(
+            -11,
+            "HOSTILE_CALLER:C_CreateObject(template_count=0xffffffffffffffff) unbacked\n",
+            "",
+            context="C_CreateObject(template_count=0xffffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "non-normative" in note
+        assert "not a conformance" in note
+
+    def test_f2_arith_hostile_clean_reject_is_observation(self) -> None:
+        _f2_reset_notes()
+        test_arithmetic_overflow._observe_hostile_caller_robustness(
+            0,
+            "HOSTILE_CALLER:C_UnwrapKey unbacked\nrv=7\n",
+            "",
+            context="C_UnwrapKey(template_count=0xffffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "CKR_ARGUMENTS_BAD" in note
+
+    def test_f2_arith_hostile_ckr_ok_is_observation_not_accepted_invalid(self) -> None:
+        _f2_reset_notes()
+        test_arithmetic_overflow._observe_hostile_caller_robustness(
+            0,
+            "HOSTILE_CALLER:C_GenerateKey unbacked\nrv=0\n",
+            "",
+            context="C_GenerateKey(template_count=0xffffffffffffffff)",
+            test_id="TestF2.test",
+        )
+        (note,) = _f2_extended_notes()
+        assert "hostile-caller" in note
+        assert "CKR_OK" in note
+
+    def test_f2_arith_hostile_traceback_exit_stays_loud(self) -> None:
+        _f2_reset_notes()
+        with pytest.raises(AssertionError, match="hostile-path probe bug"):
+            test_arithmetic_overflow._observe_hostile_caller_robustness(
+                1,
+                "HOSTILE_CALLER:C_CreateObject unbacked\n",
+                "Traceback (most recent call last):\nValueError: f2 probe bug\n",
+                context="C_CreateObject(template_count=0xffffffffffffffff)",
+                test_id="TestF2.test",
+            )
+        assert _f2_extended_notes() == []
+
+
+class TestF2HonestDemandHelpers:
+    """Owned demand helpers back the claimed length or mark hostile (honest=0)."""
+
+    def test_f2_base_helper_demands_exactly_the_claimed_length(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_base as base
+
+        calls = _f2_recording_demand(monkeypatch, base)
+        region, _keep = base._demand_readable_or_hostile(0x80000000)
+        assert calls == [0x80000000]
+        assert region.honest == 1
+        assert region.mapped_length >= 0x80000000
+
+    def test_f2_base_helper_marks_unmappable_magnitudes_hostile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_base as base
+
+        calls = _f2_recording_demand(monkeypatch, base)
+        region, keep = base._demand_readable_or_hostile(0x7FFFFFFFFFFFFFFF)
+        assert calls == []
+        assert region.honest == 0
+        assert region.mapped_length == 0
+        assert keep is not None
+
+    def test_f2_base_helper_propagates_honeypot_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_base as base
+        from pkcs11_check.testcases._probes import honeypot
+
+        _f2_recording_demand(monkeypatch, base, fail=True)
+        with pytest.raises(honeypot.HoneypotUnavailable):
+            base._demand_readable_or_hostile(0x80000000)
+
+    def test_f2_arith_template_helper_backs_small_counts_honestly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import ctypes
+
+        from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CK_ULONG, CKA_CLASS, CKO_DATA
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        cls_val = CK_ULONG(CKO_DATA)
+        first = CK_ATTRIBUTE()
+        first.type = CKA_CLASS
+        first.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
+        first.ulValueLen = ctypes.sizeof(cls_val)
+
+        saved = arith.demand_zero_region
+
+        def _backed(minimum_length: int = 0):  # type: ignore[no-untyped-def]
+            assert minimum_length == 3 * ctypes.sizeof(CK_ATTRIBUTE)
+            buf = (ctypes.c_ubyte * minimum_length)()
+            from pkcs11_check.testcases._probes import honeypot
+
+            return honeypot.ZeroRegion(
+                ptr=ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)),
+                mapped_length=minimum_length,
+                honest=1,
+            )
+
+        monkeypatch.setattr(arith, "demand_zero_region", _backed)
+        try:
+            tmpl, _keep, hostile = arith._honest_template_or_hostile(3, first)
+            assert hostile is False
+            assert tmpl[0].type == CKA_CLASS
+            assert tmpl[0].ulValueLen == ctypes.sizeof(cls_val)
+            # The tail stays demand-zero: no advertised byte is left unmapped.
+            assert tmpl[1].type == 0
+            assert tmpl[2].type == 0
+        finally:
+            monkeypatch.setattr(arith, "demand_zero_region", saved)
+
+    def test_f2_arith_template_helper_marks_unmappable_counts_hostile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import ctypes
+
+        from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CK_ULONG, CKA_CLASS, CKO_DATA
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        cls_val = CK_ULONG(CKO_DATA)
+        first = CK_ATTRIBUTE()
+        first.type = CKA_CLASS
+        first.pValue = ctypes.cast(ctypes.pointer(cls_val), ctypes.c_void_p)
+        first.ulValueLen = ctypes.sizeof(cls_val)
+
+        def _must_not_demand(minimum_length: int = 0):  # type: ignore[no-untyped-def]
+            raise AssertionError("hostile counts must not demand a mapping")
+
+        monkeypatch.setattr(arith, "demand_zero_region", _must_not_demand)
+        tmpl, _keep, hostile = arith._honest_template_or_hostile(0xFFFFFFFFFFFFFFFF, first)
+        assert hostile is True
+        assert tmpl[0].type == CKA_CLASS
+
+
+class TestF2ProbeHonestMigration:
+    """Migrated probes: honest minima, hostile markers, setup-xfail routing."""
+
+    def test_f2_data_length_probe_demands_honest_minimum(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        seen: dict[str, object] = {}
+
+        class _Raw:
+            def C_EncryptInit(self, *_a: object) -> int:  # noqa: N802
+                return 0
+
+            def C_Encrypt(self, _sh: object, buf: object, n: object, *_a: object) -> int:  # noqa: N802
+                seen["buf"] = buf
+                seen["n"] = n
+                return 0x05
+
+        calls = _f2_recording_demand(monkeypatch, arith)
+        monkeypatch.setattr(arith, "gen_aes_key", lambda *_a, **_k: 7)
+        monkeypatch.setattr(arith, "destroy_quietly", lambda *_a, **_k: None)
+        arith._run_data_length_overflow(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"func": "C_Encrypt", "init_func": "C_EncryptInit", "data_len": 0x80000000},
+        )
+        out = capsys.readouterr().out
+        assert calls == [0x80000000]
+        assert seen["n"] == 0x80000000
+        assert "HOSTILE_CALLER:" not in out
+        assert "rv=5" in out
+
+    def test_f2_data_length_probe_marks_unmappable_hostile(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        seen: dict[str, object] = {}
+
+        class _Raw:
+            def C_EncryptInit(self, *_a: object) -> int:  # noqa: N802
+                return 0
+
+            def C_Encrypt(self, _sh: object, buf: object, n: object, *_a: object) -> int:  # noqa: N802
+                seen["buf"] = buf
+                seen["n"] = n
+                return 0x05
+
+        calls = _f2_recording_demand(monkeypatch, arith)
+        monkeypatch.setattr(arith, "gen_aes_key", lambda *_a, **_k: 7)
+        monkeypatch.setattr(arith, "destroy_quietly", lambda *_a, **_k: None)
+        arith._run_data_length_overflow(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {
+                "func": "C_Encrypt",
+                "init_func": "C_EncryptInit",
+                "data_len": 0xFFFFFFFFFFFFFFFF,
+            },
+        )
+        out = capsys.readouterr().out
+        assert calls == []
+        assert seen["n"] == 0xFFFFFFFFFFFFFFFF
+        assert "HOSTILE_CALLER:" in out
+        assert "rv=5" in out
+
+    def test_f2_data_length_probe_setup_xfails_when_honest_mapping_fails(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        class _Raw:
+            def C_EncryptInit(self, *_a: object) -> int:  # noqa: N802
+                return 0
+
+            def C_Encrypt(self, *_a: object) -> int:  # noqa: N802
+                raise AssertionError("under-backed provider call must not execute")
+
+        _f2_recording_demand(monkeypatch, arith, fail=True)
+        monkeypatch.setattr(arith, "gen_aes_key", lambda *_a, **_k: 7)
+        monkeypatch.setattr(arith, "destroy_quietly", lambda *_a, **_k: None)
+        arith._run_data_length_overflow(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"func": "C_Encrypt", "init_func": "C_EncryptInit", "data_len": 0x80000000},
+        )
+        out = capsys.readouterr().out
+        assert "SETUP_XFAIL:" in out
+        assert "HOSTILE_CALLER:" not in out
+        assert "rv=" not in out
+
+    def test_f2_gcm_accumulation_passes_full_claimed_minimum(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        seen: dict[str, object] = {}
+
+        class _Raw:
+            def C_DecryptInit(self, *_a: object) -> int:  # noqa: N802
+                return 0x10
+
+        def _record_min(min_size: int = 0):  # type: ignore[no-untyped-def]
+            import ctypes
+
+            seen["min_size"] = min_size
+            return (ctypes.c_ubyte * 1)()
+
+        monkeypatch.setattr(arith, "demand_zero_buffer", _record_min)
+        monkeypatch.setattr(arith, "gen_aes_key", lambda *_a, **_k: 7)
+        monkeypatch.setattr(arith, "destroy_quietly", lambda *_a, **_k: None)
+        arith._run_gcm_decrypt_update_accumulation(SimpleNamespace(raw=_Raw(), sh=1), {})
+        capsys.readouterr()
+        assert seen["min_size"] == 0xFFFFFFFF
+
+    def test_f2_template_count_probe_splits_honest_and_hostile(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import ctypes
+
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+        from pkcs11_check.testcases._probes import honeypot
+
+        seen: dict[str, object] = {}
+
+        class _Raw:
+            def C_FindObjectsInit(self, _sh: object, tmpl: object, n: object) -> int:  # noqa: N802
+                seen["n"] = n
+                arr = ctypes.cast(tmpl, ctypes.POINTER(arith.CK_ATTRIBUTE))
+                seen["first_type"] = arr[0].type
+                return 0x12
+
+        def _fake(minimum_length: int = 0):  # type: ignore[no-untyped-def]
+            buf = (ctypes.c_ubyte * 64)()
+            return honeypot.ZeroRegion(
+                ptr=ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)),
+                mapped_length=minimum_length,
+                honest=1,
+            )
+
+        monkeypatch.setattr(arith, "demand_zero_region", _fake)
+        # 2**32 attributes need 96 GiB of honest mapping: mappable, stays strict.
+        arith._run_template_count_overflow(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"op": "C_FindObjectsInit", "count": 0x100000000},
+        )
+        out = capsys.readouterr().out
+        assert seen["n"] == 0x100000000
+        assert "HOSTILE_CALLER:" not in out
+        assert "rv=" in out
+        # ULONG_MAX attributes are un-mappable: hostile observation only.
+        arith._run_template_count_overflow(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"op": "C_FindObjectsInit", "count": 0xFFFFFFFFFFFFFFFF},
+        )
+        out = capsys.readouterr().out
+        assert seen["n"] == 0xFFFFFFFFFFFFFFFF
+        assert "HOSTILE_CALLER:" in out
+        assert "rv=" in out
+
+    def test_f2_isize_encrypt_probe_marks_isize_hostile(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_isize as isize
+
+        class _Raw:
+            def C_EncryptInit(self, *_a: object) -> int:  # noqa: N802
+                return 0
+
+            def C_Encrypt(self, *_a: object) -> int:  # noqa: N802
+                return 0x05
+
+        monkeypatch.setattr(isize, "gen_aes_key", lambda *_a, **_k: 7)
+        monkeypatch.setattr(isize, "destroy_quietly", lambda *_a, **_k: None)
+        isize._run_encrypt_isize(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"probe": "encrypt_isize", "data_len": 0x7FFFFFFFFFFFFFFF},
+        )
+        out = capsys.readouterr().out
+        assert "HOSTILE_CALLER:" in out
+        assert "TARGET_RV:0x00000005" in out
+
+    def test_f2_sign_output_probe_marks_isize_capacity_hostile(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_isize as isize
+
+        class _Raw:
+            def C_SignInit(self, *_a: object) -> int:  # noqa: N802
+                return 0
+
+            def C_Sign(self, *_a: object) -> int:  # noqa: N802
+                return 0x05
+
+        monkeypatch.setattr(isize, "_import_hmac_key_notop", lambda *_a, **_k: 9)
+        monkeypatch.setattr(isize, "destroy_quietly", lambda *_a, **_k: None)
+        isize._run_sign_isize_output(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"probe": "sign_isize_output", "out_len": 0x8000000000000000},
+        )
+        out = capsys.readouterr().out
+        assert "HOSTILE_CALLER:" in out
+        assert "TARGET_RV:0x00000005" in out
+
+    def test_f2_aes_cbc_null_case_runs_without_a_region(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_length_params as params
+
+        class _Raw:
+            def C_DeriveKey(self, *_a: object) -> int:  # noqa: N802
+                return 0x10
+
+        def _must_not_demand(*_a: object, **_k: object) -> object:
+            raise AssertionError("NULL case must not demand a region")
+
+        monkeypatch.setattr(params, "_demand_readable_or_hostile", _must_not_demand)
+        monkeypatch.setattr(params, "import_secret_key", lambda *_a, **_k: 5)
+        monkeypatch.setattr(params, "destroy_quietly", lambda *_a, **_k: None)
+        params._run_aes_cbc_encrypt_data_malformed(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {
+                "probe": "aes_cbc_encrypt_data_malformed",
+                "case_label": "pData=NULL,length=16",
+                "null_data": True,
+                "data_len": 16,
+            },
+        )
+        out = capsys.readouterr().out
+        assert "HOSTILE_CALLER:" not in out
+        assert "TARGET_RV:0x00000010" in out
+
+    def test_f2_aes_cbc_tiny_huge_case_is_hostile(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_length_params as params
+
+        class _Raw:
+            def C_DeriveKey(self, *_a: object) -> int:  # noqa: N802
+                return 0x10
+
+        monkeypatch.setattr(params, "import_secret_key", lambda *_a, **_k: 5)
+        monkeypatch.setattr(params, "destroy_quietly", lambda *_a, **_k: None)
+        params._run_aes_cbc_encrypt_data_malformed(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {
+                "probe": "aes_cbc_encrypt_data_malformed",
+                "case_label": "pData=tiny,length=isize_max_plus_1",
+                "null_data": False,
+                "data_len": 0x8000000000000000,
+            },
+        )
+        out = capsys.readouterr().out
+        assert "HOSTILE_CALLER:" in out
+        assert "TARGET_RV:0x00000010" in out
+
+
+class TestF2SoundCasesStayStrict:
+    """NULL, scalar-overflow, and backed-allocation probes keep strict wiring."""
+
+    def test_f2_gcm_null_iv_still_passes_null_with_nonzero_length(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from pkcs11_check.testcases._probes import _ffi_length_null_params as nulls
+
+        seen: dict[str, object] = {}
+
+        class _Raw:
+            def C_EncryptInit(self, _sh: object, mech: object, _key: object) -> int:  # noqa: N802
+                import ctypes
+
+                from pkcs11_check.raw.types_std import CK_AES_GCM_PARAMS, CK_MECHANISM
+
+                m = ctypes.cast(mech, ctypes.POINTER(CK_MECHANISM)).contents
+                p = ctypes.cast(m.pParameter, ctypes.POINTER(CK_AES_GCM_PARAMS)).contents
+                seen["pIv"] = p.pIv
+                seen["ulIvLen"] = p.ulIvLen
+                return 0x10
+
+        monkeypatch.setattr(nulls, "gen_aes_key", lambda *_a, **_k: 7)
+        monkeypatch.setattr(nulls, "destroy_quietly", lambda *_a, **_k: None)
+        nulls._run_gcm_null_iv(SimpleNamespace(raw=_Raw(), sh=1), {"probe": "gcm_null_iv"})
+        out = capsys.readouterr().out
+        assert seen["pIv"] is None
+        assert seen["ulIvLen"] == 12
+        assert "HOSTILE_CALLER:" not in out
+        assert "TARGET_RV:0x00000010" in out
+
+    def test_f2_key_value_len_still_uses_a_backed_scalar(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import ctypes
+
+        from pkcs11_check.raw.types_std import CK_ATTRIBUTE, CKA_VALUE_LEN
+        from pkcs11_check.testcases._probes import arithmetic_overflow as arith
+
+        seen: dict[str, object] = {}
+
+        class _Raw:
+            def C_GenerateKey(  # noqa: N802
+                self, _sh: object, _mech: object, tmpl: object, n: object, _out: object
+            ) -> int:
+                arr = ctypes.cast(tmpl, ctypes.POINTER(CK_ATTRIBUTE))
+                assert n == 3
+                for i in range(3):
+                    if arr[i].type == CKA_VALUE_LEN:
+                        seen["len"] = ctypes.cast(
+                            arr[i].pValue, ctypes.POINTER(ctypes.c_ulong)
+                        ).contents.value
+                return 0x10
+
+        arith._run_key_value_len_overflow(
+            SimpleNamespace(raw=_Raw(), sh=1),
+            {"which": "key_value_len_overflow", "mech_name": "CKM_AES_KEY_GEN"},
+        )
+        out = capsys.readouterr().out
+        assert seen["len"] == 0xFFFFFFFFFFFFFFFF
+        assert "HOSTILE_CALLER:" not in out
+        assert "rv=" in out
