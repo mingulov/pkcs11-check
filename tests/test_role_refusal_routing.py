@@ -101,12 +101,36 @@ def test_context_login_ok_remains_a_security_failure(monkeypatch: pytest.MonkeyP
         )
 
 
-@pytest.mark.parametrize("rv", [CKR_OPERATION_NOT_INITIALIZED, CKR_USER_NOT_LOGGED_IN])
-def test_context_login_preferred_rejections_pass(monkeypatch: pytest.MonkeyPatch, rv: int) -> None:
+def test_context_login_operation_not_initialized_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     from pkcs11_check.testcases import test_always_authenticate as always_auth
 
     monkeypatch.setattr(always_auth, "_pin_bytes", lambda cfg: b"pin")
-    monkeypatch.setattr(always_auth, "_context_specific_login", lambda raw, sh, pin: int(rv))
+    monkeypatch.setattr(
+        always_auth,
+        "_context_specific_login",
+        lambda raw, sh, pin: int(CKR_OPERATION_NOT_INITIALIZED),
+    )
     always_auth.TestAlwaysAuthenticateEnforcement().test_context_specific_login_without_active_op_rejected(
         _rs(), SimpleNamespace()
     )
+
+
+def test_context_login_user_not_logged_in_is_failure_like_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pkcs11_check import classification
+    from pkcs11_check.testcases import test_always_authenticate as always_auth
+
+    monkeypatch.setattr(always_auth, "_pin_bytes", lambda cfg: b"pin")
+    monkeypatch.setattr(
+        always_auth,
+        "_context_specific_login",
+        lambda raw, sh, pin: int(CKR_USER_NOT_LOGGED_IN),
+    )
+    classification.clear()
+    with pytest.raises(pytest.xfail.Exception, match="CKR_USER_NOT_LOGGED_IN"):
+        always_auth.TestAlwaysAuthenticateEnforcement().test_context_specific_login_without_active_op_rejected(
+            _rs(), SimpleNamespace()
+        )
+    records = classification.serialize(classification.get_records())
+    assert records[-1]["reason"] == "nonspec_reject"

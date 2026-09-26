@@ -1603,7 +1603,13 @@ class TestAlwaysAuthenticate:
             destroy_quietly(rs.raw, rs.sh, pub)
 
     def test_always_authenticate_requires_context_login(self, p11_raw_session: Any) -> None:
-        """Sign with ALWAYS_AUTHENTICATE key should need CKU_CONTEXT_SPECIFIC login."""
+        """Sign with ALWAYS_AUTHENTICATE key should need CKU_CONTEXT_SPECIFIC login.
+
+        P11C-0198-008: the enforcement assertion is gated on an exact
+        ``CKA_ALWAYS_AUTHENTICATE is True`` readback from the created private
+        key. Requested-template intent is never observed state: a key that
+        discarded the attribute cannot support a bypass claim.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
             pytest.skip("CKM_RSA_PKCS_KEY_PAIR_GEN not supported")
@@ -1628,31 +1634,190 @@ class TestAlwaysAuthenticate:
                     operation="C_GenerateKeyPair",
                     mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
                 )
-            raise
+            if is_standard_ckr(e.rv) or is_vendor_defined_ckr(e.rv):
+                classification.classify(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKA_ALWAYS_AUTHENTICATE=True setup",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=CKR_OK,
+                    actual=e.rv,
+                    detail={
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "CKA_ALWAYS_AUTHENTICATE=True setup: advertised key generation "
+                        "rejected the requested attribute template at runtime"
+                    ),
+                )
+            classification.classify(
+                "self_contradiction",
+                kind="metadata",
+                label="CKA_ALWAYS_AUTHENTICATE=True setup",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=e.rv,
+                detail={
+                    "ckr_validity": "undefined",
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary=(
+                    "CKA_ALWAYS_AUTHENTICATE=True setup: key generation returned an undefined CK_RV"
+                ),
+            )
 
         try:
-            # First sign after normal login - may work (first use after login)
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, priv, [CKA_ALWAYS_AUTHENTICATE])
+            except CkrAssertionError as exc:
+                _xfail_attribute_read_reject(
+                    exc,
+                    label="CKA_ALWAYS_AUTHENTICATE=True readback before enforcement",
+                    attr=CKA_ALWAYS_AUTHENTICATE,
+                )
+            record_count = len(classification.get_records())
+            value = _attribute_value(
+                attrs,
+                CKA_ALWAYS_AUTHENTICATE,
+                label="CKA_ALWAYS_AUTHENTICATE=True readback before enforcement",
+            )
+            if value is MISSING_ATTRIBUTE:
+                # A refusal that leaked real bytes was recorded as a policy
+                # self-contradiction; terminate loudly on it. Any other
+                # omission (plain absence, clean refusal, sentinel) stays a
+                # hook-driven honest_deviation xfail via the explicit return.
+                for record in classification.get_records()[record_count:]:
+                    if record.outcome == "fail":
+                        classification.raise_for_record(record)
+                return
+            if type(value) is not bool:
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label="CKA_ALWAYS_AUTHENTICATE=True readback before enforcement",
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    detail={
+                        "attribute": CKA_ALWAYS_AUTHENTICATE,
+                        "expected_shape": "CK_BBOOL",
+                        "actual_type": type(value).__name__,
+                        "actual_repr": repr(value),
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "CKA_ALWAYS_AUTHENTICATE=True readback before enforcement: "
+                        f"present value has invalid CK_BBOOL shape: {value!r}"
+                    ),
+                )
+            if value is not True:
+                fail_as(
+                    "wrong_result",
+                    kind="policy",
+                    label="CKA_ALWAYS_AUTHENTICATE=True setup",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=CKR_OK,
+                    actual=CKR_OK,
+                    detail={
+                        "attribute": CKA_ALWAYS_AUTHENTICATE,
+                        "expected_value": True,
+                        "actual_value": value,
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "C_GenerateKeyPair returned CKR_OK but did not preserve "
+                        "CKA_ALWAYS_AUTHENTICATE=True"
+                    ),
+                )
+
+            # Exact TRUE proven: sign without context login must be rejected
+            # with the canonical CKR_USER_NOT_LOGGED_IN.
             data = b"test data for signing"
             try:
-                sign_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, data)
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_PKCS, data)
             except CkrAssertionError as exc:
-                # A module may require context-specific login even for the first op;
-                # only the exact state errors are an expected clean refusal.
-                xfail_if_known_ckr(
-                    exc,
-                    (CKR_USER_NOT_LOGGED_IN,),
-                    "CKA_ALWAYS_AUTHENTICATE first sign requires context-specific login",
+                if exc.rv == CKR_USER_NOT_LOGGED_IN:
+                    return
+                if not is_standard_ckr(exc.rv) and not is_vendor_defined_ckr(exc.rv):
+                    fail_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label="CKA_ALWAYS_AUTHENTICATE:first-sign-without-reauth",
+                        operation="C_Sign",
+                        mechanism="CKM_RSA_PKCS",
+                        expected=CKR_USER_NOT_LOGGED_IN,
+                        actual=exc.rv,
+                        detail={
+                            "attribute": CKA_ALWAYS_AUTHENTICATE,
+                            "ckr_validity": "undefined",
+                            "producer_operation": "C_GenerateKeyPair",
+                            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                        },
+                        summary=(
+                            "C_Sign without context-specific login returned an undefined CK_RV"
+                        ),
+                    )
+                classification.classify(
+                    "nonspec_reject",
+                    kind="policy",
+                    label="CKA_ALWAYS_AUTHENTICATE:first-sign-without-reauth",
+                    operation="C_Sign",
+                    mechanism="CKM_RSA_PKCS",
+                    expected=CKR_USER_NOT_LOGGED_IN,
+                    actual=exc.rv,
+                    detail={
+                        "attribute": CKA_ALWAYS_AUTHENTICATE,
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "C_Sign without context-specific login was rejected with "
+                        "a non-canonical clean CKR"
+                    ),
                 )
-                raise
+            if len(sig) != 256:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKA_ALWAYS_AUTHENTICATE:first-sign-without-reauth",
+                    operation="C_Sign",
+                    mechanism="CKM_RSA_PKCS",
+                    detail={
+                        "attribute": CKA_ALWAYS_AUTHENTICATE,
+                        "expected_length": 256,
+                        "actual_length": len(sig),
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "C_Sign without context-specific login returned CKR_OK "
+                        "but produced an empty or malformed RSA-2048 signature"
+                    ),
+                )
             fail_as(
                 "self_contradiction",
                 kind="policy",
                 label="CKA_ALWAYS_AUTHENTICATE:first-sign-without-reauth",
                 operation="C_Sign",
                 mechanism="CKM_RSA_PKCS",
+                expected=CKR_USER_NOT_LOGGED_IN,
+                actual=CKR_OK,
+                detail={
+                    "attribute": CKA_ALWAYS_AUTHENTICATE,
+                    "signature_length": len(sig),
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
                 summary=(
-                    "C_Sign succeeded on CKA_ALWAYS_AUTHENTICATE=True key without "
-                    "a prior CKU_CONTEXT_SPECIFIC login"
+                    "C_Sign succeeded on a proven CKA_ALWAYS_AUTHENTICATE=True key "
+                    "without a prior CKU_CONTEXT_SPECIFIC login"
                 ),
             )
         finally:

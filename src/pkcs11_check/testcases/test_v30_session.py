@@ -408,9 +408,10 @@ class TestContextSpecificLogin:
         CKR_OPERATION_NOT_INITIALIZED if there is no active operation for
         which re-authentication is required.
 
-        Some modules additionally accept CKR_USER_NOT_LOGGED_IN (the session
-        state guard fires first), or CKR_FUNCTION_NOT_SUPPORTED (module does
-        not implement context-specific login at all).
+        CKR_USER_NOT_LOGGED_IN is not in the spec's C_Login return list for
+        this context, so it is a failure-like nonspec_reject deviation, never
+        canonical. CKR_FUNCTION_NOT_SUPPORTED (module does not implement
+        context-specific login at all) stays a not_operational deviation.
         """
         rs = p11_raw_session
         pin = _pin_bytes(p11_config)
@@ -434,7 +435,20 @@ class TestContextSpecificLogin:
         elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct per spec.
         elif rv == CKR_USER_NOT_LOGGED_IN:
-            pass  # Acceptable: module checks login state before operation state.
+            # Not canonical: CKR_USER_NOT_LOGGED_IN is not in the spec's C_Login
+            # return list for improper context-specific login. Failure-like.
+            xfail_as(
+                "nonspec_reject",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC:no-active-op",
+                operation="C_Login",
+                expected=CKR_OPERATION_NOT_INITIALIZED,
+                actual=rv,
+                summary=(
+                    "CKU_CONTEXT_SPECIFIC login without an active operation returned "
+                    "CKR_USER_NOT_LOGGED_IN; spec requires CKR_OPERATION_NOT_INITIALIZED"
+                ),
+            )
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             xfail_as(
                 "not_operational",
@@ -486,7 +500,20 @@ class TestContextSpecificLogin:
         elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct.
         elif rv == CKR_USER_NOT_LOGGED_IN:
-            pass  # Acceptable.
+            # Not canonical: CKR_USER_NOT_LOGGED_IN is not in the spec's C_Login
+            # return list for improper context-specific login. Failure-like.
+            xfail_as(
+                "nonspec_reject",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC:no-active-op",
+                operation="C_Login",
+                expected=CKR_OPERATION_NOT_INITIALIZED,
+                actual=rv,
+                summary=(
+                    "CKU_CONTEXT_SPECIFIC login without an active operation returned "
+                    "CKR_USER_NOT_LOGGED_IN; spec requires CKR_OPERATION_NOT_INITIALIZED"
+                ),
+            )
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             xfail_as(
                 "not_operational",
@@ -557,7 +584,21 @@ class TestContextSpecificLogin:
         elif rv == CKR_OPERATION_NOT_INITIALIZED:
             pass  # Correct per spec.
         elif rv == CKR_USER_NOT_LOGGED_IN:
-            pass  # Acceptable.
+            # Not canonical: CKR_USER_NOT_LOGGED_IN is not in the spec's C_Login
+            # return list for improper context-specific login. Failure-like.
+            xfail_as(
+                "nonspec_reject",
+                kind="lifecycle",
+                label="CKU_CONTEXT_SPECIFIC:no-active-op-via-loginuser",
+                operation="C_LoginUser",
+                expected=CKR_OPERATION_NOT_INITIALIZED,
+                actual=rv,
+                summary=(
+                    "CKU_CONTEXT_SPECIFIC login via C_LoginUser without an active "
+                    "operation returned CKR_USER_NOT_LOGGED_IN; spec requires "
+                    "CKR_OPERATION_NOT_INITIALIZED"
+                ),
+            )
         elif rv == CKR_FUNCTION_NOT_SUPPORTED:
             _skip_login_user_not_implemented()
         else:
@@ -565,7 +606,7 @@ class TestContextSpecificLogin:
             xfail_as(
                 "not_operational",
                 label="CKU_CONTEXT_SPECIFIC",
-                operation="C_Login",
+                operation="C_LoginUser",
                 actual=rv,
                 summary=(
                     f"context-specific login returned an unexpected clean CKR: {ckr_name(rv)}"

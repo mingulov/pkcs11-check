@@ -67,6 +67,25 @@ def encode_named_curve_parameters(name: str) -> bytes:
     return oid
 
 
+_EDWARDS_CURVE_NAMES: tuple[str, ...] = ("edwards25519", "edwards448")
+
+
+def encode_edwards_curve_name_parameters(name: str) -> bytes:
+    """Return DER PrintableString CKA_EC_PARAMS for an RFC 8032 Edwards curveName.
+
+    PKCS#11 v3.x permits Edwards CKA_EC_PARAMS as either an RFC 8410 OID
+    (``encode_named_curve_parameters("ed25519")``) or a curveName string such
+    as ``edwards25519``; the latter selects the parameterized EdDSA schemes.
+    Case-insensitive.
+    """
+    key = name.lower().strip()
+    if key not in _EDWARDS_CURVE_NAMES:
+        raise ValueError(f"Unknown Edwards curveName: {name!r}")
+    raw = key.encode("ascii")
+    return bytes([0x13, len(raw)]) + raw
+
+
 __all__ = [
+    "encode_edwards_curve_name_parameters",
     "encode_named_curve_parameters",
 ]

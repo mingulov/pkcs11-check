@@ -24,7 +24,6 @@ from .pack import (
     PackedMechanism,
     attr_bytes,
     attr_ulong,
-    mech_eddsa,
     mech_simple,
     template,
     template_ptr_count,
@@ -87,7 +86,6 @@ from .types_std import (
     CKM,
     CKM_AES_KEY_GEN,
     CKM_EC_KEY_PAIR_GEN,
-    CKM_EDDSA,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKO_PRIVATE_KEY,
     CKO_PUBLIC_KEY,
@@ -314,13 +312,11 @@ def _resolve_mech(
 ) -> PackedMechanism:
     """Return mech_param if given, otherwise wrap mechanism as mech_simple.
 
-    For CKM_EDDSA, always use mech_eddsa() with pure mode (no context)
-    since some modules require explicit params even for pure EdDSA.
+    Omitted parameters always mean NULL/zero fields, including CKM_EDDSA:
+    callers that need a CK_EDDSA_PARAMS structure pass one explicitly.
     """
     if mech_param is not None:
         return mech_param
-    if mechanism == CKM_EDDSA:
-        return mech_eddsa(mechanism)
     return mech_simple(mechanism)
 
 

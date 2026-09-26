@@ -989,11 +989,14 @@ def mech_eddsa(
     mechanism_type: CKM | int,
     *,
     context_data: bytes | None = None,
+    prehash: bool = False,
 ) -> PackedMechanism:
-    """Pack CK_EDDSA_PARAMS; sets phFlag=1 when context_data is provided."""
+    """Pack CK_EDDSA_PARAMS; prehash (phFlag) and context are orthogonal."""
+    if context_data is not None and len(context_data) > 255:
+        raise ValueError("EdDSA context must be at most 255 bytes")
     ka: list[Any] = []
     params = CK_EDDSA_PARAMS()
-    params.phFlag = CK_BBOOL(1 if context_data is not None else 0)
+    params.phFlag = CK_BBOOL(1 if prehash else 0)
     params.pContextData, params.ulContextDataLen = _pack_bytes(context_data, ka)
     return _mech_struct(
         mechanism_type, params, "mech_eddsa", ka, sub_mechanisms={"phFlag": int(params.phFlag)}

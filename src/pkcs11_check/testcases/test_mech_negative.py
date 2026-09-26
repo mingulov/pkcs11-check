@@ -20,25 +20,31 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
-from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_ulong, mech_bytes, mech_simple, template
+from pkcs11_check.raw.ec import (
+    encode_edwards_curve_name_parameters,
+    encode_named_curve_parameters,
+)
+from pkcs11_check.raw.pack import attr_bytes, attr_ulong, mech_bytes, mech_simple, template
 from pkcs11_check.raw.pack_mechanisms import mech_string_data
 from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     encrypt_single,
+    gen_keypair,
     pack_attrs,
     read_attributes,
     sign_single,
     unwrap_key,
     wrap_key,
 )
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_DERIVE,
+    CKA_EC_PARAMS,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
@@ -54,7 +60,9 @@ from pkcs11_check.raw.types_std import (
     CKM,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP_KWP,
+    CKM_EC_EDWARDS_KEY_PAIR_GEN,
     CKM_ECDSA,
+    CKM_EDDSA,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKM_RSA_PKCS,
     CKM_SHA256_HMAC,
@@ -80,13 +88,16 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
+    EC_CURVE_UNSUPPORTED_RVS,
     IMPORT_STORAGE_SHAPE_REJECTS,
+    KEYPAIR_RUNTIME_REJECT_RVS,
     classify_negative_rv,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
     import_secret_key_negotiated,
+    is_known_error,
     reject_or_classify,
     xfail_if_known_ckr,
 )
@@ -110,6 +121,9 @@ _WRONG_KEY_SETUP_REJECTS = (
 _NO_SPECIFIC_WRAP_PERMISSION_RVS: tuple[int, ...] = ()
 _MISSING_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 _MALFORMED_REQUIRED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID, CKR_ARGUMENTS_BAD)
+# EdDSA-only malformed policy: exact canonical PASS is CKR_MECHANISM_PARAM_INVALID;
+# any other defined clean refusal (including CKR_ARGUMENTS_BAD) is adverse XFAIL.
+_EDDSA_MALFORMED_PARAM_RVS = (CKR_MECHANISM_PARAM_INVALID,)
 _MALFORMED_WRAPPED_BLOB_RVS = (
     CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPED_KEY_INVALID,
@@ -1194,6 +1208,122 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, base_key)
             for handle in param_handles:
                 destroy_quietly(rs.raw, rs.sh, handle)
+
+
+_EDWARDS448_CURVE_NAME: bytes = encode_edwards_curve_name_parameters("edwards448")
+
+
+def _gen_edwards448_curve_name_keypair(rs: RawSession) -> tuple[int, int]:
+    """Generate an RFC8032 edwards448 keypair; skip when the profile is unsupported."""
+    try:
+        return gen_keypair(
+            rs.raw,
+            rs.sh,
+            int(CKM_EC_EDWARDS_KEY_PAIR_GEN),
+            pub_base=[attr_bytes(CKA_EC_PARAMS, _EDWARDS448_CURVE_NAME)],
+            priv_base=[],
+            public_attrs={CKA_VERIFY: True, CKA_TOKEN: False},
+            private_attrs={CKA_SIGN: True, CKA_TOKEN: False},
+            pub_skip={CKA_EC_PARAMS},
+        )
+    except CkrAssertionError as exc:
+        if is_known_error(exc, EC_CURVE_UNSUPPORTED_RVS):
+            pytest.skip("edwards448 curveName profile not supported")
+        xfail_if_known_ckr(
+            exc,
+            KEYPAIR_RUNTIME_REJECT_RVS,
+            "edwards448 curveName key generation advertised but not operational",
+        )
+        raise
+
+
+def _require_eddsa(rs: RawSession) -> None:
+    if not rs.has_mechanism("EDDSA"):
+        pytest.skip("EDDSA mechanism not supported")
+
+
+class TestEdDSAParameters:
+    """EdDSA parameter-profile negatives on an RFC8032 edwards448 key.
+
+    The default RFC8410 pure profile takes NULL, so the generic registry
+    missing/malformed tests skip EDDSA; these explicit tests retain the prior
+    ``[EDDSA]`` sign/verify coverage against a mode that truly requires a
+    structure. Each runs on a function-scoped session so an accepted Init
+    cannot contaminate later rows as ``CKR_OPERATION_ACTIVE``.
+    """
+
+    def test_eddsa_edwards448_sign_missing_required_param(
+        self, p11_raw_session: RawSession
+    ) -> None:
+        """Ed448 sign must reject NULL params; the mode requires a structure."""
+        rs = p11_raw_session
+        _require_eddsa(rs)
+        pub, priv = _gen_edwards448_curve_name_keypair(rs)
+        try:
+            rv = rs.raw.C_SignInit(rs.sh, mech_simple(CKM_EDDSA).byref(), priv)
+            classify_negative_rv(
+                rv,
+                _MISSING_REQUIRED_PARAM_RVS,
+                label="CKM_EDDSA C_SignInit with missing required params",
+                kind="crypto",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_eddsa_edwards448_sign_malformed_required_param(
+        self, p11_raw_session: RawSession
+    ) -> None:
+        """Ed448 sign must reject a malformed non-NULL parameter structure."""
+        rs = p11_raw_session
+        _require_eddsa(rs)
+        pub, priv = _gen_edwards448_curve_name_keypair(rs)
+        try:
+            rv = rs.raw.C_SignInit(rs.sh, mech_bytes(CKM_EDDSA, b"\x00").byref(), priv)
+            classify_negative_rv(
+                rv,
+                _EDDSA_MALFORMED_PARAM_RVS,
+                label="CKM_EDDSA C_SignInit with malformed non-NULL params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_eddsa_edwards448_verify_missing_required_param(
+        self, p11_raw_session: RawSession
+    ) -> None:
+        """Ed448 verify must reject NULL params; the mode requires a structure."""
+        rs = p11_raw_session
+        _require_eddsa(rs)
+        pub, priv = _gen_edwards448_curve_name_keypair(rs)
+        try:
+            rv = rs.raw.C_VerifyInit(rs.sh, mech_simple(CKM_EDDSA).byref(), pub)
+            classify_negative_rv(
+                rv,
+                _MISSING_REQUIRED_PARAM_RVS,
+                label="CKM_EDDSA C_VerifyInit with missing required params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_eddsa_edwards448_verify_malformed_required_param(
+        self, p11_raw_session: RawSession
+    ) -> None:
+        """Ed448 verify must reject a malformed non-NULL parameter structure."""
+        rs = p11_raw_session
+        _require_eddsa(rs)
+        pub, priv = _gen_edwards448_curve_name_keypair(rs)
+        try:
+            rv = rs.raw.C_VerifyInit(rs.sh, mech_bytes(CKM_EDDSA, b"\x00").byref(), pub)
+            classify_negative_rv(
+                rv,
+                _EDDSA_MALFORMED_PARAM_RVS,
+                label="CKM_EDDSA C_VerifyInit with malformed non-NULL params",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
 
 
 class TestMalformedWrappedBlob:

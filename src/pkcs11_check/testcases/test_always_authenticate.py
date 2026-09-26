@@ -484,7 +484,22 @@ class TestAlwaysAuthenticateEnforcement:
         # CKR_USER_NOT_LOGGED_IN is not in the spec's C_Login return list
         # for improper context-specific login. Keep the probe: any other
         # clean rejection is an explicit classified deviation, never a
-        # pass and never a raw assert.
+        # pass and never a raw assert. An undefined CK_RV is a hard failure.
+        if not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label="CKU_CONTEXT_SPECIFIC login outside active operation",
+                operation="C_Login",
+                expected=int(CKR_OPERATION_NOT_INITIALIZED),
+                actual=rv,
+                detail={"ckr_validity": "undefined"},
+                summary=(
+                    "CKU_CONTEXT_SPECIFIC login without active op returned "
+                    f"an undefined CK_RV {ckr_name(rv)}; spec requires "
+                    "CKR_OPERATION_NOT_INITIALIZED"
+                ),
+            )
         xfail_as(
             "nonspec_reject",
             kind="lifecycle",

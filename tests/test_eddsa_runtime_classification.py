@@ -35,6 +35,60 @@ def test_eddsa_verify_device_error_is_xfail(monkeypatch: pytest.MonkeyPatch) -> 
         test_eddsa._verify_eddsa(rs, 1, b"message", b"signature")
 
 
+def test_eddsa_sign_explicitly_exercises_null_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RFC8410 pure sign must send an explicit NULL mechanism parameter."""
+    captured: list[object] = []
+
+    def _capture(
+        _raw: object, _session: int, _key: int, _mech: object, _data: bytes, **kwargs: object
+    ) -> bytes:
+        captured.append(kwargs.get("mech_param"))
+        return b"S" * 64
+
+    rs = type("RawSession", (), {"raw": object(), "sh": 1})()
+    monkeypatch.setattr(test_eddsa, "sign_single", _capture)
+
+    test_eddsa._sign_eddsa(rs, 1, b"message")
+
+    assert len(captured) == 1
+    param = captured[0]
+    assert param is not None
+    assert getattr(param.ck, "pParameter", "unset") is None
+    assert param.ck.ulParameterLen == 0
+
+
+def test_eddsa_verify_explicitly_exercises_null_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RFC8410 pure verify must send an explicit NULL mechanism parameter."""
+    captured: list[object] = []
+
+    def _capture(
+        _raw: object,
+        _session: int,
+        _key: int,
+        _mech: object,
+        _data: bytes,
+        _sig: bytes,
+        **kwargs: object,
+    ) -> bool:
+        captured.append(kwargs.get("mech_param"))
+        return True
+
+    rs = type("RawSession", (), {"raw": object(), "sh": 1})()
+    monkeypatch.setattr(test_eddsa, "verify_single", _capture)
+
+    assert test_eddsa._verify_eddsa(rs, 1, b"message", b"S" * 64) is True
+
+    assert len(captured) == 1
+    param = captured[0]
+    assert param is not None
+    assert getattr(param.ck, "pParameter", "unset") is None
+    assert param.ck.ulParameterLen == 0
+
+
 def test_eddsa_cross_verify_preserves_raw_point_starting_with_der_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
