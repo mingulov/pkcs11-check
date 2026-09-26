@@ -53,10 +53,12 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.acvp._duplicates import skip_duplicate_pkcs11_input
 from pkcs11_check.testcases.acvp._mldsa_helpers import (
+    MldsaMechanism,
     get_mldsa_mechanism,
     load_mldsa_keygen_vectors,
     load_mldsa_siggen_vectors,
     load_mldsa_sigver_vectors,
+    resolve_mldsa_mechanism,
 )
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 from pkcs11_check.testcases.conftest import (
@@ -100,27 +102,16 @@ _MLDSA_RUNTIME_REJECT_RVS = (
 )
 
 
-def _get_mech_name(pre_hash: str) -> str:
-    """Get mechanism name from pre-hash type."""
-    if pre_hash == "pure":
-        return "ML_DSA"
-    # Map hash algorithm names to mechanism suffixes
-    hash_suffix_map = {
-        "SHA-224": "SHA224",
-        "SHA-256": "SHA256",
-        "SHA-384": "SHA384",
-        "SHA-512": "SHA512",
-        "SHA3-224": "SHA3_224",
-        "SHA3-256": "SHA3_256",
-        "SHA3-384": "SHA3_384",
-        "SHA3-512": "SHA3_512",
-        "SHAKE128": "SHAKE128",
-        "SHAKE256": "SHAKE256",
-    }
-    suffix = hash_suffix_map.get(pre_hash)
-    if suffix:
-        return f"HASH_ML_DSA_{suffix}"
-    return "ML_DSA"
+def _resolve_vec_mechanism(vec: dict[str, Any]) -> MldsaMechanism:
+    """Resolve one SigGen/SigVer vector to its single mechanism identity.
+
+    Called exactly once per vector; the result feeds the capability gate,
+    the mechanism-flag check, set_mechanism evidence, and invocation.
+    """
+    pre_hash = vec["pre_hash"]
+    if pre_hash == "preHash":
+        pre_hash = vec.get("hash_alg", "pure")
+    return resolve_mldsa_mechanism(pre_hash)
 
 
 def _handle_unsupported(exc: AssertionError, param_set: str) -> None:
@@ -204,10 +195,8 @@ class TestMlDsaSigGen:
     def test_mldsa_siggen(self, p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
         """Test ML-DSA signature generation from NIST ACVP SigGen vectors."""
         rs = p11_module_session
-        pre_hash_for_check = vec["pre_hash"]
-        if pre_hash_for_check == "preHash":
-            pre_hash_for_check = vec.get("hash_alg", "pure")
-        mech_name = _get_mech_name(pre_hash_for_check)
+        resolved = _resolve_vec_mechanism(vec)
+        mech_name = resolved.name
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"{mech_name} mechanism not supported by module")
         set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
@@ -228,11 +217,8 @@ class TestMlDsaSigGen:
                 attrs={CKA_SIGN: True},
             )
 
-            # Get the mechanism for signing (pure or hash-specific)
-            pre_hash = vec["pre_hash"]
-            if pre_hash == "preHash":
-                pre_hash = vec.get("hash_alg", "pure")
-            mech = get_mldsa_mechanism(pre_hash)
+            # Sign with the same resolved mechanism the gate admitted.
+            mech = resolved.value
 
             # Sign the message, passing context via CK_SIGN_ADDITIONAL_CONTEXT
             # when non-empty (pure ML-DSA only -- hash variants use mech_hash_sign_context)
@@ -303,10 +289,8 @@ class TestMlDsaSigVer:
     ) -> None:
         """ML-DSA signature verification from NIST ACVP SigVer vectors."""
         rs = p11_module_session
-        pre_hash_for_check = vec["pre_hash"]
-        if pre_hash_for_check == "preHash":
-            pre_hash_for_check = vec.get("hash_alg", "pure")
-        mech_name = _get_mech_name(pre_hash_for_check)
+        resolved = _resolve_vec_mechanism(vec)
+        mech_name = resolved.name
 
         # Check if the mechanism is supported
         # Pure ML-DSA uses CKM_ML_DSA, Hash-ML-DSA uses hash-specific mechanisms
@@ -314,6 +298,7 @@ class TestMlDsaSigVer:
             pytest.skip(f"{mech_name} mechanism not supported by module")
         skip_unless_mechanism_flag(rs, mech_name, int(CKF_VERIFY))
         set_params({"mldsa": str(vec.get("param_set", "")).removeprefix("ML-DSA-")})
+        set_mechanism(mech_name, operation="C_Verify", expect_success=bool(vec["expected_pass"]))
 
         pub_key = 0
         try:
@@ -327,11 +312,8 @@ class TestMlDsaSigVer:
                 attrs={CKA_VERIFY: True},
             )
 
-            # Get the mechanism for verification (pure or hash-specific)
-            pre_hash = vec["pre_hash"]
-            if pre_hash == "preHash":
-                pre_hash = vec.get("hash_alg", "pure")
-            mech = get_mldsa_mechanism(pre_hash)
+            # Verify with the same resolved mechanism the gate admitted.
+            mech = resolved.value
 
             # Verify the signature, passing context when non-empty
             context = vec.get("context", b"")

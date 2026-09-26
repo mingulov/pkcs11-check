@@ -19,7 +19,7 @@ import collections
 import pathlib
 
 TESTCASES_ROOT = pathlib.Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
-EXPECTED_ATTR_OR_RECORD_SITES = 377
+EXPECTED_ATTR_OR_RECORD_SITES = 378
 
 
 def _unguarded_sites() -> tuple[dict[str, list[int]], int]:

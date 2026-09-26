@@ -17,8 +17,12 @@ tc169/172/174).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+from pkcs11_check.testcases.acvp import acvp_loader
 from pkcs11_check.testcases.acvp._mldsa_helpers import load_mldsa_sigver_vectors
 from pkcs11_check.testcases.acvp.acvp_loader import ACVP_AVAILABLE
 
@@ -57,3 +61,62 @@ def test_sigver_loader_drops_internal_interface_vectors() -> None:
     assert ("ML-DSA-44", 1) in seen_param_tcs
     assert ("ML-DSA-65", 31) in seen_param_tcs
     assert ("ML-DSA-87", 61) in seen_param_tcs
+
+
+def _write_sigver_pair(tmp_path: Path, cases: list[tuple[int, str]]) -> None:
+    """Write a synthetic prompt.json + expectedResults.json pair."""
+    vec_dir = tmp_path / "ML-DSA-sigVer-FIPS204"
+    vec_dir.mkdir()
+    prompt_tests = [
+        {
+            "tcId": tc_id,
+            "pk": "02" * 32,
+            "message": "ab" * 16,
+            "signature": "cd" * 64,
+            "context": "",
+            "hashAlg": alg,
+        }
+        for tc_id, alg in cases
+    ]
+    expected_tests = [{"tcId": tc_id, "testPassed": True} for tc_id, _ in cases]
+    group = {"parameterSet": "ML-DSA-44", "preHash": "preHash", "tests": prompt_tests}
+    prompt = {"testGroups": [group]}
+    expected = {"testGroups": [{"tests": expected_tests}]}
+    (vec_dir / "prompt.json").write_text(json.dumps(prompt), encoding="utf-8")
+    (vec_dir / "expectedResults.json").write_text(json.dumps(expected), encoding="utf-8")
+
+
+def test_sigver_loader_excludes_only_unrepresentable_sha2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(acvp_loader, "ACVP_DIR", tmp_path)
+    _write_sigver_pair(tmp_path, [(1, "SHA2-512/224"), (2, "SHA2-512/256"), (3, "SHA2-256")])
+
+    vectors = load_mldsa_sigver_vectors()
+
+    assert [v["tc_id"] for _, v in vectors] == [3]
+    _, vec = vectors[0]
+    assert vec["_source"] == "acvp:ML-DSA-sigVer-FIPS204"
+    assert vec["_vector_id"] == "tcId=3"
+
+
+def test_sigver_loader_raises_on_unknown_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(acvp_loader, "ACVP_DIR", tmp_path)
+    _write_sigver_pair(tmp_path, [(9, "SHA2-999")])
+
+    with pytest.raises(ValueError, match="SHA2-999"):
+        load_mldsa_sigver_vectors()
+
+
+def test_sigver_loader_preserves_provenance_on_pinned_data() -> None:
+    """Every pinned SigVer vector keeps exact _source/_vector_id (issue #20)."""
+    vectors = load_mldsa_sigver_vectors()
+    if not vectors:
+        pytest.skip("ML-DSA-sigVer ACVP vectors not present")
+
+    assert len(vectors) == 82
+    for vec_id, vec in vectors:
+        assert vec["_source"] == "acvp:ML-DSA-sigVer-FIPS204", vec_id
+        assert vec["_vector_id"] == f"tcId={vec['tc_id']}", vec_id
