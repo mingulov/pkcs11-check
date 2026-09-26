@@ -25,7 +25,7 @@ Dispatch on ``params.extra["probe"]``:
   ``"decrypt_message_multipart"`` -- C_DecryptMessageBegin/Next (AES-GCM), honeypot isize ciphertext
   ``"sign_message"``        -- C_SignMessage (RSA), honeypot data ptr, isize data len
   ``"verify_message"``      -- C_VerifyMessage (RSA), honeypot data/signature, isize input len
-  ``"sign_message_multipart"`` -- C_SignMessageBegin/Next (RSA), honeypot isize data len
+  ``"sign_message_multipart"`` -- C_SignMessageBegin parameter/data length probes (RSA)
   ``"verify_message_multipart"`` -- C_VerifyMessageBegin/Next (RSA), honeypot isize begin/data/sig
   ``"encrypt_message_multipart"`` -- C_EncryptMessageBegin/Next (AES-GCM), honeypot isize plaintext
 
@@ -48,7 +48,8 @@ Required extra keys (in addition to ``"module_path"`` / ``"slot_id"`` handled by
   ``"probe"``     -- one of the dispatch keys above.
   ``"value_len"`` -- int for ``"generate_key_oom"`` (the large-but-valid CKA_VALUE_LEN).
   ``"data_len"``  -- int (input-length probes: encrypt/decrypt/sign/verify/digest/update/seed and
-                     ``"sign_message"`` / the ``"*_message_multipart"`` probes).
+                     ``"sign_message"``; for ``"sign_message_multipart"`` it is
+                     ``ulParameterLen`` on Begin and data length on Next).
   ``"op"``        -- str for ``"update_isize"``: one of C_EncryptUpdate / C_DecryptUpdate /
                      C_SignUpdate / C_VerifyUpdate / C_DigestUpdate; also for
                      ``"encrypt_message_multipart"`` / ``"decrypt_message_multipart"`` /

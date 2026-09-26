@@ -32,6 +32,7 @@ from pkcs11_check.raw.types_std import (
     CKF_MESSAGE_ENCRYPT,
     CKF_MESSAGE_SIGN,
     CKF_MESSAGE_VERIFY,
+    CKF_MULTI_MESSAGE,
     CKM_AES_GCM,
     CKM_SHA256_RSA_PKCS,
     CKR_ARGUMENTS_BAD,
@@ -48,6 +49,9 @@ from pkcs11_check.raw.types_std import (
     CKR_SIGNATURE_LEN_RANGE,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+)
+from pkcs11_check.testcases._probes._ffi_length_message import (
+    SETUP_CONTRADICTION_PREFIX,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
@@ -149,6 +153,32 @@ def _classify_unhonorable_length_outcome(
         )
         return
 
+    # SETUP_CONTRADICTION: an advertised message-family Init/Begin call returned a
+    # capability-metadata CKR. This is a provider self-contradiction, not the target
+    # operation's result, and must be classified before looking for TARGET_RV.
+    for line in stdout.splitlines():
+        if line.startswith(SETUP_CONTRADICTION_PREFIX):
+            payload = line.removeprefix(SETUP_CONTRADICTION_PREFIX).strip()
+            try:
+                setup_operation, setup_rv_text = payload.rsplit(":", 1)
+                setup_rv = int(setup_rv_text, 0)
+            except ValueError as exc:
+                raise AssertionError(
+                    f"Malformed {SETUP_CONTRADICTION_PREFIX!r} line: {line!r}"
+                ) from exc
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=setup_operation,
+                operation=setup_operation,
+                expected=CKR_OK,
+                actual=setup_rv,
+                summary=(
+                    f"{setup_operation} advertised setup returned {ckr_name(setup_rv)} "
+                    "(metadata self-contradiction)"
+                ),
+            )
+
     # SKIP: a v3.0 message-family Init/Begin call returned CKR_FUNCTION_NOT_SUPPORTED --
     # capability absence (see _probes/_ffi_length_message.py._message_setup_reject), not a
     # deviation. Checked before SETUP_XFAIL so it is never misrecorded as one.
@@ -225,6 +255,7 @@ class TestIsizeMaxDataLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -263,6 +294,7 @@ class TestIsizeMaxDataLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -295,6 +327,7 @@ class TestIsizeMaxDataLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -328,6 +361,7 @@ class TestIsizeMaxDataLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -360,6 +394,7 @@ class TestIsizeMaxDataLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -402,7 +437,7 @@ _MESSAGE_DECRYPT_MULTIPART_OPS = [
 ]
 
 _MESSAGE_SIGN_MULTIPART_OPS = [
-    pytest.param("C_SignMessageBegin", id="begin_data_len"),
+    pytest.param("C_SignMessageBegin", id="begin_parameter_len"),
     pytest.param("C_SignMessageNext", id="next_data_len"),
 ]
 
@@ -464,6 +499,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -522,6 +558,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -583,6 +620,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -639,6 +677,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -701,6 +740,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -734,6 +774,8 @@ class TestMessageApiLengthBoundary:
         info = get_mechanism_info(rs.raw, rs.slot_id, CKM_SHA256_RSA_PKCS)
         if not (info["flags"] & int(CKF_MESSAGE_SIGN)):
             pytest.skip("CKM_SHA256_RSA_PKCS does not advertise CKF_MESSAGE_SIGN")
+        if not (info["flags"] & int(CKF_MULTI_MESSAGE)):
+            pytest.skip("CKM_SHA256_RSA_PKCS does not advertise CKF_MULTI_MESSAGE")
 
         available = rs.raw.available_function_names()
         for fname in (
@@ -765,14 +807,16 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
+        field = "parameter_len" if op == "C_SignMessageBegin" else "data_len"
         _classify_unhonorable_length_outcome(
             rc,
             stdout,
             stderr,
             reject_rvs=_MESSAGE_LENGTH_REJECT_RVS,
-            label_op=f"{op}(data_len={data_len:#x})",
+            label_op=f"{op}({field}={data_len:#x})",
             test_id="test_sign_message_multipart_isize_input_len",
         )
 
@@ -798,6 +842,8 @@ class TestMessageApiLengthBoundary:
         info = get_mechanism_info(rs.raw, rs.slot_id, CKM_SHA256_RSA_PKCS)
         if not (info["flags"] & int(CKF_MESSAGE_VERIFY)):
             pytest.skip("CKM_SHA256_RSA_PKCS does not advertise CKF_MESSAGE_VERIFY")
+        if not (info["flags"] & int(CKF_MULTI_MESSAGE)):
+            pytest.skip("CKM_SHA256_RSA_PKCS does not advertise CKF_MULTI_MESSAGE")
 
         available = rs.raw.available_function_names()
         for fname in (
@@ -835,6 +881,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -896,6 +943,7 @@ class TestMessageApiLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -965,6 +1013,7 @@ class TestIsizeMaxUpdateLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -1004,6 +1053,7 @@ class TestRandomIsizeLength:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -1052,6 +1102,7 @@ class TestAllocationGuard:
             pin=pin_from_config(p11_config),
             timeout=5,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1109,6 +1160,7 @@ class TestMechanismNullInnerParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1152,6 +1204,7 @@ class TestMechanismNullInnerParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1195,6 +1248,7 @@ class TestMechanismNullInnerParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1231,6 +1285,7 @@ class TestMechanismNullInnerParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1285,6 +1340,7 @@ class TestIsizeMaxOutputLength:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1323,6 +1379,7 @@ class TestIsizeMaxOutputLength:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1361,6 +1418,7 @@ class TestIsizeMaxOutputLength:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1409,6 +1467,7 @@ class TestHkdfNullInfo:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1464,6 +1523,7 @@ class TestEddsaNullContext:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1509,6 +1569,7 @@ class TestMlDsaExplicitEmptyContext:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1557,6 +1618,7 @@ class TestAesCcmNullNonce:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1605,6 +1667,7 @@ class TestSimpleKdfNullData:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1669,6 +1732,7 @@ class TestAesCbcEncryptDataMalformedParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1725,6 +1789,7 @@ class TestRsaPssSaltLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1785,6 +1850,7 @@ class TestGcmAadLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -1840,6 +1906,7 @@ class TestCcmAadLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -1893,6 +1960,7 @@ class TestPbkdf2NestedLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -1979,6 +2047,7 @@ class TestPbeNestedLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2022,6 +2091,7 @@ class TestTlsKdfNullParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2078,6 +2148,7 @@ class TestTlsKdfRandomLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2121,6 +2192,7 @@ class TestSp800108NullDataParams:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2170,6 +2242,7 @@ class TestSp800108NestedCountBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2203,6 +2276,7 @@ class TestSp800108NestedCountBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2269,6 +2343,7 @@ class TestRsaOaepSourceDataLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2325,6 +2400,7 @@ class TestGcmIvLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2382,6 +2458,7 @@ class TestGcmTagBitsLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2439,6 +2516,7 @@ class TestCcmNonceLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2496,6 +2574,7 @@ class TestCcmMacLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2553,6 +2632,7 @@ class TestEddsaContextLengthBoundary:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         _classify_unhonorable_length_outcome(
@@ -2606,6 +2686,7 @@ class TestUpdateOutputGuard:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2642,6 +2723,7 @@ class TestUpdateOutputGuard:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2722,6 +2804,7 @@ class TestContinueAfterNullOutputQuery:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2762,6 +2845,7 @@ class TestContinueAfterNullOutputQuery:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2802,6 +2886,7 @@ class TestContinueAfterNullOutputQuery:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2842,6 +2927,7 @@ class TestContinueAfterNullOutputQuery:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2949,6 +3035,7 @@ class TestSingleShotOutputGuard:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -2985,6 +3072,7 @@ class TestSingleShotOutputGuard:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(

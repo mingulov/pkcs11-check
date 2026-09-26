@@ -107,6 +107,7 @@ from pkcs11_check.raw.types_std import (
 )
 
 MODULE = os.environ["P11_THREAD_MODULE"]
+INTERFACE = os.environ.get("P11_THREAD_INTERFACE", "auto")
 SLOT_INDEX = int(os.environ.get("P11_THREAD_SLOT", "0"))
 THREADS = int(os.environ["P11_THREAD_THREADS"])
 ITERS = int(os.environ["P11_THREAD_ITERS"])
@@ -115,7 +116,7 @@ _pin = os.environ.get("P11_THREAD_PIN", "")
 PIN = _pin.encode() if _pin else None
 FLAGS = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
-raw = RawPKCS11.from_lib(MODULE)
+raw = RawPKCS11.from_lib(MODULE, interface=INTERFACE)
 args = CK_C_INITIALIZE_ARGS()
 args.flags = int(CKF_OS_LOCKING_OK)
 rv = int(raw.C_Initialize(ctypes.byref(args)))
@@ -182,6 +183,7 @@ def _run_threaded_workload(
     if throwaway_conf is not None and conf_env_var:
         env[conf_env_var] = throwaway_conf
     env["P11_THREAD_MODULE"] = str(p11_config.module)
+    env["P11_THREAD_INTERFACE"] = str(getattr(p11_config, "interface", "auto"))
     env["P11_THREAD_SLOT"] = str(p11_config.slot if p11_config.slot is not None else 0)
     env["P11_THREAD_THREADS"] = str(threads)
     env["P11_THREAD_ITERS"] = str(iters)

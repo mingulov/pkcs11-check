@@ -7,15 +7,13 @@ start a ``CKM_SHA256`` digest (``C_DigestInit``), call ``C_SessionCancel(flags=0
 verify the session accepts a fresh ``C_DigestInit`` afterwards.
 
 Runs through ``probe_main_raw`` (the raw ctypes CDLL path): ``probe_main_raw`` loads the
-module and calls ``C_GetFunctionList`` (giving ``ctx.lib`` + ``ctx.func_list``); the probe
-then reproduces the legacy child's v3.0 negotiation *verbatim* -- it calls
-``C_GetInterface(NULL, NULL, &fl3, 0)`` (``except AttributeError`` when the module does not
-export it) and constructs ``RawPKCS11(ctx.func_list.value, funclist3_ptr=fl3_val)``.  This
-manual construction is preserved deliberately (Invariant I5, byte-identical child output):
-``RawPKCS11.from_lib`` would negotiate v3.0 *differently* -- it dereferences the interface's
-``pFunctionList`` and requests v3.2-then-default -- which would change which
-``C_SessionCancel`` pointer is loaded on a v3.0 module.  So the session-path ``probe_main``
-is NOT used here.
+module and calls ``C_GetFunctionList`` (giving ``ctx.lib`` + ``ctx.func_list``).  The probe
+then manually calls ``C_GetInterface`` with the exact transported version for explicit
+``3.0``/``3.1``/``3.2`` selections and constructs ``RawPKCS11`` from the returned
+``pFunctionList``.  With ``auto`` it preserves the legacy default request and fallback
+behavior.  ``RawPKCS11.from_lib`` is not used because its auto path also tries an exact
+3.2 interface first, which would change which ``C_SessionCancel`` pointer this legacy
+probe exercises.  So the session-path ``probe_main`` is NOT used here.
 
 The PIN travels ONLY via the ``_P11CHECK_PIN`` env var (Invariant I3): the probe opens a
 session and, when the env var is set, logs in as ``CKU_USER`` -- exactly as the legacy
@@ -48,8 +46,11 @@ from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids
 from pkcs11_check.raw.types_std import (
+    CK_INTERFACE_PTR,
+    CK_INTERFACE_PTR_PTR,
     CK_MECHANISM,
     CK_NOTIFY,
+    CK_VERSION,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKM_SHA256,
@@ -63,27 +64,81 @@ from pkcs11_check.testcases._probes.raw_session import RawCtypesContext, probe_m
 
 
 def _negotiate_v30(ctx: RawCtypesContext) -> RawPKCS11:
-    """Build a RawPKCS11 with the v3.0 interface negotiated exactly as the legacy child did.
+    """Build a RawPKCS11 with the requested v3 interface.
 
-    Reproduces the legacy manual construction verbatim (I5): the base v2.40 function list
-    from ``ctx.func_list`` (C_GetFunctionList) plus, when the module exports
-    ``C_GetInterface``, the pointer it writes for the default interface passed straight
-    through as ``funclist3_ptr``.  ``RawPKCS11.from_lib`` is deliberately NOT used -- it
-    negotiates v3.0 differently (dereferences ``pFunctionList``, requests v3.2-then-default),
-    which would change the loaded ``C_SessionCancel`` pointer on a v3.0 module.
+    This child intentionally retains the legacy manual construction (I5): the base v2.40
+    function list from ``ctx.func_list`` plus the exact interface table returned by
+    ``C_GetInterface``.  Unlike ``RawPKCS11.from_lib(interface="auto")``, an explicit
+    selector is never upgraded to another table.  The ``auto`` path keeps the historical
+    default-v3 request.
     """
+    requested = ctx.interface
+    if requested == "2.40":
+        raise RuntimeError("v30_session requires a PKCS#11 v3 interface, got 2.40")
+    if requested == "auto":
+        requested_version: tuple[int, int] | None = None
+    else:
+        try:
+            major, minor = (int(part) for part in requested.split("."))
+        except (AttributeError, ValueError):
+            raise ValueError(f"unknown PKCS#11 interface {requested!r}") from None
+        if (major, minor) not in ((3, 0), (3, 1), (3, 2)):
+            raise ValueError(f"v30_session requires a PKCS#11 v3 interface, got {requested!r}")
+        requested_version = (major, minor)
+
     fl3_val = 0
     try:
         get_iface = ctx.lib.C_GetInterface
         get_iface.restype = c_ulong
-        get_iface.argtypes = [c_void_p, c_void_p, POINTER(c_void_p), c_ulong]
-        fl3_ptr = c_void_p()
-        rv = get_iface(None, None, byref(fl3_ptr), 0)
-        iface_ptr = fl3_ptr.value
-        if rv == CKR_OK and iface_ptr:
-            fl3_val = iface_ptr
+        get_iface.argtypes = [c_void_p, POINTER(CK_VERSION), CK_INTERFACE_PTR_PTR, c_ulong]
     except AttributeError:
-        pass  # Module does not export C_GetInterface
+        if requested_version is not None:
+            raise RuntimeError(
+                f"requested PKCS#11 interface {requested!r} requires C_GetInterface"
+            ) from None
+        return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+
+    requested_version_obj: CK_VERSION | None = None
+    if requested_version is not None:
+        requested_version_obj = CK_VERSION()
+        requested_version_obj.major, requested_version_obj.minor = requested_version
+    iface_ptr = CK_INTERFACE_PTR()
+    rv = get_iface(
+        None,
+        byref(requested_version_obj) if requested_version_obj is not None else None,
+        byref(iface_ptr),
+        0,
+    )
+    if rv != CKR_OK:
+        if requested_version is None:
+            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+        raise RuntimeError(
+            f"C_GetInterface for requested PKCS#11 interface {requested!r} "
+            f"returned CK_RV 0x{int(rv):08x}"
+        )
+    if not bool(iface_ptr):
+        if requested_version is None:
+            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+        raise RuntimeError(
+            f"C_GetInterface for requested PKCS#11 interface {requested!r} returned NULL"
+        )
+    fl3_val = int(iface_ptr.contents.pFunctionList or 0)
+    if not fl3_val:
+        if requested_version is None:
+            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+        raise RuntimeError(
+            f"C_GetInterface for requested PKCS#11 interface {requested!r} returned "
+            "NULL pFunctionList"
+        )
+
+    if requested_version is not None:
+        actual = ctypes.cast(fl3_val, POINTER(CK_VERSION)).contents
+        actual_version = (int(actual.major), int(actual.minor))
+        if actual_version != requested_version:
+            raise RuntimeError(
+                f"requested PKCS#11 interface {requested!r}, got "
+                f"{actual_version[0]}.{actual_version[1]}"
+            )
     return RawPKCS11(ctx.func_list.value, funclist3_ptr=fl3_val)
 
 

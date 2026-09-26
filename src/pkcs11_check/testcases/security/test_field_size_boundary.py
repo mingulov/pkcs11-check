@@ -169,6 +169,7 @@ class TestRsaModulusBitsOversizedValue:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -215,6 +216,7 @@ class TestPrimeBitsOversizedValue:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -248,6 +250,7 @@ class TestPrimeBitsOversizedValue:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -309,6 +312,7 @@ class TestGenerateKeyValueLenTruncation:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -367,6 +371,7 @@ class TestFindObjectsCountTruncation:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         # Crash = buffer overrun (the only real finding for this probe).
         assert_subprocess_no_crash(
@@ -448,6 +453,7 @@ class TestHkdfParamLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=180,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -533,6 +539,7 @@ class TestHkdfParamLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=180,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,

@@ -243,6 +243,7 @@ class TestEncryptOutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -297,6 +298,7 @@ class TestDecryptOutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -356,6 +358,7 @@ class TestAesOFBOutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -400,6 +403,7 @@ class TestAesOFBOutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -458,6 +462,7 @@ class TestAesCFB128OutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -503,6 +508,7 @@ class TestAesCFB128OutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -562,6 +568,7 @@ class TestAesCFB8OutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -606,6 +613,7 @@ class TestAesCFB8OutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -661,6 +669,7 @@ class TestChaCha20OutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -701,6 +710,7 @@ class TestChaCha20OutputLengthTruncation:
             pin=pin_from_config(p11_config),
             timeout=_HONORING_TIMEOUT_S,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,

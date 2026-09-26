@@ -240,6 +240,7 @@ def _run_gap_probe(
         pin=pin_from_config(p11_config),
         timeout=timeout,
         coverage="session",
+        interface=getattr(p11_config, "interface", "auto"),
     )
     return result.returncode, result.stdout, result.stderr
 

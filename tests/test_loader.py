@@ -47,6 +47,16 @@ class TestLoadModule:
             module = load_module(fake_so, interface="auto")
         assert module.interface_version == "3.2"
 
+    def test_load_module_passes_requested_interface_to_raw_loader(self, tmp_path: Path) -> None:
+        fake_so = tmp_path / "module.so"
+        fake_so.touch()
+        mock_raw = _mock_raw("3.1")
+        with patch("pkcs11_check.core.loader.RawPKCS11") as mock_cls:
+            mock_cls.from_lib.return_value = mock_raw
+            load_module(fake_so, interface="3.1")
+
+        mock_cls.from_lib.assert_called_once_with(str(fake_so), interface="3.1")
+
     def test_c_initialize_already_initialized_is_ok(self, tmp_path: Path) -> None:
         """CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) is not an error."""
         fake_so = tmp_path / "module.so"

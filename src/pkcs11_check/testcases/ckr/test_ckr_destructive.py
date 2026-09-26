@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -110,7 +111,7 @@ def _conf_env(conf_path: str) -> Iterator[None]:
             os.environ.pop(conf_env_var, None)
 
 
-def _run_destructive(probe: str) -> tuple[int, str, str]:
+def _run_destructive(probe: str, *, interface: str) -> tuple[int, str, str]:
     """Run a destructive probe against a temporary throwaway token."""
     mint_result = _mint_throwaway_token()
     if mint_result is None:
@@ -126,6 +127,7 @@ def _run_destructive(probe: str) -> tuple[int, str, str]:
                 {"module_path": module, "probe": probe},
                 timeout=15,
                 coverage="session",
+                interface=interface,
             )
     finally:
         shutil.rmtree(token_dir, ignore_errors=True)
@@ -135,18 +137,22 @@ def _run_destructive(probe: str) -> tuple[int, str, str]:
 class TestInitTokenErrors:
     """C_InitToken error conditions."""
 
-    def test_init_token_session_exists(self) -> None:
+    def test_init_token_session_exists(self, p11_config: Any) -> None:
         """C_InitToken with open session -> CKR_SESSION_EXISTS."""
-        rc, out, err = _run_destructive("init_token_session_exists")
+        rc, out, err = _run_destructive(
+            "init_token_session_exists", interface=getattr(p11_config, "interface", "auto")
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
             out, (CKR_SESSION_EXISTS,), label="C_InitToken with an open session"
         )
 
-    def test_init_token_wrong_so_pin(self) -> None:
+    def test_init_token_wrong_so_pin(self, p11_config: Any) -> None:
         """C_InitToken with wrong SO PIN -> CKR_PIN_INCORRECT."""
-        rc, out, err = _run_destructive("init_token_wrong_so_pin")
+        rc, out, err = _run_destructive(
+            "init_token_wrong_so_pin", interface=getattr(p11_config, "interface", "auto")
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -157,9 +163,11 @@ class TestInitTokenErrors:
 class TestSetPINErrors:
     """C_SetPIN error conditions."""
 
-    def test_set_pin_wrong_old(self) -> None:
+    def test_set_pin_wrong_old(self, p11_config: Any) -> None:
         """C_SetPIN with wrong old PIN -> CKR_PIN_INCORRECT."""
-        rc, out, err = _run_destructive("set_pin_wrong_old")
+        rc, out, err = _run_destructive(
+            "set_pin_wrong_old", interface=getattr(p11_config, "interface", "auto")
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(out, (CKR_PIN_INCORRECT,), label="C_SetPIN with a wrong old PIN")
@@ -168,18 +176,22 @@ class TestSetPINErrors:
 class TestInitPINErrors:
     """C_InitPIN error conditions."""
 
-    def test_init_pin_not_logged_in(self) -> None:
+    def test_init_pin_not_logged_in(self, p11_config: Any) -> None:
         """C_InitPIN without SO login -> CKR_USER_NOT_LOGGED_IN."""
-        rc, out, err = _run_destructive("init_pin_not_logged_in")
+        rc, out, err = _run_destructive(
+            "init_pin_not_logged_in", interface=getattr(p11_config, "interface", "auto")
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
             out, (CKR_USER_NOT_LOGGED_IN,), label="C_InitPIN without SO login"
         )
 
-    def test_init_pin_short_pin(self) -> None:
+    def test_init_pin_short_pin(self, p11_config: Any) -> None:
         """C_InitPIN with 1-byte PIN -> CKR_PIN_TOO_WEAK or related PIN error."""
-        rc, out, err = _run_destructive("init_pin_short_pin")
+        rc, out, err = _run_destructive(
+            "init_pin_short_pin", interface=getattr(p11_config, "interface", "auto")
+        )
         assert rc == 0, f"Crash: {err[-300:]}"
         assert "OK" in out
         _classify_destructive_ckr(
@@ -188,7 +200,7 @@ class TestInitPINErrors:
             label="C_InitPIN with a 1-byte PIN (weak/too-short)",
         )
 
-    def test_init_pin_token_not_initialized(self) -> None:
+    def test_init_pin_token_not_initialized(self, p11_config: Any) -> None:
         """C_InitPIN on uninitialized token -> CKR_TOKEN_NOT_INITIALIZED."""
         module = os.environ.get("PKCS11_CHECK_THROWAWAY_MODULE")
         if not module:
@@ -209,6 +221,7 @@ class TestInitPINErrors:
                     {"module_path": module, "probe": "init_pin_token_not_initialized"},
                     timeout=15,
                     coverage="session",
+                    interface=getattr(p11_config, "interface", "auto"),
                 )
         finally:
             shutil.rmtree(token_dir, ignore_errors=True)

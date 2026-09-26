@@ -1185,6 +1185,7 @@ def _run_decrypt_probe(p11_config: Any, *, mech: str, variant: str, context: str
         pin=pin_from_config(p11_config),
         timeout=15,
         coverage="session",
+        interface=getattr(p11_config, "interface", "auto"),
     )
     mechanism = "CKM_RSA_PKCS" if mech == "pkcs" else "CKM_RSA_PKCS_OAEP"
     expected = (
@@ -1260,6 +1261,7 @@ class TestRsaVerifyCorruptedSignature:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         _check_protocol(
             result.returncode,

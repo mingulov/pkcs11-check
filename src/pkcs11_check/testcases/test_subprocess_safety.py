@@ -65,6 +65,7 @@ def _run_probe(
         pin=pin_from_config(p11_config) if with_pin else None,
         timeout=timeout,
         coverage="session",
+        interface=getattr(p11_config, "interface", "auto"),
     )
     return result.returncode, result.stdout, result.stderr
 

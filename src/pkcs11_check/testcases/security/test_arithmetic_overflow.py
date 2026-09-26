@@ -111,6 +111,7 @@ class TestDataLengthOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -173,6 +174,7 @@ class TestGcmDecryptUpdateAccumulation:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -245,6 +247,7 @@ class TestMechanismParamLengthOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -302,6 +305,7 @@ class TestGcmTagBitsOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -355,6 +359,7 @@ class TestPssSaltLengthOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=15,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -423,6 +428,7 @@ class TestTemplateCountOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -466,6 +472,7 @@ class TestTemplateCountOverflowValidHandles:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -505,6 +512,7 @@ class TestDeriveTemplateCountOverflowValidBase:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -557,6 +565,7 @@ class TestKemTemplateCountOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=15,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -603,6 +612,7 @@ class TestKeyValueLenOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=5,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -646,6 +656,7 @@ class TestAttributeValueLenOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -701,6 +712,7 @@ class TestGenerateKeyPairCountOverflow:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,

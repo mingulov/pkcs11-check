@@ -113,6 +113,7 @@ class TestUniversalRealTriggers:
             {"module_path": str(p11_config.module), "probe": "not_initialized"},
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,
@@ -173,6 +174,7 @@ class TestUniversalRealTriggers:
             },
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,

@@ -77,6 +77,7 @@ class ProbeContext:
     slot_id: int | None
     cleanup: Callable[[], None]
     module_path: str
+    interface: str = "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +169,12 @@ def probe_main(
     # call', so a load failure here must not look the same as one.
     atexit.register(mark_python_finalized)
     params = ProbeParams.load(sys.argv[1])
-    raw = RawPKCS11.from_lib(params.module_path)
+    requested_interface = getattr(params, "interface", None)
+    interface = requested_interface or "auto"
+    if requested_interface is None:
+        raw = RawPKCS11.from_lib(params.module_path)
+    else:
+        raw = RawPKCS11.from_lib(params.module_path, interface=interface)
 
     # Enable RV trace before any C_* calls so initialisation appears in the trace (I7).
     # The atexit handler is registered first; atexit is LIFO so it fires *after* the
@@ -183,7 +189,12 @@ def probe_main(
     try:
         slot_id = params.slot_id
         ctx = ProbeContext(
-            raw=raw, sh=None, slot_id=slot_id, cleanup=teardown, module_path=params.module_path
+            raw=raw,
+            sh=None,
+            slot_id=slot_id,
+            cleanup=teardown,
+            module_path=params.module_path,
+            interface=interface,
         )
 
         if level == Level.LOAD:

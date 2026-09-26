@@ -167,6 +167,30 @@ def test_probe_teardown_runs_at_most_once(monkeypatch: object) -> None:
     assert calls == {"coverage": 1, "close": 1, "finalize": 1}
 
 
+def test_probe_main_passes_requested_interface_to_raw_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Raw:
+        pass
+
+    def _from_lib(path: str, *, interface: str = "auto") -> _Raw:
+        captured.update(path=path, interface=interface)
+        return _Raw()
+
+    monkeypatch.setattr(session.ProbeParams, "load", lambda _path: SimpleNamespace(
+        module_path="provider.so", slot_id=None, interface="3.1", extra={}
+    ))
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", _from_lib)
+    monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
+    monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
+
+    session.probe_main(lambda _ctx, _extra: None, level=session.Level.LOAD)
+
+    assert captured == {"path": "provider.so", "interface": "3.1"}
+
+
 class _NoopTeardown:
     def __init__(self, _raw: object) -> None:
         self.sh: int | None = None
@@ -190,7 +214,7 @@ def test_session_clean_initialize_reject_is_terminal_setup_evidence(
             return int(CKR_GENERAL_ERROR)
 
     monkeypatch.setattr(session.ProbeParams, "load", lambda _path: _session_params())
-    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path: _Raw())
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path, **_kwargs: _Raw())
     monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
     monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
     monkeypatch.setattr(session, "rv_trace_enabled", lambda: False)
@@ -211,7 +235,7 @@ def test_session_python_initialize_error_propagates(monkeypatch: pytest.MonkeyPa
             raise RuntimeError("bootstrap bug")
 
     monkeypatch.setattr(session.ProbeParams, "load", lambda _path: _session_params())
-    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path: _Raw())
+    monkeypatch.setattr(session.RawPKCS11, "from_lib", lambda _path, **_kwargs: _Raw())
     monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
     monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)
     monkeypatch.setattr(session, "rv_trace_enabled", lambda: False)

@@ -68,6 +68,7 @@ class TestFaultInjection:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,
@@ -92,6 +93,7 @@ class TestFaultInjection:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,
@@ -116,6 +118,7 @@ class TestFaultInjection:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,
@@ -141,6 +144,7 @@ class TestFaultProxyBasic:
             },
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,
@@ -163,6 +167,7 @@ class TestFaultProxyBasic:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_ckr_subprocess_ok(
             result.returncode,

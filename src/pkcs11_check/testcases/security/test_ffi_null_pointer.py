@@ -131,6 +131,7 @@ class TestNullDataUpdate:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -212,6 +213,7 @@ class TestNullOutputFinal:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -243,6 +245,7 @@ class TestNullRandomBuffer:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -264,6 +267,7 @@ class TestNullRandomBuffer:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -306,6 +310,7 @@ class TestNullPinBuffer:
             },
             pin=None,
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -324,6 +329,7 @@ class TestNullPinBuffer:
             },
             pin=None,
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -342,6 +348,7 @@ class TestNullPinBuffer:
             },
             pin=None,
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -376,6 +383,7 @@ class TestNullOperationState:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -419,6 +427,7 @@ class TestNullWrapUnwrap:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -459,6 +468,7 @@ class TestHmacGeneralNullParam:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -546,6 +556,7 @@ class TestNullDataOneShot:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -593,6 +604,7 @@ class TestNullMessageApi:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         if "not_supported" in result.stdout:
             pytest.skip("C_MessageEncryptInit not available")
@@ -624,6 +636,7 @@ class TestNullMessageApi:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         if "not_supported" in result.stdout:
             pytest.skip("C_MessageDecryptInit not available")
@@ -671,6 +684,7 @@ class TestNullKemApi:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         if "not_supported" in result.stdout:
             pytest.skip("C_DecapsulateKey not available")
@@ -714,6 +728,7 @@ class TestNullInitToken:
             },
             pin=None,
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -732,6 +747,7 @@ class TestNullInitToken:
             },
             pin=None,
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,

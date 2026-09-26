@@ -14,10 +14,12 @@ from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 
 from . import metadata_std
 from ._platform import windows_dll_directory as _windows_dll_directory
+from .rv import ckr_name
 from .types_std import *  # noqa: F401,F403,F405
 from .types_std import _CKStructure  # underscore name: not re-exported by ``*``
 
 _PTR_SIZE = ctypes.sizeof(c_void_p)
+_SUPPORTED_INTERFACES = ("auto", "2.40", "3.0", "3.1", "3.2")
 
 # Reverse lookups: int -> named constant
 _CKR_BY_VALUE: dict[int, CKR] = {}
@@ -352,6 +354,26 @@ def read_crash_journal(
     return done, last_incomplete
 
 
+class InterfaceLookupError(RuntimeError):
+    """A requested v3 interface could not yield a usable function table."""
+
+    def __init__(self, requested_interface: str, *, reason: str, rv: int) -> None:
+        self.requested_interface = requested_interface
+        self.reason = reason
+        self.rv = int(rv)
+        if reason == "rv":
+            detail = f"returned {ckr_name(self.rv)} (0x{self.rv:08x})"
+        elif reason == "null_interface":
+            detail = "returned CKR_OK with NULL interface pointer"
+        elif reason == "null_function_list":
+            detail = "returned CKR_OK with NULL pFunctionList"
+        else:  # pragma: no cover - defensive for future reason additions
+            detail = f"failed ({reason})"
+        super().__init__(
+            f"C_GetInterface for requested PKCS#11 interface {requested_interface} {detail}"
+        )
+
+
 class RawPKCS11:
     """Raw ctypes access to PKCS#11 C_* functions."""
 
@@ -366,8 +388,13 @@ class RawPKCS11:
         lib_path: str | None = None,
         funclist3_ptr: int = 0,
         funclist32_ptr: int = 0,
+        interface: str = "auto",
     ) -> None:
+        if interface not in _SUPPORTED_INTERFACES:
+            msg = f"Unknown interface {interface!r}; must be one of {_SUPPORTED_INTERFACES}"
+            raise ValueError(msg)
         self._funcs: dict[str, Any] = {}
+        self._interface_version: str | None = None
         self._missing_function_list_names: set[str] = set()
         self._lib: ctypes.CDLL | None = None
         # Windows DLL-search handles kept alive for the process (see _windows_dll_directory).
@@ -390,7 +417,7 @@ class RawPKCS11:
         if funclist_ptr:
             self._load_from_ptr(funclist_ptr)
         elif lib_path:
-            self._load_from_lib(lib_path)
+            self._load_from_lib(lib_path, interface=interface)
         else:
             raise ValueError("Provide funclist_ptr or lib_path")
 
@@ -409,6 +436,9 @@ class RawPKCS11:
     @property
     def interface_version(self) -> str:
         """Detect negotiated PKCS#11 interface version."""
+        selected = getattr(self, "_interface_version", None)
+        if selected is not None:
+            return selected
         names = self.available_function_names()
         if "C_EncapsulateKey" in names:
             return "3.2"
@@ -448,28 +478,40 @@ class RawPKCS11:
             self._funcs[name] = func
 
     def _load_from_ptr(self, ptr: int) -> None:
+        self._interface_version = self._version_string(self._function_list_version(ptr))
         self._load_functions_from_ptr(ptr, _STANDARD_FUNCTION_NAMES)
 
     def _load_v30_from_ptr(self, ptr: int) -> None:
+        self._interface_version = self._version_string(self._function_list_version(ptr))
         self._load_functions_from_ptr(ptr, _V30_FUNCTION_NAMES)
 
     def _load_v32_from_ptr(self, ptr: int) -> None:
+        self._interface_version = self._version_string(self._function_list_version(ptr))
         self._load_functions_from_ptr(ptr, _V32_FUNCTION_NAMES)
 
     def _function_list_version(self, ptr: int) -> tuple[int, int]:
         version = cast(ptr, ctypes.POINTER(CK_VERSION)).contents
         return version.major, version.minor
 
+    @staticmethod
+    def _version_string(version: tuple[int, int]) -> str:
+        return f"{version[0]}.{version[1]}"
+
     def _load_versioned_function_list(self, ptr: int) -> None:
         self._load_from_ptr(ptr)
         major, minor = self._function_list_version(ptr)
+        self._interface_version = self._version_string((major, minor))
         if (major, minor) >= (3, 0):
             self._load_v30_from_ptr(ptr)
         if (major, minor) >= (3, 2):
             self._load_v32_from_ptr(ptr)
 
     def _get_interface_function_list_ptr(
-        self, get_interface: Any, version: tuple[int, int] | None
+        self,
+        get_interface: Any,
+        version: tuple[int, int] | None,
+        *,
+        strict: bool = False,
     ) -> int | None:
         interface_ptr = CK_INTERFACE_PTR()
         version_ptr = None
@@ -480,20 +522,37 @@ class RawPKCS11:
             requested_version.minor = version[1]
             version_ptr = byref(requested_version)
 
-        rv = get_interface(None, version_ptr, byref(interface_ptr), 0)
-        if rv != CKR_OK or not bool(interface_ptr):
+        rv = int(get_interface(None, version_ptr, byref(interface_ptr), 0))
+        requested_interface = self._version_string(version) if version is not None else "auto"
+        if rv != int(CKR_OK):
+            if strict:
+                raise InterfaceLookupError(requested_interface, reason="rv", rv=rv)
+            return None
+        if not bool(interface_ptr):
+            if strict:
+                raise InterfaceLookupError(
+                    requested_interface, reason="null_interface", rv=rv
+                )
             return None
         function_list_ptr = interface_ptr.contents.pFunctionList
         if not function_list_ptr:
+            if strict:
+                raise InterfaceLookupError(
+                    requested_interface, reason="null_function_list", rv=rv
+                )
             return None
         return int(function_list_ptr)
 
-    def _load_from_lib(self, lib_path: str) -> None:
+    def _load_from_lib(self, lib_path: str, interface: str = "auto") -> None:
+        if interface not in _SUPPORTED_INTERFACES:
+            msg = f"Unknown interface {interface!r}; must be one of {_SUPPORTED_INTERFACES}"
+            raise ValueError(msg)
         directory = _windows_dll_directory(lib_path)
         if directory is not None and sys.platform == "win32":
             self._dll_dir_handles.append(os.add_dll_directory(directory))
         self._lib = ctypes.CDLL(lib_path)
 
+        get_interface: Any | None = None
         try:
             get_interface = self._lib.C_GetInterface
             get_interface.restype = CK_RV
@@ -503,22 +562,56 @@ class RawPKCS11:
                 CK_INTERFACE_PTR_PTR,
                 CK_FLAGS,
             ]
-            function_list_ptr = self._get_interface_function_list_ptr(get_interface, (3, 2))
-            if function_list_ptr is not None:
-                self._load_versioned_function_list(function_list_ptr)
-                self._load_optional_exported_functions()
-                return
-
-            function_list_ptr = self._get_interface_function_list_ptr(get_interface, None)
-            if function_list_ptr is not None:
-                self._load_versioned_function_list(function_list_ptr)
-                self._load_optional_exported_functions()
-                return
         except OSError as exc:
             if ctypes_access_violation_code(exc) is not None:
                 raise
         except AttributeError:
-            pass  # Module does not export C_GetInterface or library load failed
+            if interface != "auto" and interface != "2.40":
+                raise RuntimeError(
+                    f"Requested PKCS#11 interface {interface} requires C_GetInterface"
+                ) from None
+
+        if interface in ("3.0", "3.1", "3.2"):
+            if get_interface is None:
+                raise RuntimeError(
+                    f"Requested PKCS#11 interface {interface} requires C_GetInterface"
+                )
+            major, minor = (int(part) for part in interface.split("."))
+            requested = (major, minor)
+            function_list_ptr = self._get_interface_function_list_ptr(
+                get_interface, requested, strict=True
+            )
+            if function_list_ptr is None:
+                raise RuntimeError(f"Requested PKCS#11 interface {interface} is unavailable")
+            actual = self._function_list_version(function_list_ptr)
+            if actual != requested:
+                raise RuntimeError(
+                    f"Requested PKCS#11 interface {interface}, got table "
+                    f"{self._version_string(actual)}"
+                )
+            self._load_versioned_function_list(function_list_ptr)
+            self._load_optional_exported_functions()
+            return
+
+        if interface == "auto" and get_interface is not None:
+            try:
+                function_list_ptr = self._get_interface_function_list_ptr(get_interface, (3, 2))
+                if function_list_ptr is not None:
+                    self._load_versioned_function_list(function_list_ptr)
+                    self._load_optional_exported_functions()
+                    return
+
+                function_list_ptr = self._get_interface_function_list_ptr(get_interface, None)
+                if function_list_ptr is not None:
+                    self._load_versioned_function_list(function_list_ptr)
+                    self._load_optional_exported_functions()
+                    return
+            except OSError as exc:
+                if ctypes_access_violation_code(exc) is not None:
+                    raise
+
+        # Explicit v2.40 requests use only the legacy C_GetFunctionList path. Auto
+        # retains this as its final fallback after the current v3 preference order.
 
         get_function_list = self._lib.C_GetFunctionList
         get_function_list.restype = CK_RV
@@ -535,6 +628,11 @@ class RawPKCS11:
         base_ptr = cast(fn_list_ptr, c_void_p).value
         if base_ptr is None:
             raise RuntimeError("C_GetFunctionList returned NULL pointer")
+        actual = self._function_list_version(base_ptr)
+        if interface == "2.40" and actual != (2, 40):
+            raise RuntimeError(
+                f"Requested PKCS#11 interface 2.40, got table {self._version_string(actual)}"
+            )
         self._load_from_ptr(base_ptr)
         self._load_optional_exported_functions()
 
@@ -622,8 +720,8 @@ class RawPKCS11:
         return max(0, self._rv_trace_total - len(self._rv_trace))
 
     @classmethod
-    def from_lib(cls, lib_path: str) -> RawPKCS11:
-        return cls(lib_path=lib_path)
+    def from_lib(cls, lib_path: str, interface: str = "auto") -> RawPKCS11:
+        return cls(lib_path=lib_path, interface=interface)
 
     def _call(self, name: str, *args: Any) -> CKR:
         self._call_log[name] += 1

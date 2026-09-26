@@ -31,7 +31,8 @@ def raw_pkcs11(request: pytest.FixtureRequest) -> Generator[RawPKCS11]:
     module_path = request.config.getoption("p11_module")
     if module_path is None:
         pytest.skip("No --p11-module specified")
-    raw = RawPKCS11.from_lib(str(module_path))
+    interface = request.config.getoption("p11_interface") or "auto"
+    raw = RawPKCS11.from_lib(str(module_path), interface=interface)
     yield raw
 
 

@@ -49,8 +49,7 @@ def probe_login(module: Path, interface: str, slot: int, pin: bytes) -> LoginPro
         CKU_USER,
     )
 
-    del interface  # raw login is interface-agnostic; kept for signature symmetry
-    raw = RawPKCS11.from_lib(str(module))
+    raw = RawPKCS11.from_lib(str(module), interface=interface)
     raw.C_Initialize(None)
     try:
         slot_ids = get_slot_ids(raw, token_present=True)

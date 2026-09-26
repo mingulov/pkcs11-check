@@ -73,6 +73,7 @@ class TestEcMissingParams:
             },
             pin=pin_from_config(p11_config),
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -106,6 +107,7 @@ class TestEcMissingParams:
             },
             pin=pin_from_config(p11_config),
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -155,6 +157,7 @@ class TestEcMissingParams:
             },
             pin=pin_from_config(p11_config),
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -192,6 +195,7 @@ class TestEcMissingParams:
             },
             pin=pin_from_config(p11_config),
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -231,6 +235,7 @@ class TestEcMissingParams:
             },
             pin=pin_from_config(p11_config),
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -270,6 +275,7 @@ class TestEcMissingParams:
             },
             pin=pin_from_config(p11_config),
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,

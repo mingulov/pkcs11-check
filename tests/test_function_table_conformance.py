@@ -103,6 +103,7 @@ def test_independent_entry_still_runs():
 
 def test_load_only_raw_does_not_bootstrap_a_session(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
+    interfaces: list[str] = []
 
     def missing_function_list_names() -> set[str]:
         return set()
@@ -110,17 +111,27 @@ def test_load_only_raw_does_not_bootstrap_a_session(monkeypatch: pytest.MonkeyPa
     spy = SimpleNamespace(missing_function_list_names=missing_function_list_names)
     for name in ("C_Initialize", "C_GetSlotList", "C_OpenSession"):
         setattr(spy, name, lambda *_args, _name=name: calls.append(_name))
-    monkeypatch.setattr(tin.RawPKCS11, "from_lib", lambda _path: spy)
+
+    def load_raw(_path: str, *, interface: str) -> object:
+        interfaces.append(interface)
+        return spy
+
+    monkeypatch.setattr(tin.RawPKCS11, "from_lib", load_raw)
     raw = tin._load_only_raw(SimpleNamespace(module="module.so"))
 
     tin.TestInterfaceVersion().test_selected_function_table_entry(raw, "C_Initialize")
+    assert interfaces == ["auto"]
     assert calls == []
 
 
 def test_load_only_raw_does_not_hide_loader_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail_loader(_path: str) -> object:
+    interfaces: list[str] = []
+
+    def fail_loader(_path: str, *, interface: str) -> object:
+        interfaces.append(interface)
         raise RuntimeError("loader failed")
 
     monkeypatch.setattr(tin.RawPKCS11, "from_lib", fail_loader)
     with pytest.raises(RuntimeError, match="loader failed"):
         tin._load_only_raw(SimpleNamespace(module="module.so"))
+    assert interfaces == ["auto"]

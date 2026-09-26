@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pkcs11_check.core.loader import SUPPORTED_INTERFACES
 from pkcs11_check.core.process_observation import (
     SUBPROCESS_ABRUPT_EXIT_MARKER,
     build_process_observation,
@@ -70,6 +71,18 @@ class ProbeResult:
 
 
 _PYTHON_TRACEBACK = "Traceback (most recent call last)"
+
+
+def _normalize_interface_selector(value: object) -> str:
+    """Canonicalize a supported selector exactly as the child treats auto values."""
+    if value is None:
+        return "auto"
+    if not isinstance(value, str):
+        raise ValueError(f"Unknown PKCS#11 interface {value!r}")
+    normalized = value.strip().lower() or "auto"
+    if normalized not in SUPPORTED_INTERFACES:
+        raise ValueError(f"Unknown PKCS#11 interface {value!r}")
+    return normalized
 
 
 def _finalizer_ran(cov_path: str) -> bool:
@@ -121,6 +134,7 @@ def run_probe(
     pin: str | None = None,
     timeout: int = 15,
     coverage: Literal["session", "raw"] = "session",
+    interface: str | None = None,
 ) -> ProbeResult:
     """Launch a _probes module in a subprocess and return its result.
 
@@ -134,6 +148,8 @@ def run_probe(
         coverage: ``"session"`` routes ingested coverage to the preamble accumulators
             (``ingest_subprocess_coverage``); ``"raw"`` routes to the raw accumulators
             (``ingest_raw_subprocess_coverage``) — Invariant I6.
+        interface: Explicit PKCS#11 interface selector to serialize into the child params.
+            An existing, different selector is rejected before the child is launched.
 
     Returns:
         :class:`ProbeResult` with ``returncode``, ``stdout``, ``stderr``.
@@ -141,7 +157,25 @@ def run_probe(
     Raises:
         PinInParamsError: if ``params`` contains a PIN-bearing key.
     """
-    payload = ProbeParams.dump(params)  # raises PinInParamsError on PIN keys (I3)
+    serialized_params = dict(params)
+    existing_interface = "interface" in serialized_params
+    normalized_existing = (
+        _normalize_interface_selector(serialized_params["interface"])
+        if existing_interface
+        else None
+    )
+    if interface is not None:
+        normalized_requested = _normalize_interface_selector(interface)
+        if existing_interface and normalized_existing != normalized_requested:
+            raise ValueError(
+                "conflicting interface selectors: "
+                f"params contains {serialized_params['interface']!r}, "
+                f"keyword requested {interface!r}"
+            )
+        serialized_params["interface"] = normalized_requested
+    elif existing_interface:
+        serialized_params["interface"] = normalized_existing
+    payload = ProbeParams.dump(serialized_params)  # raises PinInParamsError on PIN keys (I3)
 
     env = dict(os.environ)
     if pin is not None:

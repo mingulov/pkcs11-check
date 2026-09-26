@@ -387,6 +387,7 @@ class TestCcmNullNonceWithLength:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -549,6 +550,7 @@ class TestGcmAadNullWithLength:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(

@@ -6,6 +6,7 @@ timeout -> rc 124 + marker, and coverage routing to the correct accumulator (I6)
 
 from __future__ import annotations
 
+import json
 import signal
 import subprocess
 import tempfile
@@ -36,6 +37,121 @@ def test_run_probe_passes_extra_and_injects_pin_via_env() -> None:
     assert result.returncode == 0, result.stderr
     assert "ECHO_MARKER:hello" in result.stdout
     assert "ECHO_PIN_PRESENT:True" in result.stdout  # PIN reached child via env only
+
+
+def test_run_probe_serializes_explicit_interface_without_mutating_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The selected interface crosses the parent/child JSON boundary explicitly."""
+    original = {"module_path": "/nonexistent.so", "marker": "hello"}
+    captured: dict[str, object] = {}
+
+    def _fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["payload"] = json.loads(Path(args[-1]).read_text(encoding="utf-8"))
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+
+    run_probe("_echo", original, interface="3.1")
+
+    assert original == {"module_path": "/nonexistent.so", "marker": "hello"}
+    assert captured["payload"] == {
+        "module_path": "/nonexistent.so",
+        "marker": "hello",
+        "interface": "3.1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("existing", "requested", "expected"),
+    ((None, " auto ", "auto"), (" 3.1 ", "3.1", "3.1"), ("", "AUTO", "auto")),
+)
+def test_run_probe_accepts_equivalent_normalized_interfaces(
+    monkeypatch: pytest.MonkeyPatch,
+    existing: str | None,
+    requested: str,
+    expected: str,
+) -> None:
+    params = {"module_path": "/x.so", "interface": existing}
+    captured: dict[str, object] = {}
+
+    def _fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured["payload"] = json.loads(Path(args[-1]).read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+
+    run_probe("_echo", params, interface=requested)
+
+    assert params == {"module_path": "/x.so", "interface": existing}
+    assert captured["payload"]["interface"] == expected  # type: ignore[index]
+
+
+def test_run_probe_rejects_unknown_interface_before_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched = False
+
+    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal launched
+        launched = True
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+
+    with pytest.raises(ValueError, match="Unknown PKCS#11 interface"):
+        run_probe("_echo", {"module_path": "/x.so"}, interface="4.0")
+    assert not launched
+
+
+def test_run_probe_rejects_conflicting_interface_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller cannot silently replace a selector already present in params."""
+    launched = False
+
+    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal launched
+        launched = True
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+
+    with pytest.raises(ValueError, match="conflicting interface"):
+        run_probe("_echo", {"module_path": "/x.so", "interface": "2.40"}, interface="3.1")
+    assert not launched
+
+
+def test_run_probe_rejects_present_auto_interface_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A present ``None`` selector means auto and cannot be replaced silently."""
+    params = {"module_path": "/x.so", "interface": None}
+    launched = False
+
+    def _fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal launched
+        launched = True
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+
+    with pytest.raises(ValueError, match="conflicting interface"):
+        run_probe("_echo", params, interface="3.1")
+    assert params == {"module_path": "/x.so", "interface": None}
+    assert not launched
+
+
+def test_run_probe_allows_matching_interface_in_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+
+    run_probe("_echo", {"module_path": "/x.so", "interface": "3.1"}, interface="3.1")
 
 
 def test_run_probe_preserves_unflushed_output_before_abrupt_exit() -> None:
