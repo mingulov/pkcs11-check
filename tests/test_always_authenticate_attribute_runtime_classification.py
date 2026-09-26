@@ -258,3 +258,15 @@ def test_context_login_not_supported_xfails(monkeypatch: pytest.MonkeyPatch) -> 
 def test_context_login_user_type_invalid_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(pytest.xfail.Exception):
         _run_context_login(monkeypatch, int(CKR_USER_TYPE_INVALID))
+
+
+def test_context_login_undefined_rv_is_a_hard_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F6: an undefined CK_RV outside any active op is FAIL, never an xfail."""
+    with pytest.raises(Failed) as exc_info:
+        _run_context_login(monkeypatch, 0x12345678)
+    assert not isinstance(exc_info.value, XFailed)
+    rec = _record()
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "metadata"
+    assert rec.operation == "C_Login"
+    assert rec.actual_ckr == "0x12345678"

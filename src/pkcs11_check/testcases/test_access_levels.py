@@ -1895,68 +1895,128 @@ class TestAlwaysAuthenticate:
                     ),
                 )
 
-            # Do context-specific login, then sign
+            # Valid flow is exactly C_SignInit -> context-specific C_Login ->
+            # C_Sign. sign_single cannot insert the login between Init and use,
+            # so the three phases run as explicit ordered raw calls.
+            mech = mech_simple(CKM_SHA256_RSA_PKCS)
+            rv_init = int(rs.raw.C_SignInit(rs.sh, mech.byref(), priv_h))
+            if rv_init != CKR_OK:
+                _classify_operation_unavailable(
+                    CkrAssertionError(f"C_SignInit returned {ckr_name(rv_init)}", rv_init),
+                    label="C_SignInit before context-specific login is not operational",
+                    operation="C_SignInit",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    producer_operation="C_GenerateKeyPair",
+                    producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                )
+                return
+
+            # Only CKR_OK authenticates the active key. CKR_USER_ALREADY_LOGGED_IN,
+            # CKR_OPERATION_NOT_INITIALIZED, and any other defined/vendor clean
+            # refusal stop the flow here: Sign must not run without proven auth.
+            # A rejected login may leave Sign active; the function-scoped session
+            # teardown owns that state, not object destruction.
             pin_buf = (CK_UTF8CHAR * len(pin_bytes))(*pin_bytes)
-            rv = rs.raw.C_Login(rs.sh, CKU_CONTEXT_SPECIFIC, pin_buf, len(pin_bytes))
-            if rv not in (CKR_OK, CKR_USER_ALREADY_LOGGED_IN):
-                _classify_negative_operation_rv(
-                    rv,
-                    expected_rvs=(CKR_USER_ALREADY_LOGGED_IN,),
+            rv_login = int(rs.raw.C_Login(rs.sh, CKU_CONTEXT_SPECIFIC, pin_buf, len(pin_bytes)))
+            if rv_login != CKR_OK:
+                login_detail = {
+                    "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                }
+                _raise_for_undefined_ckr(
+                    rv_login,
                     label="Context-specific C_Login for CKA_ALWAYS_AUTHENTICATE",
                     operation="C_Login",
                     mechanism=None,
-                    allow_ok=True,
+                    expected=CKR_OK,
+                    detail=dict(login_detail),
+                )
+                classification.classify(
+                    "not_operational",
+                    kind="lifecycle",
+                    label="Context-specific C_Login for CKA_ALWAYS_AUTHENTICATE",
+                    operation="C_Login",
+                    mechanism=None,
+                    expected=CKR_OK,
+                    actual=rv_login,
+                    detail=dict(login_detail),
+                    summary=(
+                        "Context-specific C_Login for CKA_ALWAYS_AUTHENTICATE did not "
+                        "authenticate the active key"
+                    ),
                 )
                 return
 
             data = b"context auth test data"
-            try:
-                sig = sign_single(rs.raw, rs.sh, priv_h, CKM_SHA256_RSA_PKCS, data)
-                if len(sig) == 0:
-                    fail_as(
-                        "wrong_result",
-                        kind="crypto",
-                        label="CKA_ALWAYS_AUTHENTICATE:context-auth-sign",
-                        operation="C_Sign",
-                        mechanism="CKM_SHA256_RSA_PKCS",
-                        detail={
-                            "expected": "non-empty signature",
-                            "actual_length": 0,
-                            "producer_operation": "C_GenerateKeyPair",
-                            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        },
-                        summary=(
-                            "C_Sign returned CKR_OK after context-specific login "
-                            "but produced an empty signature"
-                        ),
-                    )
-            except CkrAssertionError as e:
-                if e.rv == CKR_USER_NOT_LOGGED_IN:
-                    classification.classify(
-                        "self_contradiction",
-                        kind="lifecycle",
-                        label="CKA_ALWAYS_AUTHENTICATE:context-login-not-honored",
-                        operation="C_Sign",
-                        mechanism="CKM_SHA256_RSA_PKCS",
-                        expected=CKR_OK,
-                        actual=e.rv,
-                        detail={
-                            "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                            "producer_operation": "C_GenerateKeyPair",
-                            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-                        },
-                        summary=(
-                            "C_Sign returned CKR_USER_NOT_LOGGED_IN after accepted "
-                            "context-specific login"
-                        ),
-                    )
+            msg_buf = (c_ubyte * len(data))(*data)
+            sig_buf = (c_ubyte * 256)()
+            sig_len = CK_ULONG(256)
+            rv_sign = int(rs.raw.C_Sign(rs.sh, msg_buf, len(data), sig_buf, byref(sig_len)))
+            if rv_sign == CKR_USER_NOT_LOGGED_IN:
+                classification.classify(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="CKA_ALWAYS_AUTHENTICATE:context-login-not-honored",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    expected=CKR_OK,
+                    actual=rv_sign,
+                    detail={
+                        "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "C_Sign returned CKR_USER_NOT_LOGGED_IN after accepted "
+                        "context-specific login"
+                    ),
+                )
+            if rv_sign != CKR_OK:
                 _classify_operation_unavailable(
-                    e,
+                    CkrAssertionError(f"C_Sign returned {ckr_name(rv_sign)}", rv_sign),
                     label="C_Sign after context-specific login is not operational",
                     operation="C_Sign",
                     mechanism="CKM_SHA256_RSA_PKCS",
                     producer_operation="C_GenerateKeyPair",
                     producer_mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                )
+                return
+            if sig_len.value == 0:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKA_ALWAYS_AUTHENTICATE:context-auth-sign",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    detail={
+                        "expected": "non-empty signature",
+                        "actual_length": 0,
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "C_Sign returned CKR_OK after context-specific login "
+                        "but produced an empty signature"
+                    ),
+                )
+            if sig_len.value != 256:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="CKA_ALWAYS_AUTHENTICATE:context-auth-sign-length",
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    detail={
+                        "expected_length": 256,
+                        "actual_length": sig_len.value,
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "C_Sign returned CKR_OK after context-specific login "
+                        "but produced an impossible RSA-2048 signature length"
+                    ),
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, priv_h)

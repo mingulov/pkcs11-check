@@ -165,8 +165,11 @@ def test_select_eddsa_public_key_encoding_falls_back_to_explicit_params(
         *,
         mech_param: object | None = None,
     ) -> bool:
+        from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS
+
         mech_params.append(mech_param)
-        if mech_param is not None:
+        params = getattr(mech_param, "params", None)
+        if not isinstance(params, CK_EDDSA_PARAMS):
             raise CkrAssertionError(
                 "Unexpected CK_RV CKR_FUNCTION_NOT_SUPPORTED",
                 int(CKR_FUNCTION_NOT_SUPPORTED),
@@ -190,7 +193,12 @@ def test_select_eddsa_public_key_encoding_falls_back_to_explicit_params(
     assert encoding == "raw"
     assert len(mech_params) == 2
     assert mech_params[0] is not None
-    assert mech_params[1] is None
+    # The explicit compatibility profile sends a complete CK_EDDSA_PARAMS
+    # structure directly; it must not rely on the resolver side effect.
+    assert mech_params[1] is not None
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS
+
+    assert isinstance(getattr(mech_params[1], "params", None), CK_EDDSA_PARAMS)
 
 
 def test_import_eddsa_public_key_uses_cached_der_encoding(monkeypatch: Any) -> None:

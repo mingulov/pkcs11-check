@@ -105,3 +105,24 @@ def test_bad_param_negatives_are_registry_driven() -> None:
     assert "test_registry_digest_malformed_required_param" in source
     assert "test_registry_derive_missing_required_param" in source
     assert "test_registry_derive_malformed_required_param" in source
+
+
+def test_eddsa_parameter_negatives_use_rfc8032_curve_name_setup() -> None:
+    """EdDSA negatives need an RFC8032 curveName key; RFC8410 pure takes NULL."""
+    source = _source()
+
+    assert "encode_edwards_curve_name_parameters" in source
+    assert "test_eddsa_edwards448_sign_missing_required_param" in source
+    assert "test_eddsa_edwards448_sign_malformed_required_param" in source
+    assert "test_eddsa_edwards448_verify_missing_required_param" in source
+    assert "test_eddsa_edwards448_verify_malformed_required_param" in source
+
+
+def test_eddsa_malformed_negatives_use_isolated_session_and_non_null_params() -> None:
+    """Malformed EdDSA Init negatives must not contaminate a shared session."""
+    source = _source()
+
+    assert "_EDDSA_MALFORMED_PARAM_RVS" in source
+    assert "p11_raw_session" in source
+    eddsa_block = source[source.index("test_eddsa_edwards448_sign_malformed_required_param") :]
+    assert "mech_bytes" in eddsa_block

@@ -12,8 +12,11 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify
-from pkcs11_check.raw.ec import encode_named_curve_parameters
-from pkcs11_check.raw.pack import attr_bytes
+from pkcs11_check.raw.ec import (
+    encode_edwards_curve_name_parameters,
+    encode_named_curve_parameters,
+)
+from pkcs11_check.raw.pack import attr_bytes, mech_eddsa, mech_simple
 from pkcs11_check.raw.recipes import (
     gen_keypair,
     read_attributes,
@@ -61,22 +64,32 @@ _EDDSA_RUNTIME_REJECT_RVS = (
 )
 
 
-def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
-    """Sign data with CKM_EDDSA, xfail on explicit advertised-path rejects."""
+def _sign_eddsa_params(rs: Any, priv: int, data: bytes, mech_param: Any) -> bytes:
+    """Sign with CKM_EDDSA and explicit params, xfail on advertised-path rejects."""
     try:
-        return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data)
+        return sign_single(rs.raw, rs.sh, priv, CKM_EDDSA, data, mech_param=mech_param)
     except CkrAssertionError as exc:
         xfail_if_known_ckr(exc, _EDDSA_RUNTIME_REJECT_RVS, "advertised EdDSA sign rejected")
     raise
 
 
-def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
-    """Verify EdDSA signature, xfail on explicit advertised-path rejects."""
+def _verify_eddsa_params(rs: Any, pub: int, data: bytes, sig: bytes, mech_param: Any) -> bool:
+    """Verify with CKM_EDDSA and explicit params, xfail on advertised-path rejects."""
     try:
-        return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig)
+        return verify_single(rs.raw, rs.sh, pub, CKM_EDDSA, data, sig, mech_param=mech_param)
     except CkrAssertionError as exc:
         xfail_if_known_ckr(exc, _EDDSA_RUNTIME_REJECT_RVS, "advertised EdDSA verify rejected")
     raise
+
+
+def _sign_eddsa(rs: Any, priv: int, data: bytes) -> bytes:
+    """Sign RFC8410 pure data with CKM_EDDSA and explicit NULL params."""
+    return _sign_eddsa_params(rs, priv, data, mech_simple(CKM_EDDSA))
+
+
+def _verify_eddsa(rs: Any, pub: int, data: bytes, sig: bytes) -> bool:
+    """Verify RFC8410 pure data with CKM_EDDSA and explicit NULL params."""
+    return _verify_eddsa_params(rs, pub, data, sig, mech_simple(CKM_EDDSA))
 
 
 pytestmark = pytest.mark.crossverify
@@ -406,3 +419,187 @@ class TestEd448:
         for data in [b"", b"x", b"a" * 1000]:
             sig = _sign_eddsa(rs, priv, data)
             assert len(sig) == 114
+
+
+# ---------------------------------------------------------------------------
+# RFC8032 curveName profiles: ctx/ph schemes selected via CK_EDDSA_PARAMS
+# ---------------------------------------------------------------------------
+
+EDWARDS25519_CURVE_NAME = encode_edwards_curve_name_parameters("edwards25519")
+EDWARDS448_CURVE_NAME = encode_edwards_curve_name_parameters("edwards448")
+
+_CTX_A = b"eddsa-test-context-a"
+_CTX_B = b"eddsa-test-context-b"
+
+
+def _gen_curve_name_keypair(rs: Any, curve_name_params: bytes) -> tuple[int, int]:
+    """Generate an Edwards keypair for RFC8032 curveName CKA_EC_PARAMS."""
+    return gen_keypair(
+        rs.raw,
+        rs.sh,
+        CKM_EC_EDWARDS_KEY_PAIR_GEN,
+        pub_base=[attr_bytes(CKA_EC_PARAMS, curve_name_params)],
+        priv_base=[],
+        public_attrs={
+            CKA_VERIFY: True,
+            CKA_TOKEN: False,
+        },
+        private_attrs={
+            CKA_SIGN: True,
+            CKA_TOKEN: False,
+        },
+        pub_skip={CKA_EC_PARAMS},
+    )
+
+
+def _gen_edwards25519_curve_name(rs: Any) -> tuple[int, int]:
+    return _gen_curve_name_keypair(rs, EDWARDS25519_CURVE_NAME)
+
+
+def _gen_edwards448_curve_name(rs: Any) -> tuple[int, int]:
+    return _gen_curve_name_keypair(rs, EDWARDS448_CURVE_NAME)
+
+
+@pytest.fixture()
+def edwards25519_curve_name_keypair(p11_raw_session: Any) -> tuple[int, int]:
+    """Generate an RFC8032 edwards25519 keypair, skip if unsupported."""
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
+        pytest.skip("EDDSA mechanism not supported")
+    return _gen_edwards_or_skip(rs, "edwards25519 curveName", _gen_edwards25519_curve_name)
+
+
+@pytest.fixture()
+def edwards448_curve_name_keypair(p11_raw_session: Any) -> tuple[int, int]:
+    """Generate an RFC8032 edwards448 keypair, skip if unsupported."""
+    rs = p11_raw_session
+    if not rs.has_mechanism("EDDSA"):
+        pytest.skip("EDDSA mechanism not supported")
+    return _gen_edwards_or_skip(rs, "edwards448 curveName", _gen_edwards448_curve_name)
+
+
+def _refute_ignored_structure(label: str, summary: str) -> None:
+    """Fail when a provider verifies across modes: it ignored the structure."""
+    classify(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation="C_Verify",
+        mechanism="CKM_EDDSA",
+        summary=summary,
+    )
+
+
+class TestEdDSAParametrizedModes:
+    """RFC8032 scheme rows: NULL pure plus ctx/ph structures by key profile."""
+
+    def test_edwards25519_curve_name_pure_null_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Pure Ed25519 on a curveName key takes NULL."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519 curveName pure test data"
+
+        signature = _sign_eddsa(rs, priv, data)
+        assert len(signature) == 64
+
+        assert _verify_eddsa(rs, pub, data, signature) is True
+
+    def test_edwards25519_ctx_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed25519ctx: structure with phFlag=false and context."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ctx test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 64
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_edwards25519_ph_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed25519ph: structure with phFlag=true and context."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ph test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A, prehash=True)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 64
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_edwards448_ctx_roundtrip(
+        self, p11_raw_session: Any, edwards448_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed448: structure with phFlag=false and context."""
+        rs = p11_raw_session
+        pub, priv = edwards448_curve_name_keypair
+        data = b"Ed448 test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 114
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_edwards448_ph_roundtrip(
+        self, p11_raw_session: Any, edwards448_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed448ph: structure with phFlag=true and context."""
+        rs = p11_raw_session
+        pub, priv = edwards448_curve_name_keypair
+        data = b"Ed448ph test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A, prehash=True)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 114
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_eddsa_context_mismatch_does_not_verify(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """A signature under one context must not verify under another."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ctx mismatch test data"
+
+        signature = _sign_eddsa_params(rs, priv, data, mech_eddsa(CKM_EDDSA, context_data=_CTX_A))
+        if _verify_eddsa_params(
+            rs, pub, data, signature, mech_eddsa(CKM_EDDSA, context_data=_CTX_B)
+        ):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ctx verify context dependence",
+                "signature verified under a different context -- provider ignores "
+                "CK_EDDSA_PARAMS context",
+            )
+
+    def test_eddsa_pure_and_ctx_modes_do_not_cross_verify(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Pure NULL and ctx-structure modes must not cross-verify."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519 pure/ctx cross-mode test data"
+        ctx_mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A)
+
+        pure_sig = _sign_eddsa(rs, priv, data)
+        if _verify_eddsa_params(rs, pub, data, pure_sig, ctx_mech):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ctx verify pure-signature rejection",
+                "pure NULL signature verified under a ctx structure -- provider "
+                "ignores CK_EDDSA_PARAMS",
+            )
+
+        ctx_sig = _sign_eddsa_params(rs, priv, data, ctx_mech)
+        if _verify_eddsa(rs, pub, data, ctx_sig):
+            _refute_ignored_structure(
+                "CKM_EDDSA:pure verify ctx-signature rejection",
+                "ctx-structure signature verified under NULL -- provider ignores CK_EDDSA_PARAMS",
+            )

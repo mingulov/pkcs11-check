@@ -13,11 +13,14 @@ from typing import Any
 import pytest
 from _pytest.outcomes import XFailed
 
+from pkcs11_check import classification
 from pkcs11_check.raw.types_std import (
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_USER_ALREADY_LOGGED_IN,
+    CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases import test_v30_session as tv
 from tests._skip_assert import assert_skips
@@ -167,3 +170,93 @@ def test_session_cancel_device_error_still_xfails() -> None:
     """A genuine clean-reject CKR (not FNS) must stay xfail, not turn into a skip."""
     with pytest.raises(XFailed):
         tv._handle_cancel_rv(int(CKR_DEVICE_ERROR), "C_SessionCancel")
+
+
+# ---------------------------------------------------------------------------
+# F6: no-active-operation context-specific login negatives. Canonical
+# CKR_OPERATION_NOT_INITIALIZED passes; CKR_USER_NOT_LOGGED_IN is a
+# failure-like nonspec_reject xfail (never canonical); CKR_OK is a hard
+# failure; the C_LoginUser fallback must carry operation="C_LoginUser".
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_v30_context_classifications() -> Any:
+    classification.clear()
+    yield
+    classification.clear()
+
+
+def _drive_context_login(monkeypatch: pytest.MonkeyPatch, method: str, rv: int) -> SimpleNamespace:
+    session = _session_with_login_user()
+    monkeypatch.setattr(tv, "_pin_bytes", lambda _cfg: b"1234")
+    if method == "test_context_specific_via_c_login_user":
+        monkeypatch.setattr(tv, "_raw_login_user", lambda *_a, **_k: int(rv))
+    else:
+        monkeypatch.setattr(tv, "_raw_login", lambda *_a, **_k: int(rv))
+    return session
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "test_context_specific_login_without_active_op",
+        "test_context_specific_login_uses_c_login",
+        "test_context_specific_via_c_login_user",
+    ],
+)
+def test_context_login_not_logged_in_is_nonspec_reject_xfail(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """CKR_USER_NOT_LOGGED_IN is not canonical here -> failure-like xfail."""
+    session = _drive_context_login(monkeypatch, method, int(CKR_USER_NOT_LOGGED_IN))
+    with pytest.raises(XFailed):
+        getattr(tv.TestContextSpecificLogin(), method)(session, _Cfg())
+    record = classification.get_records()[-1]
+    assert record.reason == "nonspec_reject"
+    assert record.outcome == "xfail"
+    assert record.actual_ckr == "CKR_USER_NOT_LOGGED_IN"
+    assert record.expected_ckr == ["CKR_OPERATION_NOT_INITIALIZED"]
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "test_context_specific_login_without_active_op",
+        "test_context_specific_login_uses_c_login",
+        "test_context_specific_via_c_login_user",
+    ],
+)
+def test_context_login_not_initialized_passes(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    session = _drive_context_login(monkeypatch, method, int(CKR_OPERATION_NOT_INITIALIZED))
+    getattr(tv.TestContextSpecificLogin(), method)(session, _Cfg())
+    assert classification.get_records() == []
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "test_context_specific_login_without_active_op",
+        "test_context_specific_login_uses_c_login",
+        "test_context_specific_via_c_login_user",
+    ],
+)
+def test_context_login_accepted_is_a_hard_failure(
+    monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    session = _drive_context_login(monkeypatch, method, int(CKR_OK))
+    with pytest.raises(pytest.fail.Exception, match="active operation"):
+        getattr(tv.TestContextSpecificLogin(), method)(session, _Cfg())
+
+
+def test_context_login_via_login_user_fallback_labels_c_login_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _drive_context_login(
+        monkeypatch, "test_context_specific_via_c_login_user", int(CKR_DEVICE_ERROR)
+    )
+    with pytest.raises(XFailed):
+        tv.TestContextSpecificLogin().test_context_specific_via_c_login_user(session, _Cfg())
+    record = classification.get_records()[-1]
+    assert record.operation == "C_LoginUser"
+    assert record.actual_ckr == "CKR_DEVICE_ERROR"

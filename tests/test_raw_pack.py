@@ -875,9 +875,61 @@ def test_mech_eddsa_with_context_data() -> None:
 
     params = m.params
     assert isinstance(params, CK_EDDSA_PARAMS)
-    assert params.phFlag == 1
+    assert params.phFlag == 0
     assert params.ulContextDataLen == 12
     assert params.pContextData is not None
+
+
+def test_mech_eddsa_context_without_prehash_selects_ctx_mode() -> None:
+    """Context alone selects Ed25519ctx/Ed448 mode: phFlag stays false."""
+    from pkcs11_check.raw.pack import mech_eddsa
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS, CKM_EDDSA
+
+    m = mech_eddsa(CKM_EDDSA, context_data=b"ctx", prehash=False)
+
+    params = m.params
+    assert isinstance(params, CK_EDDSA_PARAMS)
+    assert params.phFlag == 0
+    assert params.ulContextDataLen == 3
+    assert params.pContextData is not None
+
+
+def test_mech_eddsa_prehash_without_context() -> None:
+    """Prehash without context is packable: phFlag true, zero-length context."""
+    from pkcs11_check.raw.pack import mech_eddsa
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS, CKM_EDDSA
+
+    m = mech_eddsa(CKM_EDDSA, prehash=True)
+
+    params = m.params
+    assert isinstance(params, CK_EDDSA_PARAMS)
+    assert params.phFlag == 1
+    assert params.ulContextDataLen == 0
+
+
+def test_mech_eddsa_prehash_with_context() -> None:
+    """Prehash and context are orthogonal: both may be set at once."""
+    from pkcs11_check.raw.pack import mech_eddsa
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS, CKM_EDDSA
+
+    m = mech_eddsa(CKM_EDDSA, context_data=b"ctx", prehash=True)
+
+    params = m.params
+    assert isinstance(params, CK_EDDSA_PARAMS)
+    assert params.phFlag == 1
+    assert params.ulContextDataLen == 3
+    assert params.pContextData is not None
+
+
+def test_mech_eddsa_rejects_context_longer_than_255_bytes() -> None:
+    from pkcs11_check.raw.pack import mech_eddsa
+    from pkcs11_check.raw.types_std import CKM_EDDSA
+
+    with pytest.raises(ValueError, match="255"):
+        mech_eddsa(CKM_EDDSA, context_data=bytes(256))
+
+    m = mech_eddsa(CKM_EDDSA, context_data=bytes(255))
+    assert m.params.ulContextDataLen == 255
 
 
 def test_mech_pbkdf2_sets_salt_iterations_prf() -> None:

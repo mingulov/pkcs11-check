@@ -27,14 +27,18 @@ from pkcs11_check.raw.types_std import (
     CKA_WRAP_WITH_TRUSTED,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_DEVICE_ERROR,
+    CKR_FUNCTION_FAILED,
     CKR_GENERAL_ERROR,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
+    CKR_OPERATION_NOT_INITIALIZED,
     CKR_SESSION_READ_ONLY,
     CKR_SESSION_READ_ONLY_EXISTS,
+    CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_NOT_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
     CKR_VENDOR_DEFINED,
+    CKU_CONTEXT_SPECIFIC,
 )
 from pkcs11_check.testcases import test_access_levels as tal
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
@@ -517,24 +521,197 @@ def test_always_auth_success_without_context_login_is_a_failure(
     assert record.actual_ckr == "CKR_OK"
 
 
-def test_always_auth_context_login_empty_signature_is_structured_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session = _access_session()
-    session.raw.C_Login = lambda *_a, **_k: int(CKR_OK)
+class _OrderedAuthRaw:
+    """Recording fake for C_SignInit -> context C_Login -> C_Sign.
+
+    The login observes initialized state (C_SignInit already ran) and the
+    sign observes authenticated state (context login returned CKR_OK); only
+    call names and the login user type are recorded, never buffers or PINs.
+    """
+
+    def __init__(
+        self,
+        *,
+        init_rv: int = int(CKR_OK),
+        login_rv: int = int(CKR_OK),
+        sign_rv: int = int(CKR_OK),
+        sign_len: int = 256,
+    ) -> None:
+        self.calls: list[str] = []
+        self.login_user_types: list[int] = []
+        self._init_rv = init_rv
+        self._login_rv = login_rv
+        self._sign_rv = sign_rv
+        self._sign_len = sign_len
+
+    def C_SignInit(self, *_args: object) -> int:  # noqa: N802
+        self.calls.append("C_SignInit")
+        return self._init_rv
+
+    def C_Login(  # noqa: N802
+        self, _sh: object, user_type: int, _pin: object, _pin_len: object
+    ) -> int:
+        assert self.calls == ["C_SignInit"], f"login before init: {self.calls}"
+        self.calls.append("C_Login")
+        self.login_user_types.append(int(user_type))
+        return self._login_rv
+
+    def C_Sign(self, *_args: object) -> int:  # noqa: N802
+        assert self.calls == ["C_SignInit", "C_Login"], f"sign out of order: {self.calls}"
+        self.calls.append("C_Sign")
+        _args[-1]._obj.value = self._sign_len  # type: ignore[attr-defined]
+        return self._sign_rv
+
+
+def _context_login_session(
+    monkeypatch: pytest.MonkeyPatch, raw: _OrderedAuthRaw
+) -> SimpleNamespace:
+    session = SimpleNamespace(raw=raw, sh=1, slot_id=0, has_mechanism=lambda _: True)
     monkeypatch.setattr(tal, "gen_rsa_keypair", lambda *_a, **_k: (2, 3))
     monkeypatch.setattr(
         tal,
         "read_attributes",
         lambda *_a, **_k: {CKA_ALWAYS_AUTHENTICATE: True},
     )
-    monkeypatch.setattr(tal, "sign_single", lambda *_a, **_k: b"")
     monkeypatch.setattr(tal, "destroy_quietly", lambda *_a, **_k: None)
+    return session
+
+
+def _run_context_login(session: SimpleNamespace) -> None:
+    tal.TestAlwaysAuthenticate().test_always_authenticate_with_context_login(
+        session, SimpleNamespace(pin="1234")
+    )
+
+
+def test_always_auth_context_login_full_order_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F6: C_SignInit -> context C_Login -> C_Sign with a 256-byte signature passes."""
+    raw = _OrderedAuthRaw()
+    session = _context_login_session(monkeypatch, raw)
+
+    _run_context_login(session)
+
+    assert raw.calls == ["C_SignInit", "C_Login", "C_Sign"]
+    assert raw.login_user_types == [int(CKU_CONTEXT_SPECIFIC)]
+    assert classification.get_records() == []
+
+
+def test_always_auth_context_login_init_refusal_is_csigninit_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(init_rv=int(CKR_GENERAL_ERROR))
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(session)
+
+    assert raw.calls == ["C_SignInit"]
+    record = classification.get_records()[-1]
+    assert record.reason == "not_operational"
+    assert record.operation == "C_SignInit"
+    assert record.mechanism == "CKM_SHA256_RSA_PKCS"
+    assert record.expected_ckr == ["CKR_OK"]
+    assert record.actual_ckr == "CKR_GENERAL_ERROR"
+
+
+def test_always_auth_context_login_init_undefined_rv_is_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(init_rv=0x12345678)
+    session = _context_login_session(monkeypatch, raw)
 
     with pytest.raises(Failed) as exc_info:
-        tal.TestAlwaysAuthenticate().test_always_authenticate_with_context_login(
-            session, SimpleNamespace(pin="1234")
-        )
+        _run_context_login(session)
+
+    assert not isinstance(exc_info.value, XFailed)
+    assert raw.calls == ["C_SignInit"]
+    record = classification.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.operation == "C_SignInit"
+    assert record.actual_ckr == "0x12345678"
+
+
+@pytest.mark.parametrize(
+    "login_rv",
+    [int(CKR_OPERATION_NOT_INITIALIZED), int(CKR_USER_ALREADY_LOGGED_IN)],
+)
+def test_always_auth_context_login_state_refusal_is_xfail_without_sign(
+    monkeypatch: pytest.MonkeyPatch, login_rv: int
+) -> None:
+    """F6: only CKR_OK authenticates the active key; state refusals stop the flow."""
+    raw = _OrderedAuthRaw(login_rv=login_rv)
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(session)
+
+    assert raw.calls == ["C_SignInit", "C_Login"]
+    assert raw.login_user_types == [int(CKU_CONTEXT_SPECIFIC)]
+    record = classification.get_records()[-1]
+    assert record.operation == "C_Login"
+    assert record.expected_ckr == ["CKR_OK"]
+
+
+def test_always_auth_context_login_other_clean_refusal_is_xfail_without_sign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(login_rv=int(CKR_FUNCTION_FAILED))
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(session)
+
+    assert raw.calls == ["C_SignInit", "C_Login"]
+    record = classification.get_records()[-1]
+    assert record.operation == "C_Login"
+    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
+
+
+def test_always_auth_context_login_undefined_rv_is_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(login_rv=0x12345678)
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(Failed) as exc_info:
+        _run_context_login(session)
+
+    assert not isinstance(exc_info.value, XFailed)
+    assert raw.calls == ["C_SignInit", "C_Login"]
+    record = classification.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.operation == "C_Login"
+    assert record.actual_ckr == "0x12345678"
+
+
+def test_always_auth_context_login_empty_signature_is_structured_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(sign_len=0)
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(Failed) as exc_info:
+        _run_context_login(session)
+
+    assert not isinstance(exc_info.value, XFailed)
+    assert raw.calls == ["C_SignInit", "C_Login", "C_Sign"]
+    record = classification.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+    assert record.operation == "C_Sign"
+    assert record.mechanism == "CKM_SHA256_RSA_PKCS"
+    assert record.actual_ckr is None
+
+
+def test_always_auth_context_login_oversize_signature_is_crypto_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(sign_len=512)
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(Failed) as exc_info:
+        _run_context_login(session)
 
     assert not isinstance(exc_info.value, XFailed)
     record = classification.get_records()[-1]
@@ -542,7 +719,40 @@ def test_always_auth_context_login_empty_signature_is_structured_failure(
     assert record.kind == "crypto"
     assert record.operation == "C_Sign"
     assert record.mechanism == "CKM_SHA256_RSA_PKCS"
-    assert record.actual_ckr is None
+
+
+def test_always_auth_context_login_sign_refusal_is_csign_xfail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(sign_rv=int(CKR_FUNCTION_FAILED))
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(pytest.xfail.Exception):
+        _run_context_login(session)
+
+    assert raw.calls == ["C_SignInit", "C_Login", "C_Sign"]
+    record = classification.get_records()[-1]
+    assert record.reason == "not_operational"
+    assert record.operation == "C_Sign"
+    assert record.mechanism == "CKM_SHA256_RSA_PKCS"
+    assert record.expected_ckr == ["CKR_OK"]
+    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
+
+
+def test_always_auth_context_login_sign_undefined_rv_is_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _OrderedAuthRaw(sign_rv=0x12345678)
+    session = _context_login_session(monkeypatch, raw)
+
+    with pytest.raises(Failed) as exc_info:
+        _run_context_login(session)
+
+    assert not isinstance(exc_info.value, XFailed)
+    record = classification.get_records()[-1]
+    assert record.reason == "self_contradiction"
+    assert record.operation == "C_Sign"
+    assert record.actual_ckr == "0x12345678"
 
 
 def test_always_auth_unexpected_pre_context_reject_is_exact_csign_xfail(
@@ -578,29 +788,14 @@ def test_always_auth_unexpected_pre_context_reject_is_exact_csign_xfail(
 def test_always_auth_context_login_user_not_logged_in_is_lifecycle_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session = _access_session()
-    session.raw.C_Login = lambda *_a, **_k: int(CKR_OK)
-    monkeypatch.setattr(tal, "gen_rsa_keypair", lambda *_a, **_k: (2, 3))
-    monkeypatch.setattr(
-        tal,
-        "read_attributes",
-        lambda *_a, **_k: {CKA_ALWAYS_AUTHENTICATE: True},
-    )
-    monkeypatch.setattr(
-        tal,
-        "sign_single",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            CkrAssertionError("not logged in", int(CKR_USER_NOT_LOGGED_IN))
-        ),
-    )
-    monkeypatch.setattr(tal, "destroy_quietly", lambda *_a, **_k: None)
+    raw = _OrderedAuthRaw(sign_rv=int(CKR_USER_NOT_LOGGED_IN))
+    session = _context_login_session(monkeypatch, raw)
 
     with pytest.raises(Failed) as exc_info:
-        tal.TestAlwaysAuthenticate().test_always_authenticate_with_context_login(
-            session, SimpleNamespace(pin="1234")
-        )
+        _run_context_login(session)
 
     assert not isinstance(exc_info.value, XFailed)
+    assert raw.calls == ["C_SignInit", "C_Login", "C_Sign"]
     record = classification.get_records()[-1]
     assert record.reason == "self_contradiction"
     assert record.kind == "lifecycle"

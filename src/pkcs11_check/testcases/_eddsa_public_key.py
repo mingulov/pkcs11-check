@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pkcs11_check.raw.pack import mech_simple
+from pkcs11_check.raw.pack import mech_eddsa, mech_simple
 from pkcs11_check.raw.recipes import destroy_quietly, import_ec_public_key, verify_single
 from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
@@ -98,7 +98,7 @@ def _point_for_encoding(public_key: bytes, encoding: EdDsaPointEncoding) -> byte
 def _mech_param_for_profile(profile: EdDsaPublicKeyProfile) -> Any:
     if profile.mechanism_params == "null":
         return mech_simple(CKM_EDDSA)
-    return None
+    return mech_eddsa(CKM_EDDSA)
 
 
 def _try_verify_with_profile(

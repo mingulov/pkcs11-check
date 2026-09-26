@@ -44,7 +44,6 @@ _ec = KeygenRecipe("ec", {"curve": "secp256r1"})
 _ec_edwards = KeygenRecipe("ec_edwards", {"curve": "Ed25519"})
 _ec_montgomery = KeygenRecipe("ec_montgomery", {"curve": "X25519"})
 _ecdh = ParamRecipe("ecdh")
-_eddsa = ParamRecipe("eddsa")
 
 
 def populate(registry: dict[int, MechConfig]) -> None:
@@ -271,12 +270,12 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_EC_EDWARDS_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
-        param_required=True,
-        param_recipe=_eddsa,
+        param_required=False,
         keygen_recipe=_ec_edwards,
         expected_flags=_SIG_VER,
         vector_file="eddsa.json",
-        notes="EdDSA sign/verify: requires CK_EDDSA_PARAMS specifying curve",
+        notes="EdDSA sign/verify: default RFC8410 pure profile takes NULL; "
+        "RFC8032 curveName keys select ctx/ph modes via CK_EDDSA_PARAMS",
     )
 
     registry[CKM_XEDDSA] = MechConfig(
