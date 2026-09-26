@@ -13,12 +13,16 @@ from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
     gen_rsa_keypair,
+    sign_single,
     to_ubyte_buf,
     verify_single,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
+    CKF_MESSAGE_SIGN,
+    CKF_MESSAGE_VERIFY,
+    CKF_MULTI_MESSAGE,
     CKM_AES_CBC,
     CKM_SHA256_RSA_PKCS,
     CKR_DEVICE_ERROR,
@@ -107,6 +111,23 @@ def _skip_unless_message_functions(rs: Any, funcs: list[str]) -> None:
             pytest.skip(f"{name} not available")
 
 
+_MESSAGE_FLAG_NAMES = {
+    int(CKF_MESSAGE_SIGN): "CKF_MESSAGE_SIGN",
+    int(CKF_MESSAGE_VERIFY): "CKF_MESSAGE_VERIFY",
+    int(CKF_MULTI_MESSAGE): "CKF_MULTI_MESSAGE",
+}
+
+
+def _require_message_flags(
+    rs: Any, mechanism: str, required_flags: tuple[int, ...], context: str
+) -> None:
+    """Skip before setup when an advertised mechanism lacks a required v3 flag."""
+    for flag in required_flags:
+        if not rs.has_mechanism_flag(mechanism, flag):
+            name = _MESSAGE_FLAG_NAMES.get(flag, f"0x{flag:x}")
+            pytest.skip(f"{mechanism} does not advertise {name} for {context}")
+
+
 def _skip_if_message_op_not_implemented(exc: AssertionError, context: str) -> None:
     """Skip when ``message_encrypt`` fails with CKR_FUNCTION_NOT_SUPPORTED.
 
@@ -124,15 +145,42 @@ def _skip_if_message_op_not_implemented(exc: AssertionError, context: str) -> No
         pytest.skip(f"{context}: not supported (CKR_FUNCTION_NOT_SUPPORTED)")
 
 
-def _handle_message_rv(rv: int, context: str) -> None:
-    if rv in _MESSAGE_UNSUPPORTED_RVS:
+def _handle_message_rv(rv: int, context: str, *, advertised: bool = False) -> None:
+    """Classify a message operation CK_RV without losing provider evidence."""
+    if advertised and rv in (CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID):
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=context,
+            operation=context,
+            expected=CKR_OK,
+            actual=rv,
+            summary=(
+                f"{context} advertised message operation returned {ckr_name(rv)} "
+                "(metadata self-contradiction)"
+            ),
+        )
+    if rv in _MESSAGE_UNSUPPORTED_RVS and not advertised:
         pytest.skip(f"{context} not supported: {ckr_name(rv)}")
-    if rv in _MESSAGE_ADVERTISED_REJECT_RVS:
+    if rv in _MESSAGE_ADVERTISED_REJECT_RVS or is_standard_ckr(rv):
         xfail_as(
             "not_operational",
             label=context,
             actual=rv,
             summary=f"{context} rejected advertised message operation: {ckr_name(rv)}",
+        )
+    if advertised:
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=context,
+            operation=context,
+            expected=CKR_OK,
+            actual=rv,
+            summary=(
+                f"{context} advertised message operation returned undefined "
+                f"{ckr_name(rv)} (metadata self-contradiction)"
+            ),
         )
     xfail_as(
         "not_operational",
@@ -158,17 +206,20 @@ def _message_sign(
 
     rv = rs.raw.C_MessageSignInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_MessageSignInit")
+        _handle_message_rv(rv, "C_MessageSignInit", advertised=True)
 
     in_buf = to_ubyte_buf(data)
     sig_len = CK_ULONG(0)
     rv = rs.raw.C_SignMessage(rs.sh, None, 0, in_buf, len(data), None, byref(sig_len))
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_SignMessage (size)")
+        _handle_message_rv(rv, "C_SignMessage (size)", advertised=True)
     sig_buf = (ctypes.c_ubyte * sig_len.value)()
     rv = rs.raw.C_SignMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, byref(sig_len))
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_SignMessage")
+        _handle_message_rv(rv, "C_SignMessage", advertised=True)
+    rv = rs.raw.C_MessageSignFinal(rs.sh)
+    if rv != CKR_OK:
+        _handle_message_rv(rv, "C_MessageSignFinal", advertised=True)
     return bytes(sig_buf[: sig_len.value])
 
 
@@ -186,26 +237,37 @@ def _message_verify(
     packed = mech_simple(mechanism)
     rv = rs.raw.C_MessageVerifyInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_MessageVerifyInit")
+        _handle_message_rv(rv, "C_MessageVerifyInit", advertised=True)
 
     in_buf = to_ubyte_buf(data)
     sig_buf = to_ubyte_buf(signature)
     rv = rs.raw.C_VerifyMessage(rs.sh, None, 0, in_buf, len(data), sig_buf, len(signature))
+    final_rv = rs.raw.C_MessageVerifyFinal(rs.sh)
     if rv == CKR_OK:
+        if final_rv != CKR_OK:
+            _handle_message_rv(final_rv, "C_MessageVerifyFinal", advertised=True)
         return True
     if not expect_valid:
-        if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
-            xfail_as(
-                "nonspec_reject",
-                label="C_VerifyMessage:wrong-signature",
-                operation="C_VerifyMessage",
-                actual=rv,
-                summary=(
-                    f"C_VerifyMessage rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
-                ),
-            )
-        return rv not in SIGNATURE_REJECT_RVS
+        return _message_verify_rejection(rv, operation="C_VerifyMessage")
+    # Preserve the primary verify CK_RV when both the message operation and Final
+    # reject.  The operation result is the evidence for this test; Final must not
+    # overwrite it with a secondary lifecycle error.
+    _handle_message_rv(rv, "C_VerifyMessage", advertised=True)
     return False
+
+
+def _message_verify_rejection(rv: int, *, operation: str) -> bool:
+    if rv in NON_CLEAN_SIGNATURE_REJECT_RVS:
+        xfail_as(
+            "nonspec_reject",
+            label=f"{operation}:wrong-signature",
+            operation=operation,
+            actual=rv,
+            summary=(
+                f"{operation} rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
+            ),
+        )
+    return rv not in SIGNATURE_REJECT_RVS
 
 
 def _message_sign_multipart(
@@ -219,28 +281,85 @@ def _message_sign_multipart(
     packed = mech_simple(mechanism)
     rv = rs.raw.C_MessageSignInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_MessageSignInit")
+        _handle_message_rv(rv, "C_MessageSignInit", advertised=True)
+    if not parts:
+        raise ValueError("multipart message signing requires at least one part")
 
-    for part in parts:
+    rv = rs.raw.C_SignMessageBegin(rs.sh, None, 0)
+    if rv != CKR_OK:
+        _handle_message_rv(rv, "C_SignMessageBegin", advertised=True)
+
+    for part in parts[:-1]:
         in_buf = to_ubyte_buf(part)
-        rv = rs.raw.C_SignMessageBegin(rs.sh, None, 0, in_buf, len(part))
+        rv = rs.raw.C_SignMessageNext(rs.sh, None, 0, in_buf, len(part), None, None)
         if rv != CKR_OK:
-            _handle_message_rv(rv, "C_SignMessageBegin")
+            _handle_message_rv(rv, "C_SignMessageNext", advertised=True)
 
+    final_buf = to_ubyte_buf(parts[-1])
     sig_len = CK_ULONG(0)
-    rv = rs.raw.C_SignMessageNext(rs.sh, None, 0, None, 0, None, byref(sig_len), 1)
+    rv = rs.raw.C_SignMessageNext(
+        rs.sh, None, 0, final_buf, len(parts[-1]), None, byref(sig_len)
+    )
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_SignMessageNext (size)")
+        _handle_message_rv(rv, "C_SignMessageNext (size)", advertised=True)
     sig_buf = (ctypes.c_ubyte * sig_len.value)()
-    rv = rs.raw.C_SignMessageNext(rs.sh, None, 0, None, 0, sig_buf, byref(sig_len), 1)
+    rv = rs.raw.C_SignMessageNext(
+        rs.sh, None, 0, final_buf, len(parts[-1]), sig_buf, byref(sig_len)
+    )
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_SignMessageNext")
+        _handle_message_rv(rv, "C_SignMessageNext", advertised=True)
 
     rv = rs.raw.C_MessageSignFinal(rs.sh)
     if rv != CKR_OK:
-        _handle_message_rv(rv, "C_MessageSignFinal")
+        _handle_message_rv(rv, "C_MessageSignFinal", advertised=True)
 
     return bytes(sig_buf[: sig_len.value])
+
+
+def _message_verify_multipart(
+    rs: Any,
+    key: int,
+    mechanism: int,
+    parts: list[bytes],
+    signature: bytes,
+    *,
+    expect_valid: bool = True,
+) -> bool:
+    """Verify one multipart message, supplying a signature only on final Next."""
+    from pkcs11_check.raw.pack import mech_simple
+
+    if not parts:
+        raise ValueError("multipart message verification requires at least one part")
+    packed = mech_simple(mechanism)
+    rv = rs.raw.C_MessageVerifyInit(rs.sh, packed.byref(), key)
+    if rv != CKR_OK:
+        _handle_message_rv(rv, "C_MessageVerifyInit", advertised=True)
+
+    rv = rs.raw.C_VerifyMessageBegin(rs.sh, None, 0)
+    if rv != CKR_OK:
+        _handle_message_rv(rv, "C_VerifyMessageBegin", advertised=True)
+
+    for part in parts[:-1]:
+        in_buf = to_ubyte_buf(part)
+        rv = rs.raw.C_VerifyMessageNext(rs.sh, None, 0, in_buf, len(part), None, 0)
+        if rv != CKR_OK:
+            _handle_message_rv(rv, "C_VerifyMessageNext", advertised=True)
+
+    final_buf = to_ubyte_buf(parts[-1])
+    sig_buf = to_ubyte_buf(signature)
+    message_rv = rs.raw.C_VerifyMessageNext(
+        rs.sh, None, 0, final_buf, len(parts[-1]), sig_buf, len(signature)
+    )
+    final_rv = rs.raw.C_MessageVerifyFinal(rs.sh)
+    if message_rv == CKR_OK:
+        if final_rv != CKR_OK:
+            _handle_message_rv(final_rv, "C_MessageVerifyFinal", advertised=True)
+        return True
+    if not expect_valid:
+        return _message_verify_rejection(message_rv, operation="C_VerifyMessageNext")
+    # Preserve a primary signature/setup rejection if Final also returns an error.
+    _handle_message_rv(message_rv, "C_VerifyMessageNext", advertised=True)
+    return False
 
 
 @pytest.mark.needs_function("C_MessageEncryptInit")
@@ -453,6 +572,12 @@ class TestMessageSignVerify:
         _skip_unless_message_functions(rs, MESSAGE_SIGN_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_SIGN),),
+            "single message sign",
+        )
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         data = b"message sign test data"
         try:
@@ -467,13 +592,19 @@ class TestMessageSignVerify:
     def test_message_verify_single(self, p11_raw_session: Any) -> None:
         """C_MessageVerifyInit + C_VerifyMessage -- single-shot verify."""
         rs = p11_raw_session
-        _skip_unless_message_functions(rs, MESSAGE_SIGN_FUNCS + MESSAGE_VERIFY_FUNCS)
+        _skip_unless_message_functions(rs, MESSAGE_VERIFY_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_VERIFY),),
+            "single message verify",
+        )
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         data = b"message verify test data"
         try:
-            sig = _message_sign(rs, priv, CKM_SHA256_RSA_PKCS, data)
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, data)
             result = _message_verify(rs, pub, CKM_SHA256_RSA_PKCS, data, sig)
             assert result is True
         finally:
@@ -487,6 +618,12 @@ class TestMessageSignVerify:
         _skip_unless_message_functions(rs, MESSAGE_SIGN_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_SIGN),),
+            "single message sign cross-verification",
+        )
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         data = b"cross-verify sign data payload"
         try:
@@ -503,6 +640,12 @@ class TestMessageSignVerify:
         _skip_unless_message_functions(rs, MESSAGE_SIGN_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_SIGN), int(CKF_MULTI_MESSAGE)),
+            "multipart message sign",
+        )
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         try:
             sig = _message_sign_multipart(
@@ -523,6 +666,12 @@ class TestMessageSignVerify:
         _skip_unless_message_functions(rs, MESSAGE_VERIFY_FUNCS)
         if not rs.has_mechanism("SHA256_RSA_PKCS"):
             pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_VERIFY),),
+            "single message verify bad signature",
+        )
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         data = b"correct data"
         bad_sig = b"\x00" * 256
@@ -531,6 +680,64 @@ class TestMessageSignVerify:
                 rs, pub, CKM_SHA256_RSA_PKCS, data, bad_sig, expect_valid=False
             )
             assert result is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    @pytest.mark.needs_function("C_MessageVerifyInit")
+    def test_message_verify_multipart(self, p11_raw_session: Any) -> None:
+        """C_MessageVerifyInit + Begin + Next + Final verifies a multipart message."""
+        rs = p11_raw_session
+        _skip_unless_message_functions(rs, MESSAGE_VERIFY_FUNCS)
+        if not rs.has_mechanism("SHA256_RSA_PKCS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_VERIFY), int(CKF_MULTI_MESSAGE)),
+            "multipart message verify",
+        )
+        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        parts = [b"part one ", b"part two ", b"part three"]
+        try:
+            signature = sign_single(
+                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"".join(parts)
+            )
+            assert _message_verify_multipart(
+                rs, pub, CKM_SHA256_RSA_PKCS, parts, signature
+            ) is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    @pytest.mark.needs_function("C_MessageVerifyInit")
+    def test_message_verify_multipart_bad_signature(self, p11_raw_session: Any) -> None:
+        """A bad multipart signature follows the clean-versus-non-clean policy."""
+        rs = p11_raw_session
+        _skip_unless_message_functions(rs, MESSAGE_VERIFY_FUNCS)
+        if not rs.has_mechanism("SHA256_RSA_PKCS"):
+            pytest.skip("CKM_SHA256_RSA_PKCS not supported")
+        _require_message_flags(
+            rs,
+            "SHA256_RSA_PKCS",
+            (int(CKF_MESSAGE_VERIFY), int(CKF_MULTI_MESSAGE)),
+            "multipart message verify bad signature",
+        )
+        pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        parts = [b"correct data ", b"with multiple parts"]
+        try:
+            signature = sign_single(
+                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"".join(parts)
+            )
+            bad_signature = bytes([signature[0] ^ 0x01]) + signature[1:]
+            assert _message_verify_multipart(
+                rs,
+                pub,
+                CKM_SHA256_RSA_PKCS,
+                parts,
+                bad_signature,
+                expect_valid=False,
+            ) is False
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

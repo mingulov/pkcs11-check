@@ -27,6 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_GCM,
     CKM_SHA256_RSA_PKCS,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_MECHANISM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases._probes._ffi_length_base import (
@@ -45,18 +46,22 @@ from pkcs11_check.testcases.conftest import (
 )
 
 _SKIP_PREFIX = "SKIP:"
+SETUP_CONTRADICTION_PREFIX = "SETUP_CONTRADICTION:"
 
 
-def _message_setup_reject(rv: int, purpose: str) -> None:
+def _message_setup_reject(rv: int, purpose: str, *, advertised: bool = False) -> None:
     """Print the setup-rejection marker for a message-family Init/Begin call and raise.
 
-    The v3.0 message functions (C_Message*Init, C_*MessageBegin) are optional: a module
-    may expose non-null function-table pointers (passing the parent test's
-    available_function_names() gate) yet stub the call with CKR_FUNCTION_NOT_SUPPORTED --
-    capability absence, not a deviation, so it prints SKIP_PREFIX for the parent to
-    pytest.skip() on. Any other clean CKR is a genuine mechanism-level setup reject and
-    keeps printing SETUP_XFAIL_PREFIX (parent xfails as not_operational).
+    The v3.0 message functions are optional. For a parent that has not established a
+    mechanism capability, CKR_FUNCTION_NOT_SUPPORTED remains a setup skip. Once the
+    caller has gated the exact message flags, the two metadata self-contradiction CKRs
+    are emitted through a distinct setup protocol carrying the exact operation and CKR.
     """
+    if advertised and rv in (int(CKR_FUNCTION_NOT_SUPPORTED), int(CKR_MECHANISM_INVALID)):
+        # The parent already gated the mechanism's exact message capability flags.
+        # Keep setup evidence distinct from the hostile target operation result.
+        print(f"{SETUP_CONTRADICTION_PREFIX}{purpose}:0x{rv:08x}")
+        raise _SetupRejected
     prefix = _SKIP_PREFIX if rv == int(CKR_FUNCTION_NOT_SUPPORTED) else SETUP_XFAIL_PREFIX
     print(f"{prefix}{purpose} rejected: {ckr_name(rv)}")
     raise _SetupRejected
@@ -329,7 +334,7 @@ def _run_sign_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.ulParameterLen = 0
         rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), priv)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageSignInit")
+            _message_setup_reject(rv, "C_MessageSignInit", advertised=True)
 
         sig_len = CK_ULONG(512)
         sig_buf = (ctypes.c_ubyte * 512)()
@@ -385,7 +390,7 @@ def _run_verify_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         mech.ulParameterLen = 0
         rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), pub)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageVerifyInit")
+            _message_setup_reject(rv, "C_MessageVerifyInit", advertised=True)
 
         data = (
             buf
@@ -412,7 +417,7 @@ def _run_verify_message(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_sign_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_SignMessageBegin/Next (RSA) with an isize-boundary data length."""
+    """C_SignMessageBegin/Next (RSA) with parameter/data length boundaries."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
@@ -443,18 +448,17 @@ def _run_sign_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> Non
         mech.ulParameterLen = 0
         rv = raw.C_MessageSignInit(sh, ctypes.byref(mech), priv)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageSignInit")
+            _message_setup_reject(rv, "C_MessageSignInit", advertised=True)
 
         sig_len = CK_ULONG(512)
         sig_buf = (ctypes.c_ubyte * 512)()
 
         if op == "C_SignMessageBegin":
-            rv = raw.C_SignMessageBegin(sh, None, 0, buf, data_len)
+            rv = raw.C_SignMessageBegin(sh, ctypes.cast(buf, ctypes.c_void_p), data_len)
         else:
-            data = (ctypes.c_ubyte * 16)(*range(16))
-            rv = raw.C_SignMessageBegin(sh, None, 0, data, 16)
+            rv = raw.C_SignMessageBegin(sh, None, 0)
             if rv != CKR_OK:
-                _message_setup_reject(rv, "C_SignMessageBegin")
+                _message_setup_reject(rv, "C_SignMessageBegin", advertised=True)
             rv = raw.C_SignMessageNext(
                 sh,
                 None,
@@ -463,7 +467,6 @@ def _run_sign_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> Non
                 data_len,
                 sig_buf,
                 ctypes.byref(sig_len),
-                CKF_END_OF_MESSAGE,
             )
 
         print(f"TARGET_RV:0x{rv:08x}")
@@ -519,7 +522,7 @@ def _run_verify_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> N
         mech.ulParameterLen = 0
         rv = raw.C_MessageVerifyInit(sh, ctypes.byref(mech), pub)
         if rv != CKR_OK:
-            _message_setup_reject(rv, "C_MessageVerifyInit")
+            _message_setup_reject(rv, "C_MessageVerifyInit", advertised=True)
 
         if field == "begin_parameter":
             rv = raw.C_VerifyMessageBegin(
@@ -530,7 +533,7 @@ def _run_verify_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> N
         else:
             rv = raw.C_VerifyMessageBegin(sh, None, 0)
             if rv != CKR_OK:
-                _message_setup_reject(rv, "C_VerifyMessageBegin")
+                _message_setup_reject(rv, "C_VerifyMessageBegin", advertised=True)
             data = (
                 buf
                 if next_data_len != normal_data_len
@@ -547,7 +550,6 @@ def _run_verify_message_multipart(ctx: ProbeContext, extra: dict[str, Any]) -> N
                 next_data_len,
                 sig_buf,
                 next_signature_len,
-                CKF_END_OF_MESSAGE,
             )
 
         print(f"TARGET_RV:0x{rv:08x}")

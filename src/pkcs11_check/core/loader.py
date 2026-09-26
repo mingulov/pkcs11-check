@@ -321,7 +321,7 @@ def load_module(
         msg = f"Unknown interface {interface!r}; must be one of {SUPPORTED_INTERFACES}"
         raise ValueError(msg)
 
-    raw = RawPKCS11.from_lib(str(path))
+    raw = RawPKCS11.from_lib(str(path), interface=interface)
 
     # Initialize the cryptoki library. C_Initialize may return
     # CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) if another part of the

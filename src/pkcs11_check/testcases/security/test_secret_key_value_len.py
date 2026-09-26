@@ -87,6 +87,7 @@ class TestCreateObjectSecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = (
             f"C_CreateObject({key_type_name}, "
@@ -128,6 +129,7 @@ class TestExistingSecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_CopyObject(secret key, CKA_VALUE_LEN={_ULONG_MAX:#x})"
         if handle_child_provider_finding(
@@ -162,6 +164,7 @@ class TestExistingSecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=10,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_SetAttributeValue(secret key, CKA_VALUE_LEN={_ULONG_MAX:#x})"
         if handle_child_provider_finding(
@@ -205,6 +208,7 @@ class TestDigestKeySecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_DigestKey(secret key imported with CKA_VALUE_LEN={_ULONG_MAX:#x})"
         if handle_child_provider_finding(
@@ -250,6 +254,7 @@ class TestUnwrapSecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_UnwrapKey(AES_ECB, CKA_VALUE_LEN={_ULONG_MAX:#x})"
         if handle_child_provider_finding(
@@ -293,6 +298,7 @@ class TestGenerateKeySecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_GenerateKey(GENERIC_SECRET, CKA_VALUE_LEN={_ULONG_MAX:#x})"
         if handle_child_provider_finding(
@@ -338,6 +344,7 @@ class TestGenerateKeySecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_GenerateKey(PBKDF2, CKA_VALUE_LEN={_ULONG_MAX:#x})"
         if handle_child_provider_finding(
@@ -396,6 +403,7 @@ class TestDeriveKeySecretKeyValueLen:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         context = f"C_DeriveKey(HKDF_SHA256, CKA_VALUE_LEN={output_value_len:#x})"
         if handle_child_provider_finding(

@@ -107,6 +107,7 @@ class TestNullParameters:
             },
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         _check_null_result("C_OpenSession", result.returncode, result.stdout, result.stderr)
 
@@ -129,5 +130,6 @@ class TestNullParameters:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         _check_null_result("C_GenerateRandom", result.returncode, result.stdout, result.stderr)

@@ -3,11 +3,31 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 from pkcs11_check.fixtures import RawSession, p11_module_session, p11_raw_session
 from pkcs11_check.raw.recipes import create_object, get_mechanism_list
+
+
+def test_raw_pkcs11_fixture_passes_requested_interface() -> None:
+    from pkcs11_check import raw_fixtures
+
+    request = SimpleNamespace(
+        config=SimpleNamespace(
+            getoption=lambda name: {
+                "p11_module": "/tmp/provider.so",
+                "p11_interface": "3.1",
+            }.get(name)
+        )
+    )
+    raw = object()
+    with patch.object(raw_fixtures.RawPKCS11, "from_lib", return_value=raw) as from_lib:
+        fixture = raw_fixtures.raw_pkcs11.__wrapped__(request)
+        assert next(fixture) is raw
+
+    from_lib.assert_called_once_with("/tmp/provider.so", interface="3.1")
 
 
 def test_create_object_importable() -> None:

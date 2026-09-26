@@ -177,6 +177,7 @@ class TestP11KitProxy:
             {"module_path": str(proxy_path)},
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert result.returncode == 0, (
             f"p11-kit proxy crashed (rc={result.returncode}): {result.stderr}"

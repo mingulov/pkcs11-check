@@ -309,6 +309,7 @@ class TestSignRecover:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
@@ -386,6 +387,7 @@ class TestSignRecover:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)
@@ -450,6 +452,7 @@ class TestSignRecover:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
         lines_map = _parse_output(stdout)

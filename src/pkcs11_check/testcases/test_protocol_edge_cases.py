@@ -132,6 +132,7 @@ class TestSpecAmbiguousCalls:
             },
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert result.returncode == 0, f"Double init crashed: {result.stderr}"
         assert "OK:" in result.stdout

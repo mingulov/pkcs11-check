@@ -62,6 +62,7 @@ def _run_probe(p11_config: Any, probe: str) -> tuple[int, str, str]:
         pin=pin_from_config(p11_config),
         timeout=15,
         coverage="session",
+        interface=getattr(p11_config, "interface", "auto"),
     )
     return result.returncode, result.stdout, result.stderr
 

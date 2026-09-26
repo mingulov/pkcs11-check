@@ -158,6 +158,270 @@ def test_from_lib_generic_240_interface_does_not_load_v30_or_v32_tails() -> None
     raw._load_v32_from_ptr.assert_not_called()
 
 
+def test_from_lib_explicit_v31_requests_exact_table_and_retains_provenance() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import (
+        CK_INTERFACE,
+        CK_INTERFACE_PTR,
+        CK_VERSION,
+        CK_VERSION_PTR,
+        CKR_OK,
+    )
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
+
+    class FakeGetInterface:
+        def __init__(self) -> None:
+            self.function_list = FakeFunctionList()
+            self.function_list.version.major = 3
+            self.function_list.version.minor = 1
+            self.interface = CK_INTERFACE()
+            self.interface.pFunctionList = ctypes.cast(
+                ctypes.pointer(self.function_list), ctypes.c_void_p
+            ).value
+            self.interface_ptr = ctypes.pointer(self.interface)
+            self.calls: list[tuple[int, int]] = []
+
+        def __call__(
+            self, _name: object, version: object, interface_out: object, _flags: object
+        ) -> int:
+            requested = ctypes.cast(version, CK_VERSION_PTR).contents
+            self.calls.append((int(requested.major), int(requested.minor)))
+            ctypes.cast(interface_out, ctypes.POINTER(CK_INTERFACE_PTR))[0] = self.interface_ptr
+            return CKR_OK
+
+    fake_get_interface = FakeGetInterface()
+    fake_lib = type("FakeLib", (), {"C_GetInterface": fake_get_interface})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+    raw._load_from_ptr = Mock()
+    raw._load_v30_from_ptr = Mock()
+    raw._load_v32_from_ptr = Mock()
+
+    with patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="3.1")
+
+    assert fake_get_interface.calls == [(3, 1)]
+    assert raw.interface_version == "3.1"
+
+
+def test_from_lib_explicit_v31_does_not_fallback_to_legacy_function_list() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import CKR_FUNCTION_FAILED
+
+    class FakeGetInterface:
+        def __call__(self, *_args: object) -> int:
+            return CKR_FUNCTION_FAILED
+
+    class FakeGetFunctionList:
+        def __call__(self, *_args: object) -> int:
+            raise AssertionError("explicit v3.1 must not call C_GetFunctionList")
+
+    fake_lib = type(
+        "FakeLib",
+        (),
+        {"C_GetInterface": FakeGetInterface(), "C_GetFunctionList": FakeGetFunctionList()},
+    )()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(RuntimeError, match="3.1"),
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="3.1")
+
+
+def test_from_lib_explicit_v240_rejects_non_240_function_table() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import CK_FUNCTION_LIST_PTR, CK_VERSION, CKR_OK
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
+
+    function_list = FakeFunctionList()
+    function_list.version.major = 3
+    function_list.version.minor = 1
+    function_list_ptr = ctypes.pointer(function_list)
+
+    class FakeGetFunctionList:
+        def __call__(self, output: object) -> int:
+            ctypes.cast(output, ctypes.POINTER(CK_FUNCTION_LIST_PTR))[0] = ctypes.cast(
+                function_list_ptr, CK_FUNCTION_LIST_PTR
+            )
+            return CKR_OK
+
+    fake_lib = type("FakeLib", (), {"C_GetFunctionList": FakeGetFunctionList()})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(RuntimeError, match="2.40"),
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="2.40")
+
+
+@pytest.mark.parametrize(
+    ("rv", "label"),
+    [(0x00000006, "CKR_FUNCTION_FAILED"), (0x12345678, "0x12345678")],
+)
+def test_explicit_v3_lookup_preserves_non_ok_rv(rv: int, label: str) -> None:
+    from pkcs11_check.raw.api import InterfaceLookupError, RawPKCS11
+
+    class FakeGetInterface:
+        def __call__(self, *_args: object) -> int:
+            return rv
+
+    fake_lib = type("FakeLib", (), {"C_GetInterface": FakeGetInterface()})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(InterfaceLookupError) as exc_info,
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="3.1")
+
+    assert exc_info.value.requested_interface == "3.1"
+    assert exc_info.value.reason == "rv"
+    assert exc_info.value.rv == rv
+    assert label in str(exc_info.value)
+
+
+def test_explicit_v3_lookup_distinguishes_null_interface_pointer() -> None:
+    from pkcs11_check.raw.api import InterfaceLookupError, RawPKCS11
+    from pkcs11_check.raw.types_std import CKR_OK
+
+    class FakeGetInterface:
+        def __call__(self, _name: object, _version: object, _out: object, _flags: object) -> int:
+            return CKR_OK
+
+    fake_lib = type("FakeLib", (), {"C_GetInterface": FakeGetInterface()})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(InterfaceLookupError) as exc_info,
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="3.1")
+
+    assert exc_info.value.requested_interface == "3.1"
+    assert exc_info.value.reason == "null_interface"
+    assert exc_info.value.rv == int(CKR_OK)
+    assert "NULL interface pointer" in str(exc_info.value)
+
+
+def test_explicit_v3_lookup_distinguishes_null_function_list_pointer() -> None:
+    from pkcs11_check.raw.api import InterfaceLookupError, RawPKCS11
+    from pkcs11_check.raw.types_std import CK_INTERFACE, CK_INTERFACE_PTR, CKR_OK
+
+    interface = CK_INTERFACE()
+    interface.pFunctionList = None
+    interface_ptr = ctypes.pointer(interface)
+
+    class FakeGetInterface:
+        def __call__(self, _name: object, _version: object, out: object, _flags: object) -> int:
+            ctypes.cast(out, ctypes.POINTER(CK_INTERFACE_PTR))[0] = interface_ptr
+            return CKR_OK
+
+    fake_lib = type("FakeLib", (), {"C_GetInterface": FakeGetInterface()})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(InterfaceLookupError) as exc_info,
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="3.1")
+
+    assert exc_info.value.requested_interface == "3.1"
+    assert exc_info.value.reason == "null_function_list"
+    assert exc_info.value.rv == int(CKR_OK)
+    assert "NULL pFunctionList" in str(exc_info.value)
+
+
+def test_explicit_v3_lookup_rejects_mismatched_table_version() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import CK_INTERFACE, CK_INTERFACE_PTR, CK_VERSION, CKR_OK
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
+
+    function_list = FakeFunctionList()
+    function_list.version.major = 3
+    function_list.version.minor = 0
+    interface = CK_INTERFACE()
+    interface.pFunctionList = ctypes.cast(
+        ctypes.pointer(function_list), ctypes.c_void_p
+    ).value
+    interface_ptr = ctypes.pointer(interface)
+
+    class FakeGetInterface:
+        def __call__(self, _name: object, _version: object, out: object, _flags: object) -> int:
+            ctypes.cast(out, ctypes.POINTER(CK_INTERFACE_PTR))[0] = interface_ptr
+            return CKR_OK
+
+    fake_lib = type("FakeLib", (), {"C_GetInterface": FakeGetInterface()})()
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._lib = None
+    raw._dll_dir_handles = []
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(RuntimeError, match="Requested PKCS#11 interface 3.1, got table 3.0"),
+    ):
+        RawPKCS11._load_from_lib(raw, "/tmp/libpkcs11.so", interface="3.1")
+
+
+def test_unknown_interface_rejected_before_cdll_load() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL") as cdll,
+        pytest.raises(ValueError, match="Unknown interface '3.3'"),
+    ):
+        RawPKCS11.from_lib("/tmp/libpkcs11.so", interface="3.3")
+
+    cdll.assert_not_called()
+
+
+def test_direct_pointer_table_header_retains_exact_31_provenance() -> None:
+    from pkcs11_check.raw.api import RawPKCS11
+    from pkcs11_check.raw.types_std import CK_VERSION
+
+    class FakeFunctionList(ctypes.Structure):
+        _fields_ = [("version", CK_VERSION), ("reserved", ctypes.c_void_p)]
+
+    function_list = FakeFunctionList()
+    function_list.version.major = 3
+    function_list.version.minor = 1
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    raw._load_functions_from_ptr = Mock()
+
+    ptr = ctypes.cast(ctypes.pointer(function_list), ctypes.c_void_p).value
+    assert ptr is not None
+    RawPKCS11._load_from_ptr(raw, ptr)
+
+    assert raw.interface_version == "3.1"
+
+
 def test_from_lib_surfaces_get_interface_access_violation() -> None:
     from pkcs11_check.raw.api import RawPKCS11
 

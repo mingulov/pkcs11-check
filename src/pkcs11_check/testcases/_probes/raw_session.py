@@ -77,6 +77,7 @@ class RawCtypesContext:
     lib: ctypes.CDLL
     func_list: Any  # ctypes.c_void_p (opaque; Any avoids ctypes generic-type noise)
     cleanup: Callable[[], None]
+    interface: str = "auto"
 
 
 # ---------------------------------------------------------------------------
@@ -179,5 +180,10 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
 
     atexit.register(_cleanup)
 
-    ctx = RawCtypesContext(lib=lib, func_list=func_list, cleanup=_cleanup)
+    ctx = RawCtypesContext(
+        lib=lib,
+        func_list=func_list,
+        cleanup=_cleanup,
+        interface=params.interface or "auto",
+    )
     run_fn(ctx, params.extra)

@@ -42,7 +42,7 @@ class TestReinitialize:
         pin_bytes = get_pin_bytes(p11_config)
 
         # Load and initialize
-        raw = RawPKCS11.from_lib(str(module_path))
+        raw = RawPKCS11.from_lib(str(module_path), interface=p11_config.interface)
         rv = raw.C_Initialize(None)
         assert rv in (  # audit-ok: positive-op init idempotency
             CKR_OK,
@@ -87,7 +87,7 @@ class TestReinitialize:
             module_path = module_path.get_secret_value()
         pin_bytes = get_pin_bytes(p11_config)
 
-        raw = RawPKCS11.from_lib(str(module_path))
+        raw = RawPKCS11.from_lib(str(module_path), interface=p11_config.interface)
         rv = raw.C_Initialize(None)
         assert rv in (  # audit-ok: positive-op init idempotency
             CKR_OK,
@@ -184,7 +184,7 @@ class TestReinitialize:
         if hasattr(module_path, "get_secret_value"):
             module_path = module_path.get_secret_value()
 
-        raw = RawPKCS11.from_lib(str(module_path))
+        raw = RawPKCS11.from_lib(str(module_path), interface=p11_config.interface)
         assert int(raw.C_Initialize(None)) in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED)
         try:
             for i in range(1, 10000):

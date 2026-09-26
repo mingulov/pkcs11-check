@@ -33,6 +33,17 @@ def test_load_roundtrip(tmp_path: Path) -> None:
     assert params.extra["mech"] == "CKM_AES_GCM"
 
 
+def test_dump_preserves_explicit_interface() -> None:
+    payload = ProbeParams.dump({"module_path": "/lib/x.so", "interface": "3.1"})
+    assert payload["interface"] == "3.1"
+
+
+def test_load_omitted_interface_remains_auto_compatible(tmp_path: Path) -> None:
+    p = tmp_path / "params.json"
+    p.write_text(json.dumps({"module_path": "/lib/x.so"}), encoding="utf-8")
+    assert ProbeParams.load(str(p)).interface is None
+
+
 def test_dump_rejects_pin() -> None:
     with pytest.raises(PinInParamsError):
         ProbeParams.dump({"module_path": "/lib/x.so", "pin": "1234"})

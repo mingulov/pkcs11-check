@@ -191,6 +191,7 @@ class TestCorruptedUnwrap:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         context = f"{ckm_name} {api}: corruption={corruption}"
@@ -262,6 +263,7 @@ class TestBitFlipUnwrap:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
         context = f"{ckm_name} unwrap: bit_flip at byte {offset}"

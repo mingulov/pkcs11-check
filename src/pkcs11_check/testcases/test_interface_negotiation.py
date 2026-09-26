@@ -25,7 +25,7 @@ def _load_only_raw(p11_config: Any) -> RawPKCS11:
     module_path = p11_config.module
     if hasattr(module_path, "get_secret_value"):
         module_path = module_path.get_secret_value()
-    return RawPKCS11.from_lib(str(module_path))
+    return RawPKCS11.from_lib(str(module_path), interface=getattr(p11_config, "interface", "auto"))
 
 
 @pytest.fixture(scope="session")
@@ -69,7 +69,7 @@ class TestInterfaceVersion:
         if hasattr(module_path, "get_secret_value"):
             module_path = module_path.get_secret_value()
 
-        raw = RawPKCS11.from_lib(str(module_path))
+        raw = RawPKCS11.from_lib(str(module_path), interface="auto")
         rv = raw.C_Initialize(None)
         assert rv in (  # audit-ok: positive-op init idempotency
             CKR_OK,

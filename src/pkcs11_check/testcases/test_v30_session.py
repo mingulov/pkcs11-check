@@ -750,6 +750,7 @@ def _run_cancel_after_digest_probe(p11_config: Any) -> tuple[int, str, str]:
         pin=pin_from_config(p11_config),
         timeout=15,
         coverage="raw",
+        interface=getattr(p11_config, "interface", "auto"),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 

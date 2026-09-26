@@ -81,6 +81,7 @@ class TestSessionHandleBoundary:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -132,6 +133,7 @@ class TestObjectHandleBoundary:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -177,6 +179,7 @@ class TestNullMechanismInit:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -221,6 +224,7 @@ class TestMechanismParamNullWithLength:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -265,6 +269,7 @@ class TestNullTemplateNonzeroCount:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -327,6 +332,7 @@ class TestZeroLengthData:
                 },
                 pin=pin_from_config(p11_config),
                 timeout=15,
+                interface=getattr(p11_config, "interface", "auto"),
             )
         elif operation == "sign" and "RSA" in mech_name:
             pub, priv = gen_rsa_keypair_or_xfail(
@@ -345,6 +351,7 @@ class TestZeroLengthData:
                 },
                 pin=pin_from_config(p11_config),
                 timeout=15,
+                interface=getattr(p11_config, "interface", "auto"),
             )
         elif operation == "sign" and "ECDSA" in mech_name:
             curve_oid = encode_named_curve_parameters("secp256r1")
@@ -363,6 +370,7 @@ class TestZeroLengthData:
                 },
                 pin=pin_from_config(p11_config),
                 timeout=15,
+                interface=getattr(p11_config, "interface", "auto"),
             )
         else:
             raise ValueError(f"Unhandled: operation={operation}, mech_name={mech_name}")
@@ -397,6 +405,7 @@ class TestLoginNullPin:
             },
             pin=None,  # Don't auto-login -- we're testing C_Login directly
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -430,6 +439,7 @@ class TestGenerateRsaExtremeKeySize:
             },
             pin=pin_from_config(p11_config),
             timeout=5,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -462,6 +472,7 @@ class TestGenerateRsaZeroKeySize:
             },
             pin=pin_from_config(p11_config),
             timeout=10,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -495,6 +506,7 @@ class TestGenerateAesExtremeKeySize:
             },
             pin=pin_from_config(p11_config),
             timeout=5,
+            interface=getattr(p11_config, "interface", "auto"),
         )
         assert_subprocess_no_crash(
             result.returncode,

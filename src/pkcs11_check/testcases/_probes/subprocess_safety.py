@@ -211,7 +211,7 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
         # so probe_main's atexit handlers do NOT run a second time.
         raw.C_Finalize(None)
         try:
-            raw2 = RawPKCS11.from_lib(ctx.module_path)
+            raw2 = RawPKCS11.from_lib(ctx.module_path, interface=ctx.interface)
             rv = raw2.C_Initialize(None)
             if rv != CKR_OK:
                 print(f"CHILD_FATAL:Init:0x{rv:08x}")
@@ -296,7 +296,7 @@ def _reload_cycle_5x(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     """Load -> init -> ops -> finalize, 5 times. No crash or leak."""
     pin = _pin_bytes()
     for _i in range(5):
-        raw = RawPKCS11.from_lib(ctx.module_path)
+        raw = RawPKCS11.from_lib(ctx.module_path, interface=ctx.interface)
         raw.C_Initialize(None)
         try:
             slots = get_slot_ids(raw, label="pkcs11-check")

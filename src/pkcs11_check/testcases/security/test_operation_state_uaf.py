@@ -160,6 +160,7 @@ class TestSignOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -238,6 +239,7 @@ class TestAesEncryptDestroyUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -313,6 +315,7 @@ class TestAesDecryptDestroyUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -376,6 +379,7 @@ class TestDigestOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         _check_digest_probe(
@@ -422,6 +426,7 @@ class TestVerifyOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1125,6 +1130,7 @@ class TestDeriveOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         _check_derive_probe(
@@ -1183,6 +1189,7 @@ class TestCrossSessionOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1252,6 +1259,7 @@ class TestSignEcdsaOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=15,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
@@ -1323,6 +1331,7 @@ class TestDecryptRsaOperationStateUAF:
             pin=pin_from_config(p11_config),
             timeout=30,
             coverage="session",
+            interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
         assert_subprocess_no_crash(
