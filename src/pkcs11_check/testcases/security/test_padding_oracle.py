@@ -271,14 +271,75 @@ def _read_rsa_public_numbers_or_xfail(
     return n, e, k
 
 
+def _sample_bleichenbacher_cat1(n: int, k: int) -> bytes:
+    """Sample a ``00 02``-prefixed, separator-less PKCS#1 v1.5 representative.
+
+    The leading ``0x00`` keeps the integer below ``B = 2**(8*(k-1)) <= n``
+    structurally, so no modulo reduction is applied and the claimed category
+    cannot shift after construction. Membership is asserted on the final
+    encoded bytes.
+    """
+    ps_body = bytes([b if b != 0 else 0x01 for b in secrets.token_bytes(k - 2)])
+    encoded = b"\x00\x02" + ps_body
+    assert len(encoded) == k
+    assert encoded[0] == 0x00 and encoded[1] == 0x02
+    assert int.from_bytes(encoded, "big") < n
+    return encoded
+
+
+def _sample_bleichenbacher_cat2(n: int, k: int) -> bytes:
+    """Sample a PKCS#1 v1.5 representative outside the ``00 02`` category.
+
+    Samples the final integer representative directly with ``B <= m < n``
+    (``B = 2**(8*(k-1))``), then encodes it. The top byte is therefore
+    nonzero, so the encoding cannot begin ``00 02``. Never select bytes and
+    then reduce ``% n``: the reduction can reintroduce a leading zero byte --
+    even a ``00 02`` prefix -- and move the sample into the category the
+    predicate claims to exclude (P11C-0198-015). Membership is asserted on
+    the final encoded bytes.
+    """
+    boundary = 1 << (8 * (k - 1))
+    m = boundary + secrets.randbelow(n - boundary)
+    encoded = m.to_bytes(k, "big")
+    assert not (encoded[0] == 0x00 and encoded[1] == 0x02)
+    return encoded
+
+
+def _sample_manger_cat1(boundary: int) -> int:
+    """Sample an OAEP/Manger cat-1 representative: ``m`` in ``[1, B)``."""
+    return secrets.randbelow(boundary - 1) + 1
+
+
+def _sample_manger_cat2(boundary: int, n: int) -> int:
+    """Sample an OAEP/Manger cat-2 representative: ``m`` in ``[B, n)``."""
+    return boundary + secrets.randbelow(n - boundary)
+
+
+def _invalidate_cbc_padding_byte(ciphertext: bytes) -> bytes:
+    """Corrupt the last byte of the penultimate block of a CBC ciphertext.
+
+    CBC decryption XORs the previous ciphertext block into the decrypted
+    plaintext block, so this flips the aligned byte of the final plaintext
+    block. Callers apply this to a ciphertext whose final plaintext byte is
+    known ``0x07`` PKCS#7 padding (the fixed 105-byte probe plaintext); the
+    flipped byte is then guaranteed invalid under any pad length.
+    """
+    corrupted = bytearray(ciphertext)
+    corrupted[len(corrupted) - 17] ^= 0xFF
+    return bytes(corrupted)
+
+
 class TestRSAPaddingOracle:
     """Check if RSA decryption leaks padding validity via error codes."""
 
     def test_pkcs1v15_error_uniformity(self, p11_raw_session: Any) -> None:
-        """RSA PKCS#1 v1.5: invalid ciphertexts must all return same error code.
+        """RSA PKCS#1 v1.5: characterize error codes for random invalid ciphertexts.
 
-        A padding oracle exists if the module returns different errors for
-        'valid padding but wrong content' vs 'invalid padding structure'.
+        Random malformed ciphertexts overwhelmingly share one decoded
+        category, so error diversity across them is posture evidence, not a
+        demonstrated Bleichenbacher oracle. A named-oracle finding needs the
+        controlled ``00 02``-prefix vs no-prefix predicate in
+        test_pkcs1v15_bleichenbacher_structured_oracle.
         """
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair_or_xfail(
@@ -298,24 +359,36 @@ class TestRSAPaddingOracle:
                 if error is not None:
                     error_types.add(error)
 
-            # All errors should be the same type - if not, there's a potential oracle
+            # Error diversity across merely malformed random ciphertexts is a
+            # serialized posture diagnostic: no controlled Bleichenbacher
+            # (00 02-prefix vs no-prefix) predicate was shown.
             if len(error_types) > 1:
-                classify(
-                    "oracle",
-                    kind="crypto",
-                    label="RSA PKCS#1 v1.5 padding oracle",
-                    operation="C_Decrypt",
-                    mechanism="CKM_RSA_PKCS",
-                    summary="SECURITY: RSA PKCS#1 v1.5 returns different error codes "
-                    f"for invalid ciphertexts: {error_types}",
-                    detail={"channel": "error_code", "codes": sorted(error_types)},
+                from pkcs11_check.compliance import ComplianceLevel, note
+
+                note(
+                    "RSA PKCS#1 v1.5 returns non-uniform error codes across "
+                    "merely malformed random ciphertexts "
+                    f"({sorted(error_types)}); error diversity alone is posture "
+                    "evidence — no controlled Bleichenbacher predicate "
+                    "(00 02-prefix vs no-prefix categories) was shown, so no "
+                    "padding-oracle finding is established.",
+                    ComplianceLevel.EXTENDED,
+                    reference="Bleichenbacher 'Chosen Ciphertext Attacks "
+                    "Against Protocols Based on the RSA Encryption Standard "
+                    "PKCS #1' (CRYPTO 1998); RFC 3218",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_oaep_error_uniformity(self, p11_raw_session: Any) -> None:
-        """RSA-OAEP: all invalid ciphertexts must return same error."""
+        """RSA-OAEP: characterize error codes for random invalid ciphertexts.
+
+        Random malformed ciphertexts are not a controlled Manger predicate
+        (m < B vs m >= B); error diversity across them is posture evidence,
+        not a demonstrated OAEP oracle. See
+        test_oaep_manger_structured_oracle.
+        """
         rs = p11_raw_session
         pub, priv = gen_rsa_keypair_or_xfail(
             rs,
@@ -344,28 +417,25 @@ class TestRSAPaddingOracle:
                 if error is not None:
                     error_types.add(error)
 
+            # Error diversity across merely malformed random ciphertexts is a
+            # serialized posture diagnostic: no controlled Manger
+            # (m < B vs m >= B) predicate was shown.
             if len(error_types) > 1:
                 from pkcs11_check.compliance import ComplianceLevel, note
 
                 note(
-                    f"RSA-OAEP returns non-uniform error codes for invalid "
-                    f"ciphertexts ({error_types}), enabling padding oracle attack "
-                    f"(Manger 2001 / Bleichenbacher-style)",
-                    ComplianceLevel.CRITICAL,
-                    reference="Manger (2001); PKCS#11 v3.2: implementations "
-                    "SHOULD return CKR_ENCRYPTED_DATA_INVALID uniformly",
-                )
-                classify(
-                    "oracle",
-                    kind="crypto",
-                    label="RSA-OAEP padding oracle (Manger 2001)",
-                    operation="C_Decrypt",
-                    mechanism="CKM_RSA_PKCS_OAEP",
-                    summary="SECURITY: RSA-OAEP padding oracle — non-uniform error codes: "
-                    f"{error_types} (Manger 2001 attack vector). Distinct CKRs "
-                    f"on invalid ciphertexts let an attacker partition decryption "
-                    f"failures into categories — exactly the Manger leak channel.",
-                    detail={"channel": "error_code", "codes": sorted(error_types)},
+                    "RSA-OAEP returns non-uniform error codes across merely "
+                    "malformed random ciphertexts "
+                    f"({sorted(error_types)}); error diversity alone is posture "
+                    "evidence — no controlled Manger predicate (m < B vs m >= B "
+                    "categories) was shown, so no padding-oracle finding is "
+                    "established.",
+                    ComplianceLevel.EXTENDED,
+                    reference="Manger 'A Chosen Ciphertext Attack on RSA "
+                    "Optimal Asymmetric Encryption Padding (OAEP) as "
+                    "Standardized in PKCS #1 v2.0' (CRYPTO 2001); PKCS#11 v3.2: "
+                    "implementations SHOULD return CKR_ENCRYPTED_DATA_INVALID "
+                    "uniformly",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
@@ -409,13 +479,10 @@ class TestRSAPaddingOracle:
                 # bytes through to the end (no 0x00 separator → garbled
                 # plaintext but valid prefix). PS must be ≥ 8 bytes per
                 # PKCS#1 v1.5; our cat-1 has ≥ k-2 bytes which is far over.
-                ps_body = bytes([b if b != 0 else 0x01 for b in secrets.token_bytes(k - 2)])
-                m1_bytes = b"\x00\x02" + ps_body
+                # The leading 0x00 keeps m < n structurally; membership is
+                # asserted on the final encoded bytes.
+                m1_bytes = _sample_bleichenbacher_cat1(n, k)
                 m1 = int.from_bytes(m1_bytes, "big")
-                if m1 >= n:
-                    # Force m < n by clearing the top bit of byte 2.
-                    m1_bytes = bytes([0x00, 0x02, ps_body[0] & 0x7F]) + ps_body[1:]
-                    m1 = int.from_bytes(m1_bytes, "big")
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
                 result, error = _decrypt_result_or_error(
@@ -429,13 +496,12 @@ class TestRSAPaddingOracle:
                     mechanism="CKM_RSA_PKCS",
                 )
 
-                # Cat-2: m has random non-{00,02} prefix → invalid padding
-                # format. Force the top byte != 0 to ensure cat-2.
-                while True:
-                    m2_bytes = secrets.token_bytes(k)
-                    if m2_bytes[0] != 0x00:  # any non-zero high byte → not cat-1
-                        break
-                m2 = int.from_bytes(m2_bytes, "big") % n
+                # Cat-2: m sampled as the final integer representative with
+                # B <= m < n, so the top byte is nonzero and the encoding
+                # cannot begin 00 02 (P11C-0198-015). Membership is asserted
+                # on the final encoded bytes.
+                m2_bytes = _sample_bleichenbacher_cat2(n, k)
+                m2 = int.from_bytes(m2_bytes, "big")
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
                 result, error = _decrypt_result_or_error(
@@ -470,8 +536,8 @@ class TestRSAPaddingOracle:
                     mechanism="CKM_RSA_PKCS",
                     summary="SECURITY: RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle — "
                     f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
-                    f"An attacker who can submit chosen ciphertexts can "
-                    f"recover the plaintext via roughly 2^20 oracle queries.",
+                    f"The module distinguishes the controlled 00 02-prefix "
+                    f"category from the no-prefix category via error codes.",
                     detail={
                         "channel": "error_code",
                         "cat1": sorted(cat1_errors),
@@ -525,7 +591,7 @@ class TestRSAPaddingOracle:
             samples_per_category = 50
             for _ in range(samples_per_category):
                 # Cat-1: random m in [1, B). Top byte is 0.
-                m1 = secrets.randbelow(boundary - 1) + 1
+                m1 = _sample_manger_cat1(boundary)
                 c1 = pow(m1, e, n)
                 c1_bytes = c1.to_bytes(k, "big")
                 result, error = _decrypt_result_or_error(
@@ -546,7 +612,7 @@ class TestRSAPaddingOracle:
                 )
 
                 # Cat-2: random m in [B, n). Top byte is non-zero.
-                m2 = boundary + secrets.randbelow(n - boundary)
+                m2 = _sample_manger_cat2(boundary, n)
                 c2 = pow(m2, e, n)
                 c2_bytes = c2.to_bytes(k, "big")
                 result, error = _decrypt_result_or_error(
@@ -587,9 +653,8 @@ class TestRSAPaddingOracle:
                     mechanism="CKM_RSA_PKCS_OAEP",
                     summary="SECURITY: RSA-OAEP Manger 2001 padding oracle — "
                     f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
-                    f"An attacker who can submit chosen ciphertexts can "
-                    f"recover the plaintext via roughly k * log2(k) "
-                    f"oracle queries.",
+                    f"The module distinguishes the controlled m < B category "
+                    f"from the m >= B category via error codes.",
                     detail={
                         "channel": "error_code",
                         "cat1": sorted(cat1_errors),
@@ -927,10 +992,12 @@ class TestTimingBasic:
     """
 
     def test_rsa_decrypt_timing_sanity(self, p11_raw_session: Any) -> None:
-        """RSA decrypt: valid vs invalid ciphertext timing should be similar.
+        """RSA decrypt: characterize valid vs random-ciphertext latency.
 
         We measure wall-clock time for 50 valid and 50 invalid decryptions.
-        If the difference is >2x, there may be a timing oracle.
+        A gross gap (>3x with ≥1ms absolute separation) is a serialized
+        latency diagnostic, not a named timing oracle: exploitability and
+        any key/plaintext recovery are not established by this probe.
         """
         rs = p11_raw_session
         # Needs BOTH directions: this encrypts a probe, then times decryptions.
@@ -978,37 +1045,43 @@ class TestTimingBasic:
                 valid_avg = sum(valid_times) / len(valid_times)
                 invalid_avg = sum(invalid_times) / len(invalid_times)
                 if ratio > 3.0:
-                    classify(
-                        "oracle",
-                        kind="crypto",
-                        label="RSA decrypt timing oracle",
-                        operation="C_Decrypt",
-                        mechanism="CKM_RSA_PKCS",
-                        summary=f"TIMING: RSA decrypt timing ratio {ratio:.1f}x "
-                        f"(valid={valid_avg * 1000:.2f}ms, invalid={invalid_avg * 1000:.2f}ms)",
-                        detail={"channel": "timing", "ratio": round(ratio, 2)},
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        f"RSA decrypt valid-vs-random-ciphertext latency ratio "
+                        f"{ratio:.1f}x (valid={valid_avg * 1000:.2f}ms, "
+                        f"invalid={invalid_avg * 1000:.2f}ms); gross latency "
+                        f"asymmetry is a hardening diagnostic only — "
+                        f"exploitability and any key/plaintext recovery are "
+                        f"not established.",
+                        ComplianceLevel.EXTENDED,
+                        reference="Bardou et al. 'Efficient Padding Oracle "
+                        "Attacks on Cryptographic Hardware' (CRYPTO 2012)",
                     )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_aes_cbc_pad_decrypt_timing_sanity(self, p11_raw_session: Any) -> None:
-        """AES-CBC-PAD decrypt: valid vs invalid-padding timing should be similar.
+        """AES-CBC-PAD decrypt: characterize valid vs controlled-invalid latency.
 
         Lucky13 (CVE-2013-0169, Al Fardan & Paterson 2013) exploits
         sub-microsecond timing differences amplified across millions of
         samples. **This test does NOT detect Lucky13-class signals** —
-        the 3x threshold + N=50 sample size only catch GROSS timing
-        oracles (e.g. 100ms vs 5ms). Real Lucky13-resistance testing
+        the 3x threshold + N=50 sample size only catch GROSS latency
+        differences (e.g. 100ms vs 5ms). Real Lucky13-resistance testing
         requires N ≥ 10⁶ samples + Welch's t-test in a controlled
         environment with cgroups CPU pinning, jitter calibration, and
         clock-source disambiguation — well beyond the scope of a unit
         test.
 
-        Use this test as an "obvious-bug detector" only. A pass here
-        does not mean the module is Lucky13-resistant; a fail means
-        the gap is large enough to be visible without statistical
-        machinery (likely a missing constant-time path).
+        Use this test as an "obvious-asymmetry detector" only. A
+        diagnostic here means the valid-vs-controlled-invalid gap is large
+        enough to be visible without statistical machinery (likely a
+        missing constant-time path); it is a hardening lead, not a
+        demonstrated timing oracle. Neither outcome establishes or rules
+        out a Lucky13-class signal — exploitability is not established
+        by this probe.
 
         Phase 4.5 GAP-P4 status: gross-timing sanity covered here.
         Lab-grade Lucky13 detection remains future work (would belong
@@ -1061,47 +1134,52 @@ class TestTimingBasic:
                     )
                 valid_times.append(elapsed)
 
-            # Invalid decrypts: corrupt the LAST block to invalidate
-            # padding. Use a fresh corrupted ct each iteration so we
-            # don't accidentally settle on a stable "accidentally valid"
-            # padding pattern. We accept ONLY explicit padding-failure
-            # CKRs as legitimate "invalid path" timing samples;
-            # CKR_GENERAL_ERROR / CKR_FUNCTION_FAILED / unrelated
-            # AssertionErrors fail the test (those would skew timing).
+            # Invalid decrypts: a CONTROLLED guaranteed-invalid corpus. Flipping
+            # the last byte of the penultimate ciphertext block flips the
+            # final plaintext byte; the 105-byte probe plaintext ends in 0x07
+            # PKCS#7 padding, so the flipped byte (0xF8) is invalid under any
+            # pad length. Every sample is therefore known-invalid before it is
+            # timed, and only expected rejections enter the timing comparison.
+            # A CKR_OK acceptance is emitted separately as FAIL
+            # accepted_invalid; unrelated CKRs stay adverse.
             invalid_times: list[float] = []
-            last_block_start = len(valid_ct) - 16
             invalid_path_codes = (
                 "CKR_ENCRYPTED_DATA_INVALID",
                 "CKR_DATA_INVALID",
                 "CKR_DATA_LEN_RANGE",
             )
-            for i in range(50):
-                bad_ct = bytearray(valid_ct)
-                # Vary the corruption position so we sample the response
-                # surface, not just one byte.
-                bad_ct[last_block_start + (i % 16)] ^= 0xFF
+            for _ in range(50):
+                bad_ct = _invalidate_cbc_padding_byte(valid_ct)
                 elapsed, rv = _timed_decrypt(
                     rs.raw,
                     rs.sh,
                     key,
                     CKM_AES_CBC_PAD,
-                    bytes(bad_ct),
+                    bad_ct,
                     mech_param=mech_bytes(CKM_AES_CBC_PAD, iv),
                 )
-                # Some bit-flips happen to produce valid padding → CKR_OK + garbage
-                # plaintext. That is fine; timing is still on the rejection path the
-                # test compares. Other (non-padding) CKRs indicate a broken decrypt
-                # and would skew timing.
-                if rv != CKR_OK and ckr_name(rv) not in invalid_path_codes:
+                if rv == CKR_OK:
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label="AES-CBC-PAD guaranteed-invalid padding",
+                        operation="C_Decrypt",
+                        mechanism="CKM_AES_CBC_PAD",
+                        actual="CKR_OK",
+                        summary="AES-CBC-PAD accepted a guaranteed-invalid "
+                        "padding (final 0x07 pad byte flipped to 0xF8): "
+                        "CKR_OK on known-invalid input",
+                    )
+                if ckr_name(rv) not in invalid_path_codes:
                     classify(
                         "nonspec_reject",
                         label="AES-CBC-PAD corrupted decrypt",
                         operation="C_Decrypt",
                         mechanism="CKM_AES_CBC_PAD",
                         expected=invalid_path_codes,
-                        summary=f"Unexpected non-padding error on bit-"
-                        f"flipped CBC-PAD decrypt: {ckr_name(rv)} — timing "
-                        f"comparison invalid",
+                        summary=f"Unexpected non-padding error on "
+                        f"guaranteed-invalid CBC-PAD decrypt: {ckr_name(rv)} — "
+                        f"timing comparison invalid",
                     )
                 invalid_times.append(elapsed)
 
@@ -1113,24 +1191,15 @@ class TestTimingBasic:
                     from pkcs11_check.compliance import ComplianceLevel, note
 
                     note(
-                        f"AES-CBC-PAD valid/invalid decrypt timing ratio "
-                        f"{ratio:.1f}x — Lucky13-class timing oracle.",
-                        ComplianceLevel.CRITICAL,
+                        f"AES-CBC-PAD valid-vs-controlled-invalid decrypt "
+                        f"latency ratio {ratio:.1f}x "
+                        f"(valid={valid_avg * 1000:.2f}ms, "
+                        f"invalid={invalid_avg * 1000:.2f}ms); gross latency "
+                        f"asymmetry is a hardening diagnostic only — "
+                        f"exploitability is not established.",
+                        ComplianceLevel.EXTENDED,
                         reference="Al Fardan & Paterson 'Lucky Thirteen' "
                         "(IEEE S&P 2013, CVE-2013-0169)",
-                    )
-                    classify(
-                        "oracle",
-                        kind="crypto",
-                        label="AES-CBC-PAD Lucky13 timing oracle",
-                        operation="C_Decrypt",
-                        mechanism="CKM_AES_CBC_PAD",
-                        summary=f"TIMING: AES-CBC-PAD valid vs invalid timing "
-                        f"ratio {ratio:.1f}x "
-                        f"(valid={valid_avg * 1000:.2f}ms, "
-                        f"invalid={invalid_avg * 1000:.2f}ms) — "
-                        f"Lucky13-class oracle.",
-                        detail={"channel": "timing", "ratio": round(ratio, 2)},
                     )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)

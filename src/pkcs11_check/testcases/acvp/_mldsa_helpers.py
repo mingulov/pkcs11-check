@@ -6,8 +6,10 @@ NIST ACVP ML-DSA test vectors (FIPS 204).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 from pkcs11_check.raw.types_std import (
     CKM,
     CKM_HASH_ML_DSA_SHA3_224,
@@ -36,36 +38,51 @@ _ML_DSA_PARAM_MAP: dict[str, int] = {
     "ML-DSA-87": int(CKP_ML_DSA_87),
 }
 
-# Pre-hash to hash-specific ML-DSA mechanism mapping
-# Per OASIS PKCS#11 v3.2 spec and FIPS 204, only these hash functions
-# are valid for Hash-ML-DSA. SHA-512/224 and SHA-512/256 are NOT supported.
-_SUPPORTED_MLDSA_HASH_ALGS: frozenset[str] = frozenset(
-    {
-        "SHA2-224",
-        "SHA2-256",
-        "SHA2-384",
-        "SHA2-512",
-        "SHA3-224",
-        "SHA3-256",
-        "SHA3-384",
-        "SHA3-512",
-        "SHAKE-128",
-        "SHAKE-256",
-        "none",  # ACVP uses "none" for non-prehashed (same as "pure")
-    }
-)
-_HASH_ML_DSA_MECHANISMS: dict[str, CKM] = {
-    "SHA-224": CKM_HASH_ML_DSA_SHA224,
-    "SHA-256": CKM_HASH_ML_DSA_SHA256,
-    "SHA-384": CKM_HASH_ML_DSA_SHA384,
-    "SHA-512": CKM_HASH_ML_DSA_SHA512,
+
+@dataclass(frozen=True)
+class MldsaMechanism:
+    """One Hash-ML-DSA resolution: numeric CKM value plus canonical bare name."""
+
+    value: CKM
+    name: str
+
+
+# ACVP pre-hash spelling to numeric generated mechanism. The bare mechanism
+# name is derived from generated MECHANISM_NAMES, never from a second table.
+_ACVP_MLDSA_MECHANISMS: dict[str, CKM] = {
+    "pure": CKM_ML_DSA,
+    "none": CKM_ML_DSA,
+    "SHA2-224": CKM_HASH_ML_DSA_SHA224,
+    "SHA2-256": CKM_HASH_ML_DSA_SHA256,
+    "SHA2-384": CKM_HASH_ML_DSA_SHA384,
+    "SHA2-512": CKM_HASH_ML_DSA_SHA512,
     "SHA3-224": CKM_HASH_ML_DSA_SHA3_224,
     "SHA3-256": CKM_HASH_ML_DSA_SHA3_256,
     "SHA3-384": CKM_HASH_ML_DSA_SHA3_384,
     "SHA3-512": CKM_HASH_ML_DSA_SHA3_512,
-    "SHAKE128": CKM_HASH_ML_DSA_SHAKE128,
-    "SHAKE256": CKM_HASH_ML_DSA_SHAKE256,
+    "SHAKE-128": CKM_HASH_ML_DSA_SHAKE128,
+    "SHAKE-256": CKM_HASH_ML_DSA_SHAKE256,
 }
+
+# Hash spellings with no PKCS #11 v3.2 Hash-ML-DSA mechanism: the only
+# spellings the loaders may silently exclude. Every other unknown spelling
+# must raise visibly through the resolver.
+_UNREPRESENTABLE_MLDSA_HASH_ALGS: frozenset[str] = frozenset({"SHA2-512/224", "SHA2-512/256"})
+
+
+def resolve_mldsa_mechanism(pre_hash: str) -> MldsaMechanism:
+    """Resolve one ACVP pre-hash spelling to its CKM value and bare name.
+
+    This is the single resolution point for capability gates, invocation,
+    and evidence. Unknown spellings raise naming the original spelling;
+    nothing silently falls back to ML-DSA.
+    """
+    try:
+        mechanism = _ACVP_MLDSA_MECHANISMS[pre_hash]
+    except KeyError:
+        raise ValueError(f"Unknown ML-DSA pre-hash mode: {pre_hash!r}") from None
+    name = MECHANISM_NAMES[int(mechanism)].removeprefix("CKM_")
+    return MldsaMechanism(value=mechanism, name=name)
 
 
 def get_mldsa_mechanism(pre_hash: str = "pure") -> CKM:
@@ -81,19 +98,7 @@ def get_mldsa_mechanism(pre_hash: str = "pure") -> CKM:
     Returns:
         The CKM_ML_DSA or CKM_HASH_ML_DSA_* mechanism constant
     """
-    if pre_hash in ("pure", "none"):
-        return CKM_ML_DSA
-
-    # Normalize ACVP hash names to PKCS#11 mechanism names
-    # ACVP: "SHA2-256" -> PKCS#11: "SHA-256"
-    # ACVP: "SHAKE-256" -> PKCS#11: "SHAKE256"
-    normalized = pre_hash
-    normalized = normalized.replace("SHA2-", "SHA-")
-    normalized = normalized.replace("SHAKE-", "SHAKE")
-
-    if normalized in _HASH_ML_DSA_MECHANISMS:
-        return _HASH_ML_DSA_MECHANISMS[normalized]
-    raise ValueError(f"Unknown pre-hash mode: {pre_hash} (normalized: {normalized})")
+    return resolve_mldsa_mechanism(pre_hash).value
 
 
 def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
@@ -122,11 +127,15 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
             if not msg_hex or not sig_hex or not sk_hex:
                 continue
 
-            # Skip unsupported hash algorithms (e.g. SHA2-512/224, SHA2-512/256)
-            # not defined by PKCS#11 v3.2 or FIPS 204 for Hash-ML-DSA
+            # Skip only hash algorithms with no PKCS#11 v3.2 Hash-ML-DSA
+            # mechanism (SHA2-512/224, SHA2-512/256). Every other nonempty
+            # spelling is validated through the resolver so an unknown
+            # value raises visibly instead of silently dropping the vector.
             test_hash_alg = test.get("hashAlg", "")
-            if test_hash_alg and test_hash_alg not in _SUPPORTED_MLDSA_HASH_ALGS:
+            if test_hash_alg in _UNREPRESENTABLE_MLDSA_HASH_ALGS:
                 continue
+            if test_hash_alg:
+                resolve_mldsa_mechanism(test_hash_alg)
 
             try:
                 msg_bytes = bytes.fromhex(msg_hex)
@@ -144,6 +153,8 @@ def _load_internal_vectors(algorithm: str) -> list[tuple[str, dict[str, Any]]]:
                 "context": ctx_bytes,
                 "pre_hash": tg.get("preHash", "pure"),
                 "hash_alg": test.get("hashAlg", ""),
+                "_source": f"acvp:{algorithm}",
+                "_vector_id": f"tcId={tc_id}",
             }
 
             # Add key material from test level
@@ -256,11 +267,15 @@ def load_mldsa_sigver_vectors(limit: int | None = None) -> list[tuple[str, dict[
         if group.get("signatureInterface") == "internal":
             continue
 
-        # Skip unsupported hash algorithms (e.g. SHA2-512/224, SHA2-512/256)
-        # not defined by PKCS#11 v3.2 or FIPS 204 for Hash-ML-DSA
+        # Skip only hash algorithms with no PKCS#11 v3.2 Hash-ML-DSA
+        # mechanism (SHA2-512/224, SHA2-512/256). Every other nonempty
+        # spelling is validated through the resolver so an unknown
+        # value raises visibly instead of silently dropping the vector.
         hash_alg = inp.get("hashAlg", "")
-        if hash_alg and hash_alg not in _SUPPORTED_MLDSA_HASH_ALGS:
+        if hash_alg in _UNREPRESENTABLE_MLDSA_HASH_ALGS:
             continue
+        if hash_alg:
+            resolve_mldsa_mechanism(hash_alg)
 
         tc_id = inp.get("tcId", 0)
         pk_hex = inp.get("pk", "")
@@ -291,6 +306,8 @@ def load_mldsa_sigver_vectors(limit: int | None = None) -> list[tuple[str, dict[
             "expected_pass": expected_pass,
             "pre_hash": group.get("preHash", "pure"),
             "hash_alg": inp.get("hashAlg", ""),
+            "_source": vec["_source"],
+            "_vector_id": vec["_vector_id"],
         }
         vec_id = f"ML-DSA-sigVer-{param_set}-tc{tc_id}"
         result.append((vec_id, vec_data))

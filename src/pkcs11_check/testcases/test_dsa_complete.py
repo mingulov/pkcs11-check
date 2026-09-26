@@ -17,7 +17,8 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     _mech_struct,
@@ -82,6 +83,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import parse_raw_dss_or_classify
 from pkcs11_check.testcases._signature_policy import (
     signature_rejected_or_xfail,
     xfail_if_op_not_operational,
@@ -122,6 +124,9 @@ _DSA_PARAMETER_RUNTIME_REJECT_RVS = (
 # on some modules); the whole file is keygen-bound. Marked slow so a basic run can skip
 # it with -m "not slow"; it still runs in the full profile.
 pytestmark = [pytest.mark.sign, pytest.mark.slow]
+
+# Distinct-digest sample size for the repeated-r invariant below.
+_DISTINCT_MESSAGE_SAMPLES = 20
 
 _DSA_KEYPAIR_RUNTIME_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
@@ -460,6 +465,28 @@ def _generate_dsa_keypair(
     return dp_handle, pub, priv
 
 
+def _read_dsa_subprime(rs: Any, dp_handle: int) -> bytes | None:
+    """Read the DSA subprime q for signature-width derivation.
+
+    Returns the raw subprime bytes, or None if the provider omitted
+    CKA_SUBPRIME on readback (recorded via attr_or_record()) so
+    width-dependent signature analysis cannot run.
+    """
+    attrs = read_attributes(rs.raw, rs.sh, dp_handle, [CKA_SUBPRIME])
+    subprime = attr_or_record(
+        attrs,
+        CKA_SUBPRIME,
+        label="DSA signature width: CKA_SUBPRIME readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    if subprime is MISSING_ATTRIBUTE:
+        return None
+    assert isinstance(subprime, bytes)
+    assert len(subprime) > 0
+    return subprime
+
+
 def _dsa_sign_or_xfail(rs: Any, priv: int, mechanism: int, data: bytes, label: str) -> bytes:
     try:
         return sign_single(rs.raw, rs.sh, priv, mechanism, data)
@@ -631,8 +658,15 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, priv)
             destroy_quietly(rs.raw, rs.sh, dp)
 
-    def test_raw_dsa_nondeterministic(self, p11_module_session: Any) -> None:
-        """Raw DSA signatures for the same digest should differ (random k)."""
+    def test_raw_dsa_deterministic_signing_distinct_r(self, p11_module_session: Any) -> None:
+        """Same-digest resignature passes (deterministic signing is valid).
+
+        Identical signatures for the same digest are valid deterministic DSS
+        behavior (RFC 6979 / FIPS 186-5), not nonce reuse. The adverse
+        invariant is a repeated valid ``r`` across distinct digests, which
+        signals equivalent-nonce reuse. Scalar widths come from the read-back
+        subprime, never from fixed slicing.
+        """
         rs = p11_module_session
         if not rs.has_mechanism("DSA"):
             pytest.skip("CKM_DSA not supported")
@@ -642,20 +676,79 @@ class TestDSARaw:
             return
         dp, pub, priv = keypair
         try:
+            subprime = _read_dsa_subprime(rs, dp)
+            if subprime is None:
+                return
+            half_len = len(subprime)
+            order = int.from_bytes(subprime, "big")
+
             digest = hashlib.sha1(b"nonce test", usedforsecurity=False).digest()  # noqa: S324
 
             sig1 = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
+            parse_raw_dss_or_classify(
+                sig1,
+                half_len=half_len,
+                order=order,
+                label="CKM_DSA:sign deterministic signing",
+                operation="C_Sign",
+                mechanism="CKM_DSA",
+            )
             sig2 = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
+            parse_raw_dss_or_classify(
+                sig2,
+                half_len=half_len,
+                order=order,
+                label="CKM_DSA:sign deterministic signing",
+                operation="C_Sign",
+                mechanism="CKM_DSA",
+            )
             if sig1 == sig2:
-                classify(
-                    "wrong_result",
-                    kind="crypto",
-                    label="CKM_DSA:sign nonce uniqueness",
+                note(
+                    "CKM_DSA: identical signatures for the same digest "
+                    "(deterministic signing; valid per RFC 6979 / FIPS 186-5)",
+                    ComplianceLevel.STANDARD,
+                    reference="RFC 6979; FIPS 186-5",
+                )
+            else:
+                note(
+                    "CKM_DSA: varying signatures for the same digest (randomized signing)",
+                    ComplianceLevel.EXTENDED,
+                    reference="RFC 6979; FIPS 186-5",
+                )
+            seen_r: dict[int, int] = {}
+            for i in range(_DISTINCT_MESSAGE_SAMPLES):
+                distinct = hashlib.sha1(  # noqa: S324
+                    f"DSA raw distinct digest {i}".encode(), usedforsecurity=False
+                ).digest()
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, distinct)
+                r, _ = parse_raw_dss_or_classify(
+                    sig,
+                    half_len=half_len,
+                    order=order,
+                    label="CKM_DSA:sign distinct-digest r",
                     operation="C_Sign",
                     mechanism="CKM_DSA",
-                    summary="two DSA signatures of the same digest are identical -- "
-                    "nonce (k) reuse leaks the private key",
                 )
+                if r in seen_r:
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="CKM_DSA:sign distinct-digest r",
+                        operation="C_Sign",
+                        mechanism="CKM_DSA",
+                        summary=(
+                            "CKM_DSA: repeated valid r across distinct digests "
+                            f"(samples {seen_r[r]} and {i}); dangerous "
+                            "equivalent-nonce reuse signal"
+                        ),
+                        detail={
+                            "first_index": seen_r[r],
+                            "repeat_index": i,
+                            "samples": _DISTINCT_MESSAGE_SAMPLES,
+                            "r_bit_length": r.bit_length(),
+                        },
+                    )
+                seen_r[r] = i
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

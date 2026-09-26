@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, x448, x25519
 
 from pkcs11_check.classification import fail_as, xfail_as
-from pkcs11_check.raw.der import decode_ec_point
+from pkcs11_check.raw.der import decode_ec_point, ecdsa_sig_from_der
 from pkcs11_check.raw.recipes import read_attributes
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -205,6 +205,131 @@ def split_raw_ecdsa(sig: bytes, coord_len: int) -> tuple[int, int]:
     r = int.from_bytes(sig[:coord_len], "big")
     s = int.from_bytes(sig[coord_len:], "big")
     return r, s
+
+
+# secp256r1 (P-256) group order n -- public curve constant (NIST FIPS 186-5, SEC 2).
+SECP256R1_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+
+def parse_raw_dss_or_classify(
+    sig: bytes,
+    *,
+    half_len: int,
+    order: int,
+    label: str,
+    operation: str,
+    mechanism: str,
+) -> tuple[int, int]:
+    """Strictly parse a token-produced raw DSS (ECDSA/DSA) signature.
+
+    PKCS#11 requires raw ``r || s`` with exactly ``half_len`` bytes per scalar
+    (32 for P-256; DSA widths come from the read-back subprime) and both
+    scalars satisfying ``0 < scalar < order``. Returns ``(r, s)`` on success.
+
+    A well-formed DER signature where raw encoding is required is an
+    encoding/interoperability deviation (``honest_deviation`` XFAIL) -- no
+    scalar statistics are run on it. Wrong length, malformed encoding, or
+    out-of-range scalars are ``wrong_result`` FAIL carrying the actual
+    shape/length. Neither record claims nonce reuse or key recovery.
+    """
+    expected_len = 2 * half_len
+    if len(sig) == expected_len:
+        r, s = split_raw_ecdsa(sig, half_len)
+        r_in_range = 0 < r < order
+        s_in_range = 0 < s < order
+        if r_in_range and s_in_range:
+            return r, s
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=f"{expected_len}-byte raw r||s with 0 < r,s < order",
+            actual=f"{len(sig)}-byte output with out-of-range scalar(s)",
+            summary=(
+                f"{label}: raw DSS signature has the expected length ({len(sig)} bytes) "
+                f"but an out-of-range scalar (r in range: {r_in_range}, "
+                f"s in range: {s_in_range}); no scalar analysis performed"
+            ),
+            detail={
+                "encoding": "raw",
+                "expected_length": expected_len,
+                "actual_length": len(sig),
+                "half_length": half_len,
+                "r_in_range": r_in_range,
+                "s_in_range": s_in_range,
+                "r_bit_length": r.bit_length(),
+                "s_bit_length": s.bit_length(),
+            },
+        )
+    try:
+        r, s = ecdsa_sig_from_der(sig)
+    except ValueError:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=f"{expected_len}-byte raw r||s",
+            actual=f"{len(sig)}-byte output",
+            summary=(
+                f"{label}: DSS signature has wrong length or malformed encoding "
+                f"(got {len(sig)} bytes, expected exactly {expected_len} raw r||s); "
+                "no scalar analysis performed"
+            ),
+            detail={
+                "expected_length": expected_len,
+                "actual_length": len(sig),
+                "half_length": half_len,
+            },
+        )
+    if not (0 < r < order and 0 < s < order):
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=f"{expected_len}-byte raw r||s with 0 < r,s < order",
+            actual=f"{len(sig)}-byte DER signature with out-of-range scalar(s)",
+            summary=(
+                f"{label}: DER-shaped DSS signature carries an out-of-range scalar "
+                f"(r in range: {0 < r < order}, s in range: {0 < s < order}); "
+                "no scalar analysis performed"
+            ),
+            detail={
+                "encoding": "der",
+                "expected_length": expected_len,
+                "actual_length": len(sig),
+                "r_in_range": 0 < r < order,
+                "s_in_range": 0 < s < order,
+                "r_bit_length": r.bit_length(),
+                "s_bit_length": s.bit_length(),
+            },
+        )
+    xfail_as(
+        "honest_deviation",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=f"{expected_len}-byte raw r||s",
+        actual=f"{len(sig)}-byte DER signature",
+        summary=(
+            f"{label}: token returned a well-formed DER signature where PKCS#11 "
+            f"requires raw r||s encoding ({len(sig)} bytes); "
+            "encoding/interoperability deviation, no scalar statistics performed"
+        ),
+        detail={
+            "encoding": "der",
+            "expected_length": expected_len,
+            "actual_length": len(sig),
+            "r_bit_length": r.bit_length(),
+            "s_bit_length": s.bit_length(),
+        },
+    )
 
 
 def read_conventional_ec_point_or_xfail(

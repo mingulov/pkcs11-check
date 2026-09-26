@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_bytes, attr_ulong, mech_pss, mech_simple, template
 from pkcs11_check.raw.recipes import (
@@ -60,6 +62,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._ec_export import SECP256R1_ORDER, parse_raw_dss_or_classify
 from pkcs11_check.testcases._signature_policy import signature_rejected_or_xfail
 from pkcs11_check.testcases.conftest import (
     gen_ec_keypair_or_xfail,
@@ -69,6 +72,9 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.full
+
+# Distinct-digest sample size for the repeated-r invariant below.
+_DISTINCT_MESSAGE_SAMPLES = 20
 
 _SIGN_OPERATION_REJECT_RVS = (
     CKR_ARGUMENTS_BAD,
@@ -341,8 +347,14 @@ class TestECDSASignature:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_ecdsa_nondeterministic(self, p11_raw_session: Any) -> None:
-        """ECDSA signatures for same data should differ (random nonce)."""
+    def test_ecdsa_deterministic_signing_distinct_r(self, p11_raw_session: Any) -> None:
+        """Same-digest resignature passes (deterministic signing is valid).
+
+        Identical signatures for the same digest are valid deterministic DSS
+        behavior (RFC 6979 / FIPS 186-5), not nonce reuse. The adverse
+        invariant is a repeated valid ``r`` across distinct digests, which
+        signals equivalent-nonce reuse.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
@@ -351,8 +363,68 @@ class TestECDSASignature:
         try:
             digest = hashlib.sha256(b"nonce test").digest()
             sig1 = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
+            parse_raw_dss_or_classify(
+                sig1,
+                half_len=32,
+                order=SECP256R1_ORDER,
+                label="CKM_ECDSA:sign deterministic signing",
+                operation="C_Sign",
+                mechanism="CKM_ECDSA",
+            )
             sig2 = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, digest)
-            assert sig1 != sig2
+            parse_raw_dss_or_classify(
+                sig2,
+                half_len=32,
+                order=SECP256R1_ORDER,
+                label="CKM_ECDSA:sign deterministic signing",
+                operation="C_Sign",
+                mechanism="CKM_ECDSA",
+            )
+            if sig1 == sig2:
+                note(
+                    "CKM_ECDSA: identical signatures for the same digest "
+                    "(deterministic signing; valid per RFC 6979 / FIPS 186-5)",
+                    ComplianceLevel.STANDARD,
+                    reference="RFC 6979; FIPS 186-5",
+                )
+            else:
+                note(
+                    "CKM_ECDSA: varying signatures for the same digest (randomized signing)",
+                    ComplianceLevel.EXTENDED,
+                    reference="RFC 6979; FIPS 186-5",
+                )
+            seen_r: dict[int, int] = {}
+            for i in range(_DISTINCT_MESSAGE_SAMPLES):
+                distinct = hashlib.sha256(f"ECDSA raw distinct digest {i}".encode()).digest()
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_ECDSA, distinct)
+                r, _ = parse_raw_dss_or_classify(
+                    sig,
+                    half_len=32,
+                    order=SECP256R1_ORDER,
+                    label="CKM_ECDSA:sign distinct-digest r",
+                    operation="C_Sign",
+                    mechanism="CKM_ECDSA",
+                )
+                if r in seen_r:
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label="CKM_ECDSA:sign distinct-digest r",
+                        operation="C_Sign",
+                        mechanism="CKM_ECDSA",
+                        summary=(
+                            "CKM_ECDSA: repeated valid r across distinct digests "
+                            f"(samples {seen_r[r]} and {i}); dangerous "
+                            "equivalent-nonce reuse signal"
+                        ),
+                        detail={
+                            "first_index": seen_r[r],
+                            "repeat_index": i,
+                            "samples": _DISTINCT_MESSAGE_SAMPLES,
+                            "r_bit_length": r.bit_length(),
+                        },
+                    )
+                seen_r[r] = i
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

@@ -13,7 +13,8 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import fail_as
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
@@ -29,12 +30,16 @@ from pkcs11_check.raw.types_std import (
     CKM_ECDSA_SHA3_512,
     CKM_ECDSA_SHA224,
 )
+from pkcs11_check.testcases._ec_export import SECP256R1_ORDER, parse_raw_dss_or_classify
 from pkcs11_check.testcases._signature_policy import (
     signature_rejected_or_xfail,
     xfail_if_op_not_operational,
 )
 
 pytestmark = pytest.mark.sign
+
+# Distinct-message sample size for the repeated-r invariant below.
+_DISTINCT_MESSAGE_SAMPLES = 20
 
 _ECDSA_HASH_MECHS = [
     pytest.param("ECDSA_SHA1", CKM_ECDSA_SHA1, id="SHA1"),
@@ -113,13 +118,19 @@ class TestECDSAPrehash:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     @pytest.mark.parametrize(("mech_name", "mech"), _ECDSA_HASH_MECHS)
-    def test_nondeterministic(
+    def test_deterministic_signing_distinct_r(
         self,
         p11_raw_session: Any,
         mech_name: str,
         mech: Any,
     ) -> None:
-        """Two signatures of the same data must differ (random nonce)."""
+        """Same-message resignature passes (deterministic signing is valid).
+
+        Identical signatures for the same message are valid deterministic DSS
+        behavior (RFC 6979 / FIPS 186-5), not nonce reuse. The adverse
+        invariant is a repeated valid ``r`` across distinct messages, which
+        signals equivalent-nonce reuse.
+        """
         rs = p11_raw_session
         if not rs.has_mechanism(mech_name):
             pytest.skip(f"CKM_{mech_name} not supported")
@@ -127,22 +138,75 @@ class TestECDSAPrehash:
         curve_oid = encode_named_curve_parameters("secp256r1")
         pub, priv = gen_ec_keypair(rs.raw, rs.sh, curve_oid)
         try:
+            label = f"CKM_{mech_name}:sign deterministic signing"
             data = b"nonce uniqueness test for ECDSA prehash"
             try:
                 sig1 = sign_single(rs.raw, rs.sh, priv, mech, data)
             except AssertionError as exc:
                 xfail_if_op_not_operational(exc, f"CKM_{mech_name}")
+            parse_raw_dss_or_classify(
+                sig1,
+                half_len=32,
+                order=SECP256R1_ORDER,
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+            )
             sig2 = sign_single(rs.raw, rs.sh, priv, mech, data)
+            parse_raw_dss_or_classify(
+                sig2,
+                half_len=32,
+                order=SECP256R1_ORDER,
+                label=label,
+                operation="C_Sign",
+                mechanism=f"CKM_{mech_name}",
+            )
             if sig1 == sig2:
-                classify(
-                    "wrong_result",
-                    kind="crypto",
-                    label=f"CKM_{mech_name}:sign nonce uniqueness",
+                note(
+                    f"CKM_{mech_name}: identical signatures for the same message "
+                    "(deterministic signing; valid per RFC 6979 / FIPS 186-5)",
+                    ComplianceLevel.STANDARD,
+                    reference="RFC 6979; FIPS 186-5",
+                )
+            else:
+                note(
+                    f"CKM_{mech_name}: varying signatures for the same message "
+                    "(randomized signing)",
+                    ComplianceLevel.EXTENDED,
+                    reference="RFC 6979; FIPS 186-5",
+                )
+            seen_r: dict[int, int] = {}
+            for i in range(_DISTINCT_MESSAGE_SAMPLES):
+                message = f"ECDSA prehash distinct message {i}".encode()
+                sig = sign_single(rs.raw, rs.sh, priv, mech, message)
+                r, _ = parse_raw_dss_or_classify(
+                    sig,
+                    half_len=32,
+                    order=SECP256R1_ORDER,
+                    label=f"CKM_{mech_name}:sign distinct-message r",
                     operation="C_Sign",
                     mechanism=f"CKM_{mech_name}",
-                    summary="two ECDSA signatures of the same data are identical -- "
-                    "nonce (k) reuse leaks the private key",
                 )
+                if r in seen_r:
+                    fail_as(
+                        "wrong_result",
+                        kind="crypto",
+                        label=f"CKM_{mech_name}:sign distinct-message r",
+                        operation="C_Sign",
+                        mechanism=f"CKM_{mech_name}",
+                        summary=(
+                            f"CKM_{mech_name}: repeated valid r across distinct messages "
+                            f"(samples {seen_r[r]} and {i}); dangerous "
+                            "equivalent-nonce reuse signal"
+                        ),
+                        detail={
+                            "first_index": seen_r[r],
+                            "repeat_index": i,
+                            "samples": _DISTINCT_MESSAGE_SAMPLES,
+                            "r_bit_length": r.bit_length(),
+                        },
+                    )
+                seen_r[r] = i
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
