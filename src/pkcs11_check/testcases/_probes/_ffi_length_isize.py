@@ -1,7 +1,9 @@
 """ffi_length arm group: isize::MAX input/output/signature-length probes.
 
 Moved verbatim from ffi_length.py (god-module split, 2026-07-17); dispatched via
-ffi_length._DISPATCH.  Output protocol unchanged (TARGET_RV/SETUP_XFAIL lines).
+ffi_length._DISPATCH.  Mappable lengths are honestly backed
+(``_demand_readable_or_hostile``); un-mappable magnitudes print
+``HOSTILE_CALLER:`` before the provider call (TARGET_RV/SETUP_XFAIL lines kept).
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases._probes._ffi_length_base import (
+    HOSTILE_CALLER_PREFIX,
+    _demand_readable_or_hostile,
     _import_hmac_key,
     _import_hmac_key_notop,
     _setup_reject_or_raise,
@@ -30,7 +34,6 @@ from pkcs11_check.testcases._probes._ffi_length_base import (
 from pkcs11_check.testcases._probes.honeypot import (
     SETUP_XFAIL_PREFIX,
     HoneypotUnavailable,
-    demand_zero_buffer,
 )
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.conftest import (
@@ -39,17 +42,18 @@ from pkcs11_check.testcases.conftest import (
 
 
 def _run_encrypt_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Encrypt with an isize-boundary ``ulDataLen`` over a honeypot data pointer."""
+    """C_Encrypt with an isize-boundary ``ulDataLen`` over an honest/hostile data pointer."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         key = gen_aes_key(raw, sh, 256)
@@ -65,6 +69,11 @@ def _run_encrypt_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         if rv == CKR_OK:
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_Encrypt(ulDataLen={data_len:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_Encrypt(sh, buf, data_len, out_buf, ctypes.byref(out_len))
             print(f"TARGET_RV:0x{rv2:08x}")
         else:
@@ -74,17 +83,18 @@ def _run_encrypt_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_decrypt_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Decrypt with an isize-boundary ``ulEncryptedDataLen`` over a honeypot data pointer."""
+    """C_Decrypt with an isize-boundary ``ulEncryptedDataLen`` over honest/hostile input."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     try:
         key = gen_aes_key(raw, sh, 256)
@@ -100,6 +110,11 @@ def _run_decrypt_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         if rv == CKR_OK:
             out_len = CK_ULONG(256)
             out_buf = (ctypes.c_ubyte * 256)()
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_Decrypt(ulEncryptedDataLen={data_len:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_Decrypt(sh, buf, data_len, out_buf, ctypes.byref(out_len))
             print(f"TARGET_RV:0x{rv2:08x}")
         else:
@@ -109,17 +124,18 @@ def _run_decrypt_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_sign_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Sign (HMAC-SHA256) with an isize-boundary ``ulDataLen`` over a honeypot data ptr."""
+    """C_Sign (HMAC-SHA256) with an isize-boundary ``ulDataLen`` over honest/hostile input."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     key = _import_hmac_key_notop(ctx, sign=True)
     try:
@@ -131,6 +147,11 @@ def _run_sign_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         if rv == CKR_OK:
             sig_len = CK_ULONG(64)
             sig_buf = (ctypes.c_ubyte * 64)()
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_Sign(ulDataLen={data_len:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_Sign(sh, buf, data_len, sig_buf, ctypes.byref(sig_len))
             print(f"TARGET_RV:0x{rv2:08x}")
         else:
@@ -140,17 +161,18 @@ def _run_sign_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_verify_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Verify (HMAC-SHA256) with an isize-boundary ``ulDataLen`` over a honeypot data ptr."""
+    """C_Verify (HMAC-SHA256) with an isize-boundary ``ulDataLen`` over honest/hostile input."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     key = _import_hmac_key(ctx, verify=True)
     try:
@@ -161,6 +183,11 @@ def _run_verify_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
         if rv == CKR_OK:
             sig_buf = (ctypes.c_ubyte * 32)()
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_Verify(ulDataLen={data_len:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_Verify(sh, buf, data_len, sig_buf, 32)
             print(f"TARGET_RV:0x{rv2:08x}")
         else:
@@ -170,17 +197,18 @@ def _run_verify_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_digest_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Digest (SHA256) with an isize-boundary ``ulDataLen`` over a honeypot data pointer."""
+    """C_Digest (SHA256) with an isize-boundary ``ulDataLen`` over honest/hostile input."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     mech = CK_MECHANISM()
     mech.mechanism = CKM_SHA256
@@ -190,6 +218,11 @@ def _run_digest_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if rv == CKR_OK:
         digest_len = CK_ULONG(64)
         digest_buf = (ctypes.c_ubyte * 64)()
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_Digest(ulDataLen={data_len:#x}) unbacked",
+                flush=True,
+            )
         rv2 = raw.C_Digest(sh, buf, data_len, digest_buf, ctypes.byref(digest_len))
         print(f"TARGET_RV:0x{rv2:08x}")
     else:
@@ -205,10 +238,11 @@ def _run_update_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     if op in ("C_EncryptUpdate", "C_DecryptUpdate"):
         init_op = "C_EncryptInit" if op == "C_EncryptUpdate" else "C_DecryptInit"
@@ -229,6 +263,11 @@ def _run_update_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
                 out_buf = (ctypes.c_ubyte * 256)()
                 print(f"TARGET:{op}", flush=True)
                 print(f"LEN:{data_len}", flush=True)
+                if not region.honest:
+                    print(
+                        f"{HOSTILE_CALLER_PREFIX}{op}(ulPartLen={data_len:#x}) unbacked",
+                        flush=True,
+                    )
                 rv2 = getattr(raw, op)(sh, buf, data_len, out_buf, ctypes.byref(out_len))
                 print(f"TARGET_RV:0x{rv2:08x}")
             else:
@@ -246,6 +285,11 @@ def _run_update_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             if rv == CKR_OK:
                 print("TARGET:C_SignUpdate", flush=True)
                 print(f"LEN:{data_len}", flush=True)
+                if not region.honest:
+                    print(
+                        f"{HOSTILE_CALLER_PREFIX}C_SignUpdate(ulPartLen={data_len:#x}) unbacked",
+                        flush=True,
+                    )
                 rv2 = raw.C_SignUpdate(sh, buf, data_len)
                 print(f"TARGET_RV:0x{rv2:08x}")
             else:
@@ -263,6 +307,11 @@ def _run_update_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             if rv == CKR_OK:
                 print("TARGET:C_VerifyUpdate", flush=True)
                 print(f"LEN:{data_len}", flush=True)
+                if not region.honest:
+                    print(
+                        f"{HOSTILE_CALLER_PREFIX}C_VerifyUpdate(ulPartLen={data_len:#x}) unbacked",
+                        flush=True,
+                    )
                 rv2 = raw.C_VerifyUpdate(sh, buf, data_len)
                 print(f"TARGET_RV:0x{rv2:08x}")
             else:
@@ -278,6 +327,11 @@ def _run_update_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         if rv == CKR_OK:
             print("TARGET:C_DigestUpdate", flush=True)
             print(f"LEN:{data_len}", flush=True)
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_DigestUpdate(ulPartLen={data_len:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_DigestUpdate(sh, buf, data_len)
             print(f"TARGET_RV:0x{rv2:08x}")
         else:
@@ -287,20 +341,26 @@ def _run_update_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_seed_random_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_SeedRandom with an isize-boundary ``ulSeedLen`` over a honeypot data pointer."""
+    """C_SeedRandom with an isize-boundary ``ulSeedLen`` over honest/hostile input."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     data_len = int(extra["data_len"])
 
     try:
-        buf = demand_zero_buffer()
+        region, _keepalive = _demand_readable_or_hostile(data_len)
     except HoneypotUnavailable as exc:
         print(f"{SETUP_XFAIL_PREFIX}{exc}")
         return
+    buf = region.ptr
 
     print("TARGET:C_SeedRandom", flush=True)
     print(f"LEN:{data_len}", flush=True)
+    if not region.honest:
+        print(
+            f"{HOSTILE_CALLER_PREFIX}C_SeedRandom(ulSeedLen={data_len:#x}) unbacked",
+            flush=True,
+        )
     rv = raw.C_SeedRandom(sh, buf, data_len)
     print(f"TARGET_RV:0x{rv:08x}")
     print(f"rv_name={ckr_name(rv)}")
@@ -312,11 +372,25 @@ def _run_seed_random_isize(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_sign_isize_output(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Sign (HMAC-SHA256) with an isize-boundary claimed output-buffer length."""
+    """C_Sign (HMAC-SHA256) with an isize-boundary claimed output-buffer length.
+
+    Mappable capacities are backed by an honestly writable region, so the
+    declared capacity is truthful; un-mappable capacities stay explicitly
+    hostile (``honest=0``) observations.
+    """
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     out_len_val = int(extra["out_len"])
+
+    try:
+        region, _keepalive = _demand_readable_or_hostile(out_len_val)
+    except HoneypotUnavailable as exc:
+        print(f"{SETUP_XFAIL_PREFIX}{exc}")
+        return
+    # The demand-zero mapping is writable, so an honest region makes the declared
+    # output capacity truthful; a hostile region is the marked small buffer.
+    sig_buf = region.ptr
 
     key = _import_hmac_key_notop(ctx, sign=True)
     try:
@@ -327,8 +401,12 @@ def _run_sign_isize_output(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         rv = raw.C_SignInit(sh, ctypes.byref(mech), key)
         if rv == CKR_OK:
             data = (ctypes.c_ubyte * 16)(*range(16))
-            sig_buf = (ctypes.c_ubyte * 64)()
             sig_len = CK_ULONG(out_len_val)
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_Sign(sig_len={out_len_val:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_Sign(sh, data, 16, sig_buf, ctypes.byref(sig_len))
             print(f"TARGET_RV:0x{rv2:08x}")
         else:
@@ -338,11 +416,25 @@ def _run_sign_isize_output(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _run_digest_isize_output(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_Digest (SHA256) with an isize-boundary claimed output-buffer length."""
+    """C_Digest (SHA256) with an isize-boundary claimed output-buffer length.
+
+    Mappable capacities are backed by an honestly writable region, so the
+    declared capacity is truthful; un-mappable capacities stay explicitly
+    hostile (``honest=0``) observations.
+    """
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
     raw = ctx.raw
     out_len_val = int(extra["out_len"])
+
+    try:
+        region, _keepalive = _demand_readable_or_hostile(out_len_val)
+    except HoneypotUnavailable as exc:
+        print(f"{SETUP_XFAIL_PREFIX}{exc}")
+        return
+    # The demand-zero mapping is writable, so an honest region makes the declared
+    # output capacity truthful; a hostile region is the marked small buffer.
+    digest_buf = region.ptr
 
     mech = CK_MECHANISM()
     mech.mechanism = CKM_SHA256
@@ -351,8 +443,12 @@ def _run_digest_isize_output(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     rv = raw.C_DigestInit(sh, ctypes.byref(mech))
     if rv == CKR_OK:
         data = (ctypes.c_ubyte * 16)(*range(16))
-        digest_buf = (ctypes.c_ubyte * 64)()
         digest_len = CK_ULONG(out_len_val)
+        if not region.honest:
+            print(
+                f"{HOSTILE_CALLER_PREFIX}C_Digest(digest_len={out_len_val:#x}) unbacked",
+                flush=True,
+            )
         rv2 = raw.C_Digest(sh, data, 16, digest_buf, ctypes.byref(digest_len))
         print(f"TARGET_RV:0x{rv2:08x}")
     else:
@@ -366,6 +462,13 @@ def _run_verify_isize_sig_len(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     raw = ctx.raw
     sig_len_val = int(extra["sig_len"])
 
+    try:
+        region, _keepalive = _demand_readable_or_hostile(sig_len_val)
+    except HoneypotUnavailable as exc:
+        print(f"{SETUP_XFAIL_PREFIX}{exc}")
+        return
+    sig_buf = region.ptr
+
     key = _import_hmac_key_notop(ctx, verify=True)
     try:
         mech = CK_MECHANISM()
@@ -375,7 +478,11 @@ def _run_verify_isize_sig_len(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         rv = raw.C_VerifyInit(sh, ctypes.byref(mech), key)
         if rv == CKR_OK:
             data = (ctypes.c_ubyte * 16)(*range(16))
-            sig_buf = (ctypes.c_ubyte * 64)()
+            if not region.honest:
+                print(
+                    f"{HOSTILE_CALLER_PREFIX}C_Verify(ulSignatureLen={sig_len_val:#x}) unbacked",
+                    flush=True,
+                )
             rv2 = raw.C_Verify(sh, data, 16, sig_buf, sig_len_val)
             print(f"TARGET_RV:0x{rv2:08x}")
         else:

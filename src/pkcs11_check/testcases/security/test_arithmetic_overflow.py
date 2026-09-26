@@ -14,6 +14,12 @@ Covers:
 - Key value length overflow (CKA_VALUE_LEN = ULONG_MAX)
 - Attribute value length overflow (ulValueLen = ULONG_MAX)
 - GenerateKeyPair template count overflow
+
+Honest-region contract (P11C-0198-010): mappable claimed lengths are backed by
+an honestly mapped region carrying at least that many bytes. Un-mappable
+magnitudes execute as explicitly unbacked (``honest=0``) hostile-caller inputs
+whose outcomes are non-normative ``EXTENDED`` robustness observations, never
+conformance or security findings.
 """
 
 from __future__ import annotations
@@ -22,6 +28,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
+from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     _CK_ULONG_MAX,
     CKA_SIGN,
@@ -31,8 +40,12 @@ from pkcs11_check.raw.types_std import (
     CKR_DATA_LEN_RANGE,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
+from pkcs11_check.testcases._probes.arithmetic_overflow import HOSTILE_CALLER_PREFIX
 from pkcs11_check.testcases._probes.runner import run_probe
-from pkcs11_check.testcases._subprocess_preamble import pin_from_config
+from pkcs11_check.testcases._subprocess_preamble import (
+    SUBPROCESS_TIMEOUT_MARKER,
+    pin_from_config,
+)
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     destroy_returned_handles,
@@ -54,6 +67,92 @@ _ULONG_32BIT_MAX = 0xFFFFFFFF
 _ULONG_64BIT_SIGN = 0x8000000000000000
 _SIZEOF_ATTR_OVERFLOW = _ULONG_MAX // 24 + 1
 _ULONG_33BIT = 0x100000000
+
+# CPython traceback header (same line `runner._PYTHON_TRACEBACK` matches): a
+# hostile-path child exit carrying one is a probe bug, not provider behavior.
+_TRACEBACK_LINE = "Traceback (most recent call last)"
+
+
+def _is_hostile_caller(stdout: str) -> bool:
+    """Whether the child executed the provider call with an unbacked huge length."""
+    return any(line.startswith(HOSTILE_CALLER_PREFIX) for line in stdout.splitlines())
+
+
+def _observe_hostile_caller_robustness(
+    rc: int,
+    stdout: str,
+    stderr: str,
+    *,
+    context: str,
+    test_id: str,
+) -> None:
+    """Record a non-normative hostile-caller robustness observation; never fail.
+
+    The child passed an explicitly unbacked (``honest=0``) huge length that no
+    demand-zero mapping can back. Whatever the provider did -- crash, hang,
+    reject, or accept -- the caller owns the fault, so the outcome is an
+    ``EXTENDED`` compliance note, never a conformance or security finding.
+    The only loud path is a Python-traceback child exit, which is a probe bug.
+    """
+    if is_crash_returncode(rc):
+        note(
+            f"hostile-caller robustness observation (non-normative): {context} "
+            "with an explicitly unbacked huge length terminated the child "
+            f"({crash_detail_name(rc)}); out-of-contract caller input -- the caller "
+            "owns the fault, not the provider; not a conformance or security finding",
+            ComplianceLevel.EXTENDED,
+            reference="P11C-0198-010",
+            test_id=test_id,
+        )
+        return
+    if SUBPROCESS_TIMEOUT_MARKER in stderr:
+        note(
+            f"hostile-caller robustness observation (non-normative): {context} "
+            "with an explicitly unbacked huge length timed out without returning; "
+            "out-of-contract caller input -- the caller owns the fault, not the "
+            "provider; not a conformance or security finding",
+            ComplianceLevel.EXTENDED,
+            reference="P11C-0198-010",
+            test_id=test_id,
+        )
+        return
+    if rc == 0:
+        rv: int | None = None
+        for line in stdout.splitlines():
+            if line.startswith("rv="):
+                try:
+                    rv = int(line.removeprefix("rv="), 0)
+                except ValueError:
+                    rv = None
+                break
+        outcome = f"returned {ckr_name(rv)}" if rv is not None else "completed"
+        note(
+            f"hostile-caller robustness observation (non-normative): {context} "
+            f"with an explicitly unbacked huge length {outcome}; out-of-contract "
+            "caller input -- the caller owns the fault, not the provider; not a "
+            "conformance or security finding",
+            ComplianceLevel.EXTENDED,
+            reference="P11C-0198-010",
+            test_id=test_id,
+        )
+        return
+    if _TRACEBACK_LINE in stderr:
+        # Our probe code raised after printing the marker: a probe bug, loud
+        # (AssertionError, like protocol-marker parse failures).
+        raise AssertionError(
+            f"{context}: hostile-path probe bug -- child exited {rc} with a "
+            f"Python traceback after printing the {HOSTILE_CALLER_PREFIX} marker; "
+            f"not provider behavior:\n{stderr[-1500:]}"
+        )
+    note(
+        f"hostile-caller robustness observation (non-normative): {context} "
+        f"with an explicitly unbacked huge length ended with exit code {rc} and "
+        "no Python traceback; out-of-contract caller input -- the caller owns "
+        "the fault, not the provider; not a conformance or security finding",
+        ComplianceLevel.EXTENDED,
+        reference="P11C-0198-010",
+        test_id=test_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +176,10 @@ class TestDataLengthOverflow:
     """Probe C_Encrypt/C_Decrypt with near-SIZE_MAX ulDataLen.
 
     After C_EncryptInit / C_DecryptInit with AES-ECB, call the data function
-    with a huge ulDataLen.  Modules that compute padded_len =
-    block_size * (len / block_size + 1) will wrap near SIZE_MAX.
+    with a huge ulDataLen. Mappable lengths are honestly backed (strict);
+    un-mappable magnitudes execute as explicitly unbacked (``honest=0``)
+    hostile-caller inputs: non-normative ``EXTENDED`` robustness
+    observations, never conformance or security findings.
     """
 
     @pytest.mark.parametrize("data_len", _DATA_LENGTHS)
@@ -113,11 +214,21 @@ class TestDataLengthOverflow:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"{func}(ulDataLen={data_len:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestDataLengthOverflow.test_data_length_overflow",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"{func}(ulDataLen={data_len:#x})",
+            context=context,
         )
 
 
@@ -212,11 +323,12 @@ _MECH_PARAM_CASES = [
 
 
 class TestMechanismParamLengthOverflow:
-    """Probe C_EncryptInit with pParameter pointing to a small buffer
-    but ulParameterLen = ULONG_MAX.
+    """Probe C_EncryptInit with ulParameterLen = ULONG_MAX.
 
-    Modules that memcpy(ulParameterLen) from the small buffer will read
-    past the allocation boundary.
+    The parameter buffer is honestly backed when the magnitude is mappable.
+    Un-mappable magnitudes execute as explicitly unbacked (``honest=0``)
+    hostile-caller inputs: non-normative ``EXTENDED`` robustness
+    observations, never conformance or security findings.
     """
 
     @pytest.mark.parametrize("mech_check,mech_name,real_size", _MECH_PARAM_CASES)
@@ -249,14 +361,21 @@ class TestMechanismParamLengthOverflow:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"C_EncryptInit({mech_name}, ulParameterLen={_ULONG_MAX:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestMechanismParamLengthOverflow.test_mechanism_param_length_overflow",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=(
-                f"C_EncryptInit({mech_name}, "
-                f"pParameter={real_size}B, ulParameterLen={_ULONG_MAX:#x})"
-            ),
+            context=context,
         )
 
 
@@ -392,9 +511,10 @@ _TEMPLATE_OPS = [
 class TestTemplateCountOverflow:
     """Probe template-accepting functions with huge template counts.
 
-    Pass a template with 1 real CK_ATTRIBUTE but claim a count that would
-    overflow count * sizeof(CK_ATTRIBUTE), causing the module to iterate
-    past the allocation boundary.
+    Mappable count extents are honestly backed (strict). Un-mappable
+    magnitudes execute as explicitly unbacked (``honest=0``) hostile-caller
+    inputs: non-normative ``EXTENDED`` robustness observations, never
+    conformance or security findings.
     """
 
     @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
@@ -430,11 +550,21 @@ class TestTemplateCountOverflow:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"{op}(template_count={count:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestTemplateCountOverflow.test_template_count_overflow",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"{op}(template_count={count:#x})",
+            context=context,
         )
 
 
@@ -451,7 +581,12 @@ _VALID_HANDLE_TEMPLATE_OPS = [
 
 @requires_64bit_ck_ulong
 class TestTemplateCountOverflowValidHandles:
-    """Template-count overflow probes that reach real object-handle paths."""
+    """Template-count overflow probes that reach real object-handle paths.
+
+    Mappable count extents are honestly backed (strict); un-mappable
+    magnitudes are explicitly unbacked (``honest=0``) hostile-caller
+    observations, never findings.
+    """
 
     @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
     @pytest.mark.parametrize("op", _VALID_HANDLE_TEMPLATE_OPS)
@@ -461,7 +596,7 @@ class TestTemplateCountOverflowValidHandles:
         count: int,
         op: str,
     ) -> None:
-        """A huge template count must not walk beyond a one-attribute template."""
+        """A huge template count is honestly backed or a hostile-caller observation."""
         result = run_probe(
             "arithmetic_overflow",
             {
@@ -474,11 +609,22 @@ class TestTemplateCountOverflowValidHandles:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"{op}(valid object, template_count={count:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestTemplateCountOverflowValidHandles."
+                "test_template_count_overflow_with_valid_object_handle",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"{op}(valid object, template_count={count:#x})",
+            context=context,
         )
 
 
@@ -489,7 +635,12 @@ class TestTemplateCountOverflowValidHandles:
 
 @requires_64bit_ck_ulong
 class TestDeriveTemplateCountOverflowValidBase:
-    """Template-count overflow probes that reach a valid C_DeriveKey base key path."""
+    """Template-count overflow probes that reach a valid C_DeriveKey base key path.
+
+    Mappable count extents are honestly backed (strict); un-mappable
+    magnitudes are explicitly unbacked (``honest=0``) hostile-caller
+    observations, never findings.
+    """
 
     @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
     def test_derive_key_template_count_overflow_with_valid_base_key(
@@ -498,7 +649,7 @@ class TestDeriveTemplateCountOverflowValidBase:
         p11_config: Any,
         count: int,
     ) -> None:
-        """A huge derived-key template count must not walk beyond one attribute."""
+        """A huge derived-key template count is honestly backed or hostile-caller."""
         rs = p11_raw_session
         if not rs.has_mechanism("CONCATENATE_BASE_AND_DATA"):
             pytest.skip("CKM_CONCATENATE_BASE_AND_DATA not supported")
@@ -514,11 +665,22 @@ class TestDeriveTemplateCountOverflowValidBase:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"C_DeriveKey(valid base, template_count={count:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestDeriveTemplateCountOverflowValidBase."
+                "test_derive_key_template_count_overflow_with_valid_base_key",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"C_DeriveKey(valid base, template_count={count:#x})",
+            context=context,
         )
 
 
@@ -534,7 +696,12 @@ _KEM_TEMPLATE_COUNT_OPS = [
 
 @requires_64bit_ck_ulong
 class TestKemTemplateCountOverflow:
-    """Template-count overflow probes for v3.2 KEM output templates."""
+    """Template-count overflow probes for v3.2 KEM output templates.
+
+    Mappable count extents are honestly backed (strict); un-mappable
+    magnitudes are explicitly unbacked (``honest=0``) hostile-caller
+    observations, never findings.
+    """
 
     @pytest.mark.needs_function("C_EncapsulateKey")
     @pytest.mark.parametrize("count", _TEMPLATE_COUNTS)
@@ -546,7 +713,7 @@ class TestKemTemplateCountOverflow:
         count: int,
         op: str,
     ) -> None:
-        """A huge KEM output-template count must not walk beyond one attribute."""
+        """A huge KEM output-template count is honestly backed or hostile-caller."""
         rs = p11_raw_session
         if not rs.has_mechanism("ML_KEM"):
             pytest.skip("CKM_ML_KEM not supported")
@@ -567,11 +734,21 @@ class TestKemTemplateCountOverflow:
             timeout=15,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"{op}(ML-KEM output template_count={count:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestKemTemplateCountOverflow.test_kem_output_template_count_overflow",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"{op}(ML-KEM output template_count={count:#x})",
+            context=context,
         )
 
 
@@ -636,9 +813,10 @@ _ATTR_VALUE_OPS = [
 class TestAttributeValueLenOverflow:
     """Probe attribute functions with CK_ATTRIBUTE.ulValueLen = ULONG_MAX.
 
-    Pass a CK_ATTRIBUTE whose pValue points to a small buffer but whose
-    ulValueLen claims ULONG_MAX bytes.  Modules that memcpy(ulValueLen)
-    from pValue will read or write far past the allocation.
+    The value buffer is honestly backed when the magnitude is mappable.
+    Un-mappable magnitudes execute as explicitly unbacked (``honest=0``)
+    hostile-caller inputs: non-normative ``EXTENDED`` robustness
+    observations, never conformance or security findings.
     """
 
     @pytest.mark.parametrize("op", _ATTR_VALUE_OPS)
@@ -658,11 +836,21 @@ class TestAttributeValueLenOverflow:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"{op}(ulValueLen={_ULONG_MAX:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestAttributeValueLenOverflow.test_attribute_value_len_overflow",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=f"{op}(ulValueLen={_ULONG_MAX:#x})",
+            context=context,
         )
 
 
@@ -679,9 +867,10 @@ _KEYPAIR_COUNT_CASES = [
 class TestGenerateKeyPairCountOverflow:
     """Probe C_GenerateKeyPair with ULONG_MAX template count.
 
-    Pass one real attribute in the pub/priv template but claim ULONG_MAX
-    as the count for one of them.  Modules that iterate
-    count * sizeof(CK_ATTRIBUTE) bytes will overflow.
+    Each template is honestly backed when its byte extent is mappable.
+    Un-mappable magnitudes execute as explicitly unbacked (``honest=0``)
+    hostile-caller inputs: non-normative ``EXTENDED`` robustness
+    observations, never conformance or security findings.
     """
 
     @pytest.mark.parametrize("which", _KEYPAIR_COUNT_CASES)
@@ -714,9 +903,19 @@ class TestGenerateKeyPairCountOverflow:
             timeout=10,
             interface=getattr(p11_config, "interface", "auto"),
         )
+        context = f"C_GenerateKeyPair(pub_count={pub_count:#x}, priv_count={priv_count:#x})"
+        if _is_hostile_caller(result.stdout):
+            _observe_hostile_caller_robustness(
+                result.returncode,
+                result.stdout,
+                result.stderr,
+                context=context,
+                test_id="TestGenerateKeyPairCountOverflow.test_generate_key_pair_count_overflow",
+            )
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
             result.stderr,
-            context=(f"C_GenerateKeyPair(pub_count={pub_count:#x}, priv_count={priv_count:#x})"),
+            context=context,
         )

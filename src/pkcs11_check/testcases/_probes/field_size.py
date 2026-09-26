@@ -7,8 +7,10 @@ originals so the parent classifiers require no changes.
 Output protocol (preserved verbatim for the parent classifier):
   SETUP_XFAIL:<reason>   -- setup rejected; parent xfails as not_operational
   TARGET_RV:0x%08x       -- return value from the probed call (rsa/dh/dsa/aes/find)
+  VALUE_LEN:<int|unavailable> -- CKA_VALUE_LEN readback after AES CKR_OK
   COUNT_OUT:<int>        -- C_FindObjects ulObjectCount out (find_objects_count only)
   GUARD_OVERWRITE:<int>  -- handle-buffer guard words changed (find_objects_count only)
+  FINAL_RV:0x%08x        -- C_FindObjectsFinal rv (find_objects_count only)
   PROBE_RV:0x%08x        -- oversized-length HKDF derive rv (hkdf_* only)
   TRUNCATED:<int>        -- 1 if probe key == 8-byte reference key (hkdf_* only)
   PROBE_HEX:<hex>        -- derived probe key bytes (hkdf_* only; diagnostic)
@@ -16,10 +18,10 @@ Output protocol (preserved verbatim for the parent classifier):
 
 Dispatch on ``params.extra["which"]``:
   ``"rsa_modulus_bits"``   -- C_GenerateKeyPair(RSA) with oversized CKA_MODULUS_BITS value
-  ``"dh_prime_bits"``      -- C_GenerateKeyPair(DH) with oversized CKA_PRIME_BITS value
-  ``"dsa_prime_bits"``     -- C_GenerateKeyPair(DSA) with oversized CKA_PRIME_BITS value
+  ``"dh_prime_bits"``      -- C_GenerateKey(DH parameter gen) with oversized CKA_PRIME_BITS
+  ``"dsa_prime_bits"``     -- C_GenerateKey(DSA parameter gen) with oversized CKA_PRIME_BITS
   ``"aes_value_len"``      -- C_GenerateKey(AES) with oversized CKA_VALUE_LEN value
-  ``"find_objects_count"`` -- C_FindObjects with oversized ulMaxObjectCount (crash survival)
+  ``"find_objects_count"`` -- C_FindObjects with honestly backed ulMaxObjectCount capacity
   ``"hkdf_salt_len"``      -- C_DeriveKey(HKDF) ulSaltLen 64->32 truncation comparison
   ``"hkdf_info_len"``      -- C_DeriveKey(HKDF) ulInfoLen 64->32 truncation comparison
 
@@ -67,8 +69,8 @@ from pkcs11_check.raw.types_std import (
     CKF_HKDF_SALT_NULL,
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_GEN,
-    CKM_DH_PKCS_KEY_PAIR_GEN,
-    CKM_DSA_KEY_PAIR_GEN,
+    CKM_DH_PKCS_PARAMETER_GEN,
+    CKM_DSA_PARAMETER_GEN,
     CKM_HKDF_DERIVE,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256,
@@ -141,61 +143,51 @@ def _run_rsa_modulus_bits(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. CKA_PRIME_BITS oversized value in C_GenerateKeyPair(DH or DSA)
+# 2. CKA_PRIME_BITS oversized value in C_GenerateKey(DH/DSA parameter generation)
 # ---------------------------------------------------------------------------
 
 
-def _prime_bits_keygen(raw: Any, sh: int, prime_bits_value: int, mechanism: int) -> None:
-    """C_GenerateKeyPair(DH/DSA) with an oversized CKA_PRIME_BITS value."""
+def _prime_bits_param_gen(raw: Any, sh: int, prime_bits_value: int, mechanism: int) -> None:
+    """C_GenerateKey(DH/DSA parameter generation) with an oversized CKA_PRIME_BITS value."""
     prime_bits = CK_ULONG(prime_bits_value)
     token_false = ctypes.c_ubyte(0)
 
-    pub_tmpl = (CK_ATTRIBUTE * 2)()
-    pub_tmpl[0].type = CKA_PRIME_BITS
-    pub_tmpl[0].pValue = ctypes.cast(ctypes.pointer(prime_bits), ctypes.c_void_p)
-    pub_tmpl[0].ulValueLen = ctypes.sizeof(prime_bits)
-    pub_tmpl[1].type = CKA_TOKEN
-    pub_tmpl[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-    pub_tmpl[1].ulValueLen = 1
-
-    priv_tmpl = (CK_ATTRIBUTE * 1)()
-    priv_tmpl[0].type = CKA_TOKEN
-    priv_tmpl[0].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
-    priv_tmpl[0].ulValueLen = 1
+    tmpl = (CK_ATTRIBUTE * 2)()
+    tmpl[0].type = CKA_PRIME_BITS
+    tmpl[0].pValue = ctypes.cast(ctypes.pointer(prime_bits), ctypes.c_void_p)
+    tmpl[0].ulValueLen = ctypes.sizeof(prime_bits)
+    tmpl[1].type = CKA_TOKEN
+    tmpl[1].pValue = ctypes.cast(ctypes.pointer(token_false), ctypes.c_void_p)
+    tmpl[1].ulValueLen = 1
 
     mech = CK_MECHANISM()
     mech.mechanism = mechanism
     mech.pParameter = None
     mech.ulParameterLen = 0
 
-    pub = CK_OBJECT_HANDLE(0)
-    priv = CK_OBJECT_HANDLE(0)
-    rv = raw.C_GenerateKeyPair(
+    params = CK_OBJECT_HANDLE(0)
+    rv = raw.C_GenerateKey(
         sh,
         ctypes.byref(mech),
-        ctypes.cast(pub_tmpl, _ATTR_PTR),
+        ctypes.cast(tmpl, _ATTR_PTR),
         2,
-        ctypes.cast(priv_tmpl, _ATTR_PTR),
-        1,
-        ctypes.byref(pub),
-        ctypes.byref(priv),
+        ctypes.byref(params),
     )
     if rv == CKR_OK:
-        destroy_quietly(raw, sh, pub.value)
-        destroy_quietly(raw, sh, priv.value)
+        destroy_quietly(raw, sh, params.value)
     print(f"TARGET_RV:0x{rv:08x}")
 
 
 def _run_dh_prime_bits(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_GenerateKeyPair(DH) with an oversized CKA_PRIME_BITS value."""
+    """C_GenerateKey(DH parameter generation) with an oversized CKA_PRIME_BITS value."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
-    _prime_bits_keygen(ctx.raw, ctx.sh, int(extra["prime_bits"]), CKM_DH_PKCS_KEY_PAIR_GEN)
+    _prime_bits_param_gen(ctx.raw, ctx.sh, int(extra["prime_bits"]), CKM_DH_PKCS_PARAMETER_GEN)
 
 
 def _run_dsa_prime_bits(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_GenerateKeyPair(DSA) with an oversized CKA_PRIME_BITS value."""
+    """C_GenerateKey(DSA parameter generation) with an oversized CKA_PRIME_BITS value."""
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
-    _prime_bits_keygen(ctx.raw, ctx.sh, int(extra["prime_bits"]), CKM_DSA_KEY_PAIR_GEN)
+    _prime_bits_param_gen(ctx.raw, ctx.sh, int(extra["prime_bits"]), CKM_DSA_PARAMETER_GEN)
 
 
 # ---------------------------------------------------------------------------
@@ -238,18 +230,37 @@ def _run_aes_value_len(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         3,
         ctypes.byref(key),
     )
+    value_len_readback: int | None = None
     if rv == CKR_OK:
+        value_len_readback = _read_ulong_attr(raw, sh, key.value, int(CKA_VALUE_LEN))
         destroy_quietly(raw, sh, key.value)
     print(f"TARGET_RV:0x{rv:08x}")
+    if rv == CKR_OK:
+        if value_len_readback is None:
+            print("VALUE_LEN:unavailable")
+        else:
+            print(f"VALUE_LEN:{value_len_readback}")
+
+
+def _read_ulong_attr(raw: Any, sh: int, handle: int, attr_type: int) -> int | None:
+    """Read one CK_ULONG attribute; return None when the provider refuses."""
+    out = CK_ULONG(0)
+    attr = (CK_ATTRIBUTE * 1)()
+    attr[0].type = attr_type
+    attr[0].pValue = ctypes.cast(ctypes.pointer(out), ctypes.c_void_p)
+    attr[0].ulValueLen = ctypes.sizeof(out)
+    if raw.C_GetAttributeValue(sh, handle, ctypes.cast(attr, _ATTR_PTR), 1) != CKR_OK:
+        return None
+    return int(out.value)
 
 
 # ---------------------------------------------------------------------------
-# 4. C_FindObjects ulMaxObjectCount truncation-revealing value
+# 4. C_FindObjects ulMaxObjectCount with honestly backed capacity
 # ---------------------------------------------------------------------------
 
 
 def _run_find_objects_count(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    """C_FindObjects with a truncation-revealing ulMaxObjectCount must not crash."""
+    """C_FindObjects with an honestly backed ulMaxObjectCount capacity."""
     raw = ctx.raw
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh: int = ctx.sh
@@ -261,35 +272,41 @@ def _run_find_objects_count(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         print(f"SETUP_XFAIL:C_FindObjectsInit rejected: {ckr_name(rv_init)}")
         return
 
-    # 8-slot handle buffer with guard bytes immediately after.
-    guard_sentinel = 0xA5
-    handle_slots = 8
+    # Honest backing: the provider-visible capacity (max_count slots) plus a
+    # guard region beyond it are all writable demand-zero pages. Never advertise
+    # more writable capacity than allocated.
     guard_slots = 8
+    try:
+        buf = demand_zero_buffer(
+            min_size=(max_count + guard_slots) * ctypes.sizeof(CK_OBJECT_HANDLE)
+        )
+    except HoneypotUnavailable as exc:
+        print(f"{SETUP_XFAIL_PREFIX}{exc}")
+        raw.C_FindObjectsFinal(sh)
+        return
 
-    class FindProbe(ctypes.Structure):
-        _fields_ = [
-            ("handles", CK_OBJECT_HANDLE * handle_slots),
-            ("guard", ctypes.c_ulong * guard_slots),
-        ]
-
-    probe = FindProbe()
+    handles = ctypes.cast(buf, ctypes.POINTER(CK_OBJECT_HANDLE))
+    guard_addr = ctypes.addressof(buf.contents) + max_count * ctypes.sizeof(CK_OBJECT_HANDLE)
+    guard = (ctypes.c_ulong * guard_slots).from_address(guard_addr)
+    guard_sentinel = 0xA5
     for idx in range(guard_slots):
-        probe.guard[idx] = guard_sentinel
+        guard[idx] = guard_sentinel
 
     count_out = ctypes.c_ulong(0)
     rv = raw.C_FindObjects(
         sh,
-        ctypes.cast(probe.handles, ctypes.POINTER(CK_OBJECT_HANDLE)),
+        handles,
         max_count,  # ulMaxObjectCount -- cap field, CKR_OK is spec-legal
         ctypes.byref(count_out),
     )
     print(f"TARGET_RV:0x{rv:08x}")
     print(f"COUNT_OUT:{count_out.value}")
 
-    overwritten = sum(1 for g in probe.guard if g != guard_sentinel)
+    overwritten = sum(1 for g in guard if g != guard_sentinel)
     print(f"GUARD_OVERWRITE:{overwritten}")
 
-    raw.C_FindObjectsFinal(sh)
+    final_rv = raw.C_FindObjectsFinal(sh)
+    print(f"FINAL_RV:0x{final_rv:08x}")
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +435,7 @@ def _hkdf_truncation_probe(
 
     try:
         try:
-            buf = demand_zero_buffer()
+            buf = demand_zero_buffer(min_size=oversize_len)
         except HoneypotUnavailable as exc:
             print(f"{SETUP_XFAIL_PREFIX}{exc}")
             return

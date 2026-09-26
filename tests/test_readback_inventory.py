@@ -1891,8 +1891,8 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 1571, characterization.total),
-        ("candidate_total", 1381, characterization.candidate_total),
+        ("total", 1579, characterization.total),
+        ("candidate_total", 1389, characterization.candidate_total),
         ("file_total", 248, characterization.file_total),
         (
             "statuses",
@@ -1901,19 +1901,19 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_readback", 55),
                 ("non_readback", 190),
                 ("safe_mechanism_free_readback", 70),
-                ("unresolved", 608),
+                ("unresolved", 616),
                 ("unsafe_inherited_readback", 96),
             ),
             characterization.statuses,
         ),
         (
             "digest",
-            "14de2fe91c1801a4c84aec3e0a4588fbab08fb9adb33cfa3659d6cdedd24852a",
+            "d2e45a3edd3b947b031eed76c4bc4307cca29171d26ac02b59226557c52e9460",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "b2296d71043f3e0849a101ef99bd49c6289c7f9973919726c31e4de4858ac53d",
+            "2c2b226b6cadecf445c33ad52b396075a86d6cfe19a4346ff6bf4922df3b8060",
             characterization.candidate_digest,
         ),
         (
@@ -1923,7 +1923,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_readback", 339),
                 ("non_readback", 410),
                 ("safe_mechanism_free_readback", 1380),
-                ("unresolved", 2595),
+                ("unresolved", 2610),
                 ("unsafe_inherited_readback", 254),
             ),
             characterization.state_statuses,
@@ -1938,7 +1938,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("assert_correct", 268),
                 ("classify", 550),
-                ("fail_as", 200),
+                ("fail_as", 208),
                 ("record_as", 258),
                 ("xfail_as", 163),
             ),
