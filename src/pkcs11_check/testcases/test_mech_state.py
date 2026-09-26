@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import byref
+from typing import NoReturn
 
 import pytest
 
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
@@ -28,7 +30,7 @@ from pkcs11_check.raw.recipes import (
     import_secret_key,
     to_ubyte_buf,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import ckr_name, expect_rv, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKA_SENSITIVE,
@@ -55,6 +57,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases.conftest import (
+    assert_correct,
     classify_negative_rv,
     gen_aes_key_or_xfail,
     skip_unless_create_object_supported,
@@ -96,6 +99,42 @@ _HMAC_KEY_IMPORT_REJECT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+_EMPTY_SHA256 = bytes.fromhex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+
+def _classify_positive_rejection(
+    rv: int, *, label: str, operation: str, mechanism: str
+) -> NoReturn:
+    """Classify a nonzero CK_RV from a positive zero-data Init/Final call.
+
+    Any defined standard/vendor clean rejection (including the real
+    CKR_BUFFER_TOO_SMALL 0x150, CKR_KEY_TYPE_INCONSISTENT 0x63, and
+    CKR_DATA_LEN_RANGE) is adverse ``not_operational`` xfail with the exact
+    RV. An undefined RV is metadata ``self_contradiction`` fail.
+    """
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        xfail_as(
+            "not_operational",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=CKR_OK,
+            actual=rv,
+            summary=(
+                f"{label}: advertised {operation} is not operational; rejected with {ckr_name(rv)}"
+            ),
+        )
+    fail_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=CKR_OK,
+        actual=rv,
+        summary=f"{label}: {operation} returned undefined CK_RV {ckr_name(rv)}",
+    )
 
 
 class TestEncryptState:
@@ -565,7 +604,7 @@ class TestZeroDataFinal:
     """
 
     def test_encrypt_final_no_update(self, p11_raw_session: RawSession) -> None:
-        """EncryptInit then EncryptFinal with no Update — must succeed cleanly."""
+        """EncryptInit then EncryptFinal with no Update — zero input, zero output."""
         rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
@@ -575,28 +614,54 @@ class TestZeroDataFinal:
             mech = mech_simple(CKM_AES_ECB)
             rv1 = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
             if rv1 != CKR_OK:
-                pytest.skip(f"C_EncryptInit failed: 0x{rv1:08x}")
+                _classify_positive_rejection(
+                    rv1,
+                    label="C_EncryptInit:zero-data encrypt setup",
+                    operation="C_EncryptInit",
+                    mechanism="CKM_AES_ECB",
+                )
 
-            out_buf = (ctypes.c_ubyte * 64)()
+            # Supplied 64-byte non-NULL buffer pre-filled with a canary: this
+            # is NOT a length query. ECB has no padding so 0 input -> 0 output
+            # is the only correct CKR_OK answer, and the buffer must be
+            # untouched. A module that reports bytes or scribbles on the caller
+            # buffer has a zero-input memory-corruption bug.
+            canary = bytes([0xA5]) * 64
+            out_buf = (ctypes.c_ubyte * 64).from_buffer_copy(canary)
             out_len = CK_ULONG(64)
             rv = rs.raw.C_EncryptFinal(rs.sh, out_buf, byref(out_len))
-
-            # ECB has no padding so 0 input → 0 output is the natural answer.
-            # Some modules may reject with CKR_DATA_LEN_RANGE because ECB
-            # requires whole-block input. Both are acceptable as long as
-            # the module doesn't crash or return CKR_GENERAL_ERROR.
-            accepted = (
-                CKR_OK,
-                0x00000021,  # CKR_DATA_LEN_RANGE
-                CKR_OPERATION_NOT_INITIALIZED,  # some treat 0-byte as no-op
-                0x00000063,  # CKR_BUFFER_TOO_SMALL on length-query
-            )
-            assert rv in accepted, (
-                f"C_EncryptFinal with no Update returned 0x{rv:08x}; "
-                f"expected one of {[hex(c) for c in accepted]} — generic "
-                f"or unexpected codes can mask zero-input memory-corruption "
-                f"bugs"
-            )
+            if rv != CKR_OK:
+                _classify_positive_rejection(
+                    rv,
+                    label="C_EncryptFinal:zero-data encrypt final",
+                    operation="C_EncryptFinal",
+                    mechanism="CKM_AES_ECB",
+                )
+            if out_len.value != 0:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="C_EncryptFinal:zero-data encrypt final",
+                    operation="C_EncryptFinal",
+                    mechanism="CKM_AES_ECB",
+                    summary=(
+                        "C_EncryptFinal:zero-data encrypt final: CKR_OK with "
+                        f"{out_len.value} output bytes for zero input; expected "
+                        "exactly 0 (ECB has no padding)"
+                    ),
+                )
+            if bytes(out_buf) != canary:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_EncryptFinal:zero-data encrypt final",
+                    operation="C_EncryptFinal",
+                    mechanism="CKM_AES_ECB",
+                    summary=(
+                        "C_EncryptFinal:zero-data encrypt final: CKR_OK with "
+                        "zero output length but the caller buffer was mutated"
+                    ),
+                )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
@@ -610,25 +675,40 @@ class TestZeroDataFinal:
         mech = mech_simple(CKM_SHA256)
         rv1 = rs.raw.C_DigestInit(rs.sh, mech.byref())
         if rv1 != CKR_OK:
-            pytest.skip(f"C_DigestInit failed: 0x{rv1:08x}")
+            _classify_positive_rejection(
+                rv1,
+                label="C_DigestInit:zero-data digest setup",
+                operation="C_DigestInit",
+                mechanism="CKM_SHA256",
+            )
 
         out_buf = (ctypes.c_ubyte * 64)()
         out_len = CK_ULONG(64)
         rv = rs.raw.C_DigestFinal(rs.sh, out_buf, byref(out_len))
-
         if rv != CKR_OK:
-            pytest.skip(
-                f"Module rejected zero-data DigestFinal with 0x{rv:08x} "
-                f"(some treat it as not-initialised)"
+            _classify_positive_rejection(
+                rv,
+                label="C_DigestFinal:zero-data digest final",
+                operation="C_DigestFinal",
+                mechanism="CKM_SHA256",
             )
 
-        # Verify the output is the canonical empty-string SHA-256.
-        empty_sha256 = bytes.fromhex(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        )
-        actual = bytes(out_buf[: out_len.value])
-        assert actual == empty_sha256, (
-            f"SHA-256 of empty input is 0x{empty_sha256.hex()}, but module "
-            f"returned 0x{actual.hex()} — empty-input digest path likely "
-            f"reads uninitialised buffer state"
+        if out_len.value != 32:
+            fail_as(
+                "wrong_result",
+                kind="crypto",
+                label="C_DigestFinal:zero-data digest final",
+                operation="C_DigestFinal",
+                mechanism="CKM_SHA256",
+                summary=(
+                    "C_DigestFinal:zero-data digest final: CKR_OK with output "
+                    f"length {out_len.value}; expected exactly 32"
+                ),
+            )
+        assert_correct(
+            actual=bytes(out_buf[: out_len.value]),
+            expected=_EMPTY_SHA256,
+            label="C_DigestFinal:zero-data digest final",
+            operation="C_DigestFinal",
+            mechanism="CKM_SHA256",
         )

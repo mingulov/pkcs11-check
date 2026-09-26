@@ -52,7 +52,11 @@ def _load_vectors(
             if _MAX_PER_DIRECTION is not None and len(encrypt_vecs) >= _MAX_PER_DIRECTION:
                 continue
 
-            merged: dict[str, Any] = {"tc_id": tc_id}
+            merged: dict[str, Any] = {
+                "tc_id": tc_id,
+                "_source": vec.get("_source", f"acvp:{vector_name}"),
+                "_vector_id": vec.get("_vector_id", f"tcId={tc_id}"),
+            }
             valid = True
 
             # Handle multi-block resultsArray format for encrypt
@@ -129,7 +133,11 @@ def _load_vectors(
             if _MAX_PER_DIRECTION is not None and len(decrypt_vecs) >= _MAX_PER_DIRECTION:
                 continue
 
-            merged = {"tc_id": tc_id}
+            merged = {
+                "tc_id": tc_id,
+                "_source": vec.get("_source", f"acvp:{vector_name}"),
+                "_vector_id": vec.get("_vector_id", f"tcId={tc_id}"),
+            }
             valid = True
 
             # Handle multi-block resultsArray format for decrypt

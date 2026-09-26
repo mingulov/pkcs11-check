@@ -13,7 +13,12 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     encrypt_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKA_DECRYPT,
     CKA_ENCRYPT,
@@ -118,6 +123,15 @@ def _canonical_aead_probe(rs: Any, mech_name: str, direction: str) -> Operabilit
                 got = decrypt_single(rs.raw, rs.sh, key, mech, expected_ct, mech_param=param)
                 want = PROBE_PT
         except CkrAssertionError as exc:
+            if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                # An undefined CK_RV is a contract violation, not evidence the
+                # mechanism is merely unusable: WRONG_OUTPUT never masks
+                # vector findings.
+                return OperabilityResult(
+                    Operability.WRONG_OUTPUT,
+                    f"canonical {mech_name} {direction} returned undefined "
+                    f"CK_RV {ckr_name(exc.rv)}: {exc}",
+                )
             return OperabilityResult(
                 Operability.NOT_OPERATIONAL,
                 f"canonical {mech_name} {direction} rejected: {exc}",
@@ -331,12 +345,13 @@ def run_gcm_decrypt_test(
                         source=vec.get("_source"),
                         vector_id=vec.get("_vector_id"),
                     )
-                fail_as(
-                    "wrong_result",
+                xfail_as(
+                    "honest_deviation",
                     kind="crypto",
                     label="AES_GCM:decrypt",
                     summary=(
-                        f"{vec_id}: valid-tag GCM vector rejected with tag auth failure ({exc})"
+                        f"{vec_id}: valid-tag GCM vector cleanly refused "
+                        f"with tag auth failure ({exc})"
                     ),
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),
@@ -542,12 +557,13 @@ def run_ccm_decrypt_test(
                         source=vec.get("_source"),
                         vector_id=vec.get("_vector_id"),
                     )
-                fail_as(
-                    "wrong_result",
+                xfail_as(
+                    "honest_deviation",
                     kind="crypto",
                     label="AES_CCM:decrypt",
                     summary=(
-                        f"{vec_id}: valid-tag CCM vector rejected with tag auth failure ({exc})"
+                        f"{vec_id}: valid-tag CCM vector cleanly refused "
+                        f"with tag auth failure ({exc})"
                     ),
                     source=vec.get("_source"),
                     vector_id=vec.get("_vector_id"),

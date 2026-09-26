@@ -13,11 +13,15 @@ operation per (mechanism, direction) per process and reuse the verdict:
 - ``OPERATIONAL``     canonical OK + correct output. The mechanism works;
                       vector failures stay findings. Only spec-legal
                       parameter-shape rejects remain xfail material.
-- ``NOT_OPERATIONAL`` canonical clean CKR error, regardless of which code.
-                      Advertised but not operational -> vector clean errors
-                      xfail. No provider identity, no CKR allowlist.
+- ``NOT_OPERATIONAL`` canonical clean CKR error, regardless of which defined
+                      code. Advertised but not operational -> vector clean
+                      errors xfail. No provider identity, no CKR allowlist.
+                      Undefined CK_RV values are never clean refusals and
+                      always fail, in the probe and in every vector route.
 - ``WRONG_OUTPUT``    canonical OK but WRONG output: a crypto break. Never
-                      masks anything; vector errors stay findings.
+                      masks anything; vector errors stay findings. Also used
+                      when the canonical op returns an undefined CK_RV, which
+                      must never read as "not operational".
 - ``INCONCLUSIVE``    the canonical op could not be staged (key import or
                       parameter packing failed). No mechanism evidence (the
                       import path may be broken, see triage H6) -> fall back
@@ -34,8 +38,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import NoReturn
 
-from pkcs11_check.classification import xfail_as
-from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_MECHANISM_INVALID,
@@ -136,6 +145,16 @@ def classify_kat_clean_error(
         # Not a module return code -- a harness/ctypes bug must never be
         # classified as "not operational".
         raise exc
+    if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+        # An undefined CK_RV is a return-value-contract violation, never a
+        # clean refusal: it fails before any XFAIL route is consulted.
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            actual=exc.rv,
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(exc.rv)}",
+        )
     if result.status is Operability.NOT_OPERATIONAL:
         xfail_as(
             "not_operational",
@@ -144,11 +163,11 @@ def classify_kat_clean_error(
             summary=f"{not_operational_reason(label, result.detail)}; vector: {exc}",
         )
     if result.status is Operability.OPERATIONAL:
-        # Classification model, positive-op row: a clean error is an honest
-        # deviation (the module refused; it produced no wrong crypto) -> xfail,
-        # whatever the code. Only wrong output / crash / self-contradiction
-        # fail; decrypt-side false-rejects of VALID data are verdict errors and
-        # are handled by the runners before reaching here.
+        # Classification model, positive-op row: a defined clean error is an
+        # honest deviation (the module refused; it produced no wrong crypto) ->
+        # xfail, whatever the code. Only wrong output / crash /
+        # self-contradiction fail; decrypt-side clean refusals of VALID data
+        # are failure-like xfails handled by the runners before reaching here.
         xfail_as(
             "honest_deviation",
             label=label,

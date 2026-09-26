@@ -23,7 +23,13 @@ from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.ec import encode_named_curve_parameters
 from pkcs11_check.raw.pack import attr_bytes, mech_bytes, mech_simple
-from pkcs11_check.raw.pack_mechanisms import mech_ecdh, mech_gcm, mech_oaep, mech_pss
+from pkcs11_check.raw.pack_mechanisms import (
+    mech_ccm,
+    mech_ecdh,
+    mech_gcm,
+    mech_oaep,
+    mech_pss,
+)
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     derive_key,
@@ -62,6 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKK_AES,
     CKK_GENERIC_SECRET,
     CKM_AES_CBC,
+    CKM_AES_CCM,
     CKM_AES_ECB,
     CKM_AES_GCM,
     CKM_AES_XTS,
@@ -399,6 +406,46 @@ class TestCcmNullNonceWithLength:
 
 
 # ---------------------------------------------------------------------------
+# CCM oversize (16-byte) nonce
+# ---------------------------------------------------------------------------
+
+
+class TestCcmOversizeNonce:
+    """Probe CCM encrypt setup with a genuine 16-byte nonce.
+
+    CCM nonces are 7..13 bytes (NIST SP 800-38C App. A); a 16-byte nonce is
+    structurally invalid and encrypt setup must reject it. This standalone
+    negative probe is independent of the ECMA KATs, whose 16-byte source field
+    is a formatted ``B_0`` block (positive vectors, translated by the ACVP
+    loader) rather than a nonce.
+    """
+
+    def test_ccm_16byte_nonce_rejected(self, p11_raw_session: Any) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_CCM"):
+            pytest.skip("AES_CCM not supported")
+        key = gen_aes_key(rs.raw, rs.sh, 128)
+        try:
+            pt = b"C" * 32
+            mech = mech_ccm(
+                CKM_AES_CCM,
+                bytes(range(16)),
+                data_len=len(pt),
+                aad=None,
+                mac_len=16,
+            )
+            rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), key)
+            classify_negative_rv(
+                rv,
+                (CKR_MECHANISM_PARAM_INVALID,),
+                label="AES-CCM with 16-byte nonce",
+                kind="crypto",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+# ---------------------------------------------------------------------------
 # GCM IV weakness
 # ---------------------------------------------------------------------------
 
@@ -412,8 +459,9 @@ _WEAK_GCM_IVS = [
 class TestGcmIvWeakness:
     """Probe whether the module accepts empty/short GCM IVs.
 
-    NIST SP 800-38D permits nonempty IVs but recommends 96 bits. An empty IV is
-    outside its input requirements; shorter nonempty IVs are note-only posture.
+    An empty IV is outside the NIST SP 800-38D input requirements and must be
+    rejected. Every nonempty IV length is representable in PKCS #11, so
+    acceptance of a short nonempty IV passes and clean rejection xfails.
     """
 
     @pytest.mark.parametrize("iv", _WEAK_GCM_IVS)
@@ -445,13 +493,7 @@ class TestGcmIvWeakness:
                 if not isinstance(reject_exc, CkrAssertionError):
                     raise reject_exc
                 reject_or_classify(reject_exc, (), label=label, kind="crypto")
-            else:
-                note(
-                    f"Module accepted AES-GCM with a {len(iv)}-byte IV; nonempty IVs are "
-                    "permitted, while 96 bits is the recommended interoperable length",
-                    ComplianceLevel.NOT_RECOMMENDED,
-                    reference="NIST SP 800-38D §§5.2.1.1, 8.2",
-                )
+            # else: a nonempty IV is representable input; acceptance passes.
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
