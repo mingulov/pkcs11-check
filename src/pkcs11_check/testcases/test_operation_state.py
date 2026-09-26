@@ -795,18 +795,19 @@ class TestGetOperationStateAPI:
         assert hasattr(rs.raw, "C_GetOperationState") or hasattr(rs.raw, "C_SetOperationState")
 
     def test_no_active_operation(self, p11_raw_session: Any) -> None:
-        """C_GetOperationState with no active operation returns known CKR.
+        """C_GetOperationState with no active operation must return known CKR.
 
         Spec Sec.5.6.5: if no operation is active the token must return
-        CKR_OPERATION_NOT_INITIALIZED. Some modules also return
-        CKR_STATE_UNSAVEABLE or CKR_FUNCTION_NOT_SUPPORTED.
+        CKR_OPERATION_NOT_INITIALIZED. CKR_STATE_UNSAVEABLE and other defined
+        standard/vendor clean rejections are adverse xfail; CKR_OK and
+        undefined RV are fail. Only a missing function pointer or
+        CKR_FUNCTION_NOT_SUPPORTED is a capability skip.
         """
         import ctypes
 
         from pkcs11_check.raw.types_std import (
             CKR_FUNCTION_NOT_SUPPORTED,
             CKR_OPERATION_NOT_INITIALIZED,
-            CKR_STATE_UNSAVEABLE,
         )
 
         rs = p11_raw_session
@@ -817,9 +818,8 @@ class TestGetOperationStateAPI:
             pytest.skip("C_GetOperationState is not supported")
         classify_negative_rv(
             rv,
-            (CKR_OPERATION_NOT_INITIALIZED, CKR_STATE_UNSAVEABLE, CKR_FUNCTION_NOT_SUPPORTED),
+            (CKR_OPERATION_NOT_INITIALIZED,),
             label="C_GetOperationState:no active operation",
-            allow_ok=True,
         )
 
     def test_garbage_state_raises_saved_state_invalid(

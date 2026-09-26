@@ -6,11 +6,12 @@ References: rep11.md Iteration 2.
 from __future__ import annotations
 
 from ctypes import byref
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import fail_as
+from pkcs11_check.classification import fail_as, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -23,13 +24,16 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CK_SESSION_INFO,
     CK_ULONG,
     CKA_EXTRACTABLE,
     CKA_LABEL,
+    CKA_PRIVATE,
     CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_WRAP,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
@@ -50,6 +54,296 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.security
+
+_CLOSE_ALL_SESSION_LABEL = "pkcs11-check-close-all-sessions"
+
+_CLOSE_ALL_REFUSED_LABEL = "C_CloseAllSessions:close refused"
+_CLOSE_ALL_EFFECTS_LABEL = "C_CloseAllSessions:lifecycle effects"
+
+_REFUSAL_CLEAN = "refusal_clean"
+_REFUSAL_UNDEFINED = "refusal_undefined"
+_INFO_UNDEFINED = "info_undefined"
+_HANDLE_SURVIVED = "handle_survived"
+_STAGING_FAILED = "staging_failed"
+_OBJECT_SURVIVED = "object_survived"
+_INFO_NONCANONICAL = "info_noncanonical"
+
+
+@dataclass(frozen=True)
+class _CloseAllPending:
+    """A decided-but-unraised CloseAllSessions verdict retained across cleanup.
+
+    The probe computes it from the observations, closes every handle it
+    opened, then raises it — cleanup completes before the classification is
+    emitted, so teardown can never erase the primary evidence.
+    """
+
+    tag: str
+    label: str
+    summary: str
+    rv: int = 0
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+def _session_info_rv(raw: Any, session: int) -> int:
+    """Return the raw CK_RV of C_GetSessionInfo without asserting on it."""
+    info = CK_SESSION_INFO()
+    return int(raw.C_GetSessionInfo(session, byref(info)))
+
+
+def _close_all_refusal_pending(rv: int) -> _CloseAllPending:
+    """Decide a refused C_CloseAllSessions: defined/vendor clean refusal is
+    exact-RV ``not_operational`` xfail; undefined RV is metadata fail."""
+    label = _CLOSE_ALL_REFUSED_LABEL
+    detail = {"close_rv": ckr_name(rv)}
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        return _CloseAllPending(
+            tag=_REFUSAL_CLEAN,
+            label=label,
+            summary=(
+                f"{label}: C_CloseAllSessions is not operational; rejected with {ckr_name(rv)}"
+            ),
+            rv=rv,
+            detail=detail,
+        )
+    return _CloseAllPending(
+        tag=_REFUSAL_UNDEFINED,
+        label=label,
+        summary=f"{label}: C_CloseAllSessions returned undefined CK_RV {ckr_name(rv)}",
+        rv=rv,
+        detail=detail,
+    )
+
+
+def _close_all_effects_pending(
+    observations: list[tuple[int, int]],
+    found: list[int],
+    staging: tuple[str, int] | None,
+) -> _CloseAllPending | None:
+    """Decide the post-close verdict from the retained observations.
+
+    Canonical CKR_SESSION_HANDLE_INVALID for every old handle plus an absent
+    session object is the only pass. A surviving handle, a surviving object,
+    an unrestorable session namespace (``staging``), or an undefined RV is
+    fail; CKR_SESSION_CLOSED or another defined clean result is xfail.
+    """
+    label = _CLOSE_ALL_EFFECTS_LABEL
+    detail = {
+        "session_observations": [
+            {"handle": handle, "rv": ckr_name(rv)} for handle, rv in observations
+        ],
+        "object_search_label": _CLOSE_ALL_SESSION_LABEL,
+        "object_search_hits": list(found),
+    }
+    for handle, rv in observations:
+        if rv != CKR_OK and not is_standard_ckr(rv) and not is_vendor_defined_ckr(rv):
+            return _CloseAllPending(
+                tag=_INFO_UNDEFINED,
+                label=label,
+                summary=(
+                    f"{label}: old session handle {handle} returned undefined "
+                    f"CK_RV {ckr_name(rv)} after C_CloseAllSessions claimed CKR_OK"
+                ),
+                rv=rv,
+                detail=detail,
+            )
+    for handle, rv in observations:
+        if rv == CKR_OK:
+            return _CloseAllPending(
+                tag=_HANDLE_SURVIVED,
+                label=label,
+                summary=(
+                    f"{label}: old session handle {handle} survived C_CloseAllSessions success"
+                ),
+                rv=rv,
+                detail=detail,
+            )
+    if staging is not None:
+        operation, rv = staging
+        return _CloseAllPending(
+            tag=_STAGING_FAILED,
+            label=label,
+            summary=(
+                f"{label}: C_CloseAllSessions claimed CKR_OK but the "
+                f"follow-up {operation} returned {ckr_name(rv)}"
+            ),
+            rv=rv,
+            detail=detail,
+        )
+    if found:
+        return _CloseAllPending(
+            tag=_OBJECT_SURVIVED,
+            label=label,
+            summary=(
+                f"{label}: C_CloseAllSessions claimed CKR_OK but the session "
+                f"object {_CLOSE_ALL_SESSION_LABEL!r} survived"
+            ),
+            detail=detail,
+        )
+    for handle, rv in observations:
+        if rv != CKR_SESSION_HANDLE_INVALID:
+            return _CloseAllPending(
+                tag=_INFO_NONCANONICAL,
+                label=label,
+                summary=(
+                    f"{label}: old session handle {handle} returned "
+                    f"{ckr_name(rv)} instead of CKR_SESSION_HANDLE_INVALID"
+                ),
+                rv=rv,
+                detail=detail,
+            )
+    return None
+
+
+def _xfail_close_all(*, label: str, actual: int, summary: str, detail: dict[str, Any]) -> NoReturn:
+    xfail_as(
+        "not_operational",
+        label=label,
+        operation="C_CloseAllSessions",
+        expected=CKR_OK,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _fail_close_all(
+    *, kind: str, label: str, actual: int, summary: str, detail: dict[str, Any]
+) -> NoReturn:
+    fail_as(
+        "self_contradiction",
+        kind=kind,
+        label=label,
+        operation="C_CloseAllSessions",
+        expected=CKR_OK,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _fail_session_info(
+    *, kind: str, label: str, actual: int, summary: str, detail: dict[str, Any]
+) -> NoReturn:
+    fail_as(
+        "self_contradiction",
+        kind=kind,
+        label=label,
+        operation="C_GetSessionInfo",
+        expected=CKR_SESSION_HANDLE_INVALID,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _xfail_session_info(
+    *, label: str, actual: int, summary: str, detail: dict[str, Any]
+) -> NoReturn:
+    xfail_as(
+        "not_operational",
+        label=label,
+        operation="C_GetSessionInfo",
+        expected=CKR_SESSION_HANDLE_INVALID,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _fail_object_survived(*, label: str, summary: str, detail: dict[str, Any]) -> NoReturn:
+    fail_as(
+        "self_contradiction",
+        kind="lifecycle",
+        label=label,
+        operation="C_FindObjects",
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _raise_close_all(pending: _CloseAllPending) -> NoReturn:
+    """Emit the retained verdict after cleanup with literal attribution."""
+    tag = pending.tag
+    if tag == _REFUSAL_CLEAN:
+        _xfail_close_all(
+            label=pending.label,
+            actual=pending.rv,
+            summary=pending.summary,
+            detail=pending.detail,
+        )
+    elif tag == _REFUSAL_UNDEFINED:
+        _fail_close_all(
+            kind="metadata",
+            label=pending.label,
+            actual=pending.rv,
+            summary=pending.summary,
+            detail=pending.detail,
+        )
+    elif tag == _INFO_UNDEFINED:
+        _fail_session_info(
+            kind="metadata",
+            label=pending.label,
+            actual=pending.rv,
+            summary=pending.summary,
+            detail=pending.detail,
+        )
+    elif tag == _HANDLE_SURVIVED:
+        _fail_session_info(
+            kind="lifecycle",
+            label=pending.label,
+            actual=pending.rv,
+            summary=pending.summary,
+            detail=pending.detail,
+        )
+    elif tag == _STAGING_FAILED:
+        _fail_close_all(
+            kind="lifecycle",
+            label=pending.label,
+            actual=pending.rv,
+            summary=pending.summary,
+            detail=pending.detail,
+        )
+    elif tag == _OBJECT_SURVIVED:
+        _fail_object_survived(label=pending.label, summary=pending.summary, detail=pending.detail)
+    elif tag == _INFO_NONCANONICAL:
+        _xfail_session_info(
+            label=pending.label,
+            actual=pending.rv,
+            summary=pending.summary,
+            detail=pending.detail,
+        )
+    else:
+        raise AssertionError(f"unknown CloseAll verdict tag: {tag!r}")
+
+
+def _reopen_and_search(
+    rs: Any, slot_id: int, flags: int, pin_bytes: bytes | None
+) -> tuple[int, tuple[str, int] | None, list[int]]:
+    """Reopen a session, prove it operational, and search the identical label.
+
+    Provider failures never raise here: they come back as ``(operation, rv)``
+    staging data so the caller can clean up before classifying.
+    """
+    try:
+        new_sh = raw_open_session(rs.raw, slot_id, flags)
+    except CkrAssertionError as exc:
+        return 0, ("C_OpenSession", exc.rv), []
+    if pin_bytes is not None:
+        try:
+            login_user(rs.raw, new_sh, CKU_USER, pin_bytes)
+        except CkrAssertionError as exc:
+            return new_sh, ("C_Login", exc.rv), []
+    proof_rv = _session_info_rv(rs.raw, new_sh)
+    if proof_rv != CKR_OK:
+        return new_sh, ("C_GetSessionInfo", proof_rv), []
+    try:
+        found = find_objects(
+            rs.raw, new_sh, template_from_dict({CKA_LABEL: _CLOSE_ALL_SESSION_LABEL})
+        )
+    except CkrAssertionError as exc:
+        return new_sh, ("C_FindObjects", exc.rv), []
+    return new_sh, None, found
 
 
 class TestStaleSessionHandles:
@@ -108,41 +402,60 @@ class TestCloseAllSessions:
     """C_CloseAllSessions behavior (task 7.8)."""
 
     def test_close_all_sessions(self, p11_raw_session: Any, p11_config: Any) -> None:
-        """Open multiple sessions, close all, verify no crash."""
+        """C_CloseAllSessions must invalidate every old handle and session object.
+
+        One session key is generated under a unique exact label with explicit
+        CKA_TOKEN=False/CKA_PRIVATE=False. After C_CloseAllSessions claims
+        CKR_OK, every old handle (fixture session, named auxiliary session,
+        all additional handles) must report CKR_SESSION_HANDLE_INVALID, and a
+        reopened, proven-operational session must not find the labelled object.
+        """
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
         flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
 
-        sessions = []
-        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
-        if pin_bytes is not None:
-            login_user(rs.raw, s1, CKU_USER, pin_bytes)
-        sessions.append(s1)
-
-        # Open more sessions
-        for _ in range(3):
-            sh = raw_open_session(rs.raw, rs.slot_id, flags)
-            sessions.append(sh)
-
-        # Generate a key in s1 (session object)
-        gen_aes_key_or_xfail(rs, 128, sh=s1)
-
-        # Close all sessions at once
-        rv = rs.raw.C_CloseAllSessions(rs.slot_id)
-        # Crash-only check -- CKR_OK expected; some modules may return error
-        assert rv is not None
-
-        # Verify we can open a new session after closing all
-        s_new = raw_open_session(rs.raw, rs.slot_id, flags)
-        if pin_bytes is not None:
-            login_user(rs.raw, s_new, CKU_USER, pin_bytes)
+        aux: list[int] = []
+        new_sh = 0
+        pending: _CloseAllPending | None = None
         try:
-            # Session object (not TOKEN) should be gone
-            tmpl = template_from_dict({CKA_LABEL: "close-all-test"})
-            found = find_objects(rs.raw, s_new, tmpl)
-            assert len(found) == 0, "Session key survived CloseAllSessions"
+            s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+            if pin_bytes is not None:
+                login_user(rs.raw, s1, CKU_USER, pin_bytes)
+            aux.append(s1)
+
+            # Open more sessions
+            for _ in range(3):
+                aux.append(raw_open_session(rs.raw, rs.slot_id, flags))
+            old_handles = [rs.sh, *aux]
+
+            # Generate a session key in s1 with the unique exact label.
+            gen_aes_key_or_xfail(
+                rs,
+                128,
+                attrs={
+                    CKA_LABEL: _CLOSE_ALL_SESSION_LABEL,
+                    CKA_TOKEN: False,
+                    CKA_PRIVATE: False,
+                },
+                sh=s1,
+            )
+
+            rv_close = rs.raw.C_CloseAllSessions(rs.slot_id)
+            if rv_close != CKR_OK:
+                pending = _close_all_refusal_pending(rv_close)
+            else:
+                observations = [
+                    (handle, _session_info_rv(rs.raw, handle)) for handle in old_handles
+                ]
+                new_sh, staging, found = _reopen_and_search(rs, rs.slot_id, flags, pin_bytes)
+                pending = _close_all_effects_pending(observations, found, staging)
         finally:
-            close_session_quietly(rs.raw, s_new)
+            for handle in aux:
+                close_session_quietly(rs.raw, handle)
+            if new_sh:
+                close_session_quietly(rs.raw, new_sh)
+        if pending is not None:
+            _raise_close_all(pending)
 
 
 class TestSessionEdgeRegressions:

@@ -3,8 +3,6 @@
 Tracks whether a test exercises standard, recommended, allowed-but-not-recommended,
 or deprecated behavior. This enables reports like:
 
-  "Module supports AES-GCM with 16-byte IVs
-   (allowed by PKCS#11, not recommended by NIST SP 800-38D)"
   "Module accepts HMAC keys shorter than hash output
    (allowed by spec, not recommended by FIPS 198-1)"
   "Module supports MD5 (deprecated, not approved for FIPS 140-3)"
@@ -12,9 +10,9 @@ or deprecated behavior. This enables reports like:
 Usage in tests:
     from pkcs11_check.compliance import note, ComplianceLevel
 
-    def test_aes_gcm_16byte_iv(p11_session):
-        note("GCM with 16-byte IV", ComplianceLevel.NOT_RECOMMENDED,
-             reference="NIST SP 800-38D Sec.8.2 recommends 96-bit IVs")
+    def test_hmac_short_key(p11_session):
+        note("HMAC with short key", ComplianceLevel.NOT_RECOMMENDED,
+             reference="FIPS 198-1 Sec.3 recommends key >= hash output length")
         # ... test body ...
 """
 

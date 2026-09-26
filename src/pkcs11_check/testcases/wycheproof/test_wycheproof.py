@@ -80,10 +80,6 @@ _AUTHENTICATED_DECRYPT_REJECT_CKRS = (
     CKR_ENCRYPTED_DATA_INVALID,
     CKR_ENCRYPTED_DATA_LEN_RANGE,
 )
-_GCM_OPTIONAL_IV_REJECT_CKRS = (
-    CKR_ARGUMENTS_BAD,
-    CKR_MECHANISM_PARAM_INVALID,
-)
 _HMAC_REJECT_CKRS = (CKR_SIGNATURE_INVALID, CKR_SIGNATURE_LEN_RANGE)
 
 
@@ -253,19 +249,11 @@ class TestAESGCMWycheproof:
             )
 
         # Wycheproof GCM vectors are best tested via decrypt (authenticated)
-        # This verifies: given (key, iv, aad, ct, tag) -> module accepts valid, rejects invalid
-        from pkcs11_check.compliance import ComplianceLevel, note
-
+        # This verifies: given (key, iv, aad, ct, tag) -> module accepts valid, rejects invalid.
+        # Every nonempty IV length is representable in PKCS #11; IV-length
+        # deployment advice belongs to callers, not the conformance verdict.
         tag_bits = len(tag_expected) * 8
         ciphertext_with_tag = ct_expected + tag_expected
-
-        # Track non-recommended IV sizes
-        if len(iv) != 12 and result == "valid":
-            note(
-                f"GCM with {len(iv)}-byte IV (not 96-bit)",
-                ComplianceLevel.NOT_RECOMMENDED,
-                reference="NIST SP 800-38D Sec.8.2 recommends 96-bit IVs",
-            )
 
         gcm_param = mech_gcm(
             CKM_AES_GCM,
@@ -285,27 +273,13 @@ class TestAESGCMWycheproof:
             )
         except CkrAssertionError as exc:
             if result == "valid":
-                iv_len = len(iv)
-                if iv_len > 16:
-                    _classify_negative_reject(
-                        exc,
-                        _GCM_OPTIONAL_IV_REJECT_CKRS,
-                        label=f"AES-GCM tc{vec['tcId']}: optional IV length",
-                    )
-                    from pkcs11_check.compliance import ComplianceLevel, note
-
-                    note(
-                        f"GCM with {iv_len}-byte IV rejected (optional per NIST SP 800-38D)",
-                        ComplianceLevel.NOT_RECOMMENDED,
-                        reference="NIST SP 800-38D Sec.8.2: non-96-bit IV support is optional",
-                    )
-                    return
-                else:
-                    _xfail_if_generic_runtime_reject(
-                        exc,
-                        f"AES-GCM tc{vec['tcId']}",
-                        "AES-GCM decrypt",
-                    )
+                # Every valid nonempty IV length is representable: a clean
+                # refusal of a valid short, ordinary, or long IV is XFAIL.
+                _xfail_if_generic_runtime_reject(
+                    exc,
+                    f"AES-GCM tc{vec['tcId']}",
+                    "AES-GCM decrypt",
+                )
             else:
                 expected_rvs = (
                     (CKR_MECHANISM_PARAM_INVALID,)

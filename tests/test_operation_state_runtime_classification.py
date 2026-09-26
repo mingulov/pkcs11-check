@@ -117,14 +117,69 @@ def test_no_active_operation_spec_code_passes_and_records_nothing() -> None:
     assert get_records() == []
 
 
-def test_no_active_operation_ok_is_tolerated_and_records_nothing() -> None:
-    """CKR_OK was always in the old "acceptable" set -- classify_negative_rv(allow_ok=True)
-    preserves that same silent-pass behavior rather than turning it into a fail."""
-    tos.TestGetOperationStateAPI().test_no_active_operation(_get_op_session(int(CKR_OK)))
+def test_no_active_operation_ok_fails() -> None:
+    """With no active savable operation, CKR_OK is accepted-invalid FAIL, not a pass.
+
+    Spec Sec.5.6.5 mandates CKR_OPERATION_NOT_INITIALIZED; the old
+    ``allow_ok=True`` silently passed a module that claimed savable state with
+    nothing to save.
+    """
+    with pytest.raises(Failed) as ei:
+        tos.TestGetOperationStateAPI().test_no_active_operation(_get_op_session(int(CKR_OK)))
+    assert not isinstance(ei.value, XFailed)
 
     from pkcs11_check.classification import get_records
 
-    assert get_records() == []
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "accepted_invalid"
+    assert records[0].outcome == "fail"
+
+
+def test_no_active_operation_unsaveable_xfails() -> None:
+    """CKR_STATE_UNSAVEABLE is a clean non-canonical reject: adverse xfail, not pass."""
+    from tests._skip_assert import assert_xfails
+
+    assert_xfails(
+        tos.TestGetOperationStateAPI().test_no_active_operation,
+        _get_op_session(int(CKR_STATE_UNSAVEABLE)),
+    )
+
+    from pkcs11_check.classification import get_records
+
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "nonspec_reject"
+    assert records[0].outcome == "xfail"
+
+
+def test_no_active_operation_undefined_rv_fails() -> None:
+    """An undefined CK_RV with no active operation is a metadata self-contradiction."""
+    with pytest.raises(Failed) as ei:
+        tos.TestGetOperationStateAPI().test_no_active_operation(_get_op_session(0x7FFFFFFF))
+    assert not isinstance(ei.value, XFailed)
+
+    from pkcs11_check.classification import get_records
+
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "self_contradiction"
+    assert records[0].kind == "metadata"
+
+
+def test_no_active_operation_vendor_reject_xfails() -> None:
+    """A vendor-defined clean reject stays adverse xfail evidence, never success."""
+    from pkcs11_check.raw.types_std import CKR_VENDOR_DEFINED
+    from tests._skip_assert import assert_xfails
+
+    assert_xfails(
+        tos.TestGetOperationStateAPI().test_no_active_operation,
+        _get_op_session(int(CKR_VENDOR_DEFINED)),
+    )
+
+    from pkcs11_check.classification import get_records
+
+    assert get_records()[-1].outcome == "xfail"
 
 
 def test_no_active_operation_unexpected_clean_reject_is_classified_xfail() -> None:

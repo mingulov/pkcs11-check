@@ -170,11 +170,12 @@ def test_gcm_empty_iv_accept_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         _run_gcm_iv(monkeypatch, iv=b"", accepted=True)
 
 
-def test_gcm_nonempty_short_iv_accept_is_noted_but_passes(
+def test_gcm_nonempty_short_iv_accept_passes_without_advisory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A nonempty IV is representable; acceptance passes with no advisory note."""
     notes = _run_gcm_iv(monkeypatch, accepted=True)
-    assert notes and "4-byte IV" in notes[0]
+    assert notes == []
 
 
 def test_gcm_nonempty_short_iv_expected_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:

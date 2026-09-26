@@ -462,15 +462,16 @@ def test_gcm_valid_plain_decrypt_error_propagates(monkeypatch: pytest.MonkeyPatc
         _run_valid_gcm(monkeypatch, reject)
 
 
-def test_gcm_oversized_iv_accepts_only_optional_reject_ckrs(
+def test_gcm_oversized_iv_param_reject_is_xfail_never_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Oversized valid-vector IV rejection is optional only for the exact CKR set."""
+    """A >16-byte valid-vector IV is representable; its refusal is XFAIL, never PASS."""
 
     def reject(*_args: Any, **_kwargs: Any) -> Any:
-        raise CkrAssertionError("optional IV rejected", int(CKR_MECHANISM_PARAM_INVALID))
+        raise CkrAssertionError("long IV rejected", int(CKR_MECHANISM_PARAM_INVALID))
 
-    _run_valid_gcm(monkeypatch, reject, oversized_iv=True)
+    with pytest.raises(pytest.xfail.Exception, match="AES-GCM decrypt"):
+        _run_valid_gcm(monkeypatch, reject, oversized_iv=True)
 
 
 def test_gcm_oversized_iv_unexpected_ckr_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -479,7 +480,7 @@ def test_gcm_oversized_iv_unexpected_ckr_is_visible(monkeypatch: pytest.MonkeyPa
     def reject(*_args: Any, **_kwargs: Any) -> Any:
         raise CkrAssertionError("unexpected reject", int(CKR_GENERAL_ERROR))
 
-    with pytest.raises(pytest.xfail.Exception, match="optional IV length"):
+    with pytest.raises(pytest.xfail.Exception, match="AES-GCM decrypt"):
         _run_valid_gcm(monkeypatch, reject, oversized_iv=True)
 
 
