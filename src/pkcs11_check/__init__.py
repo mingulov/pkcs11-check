@@ -1,3 +1,3 @@
 """pkcs11-check - CLI-first PKCS#11 test suite."""
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
