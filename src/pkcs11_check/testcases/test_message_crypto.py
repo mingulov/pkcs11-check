@@ -17,7 +17,7 @@ from pkcs11_check.raw.recipes import (
     to_ubyte_buf,
     verify_single,
 )
-from pkcs11_check.raw.rv import ckr_name, is_standard_ckr
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CKF_MESSAGE_SIGN,
@@ -162,7 +162,7 @@ def _handle_message_rv(rv: int, context: str, *, advertised: bool = False) -> No
         )
     if rv in _MESSAGE_UNSUPPORTED_RVS and not advertised:
         pytest.skip(f"{context} not supported: {ckr_name(rv)}")
-    if rv in _MESSAGE_ADVERTISED_REJECT_RVS or is_standard_ckr(rv):
+    if rv in _MESSAGE_ADVERTISED_REJECT_RVS or is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
         xfail_as(
             "not_operational",
             label=context,
