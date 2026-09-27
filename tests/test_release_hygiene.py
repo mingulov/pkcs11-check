@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -148,21 +150,56 @@ def test_third_party_sources_carry_license_metadata() -> None:
     assert offenders == []
 
 
+_LICENSE_TOKEN_SPLIT = re.compile(r"\s+(?:AND|OR)\s+|\(|\)")
+
+
+def _license_sync_gaps(text: str, sources: dict[str, Any]) -> list[str]:
+    """Structured sources.toml fields missing from THIRD_PARTY_LICENSES.md."""
+    gaps: list[str] = []
+    for name, entry in sources.items():
+        repo = entry.get("repo")
+        if isinstance(repo, str) and repo not in text:
+            gaps.append(f"source `{name}` (repo {repo}) not mentioned")
+        for token in _LICENSE_TOKEN_SPLIT.split(entry.get("license", "")):
+            token = token.strip()
+            if token and token not in text:
+                gaps.append(f"source `{name}` license token {token} not mentioned")
+        for license_file in entry.get("license_files", []):
+            if isinstance(license_file, str) and license_file not in text:
+                gaps.append(f"source `{name}` license file {license_file} not mentioned")
+    if "pkcs11-headers" not in text:
+        gaps.append("pkcs11-headers not mentioned")
+    headings = re.findall(r"^### `([^`]+)`", text, flags=re.MULTILINE)
+    known_repos = {
+        *(e.get("repo") for e in sources.values() if isinstance(e.get("repo"), str)),
+        "latchset/pkcs11-headers",
+    }
+    for heading in headings:
+        if "/" in heading and heading not in known_repos:
+            gaps.append(f"stale source heading `{heading}` not in sources.toml")
+    return gaps
+
+
 def test_third_party_licenses_md_lists_every_source() -> None:
-    """THIRD_PARTY_LICENSES.md must mention every fetched source plus pkcs11-headers."""
+    """THIRD_PARTY_LICENSES.md must mirror each source's structured fields."""
     assert THIRD_PARTY_LICENSES_MD.is_file(), "THIRD_PARTY_LICENSES.md missing"
     text = THIRD_PARTY_LICENSES_MD.read_text(encoding="utf-8")
     assert text.strip(), "THIRD_PARTY_LICENSES.md is empty"
     with open(SOURCES_TOML, "rb") as f:
         sources = tomllib.load(f)
-    missing: list[str] = []
-    for name, entry in sources.items():
-        repo = entry.get("repo")
-        if isinstance(repo, str) and repo not in text:
-            missing.append(f"source `{name}` (repo {repo}) not mentioned")
-    if "pkcs11-headers" not in text:
-        missing.append("pkcs11-headers not mentioned")
-    assert missing == []
+    assert _license_sync_gaps(text, sources) == []
+
+
+def test_license_sync_check_catches_drifted_attribution() -> None:
+    """The sync check must fail when a license id or file goes missing."""
+    text = THIRD_PARTY_LICENSES_MD.read_text(encoding="utf-8")
+    with open(SOURCES_TOML, "rb") as f:
+        sources = tomllib.load(f)
+    assert _license_sync_gaps(text, sources) == []
+    drifted = text.replace("BSD-1-Clause", "REDACTED").replace("ed25519/LICENSE", "REDACTED")
+    gaps = _license_sync_gaps(drifted, sources)
+    assert any("BSD-1-Clause" in gap for gap in gaps)
+    assert any("ed25519/LICENSE" in gap for gap in gaps)
 
 
 def test_pyproject_lists_third_party_licenses_in_license_files() -> None:
