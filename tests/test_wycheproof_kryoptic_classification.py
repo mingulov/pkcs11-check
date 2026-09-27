@@ -21,7 +21,7 @@ and are fixed here (effect-gated, provider-general -- no provider identity):
    vectors (out-of-range s1/s2) because the module *correctly rejected* the
    malformed private key at ``C_CreateObject`` -- but with ``CKR_DEVICE_ERROR``,
    a clean non-spec reject code outside the narrow spec import-reject set.
-   Per the classification model (CLAUDE.md table): a negative-op vector "rejects
+   Per the classification model (AGENTS.md table): a negative-op vector "rejects
    with the EXPECTED spec CKR" = pass; "rejects with SOME OTHER clean code" =
    **xfail** (recorded deviation, not silently erased).  kryoptic's
    ``CKR_DEVICE_ERROR`` reject is therefore xfail, not pass.
@@ -131,7 +131,7 @@ def test_mldsa_sign_invalid_privatekey_nonspec_clean_reject_is_xfail(
 ) -> None:
     """Rejecting an ``InvalidPrivateKey`` vector with a non-spec clean code is xfail.
 
-    Per the classification model (CLAUDE.md table): negative-op "rejects with
+    Per the classification model (AGENTS.md table): negative-op "rejects with
     EXPECTED spec CKR" = pass; "rejects with SOME OTHER clean code" = xfail
     (recorded deviation, not silently erased).
 

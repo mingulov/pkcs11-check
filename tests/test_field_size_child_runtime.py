@@ -8,6 +8,7 @@ the stdout evidence protocol, and the honeypot minimum-size contract.
 from __future__ import annotations
 
 import ctypes
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,6 +31,10 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._probes import field_size as field_size_probe
 from pkcs11_check.testcases._probes.honeypot import HoneypotUnavailable
 from pkcs11_check.testcases.security._boundary_values import TRUNCATION_LOW8
+
+# CK_ULONG width on the host ABI (8 bytes LP64, 4 bytes LLP64/Windows):
+# over-wide request values truncate when transmitted through CK_ULONG.
+_CK_ULONG_MASK = (1 << (ctypes.sizeof(CK_ULONG) * 8)) - 1
 
 
 def _ctx(raw: object) -> SimpleNamespace:
@@ -106,7 +111,8 @@ def test_prime_bits_child_generates_domain_parameters(
     assert len(raw.keygen_calls) == 1
     used_mech, attrs = raw.keygen_calls[0]
     assert used_mech == mechanism
-    assert (int(CKA_PRIME_BITS), ctypes.sizeof(CK_ULONG), prime_bits) in attrs
+    transmitted = prime_bits & _CK_ULONG_MASK
+    assert (int(CKA_PRIME_BITS), ctypes.sizeof(CK_ULONG), transmitted) in attrs
     assert raw.destroyed == [77]
     out = capsys.readouterr().out
     assert out.count("TARGET_RV:") == 1
@@ -151,7 +157,7 @@ def test_aes_child_emits_value_len_readback(
     raw = _AesGenRaw(readback=16)
     field_size_probe._run_aes_value_len(_ctx(raw), {"value_len": (1 << 32) + 16})
 
-    assert raw.value_len_seen == [(1 << 32) + 16]
+    assert raw.value_len_seen == [((1 << 32) + 16) & _CK_ULONG_MASK]
     assert raw.destroyed == [55]
     out = capsys.readouterr().out
     assert out.count("TARGET_RV:") == 1
@@ -200,6 +206,7 @@ class _FindRaw:
         return int(self.final_rv)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 def test_find_objects_child_requests_backing_for_declared_capacity(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -227,6 +234,7 @@ def test_find_objects_child_requests_backing_for_declared_capacity(
     assert "GUARD_OVERWRITE:0" in out
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 def test_find_objects_child_always_finalizes_and_emits_final_rv(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -311,6 +319,7 @@ class _HkdfRaw:
         return int(CKR_OK)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 @pytest.mark.parametrize("which", ["hkdf_salt_len", "hkdf_info_len"])
 def test_hkdf_children_request_backing_for_oversize_len(
     which: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -340,6 +349,7 @@ def test_hkdf_children_request_backing_for_oversize_len(
     assert out.count("PROBE_RV:") == 1
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="demand-zero honeypot needs POSIX mmap")
 @pytest.mark.parametrize("which", ["hkdf_salt_len", "hkdf_info_len"])
 def test_hkdf_child_emits_single_truncated_after_completion(
     which: str, capsys: pytest.CaptureFixture[str]

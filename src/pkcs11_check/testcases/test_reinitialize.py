@@ -177,7 +177,7 @@ class TestReinitialize:
         accumulated init at the end; the module must still operate afterward.
 
         Runs in-process: under ``--isolation auto`` a crash kills only this
-        unit's subprocess and is recorded as the finding (see CLAUDE.md
+        unit's subprocess and is recorded as the finding (see AGENTS.md
         execution model). Marked ``@stress`` so it runs only in the stress lane.
         """
         module_path = p11_config.module

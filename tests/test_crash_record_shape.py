@@ -1,3 +1,5 @@
+import sys
+
 from pkcs11_check.core.file_runner import crash_classification
 
 
@@ -61,10 +63,18 @@ def test_signal_stays_crash_evidence():
         rec = cc(returncode=rc, target="x/test_y.py")
         assert rec["reason"] == "crash", rc
         assert rec["outcome"] == "fail" and rec["severity"] == "HIGH"
-    obs = build_process_observation("x/test_y.py", "unit", 0, -9)
-    rec = cc(returncode=-9, target="x/test_y.py", observation=obs)
-    assert rec["reason"] == "crash"
-    assert "SIGKILL" in str(rec["summary"]) or "signal" in str(rec["summary"]).lower()
+    if sys.platform == "win32":
+        # No POSIX signals on Windows: a fatal exception is the crash
+        # evidence analog (NTSTATUS code, e.g. access violation).
+        obs = build_process_observation("x/test_y.py", "unit", 0, 0xC0000005)
+        rec = cc(returncode=0xC0000005, target="x/test_y.py", observation=obs)
+        assert rec["reason"] == "crash"
+        assert "exception" in str(rec["summary"]).lower()
+    else:
+        obs = build_process_observation("x/test_y.py", "unit", 0, -9)
+        rec = cc(returncode=-9, target="x/test_y.py", observation=obs)
+        assert rec["reason"] == "crash"
+        assert "SIGKILL" in str(rec["summary"]) or "signal" in str(rec["summary"]).lower()
 
 
 def test_windows_exception_has_distinct_crash_summary():

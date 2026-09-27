@@ -263,9 +263,7 @@ def _message_verify_rejection(rv: int, *, operation: str) -> bool:
             label=f"{operation}:wrong-signature",
             operation=operation,
             actual=rv,
-            summary=(
-                f"{operation} rejected wrong signature with non-clean CKR: {ckr_name(rv)}"
-            ),
+            summary=(f"{operation} rejected wrong signature with non-clean CKR: {ckr_name(rv)}"),
         )
     return rv not in SIGNATURE_REJECT_RVS
 
@@ -297,9 +295,7 @@ def _message_sign_multipart(
 
     final_buf = to_ubyte_buf(parts[-1])
     sig_len = CK_ULONG(0)
-    rv = rs.raw.C_SignMessageNext(
-        rs.sh, None, 0, final_buf, len(parts[-1]), None, byref(sig_len)
-    )
+    rv = rs.raw.C_SignMessageNext(rs.sh, None, 0, final_buf, len(parts[-1]), None, byref(sig_len))
     if rv != CKR_OK:
         _handle_message_rv(rv, "C_SignMessageNext (size)", advertised=True)
     sig_buf = (ctypes.c_ubyte * sig_len.value)()
@@ -700,12 +696,8 @@ class TestMessageSignVerify:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         parts = [b"part one ", b"part two ", b"part three"]
         try:
-            signature = sign_single(
-                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"".join(parts)
-            )
-            assert _message_verify_multipart(
-                rs, pub, CKM_SHA256_RSA_PKCS, parts, signature
-            ) is True
+            signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"".join(parts))
+            assert _message_verify_multipart(rs, pub, CKM_SHA256_RSA_PKCS, parts, signature) is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
@@ -726,18 +718,19 @@ class TestMessageSignVerify:
         pub, priv = gen_rsa_keypair(rs.raw, rs.sh, 2048)
         parts = [b"correct data ", b"with multiple parts"]
         try:
-            signature = sign_single(
-                rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"".join(parts)
-            )
+            signature = sign_single(rs.raw, rs.sh, priv, CKM_SHA256_RSA_PKCS, b"".join(parts))
             bad_signature = bytes([signature[0] ^ 0x01]) + signature[1:]
-            assert _message_verify_multipart(
-                rs,
-                pub,
-                CKM_SHA256_RSA_PKCS,
-                parts,
-                bad_signature,
-                expect_valid=False,
-            ) is False
+            assert (
+                _message_verify_multipart(
+                    rs,
+                    pub,
+                    CKM_SHA256_RSA_PKCS,
+                    parts,
+                    bad_signature,
+                    expect_valid=False,
+                )
+                is False
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

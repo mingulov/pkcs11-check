@@ -127,9 +127,12 @@ def test_interface_negotiation_load_only_forwards_config_interface(monkeypatch) 
         return raw
 
     monkeypatch.setattr(test_interface_negotiation.RawPKCS11, "from_lib", load_raw)
-    assert test_interface_negotiation._load_only_raw(
-        SimpleNamespace(module="provider.so", interface="3.1")
-    ) is raw
+    assert (
+        test_interface_negotiation._load_only_raw(
+            SimpleNamespace(module="provider.so", interface="3.1")
+        )
+        is raw
+    )
 
     assert captured == [("provider.so", "3.1")]
 
@@ -144,9 +147,7 @@ def test_threading_workload_transports_interface_in_environment(monkeypatch) -> 
     monkeypatch.setattr(test_threading.subprocess, "run", run)
     config = SimpleNamespace(module="provider.so", interface="3.1", slot=0, pin=None)
 
-    result = test_threading._run_threaded_workload(
-        config, workload="digest", threads=1, iters=1
-    )
+    result = test_threading._run_threaded_workload(config, workload="digest", threads=1, iters=1)
 
     assert result == (0, "OK", "")
     assert captured["env"]["P11_THREAD_INTERFACE"] == "3.1"

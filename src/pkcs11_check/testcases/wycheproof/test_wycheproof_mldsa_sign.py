@@ -158,7 +158,7 @@ def test_mldsa_sign(vec_id: str, vec: dict[str, Any], p11_module_session: Any) -
         exc_msg = str(exc)
         # A vector whose invalidity IS the private key (out-of-range s1/s2,
         # wrong length) is correctly rejected at import.  Per the classification
-        # model (CLAUDE.md table): rejection with the expected spec CKR = pass;
+        # model (AGENTS.md table): rejection with the expected spec CKR = pass;
         # rejection with SOME OTHER clean code = xfail (recorded deviation).
         # some modules reject these with CKR_DEVICE_ERROR (a crypto-layer decode
         # failure code); others instead accept the bytes and

@@ -159,7 +159,8 @@ def test_v30_child_requests_exact_interface_and_uses_returned_function_list(
 ) -> None:
     version = tuple(int(part) for part in requested.split("."))
     context, calls, table_version, _interface = _v30_context(
-        requested, table_version=version  # type: ignore[arg-type]
+        requested,
+        table_version=version,  # type: ignore[arg-type]
     )
     captured: dict[str, object] = {}
 

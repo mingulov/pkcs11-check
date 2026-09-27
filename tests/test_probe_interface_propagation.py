@@ -188,8 +188,7 @@ def _is_reviewed_wrapper_transport(path: Path, tree: ast.AST, call: ast.Call) ->
         ]
         return bool(callers) and all(
             any(
-                keyword.arg == parameter_name
-                and _is_config_interface_expression(keyword.value)
+                keyword.arg == parameter_name and _is_config_interface_expression(keyword.value)
                 for keyword in caller.keywords
             )
             for caller in callers
@@ -245,9 +244,7 @@ def test_every_probe_launcher_transports_explicit_interface() -> None:
         if not interface_keywords:
             missing.append(f"{relative}:{call.lineno}: {target}")
         elif not _is_config_interface_expression(interface_keywords[0].value) and not (
-            _is_reviewed_wrapper_transport(
-                path, ast.parse(path.read_text(encoding="utf-8")), call
-            )
+            _is_reviewed_wrapper_transport(path, ast.parse(path.read_text(encoding="utf-8")), call)
         ):
             invalid_transport.append(f"{relative}:{call.lineno}: {target}")
 
@@ -262,8 +259,8 @@ def test_every_probe_launcher_transports_explicit_interface() -> None:
         Path("test_initialize_args.py"),
         Path("test_mutex_callback_safety.py"),
     } <= discovered_files
-    assert not unresolved, (
-        "unresolved probe targets require an explicit review: " + "; ".join(unresolved)
+    assert not unresolved, "unresolved probe targets require an explicit review: " + "; ".join(
+        unresolved
     )
     assert not missing, (
         "generic probe launchers must pass interface=p11_config.interface: " + "; ".join(missing)

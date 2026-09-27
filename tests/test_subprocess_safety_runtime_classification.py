@@ -1615,7 +1615,9 @@ def test_f13_fork_keeps_posix_only_gate() -> None:
     assert _posix_fork_gates(test_subprocess_safety.TestForkSafety.test_fork_after_initialize) != []
 
 
-def test_f13_isolation_child_timeout_is_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_f13_isolation_child_timeout_is_probe_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         test_subprocess_safety,
         "run_probe",
@@ -1625,14 +1627,14 @@ def test_f13_isolation_child_timeout_is_crash(monkeypatch: pytest.MonkeyPatch) -
             stderr="",
         ),
     )
-    with pytest.raises(pytest.fail.Exception, match="timed out"):
+    with pytest.raises(pytest.fail.Exception, match="timed out during Find"):
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["crash"]
+    assert [item.reason for item in get_records()] == ["probe_incomplete"]
 
 
-def test_f13_isolation_found_then_timeout_preserves_policy_and_crash(
+def test_f13_isolation_found_then_timeout_preserves_policy_and_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -1648,7 +1650,7 @@ def test_f13_isolation_found_then_timeout_preserves_policy_and_crash(
         test_subprocess_safety.TestSessionObjectProcessIsolation().test_session_object_not_visible_to_other_process(
             SimpleNamespace(module="/tmp/provider.so", slot=0, pin=None)
         )
-    assert [item.reason for item in get_records()] == ["self_contradiction", "crash"]
+    assert [item.reason for item in get_records()] == ["self_contradiction", "probe_incomplete"]
 
 
 def test_f13_isolation_no_longer_requires_fork() -> None:
@@ -1791,6 +1793,7 @@ def test_f13_wait_child_bounded_keeps_race_exit_disposition(
     assert subprocess_safety_probe._wait_child_bounded(1, 10.0) == ("exit", 0)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="no os.fork on Windows")
 def test_f13_fork_probe_child_reports_phases(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
 

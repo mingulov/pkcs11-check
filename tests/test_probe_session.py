@@ -179,9 +179,13 @@ def test_probe_main_passes_requested_interface_to_raw_loader(
         captured.update(path=path, interface=interface)
         return _Raw()
 
-    monkeypatch.setattr(session.ProbeParams, "load", lambda _path: SimpleNamespace(
-        module_path="provider.so", slot_id=None, interface="3.1", extra={}
-    ))
+    monkeypatch.setattr(
+        session.ProbeParams,
+        "load",
+        lambda _path: SimpleNamespace(
+            module_path="provider.so", slot_id=None, interface="3.1", extra={}
+        ),
+    )
     monkeypatch.setattr(session.RawPKCS11, "from_lib", _from_lib)
     monkeypatch.setattr(session, "_ProbeTeardown", _NoopTeardown)
     monkeypatch.setattr(session.atexit, "register", lambda *_a, **_k: None)

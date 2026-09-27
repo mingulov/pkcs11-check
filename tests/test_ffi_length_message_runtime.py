@@ -96,9 +96,7 @@ def _patch_probe_setup(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_sign_begin_probe_targets_parameter_length_with_three_arguments() -> None:
     raw = _ExactMultipartRaw()
 
-    probe._run_sign_message_multipart(
-        _ctx(raw), {"op": "C_SignMessageBegin", "data_len": 0x1234}
-    )
+    probe._run_sign_message_multipart(_ctx(raw), {"op": "C_SignMessageBegin", "data_len": 0x1234})
 
     assert raw.calls == [
         ("sign-init", 0),
@@ -110,9 +108,7 @@ def test_sign_begin_probe_targets_parameter_length_with_three_arguments() -> Non
 def test_sign_next_probe_uses_seven_argument_abi_and_data_length() -> None:
     raw = _ExactMultipartRaw()
 
-    probe._run_sign_message_multipart(
-        _ctx(raw), {"op": "C_SignMessageNext", "data_len": 0x5678}
-    )
+    probe._run_sign_message_multipart(_ctx(raw), {"op": "C_SignMessageNext", "data_len": 0x5678})
 
     assert raw.calls == [
         ("sign-init", 0),
@@ -172,9 +168,7 @@ def test_advertised_setup_reject_has_distinct_protocol(
     with pytest.raises(probe._SetupRejected):
         probe._message_setup_reject(int(rv), "C_MessageSignInit", advertised=True)
 
-    assert capsys.readouterr().out == (
-        f"SETUP_CONTRADICTION:C_MessageSignInit:0x{int(rv):08x}\n"
-    )
+    assert capsys.readouterr().out == (f"SETUP_CONTRADICTION:C_MessageSignInit:0x{int(rv):08x}\n")
 
 
 @pytest.mark.parametrize("rv", [CKR_FUNCTION_NOT_SUPPORTED, CKR_MECHANISM_INVALID])
