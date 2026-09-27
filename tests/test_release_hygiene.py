@@ -151,22 +151,46 @@ def test_third_party_sources_carry_license_metadata() -> None:
 
 
 _LICENSE_TOKEN_SPLIT = re.compile(r"\s+(?:AND|OR)\s+|\(|\)")
+_HEADING_RE = re.compile(r"^#{2,4} ", flags=re.MULTILINE)
+_SOURCE_HEADING_RE = re.compile(r"^### `([^`]+)`")
+
+
+def _source_sections(text: str) -> dict[str, str]:
+    """Map each `### `repo`` heading to its section body (heading included)."""
+    bounds = [match.start() for match in _HEADING_RE.finditer(text)] + [len(text)]
+    sections: dict[str, str] = {}
+    for start, end in zip(bounds, bounds[1:]):
+        block = text[start:end]
+        match = _SOURCE_HEADING_RE.match(block)
+        if match:
+            sections[match.group(1)] = block
+    return sections
 
 
 def _license_sync_gaps(text: str, sources: dict[str, Any]) -> list[str]:
-    """Structured sources.toml fields missing from THIRD_PARTY_LICENSES.md."""
+    """Structured sources.toml fields missing from THIRD_PARTY_LICENSES.md.
+
+    Each source owns a `### `repo`` section; its license tokens and license
+    files must appear inside that section, so a value pasted under the wrong
+    source is still reported.
+    """
     gaps: list[str] = []
+    sections = _source_sections(text)
     for name, entry in sources.items():
         repo = entry.get("repo")
-        if isinstance(repo, str) and repo not in text:
-            gaps.append(f"source `{name}` (repo {repo}) not mentioned")
+        if not isinstance(repo, str):
+            continue
+        section = sections.get(repo)
+        if section is None:
+            gaps.append(f"source `{name}` (repo {repo}) has no dedicated section")
+            continue
         for token in _LICENSE_TOKEN_SPLIT.split(entry.get("license", "")):
             token = token.strip()
-            if token and token not in text:
-                gaps.append(f"source `{name}` license token {token} not mentioned")
+            if token and token not in section:
+                gaps.append(f"source `{name}` license token {token} not in its section")
         for license_file in entry.get("license_files", []):
-            if isinstance(license_file, str) and license_file not in text:
-                gaps.append(f"source `{name}` license file {license_file} not mentioned")
+            if isinstance(license_file, str) and license_file not in section:
+                gaps.append(f"source `{name}` license file {license_file} not in its section")
     if "pkcs11-headers" not in text:
         gaps.append("pkcs11-headers not mentioned")
     headings = re.findall(r"^### `([^`]+)`", text, flags=re.MULTILINE)
@@ -200,6 +224,34 @@ def test_license_sync_check_catches_drifted_attribution() -> None:
     gaps = _license_sync_gaps(drifted, sources)
     assert any("BSD-1-Clause" in gap for gap in gaps)
     assert any("ed25519/LICENSE" in gap for gap in gaps)
+
+
+def test_license_sync_check_catches_swapped_attribution() -> None:
+    """The sync check must fail when licenses are assigned to the wrong source."""
+    sources = {
+        "alpha": {"repo": "org/alpha", "license": "MIT", "license_files": ["ALPHA-LICENSE"]},
+        "beta": {
+            "repo": "org/beta",
+            "license": "Apache-2.0",
+            "license_files": ["BETA-LICENSE"],
+        },
+    }
+    correct = (
+        "### `org/alpha` - MIT\n\nALPHA-LICENSE\n\n"
+        "### `org/beta` - Apache-2.0\n\nBETA-LICENSE\n\n"
+        "pkcs11-headers\n"
+    )
+    assert _license_sync_gaps(correct, sources) == []
+    swapped = (
+        "### `org/alpha` - Apache-2.0\n\nBETA-LICENSE\n\n"
+        "### `org/beta` - MIT\n\nALPHA-LICENSE\n\n"
+        "pkcs11-headers\n"
+    )
+    gaps = _license_sync_gaps(swapped, sources)
+    assert any("alpha" in gap and "MIT" in gap for gap in gaps)
+    assert any("alpha" in gap and "ALPHA-LICENSE" in gap for gap in gaps)
+    assert any("beta" in gap and "Apache-2.0" in gap for gap in gaps)
+    assert any("beta" in gap and "BETA-LICENSE" in gap for gap in gaps)
 
 
 def test_pyproject_lists_third_party_licenses_in_license_files() -> None:
