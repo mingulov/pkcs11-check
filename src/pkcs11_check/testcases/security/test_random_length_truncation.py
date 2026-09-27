@@ -21,7 +21,6 @@ import pytest
 
 from pkcs11_check.classification import fail_as
 from pkcs11_check.compliance import ComplianceLevel, note
-from pkcs11_check.core.process_observation import termination_from_returncode
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_DATA_LEN_RANGE,
@@ -32,10 +31,7 @@ from pkcs11_check.raw.types_std import (
     CKR_RANDOM_SEED_NOT_SUPPORTED,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
-from pkcs11_check.testcases._subprocess_preamble import (
-    SUBPROCESS_TIMEOUT_MARKER,
-    pin_from_config,
-)
+from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
@@ -81,8 +77,7 @@ _PROBE_TIMEOUT_S = 180
 def fail_probe_incomplete_on_typed_timeout(
     *,
     context: str,
-    returncode: int,
-    stderr: str,
+    observation: dict[str, object] | None,
     timeout_s: int,
 ) -> None:
     """Fail ``probe_incomplete`` when a 4 GiB probe hit its typed timeout.
@@ -90,14 +85,21 @@ def fail_probe_incomplete_on_typed_timeout(
     P11C-0198-018: PKCS #11 specifies no completion bound for producing 4 GiB
     of random data, so a timeout can mean the provider is slowly honoring the
     request -- completion/progress is unknown, which is unresolved attribution,
-    not a crash, hang, narrowing, or availability defect. Only the typed
-    ``SUBPROCESS_TIMEOUT_MARKER`` on stderr triggers this; every other
-    termination kind returns quietly so the generic ``assert_subprocess_no_crash``
-    classifier still owns those verdicts.
+    not a crash, hang, narrowing, or availability defect. Only the structured
+    ``ProbeResult.observation`` termination is authoritative: kind ``"timeout"``
+    is set solely by the runner's ``TimeoutExpired`` path, so
+    provider-controlled stderr text (including a copied timeout marker) can
+    never trigger this. Any other termination -- or a missing observation --
+    returns quietly so the generic ``assert_subprocess_no_crash`` classifier
+    still owns those verdicts.
     """
-    if SUBPROCESS_TIMEOUT_MARKER not in stderr:
+    termination: dict[str, object] = {}
+    if isinstance(observation, dict):
+        maybe = observation.get("termination")
+        if isinstance(maybe, dict):
+            termination = maybe
+    if termination.get("kind") != "timeout":
         return
-    termination = termination_from_returncode(returncode, timed_out=True, stderr=stderr)
     fail_as(
         "probe_incomplete",
         label=context,
@@ -106,7 +108,7 @@ def fail_probe_incomplete_on_typed_timeout(
             "completion/progress unknown (PKCS #11 sets no completion bound for "
             "this request; a slow provider may still be honoring it)"
         ),
-        detail={"termination": termination, "timeout_s": timeout_s},
+        detail={"termination": dict(termination), "timeout_s": timeout_s},
     )
 
 
@@ -158,8 +160,7 @@ class TestGenerateRandomLengthTruncation:
         )
         fail_probe_incomplete_on_typed_timeout(
             context=f"C_GenerateRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
-            returncode=result.returncode,
-            stderr=result.stderr,
+            observation=result.observation,
             timeout_s=_PROBE_TIMEOUT_S,
         )
         assert_subprocess_no_crash(
@@ -239,8 +240,7 @@ class TestSeedRandomLengthTruncation:
         )
         fail_probe_incomplete_on_typed_timeout(
             context=f"C_SeedRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
-            returncode=result.returncode,
-            stderr=result.stderr,
+            observation=result.observation,
             timeout_s=_PROBE_TIMEOUT_S,
         )
         assert_subprocess_no_crash(
