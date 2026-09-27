@@ -860,6 +860,16 @@ def _collect_buffer_measurement(
             parse(name, required=retry_required)
         for name in schema.retry_effect_fields:
             parse(name, required=retry_required)
+        # A named retry reference is the provider-reported capacity the retry
+        # is judged against; require the measurement exactly when retry
+        # evidence is required so a retry is never validated against thin
+        # air. References already covered by required_fields (e.g. the
+        # attribute size-query NEEDED) are not double-required here.
+        if (
+            schema.retry_length_reference is not None
+            and schema.retry_length_reference not in schema.required_fields
+        ):
+            parse(schema.retry_length_reference, required=retry_required)
     else:
         for name in schema.retry_fields + schema.retry_effect_fields:
             if name in fields:
@@ -1470,7 +1480,14 @@ class TestDecryptBufferTooSmallGuards:
             require_retry=True,
             retry_usable=True,
             retry_effect_fields=("FINAL_CKR", "RETRY_OUTPUT_CORRECT"),
-            success_effect_fields=("FINAL_CKR", "FINAL_OK", "MATCH"),
+            success_effect_fields=(
+                "FINAL_CKR",
+                "FINAL_OK",
+                "MATCH",
+                "LEN",
+                "OUTPUT_LENGTH_WITHIN_DECLARED",
+            ),
+            retry_length_reference="NEEDED",
         )
 
     def test_aes_cbc_pad_encrypt_final_buffer_too_small_preserves_guard_and_retries(
@@ -1487,7 +1504,12 @@ class TestDecryptBufferTooSmallGuards:
             require_retry=True,
             retry_usable=True,
             retry_effect_fields=("RETRY_OUTPUT_CORRECT",),
-            success_effect_fields=("MATCH",),
+            success_effect_fields=(
+                "MATCH",
+                "LEN",
+                "OUTPUT_LENGTH_WITHIN_DECLARED",
+            ),
+            retry_length_reference="NEEDED",
         )
 
     def test_aes_cbc_pad_decrypt_final_buffer_too_small_preserves_guard_and_retries(
@@ -1502,8 +1524,14 @@ class TestDecryptBufferTooSmallGuards:
             context="C_DecryptFinal AES-CBC-PAD undersized output buffer guard",
             expected_ckr=None,
             require_retry=True,
+            retry_usable=True,
             retry_effect_fields=("RETRY_OUTPUT_CORRECT",),
-            success_effect_fields=("MATCH",),
+            success_effect_fields=(
+                "MATCH",
+                "LEN",
+                "OUTPUT_LENGTH_WITHIN_DECLARED",
+            ),
+            retry_length_reference="NEEDED",
         )
 
 

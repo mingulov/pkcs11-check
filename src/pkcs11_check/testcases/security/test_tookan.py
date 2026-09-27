@@ -13,7 +13,13 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import (
+    Classification,
+    fail_as,
+    raise_for_record,
+    record_as,
+    xfail_as,
+)
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     copy_object,
@@ -26,7 +32,12 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     wrap_key,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
     CKA_DECRYPT,
@@ -38,12 +49,14 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
+    CKA_VALUE_LEN,
     CKA_WRAP,
     CKK_AES,
     CKK_DES3,
     CKM_AES_CBC,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
+    CKM_DES3_ECB,
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_READ_ONLY,
@@ -62,11 +75,11 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
-    classify_discrimination,
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
     is_known_error,
@@ -138,6 +151,41 @@ _WRAP_EXTRACTION_RUNTIME_REJECT_RVS = {
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
 }
+
+# Canonical rejection for the §3.2 key-type-confusion unwrap: PKCS#11 v3.2
+# section 5.18.4 requires CKR_WRAPPED_KEY_LEN_RANGE when the unwrapped length
+# conflicts with the requested key type. Any other clean rejection is XFAIL
+# evidence; an undefined CK_RV is a HIGH metadata FAIL.
+_TYPE_CONFUSION_CANONICAL_REJECT_RVS = frozenset({CKR_WRAPPED_KEY_LEN_RANGE})
+
+# CKK_DES3 keys are 24 bytes; the DES3 usability probe encrypts one DES block.
+_TYPE_CONFUSION_DES3_KEY_LEN = 24
+_TYPE_CONFUSION_DES3_PROBE_BLOCK = b"\x5a" * 8
+
+
+def _has_des_odd_parity(material: bytes) -> bool:
+    """Whether every byte of DES key material carries odd parity."""
+    return bool(material) and all(bin(byte).count("1") % 2 == 1 for byte in material)
+
+
+def _confused_key_type_name(value: Any) -> str:
+    """Short display name for the confused-handle CKA_KEY_TYPE readback."""
+    if value is MISSING_ATTRIBUTE:
+        return "unavailable"
+    if value == CKK_DES3:
+        return "CKK_DES3"
+    if value == CKK_AES:
+        return "CKK_AES"
+    return str(value)
+
+
+def _valid_leg_mismatch_summary(label: str) -> str:
+    """Summary for a valid AES unwrap leg that returned the wrong material."""
+    return (
+        f"{label}: the valid AES unwrap leg did not verify -- returned "
+        "material differs from the wrapped key"
+    )
+
 
 # Clean reject codes a module may return at an AES-CBC encrypt/decrypt or AES-key
 # import *use* site when the operation is advertised-but-not-operational for the
@@ -873,13 +921,19 @@ class TestKeyTypeConfusionOnUnwrap:
                 readback_complete = True
                 valid_accepted = good_value_raw == original_raw
 
-            # Invalid leg (Pillar-2 D3): unwrap the SAME blob while requesting CKK_DES3.
+            # Invalid leg: unwrap the SAME authentic blob while requesting CKK_DES3.
             # The wrapped blob carries an AES-128 (16-byte) key, but DES3 requires
-            # 24 bytes (with parity). A returned handle == type-confusion accepted
-            # == break; a clean CkrAssertionError == correctly refused.
-            invalid_outcome: Any
+            # 24 bytes (with parity). The canonical outcome is a
+            # CKR_WRAPPED_KEY_LEN_RANGE refusal; a returned handle is a
+            # type/length contract finding whose DES3 usability must still be
+            # proven by observation -- never inferred from the handle, and never
+            # described with forgery language for this authentic blob.
+            # CKA_ENCRYPT/CKA_DECRYPT are requested so the usability probe below
+            # is meaningful. CKA_VALUE_LEN stays deliberately omitted: the size
+            # mismatch is exactly what a type-aware module rejects on.
+            confusion_label = "Tookan: unwrap AES-KW blob as CKK_DES3 must be refused"
             try:
-                h = unwrap_key(
+                confused_h = unwrap_key(
                     rs.raw,
                     rs.sh,
                     wrap_h,
@@ -888,44 +942,275 @@ class TestKeyTypeConfusionOnUnwrap:
                     attrs={
                         CKA_CLASS: CKO_SECRET_KEY,
                         CKA_KEY_TYPE: CKK_DES3,
-                        # CKA_VALUE_LEN deliberately omitted: the size mismatch
-                        # is exactly what a type-aware module rejects on.
+                        CKA_ENCRYPT: True,
+                        CKA_DECRYPT: True,
                         CKA_EXTRACTABLE: True,
                     },
                 )
-                invalid_outcome = h
-                destroy_quietly(rs.raw, rs.sh, h)
             except AssertionError as exc:
-                invalid_outcome = exc
-
-            confusion_label = "Tookan: unwrap AES-KW blob as CKK_DES3 must be refused"
-            if readback_complete:
-                classify_discrimination(
-                    valid_accepted=valid_accepted,
-                    invalid_outcome=invalid_outcome,
-                    label=confusion_label,
-                )
-            else:
-                # An unreadable CKA_VALUE disables ONLY the "did the valid leg produce
-                # the right material" oracle -- the not_operational records above
-                # already say why it is unverifiable.  It must not fabricate
-                # valid_accepted=False (which classify_discrimination reports as a
-                # CRITICAL crypto break for a provider that correctly REFUSED the
-                # type confusion), and it must not suppress the invalid leg, which is
-                # independently observable without any readback: the module either
-                # raised a clean CkrAssertionError or handed back a live DES3 handle.
-                if isinstance(invalid_outcome, CkrAssertionError):
-                    pass  # cleanly refused -- the protection held; nothing to classify
-                elif isinstance(invalid_outcome, BaseException):
-                    raise invalid_outcome
-                else:
-                    classify(
+                if readback_complete and not valid_accepted:
+                    # The valid AES leg returned the wrong material: a genuine
+                    # crypto break that stands regardless of the invalid leg.
+                    fail_as(
                         "accepted_invalid",
                         kind="crypto",
                         label=confusion_label,
-                        summary=f"{confusion_label}: accepted the tampered/forged/confused "
-                        "input (security break)",
+                        summary=_valid_leg_mismatch_summary(confusion_label),
                     )
+                reject_or_classify(
+                    exc,
+                    _TYPE_CONFUSION_CANONICAL_REJECT_RVS,
+                    label=confusion_label,
+                    kind="metadata",
+                )
+                return
+
+            try:
+                result_attrs = read_attributes(
+                    rs.raw, rs.sh, confused_h, [CKA_KEY_TYPE, CKA_VALUE_LEN, CKA_VALUE]
+                )
+                key_type_raw = attr_or_record(
+                    result_attrs,
+                    CKA_KEY_TYPE,
+                    label="Tookan DES3-confusion result CKA_KEY_TYPE readback",
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                )
+                value_len_raw = attr_or_record(
+                    result_attrs,
+                    CKA_VALUE_LEN,
+                    label="Tookan DES3-confusion result CKA_VALUE_LEN readback",
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                )
+                value_raw = attr_or_record(
+                    result_attrs,
+                    CKA_VALUE,
+                    label="Tookan DES3-confusion result CKA_VALUE readback",
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                )
+                type_is_des3 = key_type_raw is not MISSING_ATTRIBUTE and key_type_raw == CKK_DES3
+                value_len: int | None = None
+                if value_len_raw is not MISSING_ATTRIBUTE:
+                    if isinstance(value_len_raw, int) and not isinstance(value_len_raw, bool):
+                        value_len = value_len_raw
+                material: bytes | None = None
+                if value_raw is not MISSING_ATTRIBUTE:
+                    if isinstance(value_raw, bytes):
+                        material = value_raw
+                observed_len: int | None
+                if value_len is not None:
+                    observed_len = value_len
+                elif material is not None:
+                    observed_len = len(material)
+                else:
+                    observed_len = None
+                length_is_des3 = observed_len == _TYPE_CONFUSION_DES3_KEY_LEN and (
+                    value_len is None or material is None or value_len == len(material)
+                )
+                parity_ok: bool | None = None
+                if material is not None:
+                    parity_ok = _has_des_odd_parity(material)
+
+                # Nonterminal recording: every observation below is recorded
+                # before the strongest outcome raises, so cleanup and later
+                # observations always survive an early finding.
+                pending: list[Classification] = []
+                if readback_complete and not valid_accepted:
+                    pending.append(
+                        record_as(
+                            "accepted_invalid",
+                            kind="crypto",
+                            label=confusion_label,
+                            summary=_valid_leg_mismatch_summary(confusion_label),
+                        )
+                    )
+
+                des3_usable = False
+                usability_gap: str | None
+                if not rs.has_mechanism("DES3_ECB"):
+                    usability_gap = "CKM_DES3_ECB not advertised"
+                else:
+                    try:
+                        ciphertext = encrypt_single(
+                            rs.raw,
+                            rs.sh,
+                            confused_h,
+                            CKM_DES3_ECB,
+                            _TYPE_CONFUSION_DES3_PROBE_BLOCK,
+                        )
+                    except CkrAssertionError as exc:
+                        if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                            usability_gap = f"DES3 encrypt refused ({ckr_name(exc.rv)})"
+                            pending.append(
+                                record_as(
+                                    "not_operational",
+                                    kind="crypto",
+                                    label=f"{confusion_label} (DES3 usability)",
+                                    operation="C_Encrypt",
+                                    mechanism="CKM_DES3_ECB",
+                                    actual=exc.rv,
+                                    summary=(
+                                        f"{confusion_label}: CKM_DES3_ECB encrypt on the "
+                                        f"unwrapped key refused with {ckr_name(exc.rv)} "
+                                        "(usability unproven)"
+                                    ),
+                                )
+                            )
+                        else:
+                            usability_gap = (
+                                f"DES3 encrypt returned undefined CK_RV ({ckr_name(exc.rv)})"
+                            )
+                            pending.append(
+                                record_as(
+                                    "self_contradiction",
+                                    kind="metadata",
+                                    label=f"{confusion_label} (DES3 usability)",
+                                    operation="C_Encrypt",
+                                    mechanism="CKM_DES3_ECB",
+                                    actual=exc.rv,
+                                    summary=(
+                                        f"{confusion_label}: CKM_DES3_ECB encrypt on the "
+                                        "unwrapped key returned undefined CK_RV "
+                                        f"{ckr_name(exc.rv)} (usability unproven)"
+                                    ),
+                                )
+                            )
+                    else:
+                        try:
+                            roundtripped = decrypt_single(
+                                rs.raw, rs.sh, confused_h, CKM_DES3_ECB, ciphertext
+                            )
+                        except CkrAssertionError as exc:
+                            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                                usability_gap = f"DES3 decrypt refused ({ckr_name(exc.rv)})"
+                                pending.append(
+                                    record_as(
+                                        "not_operational",
+                                        kind="crypto",
+                                        label=f"{confusion_label} (DES3 usability)",
+                                        operation="C_Decrypt",
+                                        mechanism="CKM_DES3_ECB",
+                                        actual=exc.rv,
+                                        summary=(
+                                            f"{confusion_label}: CKM_DES3_ECB decrypt on the "
+                                            f"unwrapped key refused with {ckr_name(exc.rv)} "
+                                            "(usability unproven)"
+                                        ),
+                                    )
+                                )
+                            else:
+                                usability_gap = (
+                                    f"DES3 decrypt returned undefined CK_RV ({ckr_name(exc.rv)})"
+                                )
+                                pending.append(
+                                    record_as(
+                                        "self_contradiction",
+                                        kind="metadata",
+                                        label=f"{confusion_label} (DES3 usability)",
+                                        operation="C_Decrypt",
+                                        mechanism="CKM_DES3_ECB",
+                                        actual=exc.rv,
+                                        summary=(
+                                            f"{confusion_label}: CKM_DES3_ECB decrypt on the "
+                                            "unwrapped key returned undefined CK_RV "
+                                            f"{ckr_name(exc.rv)} (usability unproven)"
+                                        ),
+                                    )
+                                )
+                        else:
+                            if roundtripped == _TYPE_CONFUSION_DES3_PROBE_BLOCK:
+                                des3_usable = True
+                                usability_gap = None
+                            else:
+                                usability_gap = "DES3 roundtrip mismatch"
+                                pending.append(
+                                    record_as(
+                                        "wrong_result",
+                                        kind="crypto",
+                                        label=f"{confusion_label} (DES3 roundtrip)",
+                                        operation="C_Decrypt",
+                                        mechanism="CKM_DES3_ECB",
+                                        summary=(
+                                            f"{confusion_label}: CKM_DES3_ECB "
+                                            "encrypt/decrypt roundtrip on the unwrapped "
+                                            "key returned bytes differing from the "
+                                            "plaintext (crypto wrong_result)"
+                                        ),
+                                    )
+                                )
+
+                gaps: list[str] = []
+                if not type_is_des3:
+                    if key_type_raw is MISSING_ATTRIBUTE:
+                        gaps.append("CKA_KEY_TYPE unavailable")
+                    else:
+                        gaps.append(
+                            f"CKA_KEY_TYPE={_confused_key_type_name(key_type_raw)} (not CKK_DES3)"
+                        )
+                if not length_is_des3:
+                    if observed_len is None:
+                        gaps.append("unwrapped length unavailable")
+                    else:
+                        gaps.append(f"unwrapped length {observed_len} (not 24 bytes)")
+                if parity_ok is False:
+                    gaps.append("readable material lacks DES3 odd parity")
+                if usability_gap is not None:
+                    gaps.append(usability_gap)
+
+                if not gaps:
+                    if parity_ok is None:
+                        proof_clause = (
+                            "proven CKA_KEY_TYPE=CKK_DES3, 24-byte length, and "
+                            "CKM_DES3_ECB encrypt/decrypt roundtrip; parity unobserved "
+                            "— CKA_VALUE unreadable"
+                        )
+                    else:
+                        proof_clause = (
+                            "proven CKA_KEY_TYPE=CKK_DES3, 24-byte length, DES3 odd "
+                            "parity, and CKM_DES3_ECB encrypt/decrypt roundtrip"
+                        )
+                    accepted_summary = (
+                        f"{confusion_label}: accepted -- module returned a usable "
+                        "CKK_DES3 type confusion from an authentic 16-byte AES AES-KW "
+                        f"blob ({proof_clause})"
+                    )
+                else:
+                    accepted_summary = (
+                        f"{confusion_label}: accepted -- module returned a handle for "
+                        "a CKK_DES3 unwrap of an authentic 16-byte AES AES-KW blob "
+                        "(PKCS#11 v3.2 section 5.18.4 requires CKR_WRAPPED_KEY_LEN_RANGE "
+                        "for the length/type conflict); DES3 usability not proven "
+                        f"({'; '.join(gaps)})"
+                    )
+                pending.append(
+                    record_as(
+                        "accepted_invalid",
+                        kind="metadata",
+                        label=confusion_label,
+                        summary=accepted_summary,
+                        detail={
+                            "requested_key_type": "CKK_DES3",
+                            "observed_key_type": _confused_key_type_name(key_type_raw),
+                            "observed_value_len": observed_len,
+                            "value_readable": material is not None,
+                            "odd_parity": parity_ok,
+                            "des3_roundtrip": (
+                                "not_attempted"
+                                if usability_gap == "CKM_DES3_ECB not advertised"
+                                else ("match" if des3_usable else "no_match")
+                            ),
+                        },
+                    )
+                )
+                strongest = next((rec for rec in pending if rec.outcome == "fail"), pending[0])
+                raise_for_record(strongest)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, confused_h)
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target_h)

@@ -31,12 +31,20 @@ import pytest
 from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_PRIVATE_EXPONENT,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_AES,
+    CKK_DES3,
+    CKR_DATA_LEN_RANGE,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases.security import test_api_security as api_sec
 from pkcs11_check.testcases.security import test_cve_regression as cve
@@ -936,17 +944,59 @@ def test_unbound_unwrap_observed_template_deviation_is_still_recorded(
     assert records[2].label == "Tookan unbound unwrap result did not honor output template"
 
 
+_CONFUSION_LABEL = "Tookan: unwrap AES-KW blob as CKK_DES3 must be refused"
+
+# CKR classes for the invalid-leg rejection contract: exact LEN_RANGE is the
+# canonical pass, 0x80000001 is vendor-defined (XFAIL), 0x12345678 is undefined
+# (HIGH metadata FAIL).
+_VENDOR_CKR = 0x80000001
+_UNDEFINED_CKR = 0x12345678
+
+# 24-byte key material with valid DES odd parity in every byte (0x01 has one
+# set bit); b"\\x00" * 24 is the parity-violating counterpart (zero set bits).
+_PARITY_OK_MATERIAL = b"\x01" * 24
+_PARITY_BAD_MATERIAL = b"\x00" * 24
+
+_FORBIDDEN_BLOB_WORDS = ("forg", "tamper", "integrit", "protected")
+
+
+def _assert_authentic_blob_wording(records: list[C.Classification]) -> None:
+    """No forgery/tamper/integrity/protected-boundary claims for the authentic blob.
+
+    The wrapped AES-128 source key is genuine and untampered, so no record may
+    describe it with forgery, tampering, integrity, or protected-boundary
+    language -- the finding is a type/length contract violation, proven usable
+    only when type, length, and a DES3 operation all check out.
+    """
+    for rec in records:
+        text = f"{rec.label} {rec.summary or ''}".lower()
+        for word in _FORBIDDEN_BLOB_WORDS:
+            assert word not in text, f"forbidden {word!r} in {rec.label!r}: {rec.summary!r}"
+
+
 def _patch_type_confusion(
     monkeypatch: pytest.MonkeyPatch,
     reads: list[dict[Any, Any]],
     invalid_leg: Any,
     destroyed: list[int],
+    *,
+    des3_advertised: bool = True,
+    encrypt_outcome: bytes | BaseException = b"\xc1" * 8,
+    decrypt_outcome: bytes | BaseException | None = None,
+    spy: dict[str, Any] | None = None,
 ) -> Any:
     """Drive the Tookan §3.2 key-type-confusion probe end to end.
 
     ``invalid_leg`` is either an exception to raise from the CKK_DES3 unwrap
     (a refusal) or an object handle to return (type confusion ACCEPTED).
+    ``decrypt_outcome=None`` echoes the encrypt plaintext (roundtrip match).
+    ``spy`` collects the DES3 unwrap ``attrs`` template plus the
+    ``encrypt_calls``/``decrypt_calls`` payloads.
     """
+    if spy is None:
+        spy = {}
+    spy.setdefault("encrypt_calls", [])
+    spy.setdefault("decrypt_calls", [])
     handles = iter([901, 902])
     read_iter = iter(reads)
     monkeypatch.setattr(tookan, "gen_aes_key", lambda *_a, **_k: next(handles))
@@ -954,14 +1004,44 @@ def _patch_type_confusion(
     monkeypatch.setattr(tookan, "wrap_key", lambda *_a, **_k: b"wrapped-blob")
     monkeypatch.setattr(tookan, "unwrap_key_for_mechanism_roundtrip", lambda *_a, **_k: 903)
 
-    def _unwrap(*_a: Any, **_k: Any) -> int:
+    def _unwrap(*args: Any, **kwargs: Any) -> int:
+        template = kwargs.get("attrs")
+        if template is None and len(args) > 5:
+            template = args[5]
+        spy["unwrap_attrs"] = dict(template or {})
         if isinstance(invalid_leg, BaseException):
             raise invalid_leg
         return int(invalid_leg)
 
     monkeypatch.setattr(tookan, "unwrap_key", _unwrap)
+
+    seen_plaintext: list[bytes] = []
+
+    def _encrypt(_raw: Any, _sh: int, _key: int, _mech: Any, data: bytes, **_k: Any) -> bytes:
+        spy["encrypt_calls"].append(data)
+        seen_plaintext.append(data)
+        if isinstance(encrypt_outcome, BaseException):
+            raise encrypt_outcome
+        return encrypt_outcome
+
+    def _decrypt(_raw: Any, _sh: int, _key: int, _mech: Any, data: bytes, **_k: Any) -> bytes:
+        spy["decrypt_calls"].append(data)
+        if isinstance(decrypt_outcome, BaseException):
+            raise decrypt_outcome
+        if decrypt_outcome is not None:
+            return decrypt_outcome
+        return seen_plaintext[-1] if seen_plaintext else b""
+
+    monkeypatch.setattr(tookan, "encrypt_single", _encrypt)
+    monkeypatch.setattr(tookan, "decrypt_single", _decrypt)
     monkeypatch.setattr(tookan, "destroy_quietly", lambda _raw, _sh, h: destroyed.append(h))
-    return _session(has_mechanism=lambda _n: True)
+
+    def _has_mechanism(name: str) -> bool:
+        if name == "DES3_ECB":
+            return des3_advertised
+        return True
+
+    return _session(has_mechanism=_has_mechanism)
 
 
 def test_type_confusion_missing_value_readback_does_not_manufacture_a_crypto_break(
@@ -970,15 +1050,15 @@ def test_type_confusion_missing_value_readback_does_not_manufacture_a_crypto_bre
     """A module that merely omits CKA_VALUE and REFUSES the confusion is conformant.
 
     Regression for the reproduced defect: normalising MISSING_ATTRIBUTE to None
-    made ``valid_accepted`` False, and classify_discrimination() reported
-    ``reason=accepted_invalid kind=crypto`` (CRITICAL, "the valid/un-tampered
-    operation did not verify") against a provider that did the right thing.
+    made ``valid_accepted`` False, and the old discrimination classifier reported
+    ``reason=accepted_invalid kind=crypto`` (CRITICAL) against a provider that
+    did the right thing.
     """
     destroyed: list[int] = []
     session = _patch_type_confusion(
         monkeypatch,
         [{}, {}],  # both CKA_VALUE readbacks omitted
-        CkrAssertionError("refused", int(CKR_GENERAL_ERROR)),
+        CkrAssertionError("refused", int(CKR_WRAPPED_KEY_LEN_RANGE)),
         destroyed,
     )
 
@@ -998,6 +1078,7 @@ def test_type_confusion_missing_value_readback_does_not_manufacture_a_crypto_bre
         assert rec.operation == "C_GetAttributeValue"
         assert rec.mechanism is None
         assert rec.spec_ref == _SPEC_REF
+    _assert_authentic_blob_wording(records)
 
 
 def test_type_confusion_missing_value_readback_still_reports_an_accepted_confusion(
@@ -1005,11 +1086,20 @@ def test_type_confusion_missing_value_readback_still_reports_an_accepted_confusi
 ) -> None:
     """A missing readback must not SUPPRESS the independently observable break.
 
-    The invalid leg needs no readback: the module either refused cleanly or handed
-    back a live CKK_DES3 handle.  The latter is a crypto break regardless.
+    A returned handle is an ``accepted_invalid`` type/length contract finding
+    (metadata/HIGH) -- never a CRITICAL crypto break from the handle alone, and
+    never described with forgery language for the authentic blob.  Usability is
+    unproven here (no attributes readable, DES3 use refused), so the wording
+    stays at the base contract level.
     """
     destroyed: list[int] = []
-    session = _patch_type_confusion(monkeypatch, [{}, {}], 904, destroyed)
+    session = _patch_type_confusion(
+        monkeypatch,
+        [{}, {}, {}],  # valid-leg readbacks AND the confused-handle readback omitted
+        904,
+        destroyed,
+        encrypt_outcome=CkrAssertionError("refused", int(CKR_KEY_FUNCTION_NOT_PERMITTED)),
+    )
 
     _expect_hard_fail(
         lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
@@ -1020,24 +1110,32 @@ def test_type_confusion_missing_value_readback_still_reports_an_accepted_confusi
     assert destroyed == [903, 904, 901, 902]
     records = C.get_records()
     assert [r.reason for r in records] == [
-        "not_operational",
-        "not_operational",
-        "accepted_invalid",
+        "not_operational",  # target CKA_VALUE
+        "not_operational",  # valid-leg CKA_VALUE
+        "not_operational",  # confused CKA_KEY_TYPE
+        "not_operational",  # confused CKA_VALUE_LEN
+        "not_operational",  # confused CKA_VALUE
+        "not_operational",  # DES3 usability refused
+        "accepted_invalid",  # the type/length contract finding
     ]
-    assert records[2].kind == "crypto"
-    assert records[2].label == "Tookan: unwrap AES-KW blob as CKK_DES3 must be refused"
+    assert records[5].actual_ckr == "CKR_KEY_FUNCTION_NOT_PERMITTED"
+    assert records[6].kind == "metadata"
+    assert records[6].severity == "HIGH"
+    assert records[6].label == _CONFUSION_LABEL
+    assert "usable" not in (records[6].summary or "").lower()
+    _assert_authentic_blob_wording(records)
 
 
 def test_type_confusion_oracle_intact_when_both_readbacks_are_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With both readbacks present, a correct refusal is a clean pass: no records."""
+    """With both readbacks present, a canonical refusal is a clean pass: no records."""
     destroyed: list[int] = []
     material = {CKA_VALUE: b"\x11" * 16}
     session = _patch_type_confusion(
         monkeypatch,
         [dict(material), dict(material)],
-        CkrAssertionError("refused", int(CKR_GENERAL_ERROR)),
+        CkrAssertionError("refused", int(CKR_WRAPPED_KEY_LEN_RANGE)),
         destroyed,
     )
 
@@ -1054,10 +1152,11 @@ def test_type_confusion_oracle_intact_when_both_readbacks_are_present(
 def test_type_confusion_valid_leg_mismatch_is_still_a_critical_crypto_break(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The genuine discrimination oracle is untouched on an observable provider.
+    """The genuine valid-leg oracle is untouched on an observable provider.
 
     Both CKA_VALUE readbacks are present but the valid leg returned the WRONG
-    material: that is a real crypto break and must still fail CRITICAL.
+    material: that is a real crypto break and must still fail CRITICAL -- with
+    authentic-blob wording (no tampering language for the genuine source key).
     """
     destroyed: list[int] = []
     session = _patch_type_confusion(
@@ -1079,6 +1178,463 @@ def test_type_confusion_valid_leg_mismatch_is_still_a_critical_crypto_break(
     assert records[0].kind == "crypto"
     assert records[0].severity == "CRITICAL"
     assert "did not verify" in (records[0].summary or "")
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_requests_encrypt_decrypt_on_des3_unwrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CKK_DES3 unwrap asks for CKA_ENCRYPT/CKA_DECRYPT so use is provable."""
+    destroyed: list[int] = []
+    spy: dict[str, Any] = {}
+    material = {CKA_VALUE: b"\x11" * 16}
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material)],
+        CkrAssertionError("refused", int(CKR_WRAPPED_KEY_LEN_RANGE)),
+        destroyed,
+        spy=spy,
+    )
+
+    _expect_completion(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    template = spy["unwrap_attrs"]
+    assert template[CKA_KEY_TYPE] == CKK_DES3
+    assert template[CKA_ENCRYPT] is True
+    assert template[CKA_DECRYPT] is True
+
+
+def test_type_confusion_alternative_defined_rejection_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean defined rejection other than LEN_RANGE is XFAIL, not a pass."""
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material)],
+        CkrAssertionError("refused", int(CKR_GENERAL_ERROR)),
+        destroyed,
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(session, None)
+
+    assert destroyed == [903, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["nonspec_reject"]
+    assert records[0].outcome == "xfail"
+    assert records[0].actual_ckr == "CKR_GENERAL_ERROR"
+    assert records[0].expected_ckr == ["CKR_WRAPPED_KEY_LEN_RANGE"]
+    assert records[0].label == _CONFUSION_LABEL
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_vendor_rejection_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A vendor-defined rejection is XFAIL evidence, not a pass or a crash."""
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material)],
+        CkrAssertionError("refused", _VENDOR_CKR),
+        destroyed,
+    )
+
+    with pytest.raises(pytest.xfail.Exception):
+        tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(session, None)
+
+    assert destroyed == [903, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["nonspec_reject"]
+    assert records[0].outcome == "xfail"
+    assert records[0].actual_ckr == "0x80000001"
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_undefined_rv_fails_high_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undefined CK_RV on the invalid leg is a HIGH metadata FAIL."""
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material)],
+        CkrAssertionError("refused", _UNDEFINED_CKR),
+        destroyed,
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    assert destroyed == [903, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["self_contradiction"]
+    assert records[0].kind == "metadata"
+    assert records[0].severity == "HIGH"
+    assert records[0].actual_ckr == "0x12345678"
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_proven_usable_des3_is_accepted_invalid_metadata_high(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Type + 24-byte length + DES3 roundtrip proven: usable-confusion wording.
+
+    The only case that may be described as a usable CKK_DES3 type confusion is
+    the fully proven triple: CKA_KEY_TYPE reads back CKK_DES3, the length is 24
+    bytes, and a block-aligned CKM_DES3_ECB encrypt/decrypt roundtrip matches.
+    The verdict stays ``accepted_invalid``/metadata/HIGH (a type/length contract
+    finding); the handle alone never earns CRITICAL crypto severity.
+    """
+    destroyed: list[int] = []
+    spy: dict[str, Any] = {}
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {
+        CKA_KEY_TYPE: CKK_DES3,
+        CKA_VALUE_LEN: 24,
+        CKA_VALUE: _PARITY_OK_MATERIAL,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+        spy=spy,
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    # The usability probe ran a block-aligned roundtrip before the verdict.
+    assert len(spy["encrypt_calls"]) == 1
+    assert len(spy["encrypt_calls"][0]) % 8 == 0
+    assert len(spy["decrypt_calls"]) == 1
+    # Cleanup order: valid leg, confused handle, then wrap/target keys.
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["accepted_invalid"]
+    assert records[0].kind == "metadata"
+    assert records[0].severity == "HIGH"
+    assert records[0].label == _CONFUSION_LABEL
+    assert "usable CKK_DES3 type confusion" in (records[0].summary or "")
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_contradictory_attributes_use_base_wording(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A handle reporting CKK_AES/16 bytes is still a finding, but not "usable".
+
+    The module accepted the CKK_DES3 unwrap yet the object reads back as a
+    16-byte CKK_AES key: the type/length contract finding stands (the unwrap
+    must have been refused), but neither DES3 type nor 24-byte length is proven,
+    so the wording must not claim a usable DES3 representation.
+    """
+    destroyed: list[int] = []
+    spy: dict[str, Any] = {}
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {
+        CKA_KEY_TYPE: CKK_AES,
+        CKA_VALUE_LEN: 16,
+        CKA_VALUE: b"\x11" * 16,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+        des3_advertised=False,
+        spy=spy,
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    # CKM_DES3_ECB unadvertised: no DES3 operation was attempted.
+    assert spy["encrypt_calls"] == []
+    assert spy["decrypt_calls"] == []
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["accepted_invalid"]
+    assert records[0].kind == "metadata"
+    assert records[0].severity == "HIGH"
+    summary = records[0].summary or ""
+    assert "usable" not in summary.lower()
+    assert "CKK_AES" in summary
+    assert "16" in summary
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_unreadable_material_with_proven_triple_escalates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unreadable CKA_VALUE still escalates when type, length, and use prove out.
+
+    The 24-byte length is proven by CKA_VALUE_LEN and the DES3 operation by the
+    roundtrip; the missing CKA_VALUE only disables the parity observation, which
+    is recorded as its own unavailable readback. The usable summary qualifies
+    the parity clause as unobserved rather than claiming proven odd parity.
+    """
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {CKA_KEY_TYPE: CKK_DES3, CKA_VALUE_LEN: 24}  # CKA_VALUE omitted
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["not_operational", "accepted_invalid"]
+    assert records[0].operation == "C_GetAttributeValue"
+    assert records[1].kind == "metadata"
+    assert records[1].severity == "HIGH"
+    summary = records[1].summary or ""
+    assert "usable CKK_DES3 type confusion" in summary
+    assert "parity unobserved" in summary
+    assert "CKA_VALUE unreadable" in summary
+    assert "DES3 odd parity" not in summary
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_refused_des3_use_keeps_exact_xfail_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clean refusal of the DES3 leg is exact XFAIL evidence, not usability.
+
+    The encrypt half succeeds but decrypt refuses with a clean CKR: the refusal
+    (with its exact CKR) survives as a nonterminal record, the contract finding
+    still raises as the strongest outcome, and the wording stays base level --
+    usability is never inferred from the handle.
+    """
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {
+        CKA_KEY_TYPE: CKK_DES3,
+        CKA_VALUE_LEN: 24,
+        CKA_VALUE: _PARITY_OK_MATERIAL,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+        decrypt_outcome=CkrAssertionError("refused", int(CKR_DATA_LEN_RANGE)),
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["not_operational", "accepted_invalid"]
+    assert records[0].outcome == "xfail"
+    assert records[0].operation == "C_Decrypt"
+    assert records[0].mechanism == "CKM_DES3_ECB"
+    assert records[0].actual_ckr == "CKR_DATA_LEN_RANGE"
+    assert records[1].kind == "metadata"
+    assert "usable" not in (records[1].summary or "").lower()
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_undefined_usability_rv_fails_high_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undefined CK_RV on the DES3 usability leg is a HIGH metadata FAIL.
+
+    The encrypt half refuses with an undefined CK_RV: unlike a clean defined
+    refusal (exact not_operational XFAIL evidence), a value outside the CK_RV
+    enum is a return-value-contract violation and must stay FAIL -- recorded
+    nonterminally in place, before the accepted-invalid contract finding.
+    """
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {
+        CKA_KEY_TYPE: CKK_DES3,
+        CKA_VALUE_LEN: 24,
+        CKA_VALUE: _PARITY_OK_MATERIAL,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+        encrypt_outcome=CkrAssertionError("refused", _UNDEFINED_CKR),
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["self_contradiction", "accepted_invalid"]
+    assert records[0].outcome == "fail"
+    assert records[0].kind == "metadata"
+    assert records[0].severity == "HIGH"
+    assert records[0].operation == "C_Encrypt"
+    assert records[0].mechanism == "CKM_DES3_ECB"
+    assert records[0].actual_ckr == "0x12345678"
+    assert "undefined CK_RV" in (records[0].summary or "")
+    assert records[1].kind == "metadata"
+    assert "usable" not in (records[1].summary or "").lower()
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_wrong_roundtrip_is_critical_crypto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CKR_OK on both DES3 halves with mismatched bytes is crypto wrong_result.
+
+    The wrong roundtrip is recorded alongside the type/length contract finding
+    and raises as the strongest (CRITICAL) outcome.
+    """
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {
+        CKA_KEY_TYPE: CKK_DES3,
+        CKA_VALUE_LEN: 24,
+        CKA_VALUE: _PARITY_OK_MATERIAL,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+        decrypt_outcome=b"\x77" * 8,  # CKR_OK but the wrong bytes
+    )
+
+    try:
+        tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(session, None)
+    except pytest.fail.Exception as exc:
+        raised = getattr(exc, "_pkcs11_check_classification", None)
+    else:  # pragma: no cover - mutation guard
+        pytest.fail("expected a hard fail, but the probe completed")
+
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["wrong_result", "accepted_invalid"]
+    assert records[0].kind == "crypto"
+    assert records[0].severity == "CRITICAL"
+    assert records[0].operation == "C_Decrypt"
+    assert records[0].mechanism == "CKM_DES3_ECB"
+    assert raised is records[0]
+    assert records[1].kind == "metadata"
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_bad_parity_blocks_usable_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Material without DES odd parity is not described as a DES3 representation.
+
+    Type, length, and the DES3 roundtrip check out, but the readable 24 bytes
+    lack odd parity -- so the finding stays at base wording and the parity
+    observation is evidenced in the record.
+    """
+    destroyed: list[int] = []
+    material = {CKA_VALUE: b"\x11" * 16}
+    confused = {
+        CKA_KEY_TYPE: CKK_DES3,
+        CKA_VALUE_LEN: 24,
+        CKA_VALUE: _PARITY_BAD_MATERIAL,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [dict(material), dict(material), dict(confused)],
+        904,
+        destroyed,
+    )
+
+    _expect_hard_fail(
+        lambda: tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+            session, None
+        )
+    )
+
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["accepted_invalid"]
+    assert records[0].kind == "metadata"
+    summary = records[0].summary or ""
+    assert "usable" not in summary.lower()
+    assert "parity" in summary.lower()
+    _assert_authentic_blob_wording(records)
+
+
+def test_type_confusion_valid_mismatch_survives_success_path_observations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nonterminal recording: a wrong valid leg still fails after full observation.
+
+    The valid AES leg returned the wrong material AND the DES3 confusion was
+    accepted with a proven triple: both findings are recorded, the DES3
+    usability probe still ran, the confused handle was still destroyed, and the
+    valid-leg CRITICAL raises as the strongest outcome.
+    """
+    destroyed: list[int] = []
+    spy: dict[str, Any] = {}
+    confused = {
+        CKA_KEY_TYPE: CKK_DES3,
+        CKA_VALUE_LEN: 24,
+        CKA_VALUE: _PARITY_OK_MATERIAL,
+    }
+    session = _patch_type_confusion(
+        monkeypatch,
+        [{CKA_VALUE: b"\x11" * 16}, {CKA_VALUE: b"\x22" * 16}, dict(confused)],
+        904,
+        destroyed,
+        spy=spy,
+    )
+
+    try:
+        tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(session, None)
+    except pytest.fail.Exception as exc:
+        raised = getattr(exc, "_pkcs11_check_classification", None)
+    else:  # pragma: no cover - mutation guard
+        pytest.fail("expected a hard fail, but the probe completed")
+
+    # All observations ran before the strongest outcome raised.
+    assert len(spy["encrypt_calls"]) == 1
+    assert len(spy["decrypt_calls"]) == 1
+    assert destroyed == [903, 904, 901, 902]
+    records = C.get_records()
+    assert [r.reason for r in records] == ["accepted_invalid", "accepted_invalid"]
+    assert records[0].kind == "crypto"
+    assert records[0].severity == "CRITICAL"
+    assert "did not verify" in (records[0].summary or "")
+    assert raised is records[0]
+    assert records[1].kind == "metadata"
+    assert "usable CKK_DES3 type confusion" in (records[1].summary or "")
+    _assert_authentic_blob_wording(records)
 
 
 # ---------------------------------------------------------------------------

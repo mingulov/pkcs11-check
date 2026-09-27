@@ -3,9 +3,11 @@
 Ports the f-string child-script bodies from security/test_ffi_alignment.py into
 dispatchable probe functions.  Caller buffers whose bytes encode valid PKCS#11
 structs or scalar values but whose pointers are intentionally 1-byte-misaligned:
-a crash-safety boundary for modules reached through foreign-function bindings.
-Output protocol lines are byte-identical to the originals so the parent
-(assert_subprocess_no_crash) requires no changes.
+a hostile-caller robustness boundary for modules reached through
+foreign-function bindings. Each probe prints a flushed ``HOSTILE_CALLER:``
+marker immediately before its hostile target call; the parent routes marked
+output to a non-normative observation and keeps the
+``assert_subprocess_no_crash`` path only for unmarked (setup-phase) output.
 
 Both probes run at Level.LOGIN; the parent forwards the PIN via
 ``run_probe(pin=pin_from_config(...))`` -> ``_P11CHECK_PIN`` (Invariant I3).
@@ -13,11 +15,20 @@ Both probes run at Level.LOGIN; the parent forwards the PIN via
 Dispatch on ``params.extra["probe"]``:
   ``"misaligned_scalar_attrs"``  -- C_GenerateKey with CK_ATTRIBUTE.pValue pointers
                                     into 1-byte-misaligned scalar storage
-                                    (prints ``TARGET_RV:C_GenerateKey:<rv>``)
+                                    (prints ``HOSTILE_CALLER:`` before the call,
+                                    then ``TARGET_RV:C_GenerateKey:<rv>``)
   ``"misaligned_mechanism_ptr"`` -- C_GenerateKey (setup) then C_EncryptInit with a
                                     1-byte-misaligned CK_MECHANISM_PTR
                                     (prints ``SETUP_RV:C_GenerateKey:<rv>`` then,
-                                    on setup success, ``TARGET_RV:C_EncryptInit:<rv>``)
+                                    on setup success, ``HOSTILE_CALLER:`` and
+                                    ``TARGET_RV:C_EncryptInit:<rv>``)
+
+Both target calls are hostile by construction (P11C-0198-013): a typed
+``CK_MECHANISM*`` that is not correctly aligned has undefined behavior on
+dereference, and unaligned ``CK_VOID_PTR`` scalar storage carries no cited
+acceptance obligation. The parent routes marked output as a non-normative
+hostile-caller robustness observation, never as a conformance or
+memory-safety finding.
 """
 
 from __future__ import annotations
@@ -43,6 +54,13 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
+# Child->parent wire marker: the probe executed the provider call with
+# 1-byte-misaligned caller pointers. The parent must route such output as a
+# non-normative hostile-caller robustness observation, never as a conformance
+# or security finding (P11C-0198-013). Equal-valued to the ffi_length and
+# arithmetic_overflow families' constants.
+HOSTILE_CALLER_PREFIX = "HOSTILE_CALLER:"
+
 
 def _misaligned_ptr_to_struct(value: Any) -> tuple[Any, Any]:
     """Copy *value* into 1-byte-misaligned storage; return (backing, typed pointer)."""
@@ -61,7 +79,7 @@ def _misaligned_scalar(ctype: Any, value: int) -> tuple[Any, Any]:
 
 
 def _run_misaligned_scalar_attrs(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
-    """C_GenerateKey must not crash on unaligned scalar pValue pointers."""
+    """C_GenerateKey with unaligned scalar pValue pointers (hostile-caller observation)."""
     raw = ctx.raw
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh = ctx.sh
@@ -87,6 +105,12 @@ def _run_misaligned_scalar_attrs(ctx: ProbeContext, _extra: dict[str, Any]) -> N
         attrs[idx].pValue = ptr
         attrs[idx].ulValueLen = ctypes.sizeof(ctype)
 
+    # The target call below is hostile by construction (misaligned pValue
+    # pointers); mark the wire BEFORE it so the marker survives a child crash.
+    print(
+        f"{HOSTILE_CALLER_PREFIX}C_GenerateKey(misaligned CK_ATTRIBUTE.pValue scalars)",
+        flush=True,
+    )
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(sh, ctypes.byref(mech), attrs, len(attrs), ctypes.byref(key))
     print(f"TARGET_RV:C_GenerateKey:{rv}", flush=True)
@@ -95,7 +119,7 @@ def _run_misaligned_scalar_attrs(ctx: ProbeContext, _extra: dict[str, Any]) -> N
 
 
 def _run_misaligned_mechanism_ptr(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
-    """C_EncryptInit must not crash on an unaligned CK_MECHANISM_PTR."""
+    """C_EncryptInit with an unaligned CK_MECHANISM_PTR (hostile-caller observation)."""
     raw = ctx.raw
     assert ctx.sh is not None, "probe requires a session (Level.LOGIN)"
     sh = ctx.sh
@@ -119,6 +143,13 @@ def _run_misaligned_mechanism_ptr(ctx: ProbeContext, _extra: dict[str, Any]) -> 
     if rv != CKR_OK:
         return
 
+    # Setup succeeded with valid typed storage; the EncryptInit below is
+    # hostile by construction (misaligned CK_MECHANISM_PTR). Mark the wire
+    # BEFORE it so the marker survives a child crash.
+    print(
+        f"{HOSTILE_CALLER_PREFIX}C_EncryptInit(misaligned CK_MECHANISM_PTR)",
+        flush=True,
+    )
     try:
         mech = CK_MECHANISM()
         mech.mechanism = CKM_AES_ECB
