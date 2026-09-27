@@ -10,28 +10,46 @@ own session + login), exactly like the legacy scripts.  rv-trace + coverage are 
 Dispatch on ``extra["probe"]``:
   ``"post_finalize_get_slot_list"`` -> C_GetSlotList after C_Finalize must not crash
   ``"reinitialize_after_finalize"`` -> C_Initialize after C_Finalize must work
-  ``"fork_after_initialize"``       -> fork after C_Initialize; child reinitializes (POSIX)
-  ``"session_object_isolation"``    -> cross-process session-object isolation (fork; POSIX)
+  ``"fork_after_initialize"``       -> fork after C_Initialize; inherited child is a
+                                       bounded, phase-aware robustness observation (POSIX)
+  ``"session_object_isolation"``    -> cross-process session-object isolation: parent
+                                       setup plus a spawned fresh-interpreter child
+  ``"session_object_isolation_child"`` -> the spawned isolation child (never forked)
   ``"reload_cycle_5x"``             -> load->init->ops->finalize x5 in one process
 
-os.fork nuance (``fork_after_initialize`` / ``session_object_isolation``): the forked
-GRANDCHILD branch terminates with ``os._exit(<code>)`` (never return / sys.exit) so it does
-NOT re-run ``probe_main``'s atexit handlers (coverage write + C_Finalize) a second time --
-each of those must fire once, in the parent process only.  The exact fork sequence,
-waitpid/status handling, and every printed marker are preserved byte-for-byte for the parent
-classifiers in ``test_subprocess_safety.py`` (I5).
+os.fork nuance (``fork_after_initialize`` only): the forked GRANDCHILD branch terminates
+with ``os._exit(<code>)`` (never return / sys.exit) so it does NOT re-run ``probe_main``'s
+atexit handlers (coverage write + C_Finalize) a second time -- each of those must fire
+once, in the parent process only.  The exact fork sequence, waitpid/status handling, and
+every printed marker are preserved byte-for-byte for the parent classifiers in
+``test_subprocess_safety.py`` (I5).  P11C-0198-017: PKCS #11 gives no portability guarantee
+for an inherited child after a multithreaded fork, so the parent bounds the wait and the
+parent test treats every inherited-child disposition as an observation, never a verdict.
 
-PIN handling (I3): the two probes that log in read the PIN from ``_P11CHECK_PIN`` (set by
-``run_probe(pin=...)``) -- never from params/argv/source.  This CLOSES the two legacy leaks
-that baked the PIN literal into the generated child script.
+Spawn nuance (``session_object_isolation``): the child is a fresh interpreter launched via
+``sys.executable -u -m ...subprocess_safety`` (argv list, no shell -- I11), so the
+isolation premise holds on Windows too.  The parent relays the child's ``CHILD_*`` lines
+and appends the terminal status itself, reconstructing the exact fork-era transcript shape
+for the unchanged parent parser (I5).
+
+PIN handling (I3): the probes that log in read the PIN from ``_P11CHECK_PIN`` (set by
+``run_probe(pin=...)`` and inherited by the spawned child) -- never from params/argv/
+source.  ``ProbeParams.dump`` structurally rejects PIN-bearing keys in the spawned child's
+params.  This CLOSES the two legacy leaks that baked the PIN literal into the generated
+child script.
 
 Launch with ``coverage="session"``.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import signal
+import subprocess
 import sys
+import tempfile
+import time
 import uuid
 from ctypes import byref
 from typing import Any
@@ -61,7 +79,25 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
 )
+from pkcs11_check.testcases._probes._emit import HARNESS_ERROR_MARKER
+from pkcs11_check.testcases._probes.params import ProbeParams
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
+
+#: Bound on the inherited fork child's lifetime; the outer probe timeout is 15 s.
+_FORK_CHILD_TIMEOUT_S = 10.0
+#: Bound on the spawned isolation child's lifetime; the outer probe timeout is 90 s.
+_ISOLATION_CHILD_TIMEOUT_S = 60.0
+_ISOLATION_CHILD_PROBE = "session_object_isolation_child"
+
+#: Spawned-child stdout lines relayed verbatim to the parent transcript (I5/I7).
+_CHILD_RELAY_PREFIXES = (
+    "CHILD_FATAL:",
+    "CHILD_EXC:",
+    "CHILD_FOUND:",
+    "CHILD_PHASE:",
+    "P11_RV_TRACE_JSON:",
+    HARNESS_ERROR_MARKER,
+)
 
 
 def _pin_bytes() -> bytes | None:
@@ -95,8 +131,48 @@ def _reinitialize_after_finalize(ctx: ProbeContext, _extra: dict[str, Any]) -> N
     raw.C_Finalize(None)
 
 
+def _wait_child_bounded(pid: int, timeout_s: float) -> tuple[str, int | None]:
+    """Reap a forked child, SIGKILLing it past *timeout_s* (POSIX-only).
+
+    Returns ``("exit", code)``, ``("signal", sig)``, or ``("timeout", None)``. A child
+    that exits in the race between the last poll and SIGKILL keeps its real disposition.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done != 0:
+            if os.WIFSIGNALED(status):
+                return ("signal", os.WTERMSIG(status))
+            return ("exit", os.WEXITSTATUS(status))
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        _, status = os.waitpid(pid, 0)
+        if os.WIFSIGNALED(status):
+            return ("signal", os.WTERMSIG(status))
+        return ("exit", os.WEXITSTATUS(status))
+    # os.kill succeeds on a zombie, so a child that exited in the race between
+    # the last poll and SIGKILL reaps here with its real disposition. Only death
+    # by our own SIGKILL reports a timeout.
+    _, status = os.waitpid(pid, 0)
+    if os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL:
+        return ("timeout", None)
+    if os.WIFSIGNALED(status):
+        return ("signal", os.WTERMSIG(status))
+    return ("exit", os.WEXITSTATUS(status))
+
+
 def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
-    """Fork after C_Initialize - child reinitializes (POSIX-only; parent test @requires_fork)."""
+    """Fork after C_Initialize - inherited child is a bounded observation (POSIX-only).
+
+    P11C-0198-017: PKCS #11 gives no portability guarantee after a multithreaded fork,
+    so the child reports flushed CHILD_PHASE progress lines and the parent bounds the
+    wait at _FORK_CHILD_TIMEOUT_S (CHILD_TIMEOUT past it). An inherited-child deadlock
+    therefore surfaces as a phase-aware observation, never as an outer-timeout crash.
+    """
     raw = ctx.raw
     rv = raw.C_Initialize(None)
     if rv != CKR_OK:
@@ -106,29 +182,36 @@ def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     if pid == 0:
         # Grandchild: os._exit so probe_main's atexit handlers do NOT run a second time.
         try:
+            print("CHILD_PHASE:FinalizeInherited", flush=True)
             raw.C_Finalize(None)
+            print("CHILD_PHASE:Init", flush=True)
             rv = raw.C_Initialize(None)
             if rv != CKR_OK:
                 print(f"CHILD_FATAL:Init:0x{rv:08x}", flush=True)
                 os._exit(2)
             try:
+                print("CHILD_PHASE:Slot", flush=True)
                 get_slot_ids(raw)
             except CkrAssertionError as exc:
                 print(f"CHILD_FATAL:Slot:0x{exc.rv:08x}", flush=True)
                 os._exit(7)
+            print("CHILD_PHASE:Finalize", flush=True)
             raw.C_Finalize(None)
             os._exit(0)
         except Exception as exc:  # noqa: BLE001 - crash-safety: report child exception, never swallow
             print(f"CHILD_EXC:{type(exc).__name__}:{exc}", flush=True)
             os._exit(1)
     else:
-        _, status = os.waitpid(pid, 0)
-        if os.WIFSIGNALED(status):
-            child_signal = os.WTERMSIG(status)
-            print(f"CHILD_SIGNAL:{child_signal}", flush=True)
+        disposition, value = _wait_child_bounded(pid, _FORK_CHILD_TIMEOUT_S)
+        if disposition == "timeout":
+            print("CHILD_TIMEOUT", flush=True)
+        elif value is None:
+            # Unreachable: the wait helper pairs every non-timeout disposition with a value.
+            raise AssertionError(f"missing {disposition} value")
+        elif disposition == "signal":
+            print(f"CHILD_SIGNAL:{value}", flush=True)
         else:
-            child_exit = os.WEXITSTATUS(status)
-            print(f"CHILD_EXIT:{child_exit}", flush=True)
+            print(f"CHILD_EXIT:{value}", flush=True)
         raw.C_Finalize(None)
 
 
@@ -146,11 +229,60 @@ def _safe_login(raw_obj: RawPKCS11, sess_h: int, user_type: int, pin_bytes: byte
             raise
 
 
+def _isolation_child_params(
+    module_path: str, interface: str, slot_index: int, label: str
+) -> dict[str, Any]:
+    """Build the spawned isolation child's params (I3: dump rejects PIN-bearing keys)."""
+    return ProbeParams.dump(
+        {
+            "module_path": module_path,
+            "interface": interface,
+            "slot_id": slot_index,
+            "extra": {"probe": _ISOLATION_CHILD_PROBE, "label": label},
+        }
+    )
+
+
+def _isolation_child_argv(params_path: str) -> list[str]:
+    """Fresh-interpreter argv for the isolation child (argv list, no shell -- I11)."""
+    return [
+        sys.executable,
+        "-u",
+        "-m",
+        "pkcs11_check.testcases._probes.subprocess_safety",
+        params_path,
+    ]
+
+
+def _stream_text(value: str | bytes | None) -> str:
+    """Decode a possibly-bytes partial stream from ``TimeoutExpired`` to text."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
+def _isolation_child_env() -> dict[str, str]:
+    """Child env: inherits ``_P11CHECK_PIN`` (I3) but not the parent coverage sentinel.
+
+    The child must not write the parent's ``_P11CHECK_SUBPROCESS_COVERAGE`` file: a stale
+    child write would make a later parent C-``exit()`` look like a clean Python death to
+    the abrupt-exit detector. Coverage writers no-op when the variable is absent, and the
+    fork-era child contributed no coverage either (``os._exit``), so nothing is lost.
+    """
+    env = dict(os.environ)
+    env.pop("_P11CHECK_SUBPROCESS_COVERAGE", None)
+    return env
+
+
 def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
-    """Cross-process session-object isolation (fork; POSIX-only; parent test @requires_fork).
+    """Cross-process session-object isolation (spawned fresh-interpreter child).
 
     A session object created in the parent process must NOT be visible to a child process
-    that re-Initializes the module (distinct applications per PKCS#11 v3.2).
+    that Initializes the module from a clean image (distinct applications per PKCS#11
+    v3.2). P11C-0198-017: the child is spawned, never forked, so the isolation premise
+    holds on Windows too and no inherited post-fork state is involved.
     """
     pin = _pin_bytes()
     slot = ctx.slot_id if ctx.slot_id is not None else 0
@@ -203,93 +335,132 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
         return
     print(f"PARENT_LABEL:{label.decode()}")
 
-    # --- Fork a child that re-Initializes (different application) ---
-    pid = os.fork()
-    if pid == 0:
-        # Child: must Finalize the inherited handle before re-Initializing,
-        # per PKCS#11 v3.2 fork semantics. Grandchild terminates with os._exit
-        # so probe_main's atexit handlers do NOT run a second time.
-        raw.C_Finalize(None)
+    # --- Spawn a fresh-interpreter child (a different application) ---
+    child_params = _isolation_child_params(ctx.module_path, ctx.interface, slot, label.decode())
+    params_fd, params_path = tempfile.mkstemp(suffix=".json", prefix="p11-isolation-child-")
+    try:
+        with os.fdopen(params_fd, "w", encoding="utf-8") as fh:
+            json.dump(child_params, fh)
+        proc = subprocess.Popen(
+            _isolation_child_argv(params_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_isolation_child_env(),
+        )
         try:
-            raw2 = RawPKCS11.from_lib(ctx.module_path, interface=ctx.interface)
-            rv = raw2.C_Initialize(None)
-            if rv != CKR_OK:
-                print(f"CHILD_FATAL:Init:0x{rv:08x}")
-                sys.stdout.flush()
-                os._exit(2)
+            out, err = proc.communicate(timeout=_ISOLATION_CHILD_TIMEOUT_S)
+            timed_out = False
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            rest_out, rest_err = proc.communicate()
+            out = _stream_text(exc.stdout) + (rest_out or "")
+            err = _stream_text(exc.stderr) + (rest_err or "")
+            timed_out = True
+    finally:
+        try:
+            os.unlink(params_path)
+        except OSError:
+            pass
+    for line in out.splitlines():
+        if line.startswith(_CHILD_RELAY_PREFIXES):
+            print(line, flush=True)
+    if err:
+        print(err, file=sys.stderr, end="")
+    child_rc = proc.returncode
+    if timed_out:
+        print("CHILD_TIMEOUT", flush=True)
+    elif child_rc is not None and child_rc < 0:
+        print(f"CHILD_SIGNAL:{-child_rc}", flush=True)
+    elif child_rc is not None and child_rc <= 255:
+        print(f"CHILD_EXIT:{child_rc}", flush=True)
+    # else: no terminal marker for an unrepresentable exit code (notably a Windows
+    # crash code above 255). The parent then reports missing child status -- loud and
+    # unresolved, never a fabricated signal number.
+    # Parent cleanup
+    raw.C_DestroyObject(sh, h)
+    close_session_quietly(raw, sh)
+    raw.C_Finalize(None)
+
+
+def _session_object_isolation_child(ctx: ProbeContext, extra: dict[str, Any]) -> None:
+    """Spawned isolation child: fresh image, find the parent's label, report, exit.
+
+    Never forked: ``probe_main`` loaded the module cleanly at Level.LOAD and this handler
+    drives its own Initialize/session/login/find over ``ctx.raw``. Every step reports a
+    flushed CHILD_PHASE line first; refusal markers and exit codes match the fork-era
+    child byte-for-byte so the parent transcript shape (I5) is unchanged. ``sys.exit``
+    raises SystemExit (BaseException), so refusal exits are never caught by the
+    in-process ``except Exception`` below.
+    """
+    pin = _pin_bytes()
+    slot = ctx.slot_id if ctx.slot_id is not None else 0
+    raw = ctx.raw
+    try:
+        label = extra["label"].encode()
+        print("CHILD_PHASE:Init", flush=True)
+        rv = raw.C_Initialize(None)
+        if rv != CKR_OK:
+            print(f"CHILD_FATAL:Init:0x{rv:08x}", flush=True)
+            sys.exit(2)
+        print("CHILD_PHASE:Slot", flush=True)
+        try:
+            slot_list = get_slot_ids(raw)
+        except CkrAssertionError as exc:
+            print(f"CHILD_FATAL:Slot:0x{exc.rv:08x}", flush=True)
+            sys.exit(7)
+        if slot >= len(slot_list):
+            print(f"CHILD_EXC:SlotRange:{slot}>={len(slot_list)}", flush=True)
+            sys.exit(5)
+        slot_id = slot_list[slot]
+        print("CHILD_PHASE:Open", flush=True)
+        try:
+            sh = open_session(raw, slot_id, CKF_RW_SESSION | CKF_SERIAL_SESSION)
+        except CkrAssertionError as exc:
+            print(f"CHILD_FATAL:Open:0x{exc.rv:08x}", flush=True)
+            sys.exit(8)
+        if pin is not None:
+            print("CHILD_PHASE:Login", flush=True)
             try:
-                slot_list2 = get_slot_ids(raw2)
+                _safe_login(raw, sh, 1, pin)
             except CkrAssertionError as exc:
-                print(f"CHILD_FATAL:Slot:0x{exc.rv:08x}")
-                sys.stdout.flush()
-                os._exit(7)
-            if slot >= len(slot_list2):
-                print(f"CHILD_EXC:SlotRange:{slot}>={len(slot_list2)}")
-                sys.stdout.flush()
-                os._exit(5)
-            slot_id2 = slot_list2[slot]
-            try:
-                sh2 = open_session(raw2, slot_id2, CKF_RW_SESSION | CKF_SERIAL_SESSION)
-            except CkrAssertionError as exc:
-                print(f"CHILD_FATAL:Open:0x{exc.rv:08x}")
-                sys.stdout.flush()
-                os._exit(8)
-            if pin is not None:
-                try:
-                    _safe_login(raw2, sh2, 1, pin)
-                except CkrAssertionError as exc:
-                    print(f"CHILD_FATAL:Login:0x{exc.rv:08x}")
-                    sys.stdout.flush()
-                    os._exit(6)
-            # Find-objects by the parent's label.
-            find_tmpl = template(
-                attr_bytes(CKA_LABEL, label),
-                attr_ulong(CKA_CLASS, CKO_DATA),
-            )
-            rv = raw2.C_FindObjectsInit(sh2, find_tmpl.ptr, find_tmpl.count)
-            if rv != CKR_OK:
-                print(f"CHILD_FATAL:FindInit:0x{rv:08x}")
-                sys.stdout.flush()
-                os._exit(3)
-            handles = (CK_OBJECT_HANDLE * 8)()
-            count = CK_ULONG(0)
-            rv = raw2.C_FindObjects(sh2, handles, 8, byref(count))
-            if rv != CKR_OK:
-                print(f"CHILD_FATAL:Find:0x{rv:08x}")
-                sys.stdout.flush()
-                os._exit(4)
-            rv = raw2.C_FindObjectsFinal(sh2)
-            if rv != CKR_OK:
-                print(f"CHILD_FATAL:FindFinal:0x{rv:08x}")
-                sys.stdout.flush()
-                os._exit(9)
-            print(f"CHILD_FOUND:{count.value}", flush=True)
-            close_session_quietly(raw2, sh2)
-            raw2.C_Finalize(None)
-            sys.stdout.flush()
-            os._exit(0)
-        except Exception as exc:  # noqa: BLE001 - crash-safety: disambiguate in-process error from init failure, not a swallow
-            # `except Exception` (not BaseException) so
-            # KeyboardInterrupt / SystemExit / signal-raised exits
-            # propagate normally. The exit-5 path is only for
-            # in-process Python errors that the parent can use to
-            # disambiguate "init worked but later step crashed"
-            # from "init never started".
-            print(f"CHILD_EXC:{type(exc).__name__}:{exc}")
-            sys.stdout.flush()
-            os._exit(5)
-    else:
-        _, status = os.waitpid(pid, 0)
-        if os.WIFSIGNALED(status):
-            child_signal = os.WTERMSIG(status)
-            print(f"CHILD_SIGNAL:{child_signal}", flush=True)
-        else:
-            child_exit = os.WEXITSTATUS(status)
-            print(f"CHILD_EXIT:{child_exit}", flush=True)
-        # Parent cleanup
-        raw.C_DestroyObject(sh, h)
+                print(f"CHILD_FATAL:Login:0x{exc.rv:08x}", flush=True)
+                sys.exit(6)
+        # Find-objects by the parent's label.
+        find_tmpl = template(
+            attr_bytes(CKA_LABEL, label),
+            attr_ulong(CKA_CLASS, CKO_DATA),
+        )
+        print("CHILD_PHASE:FindInit", flush=True)
+        rv = raw.C_FindObjectsInit(sh, find_tmpl.ptr, find_tmpl.count)
+        if rv != CKR_OK:
+            print(f"CHILD_FATAL:FindInit:0x{rv:08x}", flush=True)
+            sys.exit(3)
+        print("CHILD_PHASE:Find", flush=True)
+        handles = (CK_OBJECT_HANDLE * 8)()
+        count = CK_ULONG(0)
+        rv = raw.C_FindObjects(sh, handles, 8, byref(count))
+        if rv != CKR_OK:
+            print(f"CHILD_FATAL:Find:0x{rv:08x}", flush=True)
+            sys.exit(4)
+        print("CHILD_PHASE:FindFinal", flush=True)
+        rv = raw.C_FindObjectsFinal(sh)
+        if rv != CKR_OK:
+            print(f"CHILD_FATAL:FindFinal:0x{rv:08x}", flush=True)
+            sys.exit(9)
+        print(f"CHILD_FOUND:{count.value}", flush=True)
         close_session_quietly(raw, sh)
         raw.C_Finalize(None)
+        sys.exit(0)
+    except Exception as exc:  # noqa: BLE001 - crash-safety: disambiguate in-process error from init failure, not a swallow
+        # `except Exception` (not BaseException) so the sys.exit() refusal exits above
+        # (SystemExit) and KeyboardInterrupt propagate normally. The exit-5 path is only
+        # for in-process Python errors that the parent can use to disambiguate
+        # "init worked but a later step broke" from "init never started".
+        print(f"CHILD_EXC:{type(exc).__name__}:{exc}", flush=True)
+        sys.exit(5)
 
 
 def _reload_cycle_5x(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
@@ -318,6 +489,7 @@ _PROBES = {
     "reinitialize_after_finalize": _reinitialize_after_finalize,
     "fork_after_initialize": _fork_after_initialize,
     "session_object_isolation": _session_object_isolation,
+    _ISOLATION_CHILD_PROBE: _session_object_isolation_child,
     "reload_cycle_5x": _reload_cycle_5x,
 }
 

@@ -142,20 +142,6 @@ def test_enrich_xfail_is_deviation() -> None:
     assert groups[0]["category"] == "deviation"
 
 
-def test_enrich_unclassified_routes_to_provider_reporting() -> None:
-    groups = [
-        _group(
-            reason="unclassified",
-            outcome="fail",
-            severity="HIGH",
-            kind=None,
-        )
-    ]
-    enrich(groups, module_issues_text="", provider="p")
-    assert groups[0]["category"] == "PROVIDER_BUG"
-    assert groups[0]["routing"] == "PROVIDER_REPORT"
-
-
 def test_enrich_harness_error_routes_to_harness() -> None:
     groups = [
         _group(
@@ -193,6 +179,82 @@ def test_enrich_xfail_not_operational_routes_to_capability_audit() -> None:
     groups = [_group(reason="not_operational", outcome="xfail", severity="INFO", kind=None)]
     enrich(groups, module_issues_text="", provider="p")
     assert groups[0]["routing"] == "CAPABILITY_AUDIT"
+
+
+def test_enrich_probe_incomplete_routes_to_evidence_rerun() -> None:
+    """F14/P11C-0198-004: unresolved attribution is loud but never a provider
+    bug recommendation."""
+    groups = [
+        _group(
+            reason="probe_incomplete",
+            outcome="fail",
+            severity="HIGH",
+            kind=None,
+        )
+    ]
+    enrich(groups, module_issues_text="", provider="p")
+    assert groups[0]["category"] == "UNRESOLVED_ATTRIBUTION"
+    assert groups[0]["routing"] == "EVIDENCE_RERUN"
+    assert groups[0]["outcome"] == "fail"
+    assert groups[0]["severity"] == "HIGH"
+
+
+def test_enrich_unclassified_routes_to_manual_review() -> None:
+    """F14/P11C-0198-004: raw unclassified failures are migration backlog, not
+    provider bugs."""
+    groups = [
+        _group(
+            reason="unclassified",
+            outcome="fail",
+            severity="HIGH",
+            kind=None,
+        )
+    ]
+    enrich(groups, module_issues_text="", provider="p")
+    assert groups[0]["category"] == "CLASSIFICATION_MIGRATION"
+    assert groups[0]["routing"] == "MANUAL_REVIEW"
+    assert groups[0]["outcome"] == "fail"
+    assert groups[0]["severity"] == "HIGH"
+
+
+def test_enrich_unresolved_reasons_are_not_known_issue_overridable() -> None:
+    """F14/P11C-0198-004: neither probe_incomplete nor unclassified is eligible
+    for a known-issue override to DOCS_ONLY, even on a mechanism match."""
+    groups = [
+        _group(
+            reason="probe_incomplete",
+            outcome="fail",
+            severity="HIGH",
+            kind=None,
+            mechanism="CKM_ECDSA_SHA256",
+            operation="C_Verify",
+        ),
+        _group(
+            reason="unclassified",
+            outcome="fail",
+            severity="HIGH",
+            kind=None,
+            mechanism="CKM_ECDSA_SHA256",
+            operation="C_Verify",
+        ),
+    ]
+    snippet = (
+        "## P\n- ECDSA_SHA* flake (ACVP SigVer): C_Verify with CKM_ECDSA_SHA256 sometimes flakes.\n"
+    )
+    enrich(groups, module_issues_text=snippet, provider="p")
+    for g in groups:
+        assert g["routing"] != "DOCS_ONLY"
+        assert g["category"] != "KNOWN_ISSUE"
+    assert groups[0]["routing"] == "EVIDENCE_RERUN"
+    assert groups[1]["routing"] == "MANUAL_REVIEW"
+
+
+def test_enrich_crash_still_routes_to_provider_report() -> None:
+    """F14 loudness pin: real crash evidence keeps the provider route."""
+    groups = [_group(reason="crash", outcome="fail", severity="HIGH", kind=None)]
+    enrich(groups, module_issues_text="", provider="p")
+    assert groups[0]["category"] == "PROVIDER_BUG"
+    assert groups[0]["routing"] == "PROVIDER_REPORT"
 
 
 def test_mechanism_sort_label_is_honest_about_missing_mechanism() -> None:

@@ -136,15 +136,27 @@ _XFAIL_ROUTING = {
     "undeclared_capability": "METADATA_REVIEW",
 }
 
+# P11C-0198-004: unresolved attribution and raw unclassified failures are loud
+# FAILs that block qualification, but they are not provider bug evidence and must
+# never route to PROVIDER_BUG/PROVIDER_REPORT. Neither is a harness reason (they
+# stay in the provider's fail counts) nor eligible for a known-issue override to
+# DOCS_ONLY (there is no identified issue to mark known).
+_UNRESOLVED_ROUTING = {
+    "probe_incomplete": ("UNRESOLVED_ATTRIBUTION", "EVIDENCE_RERUN"),
+    "unclassified": ("CLASSIFICATION_MIGRATION", "MANUAL_REVIEW"),
+}
+
 
 def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str) -> None:
     """Annotate each group in place with ``category`` + ``routing`` (and caveats).
 
     * fails default to ``category=PROVIDER_BUG`` / ``routing=PROVIDER_REPORT``
-    * xfails -> ``category="deviation"`` / ``routing=DOCS_ONLY``
+    * xfails -> ``category="deviation"`` / per-reason audit routing
     * harness errors -> ``category=HARNESS_OR_UNMIGRATED`` / ``routing=HARNESS_FIX``
-    * unclassified -> provider fail evidence with the default provider-report route
-    * a module-issues match re-tags ``category=KNOWN_ISSUE`` / ``routing=DOCS_ONLY``
+    * probe_incomplete -> ``UNRESOLVED_ATTRIBUTION`` / ``EVIDENCE_RERUN``
+    * unclassified -> ``CLASSIFICATION_MIGRATION`` / ``MANUAL_REVIEW``
+    * a module-issues match re-tags an attributed fail ``category=KNOWN_ISSUE`` /
+      ``routing=DOCS_ONLY`` (unresolved/unclassified reasons are not eligible)
     * oracle/crypto (padding-oracle class) get ``soft_token_caveat=True``
     """
     section = _provider_section(module_issues_text, provider)
@@ -155,10 +167,12 @@ def enrich(groups: list[dict[str, Any]], module_issues_text: str, provider: str)
         if reason in HARNESS_REASONS:
             group["category"] = "HARNESS_OR_UNMIGRATED"
             group["routing"] = "HARNESS_FIX"
+        elif reason in _UNRESOLVED_ROUTING:
+            group["category"], group["routing"] = _UNRESOLVED_ROUTING[reason]
         elif outcome == "xfail":
             group["category"] = "deviation"
             group["routing"] = _XFAIL_ROUTING.get(reason, "DEVIATION_REVIEW")
-        else:  # any fail (incl. crash)
+        else:  # any attributed fail (incl. crash)
             group["category"] = "PROVIDER_BUG"
             group["routing"] = "PROVIDER_REPORT"
             if _known_issue_match(group, section):

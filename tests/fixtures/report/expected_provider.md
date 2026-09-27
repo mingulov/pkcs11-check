@@ -10,7 +10,7 @@ This report is produced by an automated suite and is not hand-verified: it can b
 
 ## CRASH (1)
 
-[1] tests/test_arithmetic_overflow.py - process crashed (SIGSEGV)
+[1] tests/test_arithmetic_overflow.py - process crashed with SIGSEGV
 
 ## CRITICAL - fail (4)
 
@@ -42,7 +42,7 @@ This report is produced by an automated suite and is not hand-verified: it can b
 
 ### other · unclassified
 [1] - raw pytest.fail with no classification
-  tests/test_legacy_unmigrated.py::test_old
+  -> MANUAL_REVIEW · tests/test_legacy_unmigrated.py::test_old
 
 ## capability gaps
 
