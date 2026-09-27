@@ -267,6 +267,23 @@ def test_advertised_undefined_rv_is_metadata_failure() -> None:
     assert record.actual_ckr == "0x7fffffff"
 
 
+def test_advertised_vendor_rv_is_defined_refusal_xfail() -> None:
+    """A vendor-defined CK_RV on an advertised op is a defined provider
+    refusal (not_operational), not an undefined-CKR contradiction."""
+    classification.clear()
+
+    assert_xfails(
+        test_message_crypto._handle_message_rv,
+        0x80000001,
+        "C_MessageSignInit",
+        advertised=True,
+        match="rejected advertised",
+    )
+    record = classification.get_records()[-1]
+    assert record.reason == "not_operational"
+    assert record.outcome == "xfail"
+
+
 def test_message_encrypt_uses_aes_keygen_xfail_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
