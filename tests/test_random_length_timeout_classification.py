@@ -16,6 +16,10 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification as C  # noqa: N812
+from pkcs11_check.core.process_observation import (
+    SUBPROCESS_ABRUPT_EXIT_MARKER,
+    build_process_observation,
+)
 from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases._subprocess_preamble import (
     SUBPROCESS_TIMEOUT_MARKER,
@@ -35,14 +39,32 @@ def _timed_out_stderr(timeout_s: int = 180) -> str:
     return f"partial child output\n{SUBPROCESS_TIMEOUT_MARKER}:{timeout_s}s\n"
 
 
+def _observation(
+    returncode: int,
+    stderr: str,
+    *,
+    timed_out: bool = False,
+    platform: str | None = None,
+) -> dict[str, object]:
+    """Build the runner-shaped observation for a returncode/stderr pair."""
+    return build_process_observation(
+        "random_length",
+        "probe",
+        0,
+        returncode,
+        platform=platform,
+        timed_out=timed_out,
+        stderr=stderr,
+    )
+
+
 def test_typed_timeout_is_probe_incomplete_not_crash() -> None:
     """A typed probe timeout raises FAIL/HIGH probe_incomplete with no
     fabricated CKR and no crash/hang language."""
     with pytest.raises(pytest.fail.Exception):
         rlt.fail_probe_incomplete_on_typed_timeout(
             context="C_GenerateRandom(ptr, len=0x100000008)",
-            returncode=SUBPROCESS_TIMEOUT_RC,
-            stderr=_timed_out_stderr(),
+            observation=_observation(SUBPROCESS_TIMEOUT_RC, _timed_out_stderr(), timed_out=True),
             timeout_s=180,
         )
     (rec,) = C.get_records()
@@ -65,8 +87,7 @@ def test_clean_completion_returns_quietly() -> None:
     assert (
         rlt.fail_probe_incomplete_on_typed_timeout(
             context="C_GenerateRandom(ptr, len=0x100000008)",
-            returncode=0,
-            stderr="",
+            observation=_observation(0, ""),
             timeout_s=180,
         )
         is None
@@ -80,8 +101,7 @@ def test_non_timeout_termination_keeps_generic_classifier() -> None:
     assert (
         rlt.fail_probe_incomplete_on_typed_timeout(
             context="C_GenerateRandom(ptr, len=0x100000008)",
-            returncode=-11,
-            stderr="",
+            observation=_observation(-11, ""),
             timeout_s=180,
         )
         is None
@@ -89,8 +109,7 @@ def test_non_timeout_termination_keeps_generic_classifier() -> None:
     assert (
         rlt.fail_probe_incomplete_on_typed_timeout(
             context="C_SeedRandom(ptr, len=0x100000008)",
-            returncode=1,
-            stderr="Traceback (most recent call last)\n",
+            observation=_observation(1, "Traceback (most recent call last)\n"),
             timeout_s=180,
         )
         is None
@@ -152,3 +171,74 @@ def test_both_4gib_call_sites_share_the_probe_timeout_bound() -> None:
     assert len(helper_timeouts) == 2
     for value in (*run_probe_timeouts, *helper_timeouts):
         assert isinstance(value, ast.Name) and value.id == "_PROBE_TIMEOUT_S", ast.dump(value)
+
+
+def test_fabricated_marker_on_clean_exit_returns_quietly() -> None:
+    """A provider-copied timeout marker on rc=0 must not override the
+    structured exit termination."""
+    assert (
+        rlt.fail_probe_incomplete_on_typed_timeout(
+            context="C_GenerateRandom(ptr, len=0x100000008)",
+            observation=_observation(0, _timed_out_stderr()),
+            timeout_s=180,
+        )
+        is None
+    )
+    assert C.get_records() == []
+
+
+def test_fabricated_marker_on_signal_crash_returns_quietly() -> None:
+    """A provider-copied timeout marker on SIGSEGV must not conceal the
+    crash from the generic classifier."""
+    assert (
+        rlt.fail_probe_incomplete_on_typed_timeout(
+            context="C_GenerateRandom(ptr, len=0x100000008)",
+            observation=_observation(-11, _timed_out_stderr()),
+            timeout_s=180,
+        )
+        is None
+    )
+    assert C.get_records() == []
+
+
+def test_fabricated_marker_on_abrupt_exit_returns_quietly() -> None:
+    """A provider-copied timeout marker on an abrupt native exit must not
+    reclassify it as a timeout."""
+    stderr = f"{SUBPROCESS_ABRUPT_EXIT_MARKER}:0\n{_timed_out_stderr()}"
+    assert (
+        rlt.fail_probe_incomplete_on_typed_timeout(
+            context="C_SeedRandom(ptr, len=0x100000008)",
+            observation=_observation(0, stderr),
+            timeout_s=180,
+        )
+        is None
+    )
+    assert C.get_records() == []
+
+
+def test_fabricated_marker_on_windows_exception_returns_quietly() -> None:
+    """A provider-copied timeout marker on a Windows exception must not
+    reclassify it as a timeout."""
+    assert (
+        rlt.fail_probe_incomplete_on_typed_timeout(
+            context="C_SeedRandom(ptr, len=0x100000008)",
+            observation=_observation(0xC0000005, _timed_out_stderr(), platform="win32"),
+            timeout_s=180,
+        )
+        is None
+    )
+    assert C.get_records() == []
+
+
+def test_missing_observation_returns_quietly() -> None:
+    """Without structured termination evidence the helper fails closed so
+    the generic classifier owns the verdict."""
+    assert (
+        rlt.fail_probe_incomplete_on_typed_timeout(
+            context="C_GenerateRandom(ptr, len=0x100000008)",
+            observation=None,
+            timeout_s=180,
+        )
+        is None
+    )
+    assert C.get_records() == []
