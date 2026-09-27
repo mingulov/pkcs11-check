@@ -255,6 +255,12 @@ def _classify_unhonorable_length_outcome(
         _observe_hostile_caller_robustness(rc, stdout, stderr, label_op=label_op, test_id=test_id)
         return
 
+    # No HOSTILE_CALLER marker: the child never executed the target call with an
+    # explicitly unbacked huge length, so a crash/hang here stays a hard
+    # crash-class finding -- unlike hostile-marked arms, where the caller owns
+    # the fault and the outcome exonerates to an EXTENDED note. Read-vs-write
+    # attribution is still pending an ASAN rerun; its absence must not
+    # exonerate a provider crash or hang.
     if rc != 0:
         assert_subprocess_completed(
             rc,

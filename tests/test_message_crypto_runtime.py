@@ -358,9 +358,12 @@ def test_message_verify_single_finalizes_after_completed_message() -> None:
 def test_message_sign_multipart_uses_begin_once_and_repeats_final_part() -> None:
     raw = _ExactSignRaw()
 
-    assert test_message_crypto._message_sign_multipart(
-        _message_rs(raw), 11, 1, [b"one", b"two", b"three"]
-    ) == b"sig"
+    assert (
+        test_message_crypto._message_sign_multipart(
+            _message_rs(raw), 11, 1, [b"one", b"two", b"three"]
+        )
+        == b"sig"
+    )
     assert raw.calls == [
         ("init", 0),
         ("begin", 0),
@@ -375,9 +378,12 @@ def test_message_sign_multipart_uses_begin_once_and_repeats_final_part() -> None
 def test_message_verify_multipart_puts_signature_only_on_final_next() -> None:
     raw = _ExactVerifyRaw()
 
-    assert test_message_crypto._message_verify_multipart(
-        _message_rs(raw), 12, 1, [b"one", b"two", b"three"], b"sig"
-    ) is True
+    assert (
+        test_message_crypto._message_verify_multipart(
+            _message_rs(raw), 12, 1, [b"one", b"two", b"three"], b"sig"
+        )
+        is True
+    )
     assert raw.calls == [
         ("init", 0),
         ("begin", 0),
@@ -393,9 +399,12 @@ def test_message_verify_multipart_bad_signature_preserves_rejection_policy() -> 
 
     raw = _ExactVerifyRaw(int(CKR_SIGNATURE_INVALID))
 
-    assert test_message_crypto._message_verify_multipart(
-        _message_rs(raw), 12, 1, [b"one", b"two"], b"bad", expect_valid=False
-    ) is False
+    assert (
+        test_message_crypto._message_verify_multipart(
+            _message_rs(raw), 12, 1, [b"one", b"two"], b"bad", expect_valid=False
+        )
+        is False
+    )
     assert raw.calls == [
         ("init", 0),
         ("begin", 0),

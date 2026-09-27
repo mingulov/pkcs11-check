@@ -366,9 +366,7 @@ def test_explicit_v3_lookup_rejects_mismatched_table_version() -> None:
     function_list.version.major = 3
     function_list.version.minor = 0
     interface = CK_INTERFACE()
-    interface.pFunctionList = ctypes.cast(
-        ctypes.pointer(function_list), ctypes.c_void_p
-    ).value
+    interface.pFunctionList = ctypes.cast(ctypes.pointer(function_list), ctypes.c_void_p).value
     interface_ptr = ctypes.pointer(interface)
 
     class FakeGetInterface:

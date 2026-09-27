@@ -1263,11 +1263,11 @@ class TestSessionObjectProcessIsolation:
             phase = _last_child_phase(stdout) or "unknown phase"
             nested_timeout = _provider_record(
                 context=context,
-                reason="crash",
+                reason="probe_incomplete",
                 kind=None,
                 summary=(
-                    "SECURITY: child process timed out during "
-                    f"{phase} of cross-process isolation:\n{output}"
+                    f"{context}: spawned child timed out during {phase} "
+                    f"(completion unknown; incomplete protocol):\n{output}"
                 ),
                 detail={"child_timeout": True, "phase": phase},
             )

@@ -12,8 +12,7 @@ def test_external_mu_constants_are_exported() -> None:
     from pkcs11_check.raw import metadata_std
     from pkcs11_check.raw.types_std import CKM_ML_DSA_EXTERNAL_MU, CKM_ML_DSA_EXTERNAL_MU_GEN
 
-    # OASIS TC v3.3 allocation (issue #58); the abandoned pre-ratification
-    # v3.2 draft values 0x1E/0x22 must not be reintroduced.
+    # The 0x1E/0x22 values must not be reintroduced for these mechanisms.
     assert int(CKM_ML_DSA_EXTERNAL_MU_GEN) == 0x0000403B
     assert int(CKM_ML_DSA_EXTERNAL_MU) == 0x0000403C
     assert metadata_std.MECHANISM_NAMES[int(CKM_ML_DSA_EXTERNAL_MU_GEN)] == (

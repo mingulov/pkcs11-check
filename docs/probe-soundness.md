@@ -81,16 +81,27 @@ This single step separates real findings from the one false-positive, and it
 
 ### Un-mappable magnitudes (2^63, 2^64, ULONG_MAX)
 
-These cannot be mmap-backed. They target the **allocation-wrap / write-side**
-class, where the crash is the module's own arithmetic and is independent of the
-source buffer. Confirm with ASAN's read-vs-write classification:
+These cannot be mmap-backed. The suite splits them by what the child actually
+executed, and the split - not ASAN - decides the verdict:
 
-- **WRITE overflow** (or read of the module's *own* heap) → real finding.
-- pure **READ past our short source** with no write-side fault → the contingent
-  case above.
+- **Hostile-marked arms** (the default for un-mappable magnitudes): the child
+  prints a `HOSTILE_CALLER:` marker and executes the target call with an
+  explicitly unbacked (`honest=0`) huge length. The caller owns whatever
+  happens next, so the parent routes the outcome to
+  `_observe_hostile_caller_robustness` - crash, hang, clean return, or bare
+  exit code all land as a non-normative `EXTENDED` robustness note (a pass),
+  never a conformance or security finding. The only loud path is a
+  Python-traceback child exit, which is a probe bug (`AssertionError`).
+- **No-marker arms** (e.g. the message probes, which carry no marker): stay
+  strict. A crash or hang with no marker is a hard crash-class finding via
+  `assert_subprocess_completed`; read-vs-write attribution remains pending an
+  ASAN rerun, and the absence of that evidence must not exonerate a provider
+  crash or hang.
 
-Keep these as subprocess + ASAN-lane probes and document the rationale; do not
-assert "no crash" on a non-ASAN build for an un-mappable magnitude without this.
+The same hostile-marker doctrine covers the sibling suites
+(`test_arithmetic_overflow.py` for un-mappable magnitudes,
+`test_ffi_alignment.py` for misaligned pointers): marked arms observe, never
+fail; unmarked crashes stay loud.
 
 ## Truncation-correctness probes are a different thing
 

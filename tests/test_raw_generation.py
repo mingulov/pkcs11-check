@@ -42,9 +42,9 @@ def test_vendored_header_local_dependencies_exist() -> None:
         assert (header.parent / include).is_file()
 
 
-def test_overlay_x942_mqv_pointer_field_names_match_oasis() -> None:
+def test_overlay_x942_mqv_pointer_field_names_match_published() -> None:
     # The vendored header stays verbatim upstream (latchset misspells these
-    # fields); the OASIS spellings live in the generator overlay.
+    # fields); the corrected spellings live in the generator overlay.
     header = Path("third_party/pkcs11-overlay/latchset_3_2_fixes.h")
     text = header.read_text(encoding="utf-8")
     match = re.search(

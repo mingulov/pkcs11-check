@@ -16,12 +16,16 @@ operation per (mechanism, direction) per process and reuse the verdict:
 - ``NOT_OPERATIONAL`` canonical clean CKR error, regardless of which defined
                       code. Advertised but not operational -> vector clean
                       errors xfail. No provider identity, no CKR allowlist.
-                      Undefined CK_RV values are never clean refusals and
-                      always fail, in the probe and in every vector route.
+                      ("Clean" means a defined CK_RV: ``_canonical_aead_probe``
+                      maps an undefined CK_RV to WRONG_OUTPUT, never here, and
+                      the central ``classify_kat_clean_error`` gate fails an
+                      undefined CK_RV as a metadata self-contradiction before
+                      any xfail route is consulted.)
 - ``WRONG_OUTPUT``    canonical OK but WRONG output: a crypto break. Never
                       masks anything; vector errors stay findings. Also used
-                      when the canonical op returns an undefined CK_RV, which
-                      must never read as "not operational".
+                      by ``_canonical_aead_probe`` when the canonical op
+                      returns an undefined CK_RV, which must never read as
+                      "not operational".
 - ``INCONCLUSIVE``    the canonical op could not be staged (key import or
                       parameter packing failed). No mechanism evidence (the
                       import path may be broken, see triage H6) -> fall back

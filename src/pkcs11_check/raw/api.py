@@ -436,7 +436,7 @@ class RawPKCS11:
     @property
     def interface_version(self) -> str:
         """Detect negotiated PKCS#11 interface version."""
-        selected = getattr(self, "_interface_version", None)
+        selected: str | None = getattr(self, "_interface_version", None)
         if selected is not None:
             return selected
         names = self.available_function_names()
@@ -530,16 +530,12 @@ class RawPKCS11:
             return None
         if not bool(interface_ptr):
             if strict:
-                raise InterfaceLookupError(
-                    requested_interface, reason="null_interface", rv=rv
-                )
+                raise InterfaceLookupError(requested_interface, reason="null_interface", rv=rv)
             return None
         function_list_ptr = interface_ptr.contents.pFunctionList
         if not function_list_ptr:
             if strict:
-                raise InterfaceLookupError(
-                    requested_interface, reason="null_function_list", rv=rv
-                )
+                raise InterfaceLookupError(requested_interface, reason="null_function_list", rv=rv)
             return None
         return int(function_list_ptr)
 

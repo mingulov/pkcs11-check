@@ -241,14 +241,14 @@ reports from this session.
 
 ## Documentation
 
-- Add the decision table + core principle to `CLAUDE.md` (Coding Rules) so the policy is
+- Add the decision table + core principle to `AGENTS.md` (Coding Rules) so the policy is
   stated once and authoritatively, distinguishing **clean known CKR (`xfail`)** from
   **crash/wrong-result/self-contradiction (`fail`)** from **missing capability (`skip`)**.
 
 ## Suggested phases (each its own plan/PR)
 
 1. **Helpers + docs** - `classify_rejection`, claim-check/effect-check helpers, the
-   `assert_ckr()` `xfail` tier, decision table in `CLAUDE.md`. (Enables everything else.)
+   `assert_ckr()` `xfail` tier, decision table in `AGENTS.md`. (Enables everything else.)
 2. **V1 + V2** - invalid-vector correctness (highest crypto value; 3 live + ~1000 neutralized).
 3. **N1 (crypto/policy/lifecycle)** - the security-finding reclassification (claim/effect-checks).
 4. **N2 sweep** - binary negative asserts → 3-way.

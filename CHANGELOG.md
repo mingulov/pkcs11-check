@@ -14,10 +14,9 @@ are established before they are relied on.
 - **Vendored PKCS#11 header restored byte-identical; the MU pair moved to
   a project-authored overlay.** `third_party/pkcs11-headers/3.2/pkcs11.h`
   carries no hand edits again (sha pinned by a test); the ExternalMu pair
-  lives at its TC-allocated `0x403B`/`0x403C` values with `CK_MU_GEN_PARAMS`
-  in an overlay the generator parses after the base header with
-  overlay-wins precedence, and the overlay's neutral `pkcs11-overlay` name
-  no longer suggests OASIS-copyrighted material is vendored.
+  lives at its `0x403B`/`0x403C` values with `CK_MU_GEN_PARAMS` in an
+  overlay the generator parses after the base header with overlay-wins
+  precedence.
 
 - **Exact PKCS#11 interface selection honored from loader to child
   probe.** `RawPKCS11` accepts an explicit interface (`auto`, `2.40`,
@@ -58,8 +57,10 @@ are established before they are relied on.
   the 16-byte formatted `B_0` source field to the 13-byte PKCS#11 nonce
   with every structural field validated; every nonempty GCM IV length
   counts as representable instead of drawing deployment-advice notes;
-  merged ACVP cases keep their source vector identity; and an undefined
-  CK_RV fails as a return-value-contract violation before any xfail route.
+  merged ACVP cases keep their source vector identity; clean refusals of
+  valid-tag decrypts xfail as honest deviations instead of failing as
+  wrong results; and an undefined CK_RV fails as a return-value-contract
+  violation before any xfail route.
 
 - **EdDSA parameters resolved by key profile and scheme.** Pure RFC 8032
   sign/verify pass explicit NULL params while ctx/ph schemes select via

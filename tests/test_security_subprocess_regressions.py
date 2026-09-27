@@ -3596,6 +3596,6 @@ class TestF2SoundCasesStayStrict:
             {"which": "key_value_len_overflow", "mech_name": "CKM_AES_KEY_GEN"},
         )
         out = capsys.readouterr().out
-        assert seen["len"] == 0xFFFFFFFFFFFFFFFF
+        assert seen["len"] == arith._CK_ULONG_MAX
         assert "HOSTILE_CALLER:" not in out
         assert "rv=" in out
