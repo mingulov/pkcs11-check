@@ -946,7 +946,11 @@ class TestDHKeyAgreement:
             except AssertionError as exc:
                 reject_or_classify(
                     exc,
-                    (CKR_KEY_SIZE_RANGE, CKR_ATTRIBUTE_VALUE_INVALID),
+                    (
+                        CKR_KEY_SIZE_RANGE,
+                        CKR_ATTRIBUTE_VALUE_INVALID,
+                        CKR_TEMPLATE_INCONSISTENT,
+                    ),
                     label="CKM_DH_PKCS_DERIVE RFC 3526 Group 14 CKA_VALUE_LEN=0",
                 )
                 return

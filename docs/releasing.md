@@ -17,7 +17,7 @@ Every successful TestPyPI run triggers the **TestPyPI gate** (`.github/workflows
 
 ## Cutting a release
 
-1. On `main`, bump `__version__` in `src/pkcs11_check/__init__.py` and fold the development branch's `## Unreleased` notes into a matching `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`. These are one atomic edit: the top numbered changelog heading must match the package version at release time.
+1. On `main`, bump `__version__` in `src/pkcs11_check/__init__.py` and write the matching `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`, reconciled to the merged commits. These are one atomic edit: the top changelog heading must match the package version at release time. Do not keep a `## [Unreleased]` section: the hygiene gate rejects any `## [` heading without a numeric version and date.
 2. Run `uv lock` if dependencies changed, and check the whole gate set locally, including
    `tests/test_reporting_integrity_release_gate.py` and
    `tests/test_required_attribute_access_guard.py` - the evidence-integrity gate described in

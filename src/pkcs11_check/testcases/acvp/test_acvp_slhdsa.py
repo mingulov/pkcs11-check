@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as, set_mechanism
+from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
@@ -216,6 +217,7 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
         pk = inp.get("pk", "")
         msg = inp.get("message", "")
         sig = inp.get("signature", "")
+        ctx_hex = inp.get("context", "")
         if not pk or not msg or not sig:
             continue
 
@@ -225,6 +227,7 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
             "pk": bytes.fromhex(pk),
             "msg": bytes.fromhex(msg),
             "sig": bytes.fromhex(sig),
+            "context": bytes.fromhex(ctx_hex) if ctx_hex else b"",
             "expected_pass": exp.get("testPassed", True),
             "tc_id": inp.get("tcId", 0),
         }
@@ -360,8 +363,21 @@ def test_slhdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         except AssertionError as exc:
             _xfail_if_import_not_operational(exc, f"public key ({vec['param_name']})")
 
+        # Verify the signature, passing context when non-empty
+        context = vec.get("context", b"")
+        if isinstance(context, str):
+            context = bytes.fromhex(context) if context else b""
+        mech_param = mech_sign_context(CKM_SLH_DSA, context=context) if context else None
         try:
-            verified = verify_single(rs.raw, rs.sh, pub_key, CKM_SLH_DSA, vec["msg"], vec["sig"])
+            verified = verify_single(
+                rs.raw,
+                rs.sh,
+                pub_key,
+                CKM_SLH_DSA,
+                vec["msg"],
+                vec["sig"],
+                mech_param=mech_param,
+            )
         except AssertionError as exc:
             verified = _slhdsa_verify_result_or_xfail(
                 exc, vec_id, expected_pass=vec["expected_pass"]

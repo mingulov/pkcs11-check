@@ -16,11 +16,14 @@ from pkcs11_check.raw.types_std import (
     CKF_SIGN,
     CKF_VERIFY,
     CKF_WRAP,
+    CKK_ACTI,
     CKK_GENERIC_SECRET,
     CKK_GOSTR3410,
     CKK_GOSTR3411,
+    CKK_HOTP,
     CKK_KEA,
     CKK_RSA,
+    CKK_SECURID,
     CKM_ACTI,
     CKM_ACTI_KEY_GEN,
     CKM_CMS_SIG,
@@ -455,7 +458,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     # ---------------------------------------------------------------------------
 
     registry[CKM_SECURID_KEY_GEN] = MechConfig(
-        key_type=None,
+        key_type=CKK_SECURID,
         keygen_mech=CKM_SECURID_KEY_GEN,
         key_sizes=(),
         expected_flags=CKF_GENERATE,
@@ -463,7 +466,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_SECURID] = MechConfig(
-        key_type=None,
+        key_type=CKK_SECURID,
         keygen_mech=CKM_SECURID_KEY_GEN,
         key_sizes=(),
         param_required=True,
@@ -472,7 +475,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_HOTP_KEY_GEN] = MechConfig(
-        key_type=None,
+        key_type=CKK_HOTP,
         keygen_mech=CKM_HOTP_KEY_GEN,
         key_sizes=(),
         expected_flags=CKF_GENERATE,
@@ -480,7 +483,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_HOTP] = MechConfig(
-        key_type=None,
+        key_type=CKK_HOTP,
         keygen_mech=CKM_HOTP_KEY_GEN,
         key_sizes=(),
         param_required=True,
@@ -489,7 +492,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_ACTI_KEY_GEN] = MechConfig(
-        key_type=None,
+        key_type=CKK_ACTI,
         keygen_mech=CKM_ACTI_KEY_GEN,
         key_sizes=(),
         expected_flags=CKF_GENERATE,
@@ -497,7 +500,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_ACTI] = MechConfig(
-        key_type=None,
+        key_type=CKK_ACTI,
         keygen_mech=CKM_ACTI_KEY_GEN,
         key_sizes=(),
         param_required=True,
