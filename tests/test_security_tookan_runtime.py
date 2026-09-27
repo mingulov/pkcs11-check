@@ -7,16 +7,22 @@ from types import SimpleNamespace
 import pytest
 from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_EXTRACTABLE,
+    CKA_KEY_TYPE,
     CKA_SENSITIVE,
     CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_DES3,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_NOT_WRAPPABLE,
     CKR_KEY_UNEXTRACTABLE,
+    CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases.security import test_tookan
 from tests._skip_assert import assert_skips
@@ -118,6 +124,138 @@ def test_key_type_confusion_xfails_generic_wrap_runtime_error(
             monkeypatch,
             CkrAssertionError("Unexpected CK_RV CKR_DEVICE_ERROR", int(CKR_DEVICE_ERROR)),
         )
+
+
+def _run_key_type_confusion_invalid_leg(
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_leg: CkrAssertionError | int,
+    *,
+    encrypt_outcome: bytes | BaseException = b"\xc1" * 8,
+    decrypt_outcome: bytes | BaseException | None = None,
+) -> None:
+    """Drive the §3.2 probe past the valid leg into the invalid-leg verdict.
+
+    The valid AES leg verifies (matching 16-byte material); ``invalid_leg`` is
+    either the refusal raised by the CKK_DES3 unwrap or the accepted handle. An
+    accepted handle reads back a fully proven usable DES3 key.
+    ``decrypt_outcome=None`` echoes the encrypt plaintext (roundtrip match).
+    """
+    monkeypatch.setattr(test_tookan, "gen_aes_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_tookan, "destroy_quietly", lambda *_a: None)
+    reads = iter(
+        [
+            {CKA_VALUE: b"\x11" * 16},
+            {CKA_VALUE: b"\x11" * 16},
+            {
+                CKA_KEY_TYPE: CKK_DES3,
+                CKA_VALUE_LEN: 24,
+                CKA_VALUE: b"\x01" * 24,
+            },
+        ]
+    )
+    monkeypatch.setattr(test_tookan, "read_attributes", lambda *_a, **_k: next(reads))
+    monkeypatch.setattr(test_tookan, "wrap_key", lambda *_a, **_k: b"\x00" * 24)
+    monkeypatch.setattr(test_tookan, "unwrap_key_for_mechanism_roundtrip", lambda *_a, **_k: 2)
+
+    def _unwrap(*_a: object, **_k: object) -> int:
+        if isinstance(invalid_leg, BaseException):
+            raise invalid_leg
+        return int(invalid_leg)
+
+    monkeypatch.setattr(test_tookan, "unwrap_key", _unwrap)
+    seen: list[bytes] = []
+
+    def _encrypt(_raw: object, _sh: int, _key: int, _mech: object, data: bytes) -> bytes:
+        seen.append(data)
+        if isinstance(encrypt_outcome, BaseException):
+            raise encrypt_outcome
+        return encrypt_outcome
+
+    def _decrypt(_raw: object, _sh: int, _key: int, _mech: object, _data: bytes) -> bytes:
+        if isinstance(decrypt_outcome, BaseException):
+            raise decrypt_outcome
+        if decrypt_outcome is not None:
+            return decrypt_outcome
+        return seen[-1]
+
+    monkeypatch.setattr(test_tookan, "encrypt_single", _encrypt)
+    monkeypatch.setattr(test_tookan, "decrypt_single", _decrypt)
+
+    test_tookan.TestKeyTypeConfusionOnUnwrap().test_unwrap_aes_as_des3_rejected(
+        _session("AES_KEY_WRAP", "AES_KEY_GEN", "DES3_ECB"), object()
+    )
+
+
+def test_key_type_confusion_canonical_len_range_rejection_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        test_tookan.pytest,
+        "skip",
+        lambda message: pytest.fail(f"unexpected skip: {message}"),
+    )
+    _run_key_type_confusion_invalid_leg(
+        monkeypatch,
+        CkrAssertionError(
+            "Unexpected CK_RV CKR_WRAPPED_KEY_LEN_RANGE",
+            int(CKR_WRAPPED_KEY_LEN_RANGE),
+        ),
+    )
+
+
+def test_key_type_confusion_alternative_rejection_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(XFailed, match="must be refused"):
+        _run_key_type_confusion_invalid_leg(
+            monkeypatch,
+            CkrAssertionError("Unexpected CK_RV CKR_GENERAL_ERROR", int(CKR_GENERAL_ERROR)),
+        )
+
+
+def test_key_type_confusion_undefined_rv_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(Failed) as ei:
+        _run_key_type_confusion_invalid_leg(
+            monkeypatch,
+            CkrAssertionError("Unexpected CK_RV 0x12345678", 0x12345678),
+        )
+    assert not isinstance(ei.value, XFailed)
+
+
+def test_key_type_confusion_undefined_usability_rv_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The decrypt half of the DES3 usability probe returns an undefined CK_RV:
+    # a return-value-contract violation that must stay FAIL (metadata/HIGH),
+    # recorded nonterminally in place before the accepted-invalid finding --
+    # not downgraded to not_operational XFAIL like a clean defined refusal.
+    with pytest.raises(Failed) as ei:
+        _run_key_type_confusion_invalid_leg(
+            monkeypatch,
+            3,
+            decrypt_outcome=CkrAssertionError("Unexpected CK_RV 0x12345678", 0x12345678),
+        )
+    assert not isinstance(ei.value, XFailed)
+    records = C.get_records()
+    assert [r.reason for r in records] == ["self_contradiction", "accepted_invalid"]
+    assert records[0].outcome == "fail"
+    assert records[0].kind == "metadata"
+    assert records[0].severity == "HIGH"
+    assert records[0].operation == "C_Decrypt"
+    assert records[0].mechanism == "CKM_DES3_ECB"
+    assert records[0].actual_ckr == "0x12345678"
+
+
+def test_key_type_confusion_accepted_handle_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A returned handle is failure-like evidence (a type/length contract
+    # finding), never success -- even with fully proven DES3 usability.
+    with pytest.raises(Failed) as ei:
+        _run_key_type_confusion_invalid_leg(monkeypatch, 3)
+    assert not isinstance(ei.value, XFailed)
 
 
 # --- TestWrapExtraction::test_wrap_decrypt_extraction_attempt --------------

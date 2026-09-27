@@ -46,6 +46,7 @@ legacy ``cleanup()`` / rv-trace setup.
 Output protocol (consumed structurally by the parent classifier):
   ``CKR:0x{rv:08x}``       -- return value of the tested output call
   ``INITIAL_COUNT:`` / ``RETURNED_COUNT:`` / ``GUARD_OVERWRITTEN:`` -- measured sizing effects
+  ``NEEDED:`` -- provider-reported required length behind a CKR_BUFFER_TOO_SMALL retry bound
   ``RETRY_CKR:`` / ``RETRY_LENGTH:`` / ``RETRY_OUTPUT_CORRECT:`` -- retry effects when applicable
   ``SETUP_XFAIL:...``      -- a setup step (Init/keygen/size-query) cleanly failed before the probe
   ``OK``                   -- probe reached its expected point
@@ -938,7 +939,6 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
                         print(f"OVERWRITTEN:{overwritten}")
                         print(f"GUARD_OVERWRITTEN:{overwritten}")
                         print(f"RETURNED_COUNT:{update_len.value}")
-                        print(f"INITIAL_COUNT:{len(plaintext)}")
                         if rv == CKR_OK:
                             print(f"OUTPUT_LENGTH_WITHIN_DECLARED:{int(update_len.value <= 1)}")
                             update_value = bytes(probe.data[: update_len.value])
@@ -955,6 +955,7 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
                             print(f"MATCH:{int(combined == plaintext)}")
                             print(f"FINAL_OK:{int(final_rv == CKR_OK)}")
                         elif rv == CKR_BUFFER_TOO_SMALL:
+                            print(f"NEEDED:{update_len.value}")
                             retry_usable = 1 < update_len.value <= enc_len.value
                             print(f"RETRY_USABLE:{int(retry_usable)}")
                             if retry_usable:
@@ -1083,7 +1084,6 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                     print(f"OVERWRITTEN:{overwritten}")
                     print(f"GUARD_OVERWRITTEN:{overwritten}")
                     print(f"RETURNED_COUNT:{final_len.value}")
-                    print("INITIAL_COUNT:16")
 
                     update_value = bytes(update_buf[: update_len.value])
                     if rv == CKR_OK:
@@ -1093,6 +1093,7 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                         decrypted = decrypt_ciphertext(combined)
                         print(f"MATCH:{int(decrypted == plaintext)}")
                     elif rv == CKR_BUFFER_TOO_SMALL:
+                        print(f"NEEDED:{final_len.value}")
                         retry_usable = 1 < final_len.value <= 64
                         print(f"RETRY_USABLE:{int(retry_usable)}")
                         if retry_usable:
@@ -1204,29 +1205,33 @@ def _aes_cbc_pad_decrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                             print(f"OVERWRITTEN:{overwritten}")
                             print(f"GUARD_OVERWRITTEN:{overwritten}")
                             print(f"RETURNED_COUNT:{final_len.value}")
-                            print(f"INITIAL_COUNT:{len(plaintext) - update_len.value}")
 
                             update_value = bytes(update_buf[: update_len.value])
                             if rv == CKR_OK:
+                                print(f"OUTPUT_LENGTH_WITHIN_DECLARED:{int(final_len.value <= 1)}")
                                 final_value = bytes(probe.data[: final_len.value])
                                 combined = update_value + final_value
                                 print(f"MATCH:{int(combined == plaintext)}")
                             elif rv == CKR_BUFFER_TOO_SMALL:
-                                retry_len = CK_ULONG(len(plaintext))
-                                retry_buf = (ctypes.c_ubyte * retry_len.value)()
-                                retry_rv = raw.C_DecryptFinal(
-                                    sh,
-                                    cast(retry_buf, ctypes.POINTER(ctypes.c_ubyte)),
-                                    byref(retry_len),
-                                )
-                                retry_value = bytes(retry_buf[: retry_len.value])
-                                combined = update_value + retry_value
-                                print(f"RETRY_CKR:0x{retry_rv:08x}")
-                                print(f"RETRY_LEN:{retry_len.value}")
-                                print(f"RETRY_MATCH:{int(combined == plaintext)}")
-                                print(f"RETRY_LENGTH:{retry_len.value}")
-                                retry_correct = retry_rv == CKR_OK and combined == plaintext
-                                print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
+                                print(f"NEEDED:{final_len.value}")
+                                retry_usable = 1 < final_len.value <= 64
+                                print(f"RETRY_USABLE:{int(retry_usable)}")
+                                if retry_usable:
+                                    retry_buf = (ctypes.c_ubyte * final_len.value)()
+                                    retry_len = CK_ULONG(final_len.value)
+                                    retry_rv = raw.C_DecryptFinal(
+                                        sh,
+                                        cast(retry_buf, ctypes.POINTER(ctypes.c_ubyte)),
+                                        byref(retry_len),
+                                    )
+                                    retry_value = bytes(retry_buf[: retry_len.value])
+                                    combined = update_value + retry_value
+                                    print(f"RETRY_CKR:0x{retry_rv:08x}")
+                                    print(f"RETRY_LEN:{retry_len.value}")
+                                    print(f"RETRY_MATCH:{int(combined == plaintext)}")
+                                    print(f"RETRY_LENGTH:{retry_len.value}")
+                                    retry_correct = retry_rv == CKR_OK and combined == plaintext
+                                    print(f"RETRY_OUTPUT_CORRECT:{int(retry_correct)}")
                             print("OK")
     finally:
         if key.value:
