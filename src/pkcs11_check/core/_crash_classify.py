@@ -323,12 +323,117 @@ def _status_from_returncode(returncode: int) -> str:
         return "empty"
     # F-012: no 124 arm. Genuine watchdog exits take the TimeoutExpired path
     # before this mapping is consulted; a bare 124 reaching here has no
-    # watchdog evidence and is an abrupt self-exit like any other code.
+    # watchdog evidence and is an ordinary exit like any other code.
     if returncode < 0:
         return "crashed"
     if sys.platform == "win32" and _is_windows_crash_code(returncode):
         return "crashed"
     return "failed"
+
+
+# Termination kinds a dead test unit can present (P11C-0198-012). Each maps to its
+# own (reason, summary) identity below: a timeout is unresolved attribution, never
+# a crash; signals stay crash evidence.
+_TERMINATION_KINDS = frozenset(
+    {"timeout", "signal", "exception", "external-kill", "abrupt_exit", "exit", "unknown"}
+)
+
+# Kinds that are crash evidence against the module. Every other kind states only
+# that the measurement is missing: loud FAIL/HIGH probe_incomplete with
+# unresolved attribution, never a crash and never a fabricated CKR.
+_CRASH_EVIDENCE_KINDS = frozenset({"signal", "exception", "abrupt_exit"})
+
+
+def _observation_termination_kind(observation: Mapping[str, object] | None) -> str | None:
+    """Return the structured termination kind carried by an observation, if any."""
+    if not isinstance(observation, Mapping):
+        return None
+    termination = observation.get("termination")
+    if not isinstance(termination, Mapping):
+        return None
+    kind = termination.get("kind")
+    return kind if isinstance(kind, str) and kind in _TERMINATION_KINDS else None
+
+
+def _classification_termination_kind(
+    *,
+    returncode: int | None,
+    timed_out: bool,
+    observation: Mapping[str, object] | None,
+) -> str:
+    """Resolve how a dead test unit terminated.
+
+    A runner-owned typed timeout is authoritative: the watchdog observed the hang
+    directly, so it wins over any incidental exit code. Otherwise the structured
+    observation wins over the bare return code; the bare code resolves last, with
+    NTSTATUS detection deliberately platform-independent (a POSIX exit code can
+    never have the top two bits set, so there is no ambiguity to gate on).
+    """
+    if timed_out:
+        return "timeout"
+    obs_kind = _observation_termination_kind(observation)
+    if obs_kind is not None:
+        return obs_kind
+    if returncode is None:
+        return "unknown"
+    if returncode < 0:
+        return "signal"
+    if _is_windows_crash_code(returncode):
+        return "exception"
+    return "exit"
+
+
+def _termination_summary(
+    kind: str,
+    target: str,
+    returncode: int | None,
+    observation: Mapping[str, object] | None,
+) -> str:
+    """One human-facing summary per termination kind; never a crash description
+    for a non-crash kind."""
+    termination: Mapping[str, object] | None = None
+    if isinstance(observation, Mapping):
+        raw = observation.get("termination")
+        termination = raw if isinstance(raw, Mapping) else None
+
+    def _obs_int(key: str) -> int | None:
+        value = termination.get(key) if termination is not None else None
+        return value if isinstance(value, int) else None
+
+    if kind == "timeout":
+        return (
+            f"{target}: process timed out without completing -- completion and "
+            "progress unknown (typed runner timeout)"
+        )
+    if kind == "signal":
+        name: object = termination.get("signal_name") if termination is not None else None
+        if not isinstance(name, str) or not name:
+            fallback = _obs_int("raw_code") if termination is not None else returncode
+            name = _crash_detail_name(fallback)
+        return f"{target}: process crashed with {name}"
+    if kind == "exception":
+        status = _obs_int("windows_status")
+        name = _crash_detail_name(status if status is not None else returncode)
+        return f"{target}: process crashed with Windows exception {name}"
+    if kind == "abrupt_exit":
+        raw = _obs_int("raw_code")
+        code = raw if raw is not None else returncode
+        suffix = f" (exit code {code})" if isinstance(code, int) else ""
+        return f"{target}: process terminated itself from inside the call{suffix} without returning"
+    if kind == "external-kill":
+        return (
+            f"{target}: process killed externally (possible OOM kill or operator "
+            "action) -- completion and progress unknown"
+        )
+    if kind == "exit":
+        raw = _obs_int("raw_code")
+        code = raw if raw is not None else returncode
+        suffix = f" (code {code})" if isinstance(code, int) else ""
+        return (
+            f"{target}: process exited{suffix} without completing -- completion "
+            "and progress unknown"
+        )
+    return f"{target}: process termination unknown -- completion and progress unknown"
 
 
 def crash_classification(
@@ -338,8 +443,21 @@ def crash_classification(
     timed_out: bool = False,
     observation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Build a Classification-shaped dict for a crashed/hung test unit (process is dead, so
-    this is produced runner/report-side, not via classify())."""
+    """Build a Classification-shaped dict for a dead test unit (process is dead, so
+    this is produced runner/report-side, not via classify()).
+
+    The termination kind determines the verdict (P11C-0198-012): signals, Windows
+    exceptions, and abrupt self-termination are ``crash`` evidence; a typed
+    timeout, an external kill, an ordinary exit, and an unknown termination are
+    FAIL/HIGH ``probe_incomplete`` -- the measurement is missing and attribution
+    is unresolved, so the summary never describes them as a crash and no CKR is
+    fabricated. Detail shapes are unchanged (observation / mode / signal): the
+    grouping key derives the termination from them (report/extract.py).
+    """
+    kind = _classification_termination_kind(
+        returncode=returncode, timed_out=timed_out, observation=observation
+    )
+    reason = "crash" if kind in _CRASH_EVIDENCE_KINDS else "probe_incomplete"
     if observation is not None:
         detail: dict[str, object] = {"observation": dict(observation)}
     elif timed_out:
@@ -348,12 +466,12 @@ def crash_classification(
         detail = {"signal": _crash_detail_name(returncode), "returncode": returncode}
     return {
         "schema": 1,
-        "reason": "crash",
+        "reason": reason,
         "outcome": "fail",
         "severity": "HIGH",
         "kind": None,
         "label": target,
-        "summary": f"{target}: process crashed",
+        "summary": _termination_summary(kind, target, returncode, observation),
         "operation": None,
         "mechanism": None,
         "expected_ckr": None,

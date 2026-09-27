@@ -13,23 +13,30 @@ from two places:
 Findings are grouped on a *readable* tuple key - no hashes anywhere - so the
 output stays inspectable. The key is::
 
-    (test_file, reason, kind, mechanism, operation, tuple(expected_ckr or []), actual_ckr)
+    (test_file, reason, kind, mechanism, operation, tuple(expected_ckr or []), actual_ckr,
+     termination)
 
-where ``test_file`` is the file part of the nodeid (``nodeid.split("::", 1)[0]``).
-Crash findings have no nodeid; their ``label`` is the crashing target/file.
+where ``test_file`` is the file part of the nodeid (``nodeid.split("::", 1)[0]``)
+and ``termination`` is the normalized process-termination identity (``""`` when
+the record carries no termination facts, so records without them group exactly
+as before). Crash findings have no nodeid; their ``label`` is the crashing
+target/file.
 """
 
 from __future__ import annotations
 
 import json
 from collections import Counter, OrderedDict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from pkcs11_check.classification import normalize_param
 from pkcs11_check.core.crash_codes import (
     CTYPES_ACCESS_VIOLATION,
+    crash_detail_name,
     ctypes_access_violation_from_stderr,
+    is_windows_crash_code,
 )
 from pkcs11_check.core.report_log import (
     iter_classification_occurrences as _iter_classification_occurrences,
@@ -43,7 +50,67 @@ _MAX_NODEIDS = 5
 _MAX_VECTOR_IDS = 8
 _MAX_PARAMS = 20
 
-GroupKey = tuple[str, str, str | None, str | None, str | None, tuple[str, ...], str | None]
+GroupKey = tuple[str, str, str | None, str | None, str | None, tuple[str, ...], str | None, str]
+
+
+def _structured_termination_identity(termination: Mapping[str, Any]) -> str:
+    """Normalize a ``termination_from_returncode``-shaped mapping to one string.
+
+    Signal and exception identities carry their discriminator (signal name /
+    NTSTATUS name, via the same ``crash_detail_name`` vocabulary the legacy
+    runner shapes use) so SIGSEGV never merges with SIGABRT; other kinds group
+    by kind, with the raw exit code kept for ordinary exits.
+    """
+    kind = termination.get("kind")
+    if not isinstance(kind, str) or not kind:
+        return ""
+    if kind == "signal":
+        name = termination.get("signal_name")
+        return f"signal:{name}" if isinstance(name, str) and name else "signal"
+    if kind == "exception":
+        status = termination.get("windows_status")
+        if isinstance(status, int):
+            return f"exception:{crash_detail_name(status)}"
+        return "exception"
+    if kind == "exit":
+        raw_code = termination.get("raw_code")
+        return f"exit:{raw_code}" if isinstance(raw_code, int) else "exit"
+    return kind
+
+
+def _termination_identity(rec: dict[str, Any]) -> str:
+    """Derive the grouping termination identity from a finding record.
+
+    P11C-0198-012: the structured termination stays in the grouping key, so a
+    timeout is never merged with a crash (or one signal with another). Detail is
+    a pinned wire shape, so this derives from -- never requires -- each shape:
+    in-test ``detail.termination``, runner ``detail.observation.termination``,
+    and the legacy runner ``mode``/``signal``+``returncode`` keys. Records with
+    no termination facts return ``""`` and group exactly as before.
+    """
+    detail = rec.get("detail")
+    if not isinstance(detail, dict):
+        return ""
+    termination: Any = detail.get("termination")
+    if not isinstance(termination, Mapping):
+        observation = detail.get("observation")
+        if isinstance(observation, Mapping):
+            termination = observation.get("termination")
+    if isinstance(termination, Mapping):
+        return _structured_termination_identity(termination)
+    if detail.get("mode") == "timeout":
+        return "timeout"
+    if "signal" in detail and "returncode" in detail:
+        code = detail.get("returncode")
+        name = detail.get("signal")
+        if isinstance(code, int) and code < 0:
+            return f"signal:{name}"
+        if isinstance(code, int) and is_windows_crash_code(code):
+            return f"exception:{name}"
+        if code is None:
+            return "unknown"
+        return f"exit:{code}"
+    return ""
 
 
 def _classification_from_teardown_finalize(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -107,6 +174,7 @@ def _group_key(rec: dict[str, Any], test_file: str) -> GroupKey:
         rec.get("operation"),
         expected_tuple,
         rec.get("actual_ckr"),
+        _termination_identity(rec),
     )
 
 

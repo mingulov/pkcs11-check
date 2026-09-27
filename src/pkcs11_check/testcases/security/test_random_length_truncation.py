@@ -19,7 +19,9 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import fail_as
 from pkcs11_check.compliance import ComplianceLevel, note
+from pkcs11_check.core.process_observation import termination_from_returncode
 from pkcs11_check.raw.types_std import (
     CKR_ARGUMENTS_BAD,
     CKR_DATA_LEN_RANGE,
@@ -30,7 +32,10 @@ from pkcs11_check.raw.types_std import (
     CKR_RANDOM_SEED_NOT_SUPPORTED,
 )
 from pkcs11_check.testcases._probes.runner import run_probe
-from pkcs11_check.testcases._subprocess_preamble import pin_from_config
+from pkcs11_check.testcases._subprocess_preamble import (
+    SUBPROCESS_TIMEOUT_MARKER,
+    pin_from_config,
+)
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
 from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
@@ -66,6 +71,43 @@ _SEEDRAND_REJECT_RVSS = (
     CKR_RANDOM_NO_RNG,
     CKR_RANDOM_SEED_NOT_SUPPORTED,
 )
+
+# Timeout: a truncating module measures ~0s; a correctly honoring module could
+# take significant time filling 4 GiB. 180 s is generous for an honoring module
+# while keeping slow CI bounded.
+_PROBE_TIMEOUT_S = 180
+
+
+def fail_probe_incomplete_on_typed_timeout(
+    *,
+    context: str,
+    returncode: int,
+    stderr: str,
+    timeout_s: int,
+) -> None:
+    """Fail ``probe_incomplete`` when a 4 GiB probe hit its typed timeout.
+
+    P11C-0198-018: PKCS #11 specifies no completion bound for producing 4 GiB
+    of random data, so a timeout can mean the provider is slowly honoring the
+    request -- completion/progress is unknown, which is unresolved attribution,
+    not a crash, hang, narrowing, or availability defect. Only the typed
+    ``SUBPROCESS_TIMEOUT_MARKER`` on stderr triggers this; every other
+    termination kind returns quietly so the generic ``assert_subprocess_no_crash``
+    classifier still owns those verdicts.
+    """
+    if SUBPROCESS_TIMEOUT_MARKER not in stderr:
+        return
+    termination = termination_from_returncode(returncode, timed_out=True, stderr=stderr)
+    fail_as(
+        "probe_incomplete",
+        label=context,
+        summary=(
+            f"{context}: probe timed out after {timeout_s} s without returning -- "
+            "completion/progress unknown (PKCS #11 sets no completion bound for "
+            "this request; a slow provider may still be honoring it)"
+        ),
+        detail={"termination": termination, "timeout_s": timeout_s},
+    )
 
 
 def _parse_prefixed_int(output: str, prefix: str) -> int:
@@ -110,12 +152,15 @@ class TestGenerateRandomLengthTruncation:
                 "length": _OVERSIZE_LEN,
             },
             pin=pin_from_config(p11_config),
-            # Timeout: a truncating module measures ~0s; a correctly honoring module could
-            # take significant time filling 4 GiB.  180 s is generous for an honoring
-            # module while keeping slow CI bounded.
-            timeout=180,
+            timeout=_PROBE_TIMEOUT_S,
             coverage="session",
             interface=getattr(p11_config, "interface", "auto"),
+        )
+        fail_probe_incomplete_on_typed_timeout(
+            context=f"C_GenerateRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
+            returncode=result.returncode,
+            stderr=result.stderr,
+            timeout_s=_PROBE_TIMEOUT_S,
         )
         assert_subprocess_no_crash(
             result.returncode,
@@ -188,9 +233,15 @@ class TestSeedRandomLengthTruncation:
                 "length": _OVERSIZE_LEN,
             },
             pin=pin_from_config(p11_config),
-            timeout=180,
+            timeout=_PROBE_TIMEOUT_S,
             coverage="session",
             interface=getattr(p11_config, "interface", "auto"),
+        )
+        fail_probe_incomplete_on_typed_timeout(
+            context=f"C_SeedRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
+            returncode=result.returncode,
+            stderr=result.stderr,
+            timeout_s=_PROBE_TIMEOUT_S,
         )
         assert_subprocess_no_crash(
             result.returncode,

@@ -22,6 +22,7 @@ from pkcs11_check.classification import (
     raise_for_record,
     record,
 )
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
@@ -234,11 +235,17 @@ _PROTOCOL_PREFIXES = (
     "CHILD_SIGNAL:",
     "CHILD_EXIT:",
 )
+#: Bare terminal marker (exact match, no payload): the parent killed a hung child.
+_CHILD_TIMEOUT_MARKER = "CHILD_TIMEOUT"
+# NOTE: CHILD_PHASE progress lines are deliberately NOT protocol markers. They are
+# human-readable evidence for timeout attribution (see _last_child_phase) and never
+# disturb marker-order validation.
 _FORK_MARKER_ORDERS = (
     ("SETUP_XFAIL",),
     ("CHILD_FATAL", "CHILD_EXIT"),
     ("CHILD_EXC", "CHILD_EXIT"),
     ("CHILD_SIGNAL",),
+    ("CHILD_TIMEOUT",),
     ("CHILD_EXIT",),
 )
 _SESSION_MARKER_ORDERS = (
@@ -248,7 +255,9 @@ _SESSION_MARKER_ORDERS = (
     ("PARENT_LABEL", "CHILD_EXC", "CHILD_EXIT"),
     ("PARENT_LABEL", "CHILD_FOUND", "CHILD_EXIT"),
     ("PARENT_LABEL", "CHILD_SIGNAL"),
+    ("PARENT_LABEL", "CHILD_TIMEOUT"),
     ("PARENT_LABEL", "CHILD_FOUND", "CHILD_SIGNAL"),
+    ("PARENT_LABEL", "CHILD_FOUND", "CHILD_TIMEOUT"),
     ("PARENT_LABEL", "CHILD_FOUND", "CHILD_EXC", "CHILD_EXIT"),
 )
 
@@ -336,6 +345,9 @@ def _marker_order(lines: list[str]) -> list[str]:
     """Return protocol marker kinds in their producer-emitted order."""
     order: list[str] = []
     for line in lines:
+        if line == _CHILD_TIMEOUT_MARKER:
+            order.append(_CHILD_TIMEOUT_MARKER)
+            continue
         for prefix in _PROTOCOL_PREFIXES:
             if line.startswith(prefix):
                 order.append(prefix.removesuffix(":"))
@@ -358,6 +370,7 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
     exception_lines = [line for line in lines if line.startswith("CHILD_EXC:")]
     found_lines = [line for line in lines if line.startswith("CHILD_FOUND:")]
     signal_lines = [line for line in lines if line.startswith("CHILD_SIGNAL:")]
+    timeout_lines = [line for line in lines if line == _CHILD_TIMEOUT_MARKER]
     exit_lines = [line for line in lines if line.startswith("CHILD_EXIT:")]
 
     setup_markers = setup_lines + setup_exc_lines
@@ -414,7 +427,10 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
 
     if (
         not setup_markers
-        and sum(bool(group) for group in (fatal_lines, exception_lines, found_lines, signal_lines))
+        and sum(
+            bool(group)
+            for group in (fatal_lines, exception_lines, found_lines, signal_lines, timeout_lines)
+        )
         > 1
     ):
         result.harness.append(
@@ -445,7 +461,36 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
         result.child_signal = None
         result.child_exit = None
 
-    if len(fatal_lines) == 1 and not (exception_lines or found_lines or signal_lines):
+    if len(timeout_lines) > 1:
+        result.harness.append(
+            _protocol_error(
+                context, f"{context}: duplicate child timeout markers", "duplicate_child_timeout"
+            )
+        )
+    if timeout_lines and exit_lines:
+        result.harness.append(
+            _protocol_error(
+                context,
+                f"{context}: child emitted conflicting terminal status (timeout with exit status)",
+                "conflicting_child_status",
+            )
+        )
+        result.child_signal = None
+        result.child_exit = None
+    if timeout_lines and signal_lines:
+        result.harness.append(
+            _protocol_error(
+                context,
+                f"{context}: child emitted conflicting terminal status (timeout with signal)",
+                "conflicting_child_status",
+            )
+        )
+        result.child_signal = None
+        result.child_exit = None
+
+    if len(fatal_lines) == 1 and not (
+        exception_lines or found_lines or signal_lines or timeout_lines
+    ):
         payload = fatal_lines[0].removeprefix("CHILD_FATAL:")
         match = _FATAL_MARKER.fullmatch(payload)
         rv = _parse_ckr_marker(f"0x{match.group('rv')}") if match is not None else None
@@ -461,19 +506,12 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
             result.outcome = "fatal"
             result.phase = match.group("phase")
             result.expected_exit = _FORK_REFUSAL_EXITS[result.phase]
-            if result.child_exit == result.expected_exit and result.child_signal is None:
-                result.provider.append(
-                    _provider_refusal_record(
-                        context=context,
-                        phase=result.phase,
-                        rv=rv,
-                        operation={"Init": "C_Initialize", "Slot": "C_GetSlotList"}[result.phase],
-                        marker="CHILD_FATAL",
-                        summary=f"{context}: child refused {payload}",
-                        child_exit=result.child_exit,
-                    )
-                )
-            elif result.child_exit is not None:
+            # P11C-0198-017: a matched (CHILD_FATAL, expected exit) pair is an
+            # inherited-child observation owned by the parent test, never a provider
+            # record. A missing status stays deferred for the outer check below.
+            if result.child_exit is not None and (
+                result.child_exit != result.expected_exit or result.child_signal is not None
+            ):
                 result.harness.append(
                     _protocol_error(
                         context,
@@ -483,7 +521,9 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
                     )
                 )
 
-    if len(exception_lines) == 1 and not (fatal_lines or found_lines or signal_lines):
+    if len(exception_lines) == 1 and not (
+        fatal_lines or found_lines or signal_lines or timeout_lines
+    ):
         result.outcome = "exception"
         result.expected_exit = _FORK_EXCEPTION_EXIT
         if result.child_exit is not None and result.child_exit != result.expected_exit:
@@ -495,17 +535,9 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
                     "child_exception_exit_pair",
                 )
             )
-        elif result.child_exit == result.expected_exit:
-            result.harness.append(
-                _protocol_error(
-                    context,
-                    f"{context}: child reported an in-process exception: {exception_lines[0]}",
-                    "child_exception",
-                )
-            )
-        elif result.child_exit is None:
-            # Missing status is deferred until normal outer completion.
-            pass
+        # A matched (CHILD_EXC, exit 1) pair -- or one still awaiting its status -- is an
+        # inherited-child observation owned by the parent test (P11C-0198-017), not a
+        # protocol defect. Only a mismatched exit pair above stays harness-loud.
 
     if len(fatal_lines) > 1:
         result.harness.append(
@@ -530,7 +562,13 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
         )
 
     if result.child_signal is not None and not setup_markers:
-        if fatal_lines or exception_lines or found_lines or result.child_exit is not None:
+        if (
+            fatal_lines
+            or exception_lines
+            or found_lines
+            or timeout_lines
+            or result.child_exit is not None
+        ):
             result.harness.append(
                 _protocol_error(
                     context,
@@ -543,10 +581,17 @@ def _parse_fork_status(stdout: str, *, context: str) -> _ParsedSafetyProtocol:
             result.outcome = "signal"
 
     if (
+        len(timeout_lines) == 1
+        and not setup_markers
+        and not (fatal_lines or exception_lines or found_lines or signal_lines or exit_lines)
+    ):
+        result.outcome = "timeout"
+
+    if (
         result.child_exit is not None
         and result.child_exit != 0
         and result.outcome is None
-        and not (fatal_lines or exception_lines or found_lines or signal_lines)
+        and not (fatal_lines or exception_lines or found_lines or signal_lines or timeout_lines)
     ):
         result.harness.append(
             _protocol_error(
@@ -597,6 +642,7 @@ def _parse_isolation_protocol(
     label_lines = [line for line in lines if line.startswith("PARENT_LABEL:")]
     found_lines = [line for line in lines if line.startswith("CHILD_FOUND:")]
     signal_lines = [line for line in lines if line.startswith("CHILD_SIGNAL:")]
+    timeout_lines = [line for line in lines if line == _CHILD_TIMEOUT_MARKER]
     exit_lines = [line for line in lines if line.startswith("CHILD_EXIT:")]
     marker_order = _marker_order(lines)
     order_valid = _is_order_prefix(marker_order, _SESSION_MARKER_ORDERS)
@@ -694,6 +740,32 @@ def _parse_isolation_protocol(
         )
         result.child_signal = None
         result.child_exit = None
+    if len(timeout_lines) > 1:
+        result.harness.append(
+            _protocol_error(
+                context, f"{context}: duplicate child timeout markers", "duplicate_child_timeout"
+            )
+        )
+    if timeout_lines and exit_lines:
+        result.harness.append(
+            _protocol_error(
+                context,
+                f"{context}: child emitted conflicting terminal status (timeout with exit status)",
+                "conflicting_child_status",
+            )
+        )
+        result.child_signal = None
+        result.child_exit = None
+    if timeout_lines and signal_lines:
+        result.harness.append(
+            _protocol_error(
+                context,
+                f"{context}: child emitted conflicting terminal status (timeout with signal)",
+                "conflicting_child_status",
+            )
+        )
+        result.child_signal = None
+        result.child_exit = None
 
     if len(label_lines) > 1:
         result.harness.append(
@@ -709,18 +781,28 @@ def _parse_isolation_protocol(
         )
 
     outcome_groups = sum(
-        bool(group) for group in (fatal_lines, exception_lines, found_lines, signal_lines)
+        bool(group)
+        for group in (fatal_lines, exception_lines, found_lines, signal_lines, timeout_lines)
     )
     found_signal_transition = (
-        len(found_lines) == 1 and len(signal_lines) == 1 and not (fatal_lines or exception_lines)
+        len(found_lines) == 1
+        and len(signal_lines) == 1
+        and not (fatal_lines or exception_lines or timeout_lines)
+    )
+    found_timeout_transition = (
+        len(found_lines) == 1
+        and len(timeout_lines) == 1
+        and not (fatal_lines or exception_lines or signal_lines)
     )
     found_exception_transition = (
-        len(found_lines) == 1 and len(exception_lines) == 1 and not (fatal_lines or signal_lines)
+        len(found_lines) == 1
+        and len(exception_lines) == 1
+        and not (fatal_lines or signal_lines or timeout_lines)
     )
     if (
         not setup_markers
         and outcome_groups > 1
-        and not (found_signal_transition or found_exception_transition)
+        and not (found_signal_transition or found_timeout_transition or found_exception_transition)
     ):
         result.harness.append(
             _protocol_error(
@@ -842,7 +924,10 @@ def _parse_isolation_protocol(
                 )
 
     if len(found_lines) == 1 and (
-        outcome_groups == 1 or found_signal_transition or found_exception_transition
+        outcome_groups == 1
+        or found_signal_transition
+        or found_timeout_transition
+        or found_exception_transition
     ):
         found = _parse_decimal_marker(found_lines[0].removeprefix("CHILD_FOUND:"))
         if found is None:
@@ -903,10 +988,18 @@ def _parse_isolation_protocol(
         result.outcome = "signal"
 
     if (
+        len(timeout_lines) == 1
+        and (outcome_groups == 1 or found_timeout_transition)
+        and not setup_markers
+        and not (signal_lines or exit_lines)
+    ):
+        result.outcome = "timeout"
+
+    if (
         result.child_exit is not None
         and result.child_exit != 0
         and result.outcome is None
-        and not (fatal_lines or exception_lines or found_lines or signal_lines)
+        and not (fatal_lines or exception_lines or found_lines or signal_lines or timeout_lines)
     ):
         result.harness.append(
             _protocol_error(
@@ -942,6 +1035,64 @@ def _parse_isolation_protocol(
     return result
 
 
+def _last_child_phase(stdout: str) -> str | None:
+    """Return the last CHILD_PHASE step a child reported, if any."""
+    phases = [
+        line.removeprefix("CHILD_PHASE:")
+        for line in stdout.splitlines()
+        if line.startswith("CHILD_PHASE:")
+    ]
+    return phases[-1] if phases else None
+
+
+def _first_marker_line(stdout: str, prefix: str) -> str | None:
+    """Return the first transcript line with *prefix*, if any (display use only)."""
+    for line in stdout.splitlines():
+        if line.startswith(prefix):
+            return line
+    return None
+
+
+_FORK_OBSERVATION_SUFFIX = (
+    "robustness observation only; PKCS#11 gives no portability guarantee "
+    "after a multithreaded fork (P11C-0198-017)"
+)
+
+
+def _fork_observation_message(parsed: _ParsedSafetyProtocol, stdout: str) -> str | None:
+    """Describe an inherited-child disposition as a non-verdict observation.
+
+    Returns None when the transcript is not a mappable child disposition (setup
+    refusal, malformed protocol, or a missing measurement), leaving those to the
+    test's regular verdict branches. The message carries no conformance claim: even
+    a clean survival is reported, never passed.
+    """
+    context = "fork-after-initialize"
+    if parsed.outcome == "signal" and parsed.child_signal is not None:
+        return (
+            f"{context}: inherited child killed by signal {parsed.child_signal} "
+            f"({_FORK_OBSERVATION_SUFFIX})"
+        )
+    if parsed.outcome == "timeout":
+        phase = _last_child_phase(stdout) or "unknown phase"
+        return f"{context}: inherited child timed out during {phase} ({_FORK_OBSERVATION_SUFFIX})"
+    if parsed.outcome == "exception" and parsed.child_exit is not None:
+        detail = _first_marker_line(stdout, "CHILD_EXC:") or "in-process exception"
+        return (
+            f"{context}: inherited child reported an in-process exception "
+            f"({detail}; {_FORK_OBSERVATION_SUFFIX})"
+        )
+    if parsed.outcome == "fatal" and parsed.phase is not None and parsed.child_exit is not None:
+        detail = _first_marker_line(stdout, "CHILD_FATAL:") or parsed.phase
+        return f"{context}: inherited child refused {detail} ({_FORK_OBSERVATION_SUFFIX})"
+    if parsed.outcome is None and parsed.child_exit == 0 and parsed.child_signal is None:
+        return (
+            f"{context}: inherited child survived finalize/reinitialize/enumerate "
+            f"({_FORK_OBSERVATION_SUFFIX}; no conformance claim)"
+        )
+    return None
+
+
 class TestPostFinalize:
     """Test behavior after C_Finalize - must not crash (task 7.3)."""
 
@@ -957,31 +1108,31 @@ class TestPostFinalize:
 
 
 class TestForkSafety:
-    """Test fork behavior - child must not crash or deadlock (task 7.4)."""
+    """Fork behavior as a POSIX robustness observation (P11C-0198-017).
+
+    PKCS #11 gives no portability guarantee for an inherited child after a
+    multithreaded fork, so NO inherited-child disposition is provider evidence here:
+    each one is reported as a compliance-note observation plus a skip, and this test
+    records nothing provider-side for the child. Genuine pre-fork/parent-side facts
+    keep their verdicts (setup refusal, outer crash/timeout, malformed protocol,
+    missing measurement).
+    """
 
     @requires_fork
     @pytest.mark.slow
     def test_fork_after_initialize(self, p11_config: Any) -> None:
-        """Fork after C_Initialize - child reinitializes."""
+        """Fork after C_Initialize - observe the inherited child without verdict."""
         rc, stdout, stderr = _run_probe(p11_config, "fork_after_initialize", timeout=15)
         output = f"{stdout}\n{stderr}"
         context = "fork-after-initialize"
         parsed = _parse_fork_status(stdout, context=context)
         for error in parsed.harness:
             record(error)
-        nested_crash: Classification | None = None
-        if parsed.outcome == "signal" and parsed.child_signal is not None:
-            nested_crash = _provider_record(
-                context=context,
-                reason="crash",
-                kind=None,
-                summary=(
-                    f"Fork child was killed by signal {parsed.child_signal} "
-                    f"(CHILD_SIGNAL): {output}"
-                ),
-                detail={"child_signal": parsed.child_signal},
-            )
-            record(nested_crash)
+        observation = _fork_observation_message(parsed, stdout)
+        if observation is not None and not parsed.harness and not parsed.setup_valid:
+            # Noted before the outer disposition check so the observation survives an
+            # outer crash; a note never affects the verdict.
+            note(observation, ComplianceLevel.EXTENDED, reference="P11C-0198-017")
 
         _termination, explicit_harness = assert_subprocess_completed(
             rc,
@@ -989,24 +1140,16 @@ class TestForkSafety:
             stderr,
             context="fork-after-initialize (incomplete protocol)",
         )
-        if nested_crash is not None:
-            raise_for_record(nested_crash)
-            return
         if explicit_harness:
             return
         if parsed.harness:
             raise_for_record(parsed.harness[0])
-        if parsed.provider:
-            raise_for_record(parsed.provider[0])
-        if parsed.outcome == "exception":
-            error = _protocol_record(
-                context,
-                f"{context}: child reported an in-process exception "
-                f"(incomplete protocol): {output}",
-                "child_exception",
-            )
-            record(error)
-            raise_for_record(error)
+        if parsed.setup_valid:
+            if parsed.provider:
+                raise_for_record(parsed.provider[0])
+            return
+        if observation is not None:
+            pytest.skip(observation)
         if parsed.outcome == "fatal":
             # A refusal marker with no exit is incomplete; the parser deliberately
             # deferred this check so a real outer crash is never relabeled.
@@ -1055,29 +1198,18 @@ class TestSessionObjectProcessIsolation:
     process MUST NOT see them.
     """
 
-    @requires_fork
     def test_session_object_not_visible_to_other_process(self, p11_config: Any) -> None:
         """Parent creates a session object; subprocess MUST NOT find it.
 
-        Steps:
-        1. Subprocess A opens a session, creates a session-scope (CKA_TOKEN=False)
-           data object with a unique label, prints the label, sleeps until
-           told to exit (so the session — and thus the object — stays alive).
-           Actually we can't easily coordinate two long-lived subprocesses
-           from a single pytest, so instead use a single subprocess that
-           verifies the negative property internally:
-           - Initialize, open session, create session object with label X,
-             then within the SAME process (different session — visible) and
-             via a fork+re-Initialize child (different application — not
-             visible).
-        2. Compare results.
-
-        Skips when the module doesn't support fork-after-initialize cleanly. Those modules
-        need additional setup that the subprocess test framework already
-        documents.
+        The probe initializes, opens a session, creates a session-scope
+        (CKA_TOKEN=False) data object with a unique label, then spawns a
+        fresh-interpreter child (a different application per PKCS#11 v3.2) that
+        Initializes the module from a clean image and searches for the label.
+        P11C-0198-017: the child is spawned, never forked, so the isolation
+        premise holds on every platform, including Windows.
         """
         # 90s timeout: daemon-backed modules may need cold-start headroom
-        # for post-fork re-Initialize. Real-world fork+TPM2_Startup
+        # for the spawned child's Initialize. Real-world TPM2_Startup
         # can exceed 30s on busy systems.
         rc, stdout, stderr = _run_probe(
             p11_config,
@@ -1104,6 +1236,14 @@ class TestSessionObjectProcessIsolation:
             )
             record(error)
 
+        if parsed.outcome == "timeout" and parsed.label_count == 0:
+            error = _protocol_record(
+                context,
+                f"{context}: missing parent label (incomplete protocol)",
+                "missing_parent_label",
+            )
+            record(error)
+
         nested_signal: Classification | None = None
         if parsed.outcome == "signal" and parsed.child_signal is not None:
             nested_signal = _provider_record(
@@ -1118,11 +1258,29 @@ class TestSessionObjectProcessIsolation:
             )
             record(nested_signal)
 
+        nested_timeout: Classification | None = None
+        if parsed.outcome == "timeout":
+            phase = _last_child_phase(stdout) or "unknown phase"
+            nested_timeout = _provider_record(
+                context=context,
+                reason="crash",
+                kind=None,
+                summary=(
+                    "SECURITY: child process timed out during "
+                    f"{phase} of cross-process isolation:\n{output}"
+                ),
+                detail={"child_timeout": True, "phase": phase},
+            )
+            record(nested_timeout)
+
         _termination, explicit_harness = assert_subprocess_completed(
             rc, stdout, stderr, context=context
         )
         if nested_signal is not None:
             raise_for_record(nested_signal)
+            return
+        if nested_timeout is not None:
+            raise_for_record(nested_timeout)
             return
 
         if explicit_harness:
@@ -1173,10 +1331,8 @@ class TestSessionObjectProcessIsolation:
                 record(error)
                 raise_for_record(error)
             if parsed.found > 0 and parsed.provider:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
                 note(
-                    "Cross-process session object was visible after child re-initialization; "
+                    "Cross-process session object was visible after child initialization; "
                     "PKCS#11 v3.2 requires process/application isolation.",
                     ComplianceLevel.CRITICAL,
                     reference="PKCS#11 v3.2",

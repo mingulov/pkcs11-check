@@ -170,6 +170,152 @@ def test_crash_with_per_test_target_recovers_nodeid(tmp_path: Path) -> None:
     assert crash_grp["nodeids"] == ["tests/test_overflow.py::test_boom"]
 
 
+def _runner_record(
+    label: str,
+    *,
+    reason: str,
+    summary: str,
+    detail: dict[str, object] | None,
+) -> dict[str, object]:
+    """A runner/report-side finding shaped like crash_classification output."""
+    return {
+        "schema": 1,
+        "reason": reason,
+        "outcome": "fail",
+        "severity": "HIGH",
+        "kind": None,
+        "label": label,
+        "summary": summary,
+        "operation": None,
+        "mechanism": None,
+        "expected_ckr": None,
+        "actual_ckr": None,
+        "spec_ref": "",
+        "source": None,
+        "vector_id": None,
+        "detail": detail,
+    }
+
+
+def test_timeout_and_exit_records_do_not_merge(tmp_path: Path) -> None:
+    """F14/P11C-0198-012: a timeout and an ordinary exit share every 7-tuple
+    element (same file, same probe_incomplete reason) -- only the structured
+    termination in the grouping key keeps them apart."""
+    path = tmp_path / "report.jsonl"
+    path.write_text("", encoding="utf-8")
+    timeout = _runner_record(
+        "tests/test_overflow.py",
+        reason="probe_incomplete",
+        summary="tests/test_overflow.py: process timed out without completing",
+        detail={"mode": "timeout"},
+    )
+    exited = _runner_record(
+        "tests/test_overflow.py",
+        reason="probe_incomplete",
+        summary="tests/test_overflow.py: process exited without completing",
+        detail={"signal": "exit code 1", "returncode": 1},
+    )
+    # The split must come from the termination element alone, never the reason.
+    assert timeout["reason"] == exited["reason"]
+    groups = extract_groups(path, crashes=[timeout, exited])
+    assert len(groups) == 2
+    assert {g["reason"] for g in groups} == {"probe_incomplete"}
+
+
+def test_distinct_termination_kinds_split_crash_groups(tmp_path: Path) -> None:
+    """F14/P11C-0198-012: SIGSEGV and SIGABRT in one file are different
+    terminations and must not share a group."""
+    path = tmp_path / "report.jsonl"
+    path.write_text("", encoding="utf-8")
+    segv = _crash("tests/test_overflow.py")
+    abrt = _crash("tests/test_overflow.py")
+    abrt["detail"] = {"signal": "SIGABRT", "returncode": -6}
+    groups = extract_groups(path, crashes=[segv, abrt])
+    assert len(groups) == 2
+
+
+def test_identical_terminations_still_merge(tmp_path: Path) -> None:
+    """F14 loudness pin: the termination key only splits what differs -- two
+    identical SIGSEGV observations still form one group with count 2."""
+    path = tmp_path / "report.jsonl"
+    path.write_text("", encoding="utf-8")
+    groups = extract_groups(
+        path, crashes=[_crash("tests/test_overflow.py"), _crash("tests/test_overflow.py")]
+    )
+    assert len(groups) == 1
+    assert groups[0]["count"] == 2
+
+
+def test_observation_termination_splits_runner_groups(tmp_path: Path) -> None:
+    """F14/P11C-0198-012: observation-carried terminations (signal vs Windows
+    exception) group apart even when every other key element matches."""
+    from pkcs11_check.core.process_observation import build_process_observation
+
+    path = tmp_path / "report.jsonl"
+    path.write_text("", encoding="utf-8")
+    signal_obs = build_process_observation("t", "unit", 0, -11)
+    exc_obs = build_process_observation("t", "unit", 0, 0xC0000005, platform="win32")
+    segv = _runner_record(
+        "tests/test_overflow.py",
+        reason="crash",
+        summary="tests/test_overflow.py: process crashed with SIGSEGV",
+        detail={"observation": signal_obs},
+    )
+    exc = _runner_record(
+        "tests/test_overflow.py",
+        reason="crash",
+        summary="tests/test_overflow.py: process crashed with Windows exception",
+        detail={"observation": exc_obs},
+    )
+    groups = extract_groups(path, crashes=[segv, exc])
+    assert len(groups) == 2
+
+
+def test_in_test_termination_detail_splits_groups(tmp_path: Path) -> None:
+    """F14/P11C-0198-012: in-test records carrying detail.termination (the
+    assert_subprocess_completed shape) group by termination kind."""
+    path = tmp_path / "report.jsonl"
+    sigterm = _classification(
+        reason="crash",
+        kind=None,
+        operation=None,
+        mechanism=None,
+        expected_ckr=None,
+        actual_ckr=None,
+        detail={
+            "termination": {
+                "kind": "signal",
+                "raw_code": -11,
+                "signal_name": "SIGSEGV",
+                "windows_status": None,
+            }
+        },
+    )
+    timeoutterm = _classification(
+        reason="crash",
+        kind=None,
+        operation=None,
+        mechanism=None,
+        expected_ckr=None,
+        actual_ckr=None,
+        detail={
+            "termination": {
+                "kind": "timeout",
+                "raw_code": 124,
+                "signal_name": None,
+                "windows_status": None,
+            }
+        },
+    )
+    lines = [
+        _test_report("tests/test_overflow.py::test_a", [sigterm]),
+        _test_report("tests/test_overflow.py::test_b", [timeoutterm]),
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    groups = extract_groups(path, crashes=[])
+    assert len(groups) == 2
+
+
 def test_crash_with_file_target_retains_uncertainty(tmp_path: Path) -> None:
     """F-037: a file-level crash names no culprit -- do not invent one."""
     path = tmp_path / "report.jsonl"

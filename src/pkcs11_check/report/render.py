@@ -180,8 +180,8 @@ def _crash_section(groups: list[dict[str, Any]]) -> list[str]:
     for g in crashes:
         target = str(g.get("test_file") or g.get("summary") or "?")
         summ = summarize_crash(str(g.get("summary", "process crashed")))
-        # runner-side crashes summarize to "<target>: process crashed" - drop the
-        # leading target so it is not printed twice.
+        # runner-side crash summaries are "<target>: ..." per-kind descriptions --
+        # drop the leading target so it is not printed twice.
         if summ.startswith(target):
             summ = summ[len(target) :].lstrip(": ").strip() or "process crashed"
         detail_raw = g.get("detail")
