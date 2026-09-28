@@ -11,6 +11,10 @@ from pkcs11_check.raw.types_std import (
     CKF_GENERATE,
     CKF_SIGN,
     CKF_VERIFY,
+    CKK_BLAKE2B_160_HMAC,
+    CKK_BLAKE2B_256_HMAC,
+    CKK_BLAKE2B_384_HMAC,
+    CKK_BLAKE2B_512_HMAC,
     CKK_GENERIC_SECRET,
     CKK_SHA3_224_HMAC,
     CKK_SHA3_256_HMAC,
@@ -656,7 +660,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     # ---------------------------------------------------------------------------
 
     registry[CKM_BLAKE2B_160_HMAC] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_160_HMAC,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -665,7 +669,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_160_HMAC_GENERAL] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_160_HMAC,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
         param_required=True,
@@ -676,7 +680,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_160_KEY_GEN] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_160_HMAC,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -685,7 +689,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_160_KEY_DERIVE] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_160_HMAC,
         keygen_mech=CKM_BLAKE2B_160_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -694,7 +698,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_256_HMAC] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_256_HMAC,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -703,7 +707,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_256_HMAC_GENERAL] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_256_HMAC,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
         param_required=True,
@@ -714,7 +718,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_256_KEY_GEN] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_256_HMAC,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -723,7 +727,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_256_KEY_DERIVE] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_256_HMAC,
         keygen_mech=CKM_BLAKE2B_256_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -732,7 +736,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_384_HMAC] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_384_HMAC,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -741,7 +745,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_384_HMAC_GENERAL] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_384_HMAC,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
         param_required=True,
@@ -752,7 +756,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_384_KEY_GEN] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_384_HMAC,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -761,7 +765,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_384_KEY_DERIVE] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_384_HMAC,
         keygen_mech=CKM_BLAKE2B_384_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -770,7 +774,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_512_HMAC] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_512_HMAC,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -779,7 +783,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_512_HMAC_GENERAL] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_512_HMAC,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
         param_required=True,
@@ -790,7 +794,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_512_KEY_GEN] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_512_HMAC,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,
@@ -799,7 +803,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
     )
 
     registry[CKM_BLAKE2B_512_KEY_DERIVE] = MechConfig(
-        key_type=CKK_GENERIC_SECRET,
+        key_type=CKK_BLAKE2B_512_HMAC,
         keygen_mech=CKM_BLAKE2B_512_KEY_GEN,
         key_sizes=(),
         keygen_recipe=_sym,

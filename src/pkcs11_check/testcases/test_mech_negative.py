@@ -56,7 +56,26 @@ from pkcs11_check.raw.types_std import (
     CKA_VERIFY,
     CKA_WRAP,
     CKK_AES,
+    CKK_BLAKE2B_160_HMAC,
+    CKK_BLAKE2B_256_HMAC,
+    CKK_BLAKE2B_384_HMAC,
+    CKK_BLAKE2B_512_HMAC,
     CKK_GENERIC_SECRET,
+    CKK_MD5_HMAC,
+    CKK_RIPEMD128_HMAC,
+    CKK_RIPEMD160_HMAC,
+    CKK_SHA3_224_HMAC,
+    CKK_SHA3_256_HMAC,
+    CKK_SHA3_384_HMAC,
+    CKK_SHA3_512_HMAC,
+    CKK_SHA224_HMAC,
+    CKK_SHA256_HMAC,
+    CKK_SHA384_HMAC,
+    CKK_SHA512_224_HMAC,
+    CKK_SHA512_256_HMAC,
+    CKK_SHA512_HMAC,
+    CKK_SHA512_T_HMAC,
+    CKK_SHA_1_HMAC,
     CKM,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP_KWP,
@@ -318,6 +337,34 @@ def _claim_false_or_xfail(rs: RawSession, key: int, flag: int, label: str) -> No
         )
 
 
+# Typed HMAC key types. Generic-secret keys are legal HMAC operation keys, so
+# they cannot serve as the "wrong" key type for entries carrying one of these.
+_TYPED_HMAC_KEY_TYPES = frozenset(
+    int(ckk)
+    for ckk in (
+        CKK_MD5_HMAC,
+        CKK_SHA_1_HMAC,
+        CKK_RIPEMD128_HMAC,
+        CKK_RIPEMD160_HMAC,
+        CKK_SHA256_HMAC,
+        CKK_SHA384_HMAC,
+        CKK_SHA512_HMAC,
+        CKK_SHA224_HMAC,
+        CKK_SHA3_224_HMAC,
+        CKK_SHA3_256_HMAC,
+        CKK_SHA3_384_HMAC,
+        CKK_SHA3_512_HMAC,
+        CKK_BLAKE2B_160_HMAC,
+        CKK_BLAKE2B_256_HMAC,
+        CKK_BLAKE2B_384_HMAC,
+        CKK_BLAKE2B_512_HMAC,
+        CKK_SHA512_224_HMAC,
+        CKK_SHA512_256_HMAC,
+        CKK_SHA512_T_HMAC,
+    )
+)
+
+
 def _wrong_secret_key_type(entry: MechEntry) -> int:
     config = entry.config
     assert config is not None
@@ -329,6 +376,10 @@ def _wrong_secret_key_type(entry: MechEntry) -> int:
     ):
         pytest.skip(f"{entry.mech_name}: generic-secret key type may be valid")
     if expected_key_type == int(CKK_GENERIC_SECRET):
+        return int(CKK_AES)
+    if expected_key_type in _TYPED_HMAC_KEY_TYPES:
+        # P11C-005: a generic-secret key is a legal HMAC operation key, so the
+        # wrong-key negative must use a key type HMAC must reject.
         return int(CKK_AES)
     return int(CKK_GENERIC_SECRET)
 
