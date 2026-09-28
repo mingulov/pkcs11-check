@@ -3,9 +3,9 @@
 The ``app_mutex_callbacks`` / ``both_callbacks_and_os_locking`` / partial
 probes hand the module application mutex callbacks and treat the resulting
 RV as positive initialization evidence -- so the callbacks must implement
-valid mutex semantics: CreateMutex returns a usable non-NULL handle, the
-handle actually locks, and misuse draws the specified mutex CKRs instead of
-dereferencing garbage.
+real mutex semantics: CreateMutex returns a usable non-NULL handle backed
+by a real threading.Lock, the handle actually locks, and misuse draws the
+specified mutex CKRs instead of dereferencing garbage.
 
 Each test drives a real probe handler with a fake library that exercises
 the callbacks the way a mutex-using module would, during C_Initialize.
