@@ -8,7 +8,8 @@ rejection itself is covered by a dedicated malformed-parameter negative.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import ctypes
+from collections.abc import Callable, Generator
 from types import SimpleNamespace
 from typing import Any
 
@@ -88,32 +89,55 @@ def test_invalid_short_tweak_vector_is_not_skipped(
     assert len(reached) == 1
 
 
-def test_short_tweak_negative_passes_on_clean_reject(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The dedicated short-tweak negative passes on a clean rejection and
-    sends the exact short tweak bytes."""
+def _tweak_len(mech_param: Any) -> int:
+    return int(mech_param.ck.ulParameterLen)
 
-    def _reject(*args: Any, **kwargs: Any) -> bytes:
+
+def _control_ok_short_reject(tweak_len: int) -> Callable[..., bytes]:
+    """Encrypt double: the 16-byte control succeeds, the short tweak rejects."""
+
+    def _run(*args: Any, **kwargs: Any) -> bytes:
         mech_param = kwargs.get("mech_param")
         assert mech_param is not None
-        import ctypes
-
-        assert int(mech_param.ck.ulParameterLen) == 15
-        assert bytes(ctypes.string_at(mech_param.ck.pParameter, 15)) == b"\x05" * 15
+        length = _tweak_len(mech_param)
+        if length == 16:
+            return b"\x00" * 16
+        assert length == tweak_len
+        assert bytes(ctypes.string_at(mech_param.ck.pParameter, length)) == b"\x05" * length
         raise CkrAssertionError("rejected", int(CKR_MECHANISM_PARAM_INVALID))
 
+    return _run
+
+
+@pytest.mark.parametrize("tweak_len", [8, 15])
+def test_short_tweak_negative_passes_on_clean_reject(
+    monkeypatch: pytest.MonkeyPatch, tweak_len: int
+) -> None:
+    """Each covered short-tweak length passes on a clean rejection, sends the
+    exact short tweak bytes, and runs the valid-tweak control first."""
+
+    seen: list[int] = []
+    runner = _control_ok_short_reject(tweak_len)
+
+    def _record(*args: Any, **kwargs: Any) -> bytes:
+        mech_param = kwargs.get("mech_param")
+        assert mech_param is not None
+        seen.append(_tweak_len(mech_param))
+        return runner(*args, **kwargs)
+
     monkeypatch.setattr(xts, "import_secret_key_negotiated", lambda *_a, **_k: 11)
-    monkeypatch.setattr(xts, "encrypt_single", _reject)
+    monkeypatch.setattr(xts, "encrypt_single", _record)
     monkeypatch.setattr(xts, "destroy_quietly", lambda *_a, **_k: None)
 
-    xts.test_aes_xts_short_tweak_rejected(_rs())
+    xts.test_aes_xts_short_tweak_rejected(_rs(), tweak_len)
 
+    assert seen == [16, tweak_len]
     assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
 
 
+@pytest.mark.parametrize("tweak_len", [8, 15])
 def test_short_tweak_negative_fails_on_accept(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tweak_len: int
 ) -> None:
     """A module accepting a short tweak fails accepted_invalid."""
 
@@ -125,10 +149,53 @@ def test_short_tweak_negative_fails_on_accept(
     monkeypatch.setattr(xts, "destroy_quietly", lambda *_a, **_k: None)
 
     with pytest.raises(pytest.fail.Exception):
-        xts.test_aes_xts_short_tweak_rejected(_rs())
+        xts.test_aes_xts_short_tweak_rejected(_rs(), tweak_len)
 
     (rec,) = C.get_records()
     assert rec.reason == "accepted_invalid"
     assert rec.outcome == "fail"
     assert rec.expected_ckr == ["CKR_MECHANISM_PARAM_INVALID"]
     assert rec.actual_ckr == "CKR_OK"
+
+
+def test_short_tweak_negative_uses_distinct_key_halves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The setup key must not have identical XTS halves: some modules reject
+    degenerate keys, which would xfail setup and hide the tweak verdict."""
+
+    seen_keys: list[bytes] = []
+
+    def _capture_import(*args: Any, **kwargs: Any) -> int:
+        seen_keys.append(bytes(args[2]))
+        return 11
+
+    monkeypatch.setattr(xts, "import_secret_key_negotiated", _capture_import)
+    monkeypatch.setattr(xts, "encrypt_single", _control_ok_short_reject(15))
+    monkeypatch.setattr(xts, "destroy_quietly", lambda *_a, **_k: None)
+
+    xts.test_aes_xts_short_tweak_rejected(_rs(), 15)
+
+    (key_bytes,) = seen_keys
+    assert len(key_bytes) == 64
+    assert key_bytes[:32] != key_bytes[32:]
+
+
+def test_short_tweak_negative_control_failure_is_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing valid-tweak control reports not_operational, never a
+    rejection verdict: the setup is unproven, not the tweak accepted."""
+
+    def _control_fails(*args: Any, **kwargs: Any) -> bytes:
+        raise CkrAssertionError("control rejected", int(CKR_MECHANISM_PARAM_INVALID))
+
+    monkeypatch.setattr(xts, "import_secret_key_negotiated", lambda *_a, **_k: 11)
+    monkeypatch.setattr(xts, "encrypt_single", _control_fails)
+    monkeypatch.setattr(xts, "destroy_quietly", lambda *_a, **_k: None)
+
+    with pytest.raises(pytest.xfail.Exception):
+        xts.test_aes_xts_short_tweak_rejected(_rs(), 15)
+
+    (rec,) = C.get_records()
+    assert rec.reason == "not_operational"
