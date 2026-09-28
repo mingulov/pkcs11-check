@@ -160,20 +160,15 @@ def _load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """
     all_vecs = load_acvp_vectors("SLH-DSA-keyGen-FIPS205")
     result = []
-    # Take 2 vectors per parameter set (24 total = 12 sets * 2)
-    param_set_counts: dict[str, int] = {}
+    # Full take: 120 vectors (10 per set x 12 sets). Measured ~0.5-6 s per
+    # 2-vector set on SLH-DSA-capable lanes, so the full file stays within
+    # the established heavy-file budget (see _load_siggen_vectors).
     for vec in all_vecs:
         group = vec["group"]
         param_name = group.get("parameterSet", "")
         param_set = _PARAM_SET_MAP.get(param_name)
         if param_set is None:
             continue
-
-        # Track count per parameter set
-        current_count = param_set_counts.get(param_name, 0)
-        if current_count >= 2:
-            continue
-        param_set_counts[param_name] = current_count + 1
 
         exp = vec["expected"]
         sk = exp.get("sk", "")
@@ -197,8 +192,8 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigVer ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigVer-FIPS205")
     result = []
-    # Take 4 vectors per parameter set (48 total = 12 sets * 4)
-    param_set_counts: dict[str, int] = {}
+    # Full take: 504 vectors (42 per set x 12 sets). Verifies cost ~1-12 ms
+    # each on SLH-DSA-capable lanes, so the full set adds seconds at most.
     for vec in all_vecs:
         inp = vec["input"]
         exp = vec["expected"]
@@ -207,12 +202,6 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
         param_set = _PARAM_SET_MAP.get(param_name)
         if param_set is None:
             continue
-
-        # Track count per parameter set
-        current_count = param_set_counts.get(param_name, 0)
-        if current_count >= 4:
-            continue
-        param_set_counts[param_name] = current_count + 1
 
         pk = inp.get("pk", "")
         msg = inp.get("message", "")
@@ -240,13 +229,13 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigGen ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigGen-FIPS205")
     result = []
-    # SLH-DSA signing is very slow, so keep minimal: the first vector per
-    # parameter set, plus the first vector of the opposite context shape, so
-    # both mechanism-parameter representations (NULL and explicit context)
-    # stay covered no matter how the corpus orders its tests. PreHash groups
-    # are skipped: their messages are digests for the hash-sign mechanisms,
-    # not pure CKM_SLH_DSA inputs.
-    taken_shapes: dict[str, set[bool]] = {}
+    # Full take: 336 pure vectors (28 per set x 12 sets, both context shapes
+    # throughout). PreHash groups are skipped: their messages are digests for
+    # the hash-sign mechanisms, not pure CKM_SLH_DSA inputs. Cost is bounded
+    # by measurement: round-0198 lanes ran the sampled file in ~11-43 s
+    # (kryoptic/bouncyhsm), scaling linearly to ~2.5-9 min full -- the same
+    # order as the established heavy files, which the shard balancer
+    # isolates (see DEFAULT_HEAVY_BASENAMES).
     for vec in all_vecs:
         inp = vec["input"]
         group = vec["group"]
@@ -263,10 +252,6 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
             continue
 
         ctx_hex = inp.get("context", "")
-        shapes = taken_shapes.setdefault(param_name, set())
-        if bool(ctx_hex) in shapes:
-            continue
-        shapes.add(bool(ctx_hex))
 
         merged: dict[str, Any] = {
             "param_set": param_set,
