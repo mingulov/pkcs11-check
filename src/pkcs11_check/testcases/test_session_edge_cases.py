@@ -91,10 +91,16 @@ class _CloseAllPending:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
+def _session_info(raw: Any, session: int) -> tuple[int, CK_SESSION_INFO]:
+    """Return the (CK_RV, info) of C_GetSessionInfo without asserting on it."""
+    info = CK_SESSION_INFO()
+    return int(raw.C_GetSessionInfo(session, byref(info))), info
+
+
 def _session_info_rv(raw: Any, session: int) -> int:
     """Return the raw CK_RV of C_GetSessionInfo without asserting on it."""
-    info = CK_SESSION_INFO()
-    return int(raw.C_GetSessionInfo(session, byref(info)))
+    rv, _ = _session_info(raw, session)
+    return rv
 
 
 def _close_all_refusal_pending(rv: int) -> _CloseAllPending:
@@ -688,7 +694,7 @@ class TestCKNotifyCallback:
                 ),
                 detail={"handle": sh.value, "fixture_handle": int(rs.sh)},
             )
-        info_rv = _session_info_rv(rs.raw, sh.value)
+        info_rv, info = _session_info(rs.raw, sh.value)
         if info_rv != CKR_OK:
             close_session_quietly(rs.raw, sh.value)
             fail_as(
@@ -704,16 +710,59 @@ class TestCKNotifyCallback:
                 ),
                 detail={"handle": sh.value},
             )
+        info_slot = int(info.slotID)
+        if info_slot != int(rs.slot_id):
+            close_session_quietly(rs.raw, sh.value)
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_GetSessionInfo",
+                expected=(f"slot {int(rs.slot_id)}",),
+                actual=f"slot {info_slot}",
+                summary=(
+                    f"{label}: new handle {sh.value} reports slot {info_slot}, "
+                    f"expected slot {int(rs.slot_id)} from C_OpenSession"
+                ),
+                detail={
+                    "handle": sh.value,
+                    "slot_id": info_slot,
+                    "expected_slot_id": int(rs.slot_id),
+                },
+            )
+        info_flags = int(info.flags)
+        if (info_flags & flags) != flags:
+            close_session_quietly(rs.raw, sh.value)
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_GetSessionInfo",
+                expected=(f"flags 0x{flags:08x}",),
+                actual=f"flags 0x{info_flags:08x}",
+                summary=(
+                    f"{label}: new handle {sh.value} reports flags "
+                    f"0x{info_flags:08x}, expected requested flags 0x{flags:08x}"
+                ),
+                detail={
+                    "handle": sh.value,
+                    "flags": info_flags,
+                    "expected_flags": flags,
+                },
+            )
+        close_rv = rs.raw.C_CloseSession(sh.value)
         if matrix_case["notify"]:
             # Invocation itself is optional, but every delivered call must
             # identify the new session and echo the supplied app pointer
             # (ctypes delivers CK_VOID_PTR as the address int, or None).
+            # Validated after the close completes so callbacks delivered
+            # during C_CloseSession are covered too; the close has already
+            # run, so there is nothing left to clean up on this path.
             expected_app: int | None = (
                 None if app_arg is None else int(ctypes.cast(app_arg, ctypes.c_void_p).value or 0)
             )
             for session, _event, application in calls:
                 if session != sh.value or application != expected_app:
-                    close_session_quietly(rs.raw, sh.value)
                     fail_as(
                         "self_contradiction",
                         kind="lifecycle",
@@ -731,7 +780,6 @@ class TestCKNotifyCallback:
                             "expected_app": expected_app,
                         },
                     )
-        close_rv = rs.raw.C_CloseSession(sh.value)
         if close_rv != CKR_OK:
             fail_as(
                 "self_contradiction",
@@ -743,6 +791,39 @@ class TestCKNotifyCallback:
                 summary=(
                     f"{label}: C_CloseSession({sh.value}) returned "
                     f"{ckr_name(close_rv)} for the session C_OpenSession just opened"
+                ),
+                detail={"handle": sh.value},
+            )
+        dead_rv = _session_info_rv(rs.raw, sh.value)
+        if dead_rv == CKR_OK:
+            _fail_session_info(
+                kind="lifecycle",
+                label=label,
+                actual=dead_rv,
+                summary=(
+                    f"{label}: closed handle {sh.value} still answers "
+                    "C_GetSessionInfo after C_CloseSession claimed CKR_OK"
+                ),
+                detail={"handle": sh.value},
+            )
+        if dead_rv != CKR_SESSION_HANDLE_INVALID:
+            if is_standard_ckr(dead_rv) or is_vendor_defined_ckr(dead_rv):
+                _xfail_session_info(
+                    label=label,
+                    actual=dead_rv,
+                    summary=(
+                        f"{label}: closed handle {sh.value} returned "
+                        f"{ckr_name(dead_rv)} instead of CKR_SESSION_HANDLE_INVALID"
+                    ),
+                    detail={"handle": sh.value},
+                )
+            _fail_session_info(
+                kind="metadata",
+                label=label,
+                actual=dead_rv,
+                summary=(
+                    f"{label}: closed handle {sh.value} returned undefined "
+                    f"CK_RV {ckr_name(dead_rv)} after C_CloseSession claimed CKR_OK"
                 ),
                 detail={"handle": sh.value},
             )
