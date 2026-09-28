@@ -104,7 +104,7 @@ def test_explicit_iv_row_fails_when_control_unwraps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An explicit-IV blob that unwraps under the default IV fails
-    wrong_result: integrity binding is broken."""
+    accepted_invalid: integrity binding is broken."""
     _stub_key_setup(monkeypatch)
     calls = iter([b"D" * 24, b"E" * 24])
     monkeypatch.setattr(wrap, "wrap_key", lambda *_a, **_k: next(calls))
@@ -114,5 +114,5 @@ def test_explicit_iv_row_fails_when_control_unwraps(
         wrap.TestMechWrapRoundtrip().test_aes_key_wrap_explicit_iv_roundtrip(_rs(), object())
 
     (rec,) = C.get_records()
-    assert rec.reason == "wrong_result"
+    assert rec.reason == "accepted_invalid"
     assert rec.outcome == "fail"

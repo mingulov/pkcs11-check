@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm_wrap, mech_ctr, mech_gcm_wrap
@@ -63,6 +62,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_DEVICE_ERROR,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
@@ -73,12 +74,15 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_SIZE_RANGE,
     CKR_WRAPPING_KEY_TYPE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._capability_claims import claim_refusal_passes
 from pkcs11_check.testcases.conftest import (
+    reject_or_classify,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
@@ -92,6 +96,17 @@ _AES_KEY_TYPE: int = int(CKK_AES)
 # mean the default IV A6A6A6A6A6A6A6A6; this value is deliberately different
 # so an honored IV always produces a distinct blob.
 _AES_KEY_WRAP_EXPLICIT_IV = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+
+# Wrong-IV unwrap rejects: an explicit-IV blob opened under the default IV is
+# an integrity failure, the same family as a malformed wrapped blob (mirrors
+# the malformed-blob set used by the registry unwrap negatives).
+_WRONG_IV_BLOB_REJECT_RVS = (
+    CKR_WRAPPED_KEY_LEN_RANGE,
+    CKR_WRAPPED_KEY_INVALID,
+    CKR_ENCRYPTED_DATA_LEN_RANGE,
+    CKR_ENCRYPTED_DATA_INVALID,
+    CKR_ARGUMENTS_BAD,
+)
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.wrap]
 
@@ -844,6 +859,7 @@ class TestMechWrapRoundtrip:
 
             # Negative control: the explicit-IV blob must not unwrap under the
             # default IV. Any success here means the module ignores the KW IV.
+            control_exc: AssertionError | None = None
             try:
                 control_key = unwrap_key_for_mechanism_roundtrip(
                     rs,
@@ -855,18 +871,17 @@ class TestMechWrapRoundtrip:
                     mech_param=None,
                     purpose="AES_KEY_WRAP explicit-IV blob under default IV",
                 )
-            except AssertionError:
-                pass
-            else:
-                classify(
-                    "wrong_result",
-                    kind="crypto",
-                    label="AES_KEY_WRAP:explicit-IV blob default-IV unwrap rejection",
-                    operation="C_UnwrapKey",
-                    mechanism="CKM_AES_KEY_WRAP",
-                    summary="explicit-IV blob unwrapped under the default IV "
-                    "-- module ignores the KW IV",
-                )
+            except AssertionError as caught:
+                control_exc = caught
+            if control_exc is None and control_key != 0:
+                destroy_quietly(rs.raw, rs.sh, control_key)
+                control_key = 0
+            reject_or_classify(
+                control_exc,
+                _WRONG_IV_BLOB_REJECT_RVS,
+                label="AES_KEY_WRAP:explicit-IV blob under default IV",
+                kind="crypto",
+            )
         finally:
             for handle in (target_key, unwrapped_key, control_key, wrap_handle):
                 if handle != 0:
