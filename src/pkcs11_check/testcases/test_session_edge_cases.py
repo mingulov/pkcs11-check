@@ -24,7 +24,13 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_SESSION_INFO,
@@ -44,6 +50,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_SESSION_CLOSED,
+    CKR_SESSION_COUNT,
     CKR_SESSION_HANDLE_INVALID,
     CKU_USER,
 )
@@ -644,10 +651,14 @@ class TestCKNotifyCallback:
         sh = CK_SESSION_HANDLE(0)
         rv = rs.raw.C_OpenSession(rs.slot_id, flags, app_arg, notify, byref(sh))
         if rv == CKR_OK:
-            close_session_quietly(rs.raw, sh.value)
+            assert sh.value != 0, (
+                "C_OpenSession callback matrix row returned CKR_OK with a null handle"
+            )
+            expect_rv(rs.raw.C_CloseSession(sh.value), CKR_OK)
         else:
-            # Some modules limit concurrent sessions -- acceptable
-            ckr = ckr_name(rv)
-            assert "SESSION_COUNT" in ckr or "PARALLEL" in ckr, (
-                f"C_OpenSession callback matrix row failed unexpectedly: {ckr}"
+            # Only a session-count refusal is acceptable: CKF_SERIAL_SESSION
+            # IS set, so CKR_SESSION_PARALLEL_NOT_SUPPORTED (or any other RV)
+            # is a real flag-handling bug, not a limit.
+            assert rv in (CKR_SESSION_COUNT,), (
+                f"C_OpenSession callback matrix row failed unexpectedly: {ckr_name(rv)}"
             )
