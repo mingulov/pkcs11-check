@@ -220,11 +220,42 @@ def _wellformed_oid_contents(contents: bytes) -> bool:
     return start
 
 
+def _minimal_twos_complement(contents: bytes) -> bool:
+    """Whether INTEGER/ENUMERATED contents are nonempty and minimal."""
+    if not contents:
+        return False
+    if len(contents) == 1:
+        return True
+    if contents[0] == 0x00:
+        return (contents[1] & 0x80) != 0
+    if contents[0] == 0xFF:
+        return (contents[1] & 0x80) != 0x80
+    return True
+
+
+def _wellformed_bit_string(contents: bytes) -> bool:
+    """Whether BIT STRING contents carry a valid unused-bit count with zeroed
+    trailing bits."""
+    if not contents or contents[0] > 7:
+        return False
+    unused = contents[0]
+    return unused == 0 or (contents[-1] & ((1 << unused) - 1)) == 0
+
+
+# Universal tag numbers whose constructed bit must be set (SEQUENCE, SET and
+# the always-constructed EXTERNAL / EMBEDDED PDV). Every other universal tag
+# is primitive-only in DER, including all string types; non-universal classes
+# keep the bit free.
+_CONSTRUCTED_UNIVERSAL = frozenset({8, 11, 16, 17})
+
+
 def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
     """End offset of one well-formed TLV at ``at``, or None.
 
-    Single-byte tags with minimal lengths; NULL must be empty; OIDs must be
-    well-formed; constructed values must hold complete, recursively
+    Single-byte tags with minimal lengths. Universal tags obey their DER
+    encoding rules (constructed-bit direction, no EOC in definite length,
+    BOOLEAN/INTEGER/ENUMERATED/BIT STRING content shapes, empty NULL,
+    well-formed OIDs); constructed values must hold complete, recursively
     well-formed children. Other primitive contents are opaque bytes. Depth
     is capped: parameters never nest legitimately, so deep nesting is
     treated as malformed rather than risking runaway recursion.
@@ -238,10 +269,29 @@ def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
     if voff + vlen > end:
         return None
     tag = der[at]
-    if tag == 0x05:  # NULL: empty contents only
-        return voff + vlen if vlen == 0 else None
-    if tag == 0x06:  # OID: well-formed subidentifiers
-        return voff + vlen if _wellformed_oid_contents(der[voff : voff + vlen]) else None
+    contents = der[voff : voff + vlen]
+    if (tag & 0xC0) == 0:  # universal class: encoding rules apply
+        number = tag & 0x1F
+        constructed = (tag & 0x20) != 0
+        if tag == 0x00:  # EOC has no place in definite length
+            return None
+        if constructed != (number in _CONSTRUCTED_UNIVERSAL):
+            return None
+        if number == 0x01:  # BOOLEAN: one canonical octet
+            if contents not in (b"\x00", b"\xff"):
+                return None
+        elif number in (0x02, 0x0A):  # INTEGER, ENUMERATED
+            if not _minimal_twos_complement(contents):
+                return None
+        elif number == 0x03:  # BIT STRING
+            if not _wellformed_bit_string(contents):
+                return None
+        elif number == 0x05:  # NULL: empty contents only
+            if vlen != 0:
+                return None
+        elif number == 0x06:  # OID: well-formed subidentifiers
+            if not _wellformed_oid_contents(contents):
+                return None
     if tag & 0x20:  # constructed: complete children, recursively
         pos = voff
         while pos < voff + vlen:
