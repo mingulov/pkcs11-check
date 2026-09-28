@@ -8,7 +8,7 @@ from typing import Any, NoReturn
 import pytest
 
 from pkcs11_check.classification import classify, set_mechanism, set_params
-from pkcs11_check.raw.pack import mech_bytes, mech_ccm
+from pkcs11_check.raw.pack import mech_bytes, mech_ccm, mech_gcm
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -665,7 +665,9 @@ _AES_GMAC_VECTORS = _load_flat("aes_gmac_test.json")
 
 
 @pytest.mark.parametrize("vec_id,vec", _AES_GMAC_VECTORS, ids=[v[0] for v in _AES_GMAC_VECTORS])
-def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
+def test_aes_gmac(
+    p11_module_session: Any, p11_interface_version: str, vec_id: str, vec: dict[str, Any]
+) -> None:
     """AES-GMAC (authentication-only GCM) tag verification from Wycheproof vectors.
 
     GMAC is GCM with empty plaintext - authenticates AAD only. Verifies the
@@ -711,6 +713,12 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
             vector_id=vec.get("_vector_id"),
         )
 
+    gmac_param = (
+        mech_bytes(CKM_AES_GMAC, iv)
+        if p11_interface_version == "2.40"
+        else mech_gcm(CKM_AES_GMAC, iv, aad=None, tag_bits=len(tag_expected) * 8)
+    )
+
     try:
         verified = verify_single(
             rs.raw,
@@ -719,7 +727,7 @@ def test_aes_gmac(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> 
             CKM_AES_GMAC,
             msg,
             tag_expected,
-            mech_param=mech_bytes(CKM_AES_GMAC, iv),
+            mech_param=gmac_param,
         )
     except CkrAssertionError as exc:
         if result == "valid":

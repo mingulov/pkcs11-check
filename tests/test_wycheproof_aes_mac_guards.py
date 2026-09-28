@@ -294,7 +294,7 @@ def test_gmac_invalid_vector_accepted_is_reported(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
 
     with pytest.raises(pytest.fail.Exception, match="accepted invalid tag"):
-        aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+        aes.test_aes_gmac(_AesSession("AES_GMAC"), "2.40", vec_id, vec)
 
 
 def test_gmac_valid_vector_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -304,7 +304,7 @@ def test_gmac_valid_vector_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(aes, "verify_single", lambda *_a, **_k: True)
     monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
 
-    aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+    aes.test_aes_gmac(_AesSession("AES_GMAC"), "2.40", vec_id, vec)
 
 
 def test_gmac_valid_vector_rejected_fails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -315,7 +315,7 @@ def test_gmac_valid_vector_rejected_fails(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
 
     with pytest.raises(pytest.fail.Exception, match="valid GMAC vector"):
-        aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+        aes.test_aes_gmac(_AesSession("AES_GMAC"), "2.40", vec_id, vec)
 
 
 def test_gmac_invalid_expected_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -330,7 +330,7 @@ def test_gmac_invalid_expected_reject_passes(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr(aes, "destroy_quietly", lambda *_a: None)
 
-    aes.test_aes_gmac(_AesSession("AES_GMAC"), vec_id, vec)
+    aes.test_aes_gmac(_AesSession("AES_GMAC"), "2.40", vec_id, vec)
 
 
 # --- AES-CCM (Task 2f) ---
