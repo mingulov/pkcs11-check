@@ -8,6 +8,7 @@ Based on OASIS PKCS#11 conventions for function output.
 from __future__ import annotations
 
 import ctypes
+import hashlib
 from ctypes import byref
 from typing import Any
 
@@ -334,6 +335,16 @@ class TestRandomBufferSizes:
         assert len(generate_random(rs.raw, rs.sh, 4096)) == 4096
 
 
+def _assert_digest_matches_reference(produced: bytes, msg: bytes) -> None:
+    """Compare produced SHA256 bytes against the hashlib reference digest."""
+    expected = hashlib.sha256(msg).digest()
+    assert produced == expected, (
+        f"SHA256 digest mismatch: module output {produced.hex()} != "
+        f"reference {expected.hex()} -- size checks alone cannot catch "
+        f"state corruption or wrong output"
+    )
+
+
 class TestOutputBufferEdgeCases:
     """Output-buffer edge cases the existing input-size tests skip.
 
@@ -389,6 +400,7 @@ class TestOutputBufferEdgeCases:
             f"CKR_BUFFER_TOO_SMALL"
         )
         assert out_len.value == 32
+        _assert_digest_matches_reference(bytes(out_buf)[: out_len.value], msg)
 
     def test_digest_final_preserves_state_across_multiple_retries(
         self, p11_raw_session: Any
@@ -431,6 +443,7 @@ class TestOutputBufferEdgeCases:
             f"After 3 retries, correct-size C_DigestFinal returned 0x{rv:08x} — "
             f"state was not preserved"
         )
+        _assert_digest_matches_reference(bytes(out_buf)[: out_len.value], msg)
 
     def test_digest_final_probe_null_buffer_returns_size(self, p11_raw_session: Any) -> None:
         """C_DigestFinal(NULL pBuffer, &pulSize) must populate pulSize.
@@ -467,6 +480,7 @@ class TestOutputBufferEdgeCases:
         assert rv == CKR_OK, (
             f"After NULL-buffer probe, real C_DigestFinal returned 0x{rv:08x} — state was lost"
         )
+        _assert_digest_matches_reference(bytes(out_buf)[: out_len.value], msg)
 
     def test_digest_final_with_oversize_buffer_writes_actual_size(
         self, p11_raw_session: Any
@@ -493,6 +507,7 @@ class TestOutputBufferEdgeCases:
             f"With oversize buffer, pulSize must reflect actual written bytes (32); "
             f"got {oversize_len.value}"
         )
+        _assert_digest_matches_reference(bytes(oversize_buf)[: oversize_len.value], msg)
 
     def test_sign_final_buffer_too_small_then_correct(self, p11_raw_session: Any) -> None:
         """C_SignFinal with too-small buffer → BUFFER_TOO_SMALL, retry → OK.

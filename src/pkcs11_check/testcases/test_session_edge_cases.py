@@ -566,6 +566,13 @@ class TestSessionEdgeRegressions:
 # Need CKA_VALUE_LEN for the generate key test
 from pkcs11_check.raw.types_std import CKA_VALUE_LEN  # noqa: E402
 
+_OPEN_SESSION_MATRIX: dict[str, dict[str, bool]] = {
+    "null-null": {"notify": False, "app_data": False},
+    "null-data": {"notify": False, "app_data": True},
+    "callback-null": {"notify": True, "app_data": False},
+    "callback-data": {"notify": True, "app_data": True},
+}
+
 
 class TestCKNotifyCallback:
     """Test that C_OpenSession accepts CK_NOTIFY callback parameter.
@@ -597,4 +604,50 @@ class TestCKNotifyCallback:
             ckr = ckr_name(rv)
             assert "SESSION_COUNT" in ckr or "PARALLEL" in ckr, (
                 f"C_OpenSession with null CK_NOTIFY failed unexpectedly: {ckr}"
+            )
+
+    @pytest.mark.parametrize(
+        "matrix_case",
+        list(_OPEN_SESSION_MATRIX.values()),
+        ids=list(_OPEN_SESSION_MATRIX),
+    )
+    def test_open_session_callback_matrix(
+        self, p11_raw_session: Any, matrix_case: dict[str, bool]
+    ) -> None:
+        """Every callback/app-data combination opens (or hits session limits).
+
+        The callback always returns CKR_OK; modules must accept the
+        combination without error and must never crash on it.
+        """
+        import ctypes
+
+        from pkcs11_check.raw.types_std import (
+            CK_NOTIFY,
+            CK_SESSION_HANDLE,
+            CKF_RW_SESSION,
+            CKF_SERIAL_SESSION,
+            CKR_OK,
+        )
+
+        rs = p11_raw_session
+        flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+
+        calls: list[tuple[int, int, Any]] = []
+
+        def _notify(session: int, event: int, application: Any) -> int:
+            calls.append((session, event, application))
+            return int(CKR_OK)
+
+        notify = CK_NOTIFY(_notify) if matrix_case["notify"] else CK_NOTIFY()
+        app_data = ctypes.c_ulong(0xA5A5A5A5)
+        app_arg: Any = byref(app_data) if matrix_case["app_data"] else None
+        sh = CK_SESSION_HANDLE(0)
+        rv = rs.raw.C_OpenSession(rs.slot_id, flags, app_arg, notify, byref(sh))
+        if rv == CKR_OK:
+            close_session_quietly(rs.raw, sh.value)
+        else:
+            # Some modules limit concurrent sessions -- acceptable
+            ckr = ckr_name(rv)
+            assert "SESSION_COUNT" in ckr or "PARALLEL" in ckr, (
+                f"C_OpenSession callback matrix row failed unexpectedly: {ckr}"
             )
