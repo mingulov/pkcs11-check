@@ -33,12 +33,15 @@ from pkcs11_check.raw.types_std import (
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
+    CKF_HKDF_SALT_KEY,
     CKK_GENERIC_SECRET,
     CKK_HKDF,
     CKM_HKDF_DATA,
     CKM_HKDF_DERIVE,
     CKM_HKDF_KEY_GEN,
     CKM_SHA256,
+    CKM_SHA256_HMAC,
+    CKM_SHA512,
     CKO_DATA,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
@@ -58,6 +61,7 @@ from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_
 from pkcs11_check.testcases.conftest import (
     IMPORT_STORAGE_SHAPE_REJECTS,
     assert_correct,
+    classify_negative_rv,
     import_secret_key_negotiated,
     is_known_error,
     xfail_if_known_ckr,
@@ -199,10 +203,27 @@ def _create_hkdf_data_base_or_xfail(rs: Any) -> int:
     return handle
 
 
-def _derive_hkdf_data_or_xfail(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
+def _derive_hkdf_data_or_xfail(
+    rs: Any,
+    base_key: int,
+    salt: bytes | None,
+    info: bytes | None,
+    *,
+    hash_mech: Any = None,
+    salt_type: int | None = None,
+    salt_key: int = 0,
+) -> int:
     """Run C_DeriveKey, xfail only the established HKDF derive refusals."""
     try:
-        handle = _hkdf_data_derive(rs, base_key, salt, info)
+        handle = _hkdf_data_derive(
+            rs,
+            base_key,
+            salt,
+            info,
+            hash_mech=hash_mech,
+            salt_type=salt_type,
+            salt_key=salt_key,
+        )
     except CkrAssertionError as exc:
         if exc.rv not in _DERIVE_ERROR_RVS:
             raise
@@ -365,7 +386,16 @@ def _hkdf_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
     )
 
 
-def _hkdf_data_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
+def _hkdf_data_derive(
+    rs: Any,
+    base_key: int,
+    salt: bytes | None,
+    info: bytes | None,
+    *,
+    hash_mech: Any = None,
+    salt_type: int | None = None,
+    salt_key: int = 0,
+) -> int:
     """Derive a CKO_DATA object via CKM_HKDF_DATA."""
     return derive_key(
         rs.raw,
@@ -379,10 +409,12 @@ def _hkdf_data_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
         },
         mech_param=mech_hkdf(
             CKM_HKDF_DATA,
-            hash_mech=CKM_SHA256,
+            hash_mech=CKM_SHA256 if hash_mech is None else hash_mech,
             extract=True,
             expand=True,
+            salt_type=salt_type,
             salt=salt,
+            salt_key=salt_key,
             info=info,
         ),
     )
@@ -586,6 +618,28 @@ class TestHKDFKeyGen:
                 destroy_quietly(rs.raw, rs.sh, derived)
 
 
+_HKDF_DATA_MATRIX: dict[str, dict[str, Any]] = {
+    # Salt-source and info-presence rows plus one alternate prf. Each row
+    # derives twice with identical params and asserts determinism; clean
+    # shape rejects xfail through the established derive set.
+    "salt-null": {"salt": None, "info": b"info-value"},
+    "salt-empty": {"salt": b"", "info": b"info-value"},
+    "salt-key": {
+        "salt": None,
+        "info": b"info-value",
+        "salt_type": int(CKF_HKDF_SALT_KEY),
+        "needs_salt_key": True,
+    },
+    "info-null": {"salt": b"salt-value", "info": None},
+    "info-empty": {"salt": b"salt-value", "info": b""},
+    "prf-sha512": {
+        "salt": b"salt-value",
+        "info": b"info-value",
+        "hash_mech": CKM_SHA512,
+    },
+}
+
+
 class TestHKDFData:
     """CKM_HKDF_DATA tests - derive data objects via HKDF."""
 
@@ -680,3 +734,84 @@ class TestHKDFData:
                 destroy_quietly(rs.raw, rs.sh, derived_a)
             if derived_b:
                 destroy_quietly(rs.raw, rs.sh, derived_b)
+
+    @pytest.mark.parametrize(
+        "matrix_case",
+        list(_HKDF_DATA_MATRIX.values()),
+        ids=list(_HKDF_DATA_MATRIX),
+    )
+    def test_hkdf_data_param_matrix(
+        self, p11_raw_session: Any, matrix_case: dict[str, Any]
+    ) -> None:
+        """Each salt/info/prf shape derives deterministically or cleanly xfails."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("HKDF_DATA"):
+            pytest.skip("CKM_HKDF_DATA not supported")
+
+        base_key = _create_hkdf_data_base_or_xfail(rs)
+        salt_key = 0
+        if matrix_case.get("needs_salt_key"):
+            salt_key = _create_hkdf_data_base_or_xfail(rs)
+        derived_1 = 0
+        derived_2 = 0
+        try:
+            derive_kwargs: dict[str, Any] = {
+                "hash_mech": matrix_case.get("hash_mech"),
+                "salt_type": matrix_case.get("salt_type"),
+                "salt_key": salt_key,
+            }
+            derived_1 = _derive_hkdf_data_or_xfail(
+                rs, base_key, matrix_case["salt"], matrix_case["info"], **derive_kwargs
+            )
+            derived_2 = _derive_hkdf_data_or_xfail(
+                rs, base_key, matrix_case["salt"], matrix_case["info"], **derive_kwargs
+            )
+            val_1 = _read_hkdf_data_output(rs, derived_1, "CKM_HKDF_DATA matrix output 1")
+            val_2 = _read_hkdf_data_output(rs, derived_2, "CKM_HKDF_DATA matrix output 2")
+            if val_1 is MISSING_ATTRIBUTE or val_2 is MISSING_ATTRIBUTE:
+                return
+            assert len(val_1) == _HKDF_DATA_OUTPUT_LEN
+            assert val_1 != bytes(_HKDF_DATA_OUTPUT_LEN)
+            assert val_1 == val_2, "Same HKDF_DATA inputs must produce identical output"
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+            if salt_key:
+                destroy_quietly(rs.raw, rs.sh, salt_key)
+            if derived_1:
+                destroy_quietly(rs.raw, rs.sh, derived_1)
+            if derived_2:
+                destroy_quietly(rs.raw, rs.sh, derived_2)
+
+    def test_hkdf_data_hmac_prf_rejected(self, p11_raw_session: Any) -> None:
+        """A non-hash prf mechanism (HMAC) must be cleanly rejected."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("HKDF_DATA"):
+            pytest.skip("CKM_HKDF_DATA not supported")
+
+        base_key = _create_hkdf_data_base_or_xfail(rs)
+        derived = 0
+        try:
+            try:
+                derived = _hkdf_data_derive(
+                    rs,
+                    base_key,
+                    b"salt-value",
+                    b"info-value",
+                    hash_mech=CKM_SHA256_HMAC,
+                )
+            except CkrAssertionError as exc:
+                classify_negative_rv(
+                    exc.rv,
+                    (CKR_MECHANISM_PARAM_INVALID,),
+                    label="CKM_HKDF_DATA C_DeriveKey with HMAC prf",
+                )
+            else:
+                classify_negative_rv(
+                    CKR_OK,
+                    (CKR_MECHANISM_PARAM_INVALID,),
+                    label="CKM_HKDF_DATA C_DeriveKey with HMAC prf",
+                )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, base_key)
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)

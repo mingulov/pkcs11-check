@@ -702,9 +702,9 @@ def mech_hkdf(
 
     ``salt_type`` defaults to CKF_HKDF_SALT_DATA (2) when ``salt`` is provided
     and CKF_HKDF_SALT_NULL (1) when it is not.  Pass an explicit value to
-    override (e.g. CKF_HKDF_SALT_KEY = 3).
+    override (e.g. CKF_HKDF_SALT_KEY = 4).
     """
-    # CKF_HKDF_SALT_NULL = 1, CKF_HKDF_SALT_DATA = 2, CKF_HKDF_SALT_KEY = 3
+    # CKF_HKDF_SALT_NULL = 1, CKF_HKDF_SALT_DATA = 2, CKF_HKDF_SALT_KEY = 4
     if salt_type is None:
         salt_type = 2 if salt is not None else 1
     ka: list[Any] = []
