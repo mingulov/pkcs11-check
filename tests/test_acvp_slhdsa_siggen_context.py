@@ -547,6 +547,22 @@ def test_siggen_invalid_string_params_fails_metadata(
     assert record.kind == "metadata"
 
 
+def test_siggen_surrogate_bmp_params_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SPKI whose parameters carry a surrogate pair in a BMPString fails
+    wrong_result end to end."""
+    vec = _siggen_vec(b"\xaa\x55")
+    alg = b"\x30\x09\x06\x01\x2a\x1e\x04\xd8\x3d\xde\x00"
+    spki = _spki_der_with_alg(alg, bytes(range(32)))
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=spki)
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+
+
 def test_siggen_missing_pk_empty_payload_readback_fails_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -737,6 +753,24 @@ def test_spki_extractor_validates_string_and_relative_oid_contents() -> None:
     )
     for params in good_params:
         assert test_acvp_slhdsa._spki_public_key_bytes(_spki_with_params(params, key)) == key
+
+
+def test_spki_extractor_enforces_bmp_repertoire() -> None:
+    """BMPString excludes surrogate code units and U+FFFE/U+FFFF; a UTF-16
+    decode alone is not enough."""
+    key = bytes(range(32))
+    bad_params = (
+        b"\x1e\x04\xd8\x3d\xde\x00",  # surrogate pair (U+1F600)
+        b"\x1e\x02\xff\xfe",  # U+FFFE
+        b"\x1e\x02\xff\xff",  # U+FFFF
+        b"\x30\x04\x1e\x02\xff\xfe",  # nested excluded code point
+    )
+    for params in bad_params:
+        assert test_acvp_slhdsa._spki_public_key_bytes(_spki_with_params(params, key)) is None
+    assert (
+        test_acvp_slhdsa._spki_public_key_bytes(_spki_with_params(b"\x1e\x04\x00\x41\x00\x42", key))
+        == key
+    )
 
 
 def test_spki_extractor_accepts_constructed_character_string() -> None:
