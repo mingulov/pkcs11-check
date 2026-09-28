@@ -64,6 +64,13 @@ Rules for crafted inputs:
   the intended bytes reach the PKCS#11 call.
 - Never route a crafted input through a strict output parser on its way
   to the provider.
+- Classify by expected code *and* observed effect, following the
+  EC-import probe (`security/test_curve_oid_confusion.py`): rejection
+  with an expected code passes, any other rejection xfails; acceptance
+  fails only when the token silently rebinds the malformed input to
+  something else (`self_contradiction`), and xfails `honest_deviation`
+  when the token stores it faithfully. A binary reject-pass/accept-fail
+  rule would erase recorded deviations and invent false failures.
 
 ## Libraries
 

@@ -112,8 +112,11 @@ Tests that touch DER-encoded material must state which direction they serve:
 - **Crafting inputs toward the provider** (negative tests): build the
   malformed bytes explicitly with a named defect, prove the exact bytes
   reach the PKCS#11 call (no silent repair on the way), and classify by
-  observed effect (reject → pass, accept → fail). Never route crafted
-  input through a strict output parser.
+  expected code and observed effect: expected rejection passes, other
+  rejections xfail, acceptance fails only on silent rebinding
+  (`self_contradiction`) and xfails `honest_deviation` on faithful
+  storage -- see `security/test_curve_oid_confusion.py`. Never route
+  crafted input through a strict output parser.
 
 ### Key fixtures
 
