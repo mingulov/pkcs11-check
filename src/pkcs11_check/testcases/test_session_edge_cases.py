@@ -27,7 +27,6 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import (
     CkrAssertionError,
     ckr_name,
-    expect_rv,
     is_standard_ckr,
     is_vendor_defined_ckr,
 )
@@ -638,6 +637,7 @@ class TestCKNotifyCallback:
 
         rs = p11_raw_session
         flags = int(CKF_SERIAL_SESSION) | int(CKF_RW_SESSION)
+        label = "C_OpenSession:callback matrix"
 
         calls: list[tuple[int, int, Any]] = []
 
@@ -650,15 +650,99 @@ class TestCKNotifyCallback:
         app_arg: Any = byref(app_data) if matrix_case["app_data"] else None
         sh = CK_SESSION_HANDLE(0)
         rv = rs.raw.C_OpenSession(rs.slot_id, flags, app_arg, notify, byref(sh))
-        if rv == CKR_OK:
-            assert sh.value != 0, (
-                "C_OpenSession callback matrix row returned CKR_OK with a null handle"
-            )
-            expect_rv(rs.raw.C_CloseSession(sh.value), CKR_OK)
-        else:
+        if rv != CKR_OK:
             # Only a session-count refusal is acceptable: CKF_SERIAL_SESSION
             # IS set, so CKR_SESSION_PARALLEL_NOT_SUPPORTED (or any other RV)
             # is a real flag-handling bug, not a limit.
-            assert rv in (CKR_SESSION_COUNT,), (
-                f"C_OpenSession callback matrix row failed unexpectedly: {ckr_name(rv)}"
+            if rv == CKR_SESSION_COUNT:
+                return
+            fail_as(
+                "wrong_result",
+                kind="lifecycle",
+                label=label,
+                operation="C_OpenSession",
+                expected=(CKR_OK, CKR_SESSION_COUNT),
+                actual=rv,
+                summary=(
+                    f"{label}: C_OpenSession failed unexpectedly with {ckr_name(rv)}; "
+                    "the serial flag is set so only CKR_SESSION_COUNT is acceptable"
+                ),
+            )
+        if sh.value == 0:
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_OpenSession",
+                summary=f"{label}: returned CKR_OK with a null handle",
+            )
+        if sh.value == int(rs.sh):
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_OpenSession",
+                summary=(
+                    f"{label}: returned CKR_OK with the live fixture handle "
+                    f"{int(rs.sh)} instead of a fresh session"
+                ),
+                detail={"handle": sh.value, "fixture_handle": int(rs.sh)},
+            )
+        info_rv = _session_info_rv(rs.raw, sh.value)
+        if info_rv != CKR_OK:
+            close_session_quietly(rs.raw, sh.value)
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_GetSessionInfo",
+                expected=CKR_OK,
+                actual=info_rv,
+                summary=(
+                    f"{label}: new handle {sh.value} is unusable "
+                    f"({ckr_name(info_rv)}) despite C_OpenSession claiming CKR_OK"
+                ),
+                detail={"handle": sh.value},
+            )
+        if matrix_case["notify"]:
+            # Invocation itself is optional, but every delivered call must
+            # identify the new session and echo the supplied app pointer
+            # (ctypes delivers CK_VOID_PTR as the address int, or None).
+            expected_app: int | None = (
+                None if app_arg is None else int(ctypes.cast(app_arg, ctypes.c_void_p).value or 0)
+            )
+            for session, _event, application in calls:
+                if session != sh.value or application != expected_app:
+                    close_session_quietly(rs.raw, sh.value)
+                    fail_as(
+                        "self_contradiction",
+                        kind="lifecycle",
+                        label=label,
+                        operation="C_OpenSession",
+                        summary=(
+                            f"{label}: callback delivered session {session} "
+                            f"app {application!r}, expected session {sh.value} "
+                            f"app {expected_app!r}"
+                        ),
+                        detail={
+                            "handle": sh.value,
+                            "callback_session": session,
+                            "callback_app": application,
+                            "expected_app": expected_app,
+                        },
+                    )
+        close_rv = rs.raw.C_CloseSession(sh.value)
+        if close_rv != CKR_OK:
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_CloseSession",
+                expected=CKR_OK,
+                actual=close_rv,
+                summary=(
+                    f"{label}: C_CloseSession({sh.value}) returned "
+                    f"{ckr_name(close_rv)} for the session C_OpenSession just opened"
+                ),
+                detail={"handle": sh.value},
             )
