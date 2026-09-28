@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from collections.abc import Generator
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,9 +14,19 @@ from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.pack import mech_ssl3_key_mat
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKA_DERIVE,
+    CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_VALUE,
+    CKA_VALUE_LEN,
+    CKK_GENERIC_SECRET,
+    CKM_WTLS_PRE_MASTER_KEY_GEN,
     CKR_MECHANISM_INVALID,
+    CKR_MECHANISM_PARAM_INVALID,
     CKR_OK,
 )
 from pkcs11_check.testcases import test_ssl3 as ssl3
@@ -1219,3 +1230,191 @@ def test_wtls_strongest_hard_output_kind_wins() -> None:
     records = C.get_records()
     assert [record.kind for record in records] == ["metadata", "crypto"]
     assert records[-1].expected_ckr is None and records[-1].actual_ckr is None
+
+
+_WTLS_PRE_MASTER_BOOL_ATTRS = {
+    int(CKA_DERIVE): b"\x01",
+    int(CKA_SENSITIVE): b"\x00",
+    int(CKA_EXTRACTABLE): b"\x01",
+    int(CKA_TOKEN): b"\x00",
+}
+
+
+def _decode_generate_key_call(args: Any) -> tuple[int, int, bytes | None, dict[int, bytes]]:
+    """Decode a captured C_GenerateKey(sh, mech, tmpl, count, key) call.
+
+    Returns (mechanism id, parameter length, parameter bytes or None for NULL,
+    template mapping of attribute id to raw value bytes).
+    """
+    _sh, mech_ref, tmpl_ptr, tmpl_count, _key_ptr = args
+    mech = ctypes.cast(mech_ref, ctypes.POINTER(CK_MECHANISM)).contents
+    params: bytes | None = None
+    if mech.pParameter:
+        params = bytes(ctypes.string_at(mech.pParameter, mech.ulParameterLen))
+    attrs: dict[int, bytes] = {}
+    for index in range(int(tmpl_count)):
+        attr = tmpl_ptr[index]
+        attrs[int(attr.type)] = bytes(ctypes.string_at(attr.pValue, attr.ulValueLen))
+    return int(mech.mechanism), int(mech.ulParameterLen), params, attrs
+
+
+def _assert_wtls_pre_master_call(call: tuple[int, int, bytes | None, dict[int, bytes]]) -> None:
+    """P11C-006: the pre-master keygen call must carry the 1-byte WTLS version
+    parameter and 1-byte CK_BBOOL flags."""
+    mech_id, param_len, params, attrs = call
+    assert mech_id == int(CKM_WTLS_PRE_MASTER_KEY_GEN)
+    assert param_len == 1
+    assert params == b"\x01"
+    for attr_id, expected in _WTLS_PRE_MASTER_BOOL_ATTRS.items():
+        value = attrs[attr_id]
+        assert len(value) == 1, f"attribute {attr_id:#x} must be 1-byte CK_BBOOL"
+        assert value == expected
+    assert int.from_bytes(attrs[int(CKA_VALUE_LEN)], "little") == 20
+    assert len(attrs[int(CKA_VALUE_LEN)]) == ctypes.sizeof(CK_ULONG)
+
+
+def test_wtls_pre_master_keygen_sends_version_and_bool_attrs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P11C-006: test_generate_pre_master_key must pass the required version
+    parameter and encode the boolean flags as CK_BBOOL."""
+    calls: list[Any] = []
+
+    def _generate_key(*args: Any) -> int:
+        calls.append(_decode_generate_key_call(args))
+        args[-1]._obj.value = 7
+        return CKR_OK
+
+    raw = SimpleNamespace(C_GenerateKey=_generate_key)
+    monkeypatch.setattr(
+        wtls,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_KEY_TYPE: int(CKK_GENERIC_SECRET)},
+    )
+    monkeypatch.setattr(wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    wtls.TestWTLSPreMasterKeyGen().test_generate_pre_master_key(
+        _rs("WTLS_PRE_MASTER_KEY_GEN", raw=raw)
+    )
+
+    assert C.get_records() == []
+    assert len(calls) == 1
+    _assert_wtls_pre_master_call(calls[0])
+
+
+def test_wtls_pre_master_material_probe_sends_version_and_bool_attrs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P11C-006: test_generate_yields_non_zero_material must pass the required
+    version parameter and encode the boolean flags as CK_BBOOL."""
+    calls: list[Any] = []
+
+    def _generate_key(*args: Any) -> int:
+        calls.append(_decode_generate_key_call(args))
+        args[-1]._obj.value = 7
+        return CKR_OK
+
+    raw = SimpleNamespace(C_GenerateKey=_generate_key)
+    monkeypatch.setattr(
+        wtls,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_VALUE: b"\x11" * 20},
+    )
+    monkeypatch.setattr(wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    wtls.TestWTLSPreMasterKeyGen().test_generate_yields_non_zero_material(
+        _rs("WTLS_PRE_MASTER_KEY_GEN", raw=raw)
+    )
+
+    assert C.get_records() == []
+    assert len(calls) == 1
+    _assert_wtls_pre_master_call(calls[0])
+
+
+def test_wtls_pre_master_uniqueness_probe_sends_version_and_bool_attrs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P11C-006: both generations in test_two_generated_keys_differ must pass
+    the required version parameter and encode the boolean flags as CK_BBOOL."""
+    calls: list[Any] = []
+    handles = iter([7, 8])
+
+    def _generate_key(*args: Any) -> int:
+        calls.append(_decode_generate_key_call(args))
+        args[-1]._obj.value = next(handles)
+        return CKR_OK
+
+    raw = SimpleNamespace(C_GenerateKey=_generate_key)
+    values = iter([b"\x11" * 20, b"\x22" * 20])
+    monkeypatch.setattr(
+        wtls,
+        "read_attributes",
+        lambda *_args, **_kwargs: {CKA_VALUE: next(values)},
+    )
+    monkeypatch.setattr(wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    wtls.TestWTLSPreMasterKeyGen().test_two_generated_keys_differ(
+        _rs("WTLS_PRE_MASTER_KEY_GEN", raw=raw)
+    )
+
+    assert C.get_records() == []
+    assert len(calls) == 2
+    for call in calls:
+        _assert_wtls_pre_master_call(call)
+
+
+def test_wtls_pre_master_null_params_rejection_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P11C-006: the NULL-params negative passes on a clean rejection and
+    still sends the otherwise-valid template."""
+    calls: list[Any] = []
+
+    def _generate_key(*args: Any) -> int:
+        calls.append(_decode_generate_key_call(args))
+        return int(CKR_MECHANISM_PARAM_INVALID)
+
+    raw = SimpleNamespace(C_GenerateKey=_generate_key)
+    monkeypatch.setattr(wtls, "destroy_quietly", lambda *_args, **_kwargs: None)
+
+    wtls.TestWTLSPreMasterKeyGen().test_generate_pre_master_key_rejects_null_params(
+        _rs("WTLS_PRE_MASTER_KEY_GEN", raw=raw)
+    )
+
+    assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
+    assert len(calls) == 1
+    mech_id, param_len, params, attrs = calls[0]
+    assert mech_id == int(CKM_WTLS_PRE_MASTER_KEY_GEN)
+    assert param_len == 0
+    assert params is None
+    for attr_id, expected in _WTLS_PRE_MASTER_BOOL_ATTRS.items():
+        assert attrs[attr_id] == expected
+
+
+def test_wtls_pre_master_null_params_acceptance_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P11C-006: the NULL-params negative fails accepted_invalid when the
+    module accepts, and destroys the created key."""
+    destroyed: list[int] = []
+
+    def _generate_key(*args: Any) -> int:
+        args[-1]._obj.value = 9
+        return CKR_OK
+
+    raw = SimpleNamespace(C_GenerateKey=_generate_key)
+    monkeypatch.setattr(
+        wtls,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: destroyed.append(handle),
+    )
+
+    with pytest.raises(pytest.fail.Exception):
+        wtls.TestWTLSPreMasterKeyGen().test_generate_pre_master_key_rejects_null_params(
+            _rs("WTLS_PRE_MASTER_KEY_GEN", raw=raw)
+        )
+
+    assert destroyed == [9]
+    (rec,) = C.get_records()
+    assert rec.reason == "accepted_invalid"
+    assert rec.outcome == "fail"

@@ -26,7 +26,10 @@ from _pytest.outcomes import Failed
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
+    TemplateArg,
+    attr_bool,
     attr_ulong,
+    mech_bytes,
     mech_simple,
     mech_wtls_key_mat,
     mech_wtls_master_key_derive,
@@ -73,6 +76,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     assert_correct,
+    classify_negative_rv,
     destroy_returned_handles,
     is_known_error,
     reject_or_classify,
@@ -93,6 +97,32 @@ _WTLS_TEMPLATE_CONFLICT_REJECT_RVS = (
     CKR_TEMPLATE_INCONSISTENT,
     CKR_ATTRIBUTE_VALUE_INVALID,
 )
+
+# CKM_WTLS_PRE_MASTER_KEY_GEN takes one CK_BYTE parameter: the client WTLS
+# version. P11C-006: the positive fixtures previously passed NULL.
+_WTLS_PRE_MASTER_VERSION = b"\x01"
+
+# C_GenerateKey rejection of the pre-master call with NULL mechanism params.
+_WTLS_MISSING_PARAM_REJECT_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+
+
+def _wtls_pre_master_template() -> TemplateArg:
+    """Build the shared CKM_WTLS_PRE_MASTER_KEY_GEN keygen template.
+
+    P11C-006: CKA_DERIVE/SENSITIVE/EXTRACTABLE/TOKEN are CK_BBOOL (1 byte),
+    not CK_ULONG -- packing them as CK_ULONG makes compliant modules reject
+    the template.
+    """
+    return template(
+        attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
+        attr_ulong(CKA_VALUE_LEN, 20),
+        attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+        attr_bool(CKA_DERIVE, True),
+        attr_bool(CKA_SENSITIVE, False),
+        attr_bool(CKA_EXTRACTABLE, True),
+        attr_bool(CKA_TOKEN, False),
+    )
+
 
 # WTLS client/server random values (16 bytes each)
 _CLIENT_RANDOM = bytes(range(16))
@@ -625,16 +655,8 @@ class TestWTLSPreMasterKeyGen:
             from pkcs11_check.raw.rv import expect_rv
             from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKR_OK
 
-            mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
-            tmpl = template(
-                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
-                attr_ulong(CKA_VALUE_LEN, 20),
-                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                attr_ulong(CKA_DERIVE, 1),
-                attr_ulong(CKA_SENSITIVE, 0),
-                attr_ulong(CKA_EXTRACTABLE, 1),
-                attr_ulong(CKA_TOKEN, 0),
-            )
+            mech = mech_bytes(CKM_WTLS_PRE_MASTER_KEY_GEN, _WTLS_PRE_MASTER_VERSION)
+            tmpl = _wtls_pre_master_template()
             key = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(
                 rs.sh,
@@ -719,16 +741,8 @@ class TestWTLSPreMasterKeyGen:
             from pkcs11_check.raw.rv import expect_rv
             from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKR_OK
 
-            mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
-            tmpl = template(
-                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
-                attr_ulong(CKA_VALUE_LEN, 20),
-                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                attr_ulong(CKA_DERIVE, 1),
-                attr_ulong(CKA_SENSITIVE, 0),
-                attr_ulong(CKA_EXTRACTABLE, 1),
-                attr_ulong(CKA_TOKEN, 0),
-            )
+            mech = mech_bytes(CKM_WTLS_PRE_MASTER_KEY_GEN, _WTLS_PRE_MASTER_VERSION)
+            tmpl = _wtls_pre_master_template()
             key = CK_OBJECT_HANDLE(0)
             rv = rs.raw.C_GenerateKey(
                 rs.sh,
@@ -811,16 +825,8 @@ class TestWTLSPreMasterKeyGen:
             from pkcs11_check.raw.rv import expect_rv
             from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKR_OK
 
-            mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
-            tmpl = template(
-                attr_ulong(CKA_KEY_TYPE, CKK_GENERIC_SECRET),
-                attr_ulong(CKA_VALUE_LEN, 20),
-                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
-                attr_ulong(CKA_DERIVE, 1),
-                attr_ulong(CKA_SENSITIVE, 0),
-                attr_ulong(CKA_EXTRACTABLE, 1),
-                attr_ulong(CKA_TOKEN, 0),
-            )
+            mech = mech_bytes(CKM_WTLS_PRE_MASTER_KEY_GEN, _WTLS_PRE_MASTER_VERSION)
+            tmpl = _wtls_pre_master_template()
             key1 = CK_OBJECT_HANDLE(0)
             key2 = CK_OBJECT_HANDLE(0)
             hard_results: list[C.Classification] = []
@@ -938,6 +944,36 @@ class TestWTLSPreMasterKeyGen:
                     summary=f"CKM_WTLS_PRE_MASTER_KEY_GEN not operational: {exc}",
                 )
             raise
+
+    def test_generate_pre_master_key_rejects_null_params(self, p11_raw_session: Any) -> None:
+        """NULL mechanism params must be rejected; the version byte is required."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("WTLS_PRE_MASTER_KEY_GEN"):
+            pytest.skip("CKM_WTLS_PRE_MASTER_KEY_GEN not supported")
+
+        from ctypes import byref
+
+        from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE
+
+        mech = mech_simple(CKM_WTLS_PRE_MASTER_KEY_GEN)
+        tmpl = _wtls_pre_master_template()
+        key = CK_OBJECT_HANDLE(0)
+        rv = rs.raw.C_GenerateKey(
+            rs.sh,
+            mech.byref(),
+            tmpl.ptr,
+            tmpl.count,
+            byref(key),
+        )
+        try:
+            classify_negative_rv(
+                rv,
+                _WTLS_MISSING_PARAM_REJECT_RVS,
+                label="CKM_WTLS_PRE_MASTER_KEY_GEN C_GenerateKey with NULL params",
+            )
+        finally:
+            if key.value != 0:
+                destroy_quietly(rs.raw, rs.sh, key.value)
 
 
 class TestWTLSMasterKeyDerive:
