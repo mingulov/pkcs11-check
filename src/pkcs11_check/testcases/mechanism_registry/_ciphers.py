@@ -172,11 +172,11 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_POLY1305,
         keygen_mech=CKM_POLY1305_KEY_GEN,
         key_sizes=(256,),
-        param_required=True,
+        param_required=False,
         param_recipe=ParamRecipe("none"),
         keygen_recipe=_sym,
         expected_flags=_SIG_VER,
-        notes="Poly1305 one-time MAC: sign/verify, requires nonce param",
+        notes="Poly1305 one-time MAC: sign/verify, NULL params",
     )
 
     # ---------------------------------------------------------------------------
