@@ -609,7 +609,11 @@ class TestEdDSAParametrizedModes:
     def test_edwards25519_ctx_null_pointer_roundtrip(
         self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
     ) -> None:
-        """Ed25519ctx with NULL pContextData and zero length roundtrips."""
+        """Ed25519ctx with NULL pContextData and zero length roundtrips.
+
+        RFC8032 domain-separates empty-context Ed25519ctx from pure Ed25519,
+        so the empty structure must not cross-verify with pure NULL.
+        """
         rs = p11_raw_session
         pub, priv = edwards25519_curve_name_keypair
         data = b"Ed25519ctx NULL-pointer test data"
@@ -620,10 +624,29 @@ class TestEdDSAParametrizedModes:
 
         assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
 
+        pure_sig = _sign_eddsa(rs, priv, data)
+        if _verify_eddsa_params(rs, pub, data, pure_sig, mech):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ctx-empty-null verify pure-signature rejection",
+                "pure NULL signature verified under an empty-context (NULL-pointer) "
+                "structure -- provider ignores CK_EDDSA_PARAMS",
+            )
+
+        if _verify_eddsa(rs, pub, data, signature):
+            _refute_ignored_structure(
+                "CKM_EDDSA:pure verify ctx-empty-null-signature rejection",
+                "empty-context (NULL-pointer) structure signature verified under NULL "
+                "-- provider ignores CK_EDDSA_PARAMS",
+            )
+
     def test_edwards25519_ctx_empty_bytes_roundtrip(
         self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
     ) -> None:
-        """Ed25519ctx with an empty (non-NULL) context buffer roundtrips."""
+        """Ed25519ctx with an empty (non-NULL) context buffer roundtrips.
+
+        RFC8032 domain-separates empty-context Ed25519ctx from pure Ed25519,
+        so the empty structure must not cross-verify with pure NULL.
+        """
         rs = p11_raw_session
         pub, priv = edwards25519_curve_name_keypair
         data = b"Ed25519ctx empty-bytes test data"
@@ -633,6 +656,21 @@ class TestEdDSAParametrizedModes:
         assert len(signature) == 64
 
         assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+        pure_sig = _sign_eddsa(rs, priv, data)
+        if _verify_eddsa_params(rs, pub, data, pure_sig, mech):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ctx-empty-bytes verify pure-signature rejection",
+                "pure NULL signature verified under an empty-context (empty-bytes) "
+                "structure -- provider ignores CK_EDDSA_PARAMS",
+            )
+
+        if _verify_eddsa(rs, pub, data, signature):
+            _refute_ignored_structure(
+                "CKM_EDDSA:pure verify ctx-empty-bytes-signature rejection",
+                "empty-context (empty-bytes) structure signature verified under NULL "
+                "-- provider ignores CK_EDDSA_PARAMS",
+            )
 
     def test_edwards25519_ctx_single_byte_roundtrip(
         self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
