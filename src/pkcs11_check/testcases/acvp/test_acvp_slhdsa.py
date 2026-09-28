@@ -95,6 +95,25 @@ _PARAM_SET_MAP: dict[str, int] = {
     "SLH-DSA-SHAKE-256f": CKP_SLH_DSA_SHAKE_256F,
 }
 
+# ACVP parameter set name -> expected public-key length in bytes (2n for
+# n = 16/24/32). A recovered key of any other length is malformed readback,
+# never import input: without this a short key reaches import, the provider
+# rejects it with CKR_KEY_SIZE_RANGE, and the import xfail hides the defect.
+_SLH_DSA_PUBKEY_LEN: dict[str, int] = {
+    "SLH-DSA-SHA2-128s": 32,
+    "SLH-DSA-SHA2-128f": 32,
+    "SLH-DSA-SHAKE-128s": 32,
+    "SLH-DSA-SHAKE-128f": 32,
+    "SLH-DSA-SHA2-192s": 48,
+    "SLH-DSA-SHA2-192f": 48,
+    "SLH-DSA-SHAKE-192s": 48,
+    "SLH-DSA-SHAKE-192f": 48,
+    "SLH-DSA-SHA2-256s": 64,
+    "SLH-DSA-SHA2-256f": 64,
+    "SLH-DSA-SHAKE-256s": 64,
+    "SLH-DSA-SHAKE-256f": 64,
+}
+
 # import-audit D3 boundary: SLH-DSA is advertised when these sites run (has_mechanism gate
 # precedes every import). For PQC the genuine-absence signal IS mechanism
 # advertisement -- there is no curve-absence CKR analogue. So once advertised,
@@ -177,12 +196,14 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
     """Extract raw public-key bytes from a SubjectPublicKeyInfo DER blob.
 
     Minimal ASN.1 walk over ``SEQUENCE { AlgorithmIdentifier, BIT STRING }``
-    returning the BIT STRING contents without validating the algorithm --
-    the same shape as the wycheproof SPKI fallback (``_key_decoders``).
+    returning the BIT STRING contents -- the same shape as the wycheproof
+    SPKI fallback (``_key_decoders``).
     The full encoding is validated: the outer length must match the input
-    exactly (no truncation, no trailing bytes), the BIT STRING must end at
-    the outer end, and the key payload must be nonempty (an SLH-DSA public
-    key cannot be empty). Returns None when the DER cannot be parsed at all.
+    exactly (no truncation, no trailing bytes), the AlgorithmIdentifier must
+    structurally carry an OBJECT IDENTIFIER (its value is not pinned), the
+    BIT STRING must end at the outer end, and the key payload must be
+    nonempty (an SLH-DSA public key cannot be empty). Returns None when the
+    DER cannot be parsed at all.
     """
     try:
         if len(der) < 2 or der[0] != 0x30:  # outer SEQUENCE
@@ -193,6 +214,11 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
         if pos >= len(der) or der[pos] != 0x30:  # AlgorithmIdentifier SEQUENCE
             return None
         val, length = _der_length(der, pos + 1)
+        if length < 2 or val + length > len(der) or der[val] != 0x06:
+            return None
+        oval, olen = _der_length(der, val + 1)
+        if oval + olen > val + length:  # OID overruns its AlgorithmIdentifier
+            return None
         pos = val + length
         if pos >= len(der) or der[pos] != 0x03:  # BIT STRING
             return None
@@ -206,7 +232,7 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
         return None
 
 
-def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
+def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str, param_name: str) -> bytes:
     """Recover the SLH-DSA public key from the imported private key.
 
     Reads back CKA_PUBLIC_KEY_INFO (SubjectPublicKeyInfo DER) and extracts
@@ -215,7 +241,9 @@ def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
     the explicit oracle-unavailable record. Only a DEFINED CKR refusal is
     absorbed here; an undefined CK_RV propagates, and nonempty-but-unparseable
     SPKI bytes fail as provider-malformed metadata (present-malformed fails
-    per the require_* idiom; only missing stays unavailable).
+    per the require_* idiom; only missing stays unavailable). A structurally
+    valid key of the wrong length for ``param_name`` likewise fails here, so
+    it never reaches import to decay into a not-operational xfail.
     """
     try:
         attrs = read_attributes(rs.raw, rs.sh, priv_key, [CKA_PUBLIC_KEY_INFO])
@@ -247,6 +275,20 @@ def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
             summary=(
                 f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback present but "
                 f"malformed ({len(spki)} unparseable bytes)"
+            ),
+        )
+    expected = _SLH_DSA_PUBKEY_LEN.get(param_name)
+    if expected is not None and len(parsed) != expected:
+        fail_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback",
+            operation="C_GetAttributeValue",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=(
+                f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback carries a "
+                f"{len(parsed)}-byte key, expected {expected} for {param_name}"
             ),
         )
     return parsed
@@ -606,7 +648,7 @@ def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         # explicit xfail, never a silent sign-only pass.
         pk_bytes = vec.get("pk", b"")
         if not pk_bytes:
-            pk_bytes = _recover_slhdsa_public_key(rs, priv_key, vec_id)
+            pk_bytes = _recover_slhdsa_public_key(rs, priv_key, vec_id, vec.get("param_name", ""))
         if not pk_bytes:
             xfail_as(
                 "not_operational",

@@ -437,7 +437,7 @@ def test_siggen_missing_pk_readback_recovery_runs_verify_compare(
 ) -> None:
     """A recoverable CKA_PUBLIC_KEY_INFO readback imports the recovered pk and
     runs the SAME intended/mutated verify-compare as a projection pk."""
-    recovered = b"recovered-public-key"
+    recovered = bytes(range(32))  # realistic 128f public-key length
     vec = _siggen_vec(b"\xaa\x55")
     calls = _run_siggen_no_projection_pk(monkeypatch, vec, spki=_spki_der(recovered))
     assert calls["public_imports"][0]["value"] == recovered
@@ -460,6 +460,24 @@ def test_siggen_missing_pk_unparseable_readback_fails_metadata(
     vec = _siggen_vec(b"\xaa\x55")
     with pytest.raises(Failed) as exc_info:
         _run_siggen_no_projection_pk(monkeypatch, vec, spki=b"\x30\x03oops")
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+
+
+def test_siggen_recovered_pk_wrong_length_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recovered key whose length mismatches the parameter set fails
+    wrong_result -- it must never reach import, where a CKR_KEY_SIZE_RANGE
+    reject would decay into a not-operational XFAIL hiding malformed
+    readback. (128f expects a 32-byte public key.)"""
+    vec = _siggen_vec(b"\xaa\x55")
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=_spki_der(b"\x01"))
     assert not isinstance(exc_info.value, XFailed)
     record = get_records()[-1]
     assert record.reason == "wrong_result"
@@ -544,6 +562,26 @@ def test_spki_extractor_rejects_garbage() -> None:
     assert test_acvp_slhdsa._spki_public_key_bytes(b"") is None
     truncated = _spki_der(b"public")[:-3]
     assert test_acvp_slhdsa._spki_public_key_bytes(truncated) is None
+
+
+def _spki_der_with_alg(alg_id: bytes, public_key: bytes) -> bytes:
+    """SPKI DER with an explicit AlgorithmIdentifier body (fake key material)."""
+    bit_string = b"\x00" + public_key
+    body = alg_id + b"\x03" + _der_len(len(bit_string)) + bit_string
+    return b"\x30" + _der_len(len(body)) + body
+
+
+def test_spki_extractor_requires_oid_in_algorithm_identifier() -> None:
+    """The AlgorithmIdentifier must structurally carry an OBJECT IDENTIFIER:
+    an empty sequence or a NULL-only body is malformed even when followed
+    by a valid key."""
+    key = bytes(range(32))
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der(key)) == key
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(b"\x30\x00", key)) is None
+    assert (
+        test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(b"\x30\x02\x05\x00", key))
+        is None
+    )
 
 
 def test_spki_extractor_rejects_length_mismatch_and_empty_payload() -> None:
