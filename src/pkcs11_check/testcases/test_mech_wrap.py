@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import classify
 from pkcs11_check.fixtures import RawSession
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.pack import mech_bytes, mech_ccm_wrap, mech_ctr, mech_gcm_wrap
@@ -55,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKK_RSA,
     CKM,
     CKM_AES_ECB,
+    CKM_AES_KEY_WRAP,
     CKM_SHA_1,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
@@ -81,10 +83,15 @@ from pkcs11_check.testcases.conftest import (
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.mechanism_catalog import MechEntry
-from pkcs11_check.testcases.mechanism_registry import MechConfig
+from pkcs11_check.testcases.mechanism_registry import MechConfig, get_config
 
 # Integer value for CKK_AES -- used for dispatch in the wrapping-key builder.
 _AES_KEY_TYPE: int = int(CKK_AES)
+
+# Explicit AES-KW IV for the default/explicit matrix row. RFC 3394 NULL params
+# mean the default IV A6A6A6A6A6A6A6A6; this value is deliberately different
+# so an honored IV always produces a distinct blob.
+_AES_KEY_WRAP_EXPLICIT_IV = b"\x01\x02\x03\x04\x05\x06\x07\x08"
 
 pytestmark = [pytest.mark.mechanism_coverage, pytest.mark.wrap]
 
@@ -745,3 +752,122 @@ class TestMechWrapRoundtrip:
                     destroy_quietly(rs.raw, rs.sh, wrap_priv)
             else:
                 destroy_quietly(rs.raw, rs.sh, wrap_handle)
+
+    def test_aes_key_wrap_explicit_iv_roundtrip(
+        self, p11_module_session: RawSession, p11_config: Any
+    ) -> None:
+        """AES-KW honors an explicit 8-byte IV: distinct blob, roundtrips, binds unwrap.
+
+        Wraps the same target key once with NULL params (default IV) and once
+        with an explicit IV; KW is deterministic, so identical blobs prove the
+        IV was ignored. The explicit-IV blob must unwrap with the explicit IV
+        and decrypt-equivalent to the original, and unwrapping it with the
+        default IV must fail (integrity binding).
+        """
+        rs = p11_module_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("CKM_AES_KEY_WRAP not supported")
+        config = get_config(int(CKM_AES_KEY_WRAP))
+        assert config is not None
+        entry = MechEntry(
+            mech_id=int(CKM_AES_KEY_WRAP),
+            mech_name="AES_KEY_WRAP",
+            flags=0,
+            min_key_size=0,
+            max_key_size=0,
+            config=config,
+        )
+
+        wrap_handle = _build_aes_wrap_key(rs, entry, config)
+        target_key = _build_target_aes_key(rs, entry)
+        unwrapped_key: int = 0
+        control_key: int = 0
+        try:
+            plaintext = b"\x5a\xa5\x5a\xa5" * 4  # 16 bytes, one AES block
+            ciphertext = encrypt_single(
+                rs.raw,
+                rs.sh,
+                target_key,
+                CKM_AES_ECB,
+                plaintext,
+            )
+
+            default_blob = wrap_key(
+                rs.raw,
+                rs.sh,
+                wrap_handle,
+                target_key,
+                CKM_AES_KEY_WRAP,
+                mech_param=None,
+            )
+            assert len(default_blob) > 0, "AES_KEY_WRAP: default-IV wrap produced empty blob"
+
+            try:
+                explicit_blob = wrap_key(
+                    rs.raw,
+                    rs.sh,
+                    wrap_handle,
+                    target_key,
+                    CKM_AES_KEY_WRAP,
+                    mech_param=mech_bytes(CKM_AES_KEY_WRAP, _AES_KEY_WRAP_EXPLICIT_IV),
+                )
+            except AssertionError as exc:
+                if claim_refusal_passes(exc, rs, probe_key="AES_KEY_WRAP:explicit-iv-wrap"):
+                    return
+            assert len(explicit_blob) > 0, "AES_KEY_WRAP: explicit-IV wrap produced empty blob"
+            assert explicit_blob != default_blob, (
+                "AES_KEY_WRAP: module ignored the explicit IV (identical blob)"
+            )
+
+            unwrapped_key = unwrap_key_for_mechanism_roundtrip(
+                rs,
+                p11_config,
+                unwrapping_key=wrap_handle,
+                wrapped_key=explicit_blob,
+                mechanism=CKM_AES_KEY_WRAP,
+                attrs=_target_unwrap_attrs(entry),
+                mech_param=mech_bytes(CKM_AES_KEY_WRAP, _AES_KEY_WRAP_EXPLICIT_IV),
+                purpose="AES_KEY_WRAP explicit-IV roundtrip",
+            )
+            assert unwrapped_key != 0, "AES_KEY_WRAP: explicit-IV unwrap returned handle 0"
+            recovered = decrypt_single(
+                rs.raw,
+                rs.sh,
+                unwrapped_key,
+                CKM_AES_ECB,
+                ciphertext,
+            )
+            assert recovered == plaintext, (
+                "AES_KEY_WRAP: decrypt mismatch after explicit-IV unwrap -- "
+                f"expected {plaintext.hex()!r}, got {recovered.hex()!r}"
+            )
+
+            # Negative control: the explicit-IV blob must not unwrap under the
+            # default IV. Any success here means the module ignores the KW IV.
+            try:
+                control_key = unwrap_key_for_mechanism_roundtrip(
+                    rs,
+                    p11_config,
+                    unwrapping_key=wrap_handle,
+                    wrapped_key=explicit_blob,
+                    mechanism=CKM_AES_KEY_WRAP,
+                    attrs=_target_unwrap_attrs(entry),
+                    mech_param=None,
+                    purpose="AES_KEY_WRAP explicit-IV blob under default IV",
+                )
+            except AssertionError:
+                pass
+            else:
+                classify(
+                    "wrong_result",
+                    kind="crypto",
+                    label="AES_KEY_WRAP:explicit-IV blob default-IV unwrap rejection",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    summary="explicit-IV blob unwrapped under the default IV "
+                    "-- module ignores the KW IV",
+                )
+        finally:
+            for handle in (target_key, unwrapped_key, control_key, wrap_handle):
+                if handle != 0:
+                    destroy_quietly(rs.raw, rs.sh, handle)
