@@ -113,10 +113,12 @@ Tests that touch DER-encoded material must state which direction they serve:
   malformed bytes explicitly with a named defect, prove the exact bytes
   reach the PKCS#11 call (no silent repair on the way), and classify by
   expected code and observed effect: expected rejection passes, other
-  rejections xfail, acceptance fails only on silent rebinding
-  (`self_contradiction`) and xfails `honest_deviation` on faithful
-  storage -- see `security/test_curve_oid_confusion.py`. Never route
-  crafted input through a strict output parser.
+  *defined* clean rejections xfail, undefined CK_RVs fail; acceptance
+  fails on self-contradiction (silent rebinding) or an incoherent
+  created object, and xfails `honest_deviation` only on faithful
+  storage -- see `security/test_curve_oid_confusion.py` and the shared
+  negative classifier in `testcases/conftest.py`. Never route crafted
+  input through a strict output parser.
 
 ### Key fixtures
 
