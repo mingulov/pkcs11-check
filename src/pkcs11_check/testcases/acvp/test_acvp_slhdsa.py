@@ -354,14 +354,16 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
     """Extract raw public-key bytes from a SubjectPublicKeyInfo DER blob.
 
     Minimal ASN.1 walk over ``SEQUENCE { AlgorithmIdentifier, BIT STRING }``
-    returning the BIT STRING contents -- the same shape as the wycheproof
-    SPKI fallback (``_key_decoders``).
-    The full encoding is validated: lengths are minimal with the outer
-    length matching the input exactly (no truncation, no trailing bytes);
-    the AlgorithmIdentifier must carry a well-formed OBJECT IDENTIFIER
-    (its value is not pinned) followed by at most one well-formed
-    parameters element; the BIT STRING must end at the outer end, and the
-    key payload must be nonempty (an SLH-DSA public key cannot be empty).
+    returning the BIT STRING contents. Recovery contract (see
+    ``docs/der-handling.md`` for the framework policy): minimal definite
+    lengths with the outer length matching the input exactly; an
+    AlgorithmIdentifier carrying a well-formed OBJECT IDENTIFIER plus at
+    most one well-formed parameters element; the BIT STRING ending at the
+    outer end with a nonempty payload. OID arc values, REAL/time bookkeeping
+    and exotic string contents are deliberately unchecked value semantics.
+    Shapes this walker cannot represent (multi-byte tags, nesting past the
+    depth cap) conservatively read as malformed -- fail loud, never pass
+    silent; see the policy doc before widening either side.
     Returns None when the DER cannot be parsed at all.
     """
     try:

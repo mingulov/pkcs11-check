@@ -116,6 +116,14 @@ The "claim" is the module's own success report on the prior call.
 - **New tests to add:** explicit derived-attribute invariant checks
   (`NEVER_EXTRACTABLE`↔`EXTRACTABLE`, `ALWAYS_SENSITIVE`↔`SENSITIVE`) - these don't exist
   yet and are the `fail`-on-contradiction half of the metadata kind.
+- **DER readback outcomes** (see `docs/der-handling.md`): a `CKR_OK` read
+  delivering malformed bytes (unparseable SPKI, wrong-length key) fails
+  `wrong_result` / `metadata` against `C_GetAttributeValue`, mechanism-free;
+  a missing, refused, or empty readback xfails oracle-unavailable instead.
+  Shapes the parser cannot represent read as malformed on purpose (fail
+  loud, never pass silent) -- widening either side needs a valid-encoding
+  regression pin. Acceptance of *deliberately* malformed input sent toward
+  the provider follows the negative-effect rules above, not this section.
 
 ## Mechanism / helpers
 
