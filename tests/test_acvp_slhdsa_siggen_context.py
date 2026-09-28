@@ -23,7 +23,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import Failed, XFailed
 
+from pkcs11_check.classification import get_records
 from pkcs11_check.raw.pack import PackedMechanism
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
@@ -444,17 +446,71 @@ def test_siggen_missing_pk_readback_recovery_runs_verify_compare(
     assert _packed_context(calls["verify"][1]["mech_param"]) != b"\xaa\x55"
 
 
-def test_siggen_missing_pk_unparseable_readback_xfails_oracle_unavailable(
+def test_siggen_missing_pk_unparseable_readback_fails_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Garbage CKA_PUBLIC_KEY_INFO bytes are recovery-impossible: xfail with
-    the oracle record, not a pass."""
+    """Nonempty but unparseable CKA_PUBLIC_KEY_INFO bytes fail wrong_result.
+
+    Intentional change from the earlier oracle-unavailable xfail: a CKR_OK
+    read that delivers present-but-malformed bytes is provider-malformed
+    metadata, not unavailability -- the require_* idiom (present-malformed
+    fails, only missing xfails). Swallowing it as oracle-unavailable would
+    hide provider bugs behind a not-operational record.
+    """
+    vec = _siggen_vec(b"\xaa\x55")
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=b"\x30\x03oops")
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+
+
+def test_siggen_missing_pk_empty_readback_xfails_oracle_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty CKA_PUBLIC_KEY_INFO bytes carry no key: still recovery-impossible,
+    xfail with the oracle record -- only NONEMPTY unparseable bytes fail."""
     vec = _siggen_vec(b"\xaa\x55")
     assert_xfails(
         _run_siggen_no_projection_pk,
         monkeypatch,
         vec,
-        spki=b"\x30\x03oops",
+        spki=b"",
+        match="oracle unavailable",
+    )
+
+
+def test_siggen_missing_pk_readback_undefined_ckr_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault injection: an UNDEFINED CK_RV (neither standard nor
+    vendor-defined) from the readback must propagate, never be absorbed as
+    oracle-unavailable."""
+    vec = _siggen_vec(b"\xaa\x55")
+    err = CkrAssertionError("C_GetAttributeValue: Unexpected CK_RV", 0x12345678)
+    try:
+        _run_siggen_no_projection_pk(monkeypatch, vec, read_error=err)
+    except CkrAssertionError as exc:
+        assert exc.rv == 0x12345678
+        return
+    except XFailed as exc:
+        pytest.fail(f"undefined CK_RV was absorbed as oracle-unavailable: {exc}")
+    pytest.fail("undefined CK_RV read error was swallowed entirely")
+
+
+def test_siggen_missing_pk_readback_vendor_ckr_xfails_oracle_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendor-defined CK_RV refusal is still a defined refusal: xfail with
+    the oracle record, like CKR_FUNCTION_FAILED."""
+    vec = _siggen_vec(b"\xaa\x55")
+    err = CkrAssertionError("C_GetAttributeValue: Unexpected CK_RV", 0x80000001)
+    assert_xfails(
+        _run_siggen_no_projection_pk,
+        monkeypatch,
+        vec,
+        read_error=err,
         match="oracle unavailable",
     )
 

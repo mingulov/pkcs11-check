@@ -22,7 +22,12 @@ from pkcs11_check.raw.recipes import (
     sign_single,
     verify_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CKA_PUBLIC_KEY_INFO,
     CKA_SIGN,
@@ -201,15 +206,20 @@ def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
 
     Reads back CKA_PUBLIC_KEY_INFO (SubjectPublicKeyInfo DER) and extracts
     the raw key bytes. Returns b"" when recovery is impossible -- attribute
-    unsupported, missing, sensitive, or unparseable -- so the caller emits
-    the explicit oracle-unavailable record. A rejected read is not a defect:
-    only a typed CKR refusal is absorbed here; anything else propagates.
+    unsupported, missing, sensitive, refused, or empty -- so the caller emits
+    the explicit oracle-unavailable record. Only a DEFINED CKR refusal is
+    absorbed here; an undefined CK_RV propagates, and nonempty-but-unparseable
+    SPKI bytes fail as provider-malformed metadata (present-malformed fails
+    per the require_* idiom; only missing stays unavailable).
     """
     try:
         attrs = read_attributes(rs.raw, rs.sh, priv_key, [CKA_PUBLIC_KEY_INFO])
-    except CkrAssertionError:
-        # audit-ok: recovery fallback; b"" always reaches the caller's explicit
-        # oracle-unavailable xfail, never a silent pass.
+    except CkrAssertionError as exc:
+        # audit-ok: recovery fallback for DEFINED refusals only (standard or
+        # vendor CKRs, e.g. CKR_FUNCTION_FAILED); b"" always reaches the
+        # caller's explicit oracle-unavailable xfail, never a silent pass.
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            raise
         return b""
     spki = attr_or_record(
         attrs,
@@ -218,9 +228,20 @@ def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
         reason="not_operational",
         inherit_mechanism=False,
     )
-    if spki is MISSING_ATTRIBUTE or not isinstance(spki, bytes):
+    if spki is MISSING_ATTRIBUTE or not isinstance(spki, bytes) or len(spki) == 0:
         return b""
-    return _spki_public_key_bytes(spki) or b""
+    parsed = _spki_public_key_bytes(spki)
+    if parsed is None:
+        fail_as(
+            "wrong_result",
+            kind="metadata",
+            label=f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback",
+            summary=(
+                f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback present but "
+                f"malformed ({len(spki)} unparseable bytes)"
+            ),
+        )
+    return parsed or b""
 
 
 def _load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
