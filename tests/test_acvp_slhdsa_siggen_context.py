@@ -501,6 +501,21 @@ def test_siggen_malformed_oid_readback_fails_metadata(
     assert record.kind == "metadata"
 
 
+def test_siggen_malformed_params_readback_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SPKI whose parameters carry malformed contents fails wrong_result
+    end to end (NULL with content bytes here)."""
+    vec = _siggen_vec(b"\xaa\x55")
+    spki = _spki_der_with_alg(b"\x30\x06\x06\x01\x2a\x05\x01\x00", bytes(range(32)))
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=spki)
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+
+
 def test_siggen_missing_pk_empty_payload_readback_fails_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -617,6 +632,20 @@ def test_spki_extractor_rejects_trailing_algorithm_bytes() -> None:
     assert test_acvp_slhdsa._spki_public_key_bytes(with_null) == key
     trailing = _spki_der_with_alg(b"\x30\x04\x06\x01\x2a\xff", key)
     assert test_acvp_slhdsa._spki_public_key_bytes(trailing) is None
+
+
+def test_spki_extractor_validates_parameter_contents() -> None:
+    """Parameters are validated recursively, not just length-fitted: NULL
+    must be empty, constructed values must hold complete children."""
+    key = bytes(range(32))
+    null_with_content = _spki_der_with_alg(b"\x30\x06\x06\x01\x2a\x05\x01\x00", key)
+    assert test_acvp_slhdsa._spki_public_key_bytes(null_with_content) is None
+    truncated_child = _spki_der_with_alg(b"\x30\x06\x06\x01\x2a\x30\x01\xff", key)
+    assert test_acvp_slhdsa._spki_public_key_bytes(truncated_child) is None
+    nested_bad = _spki_der_with_alg(b"\x30\x08\x06\x01\x2a\x30\x03\x05\x01\x00", key)
+    assert test_acvp_slhdsa._spki_public_key_bytes(nested_bad) is None
+    nested_good = _spki_der_with_alg(b"\x30\x09\x06\x01\x2a\x30\x04\x05\x00\x05\x00", key)
+    assert test_acvp_slhdsa._spki_public_key_bytes(nested_good) == key
 
 
 def test_spki_extractor_rejects_nonminimal_lengths() -> None:

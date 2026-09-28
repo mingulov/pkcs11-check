@@ -220,15 +220,41 @@ def _wellformed_oid_contents(contents: bytes) -> bool:
     return start
 
 
-def _single_tlv(der: bytes, at: int, end: int) -> bool:
-    """Whether ``der[at:end]`` is exactly one single-byte-tag TLV."""
-    if at + 2 > end or (der[at] & 0x1F) == 0x1F:
-        return False
+def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
+    """End offset of one well-formed TLV at ``at``, or None.
+
+    Single-byte tags with minimal lengths; NULL must be empty; OIDs must be
+    well-formed; constructed values must hold complete, recursively
+    well-formed children. Other primitive contents are opaque bytes. Depth
+    is capped: parameters never nest legitimately, so deep nesting is
+    treated as malformed rather than risking runaway recursion.
+    """
+    if depth > 32 or at + 2 > end or (der[at] & 0x1F) == 0x1F:
+        return None
     try:
         voff, vlen = _der_length(der, at + 1)
     except (IndexError, ValueError):
-        return False
-    return voff + vlen == end
+        return None
+    if voff + vlen > end:
+        return None
+    tag = der[at]
+    if tag == 0x05:  # NULL: empty contents only
+        return voff + vlen if vlen == 0 else None
+    if tag == 0x06:  # OID: well-formed subidentifiers
+        return voff + vlen if _wellformed_oid_contents(der[voff : voff + vlen]) else None
+    if tag & 0x20:  # constructed: complete children, recursively
+        pos = voff
+        while pos < voff + vlen:
+            child = _tlv_end(der, pos, voff + vlen, depth + 1)
+            if child is None:
+                return None
+            pos = child
+    return voff + vlen
+
+
+def _single_tlv(der: bytes, at: int, end: int) -> bool:
+    """Whether ``der[at:end]`` is exactly one well-formed TLV."""
+    return _tlv_end(der, at, end) == end
 
 
 def _spki_public_key_bytes(der: bytes) -> bytes | None:
