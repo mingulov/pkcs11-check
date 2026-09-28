@@ -132,8 +132,8 @@ _VALUE_LEN_TRUNC = (1 << 32) + 16
 # Canonical rejects for an impossible key-size generation premise (RSA modulus
 # and DH/DSA domain parameters): PASS only these. Any other defined/vendor
 # clean rejection is adverse XFAIL via classify_negative_rv -- including
-# CKR_KEY_SIZE_RANGE, whose defined use is for an already-supplied key, not
-# this generation premise.
+# CKR_KEY_SIZE_RANGE, which the C_GenerateKey/C_GenerateKeyPair return lists
+# omit for this generation premise, so the framework stays fail-closed.
 _KEY_SIZE_REJECT_RVS = (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
