@@ -210,8 +210,16 @@ def _hkdf_data_detail(
     }
 
 
-def _create_hkdf_data_base_or_xfail(rs: Any, *, key_len: int = _HKDF_BASE_KEY_LEN) -> int:
-    """Provision the generic-secret input, classifying exhausted shape rejects."""
+def _create_hkdf_data_base_or_xfail(
+    rs: Any, *, key_len: int = _HKDF_BASE_KEY_LEN
+) -> tuple[int, bytes]:
+    """Provision the generic-secret input, classifying exhausted shape rejects.
+
+    Returns the handle plus the exact key bytes imported, so oracles feed on
+    known bytes rather than a CKA_VALUE readback (a lawfully nonextractable
+    key must not gate verification).
+    """
+    key_bytes = _hkdf_base_ikm(key_len)
     try:
         handle = _create_base_key(rs, key_len=key_len)
     except CkrAssertionError as exc:
@@ -253,7 +261,7 @@ def _create_hkdf_data_base_or_xfail(rs: Any, *, key_len: int = _HKDF_BASE_KEY_LE
                 consumer_mechanism="CKM_HKDF_DATA",
             ),
         )
-    return handle
+    return handle, key_bytes
 
 
 def _derive_hkdf_data_or_xfail(
@@ -412,6 +420,42 @@ def _read_hkdf_data_output(rs: Any, handle: int, label: str) -> Any:
     if value is MISSING_ATTRIBUTE and len(C.get_records()) == records_before:
         raise AssertionError(f"{label}: missing CKA_VALUE produced no classification record")
     return value
+
+
+def _check_hkdf_salt_key_readback(rs: Any, salt_key: int, supplied: bytes) -> None:
+    """Consistency check: a readable salt-key CKA_VALUE must equal the imported bytes.
+
+    The oracle always feeds on the known ``supplied`` bytes, never on this
+    readback. A lawfully nonextractable salt key refuses CKA_VALUE
+    (CKR_ATTRIBUTE_SENSITIVE) or is otherwise unreadable; that skips this
+    check only -- quietly, with no record -- and never gates the oracle.
+    """
+    salt_attrs = read_attributes(rs.raw, rs.sh, salt_key, [CKA_VALUE])
+    salt_value = salt_attrs.get(CKA_VALUE, MISSING_ATTRIBUTE)
+    if salt_value is MISSING_ATTRIBUTE:
+        return
+    if type(salt_value) is not bytes or salt_value != supplied:
+        C.fail_as(
+            "wrong_result",
+            kind="metadata",
+            label="CKM_HKDF_DATA matrix salt-key readback",
+            operation="C_GetAttributeValue",
+            mechanism=None,
+            inherit_mechanism=False,
+            spec_ref=_HKDF_READ_REF,
+            expected={"type": "bytes", "length": len(supplied)},
+            actual={
+                "type": type(salt_value).__name__,
+                "length": (len(salt_value) if hasattr(salt_value, "__len__") else None),
+            },
+            summary="CKM_HKDF_DATA salt-key CKA_VALUE readback does not match imported bytes",
+            detail=_hkdf_data_detail(
+                producer_operation="C_CreateObject",
+                producer_mechanism=None,
+                consumer_operation="C_DeriveKey",
+                consumer_mechanism="CKM_HKDF_DATA",
+            ),
+        )
 
 
 def _hkdf_derive(rs: Any, base_key: int, salt: bytes, info: bytes) -> int:
@@ -703,7 +747,7 @@ class TestHKDFData:
         if not rs.has_mechanism("HKDF_DATA"):
             pytest.skip("CKM_HKDF_DATA not supported")
 
-        base_key = _create_hkdf_data_base_or_xfail(rs)
+        base_key, _ = _create_hkdf_data_base_or_xfail(rs)
         derived = 0
         try:
             derived = _derive_hkdf_data_or_xfail(rs, base_key, b"salt", b"info")
@@ -723,7 +767,7 @@ class TestHKDFData:
         if not rs.has_mechanism("HKDF_DATA"):
             pytest.skip("CKM_HKDF_DATA not supported")
 
-        base_key = _create_hkdf_data_base_or_xfail(rs)
+        base_key, _ = _create_hkdf_data_base_or_xfail(rs)
         derived_1 = 0
         derived_2 = 0
         try:
@@ -771,7 +815,7 @@ class TestHKDFData:
         if not rs.has_mechanism("HKDF_DATA"):
             pytest.skip("CKM_HKDF_DATA not supported")
 
-        base_key = _create_hkdf_data_base_or_xfail(rs)
+        base_key, _ = _create_hkdf_data_base_or_xfail(rs)
         derived_a = 0
         derived_b = 0
         try:
@@ -803,10 +847,13 @@ class TestHKDFData:
             pytest.skip("CKM_HKDF_DATA not supported")
 
         hash_mech = matrix_case.get("hash_mech")
-        base_key = _create_hkdf_data_base_or_xfail(rs, key_len=_hkdf_matrix_base_key_len(hash_mech))
+        base_key, base_ikm = _create_hkdf_data_base_or_xfail(
+            rs, key_len=_hkdf_matrix_base_key_len(hash_mech)
+        )
         salt_key = 0
+        salt_key_bytes = b""
         if matrix_case.get("needs_salt_key"):
-            salt_key = _create_hkdf_data_base_or_xfail(rs)
+            salt_key, salt_key_bytes = _create_hkdf_data_base_or_xfail(rs)
         derived_1 = 0
         derived_2 = 0
         try:
@@ -830,44 +877,11 @@ class TestHKDFData:
             assert val_1 == val_2, "Same HKDF_DATA inputs must produce identical output"
             salt: bytes | None = matrix_case["salt"]
             if matrix_case.get("needs_salt_key"):
-                salt_attrs = read_attributes(rs.raw, rs.sh, salt_key, [CKA_VALUE])
-                salt_value = attr_or_record(
-                    salt_attrs,
-                    CKA_VALUE,
-                    label="CKM_HKDF_DATA matrix salt-key readback",
-                    reason="not_operational",
-                    kind="metadata",
-                    mechanism=None,
-                    inherit_mechanism=False,
-                )
-                if salt_value is MISSING_ATTRIBUTE:
-                    return
-                if type(salt_value) is not bytes:
-                    C.fail_as(
-                        "wrong_result",
-                        kind="metadata",
-                        label="CKM_HKDF_DATA matrix salt-key readback",
-                        operation="C_GetAttributeValue",
-                        mechanism=None,
-                        inherit_mechanism=False,
-                        spec_ref=_HKDF_READ_REF,
-                        expected={"type": "bytes"},
-                        actual={
-                            "type": type(salt_value).__name__,
-                            "length": (len(salt_value) if hasattr(salt_value, "__len__") else None),
-                        },
-                        summary="CKM_HKDF_DATA salt-key CKA_VALUE readback is malformed",
-                        detail=_hkdf_data_detail(
-                            producer_operation="C_CreateObject",
-                            producer_mechanism=None,
-                            consumer_operation="C_DeriveKey",
-                            consumer_mechanism="CKM_HKDF_DATA",
-                        ),
-                    )
-                salt = salt_value
+                _check_hkdf_salt_key_readback(rs, salt_key, salt_key_bytes)
+                salt = salt_key_bytes
             expected = _hkdf_oracle(
                 hash_mech=hash_mech,
-                ikm=_hkdf_base_ikm(_hkdf_matrix_base_key_len(hash_mech)),
+                ikm=base_ikm,
                 salt=salt,
                 info=matrix_case["info"],
                 length=_HKDF_DATA_OUTPUT_LEN,
@@ -894,7 +908,7 @@ class TestHKDFData:
         if not rs.has_mechanism("HKDF_DATA"):
             pytest.skip("CKM_HKDF_DATA not supported")
 
-        base_key = _create_hkdf_data_base_or_xfail(rs)
+        base_key, _ = _create_hkdf_data_base_or_xfail(rs)
         derived = 0
         try:
             try:

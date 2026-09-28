@@ -72,6 +72,7 @@ def _stub_harness(
     *,
     output: bytes = _OUTPUT,
     salt_value: Any = _NOMINAL_SALT_KEY_VALUE,
+    salt_readable: bool = True,
 ) -> list[dict[str, Any]]:
     """Stub base-key/readback/destroy plus the given derive impl; return the
     decoded per-call param shapes."""
@@ -82,14 +83,18 @@ def _stub_harness(
         return derive(*args, **kwargs)
 
     base_handles = iter([7, 21])
-    monkeypatch.setattr(
-        hkdf, "_create_hkdf_data_base_or_xfail", lambda _rs, **_k: next(base_handles)
-    )
+
+    def _fake_base(_rs: Any, **kwargs: Any) -> tuple[int, bytes]:
+        return (
+            next(base_handles),
+            hkdf._hkdf_base_ikm(kwargs.get("key_len", hkdf._HKDF_BASE_KEY_LEN)),
+        )
+
+    monkeypatch.setattr(hkdf, "_create_hkdf_data_base_or_xfail", _fake_base)
     monkeypatch.setattr(hkdf, "derive_key", _derive)
     monkeypatch.setattr(hkdf, "_read_hkdf_data_output", lambda *_a, **_k: output)
-    monkeypatch.setattr(
-        hkdf, "read_attributes", lambda _raw, _sh, _h, _attrs: {CKA_VALUE: salt_value}
-    )
+    salt_attrs: dict[Any, Any] = {CKA_VALUE: salt_value} if salt_readable else {}
+    monkeypatch.setattr(hkdf, "read_attributes", lambda _raw, _sh, _h, _attrs: salt_attrs)
     monkeypatch.setattr(hkdf, "destroy_quietly", lambda *_a, **_k: None)
     return captured
 
@@ -324,3 +329,62 @@ def test_malformed_salt_key_readback_fails(monkeypatch: pytest.MonkeyPatch) -> N
     assert rec.reason == "wrong_result"
     assert rec.kind == "metadata"
     assert rec.outcome == "fail"
+
+
+def test_salt_key_nonextractable_correct_output_passes_without_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lawfully nonextractable salt key must not gate the oracle.
+
+    The oracle feeds on the known imported bytes, so correct output passes
+    with no not_operational record even when CKA_VALUE is unreadable.
+    """
+    _derive_ok.counter = 0
+    _stub_harness(monkeypatch, _derive_ok, output=_expected_output("salt-key"), salt_readable=False)
+    hkdf.TestHKDFData().test_hkdf_data_param_matrix(_rs(), dict(hkdf._HKDF_DATA_MATRIX["salt-key"]))
+    assert [rec for rec in C.get_records() if rec.reason == "not_operational"] == []
+    assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
+
+
+def test_salt_key_nonextractable_wrong_output_still_fails_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With an unreadable salt key the oracle still runs: wrong output fails."""
+    expected = _expected_output("salt-key")
+    wrong = bytes([expected[0] ^ 0x01]) + expected[1:]
+    assert wrong != expected
+    _derive_ok.counter = 0
+    _stub_harness(monkeypatch, _derive_ok, output=wrong, salt_readable=False)
+    with pytest.raises(pytest.fail.Exception):
+        hkdf.TestHKDFData().test_hkdf_data_param_matrix(
+            _rs(), dict(hkdf._HKDF_DATA_MATRIX["salt-key"])
+        )
+    (rec,) = C.get_records()
+    assert rec.reason == "wrong_result"
+    assert rec.outcome == "fail"
+
+
+def test_salt_key_mismatched_readback_caught_by_consistency_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An extractable salt key whose CKA_VALUE differs from the imported bytes
+    fails the separate consistency check (mechanism-free metadata)."""
+    mismatched = bytes(32)
+    assert mismatched != _NOMINAL_SALT_KEY_VALUE
+    _derive_ok.counter = 0
+    _stub_harness(
+        monkeypatch,
+        _derive_ok,
+        output=_expected_output("salt-key"),
+        salt_value=mismatched,
+    )
+    with pytest.raises(pytest.fail.Exception):
+        hkdf.TestHKDFData().test_hkdf_data_param_matrix(
+            _rs(), dict(hkdf._HKDF_DATA_MATRIX["salt-key"])
+        )
+    (rec,) = C.get_records()
+    assert rec.reason == "wrong_result"
+    assert rec.kind == "metadata"
+    assert rec.outcome == "fail"
+    assert rec.label == "CKM_HKDF_DATA matrix salt-key readback"
+    assert rec.mechanism is None
