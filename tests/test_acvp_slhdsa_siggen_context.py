@@ -1,11 +1,11 @@
 """Pins for SLH-DSA sigGen context handling (NULL-matrix row).
 
-The SLH-DSA sigGen loader must carry each vector's ``context`` bytes, sample
-both context shapes (empty and non-empty) per parameter set, and skip preHash
-groups (their messages are digests for the hash-sign mechanisms, not pure
-``CKM_SLH_DSA`` inputs). The sigGen test must pass non-empty context via
-``mech_sign_context`` (CK_SIGN_ADDITIONAL_CONTEXT), keeping NULL params for
-pure vectors -- exact sigVer parity (same conditional shape, same helper).
+The SLH-DSA sigGen loader must carry each vector's ``context`` bytes, take
+every pure vector (both context shapes stay covered as a consequence), and
+skip preHash groups (their messages are digests for the hash-sign mechanisms,
+not pure ``CKM_SLH_DSA`` inputs). The sigGen test must pass non-empty context
+via ``mech_sign_context`` (CK_SIGN_ADDITIONAL_CONTEXT), keeping NULL params
+for pure vectors -- exact sigVer parity (same conditional shape, same helper).
 """
 
 from __future__ import annotations
@@ -96,20 +96,22 @@ def test_siggen_loader_carries_context_bytes(monkeypatch: pytest.MonkeyPatch) ->
     assert loaded["sigGen-SLH-DSA-SHA2-128f-tc103"]["context"] == b""
 
 
-def test_siggen_loader_samples_both_context_shapes_per_set(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Each set keeps its first vector plus the first vector of the opposite
-    context shape, so both parameter representations stay covered."""
+def test_siggen_loader_takes_all_pure_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No per-set sampling: every pure vector loads, so both context shapes
+    (NULL and explicit parameters) stay covered for every parameter set."""
     monkeypatch.setattr(
         test_acvp_slhdsa, "load_acvp_vectors", lambda _algorithm: _fake_siggen_vectors()
     )
     loaded = dict(test_acvp_slhdsa._load_siggen_vectors())
     assert "sigGen-SLH-DSA-SHA2-128f-tc101" in loaded
-    assert "sigGen-SLH-DSA-SHA2-128f-tc102" not in loaded
+    assert "sigGen-SLH-DSA-SHA2-128f-tc102" in loaded
     assert "sigGen-SLH-DSA-SHA2-128f-tc103" in loaded
     assert "sigGen-SLH-DSA-SHA2-128s-tc201" in loaded
-    assert "sigGen-SLH-DSA-SHA2-128s-tc202" not in loaded
+    assert "sigGen-SLH-DSA-SHA2-128s-tc202" in loaded
+    contexts_128f = {
+        loaded[f"sigGen-SLH-DSA-SHA2-128f-tc{tc}"]["context"] for tc in (101, 102, 103)
+    }
+    assert contexts_128f == {bytes.fromhex("aa55"), bytes.fromhex("bb66"), b""}
 
 
 def test_siggen_loader_skips_pre_hash_groups(monkeypatch: pytest.MonkeyPatch) -> None:

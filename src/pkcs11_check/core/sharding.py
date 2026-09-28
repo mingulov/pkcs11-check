@@ -57,6 +57,9 @@ DEFAULT_HEAVY_BASENAMES: tuple[str, ...] = (
     "test_wycheproof_rsa.py",
     "test_acvp_rsa.py",
     "test_dsa_complete.py",
+    # Full-take SLH-DSA KATs: 456 signs + 624 verifies, measured ~11-43 s
+    # sampled and projecting to ~2.5-9 min full (kryoptic/bouncyhsm 0198).
+    "test_acvp_slhdsa.py",
 )
 _HEAVY_WEIGHT_SECONDS = 660.0
 
