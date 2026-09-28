@@ -260,7 +260,8 @@ def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
     Single-byte tags with minimal lengths. Universal tags obey their DER
     encoding rules (constructed-bit direction, no EOC in definite length,
     BOOLEAN/INTEGER/ENUMERATED/BIT STRING content shapes, empty NULL,
-    well-formed OIDs, strict UTF-8/16/32 and restricted string alphabets);
+    well-formed OIDs, strict UTF-8/UTF-32, BMP repertoire, and restricted
+    string alphabets);
     constructed values must hold complete, recursively well-formed children.
     Remaining primitive contents (OCTET STRING, REAL, times, the exotic
     character strings) are opaque bytes: their rules are value semantics,
@@ -327,13 +328,13 @@ def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
                 contents.decode("utf-32-be")
             except UnicodeDecodeError:
                 return None
-        elif number == 0x1E:  # BMPString: strict UTF-16-BE
+        elif number == 0x1E:  # BMPString: BMP repertoire only
             if len(contents) % 2:
                 return None
-            try:
-                contents.decode("utf-16-be")
-            except UnicodeDecodeError:
-                return None
+            for i in range(0, len(contents), 2):
+                unit = (contents[i] << 8) | contents[i + 1]
+                if 0xD800 <= unit <= 0xDFFF or unit in (0xFFFE, 0xFFFF):
+                    return None
     if tag & 0x20:  # constructed: complete children, recursively
         pos = voff
         while pos < voff + vlen:
