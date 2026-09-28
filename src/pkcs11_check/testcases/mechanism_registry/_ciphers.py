@@ -242,6 +242,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         block_size=None,
         input_constraint="any",
         param_required=True,
+        param_recipe=ParamRecipe("ctr", {"counter_bits": 128}),
         deterministic=False,
         keygen_recipe=_sym,
         expected_flags=_CAMELLIA_ENC,
