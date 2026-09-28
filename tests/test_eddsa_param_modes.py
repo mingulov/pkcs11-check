@@ -14,6 +14,7 @@ Normative mode table (brief task-6):
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -106,7 +107,6 @@ def test_rfc8410_oid_encodings_unchanged() -> None:
 
 def test_adaptive_explicit_profile_sends_complete_structure() -> None:
     """The explicit compatibility profile must call mech_eddsa directly (not None)."""
-    from typing import Any
 
     from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS
     from pkcs11_check.testcases import _eddsa_public_key as eddsa_keys
@@ -143,7 +143,6 @@ def test_adaptive_explicit_profile_sends_complete_structure() -> None:
 
 def test_adaptive_null_profile_constructs_mech_simple() -> None:
     """The NULL profile must keep constructing mech_simple (NULL/zero)."""
-    from typing import Any
 
     from pkcs11_check.testcases import _eddsa_public_key as eddsa_keys
 
@@ -208,6 +207,11 @@ _NEW_EDDSA_POSITIVE_NODES = (
     "test_edwards448_ph_roundtrip",
     "test_eddsa_context_mismatch_does_not_verify",
     "test_eddsa_pure_and_ctx_modes_do_not_cross_verify",
+    "test_edwards25519_ctx_null_pointer_roundtrip",
+    "test_edwards25519_ctx_empty_bytes_roundtrip",
+    "test_edwards25519_ctx_single_byte_roundtrip",
+    "test_edwards25519_ctx_max_length_roundtrip",
+    "test_eddsa_ph_mode_does_not_cross_verify",
 )
 
 
@@ -227,3 +231,154 @@ def test_new_eddsa_positive_nodes_present() -> None:
     source = TEST_EDDSA.read_text(encoding="utf-8")
     for node in _NEW_EDDSA_POSITIVE_NODES:
         assert node in source
+
+
+# ---------------------------------------------------------------------------
+# Context-shape wire pins: NULL-pointer vs empty-bytes vs short vs maximal
+# contexts must reach sign and verify with the exact packed representation.
+# ---------------------------------------------------------------------------
+
+
+def _decode_eddsa_wire(mech_param: Any) -> tuple[bool, bool, int, bytes | None]:
+    """Decode a captured EdDSA mech_param to
+    (is_struct, context_pointer_non_null, context_len, context_bytes)."""
+    import ctypes
+
+    assert mech_param is not None
+    params = mech_param.params
+    if params is None:
+        return (False, False, 0, None)
+    ptr = params.pContextData
+    length = int(params.ulContextDataLen)
+    context = bytes(ctypes.string_at(ptr, length)) if ptr else None
+    return (True, ptr is not None, length, context)
+
+
+def _run_mode_roundtrip(node: str) -> tuple[tuple[bool, bool, int, bytes | None], ...]:
+    """Drive one product roundtrip node with stubbed sign/verify; return the
+    decoded (sign, verify) wire shapes."""
+    import unittest.mock as mock
+    from types import SimpleNamespace
+
+    from pkcs11_check.testcases import test_eddsa as eddsa
+
+    captured: list[Any] = []
+
+    def _sign(*args: Any, **kwargs: Any) -> bytes:
+        captured.append(kwargs["mech_param"])
+        return b"S" * 64
+
+    def _verify(*args: Any, **kwargs: Any) -> bool:
+        captured.append(kwargs["mech_param"])
+        return True
+
+    rs = SimpleNamespace(raw=object(), sh=1)
+    node_fn = getattr(eddsa.TestEdDSAParametrizedModes(), node)
+    with (
+        mock.patch.object(eddsa, "sign_single", _sign),
+        mock.patch.object(eddsa, "verify_single", _verify),
+    ):
+        node_fn(rs, (7, 8))
+
+    assert len(captured) == 2
+    return (_decode_eddsa_wire(captured[0]), _decode_eddsa_wire(captured[1]))
+
+
+def test_ctx_null_pointer_sends_null_pcontext_with_zero_len() -> None:
+    """context_data=None packs a structure with NULL pContextData, len 0."""
+    sign_shape, verify_shape = _run_mode_roundtrip("test_edwards25519_ctx_null_pointer_roundtrip")
+    assert sign_shape == (True, False, 0, None)
+    assert verify_shape == (True, False, 0, None)
+
+
+def test_ctx_empty_bytes_sends_non_null_pcontext_with_zero_len() -> None:
+    """context_data=b"" packs a structure with a non-NULL pointer, len 0 --
+    the ABI-distinct empty representation."""
+    sign_shape, verify_shape = _run_mode_roundtrip("test_edwards25519_ctx_empty_bytes_roundtrip")
+    assert sign_shape == (True, True, 0, b"")
+    assert verify_shape == (True, True, 0, b"")
+
+
+def test_ctx_single_byte_roundtrip_carries_exact_byte() -> None:
+    """A one-byte context reaches sign and verify byte-identical."""
+    sign_shape, verify_shape = _run_mode_roundtrip("test_edwards25519_ctx_single_byte_roundtrip")
+    assert sign_shape == (True, True, 1, b"\x42")
+    assert verify_shape == (True, True, 1, b"\x42")
+
+
+def test_ctx_max_length_roundtrip_carries_255_bytes() -> None:
+    """A 255-byte context reaches sign and verify byte-identical."""
+    expected = bytes(range(255))
+    sign_shape, verify_shape = _run_mode_roundtrip("test_edwards25519_ctx_max_length_roundtrip")
+    assert sign_shape == (True, True, 255, expected)
+    assert verify_shape == (True, True, 255, expected)
+
+
+def test_ctx_structures_carry_sizeof_eddsa_params() -> None:
+    """Structured rows send ulParameterLen == sizeof(CK_EDDSA_PARAMS)."""
+    import ctypes
+    import unittest.mock as mock
+    from types import SimpleNamespace
+
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS
+    from pkcs11_check.testcases import test_eddsa as eddsa
+
+    captured: list[Any] = []
+
+    def _sign(*args: Any, **kwargs: Any) -> bytes:
+        captured.append(kwargs["mech_param"])
+        return b"S" * 64
+
+    def _verify(*args: Any, **kwargs: Any) -> bool:
+        captured.append(kwargs["mech_param"])
+        return True
+
+    rs = SimpleNamespace(raw=object(), sh=1)
+    node = eddsa.TestEdDSAParametrizedModes()
+    with (
+        mock.patch.object(eddsa, "sign_single", _sign),
+        mock.patch.object(eddsa, "verify_single", _verify),
+    ):
+        node.test_edwards25519_ctx_empty_bytes_roundtrip(rs, (7, 8))
+
+    assert len(captured) == 2
+    for mech in captured:
+        assert mech.ck.ulParameterLen == ctypes.sizeof(CK_EDDSA_PARAMS)
+
+
+def test_ph_mode_exercises_all_separation_directions() -> None:
+    """The ph separation node must sign ph + NULL + ctx and verify each
+    signature under a different mode, all drawing rejection (False)."""
+    import unittest.mock as mock
+    from types import SimpleNamespace
+
+    from pkcs11_check.testcases import test_eddsa as eddsa
+
+    captured: list[tuple[str, Any]] = []
+
+    def _sign(*args: Any, **kwargs: Any) -> bytes:
+        captured.append(("sign", kwargs["mech_param"]))
+        return b"S" * 64
+
+    def _verify(*args: Any, **kwargs: Any) -> bool:
+        captured.append(("verify", kwargs["mech_param"]))
+        return False
+
+    rs = SimpleNamespace(raw=object(), sh=1)
+    with (
+        mock.patch.object(eddsa, "sign_single", _sign),
+        mock.patch.object(eddsa, "verify_single", _verify),
+    ):
+        eddsa.TestEdDSAParametrizedModes().test_eddsa_ph_mode_does_not_cross_verify(rs, (7, 8))
+
+    kinds = [op for op, _ in captured]
+    assert kinds.count("sign") == 3
+    assert kinds.count("verify") == 4
+
+    ph_flags: list[bool | None] = []
+    for _op, mech in captured:
+        params = mech.params
+        ph_flags.append(None if params is None else bool(params.phFlag))
+    assert True in ph_flags  # ph structures exercised
+    assert False in ph_flags  # ctx structures exercised
+    assert None in ph_flags  # NULL pure exercised

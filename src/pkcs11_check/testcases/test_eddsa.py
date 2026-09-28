@@ -430,6 +430,8 @@ EDWARDS448_CURVE_NAME = encode_edwards_curve_name_parameters("edwards448")
 
 _CTX_A = b"eddsa-test-context-a"
 _CTX_B = b"eddsa-test-context-b"
+_CTX_1 = b"\x42"
+_CTX_MAX = bytes(range(255))
 
 
 def _gen_curve_name_keypair(rs: Any, curve_name_params: bytes) -> tuple[int, int]:
@@ -602,4 +604,99 @@ class TestEdDSAParametrizedModes:
             _refute_ignored_structure(
                 "CKM_EDDSA:pure verify ctx-signature rejection",
                 "ctx-structure signature verified under NULL -- provider ignores CK_EDDSA_PARAMS",
+            )
+
+    def test_edwards25519_ctx_null_pointer_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed25519ctx with NULL pContextData and zero length roundtrips."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ctx NULL-pointer test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=None)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 64
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_edwards25519_ctx_empty_bytes_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed25519ctx with an empty (non-NULL) context buffer roundtrips."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ctx empty-bytes test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=b"")
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 64
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_edwards25519_ctx_single_byte_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed25519ctx with a one-byte context roundtrips."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ctx single-byte test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_1)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 64
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_edwards25519_ctx_max_length_roundtrip(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """Ed25519ctx with a maximal 255-byte context roundtrips."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519ctx max-length test data"
+        mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_MAX)
+
+        signature = _sign_eddsa_params(rs, priv, data, mech)
+        assert len(signature) == 64
+
+        assert _verify_eddsa_params(rs, pub, data, signature, mech) is True
+
+    def test_eddsa_ph_mode_does_not_cross_verify(
+        self, p11_raw_session: Any, edwards25519_curve_name_keypair: tuple[int, int]
+    ) -> None:
+        """ph mode must not cross-verify with pure NULL or ctx modes."""
+        rs = p11_raw_session
+        pub, priv = edwards25519_curve_name_keypair
+        data = b"Ed25519 ph cross-mode test data"
+        ctx_mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A)
+        ph_mech = mech_eddsa(CKM_EDDSA, context_data=_CTX_A, prehash=True)
+
+        ph_sig = _sign_eddsa_params(rs, priv, data, ph_mech)
+        if _verify_eddsa(rs, pub, data, ph_sig):
+            _refute_ignored_structure(
+                "CKM_EDDSA:pure verify ph-signature rejection",
+                "ph-structure signature verified under NULL -- provider ignores CK_EDDSA_PARAMS",
+            )
+        if _verify_eddsa_params(rs, pub, data, ph_sig, ctx_mech):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ctx verify ph-signature rejection",
+                "ph-structure signature verified under a ctx structure -- provider "
+                "ignores CK_EDDSA_PARAMS phFlag",
+            )
+
+        pure_sig = _sign_eddsa(rs, priv, data)
+        if _verify_eddsa_params(rs, pub, data, pure_sig, ph_mech):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ph verify pure-signature rejection",
+                "pure NULL signature verified under a ph structure -- provider "
+                "ignores CK_EDDSA_PARAMS",
+            )
+
+        ctx_sig = _sign_eddsa_params(rs, priv, data, ctx_mech)
+        if _verify_eddsa_params(rs, pub, data, ctx_sig, ph_mech):
+            _refute_ignored_structure(
+                "CKM_EDDSA:ph verify ctx-signature rejection",
+                "ctx-structure signature verified under a ph structure -- provider "
+                "ignores CK_EDDSA_PARAMS phFlag",
             )
