@@ -30,8 +30,14 @@ def _session() -> SimpleNamespace:
 
 
 def _fake_sigver_vectors() -> list[dict[str, Any]]:
-    """Synthetic ``load_acvp_vectors`` rows: context present/empty/absent."""
-    group = {"parameterSet": "SLH-DSA-SHA2-128f"}
+    """Synthetic ``load_acvp_vectors`` rows: context present/empty/absent,
+    plus preHash and internal groups (excluded; internal groups carry no
+    ``preHash`` key, like the real corpus)."""
+    group = {
+        "parameterSet": "SLH-DSA-SHA2-128f",
+        "signatureInterface": "external",
+        "preHash": "pure",
+    }
     expected = {"testPassed": True}
     rows = [
         ("aa55", 101),  # non-empty context
@@ -49,6 +55,22 @@ def _fake_sigver_vectors() -> list[dict[str, Any]]:
         if context is not None:
             test["context"] = context
         vectors.append({"input": test, "expected": expected, "group": group})
+    for tc_id, extra_group in (
+        (301, {"signatureInterface": "external", "preHash": "preHash"}),
+        (302, {"signatureInterface": "internal"}),
+    ):
+        vectors.append(
+            {
+                "input": {
+                    "tcId": tc_id,
+                    "pk": "aa" * 32,
+                    "message": "bb" * 16,
+                    "signature": "cc" * 64,
+                },
+                "expected": expected,
+                "group": {"parameterSet": "SLH-DSA-SHA2-128s", **extra_group},
+            }
+        )
     return vectors
 
 
@@ -61,6 +83,19 @@ def test_sigver_loader_carries_context_bytes(monkeypatch: pytest.MonkeyPatch) ->
     assert loaded["sigVer-SLH-DSA-SHA2-128f-tc101"]["context"] == bytes.fromhex("aa55")
     assert loaded["sigVer-SLH-DSA-SHA2-128f-tc102"]["context"] == b""
     assert loaded["sigVer-SLH-DSA-SHA2-128f-tc103"]["context"] == b""
+
+
+def test_sigver_loader_takes_only_external_pure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only external-pure groups load: preHash groups carry digests for the
+    hash-sign mechanisms, and internal groups are not externally verifiable
+    (routing either through pure verify fails valid vectors)."""
+    monkeypatch.setattr(
+        test_acvp_slhdsa, "load_acvp_vectors", lambda _algorithm: _fake_sigver_vectors()
+    )
+    loaded = dict(test_acvp_slhdsa._load_sigver_vectors())
+    assert "sigVer-SLH-DSA-SHA2-128f-tc101" in loaded
+    assert "sigVer-SLH-DSA-SHA2-128s-tc301" not in loaded
+    assert "sigVer-SLH-DSA-SHA2-128s-tc302" not in loaded
 
 
 def _sigver_vec(context: Any) -> dict[str, Any]:
