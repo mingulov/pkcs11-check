@@ -208,6 +208,8 @@ def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
     try:
         attrs = read_attributes(rs.raw, rs.sh, priv_key, [CKA_PUBLIC_KEY_INFO])
     except CkrAssertionError:
+        # audit-ok: recovery fallback; b"" always reaches the caller's explicit
+        # oracle-unavailable xfail, never a silent pass.
         return b""
     spki = attr_or_record(
         attrs,

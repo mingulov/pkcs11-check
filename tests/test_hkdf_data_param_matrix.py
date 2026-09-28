@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check import classification as C  # noqa: N812
+from pkcs11_check.raw.recipes import AttrReadResult, AttrRefusal
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CKA_VALUE,
@@ -26,6 +27,7 @@ from pkcs11_check.raw.types_std import (
     CKK_GENERIC_SECRET,
     CKM_SHA256,
     CKM_SHA512,
+    CKR_ATTRIBUTE_SENSITIVE,
     CKR_MECHANISM_PARAM_INVALID,
 )
 from pkcs11_check.testcases import test_hkdf_extended as hkdf
@@ -93,7 +95,14 @@ def _stub_harness(
     monkeypatch.setattr(hkdf, "_create_hkdf_data_base_or_xfail", _fake_base)
     monkeypatch.setattr(hkdf, "derive_key", _derive)
     monkeypatch.setattr(hkdf, "_read_hkdf_data_output", lambda *_a, **_k: output)
-    salt_attrs: dict[Any, Any] = {CKA_VALUE: salt_value} if salt_readable else {}
+    if salt_readable:
+        salt_attrs: dict[Any, Any] = {CKA_VALUE: salt_value}
+    else:
+        # Faithful nonextractable-key shape: absent value plus the observed
+        # conformant CKR_ATTRIBUTE_SENSITIVE refusal on the channel.
+        unreadable = AttrReadResult()
+        unreadable.refusals[CKA_VALUE] = AttrRefusal(ckr=int(CKR_ATTRIBUTE_SENSITIVE))
+        salt_attrs = unreadable
     monkeypatch.setattr(hkdf, "read_attributes", lambda _raw, _sh, _h, _attrs: salt_attrs)
     monkeypatch.setattr(hkdf, "destroy_quietly", lambda *_a, **_k: None)
     return captured
@@ -344,6 +353,8 @@ def test_salt_key_nonextractable_correct_output_passes_without_not_operational(
     hkdf.TestHKDFData().test_hkdf_data_param_matrix(_rs(), dict(hkdf._HKDF_DATA_MATRIX["salt-key"]))
     assert [rec for rec in C.get_records() if rec.reason == "not_operational"] == []
     assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
+    (observed,) = [rec for rec in C.get_records() if rec.reason == "sanctioned_refusal"]
+    assert observed.outcome == "pass"
 
 
 def test_salt_key_nonextractable_wrong_output_still_fails_oracle(
@@ -359,9 +370,12 @@ def test_salt_key_nonextractable_wrong_output_still_fails_oracle(
         hkdf.TestHKDFData().test_hkdf_data_param_matrix(
             _rs(), dict(hkdf._HKDF_DATA_MATRIX["salt-key"])
         )
-    (rec,) = C.get_records()
-    assert rec.reason == "wrong_result"
-    assert rec.outcome == "fail"
+    records = C.get_records()
+    assert [rec for rec in records if rec.reason == "not_operational"] == []
+    (failed,) = [rec for rec in records if rec.outcome == "fail"]
+    assert failed.reason == "wrong_result"
+    (observed,) = [rec for rec in records if rec.reason == "sanctioned_refusal"]
+    assert observed.outcome == "pass"
 
 
 def test_salt_key_mismatched_readback_caught_by_consistency_check(
