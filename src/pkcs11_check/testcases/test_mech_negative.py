@@ -125,6 +125,7 @@ from pkcs11_check.testcases.mechanism_helpers import (
     gen_symmetric_key,
     generate_key_for_encrypt,
     generate_key_for_sign,
+    generate_key_from_recipe,
     make_mech_param_or_skip,
 )
 
@@ -314,7 +315,12 @@ def _gen_claimed_false_secret_key(
     attrs: dict[int, Any] = {flag: False, CKA_TOKEN: False}
     if companion_attrs:
         attrs.update(companion_attrs)
-    return gen_symmetric_key(rs, entry, config, extra_attrs=attrs)
+    # Resolve the registry keygen mechanism (e.g. CKM_AES_XTS_KEY_GEN), not the
+    # operation mechanism: generating with the op mech fails setup before the
+    # permission check is ever reached.
+    handle, priv = generate_key_from_recipe(rs, entry, config, extra_attrs=attrs)
+    assert priv is None, f"{entry.mech_name}: permission setup needs a secret key"
+    return handle
 
 
 def _claim_false_or_xfail(rs: RawSession, key: int, flag: int, label: str) -> None:
