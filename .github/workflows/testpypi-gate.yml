@@ -16,6 +16,17 @@ name: TestPyPI gate
 #   - workflow_dispatch / workflow_call with an optional pinned version for
 #     manual re-runs. With no version the gate validates TestPyPI latest.
 #
+# Version handling: a `prepare` job resolves ONE version for the whole run
+# and every matrix leg validates exactly that release. Resolving "latest"
+# per leg diverged within a single run (the TestPyPI JSON index is
+# CDN-cached per runner, so one leg saw rc1 while others saw rc2), and
+# installing immediately after upload raced index propagation (metadata
+# visible before files are fetchable). So prepare settles "latest" across
+# consecutive identical reads, awaits the release files on the simple
+# index, and only then releases the pinned version to the matrix. An
+# explicitly requested version skips the settle but keeps the file wait
+# (instant for already-published releases).
+#
 # This workflow never publishes, tags, or releases anything: it is read-only
 # (contents: read for the checkout) plus installs from TestPyPI.
 
@@ -40,10 +51,104 @@ permissions:
   contents: read
 
 jobs:
+  prepare:
+    # Same leg gate as validate: without it a failed publish would still run
+    # a pointless settle-and-wait here while validate stays skipped.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+    steps:
+      - name: Resolve and await candidate version
+        id: candidate
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          JSON_URL = "https://test.pypi.org/pypi/pkcs11-check/json"
+          SIMPLE_URL = "https://test.pypi.org/simple/pkcs11-check/"
+          READ_TIMEOUT = 30
+          SETTLE_READS = 3
+          SETTLE_INTERVAL = 15
+          SETTLE_DEADLINE = 300
+          WAIT_INTERVAL = 15
+          WAIT_DEADLINE = 600
+
+
+          def read_latest() -> str:
+              with urllib.request.urlopen(JSON_URL, timeout=READ_TIMEOUT) as response:
+                  return str(json.load(response)["info"]["version"])
+
+
+          def simple_page() -> str:
+              with urllib.request.urlopen(SIMPLE_URL, timeout=READ_TIMEOUT) as response:
+                  return response.read().decode("utf-8", "replace")
+
+
+          requested = os.environ.get("REQUESTED", "").strip()
+          if requested:
+              version = requested
+              print(f"requested version: {version}")
+          else:
+              # "Latest" is CDN-cached per runner: consecutive identical reads
+              # prove the value settled instead of trusting one stale read.
+              seen: list[str] = []
+              deadline = time.monotonic() + SETTLE_DEADLINE
+              while True:
+                  try:
+                      latest = read_latest()
+                  except Exception as exc:
+                      print(f"latest read failed ({exc}); retrying")
+                      latest = ""
+                  seen.append(latest)
+                  print(f"latest reads: {seen[-SETTLE_READS:]}")
+                  if (
+                      latest
+                      and len(seen) >= SETTLE_READS
+                      and len(set(seen[-SETTLE_READS:])) == 1
+                  ):
+                      version = latest
+                      break
+                  if time.monotonic() >= deadline:
+                      raise SystemExit("TestPyPI latest did not settle in time")
+                  time.sleep(SETTLE_INTERVAL)
+              print(f"settled on latest: {version}")
+
+          # Metadata turns visible before files are fetchable: await both
+          # release files on the same simple index pip will read.
+          wheel_marker = f"-{version}-"
+          sdist_marker = f"-{version}.tar.gz"
+          deadline = time.monotonic() + WAIT_DEADLINE
+          while True:
+              try:
+                  page = simple_page()
+              except Exception as exc:
+                  print(f"simple-index read failed ({exc}); retrying")
+                  page = ""
+              if wheel_marker in page and sdist_marker in page:
+                  print(f"wheel+sdist for {version} visible on the simple index")
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit(f"pkcs11-check {version} files not visible after {WAIT_DEADLINE}s")
+              print(f"waiting for {version} files ...")
+              time.sleep(WAIT_INTERVAL)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+          print(f"Validating pkcs11-check {version} on every leg")
+          PY
+
   validate:
     # Only the automatic leg is gated: a failed/cancelled publish run has no
     # new artifacts to validate. Manual legs always run.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    needs: [prepare]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -68,22 +173,9 @@ jobs:
           # strictest install target, so the gate pins it on every OS.
           python-version: "3.12"
 
-      - name: Resolve candidate version
-        id: candidate
-        env:
-          REQUESTED: ${{ inputs.version }}
-        run: |
-          if [ -n "$REQUESTED" ]; then
-            VERSION="$REQUESTED"
-          else
-            VERSION=$(python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://test.pypi.org/pypi/pkcs11-check/json', timeout=30))['info']['version'])" | tr -d '\r')
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Validating pkcs11-check $VERSION (${{ matrix.artifact }} on ${{ matrix.os }})"
-
       - name: Install ${{ matrix.artifact }} from TestPyPI
         env:
-          VERSION: ${{ steps.candidate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           if [ "${{ matrix.artifact }}" = "wheel" ]; then
             BINARY_FLAG="--only-binary=pkcs11-check"
@@ -98,7 +190,7 @@ jobs:
 
       - name: Version check
         env:
-          VERSION: ${{ steps.candidate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           test "$(pkcs11-check version | tr -d '\r')" = "pkcs11-check $VERSION"
           python - <<'PY'
@@ -258,7 +350,7 @@ jobs:
       - name: Summarize
         if: always()
         env:
-          VERSION: ${{ steps.candidate.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           python - "gate-out/smoke/results.json" "gate-out/vectors/results.json" <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
