@@ -10,6 +10,8 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any
 
 import pytest
@@ -120,9 +122,60 @@ def _gen_hkdf_key(rs: Any, key_type: int, bits: int = 256) -> int:
     return key_h.value
 
 
-def _create_base_key(rs: Any) -> int:
+_HKDF_BASE_KEY_LEN = 32
+_HKDF_SHA512_BASE_KEY_LEN = 64
+
+
+def _hkdf_base_ikm(key_len: int = _HKDF_BASE_KEY_LEN) -> bytes:
+    """Deterministic IKM bytes for an HKDF_DATA base or salt key."""
+    return bytes(range(key_len))
+
+
+def _hkdf_matrix_base_key_len(hash_mech: Any) -> int:
+    """Base-key size for a matrix row: the prf hash size (default SHA-256)."""
+    if hash_mech is not None and int(hash_mech) == int(CKM_SHA512):
+        return _HKDF_SHA512_BASE_KEY_LEN
+    return _HKDF_BASE_KEY_LEN
+
+
+def _hkdf_oracle(
+    *,
+    hash_mech: Any,
+    ikm: bytes,
+    salt: bytes | None,
+    info: bytes | None,
+    length: int,
+) -> bytes:
+    """RFC 5869 extract-and-expand reference for CKM_HKDF_DATA rows.
+
+    ``salt=None`` (CKF_HKDF_SALT_NULL) uses HashLen zero bytes per RFC 5869
+    section 2.2, while ``salt=b""`` (CKF_HKDF_SALT_DATA of length 0) uses an
+    empty HMAC key; HMAC zero-padding makes both derive the same output.
+    ``info=None`` and ``info=b""`` are both empty info: a NULL pInfo with
+    ulInfoLen 0 carries no info bytes (CK_HKDF_PARAMS).
+    """
+    if hash_mech is None or int(hash_mech) == int(CKM_SHA256):
+        digest = "sha256"
+    elif int(hash_mech) == int(CKM_SHA512):
+        digest = "sha512"
+    else:
+        raise AssertionError(f"unsupported HKDF prf mechanism: {hash_mech!r}")
+    hash_len = hashlib.new(digest).digest_size
+    prk = hmac.new(salt if salt is not None else bytes(hash_len), ikm, digest).digest()
+    info_bytes = b"" if info is None else info
+    okm = bytearray()
+    block = b""
+    counter = 1
+    while len(okm) < length:
+        block = hmac.new(prk, block + info_bytes + bytes([counter]), digest).digest()
+        okm += block
+        counter += 1
+    return bytes(okm[:length])
+
+
+def _create_base_key(rs: Any, *, key_len: int = _HKDF_BASE_KEY_LEN) -> int:
     """Create a GENERIC_SECRET key suitable for HKDF derivation."""
-    ikm = bytes(range(32))
+    ikm = _hkdf_base_ikm(key_len)
     return import_secret_key_negotiated(
         rs,
         CKK_GENERIC_SECRET,
@@ -157,10 +210,10 @@ def _hkdf_data_detail(
     }
 
 
-def _create_hkdf_data_base_or_xfail(rs: Any) -> int:
+def _create_hkdf_data_base_or_xfail(rs: Any, *, key_len: int = _HKDF_BASE_KEY_LEN) -> int:
     """Provision the generic-secret input, classifying exhausted shape rejects."""
     try:
-        handle = _create_base_key(rs)
+        handle = _create_base_key(rs, key_len=key_len)
     except CkrAssertionError as exc:
         if exc.rv not in IMPORT_STORAGE_SHAPE_REJECTS:
             raise
@@ -620,7 +673,8 @@ class TestHKDFKeyGen:
 
 _HKDF_DATA_MATRIX: dict[str, dict[str, Any]] = {
     # Salt-source and info-presence rows plus one alternate prf. Each row
-    # derives twice with identical params and asserts determinism; clean
+    # provisions a hash-sized base key, derives twice with identical params,
+    # and asserts determinism plus equality with the RFC 5869 oracle; clean
     # shape rejects xfail through the established derive set.
     "salt-null": {"salt": None, "info": b"info-value"},
     "salt-empty": {"salt": b"", "info": b"info-value"},
@@ -748,7 +802,8 @@ class TestHKDFData:
         if not rs.has_mechanism("HKDF_DATA"):
             pytest.skip("CKM_HKDF_DATA not supported")
 
-        base_key = _create_hkdf_data_base_or_xfail(rs)
+        hash_mech = matrix_case.get("hash_mech")
+        base_key = _create_hkdf_data_base_or_xfail(rs, key_len=_hkdf_matrix_base_key_len(hash_mech))
         salt_key = 0
         if matrix_case.get("needs_salt_key"):
             salt_key = _create_hkdf_data_base_or_xfail(rs)
@@ -756,7 +811,7 @@ class TestHKDFData:
         derived_2 = 0
         try:
             derive_kwargs: dict[str, Any] = {
-                "hash_mech": matrix_case.get("hash_mech"),
+                "hash_mech": hash_mech,
                 "salt_type": matrix_case.get("salt_type"),
                 "salt_key": salt_key,
             }
@@ -773,6 +828,56 @@ class TestHKDFData:
             assert len(val_1) == _HKDF_DATA_OUTPUT_LEN
             assert val_1 != bytes(_HKDF_DATA_OUTPUT_LEN)
             assert val_1 == val_2, "Same HKDF_DATA inputs must produce identical output"
+            salt: bytes | None = matrix_case["salt"]
+            if matrix_case.get("needs_salt_key"):
+                salt_attrs = read_attributes(rs.raw, rs.sh, salt_key, [CKA_VALUE])
+                salt_value = attr_or_record(
+                    salt_attrs,
+                    CKA_VALUE,
+                    label="CKM_HKDF_DATA matrix salt-key readback",
+                    reason="not_operational",
+                    kind="metadata",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                )
+                if salt_value is MISSING_ATTRIBUTE:
+                    return
+                if type(salt_value) is not bytes:
+                    C.fail_as(
+                        "wrong_result",
+                        kind="metadata",
+                        label="CKM_HKDF_DATA matrix salt-key readback",
+                        operation="C_GetAttributeValue",
+                        mechanism=None,
+                        inherit_mechanism=False,
+                        spec_ref=_HKDF_READ_REF,
+                        expected={"type": "bytes"},
+                        actual={
+                            "type": type(salt_value).__name__,
+                            "length": (len(salt_value) if hasattr(salt_value, "__len__") else None),
+                        },
+                        summary="CKM_HKDF_DATA salt-key CKA_VALUE readback is malformed",
+                        detail=_hkdf_data_detail(
+                            producer_operation="C_CreateObject",
+                            producer_mechanism=None,
+                            consumer_operation="C_DeriveKey",
+                            consumer_mechanism="CKM_HKDF_DATA",
+                        ),
+                    )
+                salt = salt_value
+            expected = _hkdf_oracle(
+                hash_mech=hash_mech,
+                ikm=_hkdf_base_ikm(_hkdf_matrix_base_key_len(hash_mech)),
+                salt=salt,
+                info=matrix_case["info"],
+                length=_HKDF_DATA_OUTPUT_LEN,
+            )
+            assert_correct(
+                actual=val_1,
+                expected=expected,
+                label="CKM_HKDF_DATA matrix output",
+                operation="C_GetAttributeValue",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
             if salt_key:
