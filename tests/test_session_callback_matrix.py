@@ -505,6 +505,90 @@ def test_open_session_callback_during_close_foreign_fails(wrong: str) -> None:
     assert closed == [9]
 
 
+@pytest.mark.parametrize("wrong", ["session", "app"])
+def test_open_session_callback_during_post_close_probe_foreign_fails(wrong: str) -> None:
+    """A foreign callback delivered during the post-close probe fails the row.
+
+    Regression pin (H4-CB follow-up): validation ran before the post-close
+    C_GetSessionInfo, so callbacks delivered by that final provider call
+    escaped identity checking even though the probe itself returned the
+    expected CKR_SESSION_HANDLE_INVALID.
+    """
+    other = ctypes.c_ulong(0)
+    captured: dict[str, Any] = {}
+
+    def _open_session(_slot: int, _flags: int, app: Any, notify: Any, sh_ptr: Any) -> int:
+        sh_ptr._obj.value = 9
+        captured["notify"] = notify
+        captured["app"] = _echo_app(app)
+        return int(CKR_OK)
+
+    dead: set[int] = set()
+    closed: list[int] = []
+
+    def _close_session(sh: int) -> int:
+        closed.append(sh)
+        dead.add(sh)
+        return int(CKR_OK)
+
+    def _info(session: int, info_ptr: Any) -> int:
+        if int(session) not in dead:
+            _fill_info(info_ptr)
+            return int(CKR_OK)
+        if wrong == "session":
+            captured["notify"](12345, 0, captured["app"])
+        else:
+            captured["notify"](session, 0, ctypes.addressof(other))
+        return int(CKR_SESSION_HANDLE_INVALID)
+
+    raw = SimpleNamespace(
+        C_OpenSession=_open_session,
+        C_CloseSession=_close_session,
+        C_GetSessionInfo=_info,
+    )
+    with pytest.raises(Failed) as ei:
+        _run_case(raw, "callback-data")
+    assert not isinstance(ei.value, XFailed)
+    _assert_fail_record("self_contradiction", "lifecycle")
+    assert closed == [9]
+
+
+def test_open_session_callback_during_post_close_probe_correct_identity_passes() -> None:
+    """A post-close probe delivering a correctly-identified callback passes."""
+
+    captured: dict[str, Any] = {}
+
+    def _open_session(_slot: int, _flags: int, app: Any, notify: Any, sh_ptr: Any) -> int:
+        sh_ptr._obj.value = 9
+        captured["notify"] = notify
+        captured["app"] = _echo_app(app)
+        return int(CKR_OK)
+
+    dead: set[int] = set()
+    closed: list[int] = []
+
+    def _close_session(sh: int) -> int:
+        closed.append(sh)
+        dead.add(sh)
+        return int(CKR_OK)
+
+    def _info(session: int, info_ptr: Any) -> int:
+        if int(session) not in dead:
+            _fill_info(info_ptr)
+            return int(CKR_OK)
+        captured["notify"](session, 0, captured["app"])
+        return int(CKR_SESSION_HANDLE_INVALID)
+
+    raw = SimpleNamespace(
+        C_OpenSession=_open_session,
+        C_CloseSession=_close_session,
+        C_GetSessionInfo=_info,
+    )
+    _run_case(raw, "callback-data")
+    assert closed == [9]
+    assert get_records() == []
+
+
 def test_open_session_callback_during_close_correct_identity_passes() -> None:
     """A close delivering a correctly-identified callback passes the row."""
 

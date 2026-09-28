@@ -751,13 +751,29 @@ class TestCKNotifyCallback:
                 },
             )
         close_rv = rs.raw.C_CloseSession(sh.value)
+        if close_rv != CKR_OK:
+            fail_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=label,
+                operation="C_CloseSession",
+                expected=CKR_OK,
+                actual=close_rv,
+                summary=(
+                    f"{label}: C_CloseSession({sh.value}) returned "
+                    f"{ckr_name(close_rv)} for the session C_OpenSession just opened"
+                ),
+                detail={"handle": sh.value},
+            )
+        dead_rv = _session_info_rv(rs.raw, sh.value)
         if matrix_case["notify"]:
             # Invocation itself is optional, but every delivered call must
             # identify the new session and echo the supplied app pointer
             # (ctypes delivers CK_VOID_PTR as the address int, or None).
-            # Validated after the close completes so callbacks delivered
-            # during C_CloseSession are covered too; the close has already
-            # run, so there is nothing left to clean up on this path.
+            # Validated after the final provider call completes so callbacks
+            # delivered during C_CloseSession and the post-close probe are
+            # covered too; the close has already run, so there is nothing
+            # left to clean up on this path.
             expected_app: int | None = (
                 None if app_arg is None else int(ctypes.cast(app_arg, ctypes.c_void_p).value or 0)
             )
@@ -780,21 +796,6 @@ class TestCKNotifyCallback:
                             "expected_app": expected_app,
                         },
                     )
-        if close_rv != CKR_OK:
-            fail_as(
-                "self_contradiction",
-                kind="lifecycle",
-                label=label,
-                operation="C_CloseSession",
-                expected=CKR_OK,
-                actual=close_rv,
-                summary=(
-                    f"{label}: C_CloseSession({sh.value}) returned "
-                    f"{ckr_name(close_rv)} for the session C_OpenSession just opened"
-                ),
-                detail={"handle": sh.value},
-            )
-        dead_rv = _session_info_rv(rs.raw, sh.value)
         if dead_rv == CKR_OK:
             _fail_session_info(
                 kind="lifecycle",
