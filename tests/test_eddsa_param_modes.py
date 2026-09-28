@@ -254,9 +254,14 @@ def _decode_eddsa_wire(mech_param: Any) -> tuple[bool, bool, int, bytes | None]:
     return (True, ptr is not None, length, context)
 
 
-def _run_mode_roundtrip(node: str) -> tuple[tuple[bool, bool, int, bytes | None], ...]:
-    """Drive one product roundtrip node with stubbed sign/verify; return the
-    decoded (sign, verify) wire shapes."""
+def _drive_mode_node(node: str) -> list[Any]:
+    """Drive one product roundtrip node with an honest separating stub.
+
+    Signatures are tagged by the mode they were signed under (NULL vs
+    structure) and verify accepts only same-mode pairs, so separation
+    assertions pass while every captured mech_param stays observable.
+    Returns the captured mech_params in call order.
+    """
     import unittest.mock as mock
     from types import SimpleNamespace
 
@@ -265,12 +270,15 @@ def _run_mode_roundtrip(node: str) -> tuple[tuple[bool, bool, int, bytes | None]
     captured: list[Any] = []
 
     def _sign(*args: Any, **kwargs: Any) -> bytes:
-        captured.append(kwargs["mech_param"])
-        return b"S" * 64
+        mech_param = kwargs["mech_param"]
+        captured.append(mech_param)
+        return (b"P" if mech_param.params is None else b"S") * 64
 
     def _verify(*args: Any, **kwargs: Any) -> bool:
-        captured.append(kwargs["mech_param"])
-        return True
+        mech_param = kwargs["mech_param"]
+        captured.append(mech_param)
+        signature: bytes = args[5]
+        return (signature[:1] == b"S") == (mech_param.params is not None)
 
     rs = SimpleNamespace(raw=object(), sh=1)
     node_fn = getattr(eddsa.TestEdDSAParametrizedModes(), node)
@@ -280,23 +288,29 @@ def _run_mode_roundtrip(node: str) -> tuple[tuple[bool, bool, int, bytes | None]
     ):
         node_fn(rs, (7, 8))
 
-    assert len(captured) == 2
-    return (_decode_eddsa_wire(captured[0]), _decode_eddsa_wire(captured[1]))
+    return captured
+
+
+def _run_mode_roundtrip(node: str) -> tuple[tuple[bool, bool, int, bytes | None], ...]:
+    """Drive one product roundtrip node; return every decoded wire shape."""
+    return tuple(_decode_eddsa_wire(mech) for mech in _drive_mode_node(node))
 
 
 def test_ctx_null_pointer_sends_null_pcontext_with_zero_len() -> None:
     """context_data=None packs a structure with NULL pContextData, len 0."""
-    sign_shape, verify_shape = _run_mode_roundtrip("test_edwards25519_ctx_null_pointer_roundtrip")
-    assert sign_shape == (True, False, 0, None)
-    assert verify_shape == (True, False, 0, None)
+    shapes = _run_mode_roundtrip("test_edwards25519_ctx_null_pointer_roundtrip")
+    assert len(shapes) == 5  # roundtrip sign+verify, pure sign, 2 cross verifies
+    assert shapes[0] == (True, False, 0, None)
+    assert shapes[1] == (True, False, 0, None)
 
 
 def test_ctx_empty_bytes_sends_non_null_pcontext_with_zero_len() -> None:
     """context_data=b"" packs a structure with a non-NULL pointer, len 0 --
     the ABI-distinct empty representation."""
-    sign_shape, verify_shape = _run_mode_roundtrip("test_edwards25519_ctx_empty_bytes_roundtrip")
-    assert sign_shape == (True, True, 0, b"")
-    assert verify_shape == (True, True, 0, b"")
+    shapes = _run_mode_roundtrip("test_edwards25519_ctx_empty_bytes_roundtrip")
+    assert len(shapes) == 5  # roundtrip sign+verify, pure sign, 2 cross verifies
+    assert shapes[0] == (True, True, 0, b"")
+    assert shapes[1] == (True, True, 0, b"")
 
 
 def test_ctx_single_byte_roundtrip_carries_exact_byte() -> None:
@@ -317,33 +331,81 @@ def test_ctx_max_length_roundtrip_carries_255_bytes() -> None:
 def test_ctx_structures_carry_sizeof_eddsa_params() -> None:
     """Structured rows send ulParameterLen == sizeof(CK_EDDSA_PARAMS)."""
     import ctypes
+
+    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS
+
+    captured = _drive_mode_node("test_edwards25519_ctx_empty_bytes_roundtrip")
+
+    assert len(captured) == 5  # roundtrip sign+verify, pure sign, 2 cross verifies
+    for mech in captured:
+        if mech.params is None:
+            assert mech.ck.ulParameterLen == 0
+        else:
+            assert mech.ck.ulParameterLen == ctypes.sizeof(CK_EDDSA_PARAMS)
+
+
+def test_empty_nodes_separate_both_directions_with_honest_provider() -> None:
+    """With an honest provider both empty nodes pass and each exercises both
+    cross directions: a pure-signed signature under the empty structure and
+    an empty-structure signature under NULL."""
+    for node, empty_shape in (
+        ("test_edwards25519_ctx_null_pointer_roundtrip", (True, False, 0, None)),
+        ("test_edwards25519_ctx_empty_bytes_roundtrip", (True, True, 0, b"")),
+    ):
+        shapes = _run_mode_roundtrip(node)
+        # sign(struct), verify(struct), sign(NULL), verify(struct), verify(NULL)
+        assert len(shapes) == 5
+        assert shapes[0] == empty_shape
+        assert shapes[1] == empty_shape
+        assert shapes[2] == (False, False, 0, None)  # pure sign
+        assert shapes[3] == empty_shape  # pure sig under empty structure
+        assert shapes[4] == (False, False, 0, None)  # empty sig under NULL
+
+
+# ---------------------------------------------------------------------------
+# Empty-context separation: RFC8032 domain-separates Ed25519ctx-with-empty-
+# context from pure Ed25519, so both empty representations (NULL-pointer and
+# empty-bytes) must refuse to cross-verify with pure NULL in both directions.
+# ---------------------------------------------------------------------------
+
+
+def _run_empty_node_with_collapse(node: str) -> None:
+    """Drive one empty-context product node against a collapse-fake provider.
+
+    The fake treats the empty structure as pure: every verify accepts. A
+    separating node must refute this via pytest.fail; a same-params-only
+    roundtrip returns normally (no separation asserted).
+    """
     import unittest.mock as mock
     from types import SimpleNamespace
 
-    from pkcs11_check.raw.types_std import CK_EDDSA_PARAMS
     from pkcs11_check.testcases import test_eddsa as eddsa
 
-    captured: list[Any] = []
-
     def _sign(*args: Any, **kwargs: Any) -> bytes:
-        captured.append(kwargs["mech_param"])
         return b"S" * 64
 
     def _verify(*args: Any, **kwargs: Any) -> bool:
-        captured.append(kwargs["mech_param"])
         return True
 
     rs = SimpleNamespace(raw=object(), sh=1)
-    node = eddsa.TestEdDSAParametrizedModes()
+    node_fn = getattr(eddsa.TestEdDSAParametrizedModes(), node)
     with (
         mock.patch.object(eddsa, "sign_single", _sign),
         mock.patch.object(eddsa, "verify_single", _verify),
     ):
-        node.test_edwards25519_ctx_empty_bytes_roundtrip(rs, (7, 8))
+        node_fn(rs, (7, 8))
 
-    assert len(captured) == 2
-    for mech in captured:
-        assert mech.ck.ulParameterLen == ctypes.sizeof(CK_EDDSA_PARAMS)
+
+def test_empty_null_pointer_node_refutes_pure_collapse() -> None:
+    """The NULL-pointer empty node must fail against a collapsing provider."""
+    with pytest.raises(pytest.fail.Exception, match="ignores CK_EDDSA_PARAMS"):
+        _run_empty_node_with_collapse("test_edwards25519_ctx_null_pointer_roundtrip")
+
+
+def test_empty_bytes_node_refutes_pure_collapse() -> None:
+    """The empty-bytes node must fail against a collapsing provider."""
+    with pytest.raises(pytest.fail.Exception, match="ignores CK_EDDSA_PARAMS"):
+        _run_empty_node_with_collapse("test_edwards25519_ctx_empty_bytes_roundtrip")
 
 
 def test_ph_mode_exercises_all_separation_directions() -> None:
