@@ -243,10 +243,15 @@ def _wellformed_bit_string(contents: bytes) -> bool:
 
 
 # Universal tag numbers whose constructed bit must be set (SEQUENCE, SET and
-# the always-constructed EXTERNAL / EMBEDDED PDV). Every other universal tag
-# is primitive-only in DER, including all string types; non-universal classes
-# keep the bit free.
-_CONSTRUCTED_UNIVERSAL = frozenset({8, 11, 16, 17})
+# the always-constructed EXTERNAL / EMBEDDED PDV / CHARACTER STRING). Every
+# other universal tag is primitive-only in DER, including all string types;
+# non-universal classes keep the bit free.
+_CONSTRUCTED_UNIVERSAL = frozenset({8, 11, 16, 17, 29})
+
+_NUMERICSTRING_BYTES = frozenset(b"0123456789 ")
+_PRINTABLESTRING_BYTES = frozenset(
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 '()+,-./:=?"
+)
 
 
 def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
@@ -255,8 +260,11 @@ def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
     Single-byte tags with minimal lengths. Universal tags obey their DER
     encoding rules (constructed-bit direction, no EOC in definite length,
     BOOLEAN/INTEGER/ENUMERATED/BIT STRING content shapes, empty NULL,
-    well-formed OIDs); constructed values must hold complete, recursively
-    well-formed children. Other primitive contents are opaque bytes. Depth
+    well-formed OIDs, strict UTF-8/16/32 and restricted string alphabets);
+    constructed values must hold complete, recursively well-formed children.
+    Remaining primitive contents (OCTET STRING, REAL, times, the exotic
+    character strings) are opaque bytes: their rules are value semantics,
+    and strictness there risks rejecting valid provider encodings. Depth
     is capped: parameters never nest legitimately, so deep nesting is
     treated as malformed rather than risking runaway recursion.
     """
@@ -291,6 +299,40 @@ def _tlv_end(der: bytes, at: int, end: int, depth: int = 0) -> int | None:
                 return None
         elif number == 0x06:  # OID: well-formed subidentifiers
             if not _wellformed_oid_contents(contents):
+                return None
+        elif number == 0x0C:  # UTF8String: strict UTF-8
+            try:
+                contents.decode("utf-8")
+            except UnicodeDecodeError:
+                return None
+        elif number == 0x0D:  # RELATIVE-OID: same base-128 rules as OID
+            if not _wellformed_oid_contents(contents):
+                return None
+        elif number == 0x12:  # NumericString: digits and space
+            if any(byte not in _NUMERICSTRING_BYTES for byte in contents):
+                return None
+        elif number == 0x13:  # PrintableString: restricted alphabet
+            if any(byte not in _PRINTABLESTRING_BYTES for byte in contents):
+                return None
+        elif number == 0x16:  # IA5String: 7-bit only
+            if any(byte > 0x7F for byte in contents):
+                return None
+        elif number == 0x1A:  # VisibleString: space through '~'
+            if any(byte < 0x20 or byte > 0x7E for byte in contents):
+                return None
+        elif number == 0x1C:  # UniversalString: strict UTF-32-BE
+            if len(contents) % 4:
+                return None
+            try:
+                contents.decode("utf-32-be")
+            except UnicodeDecodeError:
+                return None
+        elif number == 0x1E:  # BMPString: strict UTF-16-BE
+            if len(contents) % 2:
+                return None
+            try:
+                contents.decode("utf-16-be")
+            except UnicodeDecodeError:
                 return None
     if tag & 0x20:  # constructed: complete children, recursively
         pos = voff
