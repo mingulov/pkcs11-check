@@ -181,15 +181,54 @@ def _slhdsa_verify_result_or_xfail(exc: AssertionError, label: str, *, expected_
 
 
 def _der_length(der: bytes, pos: int) -> tuple[int, int]:
-    """Return ``(value_offset, value_length)`` for the DER length at ``pos``."""
+    """Return ``(value_offset, value_length)`` for the DER length at ``pos``.
+
+    Enforces DER minimality: short form below 128, long form with no
+    leading zero octets and only at 128 and above.
+    """
     first = der[pos]
     if first < 0x80:
         return pos + 1, first
     n_bytes = first & 0x7F
     if n_bytes == 0 or n_bytes > 4:
         raise ValueError("indefinite or oversize DER length")
+    if der[pos + 1] == 0x00:
+        raise ValueError("nonminimal DER length (leading zero octet)")
     length = int.from_bytes(der[pos + 1 : pos + 1 + n_bytes], "big")
+    if length < 0x80:
+        raise ValueError("nonminimal DER length (long form below 128)")
     return pos + 1 + n_bytes, length
+
+
+def _wellformed_oid_contents(contents: bytes) -> bool:
+    """Whether OID contents are well-formed base-128 subidentifiers.
+
+    Nonempty, every subidentifier terminated (final octet high bit clear)
+    and minimal (no leading 0x80 octet). Arc values are not pinned, so
+    unfamiliar but well-formed OIDs keep parsing.
+    """
+    if not contents:
+        return False
+    start = True
+    for byte in contents:
+        if start:
+            if byte == 0x80:
+                return False
+            start = False
+        if (byte & 0x80) == 0:
+            start = True
+    return start
+
+
+def _single_tlv(der: bytes, at: int, end: int) -> bool:
+    """Whether ``der[at:end]`` is exactly one single-byte-tag TLV."""
+    if at + 2 > end or (der[at] & 0x1F) == 0x1F:
+        return False
+    try:
+        voff, vlen = _der_length(der, at + 1)
+    except (IndexError, ValueError):
+        return False
+    return voff + vlen == end
 
 
 def _spki_public_key_bytes(der: bytes) -> bytes | None:
@@ -198,12 +237,13 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
     Minimal ASN.1 walk over ``SEQUENCE { AlgorithmIdentifier, BIT STRING }``
     returning the BIT STRING contents -- the same shape as the wycheproof
     SPKI fallback (``_key_decoders``).
-    The full encoding is validated: the outer length must match the input
-    exactly (no truncation, no trailing bytes), the AlgorithmIdentifier must
-    structurally carry an OBJECT IDENTIFIER (its value is not pinned), the
-    BIT STRING must end at the outer end, and the key payload must be
-    nonempty (an SLH-DSA public key cannot be empty). Returns None when the
-    DER cannot be parsed at all.
+    The full encoding is validated: lengths are minimal with the outer
+    length matching the input exactly (no truncation, no trailing bytes);
+    the AlgorithmIdentifier must carry a well-formed OBJECT IDENTIFIER
+    (its value is not pinned) followed by at most one well-formed
+    parameters element; the BIT STRING must end at the outer end, and the
+    key payload must be nonempty (an SLH-DSA public key cannot be empty).
+    Returns None when the DER cannot be parsed at all.
     """
     try:
         if len(der) < 2 or der[0] != 0x30:  # outer SEQUENCE
@@ -218,6 +258,11 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
             return None
         oval, olen = _der_length(der, val + 1)
         if oval + olen > val + length:  # OID overruns its AlgorithmIdentifier
+            return None
+        if not _wellformed_oid_contents(der[oval : oval + olen]):
+            return None
+        params_at, alg_end = oval + olen, val + length
+        if params_at < alg_end and not _single_tlv(der, params_at, alg_end):
             return None
         pos = val + length
         if pos >= len(der) or der[pos] != 0x03:  # BIT STRING
