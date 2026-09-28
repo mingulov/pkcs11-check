@@ -85,8 +85,11 @@ def test_gate_matrix_covers_every_os_and_artifact() -> None:
     """Dropping an OS or an artifact kind must break this guard."""
     workflow = _workflow()
 
-    assert set(workflow["jobs"]) == {"validate"}
+    assert set(workflow["jobs"]) == {"prepare", "validate"}
     job = workflow["jobs"]["validate"]
+    # Every leg validates the one version prepare pinned: resolving "latest"
+    # per leg diverged within a single run (CDN-cached index reads).
+    assert job["needs"] == ["prepare"]
     assert job["runs-on"] == "${{ matrix.os }}"
     assert job["strategy"]["fail-fast"] == "false"
     assert job["strategy"]["matrix"]["os"] == ["ubuntu-latest", "windows-latest", "macos-latest"]
@@ -131,7 +134,6 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
     order = [
         _step_index(steps, needle)
         for needle in (
-            "Resolve candidate version",
             "Install ${{ matrix.artifact }} from TestPyPI",
             "Version check",
             "Entry-point check",
@@ -170,16 +172,60 @@ def test_gate_runs_install_version_doctor_fetch_smoke_report_in_order() -> None:
         for var in ("P11_MODULE=", "P11_SLOT=", "P11_PIN=1234", "SOFTHSM2_CONF="):
             assert var in step["run"], f"{step.get('name')}: missing {var}"
         assert steps.index(step) < doctor_pre, f"{step.get('name')}: must precede doctor"
-    # The TestPyPI version lookup is network I/O: it must be bounded so a hung
-    # index cannot stall every leg up to the job timeout.
-    resolve = next(step for step in steps if step.get("name") == "Resolve candidate version")
-    assert "timeout=" in resolve["run"]
     # The smoke and vector summaries must prove execution, not empty green —
     # scoped to their own steps so drifting into an always() step still fails.
     for needle in ("Smoke (installed package)", "Vector slice (fetch-then-test proof)"):
         run_body = _run_of(steps, needle)
         assert 'summary["passed"] > 0' in run_body, needle
         assert 'summary["failed"] == 0' in run_body, needle
+
+
+def test_gate_pins_one_settled_version_for_every_leg() -> None:
+    """The prepare job must settle "latest", await the release files, and pin
+    one version for the whole matrix. Per-leg resolution diverged within one
+    run (stale CDN reads), and installing straight after upload raced index
+    propagation (metadata visible before files)."""
+    workflow = _workflow()
+    prepare = workflow["jobs"]["prepare"]
+
+    assert prepare["runs-on"] == "ubuntu-latest"
+    assert prepare["outputs"] == {"version": "${{ steps.candidate.outputs.version }}"}
+    # Same leg gate as validate: a failed publish must skip prepare too.
+    validate = workflow["jobs"]["validate"]
+    assert prepare["if"] == validate["if"]
+
+    steps = _steps(prepare)
+    resolve = next(step for step in steps if "await candidate version" in str(step.get("name", "")))
+    assert resolve["name"] == "Resolve and await candidate version"
+    assert resolve["id"] == "candidate"
+    assert resolve["env"] == {"REQUESTED": "${{ inputs.version }}"}
+    run_body = str(resolve["run"])
+    # An explicitly requested version skips the settle; "latest" must prove
+    # stability across consecutive identical reads, not one possibly stale read.
+    assert 'os.environ.get("REQUESTED"' in run_body
+    assert "SETTLE_READS" in run_body
+    assert "len(set(" in run_body
+    # The wait polls the same simple index pip will read, for BOTH release
+    # files; pinning on metadata alone reintroduces the propagation race.
+    assert "https://test.pypi.org/simple/pkcs11-check/" in run_body
+    assert ".tar.gz" in run_body and "-{version}-" in run_body
+    assert "WAIT_DEADLINE" in run_body
+    # Bounded network I/O throughout: a hung index must fail loudly instead
+    # of stalling up to the job timeout.
+    assert "timeout=" in run_body
+    assert "GITHUB_OUTPUT" in run_body
+
+    # Every validate leg consumes the pinned version; no leg may resolve or
+    # pin its own (that was the divergence).
+    validate_source = "\n".join(
+        f"{step.get('name', '')}\n{step.get('env', '')}\n{step.get('run', '')}"
+        for step in _steps(validate)
+    )
+    assert "steps.candidate" not in validate_source
+    assert "test.pypi.org/pypi/pkcs11-check/json" not in validate_source
+    for needle in ("Install ${{ matrix.artifact }} from TestPyPI", "Version check", "Summarize"):
+        step = next(s for s in _steps(validate) if needle in str(s.get("name", "")))
+        assert step["env"]["VERSION"] == "${{ needs.prepare.outputs.version }}", needle
 
 
 def _find_gnu_bash() -> str | None:
@@ -217,7 +263,8 @@ def _find_gnu_bash() -> str | None:
 @pytest.mark.skipif(shutil.which("bash") is None, reason="gate scripts are bash")
 def test_gate_inline_bash_scripts_parse(tmp_path: Path) -> None:
     """Every bash `run:` block must be syntactically valid shell."""
-    job = _workflow()["jobs"]["validate"]
+    jobs = _workflow()["jobs"]
+    job = jobs["validate"]
     default_shell = job["defaults"]["run"]["shell"]
     assert default_shell == "bash"
     scripts = [
@@ -225,6 +272,17 @@ def test_gate_inline_bash_scripts_parse(tmp_path: Path) -> None:
         for step in _steps(job)
         if "run" in step and step.get("shell", default_shell) == "bash"
     ]
+    # The prepare job's scripts get the same syntax gate (ubuntu default
+    # shell is bash; prepare pins no other shell).
+    prepare = jobs["prepare"]
+    prepare_scripts = [
+        (f"prepare: {step.get('name', '<unnamed>')}", step["run"])
+        for step in _steps(prepare)
+        if "run" in step
+    ]
+    assert prepare_scripts, "prepare job lost its scripts"
+    assert all("shell" not in step for step in _steps(prepare))
+    scripts.extend(prepare_scripts)
     assert len(scripts) >= 10
     # Every run: block must use a syntax-checked shell; a third shell would
     # otherwise slip through with zero validation.
