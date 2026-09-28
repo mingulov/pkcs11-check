@@ -240,32 +240,40 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigGen ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigGen-FIPS205")
     result = []
-    # Take 1 vector per parameter set (12 total = 12 sets * 1)
-    # SLH-DSA signing is very slow, so keep minimal
-    param_set_seen: set[str] = set()
+    # SLH-DSA signing is very slow, so keep minimal: the first vector per
+    # parameter set, plus the first vector of the opposite context shape, so
+    # both mechanism-parameter representations (NULL and explicit context)
+    # stay covered no matter how the corpus orders its tests. PreHash groups
+    # are skipped: their messages are digests for the hash-sign mechanisms,
+    # not pure CKM_SLH_DSA inputs.
+    taken_shapes: dict[str, set[bool]] = {}
     for vec in all_vecs:
         inp = vec["input"]
         group = vec["group"]
+        if group.get("preHash") == "preHash":
+            continue
         param_name = group.get("parameterSet", "")
         param_set = _PARAM_SET_MAP.get(param_name)
         if param_set is None:
             continue
-
-        # Only take first vector per parameter set
-        if param_name in param_set_seen:
-            continue
-        param_set_seen.add(param_name)
 
         sk = inp.get("sk", "")
         msg = inp.get("message", "")
         if not sk or not msg:
             continue
 
+        ctx_hex = inp.get("context", "")
+        shapes = taken_shapes.setdefault(param_name, set())
+        if bool(ctx_hex) in shapes:
+            continue
+        shapes.add(bool(ctx_hex))
+
         merged: dict[str, Any] = {
             "param_set": param_set,
             "param_name": param_name,
             "sk": bytes.fromhex(sk),
             "msg": bytes.fromhex(msg),
+            "context": bytes.fromhex(ctx_hex) if ctx_hex else b"",
             "tc_id": inp.get("tcId", 0),
         }
         vec_id = f"sigGen-{param_name}-tc{merged['tc_id']}"
@@ -439,8 +447,16 @@ def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         except AssertionError as exc:
             _xfail_if_import_not_operational(exc, f"private key ({vec['param_name']})")
 
+        # Sign with the vector's context, mirroring sigVer: non-empty context
+        # selects CK_SIGN_ADDITIONAL_CONTEXT, pure vectors keep NULL params.
+        context = vec.get("context", b"")
+        if isinstance(context, str):
+            context = bytes.fromhex(context) if context else b""
+        mech_param = mech_sign_context(CKM_SLH_DSA, context=context) if context else None
         try:
-            sig = sign_single(rs.raw, rs.sh, priv_key, CKM_SLH_DSA, vec["msg"])
+            sig = sign_single(
+                rs.raw, rs.sh, priv_key, CKM_SLH_DSA, vec["msg"], mech_param=mech_param
+            )
         except AssertionError as exc:
             _xfail_if_slhdsa_runtime_reject(exc, vec_id)
         assert len(sig) > 0, f"SLH-DSA sign returned empty signature for {vec_id}"
