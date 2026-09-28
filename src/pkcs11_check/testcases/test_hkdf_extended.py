@@ -877,6 +877,7 @@ class TestHKDFData:
                 expected=expected,
                 label="CKM_HKDF_DATA matrix output",
                 operation="C_GetAttributeValue",
+                mechanism="CKM_HKDF_DATA",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, base_key)
