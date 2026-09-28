@@ -168,6 +168,7 @@ class TestGenerateRandomLengthTruncation:
             result.stdout,
             result.stderr,
             context=f"C_GenerateRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
+            observation=result.observation,
         )
 
         rv = _parse_prefixed_int(result.stdout, "GENRAND_RV:")
@@ -248,6 +249,7 @@ class TestSeedRandomLengthTruncation:
             result.stdout,
             result.stderr,
             context=f"C_SeedRandom(ptr, len=0x{_OVERSIZE_LEN:x})",
+            observation=result.observation,
         )
 
         rv = _parse_prefixed_int(result.stdout, "SEEDRAND_RV:")

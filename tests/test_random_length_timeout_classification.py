@@ -20,6 +20,7 @@ from pkcs11_check.core.process_observation import (
     SUBPROCESS_ABRUPT_EXIT_MARKER,
     build_process_observation,
 )
+from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD
 from pkcs11_check.testcases._probes.runner import ProbeResult
 from pkcs11_check.testcases._subprocess_preamble import (
     SUBPROCESS_TIMEOUT_MARKER,
@@ -242,3 +243,145 @@ def test_missing_observation_returns_quietly() -> None:
         is None
     )
     assert C.get_records() == []
+
+
+def _stub_probe_with(result: ProbeResult) -> Any:
+    def _stub_probe(probe: str, params: dict[str, object], **_kwargs: object) -> ProbeResult:
+        assert probe == "random_length"
+        return result
+
+    return _stub_probe
+
+
+def _termination_kind(rec: Any) -> object:
+    assert rec.detail is not None
+    termination = rec.detail.get("termination")
+    assert isinstance(termination, dict)
+    return termination.get("kind")
+
+
+def test_product_node_completed_underfill_ignores_copied_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copied timeout marker on a completed underfill measurement must not
+    displace the accepted_invalid verdict with a crash/hang verdict."""
+    result = ProbeResult(
+        returncode=0,
+        stdout="GENRAND_RV:0\nUNDERFILL:1\n",
+        stderr=_timed_out_stderr(),
+        observation=_observation(0, _timed_out_stderr()),
+    )
+    monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
+    with pytest.raises(pytest.fail.Exception):
+        rlt.TestGenerateRandomLengthTruncation().test_generate_random_oversized_length_rejects_or_honors(
+            cfg
+        )
+    (rec,) = C.get_records()
+    assert rec.reason == "accepted_invalid"
+    assert rec.outcome == "fail"
+
+
+def test_product_node_clean_reject_ignores_copied_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copied timeout marker on a clean seed-path rejection must not
+    turn the pass into a crash verdict."""
+    result = ProbeResult(
+        returncode=0,
+        stdout=f"SEEDRAND_RV:{int(CKR_ARGUMENTS_BAD)}\n",
+        stderr=_timed_out_stderr(),
+        observation=_observation(0, _timed_out_stderr()),
+    )
+    monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
+    try:
+        rlt.TestSeedRandomLengthTruncation().test_seed_random_oversized_length_return_code(cfg)
+    except pytest.fail.Exception:
+        pytest.fail("copied timeout marker turned a clean reject into a crash verdict")
+    assert [rec for rec in C.get_records() if rec.outcome == "fail"] == []
+
+
+def test_product_node_signal_keeps_termination_despite_copied_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copied timeout marker on SIGSEGV must not rewrite the retained
+    termination kind to timeout."""
+    result = ProbeResult(
+        returncode=-11,
+        stdout="",
+        stderr=_timed_out_stderr(),
+        observation=_observation(-11, _timed_out_stderr()),
+    )
+    monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
+    with pytest.raises(pytest.fail.Exception):
+        rlt.TestGenerateRandomLengthTruncation().test_generate_random_oversized_length_rejects_or_honors(
+            cfg
+        )
+    (rec,) = C.get_records()
+    assert rec.reason == "crash"
+    assert _termination_kind(rec) == "signal"
+
+
+def test_product_node_windows_exception_keeps_termination_despite_copied_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copied timeout marker on a Windows exception must not rewrite the
+    retained termination kind to timeout."""
+    result = ProbeResult(
+        returncode=0xC0000005,
+        stdout="",
+        stderr=_timed_out_stderr(),
+        observation=_observation(0xC0000005, _timed_out_stderr(), platform="win32"),
+    )
+    monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
+    with pytest.raises(pytest.fail.Exception):
+        rlt.TestSeedRandomLengthTruncation().test_seed_random_oversized_length_return_code(cfg)
+    (rec,) = C.get_records()
+    assert rec.reason == "crash"
+    assert _termination_kind(rec) == "exception"
+
+
+def test_product_node_abrupt_exit_keeps_termination_despite_copied_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copied timeout marker on an abrupt native exit must not rewrite the
+    retained termination kind to timeout."""
+    stderr = f"{SUBPROCESS_ABRUPT_EXIT_MARKER}:0\n{_timed_out_stderr()}"
+    result = ProbeResult(
+        returncode=0,
+        stdout="",
+        stderr=stderr,
+        observation=_observation(0, stderr),
+    )
+    monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
+    with pytest.raises(pytest.fail.Exception):
+        rlt.TestGenerateRandomLengthTruncation().test_generate_random_oversized_length_rejects_or_honors(
+            cfg
+        )
+    (rec,) = C.get_records()
+    assert rec.reason == "crash"
+    assert _termination_kind(rec) == "abrupt_exit"
+
+
+def test_product_node_genuine_timeout_stays_probe_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine typed timeout through the product node still raises
+    probe_incomplete (not a crash/hang verdict)."""
+    result = ProbeResult(
+        returncode=SUBPROCESS_TIMEOUT_RC,
+        stdout="",
+        stderr=_timed_out_stderr(),
+        observation=_observation(SUBPROCESS_TIMEOUT_RC, _timed_out_stderr(), timed_out=True),
+    )
+    monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
+    with pytest.raises(pytest.fail.Exception):
+        rlt.TestSeedRandomLengthTruncation().test_seed_random_oversized_length_return_code(cfg)
+    (rec,) = C.get_records()
+    assert rec.reason == "probe_incomplete"
+    assert _termination_kind(rec) == "timeout"

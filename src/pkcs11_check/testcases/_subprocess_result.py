@@ -61,6 +61,23 @@ def _is_dispatcher_capability_error(stderr: str) -> bool:
     return bool(lines and _MISSING_FUNCTION_ERROR.fullmatch(lines[-1]))
 
 
+_OBSERVED_TERMINATION_KINDS = frozenset(
+    {"exit", "signal", "exception", "timeout", "abrupt_exit", "external-kill"}
+)
+
+
+def _observed_termination(observation: dict[str, object] | None) -> dict[str, object] | None:
+    """Return the runner-built termination when it carries a recognized kind."""
+    if not isinstance(observation, dict):
+        return None
+    termination = observation.get("termination")
+    if not isinstance(termination, dict):
+        return None
+    if termination.get("kind") not in _OBSERVED_TERMINATION_KINDS:
+        return None
+    return dict(termination)
+
+
 def _report_harness_error(
     detail: str,
     *,
@@ -146,6 +163,7 @@ def assert_subprocess_completed(
     *,
     context: str,
     already_attributed: bool = False,
+    observation: dict[str, object] | None = None,
 ) -> tuple[dict[str, object], bool]:
     """Fail if a crash-survival subprocess crashed or failed internally.
 
@@ -159,10 +177,19 @@ def assert_subprocess_completed(
     caller's own, better-informed record stands alone. Crash, hang, and explicit
     ``HARNESS_ERROR:`` dispositions are unaffected -- a crash still outranks everything,
     which is why callers invoke this before acting on their own protocol findings.
+
+    Pass ``observation`` (``ProbeResult.observation``) when the caller has it: the
+    runner-built termination then governs instead of a re-derivation from stderr text,
+    so provider-copied marker text cannot rewrite the verdict. Without it the timeout
+    marker scan below still applies, preserving every existing caller.
     """
     record_subprocess_rv_trace(stdout, stderr)
-    timed_out = SUBPROCESS_TIMEOUT_MARKER in stderr
-    termination = termination_from_returncode(rc, timed_out=timed_out, stderr=stderr)
+    observed = _observed_termination(observation)
+    if observed is not None:
+        termination = observed
+    else:
+        timed_out = SUBPROCESS_TIMEOUT_MARKER in stderr
+        termination = termination_from_returncode(rc, timed_out=timed_out, stderr=stderr)
     termination_kind = termination["kind"]
     if termination_kind in {"signal", "exception", "timeout", "abrupt_exit"}:
         # The module hung on the probe input (subprocess timed out without

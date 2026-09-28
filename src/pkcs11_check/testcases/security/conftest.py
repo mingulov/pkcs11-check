@@ -74,6 +74,7 @@ def assert_subprocess_no_crash(
     stderr: str,
     *,
     context: str,
+    observation: dict[str, object] | None = None,
 ) -> None:
     """Assert a subprocess completed without crashing or child-script failure.
 
@@ -83,8 +84,10 @@ def assert_subprocess_no_crash(
         stdout: subprocess stdout.
         stderr: subprocess stderr.
         context: Human-readable test description for failure message.
+        observation: Runner-built ``ProbeResult.observation`` when available;
+            its termination governs instead of a stderr re-derivation.
     """
-    assert_subprocess_completed(rc, stdout, stderr, context=context)
+    assert_subprocess_completed(rc, stdout, stderr, context=context, observation=observation)
     for line in stdout.splitlines():
         if line.startswith(SETUP_XFAIL_PREFIX):
             # Child setup (keygen/Init) cleanly errored before the probe could run:
