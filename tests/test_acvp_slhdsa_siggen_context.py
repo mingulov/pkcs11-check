@@ -531,6 +531,22 @@ def test_siggen_primitive_sequence_params_fails_metadata(
     assert record.kind == "metadata"
 
 
+def test_siggen_invalid_string_params_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SPKI whose parameters carry invalid string contents fails
+    wrong_result end to end (non-UTF-8 bytes here)."""
+    vec = _siggen_vec(b"\xaa\x55")
+    alg = b"\x30\x06\x06\x01\x2a\x0c\x01\xff"
+    spki = _spki_der_with_alg(alg, bytes(range(32)))
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=spki)
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+
+
 def test_siggen_missing_pk_empty_payload_readback_fails_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -685,6 +701,51 @@ def test_spki_extractor_enforces_universal_type_rules() -> None:
     for params in (b"\x04\x02\xaa\xbb", b"\xa0\x02\x05\x00"):
         alg = b"\x30" + _der_len(3 + len(params)) + b"\x06\x01\x2a" + params
         assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(alg, key)) == key
+
+
+def _spki_with_params(params: bytes, key: bytes) -> bytes:
+    """SPKI DER whose AlgorithmIdentifier carries OID 1.42 plus ``params``."""
+    alg = b"\x30" + _der_len(3 + len(params)) + b"\x06\x01\x2a" + params
+    return _spki_der_with_alg(alg, key)
+
+
+def test_spki_extractor_validates_string_and_relative_oid_contents() -> None:
+    """String and relative-OID parameter contents obey their rules: strict
+    UTF-8/UTF-16/UTF-32, restricted alphabets and ranges, well-formed
+    relative-OID subidentifiers."""
+    key = bytes(range(32))
+    bad_params = (
+        b"\x0d\x01\x80",  # unterminated relative OID
+        b"\x0d\x02\x80\x2a",  # nonminimal relative OID
+        b"\x0c\x01\xff",  # invalid UTF8String
+        b"\x1e\x01\x00",  # odd-length BMPString
+        b"\x1c\x01\x00",  # UniversalString length not a multiple of 4
+        b"\x16\x01\x80",  # IA5String above 0x7F
+        b"\x1a\x01\x7f",  # VisibleString DEL
+        b"\x12\x01\x61",  # NumericString 'a'
+        b"\x13\x01\x60",  # PrintableString backtick
+    )
+    for params in bad_params:
+        assert test_acvp_slhdsa._spki_public_key_bytes(_spki_with_params(params, key)) is None
+    good_params = (
+        b"\x0d\x01\x30",  # well-formed relative OID
+        b"\x0c\x02\xc3\xa9",  # valid UTF8String
+        b"\x1e\x04\x00\x41\x00\x42",  # valid BMPString
+        b"\x1c\x04\x00\x00\x00\x41",  # valid UniversalString
+        b"\x16\x03\x41\x20\x7e",  # valid IA5String
+        b"\x12\x03\x31\x20\x32",  # valid NumericString
+    )
+    for params in good_params:
+        assert test_acvp_slhdsa._spki_public_key_bytes(_spki_with_params(params, key)) == key
+
+
+def test_spki_extractor_accepts_constructed_character_string() -> None:
+    """Universal tag 29 (CHARACTER STRING) is always constructed: a valid
+    encoding must keep parsing (H1-REG: no over-strictness on valid DER)."""
+    key = bytes(range(32))
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der(key)) == key
+    params = bytes.fromhex("3d07a0028500820141")
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_with_params(params, key)) == key
 
 
 def test_spki_extractor_rejects_nonminimal_lengths() -> None:
