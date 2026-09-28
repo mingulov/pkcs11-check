@@ -486,6 +486,21 @@ def test_siggen_recovered_pk_wrong_length_fails_metadata(
     assert record.mechanism is None
 
 
+def test_siggen_malformed_oid_readback_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SPKI whose OID encoding is malformed fails wrong_result end to end,
+    even with an otherwise valid key payload."""
+    vec = _siggen_vec(b"\xaa\x55")
+    spki = _spki_der_with_alg(b"\x30\x02\x06\x00", bytes(range(32)))
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=spki)
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+
+
 def test_siggen_missing_pk_empty_payload_readback_fails_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -582,6 +597,40 @@ def test_spki_extractor_requires_oid_in_algorithm_identifier() -> None:
         test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(b"\x30\x02\x05\x00", key))
         is None
     )
+
+
+def test_spki_extractor_rejects_malformed_oid_contents() -> None:
+    """OID encodings must be well-formed base-128: nonempty, terminated,
+    minimal. Unfamiliar but well-formed OIDs still parse (value not pinned)."""
+    key = bytes(range(32))
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der(key)) == key
+    for bad_oid in (b"\x06\x00", b"\x06\x01\x80", b"\x06\x02\x80\x2a"):
+        alg = b"\x30" + _der_len(len(bad_oid)) + bad_oid
+        assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(alg, key)) is None
+
+
+def test_spki_extractor_rejects_trailing_algorithm_bytes() -> None:
+    """After the OID, the AlgorithmIdentifier may carry at most one
+    well-formed parameters element (e.g. NULL); trailing garbage fails."""
+    key = bytes(range(32))
+    with_null = _spki_der_with_alg(b"\x30\x05\x06\x01\x2a\x05\x00", key)
+    assert test_acvp_slhdsa._spki_public_key_bytes(with_null) == key
+    trailing = _spki_der_with_alg(b"\x30\x04\x06\x01\x2a\xff", key)
+    assert test_acvp_slhdsa._spki_public_key_bytes(trailing) is None
+
+
+def test_spki_extractor_rejects_nonminimal_lengths() -> None:
+    """DER lengths must be minimal: no long form below 128, no leading zero
+    octets in long form."""
+    good = _spki_der(bytes(range(32)))
+    assert good[1] == len(good) - 2  # short-form outer length below 128
+    long_for_short = b"\x30\x81" + good[1:2] + good[2:]
+    assert test_acvp_slhdsa._spki_public_key_bytes(long_for_short) is None
+    head, sep, tail = good.partition(b"\x03\x21")
+    assert sep  # BIT STRING header for the 33-byte key field
+    widened = head + b"\x03\x81\x21" + tail
+    widened = b"\x30" + bytes([widened[1] + 1]) + widened[2:]
+    assert test_acvp_slhdsa._spki_public_key_bytes(widened) is None
 
 
 def test_spki_extractor_rejects_length_mismatch_and_empty_payload() -> None:
