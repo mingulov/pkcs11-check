@@ -865,11 +865,15 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
         )
 
 
-def test_aes_xts_short_tweak_rejected(p11_module_session: Any) -> None:
+@pytest.mark.parametrize("tweak_len", [8, 15])
+def test_aes_xts_short_tweak_rejected(p11_module_session: Any, tweak_len: int) -> None:
     """A non-16-byte AES-XTS tweak must be cleanly rejected.
 
     Dedicated malformed-parameter coverage for the tweak lengths the corpus
-    KAT skips as inapplicable: PKCS#11 fixes the tweak at 16 bytes.
+    KAT skips as inapplicable: PKCS#11 fixes the tweak at 16 bytes. The
+    1-byte extreme stays covered by the registry malformed-required-param
+    negative; the setup key uses distinct halves so a degenerate-key
+    refusal cannot xfail setup and hide the tweak verdict.
     """
     rs = p11_module_session
     if not rs.has_mechanism("AES_XTS"):
@@ -879,7 +883,7 @@ def test_aes_xts_short_tweak_rejected(p11_module_session: Any) -> None:
         key = import_secret_key_negotiated(
             rs,
             CKK_AES_XTS,
-            b"\x2b" * 64,
+            b"\x2b" * 32 + b"\x1f" * 32,
             attrs={
                 CKA_ENCRYPT: True,
                 CKA_DECRYPT: True,
@@ -890,6 +894,7 @@ def test_aes_xts_short_tweak_rejected(p11_module_session: Any) -> None:
     except CkrAssertionError as exc:
         _xfail_if_aes_runtime_reject(exc, "AES-XTS:short-tweak key-import")
 
+    label = f"AES-XTS C_Encrypt with {tweak_len}-byte tweak"
     try:
         try:
             encrypt_single(
@@ -898,19 +903,30 @@ def test_aes_xts_short_tweak_rejected(p11_module_session: Any) -> None:
                 key,
                 CKM_AES_XTS,
                 b"\x11" * 16,
-                mech_param=mech_bytes(CKM_AES_XTS, b"\x05" * 15),
+                mech_param=mech_bytes(CKM_AES_XTS, b"\x05" * 16),
+            )
+        except CkrAssertionError as exc:
+            _xfail_if_aes_runtime_reject(exc, "AES-XTS:short-tweak valid-tweak control")
+        try:
+            encrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_XTS,
+                b"\x11" * 16,
+                mech_param=mech_bytes(CKM_AES_XTS, b"\x05" * tweak_len),
             )
         except CkrAssertionError as exc:
             classify_negative_rv(
                 exc.rv,
                 (CKR_MECHANISM_PARAM_INVALID,),
-                label="AES-XTS C_Encrypt with 15-byte tweak",
+                label=label,
             )
         else:
             classify_negative_rv(
                 CKR_OK,
                 (CKR_MECHANISM_PARAM_INVALID,),
-                label="AES-XTS C_Encrypt with 15-byte tweak",
+                label=label,
             )
     finally:
         destroy_quietly(rs.raw, rs.sh, key)
