@@ -62,6 +62,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
     CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_WRAPPED_KEY_INVALID,
@@ -82,6 +83,7 @@ from pkcs11_check.testcases._operability import (
 from pkcs11_check.testcases.acvp.aes.base_runner_aead import _aead_operability as _ccm_operability
 from pkcs11_check.testcases.conftest import (
     assert_correct,
+    classify_negative_rv,
     import_secret_key_negotiated,
     reject_or_classify,
     skip_unless_mechanism_flag,
@@ -771,6 +773,14 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
     msg = bytes.fromhex(vec["msg"])
     ct_expected = bytes.fromhex(vec["ct"])
     result = vec["result"]
+    if result == "valid" and len(iv) != 16:
+        # PKCS#11 fixes the CKM_AES_XTS tweak at 16 bytes: a corpus-positive
+        # vector with any other tweak length is inapplicable. Skipping (not
+        # xfailing) keeps it from misreporting as provider non-operability.
+        pytest.skip(
+            f"AES-XTS {vec_id}: {len(iv)}-byte tweak inexpressible in PKCS#11 "
+            "(CKM_AES_XTS tweak is fixed 16 bytes)"
+        )
     set_mechanism("AES_XTS", operation="C_Encrypt", expect_success=(result == "valid"))
 
     # XTS uses AES_XTS key type with double-size key
@@ -845,3 +855,54 @@ def test_aes_xts(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> N
             source=vec.get("_source"),
             vector_id=vec.get("_vector_id"),
         )
+
+
+def test_aes_xts_short_tweak_rejected(p11_module_session: Any) -> None:
+    """A non-16-byte AES-XTS tweak must be cleanly rejected.
+
+    Dedicated malformed-parameter coverage for the tweak lengths the corpus
+    KAT skips as inapplicable: PKCS#11 fixes the tweak at 16 bytes.
+    """
+    rs = p11_module_session
+    if not rs.has_mechanism("AES_XTS"):
+        pytest.skip("AES_XTS not supported")
+
+    try:
+        key = import_secret_key_negotiated(
+            rs,
+            CKK_AES_XTS,
+            b"\x2b" * 64,
+            attrs={
+                CKA_ENCRYPT: True,
+                CKA_DECRYPT: True,
+                CKA_TOKEN: False,
+                CKA_SENSITIVE: False,
+            },
+        )
+    except CkrAssertionError as exc:
+        _xfail_if_aes_runtime_reject(exc, "AES-XTS:short-tweak key-import")
+
+    try:
+        try:
+            encrypt_single(
+                rs.raw,
+                rs.sh,
+                key,
+                CKM_AES_XTS,
+                b"\x11" * 16,
+                mech_param=mech_bytes(CKM_AES_XTS, b"\x05" * 15),
+            )
+        except CkrAssertionError as exc:
+            classify_negative_rv(
+                exc.rv,
+                (CKR_MECHANISM_PARAM_INVALID,),
+                label="AES-XTS C_Encrypt with 15-byte tweak",
+            )
+        else:
+            classify_negative_rv(
+                CKR_OK,
+                (CKR_MECHANISM_PARAM_INVALID,),
+                label="AES-XTS C_Encrypt with 15-byte tweak",
+            )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, key)
