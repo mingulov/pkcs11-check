@@ -427,11 +427,20 @@ def _check_hkdf_salt_key_readback(rs: Any, salt_key: int, supplied: bytes) -> No
 
     The oracle always feeds on the known ``supplied`` bytes, never on this
     readback. A lawfully nonextractable salt key refuses CKA_VALUE
-    (CKR_ATTRIBUTE_SENSITIVE) or is otherwise unreadable; that skips this
-    check only -- quietly, with no record -- and never gates the oracle.
+    (CKR_ATTRIBUTE_SENSITIVE); that conformant refusal is recorded as a
+    passing observation and skips this check only -- the oracle still runs
+    on the known bytes and is never gated by this readback.
     """
     salt_attrs = read_attributes(rs.raw, rs.sh, salt_key, [CKA_VALUE])
-    salt_value = salt_attrs.get(CKA_VALUE, MISSING_ATTRIBUTE)
+    salt_value = attr_or_record(
+        salt_attrs,
+        CKA_VALUE,
+        label="CKM_HKDF_DATA matrix salt-key CKA_VALUE readback",
+        kind="metadata",
+        mechanism=None,
+        inherit_mechanism=False,
+        sensitive_is_conformant=True,
+    )
     if salt_value is MISSING_ATTRIBUTE:
         return
     if type(salt_value) is not bytes or salt_value != supplied:
