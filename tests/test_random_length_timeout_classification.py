@@ -311,7 +311,7 @@ def test_product_node_signal_keeps_termination_despite_copied_marker(
         returncode=-11,
         stdout="",
         stderr=_timed_out_stderr(),
-        observation=_observation(-11, _timed_out_stderr()),
+        observation=_observation(-11, _timed_out_stderr(), platform="linux"),
     )
     monkeypatch.setattr(rlt, "run_probe", _stub_probe_with(result))
     cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0)
