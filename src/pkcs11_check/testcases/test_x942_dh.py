@@ -974,6 +974,9 @@ def _x942_derive_aes(
     attrs: dict[int, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
         CKA_KEY_TYPE: CKK_AES,
+        # P11C-007: pin the length like the PKCS#3 twin; without it a module
+        # may store the full DH secret width as an unusable oversized key.
+        CKA_VALUE_LEN: 16,
         CKA_SENSITIVE: False,
         CKA_EXTRACTABLE: True,
         CKA_TOKEN: False,

@@ -323,3 +323,50 @@ def test_vlen_pin_table_covers_haskoki_code_above_baseline() -> None:
     proof_rows = len(_VLEN_METHODS) * len(_VLEN_ACCEPTED)
     assert proof_rows == 6
     assert proof_rows > len(_VLEN_METHODS) * len(_VLEN_BASELINE_CODES)
+
+
+# ---------------------------------------------------------------------------
+# Part C — P11C-007: _x942_derive_aes pins CKA_VALUE_LEN like its PKCS#3 twin.
+# Without the pin a module may default the length to the full DH secret width
+# and store an unusable oversized "AES" key that fails downstream at C_Encrypt
+# instead of at derive time.
+# ---------------------------------------------------------------------------
+
+
+def _capture_x942_derive_attrs(
+    monkeypatch: pytest.MonkeyPatch, extra_attrs: dict[int, Any] | None = None
+) -> dict[Any, Any]:
+    """Drive _x942_derive_aes with a stubbed derive_key; return the template."""
+    seen: dict[Any, Any] = {}
+
+    def _derive(
+        _raw: Any,
+        _sh: int,
+        _base_key: int,
+        mechanism: int,
+        *,
+        attrs: dict[int, Any],
+        mech_param: Any,
+    ) -> int:
+        assert int(mechanism) == int(CKM_X9_42_DH_DERIVE)
+        seen.update(attrs)
+        return 777
+
+    monkeypatch.setattr(test_x942_dh, "derive_key", _derive)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    test_x942_dh._x942_derive_aes(rs, 5, b"\x02" * 256, extra_attrs=extra_attrs)
+    return seen
+
+
+def test_x942_derive_aes_pins_value_len_16(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P11C-007: the derived AES-128 template pins CKA_VALUE_LEN 16."""
+    seen = _capture_x942_derive_attrs(monkeypatch)
+    assert seen[CKA_VALUE_LEN] == 16
+
+
+def test_x942_derive_aes_extra_attrs_override_value_len(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P11C-007: explicit extra_attrs still override the pinned length."""
+    seen = _capture_x942_derive_attrs(monkeypatch, {CKA_VALUE_LEN: 24})
+    assert seen[CKA_VALUE_LEN] == 24
