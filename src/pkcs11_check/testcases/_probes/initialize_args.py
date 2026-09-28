@@ -4,10 +4,12 @@ Raw pre-auth ctypes path (no session, no login; Invariant I3): the child loads t
 module via ``ctypes.CDLL`` and calls ``C_Initialize`` (or ``C_Finalize``) directly off
 the loaded ``CDLL`` (``lib.C_Initialize`` / ``lib.C_Finalize``), exactly as the legacy
 inline subprocess bodies did -- no ``CK_FUNCTION_LIST`` pointer arithmetic is needed.
-Migrated verbatim from the legacy ``test_initialize_args.py`` child scripts (each
-``args_setup`` snippet becomes one handler; the mutex-callback stubs and the deliberate
-``pReserved`` non-NULL / partial-callback setups are preserved unchanged so the module
-sees byte-identical inputs).
+Migrated from the legacy ``test_initialize_args.py`` child scripts (each
+``args_setup`` snippet becomes one handler); the deliberate ``pReserved`` non-NULL /
+partial-callback setups are preserved so the module sees byte-identical inputs for
+those probes. The mutex callbacks implement real mutex semantics (usable non-NULL
+handles; misuse draws the specified mutex CKRs) so callback-using modules are
+exercised rather than handed garbage handles.
 
 Dispatch on ``extra["probe"]``:
   ``"null_args"``                      -- C_Initialize(NULL).
@@ -35,6 +37,7 @@ Launch with ``coverage="raw"`` (the raw CDLL path has no RawPKCS11 wrapper; I6).
 from __future__ import annotations
 
 import ctypes
+import threading
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
@@ -47,7 +50,10 @@ from pkcs11_check.raw.types_std import (
     CK_RV,
     CK_UNLOCKMUTEX,
     CKF_OS_LOCKING_OK,
+    CKR_ARGUMENTS_BAD,
     CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    CKR_MUTEX_BAD,
+    CKR_MUTEX_NOT_LOCKED,
     CKR_OK,
 )
 from pkcs11_check.testcases._probes.raw_session import RawCtypesContext, probe_main_raw
@@ -93,55 +99,111 @@ def _os_locking_only(lib: ctypes.CDLL) -> None:
     _call_initialize(lib, cast(byref(args), c_void_p))
 
 
+class _MutexSet:
+    """Application mutex callbacks with real mutex semantics.
+
+    Each created mutex is a ``threading.Lock`` plus an owned storage cell
+    whose address is the opaque handle handed to the module. Storage is never
+    freed, so a freed address can never be recycled into a stale but live
+    handle. Unknown handles draw ``CKR_MUTEX_BAD``; unlocking a mutex that was
+    never locked draws ``CKR_MUTEX_NOT_LOCKED``.
+    """
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._mutexes: dict[int, threading.Lock] = {}
+        self._storage: list[Any] = []
+        self._wrappers: list[Any] = []
+
+    @staticmethod
+    def _address(value: Any) -> int:
+        if isinstance(value, int):
+            return value
+        if value is None:
+            return 0
+        return int(ctypes.cast(value, c_void_p).value or 0)
+
+    def create(self, pp: Any) -> int:
+        slot = self._address(pp)
+        if not slot:
+            return int(CKR_ARGUMENTS_BAD)
+        with self._guard:
+            storage = ctypes.c_ulong(len(self._storage) + 1)
+            handle = ctypes.addressof(storage)
+            self._storage.append(storage)
+            self._mutexes[handle] = threading.Lock()
+        ctypes.cast(slot, ctypes.POINTER(c_void_p))[0] = handle
+        return int(CKR_OK)
+
+    def _lookup(self, p: Any) -> threading.Lock | None:
+        handle = self._address(p)
+        if not handle:
+            return None
+        with self._guard:
+            return self._mutexes.get(handle)
+
+    def destroy(self, p: Any) -> int:
+        handle = self._address(p)
+        if not handle:
+            return int(CKR_MUTEX_BAD)
+        with self._guard:
+            if handle not in self._mutexes:
+                return int(CKR_MUTEX_BAD)
+            del self._mutexes[handle]
+        return int(CKR_OK)
+
+    def lock(self, p: Any) -> int:
+        mutex = self._lookup(p)
+        if mutex is None:
+            return int(CKR_MUTEX_BAD)
+        mutex.acquire()
+        return int(CKR_OK)
+
+    def unlock(self, p: Any) -> int:
+        mutex = self._lookup(p)
+        if mutex is None:
+            return int(CKR_MUTEX_BAD)
+        try:
+            mutex.release()
+        except RuntimeError:
+            return int(CKR_MUTEX_NOT_LOCKED)
+        return int(CKR_OK)
+
+
+def _new_mutex_set() -> _MutexSet:
+    """Return fresh application mutex callbacks with real mutex semantics."""
+    return _MutexSet()
+
+
+def _install_app_mutexes(args: CK_C_INITIALIZE_ARGS, *, with_unlock: bool = True) -> _MutexSet:
+    """Install valid application mutex callbacks on init args.
+
+    Returns the mutex set, which the caller must keep alive while the module
+    may invoke the callbacks.
+    """
+    mutexes = _new_mutex_set()
+    wrappers = [
+        CK_CREATEMUTEX(mutexes.create),
+        CK_DESTROYMUTEX(mutexes.destroy),
+        CK_LOCKMUTEX(mutexes.lock),
+    ]
+    args.CreateMutex, args.DestroyMutex, args.LockMutex = wrappers
+    if with_unlock:
+        wrappers.append(CK_UNLOCKMUTEX(mutexes.unlock))
+        args.UnlockMutex = wrappers[-1]
+    mutexes._wrappers = wrappers
+    return mutexes
+
+
 def _app_mutex_callbacks(lib: ctypes.CDLL) -> None:
-    def _create(pp: Any) -> int:
-        return int(CKR_OK)
-
-    def _destroy(p: Any) -> int:
-        return int(CKR_OK)
-
-    def _lock(p: Any) -> int:
-        return int(CKR_OK)
-
-    def _unlock(p: Any) -> int:
-        return int(CKR_OK)
-
-    create_fn = CK_CREATEMUTEX(_create)
-    destroy_fn = CK_DESTROYMUTEX(_destroy)
-    lock_fn = CK_LOCKMUTEX(_lock)
-    unlock_fn = CK_UNLOCKMUTEX(_unlock)
-
     args = CK_C_INITIALIZE_ARGS()
-    args.CreateMutex = create_fn
-    args.DestroyMutex = destroy_fn
-    args.LockMutex = lock_fn
-    args.UnlockMutex = unlock_fn
+    _mutexes = _install_app_mutexes(args)
     _call_initialize(lib, cast(byref(args), c_void_p))
 
 
 def _both_callbacks_and_os_locking(lib: ctypes.CDLL) -> None:
-    def _create(pp: Any) -> int:
-        return int(CKR_OK)
-
-    def _destroy(p: Any) -> int:
-        return int(CKR_OK)
-
-    def _lock(p: Any) -> int:
-        return int(CKR_OK)
-
-    def _unlock(p: Any) -> int:
-        return int(CKR_OK)
-
-    create_fn = CK_CREATEMUTEX(_create)
-    destroy_fn = CK_DESTROYMUTEX(_destroy)
-    lock_fn = CK_LOCKMUTEX(_lock)
-    unlock_fn = CK_UNLOCKMUTEX(_unlock)
-
     args = CK_C_INITIALIZE_ARGS()
-    args.CreateMutex = create_fn
-    args.DestroyMutex = destroy_fn
-    args.LockMutex = lock_fn
-    args.UnlockMutex = unlock_fn
+    _mutexes = _install_app_mutexes(args)
     args.flags = int(CKF_OS_LOCKING_OK)
     _call_initialize(lib, cast(byref(args), c_void_p))
 
@@ -153,23 +215,8 @@ def _reserved_non_null(lib: ctypes.CDLL) -> None:
 
 
 def _partial_callbacks(lib: ctypes.CDLL) -> None:
-    def _create(pp: Any) -> int:
-        return int(CKR_OK)
-
-    def _destroy(p: Any) -> int:
-        return int(CKR_OK)
-
-    def _lock(p: Any) -> int:
-        return int(CKR_OK)
-
-    create_fn = CK_CREATEMUTEX(_create)
-    destroy_fn = CK_DESTROYMUTEX(_destroy)
-    lock_fn = CK_LOCKMUTEX(_lock)
-
     args = CK_C_INITIALIZE_ARGS()
-    args.CreateMutex = create_fn
-    args.DestroyMutex = destroy_fn
-    args.LockMutex = lock_fn
+    _mutexes = _install_app_mutexes(args, with_unlock=False)
     # UnlockMutex left as NULL — deliberate
     _call_initialize(lib, cast(byref(args), c_void_p))
 
