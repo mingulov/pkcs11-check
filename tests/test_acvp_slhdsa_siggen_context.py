@@ -516,6 +516,21 @@ def test_siggen_malformed_params_readback_fails_metadata(
     assert record.kind == "metadata"
 
 
+def test_siggen_primitive_sequence_params_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A primitive-encoded SEQUENCE in parameters fails wrong_result end to
+    end (SEQUENCE is always constructed)."""
+    vec = _siggen_vec(b"\xaa\x55")
+    spki = _spki_der_with_alg(b"\x30\x05\x06\x01\x2a\x10\x00", bytes(range(32)))
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=spki)
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
+
+
 def test_siggen_missing_pk_empty_payload_readback_fails_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -646,6 +661,30 @@ def test_spki_extractor_validates_parameter_contents() -> None:
     assert test_acvp_slhdsa._spki_public_key_bytes(nested_bad) is None
     nested_good = _spki_der_with_alg(b"\x30\x09\x06\x01\x2a\x30\x04\x05\x00\x05\x00", key)
     assert test_acvp_slhdsa._spki_public_key_bytes(nested_good) == key
+
+
+def test_spki_extractor_enforces_universal_type_rules() -> None:
+    """Universal tags obey their DER encoding rules: constructed bit set only
+    where the type requires it, no EOC in definite length, nonempty
+    INTEGER/BOOLEAN, BIT STRING unused-bit count within range."""
+    key = bytes(range(32))
+    bad_params = (
+        b"\x25\x00",  # constructed NULL
+        b"\x26\x00",  # constructed OID
+        b"\x10\x00",  # primitive SEQUENCE
+        b"\x00\x00",  # EOC in definite length
+        b"\x02\x00",  # empty INTEGER
+        b"\x01\x00",  # empty BOOLEAN
+        b"\x03\x01\x08",  # BIT STRING unused-bit count 8
+    )
+    for params in bad_params:
+        alg = b"\x30" + _der_len(3 + len(params)) + b"\x06\x01\x2a" + params
+        assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(alg, key)) is None
+    # Positive controls: primitive OCTET STRING and context-specific
+    # constructed wrappers are legitimate parameter shapes.
+    for params in (b"\x04\x02\xaa\xbb", b"\xa0\x02\x05\x00"):
+        alg = b"\x30" + _der_len(3 + len(params)) + b"\x06\x01\x2a" + params
+        assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der_with_alg(alg, key)) == key
 
 
 def test_spki_extractor_rejects_nonminimal_lengths() -> None:
