@@ -179,12 +179,17 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
     Minimal ASN.1 walk over ``SEQUENCE { AlgorithmIdentifier, BIT STRING }``
     returning the BIT STRING contents without validating the algorithm --
     the same shape as the wycheproof SPKI fallback (``_key_decoders``).
-    Returns None when the DER cannot be parsed at all.
+    The full encoding is validated: the outer length must match the input
+    exactly (no truncation, no trailing bytes), the BIT STRING must end at
+    the outer end, and the key payload must be nonempty (an SLH-DSA public
+    key cannot be empty). Returns None when the DER cannot be parsed at all.
     """
     try:
         if len(der) < 2 or der[0] != 0x30:  # outer SEQUENCE
             return None
-        pos, _outer_len = _der_length(der, 1)
+        pos, outer_len = _der_length(der, 1)
+        if pos + outer_len != len(der):  # truncated or trailing garbage
+            return None
         if pos >= len(der) or der[pos] != 0x30:  # AlgorithmIdentifier SEQUENCE
             return None
         val, length = _der_length(der, pos + 1)
@@ -192,7 +197,7 @@ def _spki_public_key_bytes(der: bytes) -> bytes | None:
         if pos >= len(der) or der[pos] != 0x03:  # BIT STRING
             return None
         val, length = _der_length(der, pos + 1)
-        if length < 1 or val + length > len(der):
+        if length < 2 or val + length != len(der):  # payload + exact fit
             return None
         if der[val] != 0x00:  # unused-bits count; PQC keys use 0
             return None
@@ -236,12 +241,15 @@ def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
             "wrong_result",
             kind="metadata",
             label=f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback",
+            operation="C_GetAttributeValue",
+            mechanism=None,
+            inherit_mechanism=False,
             summary=(
                 f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback present but "
                 f"malformed ({len(spki)} unparseable bytes)"
             ),
         )
-    return parsed or b""
+    return parsed
 
 
 def _load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:

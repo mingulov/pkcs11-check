@@ -464,6 +464,22 @@ def test_siggen_missing_pk_unparseable_readback_fails_metadata(
     record = get_records()[-1]
     assert record.reason == "wrong_result"
     assert record.kind == "metadata"
+    assert record.operation == "C_GetAttributeValue"
+    assert record.mechanism is None
+
+
+def test_siggen_missing_pk_empty_payload_readback_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A nonempty SPKI whose BIT STRING carries no key bytes is malformed,
+    not unavailable: an SLH-DSA public key cannot be empty."""
+    vec = _siggen_vec(b"\xaa\x55")
+    with pytest.raises(Failed) as exc_info:
+        _run_siggen_no_projection_pk(monkeypatch, vec, spki=_spki_der(b""))
+    assert not isinstance(exc_info.value, XFailed)
+    record = get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "metadata"
 
 
 def test_siggen_missing_pk_empty_readback_xfails_oracle_unavailable(
@@ -528,3 +544,14 @@ def test_spki_extractor_rejects_garbage() -> None:
     assert test_acvp_slhdsa._spki_public_key_bytes(b"") is None
     truncated = _spki_der(b"public")[:-3]
     assert test_acvp_slhdsa._spki_public_key_bytes(truncated) is None
+
+
+def test_spki_extractor_rejects_length_mismatch_and_empty_payload() -> None:
+    """The extractor validates the full encoding: outer length must match the
+    input exactly (no truncation, no trailing bytes) and the key payload must
+    be nonempty -- an SLH-DSA public key cannot be empty."""
+    good = _spki_der(b"public")
+    assert test_acvp_slhdsa._spki_public_key_bytes(good + b"\x00") is None
+    oversized = b"\x30\x7f" + good[2:]
+    assert test_acvp_slhdsa._spki_public_key_bytes(oversized) is None
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der(b"")) is None
