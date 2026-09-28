@@ -2,14 +2,18 @@
 
 The SLH-DSA sigGen loader must carry each vector's ``context`` bytes, take
 every external-pure vector (both context shapes stay covered as a
-consequence), and skip preHash groups (their messages are digests for the
-hash-sign mechanisms, not pure ``CKM_SLH_DSA`` inputs) as well as internal
-groups (Sign_internal calling convention, not externally verifiable). The
+consequence), and skip preHash groups (their messages pair with a per-test
+hashAlg for the hash-sign mechanisms -- not pre-hashed digests -- so they
+are not pure ``CKM_SLH_DSA`` inputs) as well as internal groups
+(Sign_internal calling convention, not externally verifiable). The
 sigGen test must pass non-empty context via ``mech_sign_context``
 (CK_SIGN_ADDITIONAL_CONTEXT), keeping NULL params for pure vectors -- exact
 sigVer parity (same conditional shape, same helper) -- and must verify each
 produced signature under the intended context (must pass) and a mutated
-context (must fail), so a provider that ignores context is caught.
+context (must fail), so a provider that ignores context is caught. A vector
+without a projection pk must recover it via CKA_PUBLIC_KEY_INFO readback or
+xfail with the explicit oracle-unavailable record -- never a silent
+sign-only pass.
 """
 
 from __future__ import annotations
@@ -21,8 +25,14 @@ from typing import Any
 import pytest
 
 from pkcs11_check.raw.pack import PackedMechanism
-from pkcs11_check.raw.types_std import CK_SIGN_ADDITIONAL_CONTEXT
+from pkcs11_check.raw.rv import CkrAssertionError
+from pkcs11_check.raw.types_std import (
+    CK_SIGN_ADDITIONAL_CONTEXT,
+    CKA_PUBLIC_KEY_INFO,
+    CKR_FUNCTION_FAILED,
+)
 from pkcs11_check.testcases.acvp import test_acvp_slhdsa
+from tests._skip_assert import assert_xfails
 
 
 def _session() -> SimpleNamespace:
@@ -156,8 +166,9 @@ def test_siggen_loader_takes_all_external_pure_vectors(
 
 
 def test_siggen_loader_skips_pre_hash_groups(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PreHash groups are skipped: their messages are digests for the
-    hash-sign mechanisms, not pure CKM_SLH_DSA inputs."""
+    """PreHash groups are skipped: their messages pair with a per-test hashAlg
+    for the hash-sign mechanisms (not pre-hashed digests), so they are not
+    pure CKM_SLH_DSA inputs."""
     monkeypatch.setattr(
         test_acvp_slhdsa, "load_acvp_vectors", lambda _algorithm: _fake_siggen_vectors()
     )
@@ -216,13 +227,22 @@ def _siggen_vec(context: Any, pk: bytes | None = None) -> dict[str, Any]:
 
 def _run_siggen(monkeypatch: pytest.MonkeyPatch, vec: dict[str, Any]) -> dict[str, Any]:
     captured: dict[str, Any] = {}
+    verify_results = [True, False]
 
     def _capture(*_args: Any, **_kwargs: Any) -> bytes:
         captured.update(_kwargs)
         return b"fake-signature"
 
+    def _verify(*_args: Any, **_kwargs: Any) -> bool:
+        return verify_results.pop(0)
+
+    # Sign-side pins need a projection pk: pk-less vectors now exercise the
+    # CKA_PUBLIC_KEY_INFO recovery path (covered by the oracle tests below).
+    vec = {"pk": b"public", **vec}
     monkeypatch.setattr(test_acvp_slhdsa, "import_pqc_private_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_acvp_slhdsa, "import_pqc_public_key", lambda *_a, **_k: 2)
     monkeypatch.setattr(test_acvp_slhdsa, "sign_single", _capture)
+    monkeypatch.setattr(test_acvp_slhdsa, "verify_single", _verify)
     monkeypatch.setattr(test_acvp_slhdsa, "destroy_quietly", lambda *_args: None)
     test_acvp_slhdsa.test_slhdsa_siggen(_session(), "sigGen-pin-tc1", vec)
     return captured
@@ -323,3 +343,132 @@ def test_siggen_ignored_context_signature_is_caught(
 
     with pytest.raises(Failed):
         _run_siggen_with_verify(monkeypatch, _siggen_vec(b"\xaa\x55", pk=b"public"), [True, True])
+
+
+def _der_len(n: int) -> bytes:
+    if n < 0x80:
+        return bytes([n])
+    raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    return bytes([0x80 | len(raw)]) + raw
+
+
+def _spki_der(public_key: bytes) -> bytes:
+    """Minimal SubjectPublicKeyInfo DER wrapping raw public-key bytes (fake OID)."""
+    alg_id = b"\x30\x03\x06\x01\x2a"
+    bit_string = b"\x00" + public_key
+    body = alg_id + b"\x03" + _der_len(len(bit_string)) + bit_string
+    return b"\x30" + _der_len(len(body)) + body
+
+
+def _run_siggen_no_projection_pk(
+    monkeypatch: pytest.MonkeyPatch,
+    vec: dict[str, Any],
+    *,
+    spki: bytes | None = None,
+    read_error: Exception | None = None,
+) -> dict[str, Any]:
+    """Run sigGen on a projection-pk-less vec: one-byte signer, stubbed readback."""
+    calls: dict[str, Any] = {"sign": [], "verify": [], "public_imports": []}
+    results = [True, False]
+
+    def _sign(*_args: Any, **_kwargs: Any) -> bytes:
+        calls["sign"].append(_kwargs)
+        return b"\x01"
+
+    def _verify(*_args: Any, **_kwargs: Any) -> bool:
+        calls["verify"].append(_kwargs)
+        return results.pop(0)
+
+    def _read_attributes(*_args: Any, **_kwargs: Any) -> dict[Any, Any]:
+        if read_error is not None:
+            raise read_error
+        if spki is None:
+            return {}
+        return {CKA_PUBLIC_KEY_INFO: spki}
+
+    def _import_public(*_args: Any, **kwargs: Any) -> int:
+        calls["public_imports"].append(kwargs)
+        return 2
+
+    monkeypatch.setattr(test_acvp_slhdsa, "import_pqc_private_key", lambda *_a, **_k: 1)
+    monkeypatch.setattr(test_acvp_slhdsa, "import_pqc_public_key", _import_public)
+    monkeypatch.setattr(test_acvp_slhdsa, "sign_single", _sign)
+    monkeypatch.setattr(test_acvp_slhdsa, "verify_single", _verify)
+    # raising=False: pre-fix the module has no read_attributes import and the
+    # stub is simply never consulted (the silent sign-only pass under test).
+    monkeypatch.setattr(test_acvp_slhdsa, "read_attributes", _read_attributes, raising=False)
+    monkeypatch.setattr(test_acvp_slhdsa, "destroy_quietly", lambda *_args: None)
+    test_acvp_slhdsa.test_slhdsa_siggen(_session(), "sigGen-pin-tc1", vec)
+    return calls
+
+
+def test_siggen_missing_pk_without_readback_xfails_oracle_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing projection pk + no CKA_PUBLIC_KEY_INFO readback must xfail with
+    the explicit oracle-unavailable record -- never a silent sign-only pass."""
+    vec = _siggen_vec(b"\xaa\x55")  # no pk: missing internalProjection entry
+    xfailed = assert_xfails(
+        _run_siggen_no_projection_pk, monkeypatch, vec, match="oracle unavailable"
+    )
+    assert "sigGen-pin-tc1" in str(xfailed)
+
+
+def test_siggen_missing_pk_readback_rejection_xfails_oracle_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected C_GetAttributeValue readback is also recovery-impossible:
+    xfail with the oracle record, not a pass."""
+    vec = _siggen_vec(b"\xaa\x55")
+    err = CkrAssertionError("C_GetAttributeValue: Unexpected CK_RV", int(CKR_FUNCTION_FAILED))
+    assert_xfails(
+        _run_siggen_no_projection_pk,
+        monkeypatch,
+        vec,
+        read_error=err,
+        match="oracle unavailable",
+    )
+
+
+def test_siggen_missing_pk_readback_recovery_runs_verify_compare(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recoverable CKA_PUBLIC_KEY_INFO readback imports the recovered pk and
+    runs the SAME intended/mutated verify-compare as a projection pk."""
+    recovered = b"recovered-public-key"
+    vec = _siggen_vec(b"\xaa\x55")
+    calls = _run_siggen_no_projection_pk(monkeypatch, vec, spki=_spki_der(recovered))
+    assert calls["public_imports"][0]["value"] == recovered
+    assert len(calls["verify"]) == 2
+    assert _packed_context(calls["verify"][0]["mech_param"]) == b"\xaa\x55"
+    assert _packed_context(calls["verify"][1]["mech_param"]) != b"\xaa\x55"
+
+
+def test_siggen_missing_pk_unparseable_readback_xfails_oracle_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Garbage CKA_PUBLIC_KEY_INFO bytes are recovery-impossible: xfail with
+    the oracle record, not a pass."""
+    vec = _siggen_vec(b"\xaa\x55")
+    assert_xfails(
+        _run_siggen_no_projection_pk,
+        monkeypatch,
+        vec,
+        spki=b"\x30\x03oops",
+        match="oracle unavailable",
+    )
+
+
+@pytest.mark.parametrize("public_key", [b"public", bytes(range(256))])
+def test_spki_extractor_returns_bit_string_contents(public_key: bytes) -> None:
+    """The SPKI extractor returns the BIT STRING contents (short + long form)."""
+    assert test_acvp_slhdsa._spki_public_key_bytes(_spki_der(public_key)) == public_key
+
+
+def test_spki_extractor_rejects_garbage() -> None:
+    """The SPKI extractor returns None when the DER cannot be parsed at all."""
+    assert test_acvp_slhdsa._spki_public_key_bytes(b"not-der") is None
+    assert test_acvp_slhdsa._spki_public_key_bytes(b"\x30\x03oops") is None
+    assert test_acvp_slhdsa._spki_public_key_bytes(b"") is None
+    truncated = _spki_der(b"public")[:-3]
+    assert test_acvp_slhdsa._spki_public_key_bytes(truncated) is None

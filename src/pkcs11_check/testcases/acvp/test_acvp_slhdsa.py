@@ -12,17 +12,19 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as, set_mechanism
+from pkcs11_check.classification import classify, fail_as, set_mechanism, xfail_as
 from pkcs11_check.raw.pack_mechanisms import mech_sign_context
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
     import_pqc_private_key,
     import_pqc_public_key,
+    read_attributes,
     sign_single,
     verify_single,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
+    CKA_PUBLIC_KEY_INFO,
     CKA_SIGN,
     CKA_VERIFY,
     CKF_VERIFY,
@@ -49,6 +51,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_PARAM_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
 )
+from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._operability import not_operational_reason
 from pkcs11_check.testcases._signature_policy import (
     NON_CLEAN_SIGNATURE_REJECT_RVS,
@@ -153,6 +156,71 @@ def _slhdsa_verify_result_or_xfail(exc: AssertionError, label: str, *, expected_
     return signature_rejected_or_xfail(exc, label)
 
 
+def _der_length(der: bytes, pos: int) -> tuple[int, int]:
+    """Return ``(value_offset, value_length)`` for the DER length at ``pos``."""
+    first = der[pos]
+    if first < 0x80:
+        return pos + 1, first
+    n_bytes = first & 0x7F
+    if n_bytes == 0 or n_bytes > 4:
+        raise ValueError("indefinite or oversize DER length")
+    length = int.from_bytes(der[pos + 1 : pos + 1 + n_bytes], "big")
+    return pos + 1 + n_bytes, length
+
+
+def _spki_public_key_bytes(der: bytes) -> bytes | None:
+    """Extract raw public-key bytes from a SubjectPublicKeyInfo DER blob.
+
+    Minimal ASN.1 walk over ``SEQUENCE { AlgorithmIdentifier, BIT STRING }``
+    returning the BIT STRING contents without validating the algorithm --
+    the same shape as the wycheproof SPKI fallback (``_key_decoders``).
+    Returns None when the DER cannot be parsed at all.
+    """
+    try:
+        if len(der) < 2 or der[0] != 0x30:  # outer SEQUENCE
+            return None
+        pos, _outer_len = _der_length(der, 1)
+        if pos >= len(der) or der[pos] != 0x30:  # AlgorithmIdentifier SEQUENCE
+            return None
+        val, length = _der_length(der, pos + 1)
+        pos = val + length
+        if pos >= len(der) or der[pos] != 0x03:  # BIT STRING
+            return None
+        val, length = _der_length(der, pos + 1)
+        if length < 1 or val + length > len(der):
+            return None
+        if der[val] != 0x00:  # unused-bits count; PQC keys use 0
+            return None
+        return der[val + 1 : val + length]
+    except (IndexError, ValueError):
+        return None
+
+
+def _recover_slhdsa_public_key(rs: Any, priv_key: int, vec_id: str) -> bytes:
+    """Recover the SLH-DSA public key from the imported private key.
+
+    Reads back CKA_PUBLIC_KEY_INFO (SubjectPublicKeyInfo DER) and extracts
+    the raw key bytes. Returns b"" when recovery is impossible -- attribute
+    unsupported, missing, sensitive, or unparseable -- so the caller emits
+    the explicit oracle-unavailable record. A rejected read is not a defect:
+    only a typed CKR refusal is absorbed here; anything else propagates.
+    """
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, priv_key, [CKA_PUBLIC_KEY_INFO])
+    except CkrAssertionError:
+        return b""
+    spki = attr_or_record(
+        attrs,
+        CKA_PUBLIC_KEY_INFO,
+        label=f"{vec_id}: SLH-DSA CKA_PUBLIC_KEY_INFO readback",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    if spki is MISSING_ATTRIBUTE or not isinstance(spki, bytes):
+        return b""
+    return _spki_public_key_bytes(spki) or b""
+
+
 def _load_keygen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA keyGen ACVP vectors.
 
@@ -195,13 +263,15 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
     result = []
     # External-pure take only: 168 vectors (14 per set x 12 sets) out of the
     # 504-row corpus (168 external-pure + 168 external-preHash + 168
-    # internal-pure). PreHash groups carry digests for the hash-sign
-    # mechanisms, not pure CKM_SLH_DSA inputs; internal groups use the
-    # Verify_internal calling convention, which is not externally
-    # verifiable -- routing their expected-valid vectors through pure verify
-    # yields false provider failures (proven: internal tc174 fails OpenSSL
-    # pure verify while the empty-context external-pure control tc154
-    # passes). Verifies cost ~1-12 ms each, so the take adds seconds at most.
+    # internal-pure). PreHash groups carry full messages plus a per-test
+    # hashAlg for the hash-sign mechanisms -- not pre-hashed digests (proven:
+    # sigVer tc15 is a 6361-byte message with hashAlg SHA2-224) -- so they are
+    # not pure CKM_SLH_DSA inputs; internal groups use the Verify_internal
+    # calling convention, which is not externally verifiable -- routing their
+    # expected-valid vectors through pure verify yields false provider
+    # failures (proven: internal tc174 fails OpenSSL pure verify while the
+    # empty-context external-pure control tc154 passes). Verifies cost ~1-12
+    # ms each, so the take adds seconds at most.
     for vec in all_vecs:
         inp = vec["input"]
         exp = vec["expected"]
@@ -242,8 +312,9 @@ def _load_siggen_pk_by_tcid() -> dict[int, bytes]:
     carries the public key for sigGen (prompt has sk/message/context;
     expectedResults has the reference signature). The companion
     internalProjection.json carries pk per test; tcIds are unique across
-    the file, so a flat map is unambiguous. A missing file yields {} and
-    the sign-then-verify step degrades to sign-only.
+    the file, so a flat map is unambiguous. A missing file yields {} and rows
+    without a pk fall back to CKA_PUBLIC_KEY_INFO recovery, xfailing
+    not_operational when the sign-then-verify oracle cannot run.
     """
     internal_file = ACVP_DIR / "SLH-DSA-sigGen-FIPS205" / "internalProjection.json"
     if not internal_file.exists():
@@ -269,15 +340,16 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     result = []
     # External-pure take only: 168 vectors (14 per set x 12 sets) out of the
     # 624-row corpus (168 external-pure + 168 internal + 288 preHash, both
-    # context shapes throughout the take). PreHash groups carry digests for
-    # the hash-sign mechanisms, not pure CKM_SLH_DSA inputs; internal groups
-    # use the Sign_internal calling convention, which is not externally
-    # verifiable (same proof as _load_sigver_vectors: internal tc174 fails
-    # pure verify while the external-pure control tc154 passes). Cost is
-    # bounded by measurement: round-0198 lanes ran the sampled file in
-    # ~11-43 s (kryoptic/bouncyhsm), so the 168-vector take stays within the
-    # established heavy-file budget, which the shard balancer isolates (see
-    # DEFAULT_HEAVY_BASENAMES).
+    # context shapes throughout the take). PreHash groups carry full messages
+    # plus a per-test hashAlg for the hash-sign mechanisms -- not pre-hashed
+    # digests (proven: sigGen tc8 is a 4405-byte message) -- so they are not
+    # pure CKM_SLH_DSA inputs; internal groups use the Sign_internal calling
+    # convention, which is not externally verifiable (same proof as
+    # _load_sigver_vectors: internal tc174 fails pure verify while the
+    # external-pure control tc154 passes). Cost is bounded by measurement:
+    # round-0198 lanes ran the sampled file in ~11-43 s (kryoptic/bouncyhsm),
+    # so the 168-vector take stays within the established heavy-file budget,
+    # which the shard balancer isolates (see DEFAULT_HEAVY_BASENAMES).
     for vec in all_vecs:
         inp = vec["input"]
         group = vec["group"]
@@ -496,11 +568,27 @@ def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
         # context handling, so the produced signature is verified below.
         assert len(sig) > 0, f"SLH-DSA sign returned empty signature for {vec_id}"
 
-        # ML-DSA parity: without the public key the produced signature
-        # cannot be checked, so there is nothing more to assert.
+        # The produced signature is only meaningful when verified: resolve the
+        # public key from the internalProjection entry first, else recover it
+        # from the imported private key via CKA_PUBLIC_KEY_INFO readback. When
+        # neither yields a key the sign-then-verify oracle cannot run -- an
+        # explicit xfail, never a silent sign-only pass.
         pk_bytes = vec.get("pk", b"")
         if not pk_bytes:
-            return
+            pk_bytes = _recover_slhdsa_public_key(rs, priv_key, vec_id)
+        if not pk_bytes:
+            xfail_as(
+                "not_operational",
+                kind="crypto",
+                label="SLH-DSA:sign-verify",
+                summary=(
+                    f"{vec_id}: SLH-DSA sign-verify oracle unavailable: no "
+                    "projection pk and CKA_PUBLIC_KEY_INFO recovery impossible "
+                    "(unsupported/missing/sensitive); produced signature unverified"
+                ),
+                source=vec.get("_source"),
+                vector_id=vec.get("_vector_id"),
+            )
 
         pub_key = 0
         try:
