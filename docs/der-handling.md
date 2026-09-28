@@ -49,7 +49,7 @@ lenient, because each direction answers a different question.
 
 Negative tests must be able to send malformed DER *to* the token -- bad
 OIDs, broken lengths, truncated children -- and then judge the provider by
-its effect (reject cleanly, and the row passes; accept, and the row fails).
+expected code and observed effect, per the classification rules below.
 The Wycheproof key fallback (`_key_decoders._extract_spki_bitstring_raw`)
 exists for exactly this: it extracts bytes tolerantly so the test can probe
 provider input validation. That tolerance is intentional and must survive
@@ -65,12 +65,15 @@ Rules for crafted inputs:
 - Never route a crafted input through a strict output parser on its way
   to the provider.
 - Classify by expected code *and* observed effect, following the
-  EC-import probe (`security/test_curve_oid_confusion.py`): rejection
-  with an expected code passes, any other rejection xfails; acceptance
-  fails only when the token silently rebinds the malformed input to
-  something else (`self_contradiction`), and xfails `honest_deviation`
-  when the token stores it faithfully. A binary reject-pass/accept-fail
-  rule would erase recorded deviations and invent false failures.
+  EC-import probe (`security/test_curve_oid_confusion.py`) and the shared
+  negative classifier (`testcases/conftest.py`): rejection with an
+  expected code passes; other *defined* clean rejections (standard or
+  vendor) xfail, while an undefined CK_RV fails as a return-value
+  contract violation; acceptance fails on self-contradiction (silent
+  rebinding) or an incoherent created object, and xfails
+  `honest_deviation` only when the token stores the input faithfully.
+  A binary reject-pass/accept-fail rule would erase recorded deviations
+  and invent false failures.
 
 ## Libraries
 
