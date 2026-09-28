@@ -61,6 +61,7 @@ from pkcs11_check.testcases.conftest import (
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
+from pkcs11_check.testcases.data import ACVP_DIR, load_json_cached
 
 pytestmark = [pytest.mark.pqc, pytest.mark.kat, pytest.mark.acvp]
 
@@ -192,12 +193,21 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigVer ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigVer-FIPS205")
     result = []
-    # Full take: 504 vectors (42 per set x 12 sets). Verifies cost ~1-12 ms
-    # each on SLH-DSA-capable lanes, so the full set adds seconds at most.
+    # External-pure take only: 168 vectors (14 per set x 12 sets) out of the
+    # 504-row corpus (168 external-pure + 168 external-preHash + 168
+    # internal-pure). PreHash groups carry digests for the hash-sign
+    # mechanisms, not pure CKM_SLH_DSA inputs; internal groups use the
+    # Verify_internal calling convention, which is not externally
+    # verifiable -- routing their expected-valid vectors through pure verify
+    # yields false provider failures (proven: internal tc174 fails OpenSSL
+    # pure verify while the empty-context external-pure control tc154
+    # passes). Verifies cost ~1-12 ms each, so the take adds seconds at most.
     for vec in all_vecs:
         inp = vec["input"]
         exp = vec["expected"]
         group = vec["group"]
+        if group.get("signatureInterface") != "external" or group.get("preHash") != "pure":
+            continue
         param_name = group.get("parameterSet", "")
         param_set = _PARAM_SET_MAP.get(param_name)
         if param_set is None:
@@ -225,21 +235,53 @@ def _load_sigver_vectors() -> list[tuple[str, dict[str, Any]]]:
     return result
 
 
+def _load_siggen_pk_by_tcid() -> dict[int, bytes]:
+    """Public keys for sigGen vectors, keyed by tcId.
+
+    ``load_acvp_vectors`` merges prompt + expectedResults only, and neither
+    carries the public key for sigGen (prompt has sk/message/context;
+    expectedResults has the reference signature). The companion
+    internalProjection.json carries pk per test; tcIds are unique across
+    the file, so a flat map is unambiguous. A missing file yields {} and
+    the sign-then-verify step degrades to sign-only.
+    """
+    internal_file = ACVP_DIR / "SLH-DSA-sigGen-FIPS205" / "internalProjection.json"
+    if not internal_file.exists():
+        return {}
+    data = load_json_cached(internal_file)
+    result: dict[int, bytes] = {}
+    for tg in data.get("testGroups", []):
+        for test in tg.get("tests", []):
+            pk_hex = test.get("pk", "")
+            if not pk_hex:
+                continue
+            try:
+                result[test.get("tcId", 0)] = bytes.fromhex(pk_hex)
+            except ValueError:
+                continue
+    return result
+
+
 def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
     """Load SLH-DSA sigGen ACVP vectors merged with expected results."""
     all_vecs = load_acvp_vectors("SLH-DSA-sigGen-FIPS205")
+    pk_by_tcid = _load_siggen_pk_by_tcid()
     result = []
-    # Full take: 336 pure vectors (28 per set x 12 sets, both context shapes
-    # throughout). PreHash groups are skipped: their messages are digests for
-    # the hash-sign mechanisms, not pure CKM_SLH_DSA inputs. Cost is bounded
-    # by measurement: round-0198 lanes ran the sampled file in ~11-43 s
-    # (kryoptic/bouncyhsm), scaling linearly to ~2.5-9 min full -- the same
-    # order as the established heavy files, which the shard balancer
-    # isolates (see DEFAULT_HEAVY_BASENAMES).
+    # External-pure take only: 168 vectors (14 per set x 12 sets) out of the
+    # 624-row corpus (168 external-pure + 168 internal + 288 preHash, both
+    # context shapes throughout the take). PreHash groups carry digests for
+    # the hash-sign mechanisms, not pure CKM_SLH_DSA inputs; internal groups
+    # use the Sign_internal calling convention, which is not externally
+    # verifiable (same proof as _load_sigver_vectors: internal tc174 fails
+    # pure verify while the external-pure control tc154 passes). Cost is
+    # bounded by measurement: round-0198 lanes ran the sampled file in
+    # ~11-43 s (kryoptic/bouncyhsm), so the 168-vector take stays within the
+    # established heavy-file budget, which the shard balancer isolates (see
+    # DEFAULT_HEAVY_BASENAMES).
     for vec in all_vecs:
         inp = vec["input"]
         group = vec["group"]
-        if group.get("preHash") == "preHash":
+        if group.get("signatureInterface") != "external" or group.get("preHash") != "pure":
             continue
         param_name = group.get("parameterSet", "")
         param_set = _PARAM_SET_MAP.get(param_name)
@@ -261,6 +303,9 @@ def _load_siggen_vectors() -> list[tuple[str, dict[str, Any]]]:
             "context": bytes.fromhex(ctx_hex) if ctx_hex else b"",
             "tc_id": inp.get("tcId", 0),
         }
+        pk = pk_by_tcid.get(merged["tc_id"])
+        if pk:
+            merged["pk"] = pk
         vec_id = f"sigGen-{param_name}-tc{merged['tc_id']}"
         result.append((vec_id, merged))
     return result
@@ -406,10 +451,13 @@ def test_slhdsa_sigver(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
 def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]) -> None:
     """SLH-DSA signature generation from NIST ACVP message vectors.
 
-    PKCS#11 does not guarantee deterministic SLH-DSA output. This test
-    verifies that the module can sign without error and produces a non-empty
-    result. Exact signature comparison is skipped because most PKCS#11
-    implementations use randomized SLH-DSA.
+    PKCS#11 does not guarantee deterministic SLH-DSA output, so the
+    produced signature is verified with the vector's public key instead of
+    byte-compared: it must verify under the signing context and must NOT
+    verify under a mutated context (catching providers that ignore
+    context). The non-empty check is a smoke pre-check only. Exact
+    signature comparison is skipped because most PKCS#11 implementations
+    use randomized SLH-DSA.
     """
     rs = p11_module_session
     if not rs.has_mechanism("SLH_DSA"):
@@ -444,7 +492,85 @@ def test_slhdsa_siggen(p11_module_session: Any, vec_id: str, vec: dict[str, Any]
             )
         except AssertionError as exc:
             _xfail_if_slhdsa_runtime_reject(exc, vec_id)
+        # Smoke pre-check only: a non-empty signature says nothing about
+        # context handling, so the produced signature is verified below.
         assert len(sig) > 0, f"SLH-DSA sign returned empty signature for {vec_id}"
+
+        # ML-DSA parity: without the public key the produced signature
+        # cannot be checked, so there is nothing more to assert.
+        pk_bytes = vec.get("pk", b"")
+        if not pk_bytes:
+            return
+
+        pub_key = 0
+        try:
+            try:
+                pub_key = import_pqc_public_key(
+                    rs.raw,
+                    rs.sh,
+                    key_type=int(CKK_SLH_DSA),
+                    value=pk_bytes,
+                    parameter_set=param_set,
+                    attrs={CKA_VERIFY: True},
+                )
+            except AssertionError as exc:
+                _xfail_if_import_not_operational(exc, f"public key ({vec['param_name']})")
+
+            try:
+                verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub_key,
+                    CKM_SLH_DSA,
+                    vec["msg"],
+                    sig,
+                    mech_param=mech_param,
+                )
+            except AssertionError as exc:
+                verified = _slhdsa_verify_result_or_xfail(exc, vec_id, expected_pass=True)
+            if not verified:
+                fail_as(
+                    "wrong_result",
+                    kind="crypto",
+                    label="SLH-DSA:sign-verify",
+                    summary=f"{vec_id}: produced SLH-DSA signature failed "
+                    "verification under the signing context",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+
+            # A provider that ignores context accepts the produced
+            # signature under ANY context: it must NOT verify here.
+            if context:
+                mutated = bytes([context[0] ^ 0x01]) + context[1:]
+            else:
+                mutated = b"\x00"
+            mutated_param = mech_sign_context(CKM_SLH_DSA, context=mutated)
+            try:
+                wrong_verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub_key,
+                    CKM_SLH_DSA,
+                    vec["msg"],
+                    sig,
+                    mech_param=mutated_param,
+                )
+            except AssertionError as exc:
+                wrong_verified = _slhdsa_verify_result_or_xfail(exc, vec_id, expected_pass=False)
+            if wrong_verified:
+                fail_as(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="SLH-DSA:sign-verify",
+                    summary=f"{vec_id}: produced SLH-DSA signature verified "
+                    "under a mutated context (context ignored)",
+                    source=vec.get("_source"),
+                    vector_id=vec.get("_vector_id"),
+                )
+        finally:
+            if pub_key:
+                destroy_quietly(rs.raw, rs.sh, pub_key)
     finally:
         if priv_key:
             destroy_quietly(rs.raw, rs.sh, priv_key)
