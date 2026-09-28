@@ -99,6 +99,22 @@ class TestExample:
 > When the AES key is a **fixture** (not the test's subject), prefer
 > `gen_aes_key_or_xfail(rs, 256)` over the raw recipe - see "Classification & setup helpers" below.
 
+### DER-handling checklist
+
+DER flows in two directions (see `docs/der-handling.md` for the policy).
+Tests that touch DER-encoded material must state which direction they serve:
+
+- **Validating provider output** (oracle input): parse strictly, fail the
+  row on malformed bytes (`wrong_result` / `metadata` / `C_GetAttributeValue`,
+  mechanism-free), xfail oracle-unavailable only when the readback is
+  missing, refused, or empty. Pin a valid control alongside every new
+  rejection so strictness can never quietly reject legal encodings.
+- **Crafting inputs toward the provider** (negative tests): build the
+  malformed bytes explicitly with a named defect, prove the exact bytes
+  reach the PKCS#11 call (no silent repair on the way), and classify by
+  observed effect (reject → pass, accept → fail). Never route crafted
+  input through a strict output parser.
+
 ### Key fixtures
 
 - `p11_raw_session` - function-scoped: fresh C_OpenSession + C_Login per test. Fields: `rs.raw`, `rs.sh`, `rs.slot_id`, `rs.has_mechanism(name)`, `rs.mechanisms`. Use for tests that test session lifecycle, login/logout/PIN behavior, or otherwise need a fresh session per invocation.
