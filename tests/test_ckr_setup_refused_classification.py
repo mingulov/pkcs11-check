@@ -98,6 +98,38 @@ def test_refused_max_ulong_rv_still_xfails() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        # R2a: a refused setup is a single terminal fact -- real emitters print
+        # it once on an early-return path, never beside measurement or OK.
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nSETUP_REFUSED:C_GenerateKey:0x00000006\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+        "CKR:0x00000007\nGUARD_OVERWRITTEN:0\nRETURNED_COUNT:16\nOK\n",
+        "CKR:0x00000007\nGUARD_OVERWRITTEN:0\nRETURNED_COUNT:16\nOK\n"
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nOK\n",
+    ],
+)
+def test_refused_terminal_contradictions_are_malformed(stdout: str) -> None:
+    """Duplicate refusals and refusal-with-measurement fail loud (R2a)."""
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        raw_buffer._check_buffer_probe(0, stdout, "", context="buffer probe")
+    assert any(record.reason == "harness_error" for record in get_records())
+
+
+def test_refused_contradiction_with_provider_fail_raises_fail() -> None:
+    """Fail-before-malformed: parsed provider evidence beats the protocol failure (R2a)."""
+    stdout = (
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+        "BREAK:wrong-key operation produced output\n"
+    )
+    with pytest.raises(pytest.fail.Exception, match="wrong-key operation produced output"):
+        raw_buffer._check_buffer_probe(0, stdout, "", context="buffer probe")
+    assert any(record.reason == "self_contradiction" for record in get_records())
+
+
 class _RefuseGenerateKey:
     """Fake raw: C_GenerateKey refused; anything else is a test bug."""
 
