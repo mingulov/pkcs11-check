@@ -442,7 +442,11 @@ def test_multiprime_pkcs8_no_path_skips_and_records_event(
 def test_multiprime_off_skips_with_honest_reason_not_missing_create(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Multi-prime + key_inject=off must skip naming the material limit, never a missing C_CreateObject (create is deliberately never probed for multi-prime keys; issue #27)."""
+    """Multi-prime + key_inject=off must skip naming the material limit.
+
+    Never a missing C_CreateObject: create is deliberately never probed for
+    multi-prime keys (issue #27).
+    """
     monkeypatch.setattr(_prov, "profile_for", lambda rs: pytest.fail("create must be bypassed"))
     monkeypatch.setattr(_prov, "external_provision", lambda *args, **kwargs: None)
     monkeypatch.setattr(

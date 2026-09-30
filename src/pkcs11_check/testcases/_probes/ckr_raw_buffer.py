@@ -49,6 +49,10 @@ Output protocol (consumed structurally by the parent classifier):
   ``NEEDED:`` -- provider-reported required length behind a CKR_BUFFER_TOO_SMALL retry bound
   ``RETRY_CKR:`` / ``RETRY_LENGTH:`` / ``RETRY_OUTPUT_CORRECT:`` -- retry effects when applicable
   ``SETUP_XFAIL:...``      -- a setup step (Init/keygen/size-query) cleanly failed before the probe
+  ``SETUP_REFUSED:<Op>:0x<rv>`` -- a setup step with valid inputs was refused (target untested);
+                              -- structured op + refusal CKR; emitted by the AES-CBC-PAD
+                              -- families (issue #28), parsed by the parent into a setup-
+                              -- attributed not_operational record
   ``OK``                   -- probe reached its expected point
 
 The uppercase legacy locals (``GUARD`` / ``BUF_SIZE`` / ``DECLARED`` / ``GUARD_SIZE``) are
@@ -778,14 +782,14 @@ def _aes_cbc_pad_decrypt_buffer_too_small(ctx: ProbeContext) -> None:
             byref(key),
         )
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_GenerateKey for AES-CBC-PAD decrypt failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         else:
             iv = bytes(range(16))
             plaintext = b"cbc-pad-output"
             enc_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
             rv = raw.C_EncryptInit(sh, enc_mech.byref(), key.value)
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_EncryptInit:0x{rv:08x}")
             else:
                 plain_buf = (ctypes.c_ubyte * len(plaintext))(*plaintext)
                 enc_buf = (ctypes.c_ubyte * 64)()
@@ -798,12 +802,12 @@ def _aes_cbc_pad_decrypt_buffer_too_small(ctx: ProbeContext) -> None:
                     byref(enc_len),
                 )
                 if rv != CKR_OK:
-                    print(f"SETUP_XFAIL:C_Encrypt(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                    print(f"SETUP_REFUSED:C_Encrypt:0x{rv:08x}")
                 else:
                     decrypt_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
                     rv = raw.C_DecryptInit(sh, decrypt_mech.byref(), key.value)
                     if rv != CKR_OK:
-                        print(f"SETUP_XFAIL:C_DecryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                        print(f"SETUP_REFUSED:C_DecryptInit:0x{rv:08x}")
                     else:
                         guard = 0x73
                         guard_size = 32
@@ -882,16 +886,14 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
             byref(key),
         )
         if rv != CKR_OK:
-            print(
-                f"SETUP_XFAIL:C_GenerateKey for AES-CBC-PAD decrypt update failed: {ckr_name(rv)}"
-            )
+            print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         else:
             iv = bytes(range(16))
             plaintext = b"B" * 48
             enc_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
             rv = raw.C_EncryptInit(sh, enc_mech.byref(), key.value)
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_EncryptInit:0x{rv:08x}")
             else:
                 plain_buf = (ctypes.c_ubyte * len(plaintext))(*plaintext)
                 enc_buf = (ctypes.c_ubyte * 96)()
@@ -904,12 +906,12 @@ def _aes_cbc_pad_decrypt_update_buffer_too_small(ctx: ProbeContext) -> None:
                     byref(enc_len),
                 )
                 if rv != CKR_OK:
-                    print(f"SETUP_XFAIL:C_Encrypt(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                    print(f"SETUP_REFUSED:C_Encrypt:0x{rv:08x}")
                 else:
                     decrypt_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
                     rv = raw.C_DecryptInit(sh, decrypt_mech.byref(), key.value)
                     if rv != CKR_OK:
-                        print(f"SETUP_XFAIL:C_DecryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                        print(f"SETUP_REFUSED:C_DecryptInit:0x{rv:08x}")
                     else:
                         guard = 0x8D
                         guard_size = 32
@@ -1017,7 +1019,7 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
             byref(key),
         )
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_GenerateKey for AES-CBC-PAD encrypt final failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         else:
             iv = bytes(range(16))
             plaintext = b"A" * 31
@@ -1044,7 +1046,7 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
             enc_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
             rv = raw.C_EncryptInit(sh, enc_mech.byref(), key.value)
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_EncryptInit:0x{rv:08x}")
             else:
                 plain_buf = (ctypes.c_ubyte * len(plaintext))(*plaintext)
                 update_buf = (ctypes.c_ubyte * 64)()
@@ -1057,7 +1059,7 @@ def _aes_cbc_pad_encrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                     byref(update_len),
                 )
                 if rv != CKR_OK:
-                    print(f"SETUP_XFAIL:C_EncryptUpdate failed: {ckr_name(rv)}")
+                    print(f"SETUP_REFUSED:C_EncryptUpdate:0x{rv:08x}")
                 else:
                     guard = 0x92
                     guard_size = 32
@@ -1140,14 +1142,14 @@ def _aes_cbc_pad_decrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
             byref(key),
         )
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_GenerateKey for AES-CBC-PAD decrypt final failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         else:
             iv = bytes(range(16))
             plaintext = b"A" * 31
             enc_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
             rv = raw.C_EncryptInit(sh, enc_mech.byref(), key.value)
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_EncryptInit:0x{rv:08x}")
             else:
                 plain_buf = (ctypes.c_ubyte * len(plaintext))(*plaintext)
                 enc_buf = (ctypes.c_ubyte * 64)()
@@ -1160,12 +1162,12 @@ def _aes_cbc_pad_decrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                     byref(enc_len),
                 )
                 if rv != CKR_OK:
-                    print(f"SETUP_XFAIL:C_Encrypt(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                    print(f"SETUP_REFUSED:C_Encrypt:0x{rv:08x}")
                 else:
                     decrypt_mech = mech_bytes(CKM_AES_CBC_PAD, iv)
                     rv = raw.C_DecryptInit(sh, decrypt_mech.byref(), key.value)
                     if rv != CKR_OK:
-                        print(f"SETUP_XFAIL:C_DecryptInit(CKM_AES_CBC_PAD) failed: {ckr_name(rv)}")
+                        print(f"SETUP_REFUSED:C_DecryptInit:0x{rv:08x}")
                     else:
                         ct_buf = (ctypes.c_ubyte * enc_len.value)(*enc_buf[: enc_len.value])
                         update_buf = (ctypes.c_ubyte * len(plaintext))()
@@ -1178,7 +1180,7 @@ def _aes_cbc_pad_decrypt_final_buffer_too_small(ctx: ProbeContext) -> None:
                             byref(update_len),
                         )
                         if rv != CKR_OK:
-                            print(f"SETUP_XFAIL:C_DecryptUpdate failed: {ckr_name(rv)}")
+                            print(f"SETUP_REFUSED:C_DecryptUpdate:0x{rv:08x}")
                         else:
                             guard = 0x91
                             guard_size = 32

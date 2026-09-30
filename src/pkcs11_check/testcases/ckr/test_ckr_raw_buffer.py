@@ -1113,6 +1113,9 @@ def _check_buffer_probe(
         if line.startswith("SETUP_XFAIL:"):
             prefix = "SETUP_XFAIL:"
             reason, kind = "not_operational", None
+        elif line.startswith("SETUP_REFUSED:"):
+            prefix = "SETUP_REFUSED:"
+            reason, kind = "not_operational", None
         elif line.startswith("BREAK:"):
             prefix = "BREAK:"
             reason, kind = "self_contradiction", "crypto"
@@ -1124,6 +1127,44 @@ def _check_buffer_probe(
         payload = line.removeprefix(prefix).strip()
         if not payload:
             malformed_marker = prefix.removesuffix(":")
+            continue
+        if prefix == "SETUP_REFUSED:":
+            # Structured setup refusal (issue #28): "<Op>:0x<rv>" names the
+            # refused setup step so the record cannot masquerade as a tested
+            # target. Same xfail bucket as SETUP_XFAIL -- a clean refusal of
+            # valid setup is advertised-but-not-operational -- but the setup
+            # operation + CKR stay visible and the target is marked untested.
+            try:
+                setup_op, rv_text = payload.rsplit(":", 1)
+                setup_rv = int(rv_text, 0)
+            except ValueError:
+                malformed_marker = prefix.removesuffix(":")
+                continue
+            if not setup_op or setup_rv < 0:
+                malformed_marker = prefix.removesuffix(":")
+                continue
+            outcome, severity = derive_verdict(reason, kind)
+            semantic.append(
+                Classification(
+                    reason=reason,
+                    outcome=outcome,
+                    severity=severity,
+                    kind=kind,
+                    label=context,
+                    operation=setup_op,
+                    expected_ckr=[ckr_name(int(CKR_OK))],
+                    actual_ckr=ckr_name(setup_rv),
+                    summary=(
+                        f"{context}: setup {setup_op} refused "
+                        f"with {ckr_name(setup_rv)} (target untested)"
+                    ),
+                    detail={
+                        "protocol_marker": prefix.removesuffix(":"),
+                        "setup_operation": setup_op,
+                        "setup_rv": setup_rv,
+                    },
+                )
+            )
             continue
         outcome, severity = derive_verdict(reason, kind)
         semantic.append(
