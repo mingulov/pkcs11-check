@@ -177,3 +177,23 @@ def test_malformed_fresh_collection_fails_visibly(
         collect_pytest_item_metadata(
             ["anything.py"], [], env={"PKCS11_CHECK_NO_COLLECTION_CACHE": "1"}
         )
+
+
+def test_explicit_empty_env_is_not_treated_as_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicitly-passed empty env means empty, not 'inherit os.environ'."""
+    monkeypatch.setenv("PKCS11_CHECK_NO_COLLECTION_CACHE", "1")
+    monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", "/should/not/leak")
+    seen: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["env"] = kwargs.get("env")
+        out = Path(cmd[cmd.index("--output") + 1])
+        out.write_text(json.dumps({"items": []}), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(col.subprocess, "run", _fake_run)
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    collect_pytest_item_metadata(["anything.py"], [], env={})
+    assert seen["env"] == {}, f"explicit empty env leaked os.environ: {seen['env']!r}"
