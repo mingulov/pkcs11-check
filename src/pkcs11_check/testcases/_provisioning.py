@@ -1726,6 +1726,16 @@ def provision_rsa_private_key(
         )
 
     if mode == "off":
+        # Multi-prime keys never probed create (the CRT template cannot express
+        # 3+ primes), so the skip must name the material limit, not a missing
+        # C_CreateObject (issue #27).
+        if multiprime_pkcs8:
+            skip_msg = (
+                f"{label}: multi-prime RSA key requires PKCS#8-preserving injection "
+                f"(key_inject=off); C_CreateObject templates cannot express 3+ primes"
+            )
+        else:
+            skip_msg = f"{label}: Module does not implement C_CreateObject"
         return _external_or_skip(
             rs,
             cfg,
@@ -1733,7 +1743,7 @@ def provision_rsa_private_key(
             label=label,
             key_type=CKK_RSA,
             obj_class="private",
-            skip_msg=f"{label}: Module does not implement C_CreateObject",
+            skip_msg=skip_msg,
         )
 
     ctx = wrap_context_for(rs, cfg)
