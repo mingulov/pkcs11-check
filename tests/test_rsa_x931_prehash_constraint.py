@@ -64,9 +64,7 @@ def test_roundtrip_leg_hashes_input_for_x9_31(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(mech_sign, "sign_single", _capture_sign)
     monkeypatch.setattr(mech_sign, "verify_single", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(mech_sign, "destroy_quietly", lambda *_args: None)
-    mech_sign.TestMechSignRoundtrip().test_roundtrip(
-        SimpleNamespace(raw=object(), sh=1), entry
-    )
+    mech_sign.TestMechSignRoundtrip().test_roundtrip(SimpleNamespace(raw=object(), sh=1), entry)
     expected = hashlib.sha256(b"hello pkcs11 sign test" * 2).digest()
     assert seen == [expected], f"leg fed {len(seen[0])} bytes, expected 32-byte digest"
     assert len(seen[0]) == 32
