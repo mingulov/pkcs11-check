@@ -3599,3 +3599,57 @@ class TestF2SoundCasesStayStrict:
         assert seen["len"] == arith._CK_ULONG_MAX
         assert "HOSTILE_CALLER:" not in out
         assert "rv=" in out
+
+
+def _recover_guard_marker(operation: str) -> str:
+    from pkcs11_check.testcases._probes._emit import PROVIDER_FINDING_MARKER
+
+    return PROVIDER_FINDING_MARKER + json.dumps(
+        {
+            "schema": 1,
+            "reason": "self_contradiction",
+            "kind": "policy",
+            "operation": operation,
+            "mechanism": "CKM_RSA_X_509",
+            "detail": f"{operation} overwrote 3 guard byte(s) past a 1-byte output buffer",
+        },
+        separators=(",", ":"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "operation"),
+    [
+        ("test_verify_recover_one_byte_output_preserves_guard", "C_VerifyRecover"),
+        ("test_sign_recover_one_byte_output_preserves_guard", "C_SignRecover"),
+    ],
+)
+def test_recover_guard_overflow_marker_records_provider_finding(
+    monkeypatch: pytest.MonkeyPatch, method: str, operation: str
+) -> None:
+    """Guard-overwrite markers record fail/policy, not probe_incomplete (channel slice 1)."""
+    C.clear()
+    stdout = (
+        f"TARGET:{operation}\nNEEDED:256\nCKR:0x00000000\nLEN:1\nOVERWRITTEN:3\n"
+        + _recover_guard_marker(operation)
+        + "\n"
+    )
+
+    def _overflow(*_args: object, **_kwargs: object) -> ProbeResult:
+        return ProbeResult(
+            returncode=1,
+            stdout=stdout,
+            stderr="AssertionError: wrote past the declared one-byte output buffer",
+        )
+
+    monkeypatch.setattr(test_recover_length_boundary, "run_probe", _overflow)
+    cfg = SimpleNamespace(module="/tmp/fake-pkcs11.so", slot=0, pin=_Pin(), interface="auto")
+    with pytest.raises(pytest.fail.Exception, match="provider terminal evidence"):
+        getattr(test_recover_length_boundary.TestRecoverOutputLengthBoundary(), method)(
+            _RawSession(), cfg
+        )
+    records = C.get_records()
+    assert [record.reason for record in records] == ["self_contradiction"]
+    assert records[0].kind == "policy"
+    assert records[0].operation == operation
+    assert records[0].mechanism == "CKM_RSA_X_509"
