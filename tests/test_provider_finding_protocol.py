@@ -558,22 +558,22 @@ class _GuardOverwriteRaw:
         out_len.value = 1
         return int(CKR_OK)
 
-    def C_SignRecover(
+    def C_SignRecover(  # noqa: N802
         self,
         sh: int,
         in_ptr: Any,
         in_len: int,
-        out_ptr: Any,  # noqa: N802
+        out_ptr: Any,
         out_len_ptr: Any,
     ) -> int:
         return self._recover_call(sh, in_ptr, in_len, out_ptr, out_len_ptr)
 
-    def C_VerifyRecover(
+    def C_VerifyRecover(  # noqa: N802
         self,
         sh: int,
         in_ptr: Any,
         in_len: int,
-        out_ptr: Any,  # noqa: N802
+        out_ptr: Any,
         out_len_ptr: Any,
     ) -> int:
         return self._recover_call(sh, in_ptr, in_len, out_ptr, out_len_ptr)
