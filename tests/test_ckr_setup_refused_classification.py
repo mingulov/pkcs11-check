@@ -70,6 +70,7 @@ def test_legacy_setup_xfail_record_shape_unchanged() -> None:
         "SETUP_REFUSED:\n",
         "SETUP_REFUSED:not-a-payload\n",
         "SETUP_REFUSED:C_DecryptInit:-1\n",
+        "SETUP_REFUSED:!!!:0x6\n",
     ],
 )
 def test_refused_malformed_payload_is_harness_error(line: str) -> None:
@@ -106,3 +107,14 @@ def test_decrypt_final_setup_refusal_emits_structured_marker(
     out = capsys.readouterr().out
     assert "SETUP_REFUSED:C_GenerateKey:0x00000006" in out
     assert "SETUP_XFAIL" not in out
+
+
+def test_refused_line_tracked_as_setup_refusal() -> None:
+    """SETUP_REFUSED lines feed setup_refusal_indices for ordering checks."""
+    (_, _, _, _, _, _, _, _, setup_refusal_indices, _) = raw_buffer._parse_ec_facts(
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n",
+        context="buffer probe",
+        process_complete=True,
+        expected_probe=None,
+    )
+    assert list(setup_refusal_indices) == [0]
