@@ -241,14 +241,18 @@ def collect_pytest_item_metadata(
         and not effective_env.get("PKCS11_CHECK_DATA_DIR")
         and bool(os.environ.get("PKCS11_CHECK_DATA_DIR"))
     )
-    # R2b: same class for the home-derived fallback root. Path.home() honors
-    # HOME (POSIX) / USERPROFILE (Windows), so an explicit env that changes or
-    # drops either input walks a different tree than the parent digest hashed.
-    # An explicit PKCS11_CHECK_DATA_DIR fixes the identity and keeps the cache.
+    # R2b/R3b: same class for the home-derived fallback root. Path.home()
+    # honors HOME (POSIX) / USERPROFILE, else HOMEDRIVE+HOMEPATH (Windows), so
+    # an explicit env that changes or drops any of these inputs walks a
+    # different tree than the parent digest hashed. An explicit
+    # PKCS11_CHECK_DATA_DIR fixes the identity and keeps the cache.
     shifts_home_root = (
         env is not None
         and not effective_env.get("PKCS11_CHECK_DATA_DIR")
-        and any(effective_env.get(var) != os.environ.get(var) for var in ("HOME", "USERPROFILE"))
+        and any(
+            effective_env.get(var) != os.environ.get(var)
+            for var in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH")
+        )
     )
     cache_usable = cache_enabled and not drops_data_override and not shifts_home_root
     cache_dir = _collection_cache_dir() if cache_usable else None
