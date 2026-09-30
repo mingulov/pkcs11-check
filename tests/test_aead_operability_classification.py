@@ -14,6 +14,7 @@ Provider shapes covered (all via fakes, no module needed):
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
 import pytest
@@ -287,3 +288,97 @@ def test_aead_decrypt_setup_non_ckr_errors_propagate(
 
     with pytest.raises(type(error), match=str(error)):
         run(_AeadSession(), "non-ckr-setup-error", vec)
+
+
+# --- F3: out-of-range CCM nonces replay as non-strict (issue #20 agreement) ---
+#
+# PKCS #11 v3.2 bounds ulNonceLen to 7..13, but a testing framework must still
+# exercise out-of-range corpus nonces: the provider receives the exact vector
+# bytes, and a compliant CKR_MECHANISM_PARAM_INVALID rejection is a recorded
+# (non-strict) deviation -- never a fail, and never filtered at load time.
+
+
+def _ccm_nonce_bytes(mech_param: Any) -> bytes:
+    """Read the packed nonce bytes the runner handed to the provider call."""
+    params = mech_param.params
+    return bytes(ctypes.string_at(params.pNonce, params.ulNonceLen))
+
+
+def _ccm_decrypt_vec(nonce_len: int) -> dict[str, Any]:
+    vec = _ckm_ccm_vec(nonce_len=nonce_len)
+    vec["nonce"] = bytes(range(nonce_len))
+    vec.update({"ct": bytes(24), "pt_expected": bytes(8), "test_passed": True})
+    return vec
+
+
+@pytest.mark.parametrize("nonce_len", [6, 16])
+def test_ccm_out_of_range_nonce_encrypt_replays_and_xfails(
+    monkeypatch: pytest.MonkeyPatch, nonce_len: int
+) -> None:
+    """6B/16B nonces reach the provider unchanged; compliant reject xfails."""
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
+    canonical_ct = _expected_canonical_ccm_ct()
+    seen: list[bytes] = []
+
+    def _encrypt(_raw: Any, _sh: int, _key: int, _mech: Any, pt: bytes, **kwargs: Any) -> bytes:
+        if pt == runner.PROBE_PT:
+            return canonical_ct
+        seen.append(_ccm_nonce_bytes(kwargs["mech_param"]))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID", int(CKR_MECHANISM_PARAM_INVALID)
+        )
+
+    monkeypatch.setattr(runner, "encrypt_single", _encrypt)
+    vec = _ckm_ccm_vec(nonce_len=nonce_len)
+    vec["nonce"] = bytes(range(nonce_len))
+    with pytest.raises(pytest.xfail.Exception, match="mechanism operational"):
+        runner.run_ccm_encrypt_test(_AeadSession(), f"tc{nonce_len}b", vec)
+    assert seen == [bytes(range(nonce_len))]
+
+
+@pytest.mark.parametrize("nonce_len", [6, 16])
+def test_ccm_out_of_range_nonce_decrypt_replays_and_xfails(
+    monkeypatch: pytest.MonkeyPatch, nonce_len: int
+) -> None:
+    """Decrypt direction: same replay + non-strict contract (no load filter)."""
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
+    canonical_ct = _expected_canonical_ccm_ct()
+    seen: list[bytes] = []
+
+    def _decrypt(_raw: Any, _sh: int, _key: int, _mech: Any, data: bytes, **kwargs: Any) -> bytes:
+        if data == canonical_ct:
+            return runner.PROBE_PT
+        seen.append(_ccm_nonce_bytes(kwargs["mech_param"]))
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID", int(CKR_MECHANISM_PARAM_INVALID)
+        )
+
+    monkeypatch.setattr(runner, "decrypt_single", _decrypt)
+    with pytest.raises(pytest.xfail.Exception, match="mechanism operational"):
+        runner.run_ccm_decrypt_test(_AeadSession(), f"tc{nonce_len}b", _ccm_decrypt_vec(nonce_len))
+    assert seen == [bytes(range(nonce_len))]
+
+
+def test_ccm_vector_reject_with_wrong_output_canonical_stays_finding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-strict applies only with an OPERATIONAL canonical (F3 boundary).
+
+    A canonical WRONG_OUTPUT is an independent finding: the vector rejection
+    must surface (re-raised), never be masked as an xfail.
+    """
+    monkeypatch.setattr(runner, "import_secret_key_negotiated", lambda *a, **k: 7)
+    monkeypatch.setattr(runner, "destroy_quietly", lambda *a, **k: None)
+
+    def _encrypt(_raw: Any, _sh: int, _key: int, _mech: Any, pt: bytes, **_kwargs: Any) -> bytes:
+        if pt == runner.PROBE_PT:
+            return b"\x00" * (len(runner.PROBE_PT) + 16)  # wrong canonical output
+        raise CkrAssertionError(
+            "Unexpected CK_RV CKR_MECHANISM_PARAM_INVALID", int(CKR_MECHANISM_PARAM_INVALID)
+        )
+
+    monkeypatch.setattr(runner, "encrypt_single", _encrypt)
+    with pytest.raises(CkrAssertionError, match="CKR_MECHANISM_PARAM_INVALID"):
+        runner.run_ccm_encrypt_test(_AeadSession(), "tc16b", _ckm_ccm_vec(nonce_len=16))
