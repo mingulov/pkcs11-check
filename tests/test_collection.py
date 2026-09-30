@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -197,3 +198,63 @@ def test_explicit_empty_env_is_not_treated_as_unset(
     monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
     collect_pytest_item_metadata(["anything.py"], [], env={})
     assert seen["env"] == {}, f"explicit empty env leaked os.environ: {seen['env']!r}"
+
+
+def _fake_collect_run(
+    seen: dict[str, object],
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen["ran"] = True
+        out = Path(cmd[cmd.index("--output") + 1])
+        out.write_text(json.dumps({"items": []}), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    return _fake_run
+
+
+def test_explicit_env_dropping_data_override_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Parent override + env without it: digest would hash A while child reads B (F2).
+
+    The cache must be bypassed rather than serve a manifest collected elsewhere.
+    """
+    data_a = tmp_path / "data-a"
+    data_a.mkdir()
+    monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(data_a))
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(["anything.py"], [], env={})
+    assert seen.get("ran") is True, "child collection did not run"
+    assert consulted == [], f"stale cache consulted despite dropped override: {consulted!r}"
+
+
+def test_explicit_env_carrying_data_override_uses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Control: env carrying the same override keeps the cache (no wholesale disable)."""
+    data_a = tmp_path / "data-a"
+    data_a.mkdir()
+    monkeypatch.setenv("PKCS11_CHECK_DATA_DIR", str(data_a))
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(["anything.py"], [], env={"PKCS11_CHECK_DATA_DIR": str(data_a)})
+    assert len(consulted) == 1, "cache not consulted despite carried override"
