@@ -109,6 +109,10 @@ def test_refused_max_ulong_rv_still_xfails() -> None:
         "CKR:0x00000007\nGUARD_OVERWRITTEN:0\nRETURNED_COUNT:16\nOK\n"
         "SETUP_REFUSED:C_GenerateKey:0x00000006\n",
         "SETUP_REFUSED:C_GenerateKey:0x00000006\nOK\n",
+        # R3a: a refusal beside any other terminal marker is competing-terminal
+        # evidence -- real emitters print exactly one marker per probe run.
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nSETUP_XFAIL:legacy key setup refused\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nDEVIATION_XFAIL:safely refused at end\n",
     ],
 )
 def test_refused_terminal_contradictions_are_malformed(stdout: str) -> None:
