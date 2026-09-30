@@ -1235,13 +1235,22 @@ def _check_buffer_probe(
         for item in semantic
         if item.detail is not None and item.detail.get("protocol_marker") == "SETUP_REFUSED"
     ]
-    if len(refused_records) > 1 or (refused_records and (fields or has_ok_terminal)):
-        # R2a: a refused setup is a single terminal fact -- real emitters print
-        # it once on an early-return path. Duplicates, or a refusal beside
-        # target measurement/OK, are a broken wire protocol, never an xfail.
-        # Legacy SETUP_XFAIL keeps its historical leniency; only the
-        # structured marker is strict. A parsed provider FAIL still raises
-        # first (fail-before-malformed below), so this cannot mask evidence.
+    other_terminal = [
+        item
+        for item in semantic
+        if item.detail is not None
+        and item.detail.get("protocol_marker") not in (None, "SETUP_REFUSED")
+    ]
+    if refused_records and (
+        len(refused_records) > 1 or other_terminal or fields or has_ok_terminal
+    ):
+        # R2a/R3a: a refused setup is a single terminal fact -- real emitters
+        # print exactly one marker per probe run. Duplicates, a refusal beside
+        # target measurement/OK, or a refusal beside any other terminal marker
+        # are a broken wire protocol, never an xfail. Legacy-only transcripts
+        # keep their historical leniency (this rule needs a validated refusal).
+        # A parsed provider FAIL still raises first (fail-before-malformed
+        # below), so this cannot mask evidence.
         malformed_marker = "SETUP_REFUSED"
     if has_ec_setup and ec_done_status in {"unavailable", "invalid_point", "read_refused"}:
         has_terminal_marker = True
