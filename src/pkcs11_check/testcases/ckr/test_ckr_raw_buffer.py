@@ -240,6 +240,11 @@ def _parse_ec_facts(
             if line.removeprefix("SETUP_XFAIL:").strip():
                 legacy_setup_seen = True
                 setup_refusal_indices.append(line_index)
+        elif line.startswith("SETUP_REFUSED:"):
+            # Structured refusal (issue #28) is a setup-phase line for ordering
+            # purposes, same as the legacy marker (payload validated at dispatch).
+            if line.removeprefix("SETUP_REFUSED:").strip():
+                setup_refusal_indices.append(line_index)
         if line == "OK" or line.startswith("OK:") or line.split(":", 1)[0] in _BUFFER_FIELD_NAMES:
             measurement_indices.append(line_index)
         if line.startswith(_EC_SETUP_PREFIX):
@@ -1140,7 +1145,7 @@ def _check_buffer_probe(
             except ValueError:
                 malformed_marker = prefix.removesuffix(":")
                 continue
-            if not setup_op or setup_rv < 0:
+            if not setup_op.startswith("C_") or setup_rv < 0:
                 malformed_marker = prefix.removesuffix(":")
                 continue
             outcome, severity = derive_verdict(reason, kind)

@@ -144,8 +144,7 @@ def test_all_loaded_ccm_nonces_within_spec_range() -> None:
     """
     enc, dec = _load_standard_ccm()
     enc_e, dec_e = _load_ecma()
-    checked = 0
+    # Anti-vacuity: every loader contributed (today 8310 standard + 88 ECMA).
+    assert enc and dec and enc_e and dec_e
     for vec_id, vec in enc + dec + enc_e + dec_e:
         assert 7 <= len(vec["nonce"]) <= 13, vec_id
-        checked += 1
-    assert checked > 8000

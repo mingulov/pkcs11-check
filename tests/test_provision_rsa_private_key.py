@@ -454,6 +454,7 @@ def test_multiprime_off_skips_with_honest_reason_not_missing_create(
         lambda **kwargs: pytest.fail("CRT encoder must be bypassed"),
     )
     _reset_cache()
+    _prov.clear_provisioning_events()
 
     multiprime_n = (int.from_bytes(RSA_N, "big") + 1).to_bytes(len(RSA_N), "big")
     skipped = assert_skips(
@@ -474,6 +475,7 @@ def test_multiprime_off_skips_with_honest_reason_not_missing_create(
         match="multi-prime",
     )
     assert "does not implement C_CreateObject" not in str(skipped)
+    assert _prov.get_provisioning_events()[-1].method == "skipped_no_path"
 
 
 def test_two_prime_ignores_optional_pkcs8_and_keeps_crt_encoding(
