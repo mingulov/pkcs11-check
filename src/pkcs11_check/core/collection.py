@@ -232,7 +232,16 @@ def collect_pytest_item_metadata(
     """
     effective_env = env if env is not None else os.environ
     cache_enabled = effective_env.get("PKCS11_CHECK_NO_COLLECTION_CACHE") not in {"1", "true"}
-    cache_dir = _collection_cache_dir() if cache_enabled else None
+    # F2: the digest walks data dirs resolved from the parent environment when the
+    # effective env carries no PKCS11_CHECK_DATA_DIR. An explicit env that drops a
+    # parent override would hash tree A while the child collects tree B -- bypass
+    # the cache rather than serve a manifest collected from another tree.
+    drops_data_override = (
+        env is not None
+        and not effective_env.get("PKCS11_CHECK_DATA_DIR")
+        and bool(os.environ.get("PKCS11_CHECK_DATA_DIR"))
+    )
+    cache_dir = _collection_cache_dir() if cache_enabled and not drops_data_override else None
     digest = (
         _collection_inputs_digest(targets, pytest_args, effective_env.get("PKCS11_CHECK_DATA_DIR"))
         if cache_dir is not None
