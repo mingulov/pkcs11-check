@@ -138,7 +138,10 @@ def _load_standard_ccm() -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
 
 
 def test_all_loaded_ccm_nonces_within_spec_range() -> None:
-    """Every nonce any CCM loader feeds PKCS #11 must satisfy 7 <= len <= 13 (PKCS #11 v3.2 ulNonceLen). Guards future dataset repins (issue #20 follow-up)."""
+    """Every nonce any CCM loader feeds PKCS #11 must satisfy 7 <= len <= 13.
+
+    PKCS #11 v3.2 ulNonceLen bound; guards future dataset repins (issue #20 follow-up).
+    """
     enc, dec = _load_standard_ccm()
     enc_e, dec_e = _load_ecma()
     checked = 0
