@@ -1900,20 +1900,20 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 570),
                 ("explicit_mechanism_readback", 56),
                 ("non_readback", 208),
-                ("safe_mechanism_free_readback", 74),
+                ("safe_mechanism_free_readback", 75),
                 ("unresolved", 627),
-                ("unsafe_inherited_readback", 96),
+                ("unsafe_inherited_readback", 95),
             ),
             characterization.statuses,
         ),
         (
             "digest",
-            "8b48a902e0cca6ad76a8878ed3156e4385ab9b4129581ef04f7f02ff73468d9b",
+            "28839f0cb6b1d9ee54b8e32ab01c313e3fd3a75fb7a975d7c6fc3162abdd0a85",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "9dd36794c053b98bdabd3ec9ecea68196aea1ae6fdc573e0398cbc6ce955c061",
+            "32651e9ef48ec63d20b0ff1ffb7529d1e95b8d089a35cb4be7108e45f768a83a",
             characterization.candidate_digest,
         ),
         (
@@ -1922,9 +1922,9 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 1337),
                 ("explicit_mechanism_readback", 340),
                 ("non_readback", 437),
-                ("safe_mechanism_free_readback", 1402),
+                ("safe_mechanism_free_readback", 1421),
                 ("unresolved", 2664),
-                ("unsafe_inherited_readback", 254),
+                ("unsafe_inherited_readback", 235),
             ),
             characterization.state_statuses,
         ),
@@ -1981,6 +1981,21 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     assert all(state.status == STATUS_SAFE_MECHANISM_FREE_READBACK for state in refusal[0].states)
     assert refusal[0].operations == (C_GET_ATTRIBUTE_VALUE,)
     assert refusal[0].mechanisms == (NONE_VALUE,)
+    defaults_readback = [
+        finding
+        for finding in all_findings
+        if finding.path == "test_attribute_defaults.py"
+        and finding.function == "_read_attr"
+        and finding.emitter == "record_as"
+    ]
+    assert len(defaults_readback) == 1
+    assert defaults_readback[0].status == STATUS_SAFE_MECHANISM_FREE_READBACK
+    assert defaults_readback[0].uncertain is False
+    assert all(
+        state.status == STATUS_SAFE_MECHANISM_FREE_READBACK for state in defaults_readback[0].states
+    )
+    assert defaults_readback[0].operations == (C_GET_ATTRIBUTE_VALUE,)
+    assert defaults_readback[0].mechanisms == (NONE_VALUE,)
     conftest = [
         finding
         for finding in all_findings

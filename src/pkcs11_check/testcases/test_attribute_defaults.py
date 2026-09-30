@@ -81,6 +81,7 @@ def _read_attr(raw: Any, sh: int, handle: int, attr: int) -> Any:
                 kind="metadata",
                 label=f"attribute 0x{attr:08X}:default-readback",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=e.rv,
                 summary=f"Module does not expose required attribute 0x{attr:08X}: {e}",
                 detail={"attribute": {"name": attr_name, "id": int(attr)}},
