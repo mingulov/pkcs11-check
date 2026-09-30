@@ -316,9 +316,11 @@ def test_explicit_env_with_same_home_uses_cache(
     monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
     monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
     carried: dict[str, str] = {"HOME": str(home_a)}
-    if os.environ.get("USERPROFILE") is not None:
-        # Portable control: on Windows the parent profile must be carried too.
-        carried["USERPROFILE"] = os.environ["USERPROFILE"]
+    for var in ("USERPROFILE", "HOMEDRIVE", "HOMEPATH"):
+        # Portable control: every home-root input the parent has set must be
+        # carried, or the bypass under test fires for the wrong variable.
+        if os.environ.get(var) is not None:
+            carried[var] = os.environ[var]
     collect_pytest_item_metadata(["anything.py"], [], env=carried)
     assert len(consulted) == 1, "cache not consulted despite identical HOME"
 
