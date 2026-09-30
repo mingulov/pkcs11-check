@@ -172,6 +172,7 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_sizes=_RSA_SIZES,
         is_keypair=True,
         multi_part_supported=False,
+        input_constraint="prehash",
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
         notes="RSA X9.31 sign/verify with pre-hash",
