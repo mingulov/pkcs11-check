@@ -125,3 +125,24 @@ def test_normalize_malformed_b0_fails_visibly(mutate: str, reason: str) -> None:
         raw = bytes(b0)
     with pytest.raises(ValueError, match=reason):
         _normalize(raw, tag_len=tag_len, aad=aad, payload_len=payload_len)
+
+
+# --- Loaded-nonce range pin (issue #20 follow-up) ---------------------------
+
+
+def _load_standard_ccm() -> tuple[list[tuple[str, Any]], list[tuple[str, Any]]]:
+    _require_vectors()
+    from pkcs11_check.testcases.acvp.aes.test_ccm import _load_ccm_vectors
+
+    return _load_ccm_vectors()
+
+
+def test_all_loaded_ccm_nonces_within_spec_range() -> None:
+    """Every nonce any CCM loader feeds PKCS #11 must satisfy 7 <= len <= 13 (PKCS #11 v3.2 ulNonceLen). Guards future dataset repins (issue #20 follow-up)."""
+    enc, dec = _load_standard_ccm()
+    enc_e, dec_e = _load_ecma()
+    checked = 0
+    for vec_id, vec in enc + dec + enc_e + dec_e:
+        assert 7 <= len(vec["nonce"]) <= 13, vec_id
+        checked += 1
+    assert checked > 8000
