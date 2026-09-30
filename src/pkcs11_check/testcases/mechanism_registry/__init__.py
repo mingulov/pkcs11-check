@@ -85,9 +85,7 @@ class MechConfig:
         keygen_recipe: Declarative recipe for key generation template construction
         block_size: Block size in bytes (16 for AES block modes, None for stream)
         vector_file: Path to JSON vectors file (relative to data/mechanism_vectors/)
-        input_constraint: "block_aligned", "any", "digest_only", "none",
-            "prehash" (caller hashes input first, e.g. PSS/X9.31 sign),
-            "raw_block" (input must be exactly one raw block, e.g. X.509)
+        input_constraint: "block_aligned", "any", "digest_only", "none"
         multi_part_supported: False for AEAD (GCM/CCM), raw ECDSA, etc.
         param_required: True if C_*Init needs non-NULL mechanism params
         auth_tag_included: True for GCM/CCM (ciphertext includes auth tag)
