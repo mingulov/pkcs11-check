@@ -18,7 +18,10 @@ from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.security._boundary_values import requires_64bit_ck_ulong
-from pkcs11_check.testcases.security.conftest import assert_subprocess_no_crash
+from pkcs11_check.testcases.security.conftest import (
+    assert_subprocess_no_crash,
+    handle_child_provider_finding,
+)
 
 pytestmark = [
     pytest.mark.security,
@@ -221,6 +224,17 @@ class TestRecoverOutputLengthBoundary:
             interface=getattr(p11_config, "interface", "auto"),
         )
         _skip_if_recover_init_not_supported(result.stdout)
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_VerifyRecover one-byte output buffer guard",
+            expected_reason="self_contradiction",
+            expected_kind="policy",
+            operation="C_VerifyRecover",
+            mechanism="CKM_RSA_X_509",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,
@@ -287,6 +301,17 @@ class TestRecoverOutputLengthBoundary:
             interface=getattr(p11_config, "interface", "auto"),
         )
         _skip_if_recover_init_not_supported(result.stdout)
+        if handle_child_provider_finding(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            context="C_SignRecover one-byte output buffer guard",
+            expected_reason="self_contradiction",
+            expected_kind="policy",
+            operation="C_SignRecover",
+            mechanism="CKM_RSA_X_509",
+        ):
+            return
         assert_subprocess_no_crash(
             result.returncode,
             result.stdout,

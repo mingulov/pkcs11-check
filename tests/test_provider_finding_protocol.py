@@ -76,6 +76,7 @@ def test_provider_finding_marker_round_trips_without_classification_import(
     [
         "src/pkcs11_check/testcases/_probes/error_path_kwp.py",
         "src/pkcs11_check/testcases/_probes/secret_key_value_len.py",
+        "src/pkcs11_check/testcases/_probes/recover_length.py",
     ],
 )
 def test_terminal_child_probes_only_emit_facts(relative_path: str) -> None:
@@ -510,3 +511,108 @@ def test_dispatch_paths_emit_their_actual_producer_wiring(
     assert payload["operation"] == "C_GetAttributeValue"
     assert payload["mechanism"] == mechanism
     assert producer_operation in payload["detail"]
+
+
+class _GuardOverwriteRaw:
+    """Fake token: recover setup succeeds, the guarded call overwrites one byte."""
+
+    def C_GenerateKeyPair(  # noqa: N802
+        self,
+        _sh: int,
+        _mech: Any,
+        _pub_ptr: Any,
+        _pub_count: int,
+        _prv_ptr: Any,
+        _prv_count: int,
+        pub_out: Any,
+        priv_out: Any,
+    ) -> int:
+        from pkcs11_check.raw.types_std import CK_OBJECT_HANDLE, CKR_OK
+
+        ctypes.cast(pub_out, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 11
+        ctypes.cast(priv_out, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = 12
+        return int(CKR_OK)
+
+    def C_SignRecoverInit(self, _sh: int, _mech: Any, _key: int) -> int:  # noqa: N802
+        from pkcs11_check.raw.types_std import CKR_OK
+
+        return int(CKR_OK)
+
+    def C_VerifyRecoverInit(self, _sh: int, _mech: Any, _key: int) -> int:  # noqa: N802
+        from pkcs11_check.raw.types_std import CKR_OK
+
+        return int(CKR_OK)
+
+    def _recover_call(
+        self, _sh: int, _in_ptr: Any, _in_len: int, out_ptr: Any, out_len_ptr: Any
+    ) -> int:
+        from pkcs11_check.raw.types_std import CKR_OK
+
+        out_len = ctypes.cast(out_len_ptr, ctypes.POINTER(CK_ULONG)).contents
+        if out_ptr is None:
+            out_len.value = 256
+            return int(CKR_OK)
+        buf = ctypes.cast(out_ptr, ctypes.POINTER(ctypes.c_ubyte))
+        buf[0] = 0xAA
+        buf[1] = 0xAA  # the provider defect: past the 1-byte buffer
+        out_len.value = 1
+        return int(CKR_OK)
+
+    def C_SignRecover(
+        self,
+        sh: int,
+        in_ptr: Any,
+        in_len: int,
+        out_ptr: Any,  # noqa: N802
+        out_len_ptr: Any,
+    ) -> int:
+        return self._recover_call(sh, in_ptr, in_len, out_ptr, out_len_ptr)
+
+    def C_VerifyRecover(
+        self,
+        sh: int,
+        in_ptr: Any,
+        in_len: int,
+        out_ptr: Any,  # noqa: N802
+        out_len_ptr: Any,
+    ) -> int:
+        return self._recover_call(sh, in_ptr, in_len, out_ptr, out_len_ptr)
+
+    def C_DestroyObject(self, _sh: int, _handle: int) -> int:  # noqa: N802
+        from pkcs11_check.raw.types_std import CKR_OK
+
+        return int(CKR_OK)
+
+
+@pytest.mark.parametrize(
+    ("which", "operation"),
+    [
+        ("verify_one_byte_guard", "C_VerifyRecover"),
+        ("sign_one_byte_guard", "C_SignRecover"),
+    ],
+)
+def test_recover_guard_overflow_emits_provider_finding(
+    which: str, operation: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Guard overwrites emit a terminal marker before the probe raises (channel slice 1)."""
+    from pkcs11_check.testcases._probes import recover_length
+    from pkcs11_check.testcases._probes.session import ProbeContext
+
+    probe_context = ProbeContext(
+        raw=cast(Any, _GuardOverwriteRaw()),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    with pytest.raises(AssertionError, match="wrote past the declared one-byte output buffer"):
+        recover_length._DISPATCH[which](probe_context, {})
+
+    payload, error = parse_provider_finding(capsys.readouterr().out)
+    assert error is None
+    assert payload is not None
+    assert payload["reason"] == "self_contradiction"
+    assert payload["kind"] == "policy"
+    assert payload["operation"] == operation
+    assert payload["mechanism"] == "CKM_RSA_X_509"
+    assert "guard" in payload["detail"]

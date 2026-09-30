@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
 )
+from pkcs11_check.testcases._probes._emit import emit_provider_finding
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 from pkcs11_check.testcases.conftest import KEYPAIR_RUNTIME_REJECT_RVS
 
@@ -358,6 +359,17 @@ def _run_verify_one_byte_guard(ctx: ProbeContext, _extra: dict[str, Any]) -> Non
         print(f"LEN:{out_len.value}")
         overwritten = sum(1 for byte in probe.guard if byte != guard_byte)
         print(f"OVERWRITTEN:{overwritten}")
+        if overwritten:
+            emit_provider_finding(
+                reason="self_contradiction",
+                kind="policy",
+                operation="C_VerifyRecover",
+                mechanism="CKM_RSA_X_509",
+                detail=(
+                    f"C_VerifyRecover overwrote {overwritten} guard byte(s) "
+                    "past a 1-byte output buffer"
+                ),
+            )
         assert overwritten == 0, (
             "C_VerifyRecover wrote past the declared one-byte output buffer: "
             f"{overwritten} guard byte(s) changed"
@@ -428,6 +440,17 @@ def _run_sign_one_byte_guard(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         print(f"LEN:{out_len.value}")
         overwritten = sum(1 for byte in probe.guard if byte != guard_byte)
         print(f"OVERWRITTEN:{overwritten}")
+        if overwritten:
+            emit_provider_finding(
+                reason="self_contradiction",
+                kind="policy",
+                operation="C_SignRecover",
+                mechanism="CKM_RSA_X_509",
+                detail=(
+                    f"C_SignRecover overwrote {overwritten} guard byte(s) "
+                    "past a 1-byte output buffer"
+                ),
+            )
         assert overwritten == 0, (
             "C_SignRecover wrote past the declared one-byte output buffer: "
             f"{overwritten} guard byte(s) changed"
