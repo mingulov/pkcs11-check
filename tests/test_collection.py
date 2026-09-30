@@ -352,6 +352,69 @@ def test_explicit_env_with_differing_userprofile_bypasses_cache(
     assert consulted == [], f"stale cache consulted despite shifted USERPROFILE: {consulted!r}"
 
 
+@pytest.mark.parametrize("var", ["HOMEDRIVE", "HOMEPATH"])
+def test_explicit_env_with_differing_drive_path_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, var: str
+) -> None:
+    """Windows fallback without USERPROFILE: differing drive/path bypasses (R3b).
+
+    USERPROFILE is absent on both sides to isolate the HOMEDRIVE/HOMEPATH
+    fallback that Path.home() uses in that case.
+    """
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    old = "C:" if var == "HOMEDRIVE" else "\\Users\\a"
+    new = "D:" if var == "HOMEDRIVE" else "\\Users\\b"
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv(var, old)
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(["anything.py"], [], env={"HOME": str(home_dir), var: new})
+    assert seen.get("ran") is True, "child collection did not run"
+    assert consulted == [], f"stale cache consulted despite shifted {var}: {consulted!r}"
+
+
+def test_explicit_env_carrying_drive_path_uses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Control: identical drive/path keeps the cache (R3b)."""
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("HOMEDRIVE", "C:")
+    monkeypatch.setenv("HOMEPATH", "\\Users\\a")
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(
+        ["anything.py"],
+        [],
+        env={"HOME": str(home_dir), "HOMEDRIVE": "C:", "HOMEPATH": "\\Users\\a"},
+    )
+    assert len(consulted) == 1, "cache not consulted despite identical drive/path"
+
+
 def test_explicit_env_carrying_data_override_uses_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
