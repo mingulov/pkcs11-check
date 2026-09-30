@@ -439,6 +439,39 @@ def test_multiprime_pkcs8_no_path_skips_and_records_event(
     assert _prov.get_provisioning_events()[-1].method == "skipped_no_path"
 
 
+def test_multiprime_off_skips_with_honest_reason_not_missing_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-prime + key_inject=off must skip naming the material limit, never a missing C_CreateObject (create is deliberately never probed for multi-prime keys; issue #27)."""
+    monkeypatch.setattr(_prov, "profile_for", lambda rs: pytest.fail("create must be bypassed"))
+    monkeypatch.setattr(_prov, "external_provision", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "pkcs11_check.raw.key_encoding.rsa_pkcs8_from_crt",
+        lambda **kwargs: pytest.fail("CRT encoder must be bypassed"),
+    )
+    _reset_cache()
+
+    multiprime_n = (int.from_bytes(RSA_N, "big") + 1).to_bytes(len(RSA_N), "big")
+    skipped = assert_skips(
+        _prov.provision_rsa_private_key,
+        _make_rs(sh=309),
+        _make_cfg("off"),
+        n=multiprime_n,
+        e=RSA_E,
+        d=RSA_D,
+        p=RSA_P,
+        q=RSA_Q,
+        dmp1=RSA_DMP1,
+        dmq1=RSA_DMQ1,
+        iqmp=RSA_IQMP,
+        pkcs8=b"trusted-multiprime-pkcs8",
+        attrs=_RSA_ATTRS,
+        label="multiprime",
+        match="multi-prime",
+    )
+    assert "does not implement C_CreateObject" not in str(skipped)
+
+
 def test_two_prime_ignores_optional_pkcs8_and_keeps_crt_encoding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
