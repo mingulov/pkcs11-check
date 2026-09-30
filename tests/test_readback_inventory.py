@@ -1908,22 +1908,22 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "e80eb4744e8b3c580ca1e820b6a07a1942e6e345ce20a392901d1fb1f66680f6",
+            "8b48a902e0cca6ad76a8878ed3156e4385ab9b4129581ef04f7f02ff73468d9b",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "9b25b0e9c2f2f98bdcc1093824f92777dbd2640ff72cae40bd4b66663bbc442c",
+            "9dd36794c053b98bdabd3ec9ecea68196aea1ae6fdc573e0398cbc6ce955c061",
             characterization.candidate_digest,
         ),
         (
             "state_statuses",
             (
-                ("explicit_mechanism_grouping", 1335),
+                ("explicit_mechanism_grouping", 1337),
                 ("explicit_mechanism_readback", 340),
                 ("non_readback", 437),
                 ("safe_mechanism_free_readback", 1402),
-                ("unresolved", 2660),
+                ("unresolved", 2664),
                 ("unsafe_inherited_readback", 254),
             ),
             characterization.state_statuses,
