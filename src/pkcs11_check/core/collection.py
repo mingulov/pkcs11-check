@@ -230,7 +230,7 @@ def collect_pytest_item_metadata(
     the ~13-18s --collect-only pass is skipped. Set
     PKCS11_CHECK_NO_COLLECTION_CACHE=1 to bypass it entirely.
     """
-    effective_env = env or os.environ
+    effective_env = env if env is not None else os.environ
     cache_enabled = effective_env.get("PKCS11_CHECK_NO_COLLECTION_CACHE") not in {"1", "true"}
     cache_dir = _collection_cache_dir() if cache_enabled else None
     digest = (
@@ -279,7 +279,7 @@ def collect_pytest_item_metadata(
             encoding="utf-8",
             # F18: a stray provider byte must not lose the collection result.
             errors="replace",
-            env=dict(env or os.environ),
+            env=dict(env if env is not None else os.environ),
         )
 
         if completed.returncode not in {0, 5}:
