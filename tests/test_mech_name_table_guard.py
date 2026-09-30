@@ -7,12 +7,46 @@ Only string literals are checked; computed names are out of scope.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
 from pkcs11_check.raw.metadata_std import MECHANISM_NAMES
 
-_CALL_RE = re.compile(r"""has_mechanism\(\s*["']([A-Za-z0-9_]+)["']\s*\)""")
+_LITERAL_RE = re.compile(r"[A-Za-z0-9_]+")
+
+
+def _find_has_mechanism_literals(source: str) -> list[tuple[str, int]]:
+    """Find (literal, lineno) for every has_mechanism("LIT") call, any layout.
+
+    AST-based: multi-line calls (which the old line-regex missed) are found.
+    Only string-literal first args are reported; computed names stay out of
+    scope. Both bare `has_mechanism(..)` and `rs.has_mechanism(..)` forms
+    are covered.
+    """
+    found: list[tuple[str, int]] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            name: str | None = func.attr
+        elif isinstance(func, ast.Name):
+            name = func.id
+        else:
+            name = None
+        if name != "has_mechanism" or not node.args:
+            continue
+        first = node.args[0]
+        if (
+            isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+            and _LITERAL_RE.fullmatch(first.value)
+        ):
+            found.append((first.value, node.lineno))
+    return found
+
 
 # Documented unresolvable literals. Each entry needs either a code point,
 # a vendor-retention decision, or test deletion — do not extend this set
@@ -57,13 +91,32 @@ def test_all_has_mechanism_literals_resolve() -> None:
     bad: list[str] = []
     found: set[str] = set()
     for path in sorted(root.rglob("*.py")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            for lit in _CALL_RE.findall(line):
-                found.add(lit)
-                if lit not in resolvable and lit not in KNOWN_UNRESOLVED:
-                    bad.append(f"{path.relative_to(root)}:{lineno}: {lit}")
+        for lit, lineno in _find_has_mechanism_literals(path.read_text(encoding="utf-8")):
+            found.add(lit)
+            if lit not in resolvable and lit not in KNOWN_UNRESOLVED:
+                bad.append(f"{path.relative_to(root)}:{lineno}: {lit}")
     stale = KNOWN_UNRESOLVED - found
     assert not stale, "KNOWN_UNRESOLVED entries no longer present — remove them:\n" + "\n".join(
         sorted(stale)
     )
     assert not bad, "has_mechanism() literals with no resolvable code point:\n" + "\n".join(bad)
+
+
+def test_scanner_finds_multiline_has_mechanism_literal() -> None:
+    source = 'x = has_mechanism(\n    "CKM_AES_GCM"\n)\n'
+    assert ("CKM_AES_GCM", 1) in _find_has_mechanism_literals(source)
+
+
+def test_scanner_ignores_non_literal_first_arg() -> None:
+    source = "x = has_mechanism(name)\n"
+    assert _find_has_mechanism_literals(source) == []
+
+
+def test_scanner_finds_single_line_and_reports_lineno() -> None:
+    source = 'a = 1\ny = has_mechanism("CKM_SHA256")\n'
+    assert _find_has_mechanism_literals(source) == [("CKM_SHA256", 2)]
+
+
+def test_scanner_finds_method_call_form() -> None:
+    source = 'ok = rs.has_mechanism("CKM_RSA_PKCS")\n'
+    assert _find_has_mechanism_literals(source) == [("CKM_RSA_PKCS", 1)]
