@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -236,6 +237,119 @@ def test_explicit_env_dropping_data_override_bypasses_cache(
     collect_pytest_item_metadata(["anything.py"], [], env={})
     assert seen.get("ran") is True, "child collection did not run"
     assert consulted == [], f"stale cache consulted despite dropped override: {consulted!r}"
+
+
+def test_explicit_env_with_differing_home_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Explicit HOME != parent HOME changes the fallback root: bypass (R2b).
+
+    Path.home() honors $HOME, so the parent digest and the child would walk
+    different XDG fallback trees.
+    """
+    home_a = tmp_path / "home-a"
+    home_b = tmp_path / "home-b"
+    home_a.mkdir()
+    home_b.mkdir()
+    monkeypatch.setenv("HOME", str(home_a))
+    monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(["anything.py"], [], env={"HOME": str(home_b)})
+    assert seen.get("ran") is True, "child collection did not run"
+    assert consulted == [], f"stale cache consulted despite shifted HOME: {consulted!r}"
+
+
+def test_explicit_env_dropping_home_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Explicit env without HOME while the parent has it: bypass (R2b).
+
+    Pwd-fallback equivalence is platform fragile; bypass is always correct.
+    """
+    home_a = tmp_path / "home-a"
+    home_a.mkdir()
+    monkeypatch.setenv("HOME", str(home_a))
+    monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(["anything.py"], [], env={})
+    assert seen.get("ran") is True, "child collection did not run"
+    assert consulted == [], f"stale cache consulted despite dropped HOME: {consulted!r}"
+
+
+def test_explicit_env_with_same_home_uses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Control: carried HOME keeps the cache (R2b)."""
+    home_a = tmp_path / "home-a"
+    home_a.mkdir()
+    monkeypatch.setenv("HOME", str(home_a))
+    monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    carried: dict[str, str] = {"HOME": str(home_a)}
+    if os.environ.get("USERPROFILE") is not None:
+        # Portable control: on Windows the parent profile must be carried too.
+        carried["USERPROFILE"] = os.environ["USERPROFILE"]
+    collect_pytest_item_metadata(["anything.py"], [], env=carried)
+    assert len(consulted) == 1, "cache not consulted despite identical HOME"
+
+
+def test_explicit_env_with_differing_userprofile_bypasses_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows root input: differing USERPROFILE also bypasses (R2b)."""
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("USERPROFILE", "C:\\Users\\a")
+    monkeypatch.delenv("PKCS11_CHECK_DATA_DIR", raising=False)
+    monkeypatch.delenv("PKCS11_CHECK_NO_COLLECTION_CACHE", raising=False)
+    seen: dict[str, object] = {}
+    consulted: list[Path] = []
+
+    def _spy_read_cache(path: Path) -> None:
+        consulted.append(path)
+        return None
+
+    monkeypatch.setattr("pkcs11_check.core.collection.subprocess.run", _fake_collect_run(seen))
+    monkeypatch.setattr(col, "_collection_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(col, "_read_collection_cache", _spy_read_cache)
+    collect_pytest_item_metadata(
+        ["anything.py"],
+        [],
+        env={"USERPROFILE": "C:\\Users\\b", "HOME": str(home_dir)},
+    )
+    assert seen.get("ran") is True, "child collection did not run"
+    assert consulted == [], f"stale cache consulted despite shifted USERPROFILE: {consulted!r}"
 
 
 def test_explicit_env_carrying_data_override_uses_cache(
