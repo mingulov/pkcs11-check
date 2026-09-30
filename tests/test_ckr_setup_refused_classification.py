@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 
 from pkcs11_check.classification import get_records
+from pkcs11_check.raw.types_std import _CK_ULONG_MAX
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.ckr import test_ckr_raw_buffer as raw_buffer
 from tests._skip_assert import assert_xfails
@@ -71,13 +72,30 @@ def test_legacy_setup_xfail_record_shape_unchanged() -> None:
         "SETUP_REFUSED:not-a-payload\n",
         "SETUP_REFUSED:C_DecryptInit:-1\n",
         "SETUP_REFUSED:!!!:0x6\n",
+        # F1 (review): success masquerading as refusal, unrepresentable rv,
+        # extra delimiters, and non-identifier ops must fail loud, never xfail.
+        "SETUP_REFUSED:C_DecryptInit:0x0\n",
+        f"SETUP_REFUSED:C_DecryptInit:0x{_CK_ULONG_MAX + 1:X}\n",
+        "SETUP_REFUSED:C_A:B:0x6\n",
+        "SETUP_REFUSED:C_!!!:0x6\n",
     ],
 )
 def test_refused_malformed_payload_is_harness_error(line: str) -> None:
-    """Empty, garbage, or negative-rv SETUP_REFUSED payloads fail loud as harness errors."""
+    """Empty, garbage, contradictory, or unrepresentable SETUP_REFUSED payloads fail loud."""
     with pytest.raises(pytest.fail.Exception, match="malformed"):
         raw_buffer._check_buffer_probe(0, line, "", context="buffer probe")
     assert any(record.reason == "harness_error" for record in get_records())
+
+
+def test_refused_max_ulong_rv_still_xfails() -> None:
+    """Boundary pin: the largest representable CK_RV is a refusal, not malformed (F1)."""
+    assert_xfails(
+        raw_buffer._check_buffer_probe,
+        0,
+        f"SETUP_REFUSED:C_DecryptInit:0x{_CK_ULONG_MAX:X}\n",
+        "",
+        context="buffer probe",
+    )
 
 
 class _RefuseGenerateKey:
