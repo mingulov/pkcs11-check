@@ -3,247 +3,56 @@
 ## [0.2.2] - 2026-10-01
 
 A correction release: the suite stops manufacturing evidence against
-providers and proves the premises it asserts. Wrong CKR literals become
-symbolic constants, under-backed hostile buffers become honest mappings
-or say they are hostile, timeouts stay timeouts instead of merging into
-crashes, and interface selection, login state, and parameter encodings
-are established before they are relied on.
+providers and proves the premises it asserts. Details per fix live
+with the commits.
 
 ### Fixed
 
-- **Vendored PKCS#11 header restored byte-identical; the MU pair moved to
-  a project-authored overlay.** `third_party/pkcs11-headers/3.2/pkcs11.h`
-  carries no hand edits again (sha pinned by a test); the ExternalMu pair
-  lives at its `0x403B`/`0x403C` values with `CK_MU_GEN_PARAMS` in an
-  overlay the generator parses after the base header with overlay-wins
-  precedence.
-
+- **Vendored PKCS#11 header restored byte-identical; MU pair moved to
+  a project-authored overlay.**
 - **Exact PKCS#11 interface selection honored from loader to child
-  probe.** `RawPKCS11` accepts an explicit interface (`auto`, `2.40`,
-  `3.0`, `3.1`, `3.2`; unknown values rejected), the version string comes
-  from the loaded function list, and the runner serializes the selector
-  into every child params payload, rejecting a conflicting pre-set value
-  before launch instead of silently testing the wrong interface.
-
-- **Message-mode tests drive the v3 message entry points with advertised
-  flags and kept refusal evidence.** Sign/verify/encrypt message tests
-  gate on the advertised `CKF_MESSAGE_*`/`CKF_MULTI_MESSAGE` flags,
-  advertised-but-refused operations classify as contradictions instead of
-  skipping, and a `SETUP_CONTRADICTION` protocol line keeps setup
-  failures (exact operation and CKR) distinct from the target operation's
-  result.
-
+  probe.**
+- **Message-mode tests gate on advertised flags and keep refusal
+  evidence.**
 - **Hostile length probes carry honest backing or say they are hostile.**
-  Demand-zero regions map at least the requested length and travel with
-  their honestly mapped size; explicitly unbacked inputs are marked
-  `honest=0`, and claimed lengths past the mappable range execute under a
-  `HOSTILE_CALLER` marker the parent routes to a non-normative robustness
-  observation instead of a conformance finding.
-
-- **Field-size oracles rebuilt on symbolic CKRs and correct calls.** The
-  wrong raw literals are replaced by imported `CKR_*` constants with
-  per-call-site reject sets; DH/DSA prime probes use `C_GenerateKey` with
-  the parameter-generation mechanisms; an AES `CKR_OK` requires a
-  `CKA_VALUE_LEN` readback; and the `C_FindObjects` count probe declares
-  only honestly backed capacity and reports its `Final` return.
-
+- **Field-size oracles rebuilt on symbolic CKRs and correct calls.**
 - **Zero-data final and session tests require observable effects.**
-  Positive Init/Final calls with no data classify defined rejections as
-  `not_operational` with the exact CKR and undefined return codes as
-  metadata self-contradictions instead of skipping; empty-digest finals
-  compare against the real SHA-256 of the empty string.
+- **CCM and GCM vector contracts aligned.**
 
-- **CCM and GCM vector contracts aligned.** ECMA CCM vectors translate
-  the 16-byte formatted `B_0` source field to the 13-byte PKCS#11 nonce
-  with every structural field validated; every nonempty GCM IV length
-  counts as representable instead of drawing deployment-advice notes;
-  merged ACVP cases keep their source vector identity; clean refusals of
-  valid-tag decrypts xfail as honest deviations instead of failing as
-  wrong results; and an undefined CK_RV fails as a return-value-contract
-  violation before any xfail route.
+- **EdDSA parameters resolved by key profile and scheme.**
+- **Context-specific login premises proven before signing.**
+- **Hash-ML-DSA mechanism resolution unified in one table.**
+- **Deterministic-DSS and nonce claims reframed to recorded evidence.**
+- **Padding oracle calibrated to a measured floor.**
+- **Unwrap type-confusion proof carries type length and usability.**
+- **Buffer retries bounded by provider-reported need.**
 
-- **EdDSA parameters resolved by key profile and scheme.** Pure RFC 8032
-  sign/verify pass explicit NULL params while ctx/ph schemes select via
-  curveName `CK_EDDSA_PARAMS`, replacing the single implicit encoding;
-  mechanism-negative coverage follows the same registry.
-
-- **Context-specific login premises proven.** The always-authenticate flow
-  runs explicit ordered raw calls (`C_SignInit`, context-specific
-  `C_Login`, `C_Sign`) and only a `CKR_OK` login authenticates the active
-  key; any other defined refusal stops the flow instead of signing on an
-  unproven authentication, and undefined return codes fail.
-
-- **Hash-ML-DSA mechanism resolution unified.** One ACVP-spelling table
-  maps to the numeric generated mechanisms (`pure`/`none` to `CKM_ML_DSA`)
-  with the bare name derived from generated metadata, replacing twin
-  tables whose hash spellings disagreed.
-
-- **Deterministic-DSS and nonce claims reframed.** Same-message signature
-  stability is recorded, not accused; the adverse signal is a repeated
-  valid `r` across distinct digests, with `r` described as `x(kG) mod n`
-  rather than the secret nonce and no key-recovery claim without it; raw
-  DSS signatures parse through a shape-classifying helper.
-
-- **Padding oracle calibrated to a measured floor.** A gross-gap finding
-  needs a >3x latency ratio with >=1ms absolute separation over a
-  controlled guaranteed-invalid corpus; the suite is an
-  obvious-asymmetry detector, not a Lucky13 prover.
-
-- **Unwrap type-confusion proof carries type length and usability.** The
-  key-type-confusion unwrap expects the v3.2-mandated
-  `CKR_WRAPPED_KEY_LEN_RANGE`, then proves the confused handle with a
-  type readback and a real DES3 encrypt probe; accepted summaries no
-  longer claim unobserved DES3 odd parity, and usability refusals with
-  undefined return codes record metadata self-contradictions.
-
-- **Buffer retries bounded by provider-reported need.** CBC-PAD retry
-  limits come from the `NEEDED` length behind `CKR_BUFFER_TOO_SMALL`;
-  Update/Final `CKR_OK` paths require length plus roundtrip evidence;
-  `CKR_BUFFER_TOO_SMALL` is required only when measured need exceeds
-  declared capacity; and a fit marker on the success paths turns a future
-  probe omission into `probe_incomplete` instead of a silent fit-pass.
-
-- **Alignment controls separated from hostile pointers.** Hostile
-  misalignment probes flush a marker before the target call and land as
-  non-normative robustness observations, while two in-process aligned
-  controls with valid typed storage prove the baseline; unmarked and
-  setup crashes stay loud.
-
-- **Fork robustness separated from session semantics.** Fork-after-init
-  becomes a bounded, phase-aware POSIX observation yielding a compliance
-  note plus skip with zero provider records, while session-object
-  isolation runs in a spawned fresh interpreter whose verdicts are
-  genuine; fatal/exception observations require terminal status, and the
-  child-wait helper returns the real disposition.
-
-- **Timeouts and unresolved attribution preserved in reports.** Each
-  termination kind maps to its own reason and summary: typed
-  timeouts, external kills, and ordinary exits are `probe_incomplete`
-  (completion unknown, never "crash", no fabricated CKR) while signals
-  and abrupt exits stay crashes with their names; report grouping never merges
-  timeouts with crashes, and `probe_incomplete` routes to
-  evidence-rerun instead of any known-issue override. The bounded 4 GiB
-  random probes report `probe_incomplete` on a typed timeout.
-
-- **OTP registry entries carry their key types; negative legs repaired,
-  positive-path operation still deferred.** The six HOTP/SecurID/ACTI
-  entries move from `key_type=None` to `CKK_HOTP`, `CKK_SECURID`, and
-  `CKK_ACTI`, so the registry-driven wrong-key-type legs resolve
-  `CKK_GENERIC_SECRET` instead of dying on the `key_type is not None`
-  assertion, and proper-key setup reaches `C_GenerateKey` with the right
-  `CKA_KEY_TYPE`; placeholder recipes (`none` params, empty key sizes)
-  stay untouched, keeping positive-path OTP operation deferred.
-
-- **SLH-DSA sigver vectors carry their context into verification.** The
-  loader keeps each vector's `context` bytes instead of dropping them, and
-  the test passes non-empty context via `mech_sign_context`
-  (`CK_SIGN_ADDITIONAL_CONTEXT`) while pure vectors keep NULL params,
-  matching the ML-DSA conditional packing.
-
-- **X9.42 fixtures replaced with verified RFC 5114 section 2.3 values;
-  the zero-length reject set widened.** The corrupted 257-byte `X942_GEN`
-  (past `p`, outside the subgroup) and the out-of-subgroup Bob peer give
-  way to the section 2.3 generator with a deterministic Bob private value
-  (`0x81..0xA0`), derived public, and trailing-32 secret, checked against
-  an independent transcription of the fetched RFC text with full subgroup
-  math instead of modexp self-consistency; the header cite moves from
-  section 2.1 to 2.3. Both zero-`CKA_VALUE_LEN` DH probes accept
-  `CKR_TEMPLATE_INCONSISTENT` alongside `CKR_KEY_SIZE_RANGE` and
-  `CKR_ATTRIBUTE_VALUE_INVALID`.
-
-- **Readback-inventory characterization repinned to the corrected counts**
-  after each fix (total 1568 -> 1616), keeping the ratchet green on
-  proved sites only.
+- **Alignment controls separated from hostile pointers.**
+- **Fork robustness separated from session semantics.**
+- **Timeouts and unresolved attribution preserved in reports.**
+- **OTP registry entries carry their key types.**
+- **SLH-DSA sigver vectors carry their context into verification.**
+- **X9.42 fixtures replaced with verified RFC 5114 section 2.3 values.**
+- **Readback-inventory characterization repinned to corrected counts.**
 
 - **Authoritative child termination governs the subprocess classifier.**
-  Timeout, kill, and crash verdicts read structured child disposition
-  instead of inferring from exit codes; the bounded 4 GiB probes gate
-  their timeout verdict on it, and the POSIX-signal regression is
-  pinned to linux.
-
-- **SLH-DSA keys prove their SPKI/DER encoding before import.** The
-  parameter validator checks OID presence and contents, algorithm
-  trailing bytes, length minimality, recursive parameter contents,
-  universal-type DER rules, string and relative-OID contents, and
-  BMPString repertoire; malformed encodings fail against the readback
-  with narrowed CKR catches instead of importing. The two DER
-  directions and the recovery contract are documented in
-  `docs/der-handling.md`.
-
-- **SLH-DSA loaders restricted to external-pure; the full KAT corpus
-  runs.** Produced signatures are verified instead of sampled per set,
-  and a missing sigGen verify key can no longer pass silently on the
-  sign leg alone.
-
+- **SLH-DSA keys prove their SPKI/DER encoding before import.**
+- **SLH-DSA loaders restricted to external-pure; full KAT corpus runs.**
 - **Session matrix proves handles, freshness, and callback identity.**
-  Fresh-session properties, close invalidation, late-callback
-  behavior, post-close callback validation, and matrix handles are
-  asserted; refusal narrows to `CKR_SESSION_COUNT`.
-
-- **HKDF DATA matrix runs on hash-sized base keys against an
-  RFC 5869 oracle.** The oracle salt-key row derives from known bytes
-  with an explicit mechanism while readback stays separate and
-  non-gating.
-
-- **XTS tweaks separated into valid controls and negatives.** Distinct
-  key halves, a valid-tweak control, and parametrized short tweaks
-  replace the shared-shape legs; inapplicable short-tweak Wycheproof
-  vectors skip while rejection negatives still run.
-
-- **Registry contradictions resolved for CAMELLIA_CTR, POLY1305, and
-  GMAC.** `CKM_CAMELLIA_CTR` gains its `param_recipe`,
-  `CKM_POLY1305` no longer declares `param_required` with a `none`
-  recipe, and Wycheproof GMAC packs version-aware `CK_GCM_PARAMS`.
-
-- **WTLS, BLAKE2b, and X9.42 inputs corrected.** WTLS pre-master
-  keygen passes the required version parameter and encodes flags as
-  `CK_BBOOL`; BLAKE2b keygen templates carry their key type with a
-  fixed wrong-key selector; derived AES keys pin `CKA_VALUE_LEN` 16.
+- **HKDF DATA matrix runs against an RFC 5869 oracle.**
+- **XTS tweaks separated into valid controls and negatives.**
+- **Registry contradictions resolved (CAMELLIA_CTR, POLY1305, GMAC).**
+- **WTLS, BLAKE2b, and X9.42 inputs corrected.**
 
 - **EdDSA empty-context modes separated from pure Ed25519.**
-  Context-shape roundtrips and pre-hash separation follow the scheme
-  registry instead of the single implicit encoding.
-
-- **Smaller premise fixes: C_Initialize mutex semantics,
-  registry-driven permission setup, and vendor CK_RVs as defined
-  refusals.** Callback mutexes follow valid semantics, permission
-  setup uses the registry keygen mechanism, and message-mode legs
-  treat vendor return codes as defined refusals. The AES-KW IV
-  negative control routes through `reject_or_classify`.
-
-- **Multi-prime provisioning skips name the material limit.**
-  With `key_inject=off`, keys whose PKCS#8 the CRT template cannot
-  express skip as requiring PKCS#8-preserving injection instead of
-  blaming a missing `C_CreateObject` that was never probed.
-
-- **Refused valid setup recorded as structured `SETUP_REFUSED`.**
-  The AES-CBC-PAD families emit the refused operation plus the
-  numeric CKR, parsed into a setup-attributed `not_operational`
-  record with the target marked untested; the payload grammar
-  (bare `C_` op, nonzero representable CKR, singleton terminal
-  exclusive of measurement and other markers) fails loud on
-  anything else.
-
-- **Out-of-range CCM nonces replay against providers as
-  non-strict.** 6-byte and 16-byte nonces reach both CCM runners
-  byte-exact, and a compliant `CKR_MECHANISM_PARAM_INVALID`
-  rejection xfails with an operational canonical instead of
-  failing; a `WRONG_OUTPUT` canonical still surfaces the
-  rejection as a finding.
-
-- **Collection cache bound to the child's effective
-  environment.** An explicitly-passed empty env reaches the child
-  as empty, and the cache is bypassed whenever the explicit env
-  could resolve a different vector tree than the parent digest
-  hashed (dropped data override, shifted `HOME`/`USERPROFILE`/
-  `HOMEDRIVE`/`HOMEPATH`).
-
-- **Recover guard overwrites and default readbacks carry
-  structured attribution.** One-byte guard corruptions emit a
-  `self_contradiction`/`policy` provider finding before the
-  probe raises (the verdict stays a fail), and the attribute
-  default-readback record no longer inherits an unrelated
-  mechanism.
+- **C_Initialize mutex semantics, registry-driven permission setup,
+  vendor CK_RVs as defined refusals, AES-KW IV negative control.**
+- **Multi-prime provisioning skips name the material limit (#27).**
+- **Refused valid setup recorded as structured `SETUP_REFUSED` (#28).**
+- **Out-of-range CCM nonces replay as non-strict (#20).**
+- **Collection cache bound to the child's effective environment.**
+- **Recover guard overwrites and default readbacks carry structured
+  attribution.**
 
 ## [0.2.1] - 2026-09-24
 
