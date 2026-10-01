@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.2] - 2026-09-26
+## [0.2.2] - 2026-10-01
 
 A correction release: the suite stops manufacturing evidence against
 providers and proves the premises it asserts. Wrong CKR literals become
@@ -154,6 +154,96 @@ are established before they are relied on.
 - **Readback-inventory characterization repinned to the corrected counts**
   after each fix (total 1568 -> 1616), keeping the ratchet green on
   proved sites only.
+
+- **Authoritative child termination governs the subprocess classifier.**
+  Timeout, kill, and crash verdicts read structured child disposition
+  instead of inferring from exit codes; the bounded 4 GiB probes gate
+  their timeout verdict on it, and the POSIX-signal regression is
+  pinned to linux.
+
+- **SLH-DSA keys prove their SPKI/DER encoding before import.** The
+  parameter validator checks OID presence and contents, algorithm
+  trailing bytes, length minimality, recursive parameter contents,
+  universal-type DER rules, string and relative-OID contents, and
+  BMPString repertoire; malformed encodings fail against the readback
+  with narrowed CKR catches instead of importing. The two DER
+  directions and the recovery contract are documented in
+  `docs/der-handling.md`.
+
+- **SLH-DSA loaders restricted to external-pure; the full KAT corpus
+  runs.** Produced signatures are verified instead of sampled per set,
+  and a missing sigGen verify key can no longer pass silently on the
+  sign leg alone.
+
+- **Session matrix proves handles, freshness, and callback identity.**
+  Fresh-session properties, close invalidation, late-callback
+  behavior, post-close callback validation, and matrix handles are
+  asserted; refusal narrows to `CKR_SESSION_COUNT`.
+
+- **HKDF DATA matrix runs on hash-sized base keys against an
+  RFC 5869 oracle.** The oracle salt-key row derives from known bytes
+  with an explicit mechanism while readback stays separate and
+  non-gating.
+
+- **XTS tweaks separated into valid controls and negatives.** Distinct
+  key halves, a valid-tweak control, and parametrized short tweaks
+  replace the shared-shape legs; inapplicable short-tweak Wycheproof
+  vectors skip while rejection negatives still run.
+
+- **Registry contradictions resolved for CAMELLIA_CTR, POLY1305, and
+  GMAC.** `CKM_CAMELLIA_CTR` gains its `param_recipe`,
+  `CKM_POLY1305` no longer declares `param_required` with a `none`
+  recipe, and Wycheproof GMAC packs version-aware `CK_GCM_PARAMS`.
+
+- **WTLS, BLAKE2b, and X9.42 inputs corrected.** WTLS pre-master
+  keygen passes the required version parameter and encodes flags as
+  `CK_BBOOL`; BLAKE2b keygen templates carry their key type with a
+  fixed wrong-key selector; derived AES keys pin `CKA_VALUE_LEN` 16.
+
+- **EdDSA empty-context modes separated from pure Ed25519.**
+  Context-shape roundtrips and pre-hash separation follow the scheme
+  registry instead of the single implicit encoding.
+
+- **Smaller premise fixes: C_Initialize mutex semantics,
+  registry-driven permission setup, and vendor CK_RVs as defined
+  refusals.** Callback mutexes follow valid semantics, permission
+  setup uses the registry keygen mechanism, and message-mode legs
+  treat vendor return codes as defined refusals. The AES-KW IV
+  negative control routes through `reject_or_classify`.
+
+- **Multi-prime provisioning skips name the material limit.**
+  With `key_inject=off`, keys whose PKCS#8 the CRT template cannot
+  express skip as requiring PKCS#8-preserving injection instead of
+  blaming a missing `C_CreateObject` that was never probed.
+
+- **Refused valid setup recorded as structured `SETUP_REFUSED`.**
+  The AES-CBC-PAD families emit the refused operation plus the
+  numeric CKR, parsed into a setup-attributed `not_operational`
+  record with the target marked untested; the payload grammar
+  (bare `C_` op, nonzero representable CKR, singleton terminal
+  exclusive of measurement and other markers) fails loud on
+  anything else.
+
+- **Out-of-range CCM nonces replay against providers as
+  non-strict.** 6-byte and 16-byte nonces reach both CCM runners
+  byte-exact, and a compliant `CKR_MECHANISM_PARAM_INVALID`
+  rejection xfails with an operational canonical instead of
+  failing; a `WRONG_OUTPUT` canonical still surfaces the
+  rejection as a finding.
+
+- **Collection cache bound to the child's effective
+  environment.** An explicitly-passed empty env reaches the child
+  as empty, and the cache is bypassed whenever the explicit env
+  could resolve a different vector tree than the parent digest
+  hashed (dropped data override, shifted `HOME`/`USERPROFILE`/
+  `HOMEDRIVE`/`HOMEPATH`).
+
+- **Recover guard overwrites and default readbacks carry
+  structured attribution.** One-byte guard corruptions emit a
+  `self_contradiction`/`policy` provider finding before the
+  probe raises (the verdict stays a fail), and the attribute
+  default-readback record no longer inherits an unrelated
+  mechanism.
 
 ## [0.2.1] - 2026-09-24
 
