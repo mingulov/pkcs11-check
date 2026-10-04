@@ -401,6 +401,7 @@ def _read_ulong_attr_state(
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=CKR_OK,
             actual=rv,
             summary=f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}",
@@ -419,6 +420,7 @@ def _read_ulong_attr_state(
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"attribute {attr_type:#x}: malformed CK_ULONG length {query.ulValueLen}",
             detail={
                 "attribute": {
@@ -445,6 +447,7 @@ def _read_ulong_attr_state(
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=CKR_OK,
             actual=rv,
             summary=f"C_GetAttributeValue({attr_type:#x}) returned {ckr_name(rv)}",
@@ -461,6 +464,7 @@ def _read_ulong_attr_state(
             kind="metadata",
             label=f"CKA_{attr_type:#x}:C_GetAttributeValue",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"attribute {attr_type:#x}: malformed CK_ULONG length {attr.ulValueLen}",
             detail={
                 "attribute": {
@@ -499,6 +503,7 @@ def _classify_imported_key_origin_invariant(
                     kind="metadata",
                     label=label,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{label}: CKA_LOCAL not reported (honest non-support)",
                     detail={
                         "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
@@ -517,6 +522,7 @@ def _classify_imported_key_origin_invariant(
                         kind="metadata",
                         label=label,
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=f"{label}: CKA_LOCAL has malformed CK_BBOOL value",
                         detail={
                             "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
@@ -534,6 +540,7 @@ def _classify_imported_key_origin_invariant(
                     kind="metadata",
                     label=label,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{label}: CKA_LOCAL is not False (isolated wrong value)",
                     detail={
                         "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
@@ -552,6 +559,7 @@ def _classify_imported_key_origin_invariant(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=CKR_ATTRIBUTE_TYPE_INVALID,
                 summary=f"{label}: CKA_KEY_GEN_MECHANISM not reported (honest non-support)",
                 detail={
@@ -572,6 +580,7 @@ def _classify_imported_key_origin_invariant(
                     kind="metadata",
                     label=label,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{label}: CKA_KEY_GEN_MECHANISM has malformed CK_ULONG value",
                     detail={
                         "attribute": {
@@ -592,6 +601,7 @@ def _classify_imported_key_origin_invariant(
                     kind="metadata",
                     label=label,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         f"{label}: imported CKA_LOCAL=False has a present "
                         "CKA_KEY_GEN_MECHANISM (expected unavailable)"
@@ -615,6 +625,7 @@ def _classify_imported_key_origin_invariant(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: unexpected CKA_KEY_GEN_MECHANISM state",
                 detail={
                     "attribute": {
@@ -737,6 +748,7 @@ class TestDerivedAttributeInvariants:
                         "CKA_LOCAL/CKA_KEY_GEN_MECHANISM on an AES key imported by C_CreateObject"
                     ),
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary="CKA_LOCAL: imported key has malformed CK_BBOOL value",
                     detail={
                         "attribute": {"name": "CKA_LOCAL", "id": int(CKA_LOCAL)},
