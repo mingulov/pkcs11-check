@@ -415,11 +415,15 @@ def _import_wrong_secret_key_or_xfail(
 
 
 class TestWrongKeyType:
-    """EncryptInit/SignInit with wrong key type must be rejected."""
+    """EncryptInit/SignInit with wrong key type must be rejected.
 
-    def test_aes_ecb_with_rsa_key_rejected(self, p11_module_session: RawSession) -> None:
+    Each runs on a function-scoped session so an accepted Init cannot
+    contaminate later rows as ``CKR_OPERATION_ACTIVE`` (fw#38).
+    """
+
+    def test_aes_ecb_with_rsa_key_rejected(self, p11_raw_session: RawSession) -> None:
         """CKM_AES_ECB with an RSA private key must fail EncryptInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -437,9 +441,9 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_rsa_pkcs_with_aes_key_rejected(self, p11_module_session: RawSession) -> None:
+    def test_rsa_pkcs_with_aes_key_rejected(self, p11_raw_session: RawSession) -> None:
         """CKM_RSA_PKCS with an AES key must fail EncryptInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("RSA_PKCS"):
             pytest.skip("CKM_RSA_PKCS not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):
@@ -455,9 +459,9 @@ class TestWrongKeyType:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_ecdsa_with_rsa_key_rejected(self, p11_module_session: RawSession) -> None:
+    def test_ecdsa_with_rsa_key_rejected(self, p11_raw_session: RawSession) -> None:
         """CKM_ECDSA with an RSA key must fail SignInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("ECDSA"):
             pytest.skip("CKM_ECDSA not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -472,9 +476,9 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_hmac_sha256_with_rsa_key_rejected(self, p11_module_session: RawSession) -> None:
+    def test_hmac_sha256_with_rsa_key_rejected(self, p11_raw_session: RawSession) -> None:
         """CKM_SHA256_HMAC with an RSA key must fail SignInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
@@ -491,9 +495,9 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
-    def test_aes_ecb_with_ec_key_rejected(self, p11_module_session: RawSession) -> None:
+    def test_aes_ecb_with_ec_key_rejected(self, p11_raw_session: RawSession) -> None:
         """CKM_AES_ECB with an EC private key must fail EncryptInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
         if not rs.has_mechanism("EC_KEY_PAIR_GEN"):
@@ -511,10 +515,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_registry_encrypt_wrong_key_type(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised encrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -545,10 +549,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_decrypt_wrong_key_type(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised decrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -567,10 +571,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_sign_wrong_key_type(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised sign mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -599,10 +603,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_verify_wrong_key_type(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised verify mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -621,10 +625,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_wrap_wrong_key_type(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised wrap mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_wrap_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -658,10 +662,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_registry_unwrap_wrong_key_type(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised unwrap mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_wrap_entry
         _skip_if_not_secret_key_registry_case(entry)
         config = entry.config
@@ -736,10 +740,10 @@ class TestWrongKeyType:
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_registry_derive_wrong_key_type(
-        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_derive_entry: MechEntry
     ) -> None:
         """Registry-driven wrong-secret-key-type check for advertised derive mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_derive_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -778,13 +782,17 @@ class TestWrongKeyType:
 
 
 class TestBadParameters:
-    """Mechanisms requiring params must reject missing or malformed mechanism parameters."""
+    """Mechanisms requiring params must reject missing or malformed mechanism parameters.
+
+    Each runs on a function-scoped session so an accepted Init cannot
+    contaminate later rows as ``CKR_OPERATION_ACTIVE`` (fw#38).
+    """
 
     def test_registry_encrypt_missing_required_param(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised encrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -804,10 +812,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, decrypt_key)
 
     def test_registry_encrypt_malformed_required_param(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised encrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -827,10 +835,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, decrypt_key)
 
     def test_registry_decrypt_missing_required_param(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised decrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -851,10 +859,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, decrypt_key)
 
     def test_registry_decrypt_malformed_required_param(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised decrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -875,10 +883,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, decrypt_key)
 
     def test_registry_sign_missing_required_param(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised sign mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -898,10 +906,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
 
     def test_registry_sign_malformed_required_param(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised sign mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -921,10 +929,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
 
     def test_registry_verify_missing_required_param(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised verify mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -945,10 +953,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, verify_key)
 
     def test_registry_verify_malformed_required_param(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised verify mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_required_param_registry_case(entry)
         config = entry.config
@@ -1011,11 +1019,11 @@ class TestBadParameters:
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_registry_wrap_missing_required_param(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised wrap mechanisms."""
         self._wrap_required_param_must_reject(
-            p11_module_session,
+            p11_raw_session,
             mech_wrap_entry,
             mech_param=mech_simple(mech_wrap_entry.mech_id),
             expected_rvs=_MISSING_REQUIRED_PARAM_RVS,
@@ -1023,11 +1031,11 @@ class TestBadParameters:
         )
 
     def test_registry_wrap_malformed_required_param(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised wrap mechanisms."""
         self._wrap_required_param_must_reject(
-            p11_module_session,
+            p11_raw_session,
             mech_wrap_entry,
             mech_param=mech_bytes(mech_wrap_entry.mech_id, b"\x00"),
             expected_rvs=_MALFORMED_REQUIRED_PARAM_RVS,
@@ -1110,11 +1118,11 @@ class TestBadParameters:
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_registry_unwrap_missing_required_param(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised unwrap mechanisms."""
         self._unwrap_required_param_must_reject(
-            p11_module_session,
+            p11_raw_session,
             mech_wrap_entry,
             mech_param=mech_simple(mech_wrap_entry.mech_id),
             expected_rvs=_MISSING_REQUIRED_PARAM_RVS,
@@ -1122,11 +1130,11 @@ class TestBadParameters:
         )
 
     def test_registry_unwrap_malformed_required_param(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised unwrap mechanisms."""
         self._unwrap_required_param_must_reject(
-            p11_module_session,
+            p11_raw_session,
             mech_wrap_entry,
             mech_param=mech_bytes(mech_wrap_entry.mech_id, b"\x00"),
             expected_rvs=_MALFORMED_REQUIRED_PARAM_RVS,
@@ -1134,10 +1142,10 @@ class TestBadParameters:
         )
 
     def test_registry_digest_missing_required_param(
-        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for advertised digest mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_digest_entry
         _skip_if_not_required_param_registry_case(entry)
 
@@ -1149,10 +1157,10 @@ class TestBadParameters:
         classify_negative_rv(rv, _MISSING_REQUIRED_PARAM_RVS, label=label)
 
     def test_registry_digest_malformed_required_param(
-        self, p11_module_session: RawSession, mech_digest_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_digest_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for advertised digest mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_digest_entry
         _skip_if_not_required_param_registry_case(entry)
 
@@ -1164,10 +1172,10 @@ class TestBadParameters:
         classify_negative_rv(rv, _MALFORMED_REQUIRED_PARAM_RVS, label=label)
 
     def test_registry_derive_missing_required_param(
-        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_derive_entry: MechEntry
     ) -> None:
         """Registry-driven missing-required-param check for simple advertised derive mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_derive_entry
         _skip_if_not_required_param_registry_case(entry)
         _skip_if_not_secret_key_registry_case(entry)
@@ -1215,10 +1223,10 @@ class TestBadParameters:
                 destroy_quietly(rs.raw, rs.sh, handle)
 
     def test_registry_derive_malformed_required_param(
-        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_derive_entry: MechEntry
     ) -> None:
         """Registry-driven malformed-param check for simple advertised derive mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_derive_entry
         _skip_if_not_required_param_registry_case(entry)
         _skip_if_not_secret_key_registry_case(entry)
@@ -1545,13 +1553,17 @@ class TestMalformedWrappedBlob:
 
 
 class TestMissingPermission:
-    """Keys with required CKA flags set to False must be rejected."""
+    """Keys with required CKA flags set to False must be rejected.
+
+    Each runs on a function-scoped session so an accepted Init cannot
+    contaminate later rows as ``CKR_OPERATION_ACTIVE`` (fw#38).
+    """
 
     def test_registry_encrypt_without_flag(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_ENCRYPT=False check for advertised encrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1574,10 +1586,10 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_decrypt_without_flag(
-        self, p11_module_session: RawSession, mech_encrypt_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_encrypt_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_DECRYPT=False check for advertised decrypt mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_encrypt_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1600,10 +1612,10 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_sign_without_flag(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_SIGN=False check for advertised sign mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1626,10 +1638,10 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_verify_without_flag(
-        self, p11_module_session: RawSession, mech_sign_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_sign_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_VERIFY=False check for advertised verify mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_sign_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1652,10 +1664,10 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, key)
 
     def test_registry_wrap_without_flag(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_WRAP=False check for advertised wrap mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_wrap_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1693,10 +1705,10 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_registry_unwrap_without_flag(
-        self, p11_module_session: RawSession, mech_wrap_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_wrap_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_UNWRAP=False check for advertised unwrap mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_wrap_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1766,10 +1778,10 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, target_key)
 
     def test_registry_derive_without_flag(
-        self, p11_module_session: RawSession, mech_derive_entry: MechEntry
+        self, p11_raw_session: RawSession, mech_derive_entry: MechEntry
     ) -> None:
         """Registry-driven CKA_DERIVE=False check for advertised derive mechanisms."""
-        rs = p11_module_session
+        rs = p11_raw_session
         entry = mech_derive_entry
         _skip_if_not_secret_key_registry_case(entry)
 
@@ -1809,9 +1821,9 @@ class TestMissingPermission:
             for handle in param_handles:
                 destroy_quietly(rs.raw, rs.sh, handle)
 
-    def test_encrypt_without_flag(self, p11_module_session: RawSession) -> None:
+    def test_encrypt_without_flag(self, p11_raw_session: RawSession) -> None:
         """Key with CKA_ENCRYPT=False cannot EncryptInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
@@ -1830,9 +1842,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_decrypt_without_flag(self, p11_module_session: RawSession) -> None:
+    def test_decrypt_without_flag(self, p11_raw_session: RawSession) -> None:
         """Key with CKA_DECRYPT=False cannot DecryptInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("AES_ECB"):
             pytest.skip("CKM_AES_ECB not supported")
 
@@ -1851,9 +1863,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_sign_without_flag(self, p11_module_session: RawSession) -> None:
+    def test_sign_without_flag(self, p11_raw_session: RawSession) -> None:
         """Key with CKA_SIGN=False cannot SignInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
@@ -1881,9 +1893,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_verify_without_flag(self, p11_module_session: RawSession) -> None:
+    def test_verify_without_flag(self, p11_raw_session: RawSession) -> None:
         """Key with CKA_VERIFY=False cannot VerifyInit."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("SHA256_HMAC"):
             pytest.skip("CKM_SHA256_HMAC not supported")
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
@@ -1912,9 +1924,9 @@ class TestMissingPermission:
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
 
-    def test_wrap_without_flag(self, p11_module_session: RawSession) -> None:
+    def test_wrap_without_flag(self, p11_raw_session: RawSession) -> None:
         """Wrapping key with CKA_WRAP=False must fail C_WrapKey."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("AES_KEY_WRAP"):
             pytest.skip("CKM_AES_KEY_WRAP not supported")
         if not rs.has_mechanism("AES_KEY_GEN"):
@@ -1948,9 +1960,9 @@ class TestMissingPermission:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
             destroy_quietly(rs.raw, rs.sh, target_key)
 
-    def test_derive_without_flag(self, p11_module_session: RawSession) -> None:
+    def test_derive_without_flag(self, p11_raw_session: RawSession) -> None:
         """Key with CKA_DERIVE=False cannot be used as derive base key."""
-        rs = p11_module_session
+        rs = p11_raw_session
         if not rs.has_mechanism("SHA256_KEY_DERIVATION"):
             pytest.skip("CKM_SHA256_KEY_DERIVATION not supported")
         if not rs.has_mechanism("GENERIC_SECRET_KEY_GEN"):
