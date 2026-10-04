@@ -59,6 +59,7 @@ _SKIP_TOKENS_BY_FUNCTION: dict[str, frozenset[str]] = {
         "C_DecapsulateKey",
         "C_DecapsulateKey_NULLs",
         "C_AsyncGetID",
+        "C_AsyncGetID_empty_selector",
         "C_WrapKeyAuthenticated",
     )
 }
@@ -112,6 +113,7 @@ def _check(rc: int, out: str, err: str, func: str) -> None:
             "C_DecapsulateKey.pCiphertext",
         ),
         "C_AsyncGetID": ("C_AsyncGetID",),
+        "C_AsyncGetID_empty_selector": ("C_AsyncGetID.empty_selector",),
         "C_WrapKeyAuthenticated": ("C_WrapKeyAuthenticated",),
     }.get(func, (func,))
     # CKR_FUNCTION_NOT_SUPPORTED is NOT listed here. It is the spec-defined way to say a
@@ -127,6 +129,7 @@ def _check(rc: int, out: str, err: str, func: str) -> None:
         "C_DecapsulateKey": (CKR_MECHANISM_INVALID,),
         "C_DecapsulateKey_NULLs": (CKR_ARGUMENTS_BAD,),
         "C_AsyncGetID": (CKR_OPERATION_NOT_INITIALIZED,),
+        "C_AsyncGetID_empty_selector": (CKR_ARGUMENTS_BAD,),
         "C_WrapKeyAuthenticated": (CKR_MECHANISM_INVALID,),
     }.get(func, (CKR_ARGUMENTS_BAD,))
     return _check_protocol(rc, out, err, func, expected_phases, expected_rvs)
@@ -464,9 +467,14 @@ class TestAsyncErrors:
     """v3.2 async function error conditions."""
 
     def test_async_get_id_no_operation(self, p11_config: Any) -> None:
-        """C_AsyncGetID with no pending async operation."""
+        """C_AsyncGetID with a valid selector and no pending async operation."""
         rc, out, err = _run_probe(p11_config, "async_get_id_no_operation")
         _check(rc, out, err, "C_AsyncGetID")
+
+    def test_async_get_id_empty_selector(self, p11_config: Any) -> None:
+        """C_AsyncGetID with an empty selector must return CKR_ARGUMENTS_BAD."""
+        rc, out, err = _run_probe(p11_config, "async_get_id_empty_selector")
+        _check(rc, out, err, "C_AsyncGetID_empty_selector")
 
 
 @pytest.mark.needs_function("C_WrapKeyAuthenticated")
