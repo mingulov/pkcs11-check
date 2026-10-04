@@ -140,6 +140,7 @@ class TestECKeygen:
                     kind="metadata",
                     label=label,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{label}: expected CKK_EC, got {value!r}",
                 )
             if contradictions:
@@ -149,6 +150,7 @@ class TestECKeygen:
                     kind="metadata",
                     label=label,
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=f"{label}: expected CKK_EC, got {value!r}",
                 )
         finally:

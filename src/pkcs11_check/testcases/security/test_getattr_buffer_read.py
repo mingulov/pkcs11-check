@@ -92,6 +92,7 @@ def _probe_undersized_getattr(
                 f"(buffer over-write) for {attr_label}"
             ),
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
         )
 
     if rv == CKR_OK:
@@ -102,6 +103,7 @@ def _probe_undersized_getattr(
                 f"C_GetAttributeValue returned CKR_OK for an undersized buffer for {attr_label}"
             ),
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
         )
 
     classify_negative_rv(

@@ -73,6 +73,7 @@ def _assert_required_flag(value: Any, expected: bool, *, label: str) -> None:
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: expected {expected!r}, got {value!r}",
         )
 
@@ -120,6 +121,7 @@ def _read_bool_attr_safe(
             kind="metadata",
             label=f"{ATTR_NAMES.get(int(attr), hex(int(attr)))}:required-key-flag",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             actual=rv,
             summary=(
                 f"Module does not expose required key flag "
@@ -312,6 +314,7 @@ class TestLocalFlag:
                     kind="metadata",
                     label="CKA_LOCAL:generated-key",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary="Generated key reports CKA_LOCAL=False",
                 )
         finally:
@@ -351,6 +354,7 @@ class TestLocalFlag:
                     kind="metadata",
                     label="CKA_LOCAL:imported-key",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary="Imported key reports CKA_LOCAL=True",
                 )
         finally:
@@ -390,6 +394,7 @@ class TestLocalFlag:
                     kind="metadata",
                     label="CKA_LOCAL:generated-rsa-keypair",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         f"Module does not set CKA_LOCAL=True on generated RSA keypair: "
                         f"pub={pub_local}, priv={priv_local} "

@@ -402,6 +402,7 @@ class TestTookanUnwrapAttrs:
                         kind="policy",
                         label="Tookan unwrapped key contradicts requested protection",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "SECURITY: C_UnwrapKey returned a result contradicting its "
                             "requested protection template: "
@@ -424,6 +425,7 @@ class TestTookanUnwrapAttrs:
                         kind="metadata",
                         label="Tookan unwrapped key protection readback",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "Tookan C_UnwrapKey result protection readback is malformed: "
                             f"CKA_EXTRACTABLE={_readback_repr(extractable_after_raw)}, "
@@ -616,6 +618,7 @@ class TestTookanUnwrapAttrs:
                         kind="policy",
                         label="Tookan unbound unwrap result exposes protected key material",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "SECURITY: unbound C_UnwrapKey result contains nonempty "
                             "CKA_VALUE while the same result key reports protective "
@@ -630,6 +633,7 @@ class TestTookanUnwrapAttrs:
                         kind="metadata",
                         label="Tookan unbound unwrap result-key protection readback",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "Tookan unbound unwrap result-key protection readback is "
                             "malformed: "

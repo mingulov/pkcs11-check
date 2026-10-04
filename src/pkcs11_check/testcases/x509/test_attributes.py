@@ -148,6 +148,7 @@ class TestCertificateAttributes:
                     expected=der,
                     label="X509:CKA_VALUE matches imported DER",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
 
@@ -175,6 +176,7 @@ class TestCertificateAttributes:
                         expected=CKC_X_509,
                         label="X509:CKA_CERTIFICATE_TYPE must be CKC_X_509",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         kind="metadata",
                     )
 

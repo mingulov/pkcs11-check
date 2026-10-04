@@ -123,6 +123,7 @@ class TestRSAPublicKeyImport:
                     expected=CKK_RSA,
                     label="RSA public-key import: CKA_KEY_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -199,6 +200,7 @@ class TestRSAPrivateKeyImport:
                     expected=CKK_RSA,
                     label="RSA private-key import: CKA_KEY_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:

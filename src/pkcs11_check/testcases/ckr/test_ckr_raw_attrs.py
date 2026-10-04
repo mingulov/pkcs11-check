@@ -302,6 +302,7 @@ def _collect_permission_observations(
                 kind="policy",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: permission attribute unavailable; enforcement oracle disabled",
                 detail={**event_detail, "oracle_disabled": True},
             )
@@ -313,6 +314,7 @@ def _collect_permission_observations(
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: permission attribute readback is malformed",
                 detail={
                     **event_detail,
@@ -328,6 +330,7 @@ def _collect_permission_observations(
                 kind="policy",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: module did not claim the permission restriction",
                 detail={**event_detail, "value": True},
             )

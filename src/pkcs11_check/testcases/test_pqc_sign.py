@@ -158,6 +158,7 @@ class TestMLDSAKeyGeneration:
                     expected=CKO_PUBLIC_KEY,
                     label="ML_DSA:public CKA_CLASS readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
             if priv_cls is not MISSING_ATTRIBUTE:
@@ -166,6 +167,7 @@ class TestMLDSAKeyGeneration:
                     expected=CKO_PRIVATE_KEY,
                     label="ML_DSA:private CKA_CLASS readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -198,6 +200,7 @@ class TestMLDSAKeyGeneration:
                     expected=CKK_ML_DSA,
                     label="ML_DSA:public CKA_KEY_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
             if priv_kt is not MISSING_ATTRIBUTE:
@@ -206,6 +209,7 @@ class TestMLDSAKeyGeneration:
                     expected=CKK_ML_DSA,
                     label="ML_DSA:private CKA_KEY_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -467,6 +471,7 @@ class TestSLHDSAKeyGeneration:
                     expected=CKK_SLH_DSA,
                     label="SLH_DSA:public CKA_KEY_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
             if priv_kt is not MISSING_ATTRIBUTE:
@@ -475,6 +480,7 @@ class TestSLHDSAKeyGeneration:
                     expected=CKK_SLH_DSA,
                     label="SLH_DSA:private CKA_KEY_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:

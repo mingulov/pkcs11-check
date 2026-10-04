@@ -131,6 +131,7 @@ def _record_wrong_attribute(
         kind=kind,
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         summary=f"{label}: provider returned {actual}; expected {expected!r}",
         detail={
             "attribute": {

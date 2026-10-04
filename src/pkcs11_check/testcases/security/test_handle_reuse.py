@@ -78,6 +78,7 @@ def _assert_read_destroyed_handle_fails(rs: Any, key: int) -> None:
         kind="lifecycle",
         label="C_GetAttributeValue on a destroyed object handle (use-after-destroy)",
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         summary="C_GetAttributeValue succeeded with destroyed handle",
     )
 

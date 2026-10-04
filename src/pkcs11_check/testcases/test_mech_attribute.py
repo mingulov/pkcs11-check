@@ -84,6 +84,7 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label}: missing attribute produced no classification",
             )
         return value
@@ -97,6 +98,7 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=rv,
                 summary=(f"{label} attribute read rejected with non-clean CKR: {ckr_name(rv)}"),
             )
@@ -106,6 +108,7 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
                 kind="metadata",
                 label=label,
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=rv,
                 summary=f"{label} attribute read rejected with clean CKR: {ckr_name(rv)}",
             )
@@ -114,6 +117,7 @@ def _read_attr_safe(rs: RawSession, handle: int, attr_id: int, label: str) -> An
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=_ATTRIBUTE_READ_UNSUPPORTED_RVS + _ATTRIBUTE_READ_NONCLEAN_RVS,
             actual=rv,
             summary=f"{label} attribute read returned undefined CK_RV: {ckr_name(rv)}",
