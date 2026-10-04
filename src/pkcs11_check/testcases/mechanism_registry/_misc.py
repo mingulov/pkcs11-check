@@ -469,9 +469,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_SECURID,
         keygen_mech=CKM_SECURID_KEY_GEN,
         key_sizes=(),
-        param_required=True,
+        param_required=False,
         expected_flags=CKF_SIGN | CKF_VERIFY | CKF_GENERATE,
-        notes="SecurID OTP computation (RSA SecurID token algorithm)",
+        notes="SecurID OTP computation (RSA SecurID token algorithm), NULL params",
     )
 
     registry[CKM_HOTP_KEY_GEN] = MechConfig(
@@ -486,9 +486,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_HOTP,
         keygen_mech=CKM_HOTP_KEY_GEN,
         key_sizes=(),
-        param_required=True,
+        param_required=False,
         expected_flags=CKF_SIGN | CKF_VERIFY | CKF_GENERATE,
-        notes="HOTP computation (RFC 4226 HMAC-based OTP)",
+        notes="HOTP computation (RFC 4226 HMAC-based OTP), NULL params",
     )
 
     registry[CKM_ACTI_KEY_GEN] = MechConfig(
@@ -503,9 +503,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         key_type=CKK_ACTI,
         keygen_mech=CKM_ACTI_KEY_GEN,
         key_sizes=(),
-        param_required=True,
+        param_required=False,
         expected_flags=CKF_SIGN | CKF_VERIFY | CKF_GENERATE,
-        notes="ACTI OTP computation",
+        notes="ACTI OTP computation, NULL params",
     )
 
     # ---------------------------------------------------------------------------
