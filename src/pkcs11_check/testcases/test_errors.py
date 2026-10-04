@@ -511,10 +511,6 @@ class TestInvalidOperations:
                         actual=rv,
                         summary="module decrypted invalid RSA-PKCS padding with CKR_OK "
                         "(padding bypass)",
-                        detail={
-                            "out_len": len(recovered),
-                            "repeat_len": None if repeat is None else len(repeat),
-                        },
                     )
                 else:
                     # Nonzero but nondeterministic (or unrepeatable) output fails
@@ -534,10 +530,6 @@ class TestInvalidOperations:
                         summary="module returned CKR_OK with nondeterministic output "
                         f"({len(recovered)} bytes, repeat {repeat_desc}) "
                         "for invalid RSA-PKCS padding (implicit rejection unproven)",
-                        detail={
-                            "out_len": len(recovered),
-                            "repeat_len": None if repeat is None else len(repeat),
-                        },
                     )
             else:
                 classify_negative_rv(
