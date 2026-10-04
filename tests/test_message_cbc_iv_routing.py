@@ -17,6 +17,7 @@ import pytest
 
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
+    CKF_END_OF_MESSAGE,
     CKF_MESSAGE_DECRYPT,
     CKF_MESSAGE_ENCRYPT,
     CKF_MULTI_MESSAGE,
@@ -65,6 +66,7 @@ class _FakeMessageRaw:
         self.msg_aads: list[bytes | None] = []
         self.begins: list[tuple[bytes | None, bytes | None]] = []
         self.nexts: list[tuple[bytes | None, bytes]] = []
+        self.next_flags: list[int] = []
         self.finals: list[str] = []
 
     def C_GenerateKey(self, _sh: int, _mech: Any, _tmpl: Any, _n: int, out: Any) -> int:  # noqa: N802
@@ -119,8 +121,9 @@ class _FakeMessageRaw:
         return self._begin(*args)
 
     def _next(self, out_fill: bytes, args: tuple[Any, ...]) -> int:
-        (_sh, p, pl, data, dl, out, out_len, _flags) = args
+        (_sh, p, pl, data, dl, out, out_len, flags) = args
         self.nexts.append((_buf_bytes(p, pl), bytes(_buf_bytes(data, dl) or b"")))
+        self.next_flags.append(int(flags))
         if out is None:
             out_len._obj.value = len(out_fill)
         else:
@@ -272,6 +275,15 @@ def test_multipart_decrypt_routes_data_through_next() -> None:
     for _param, data in raw.nexts:
         assert data == _CT_FIXTURE
     assert raw.finals == ["enc", "dec"]
+
+
+def test_multipart_next_carries_end_of_message_flag() -> None:
+    """Multipart legs pass CKF_END_OF_MESSAGE on every Next call (#34)."""
+    for method in ("test_message_encrypt_multipart", "test_message_decrypt_multipart"):
+        raw = _FakeMessageRaw()
+        _run(method, _FakeRs(raw))
+        assert raw.next_flags == [int(CKF_END_OF_MESSAGE)] * len(raw.nexts), method
+        assert len(raw.nexts) == 2, method
 
 
 def test_init_refusal_still_fails_loudly() -> None:

@@ -1872,7 +1872,7 @@ def _message_crypto(
     per ``_resolve_mech``); ``msg_param`` carries the per-message parameters
     (e.g. the CBC IV) for both ``C_*Message`` calls. The operation always ends
     with ``final_fn`` on success: message completion and process finalization
-    are distinct (PKCS#11 base v3.0, sections 5.9-5.10).
+    are distinct (PKCS#11 base v3.0, sections 5.9, 5.11).
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = getattr(raw, init_fn)(session, mech.byref(), key)
