@@ -1900,31 +1900,30 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_grouping", 574),
                 ("explicit_mechanism_readback", 57),
                 ("non_readback", 208),
-                ("safe_mechanism_free_readback", 75),
-                ("unresolved", 627),
-                ("unsafe_inherited_readback", 95),
+                ("safe_mechanism_free_readback", 169),
+                ("unresolved", 628),
             ),
             characterization.statuses,
         ),
         (
             "digest",
-            "684f2f9dd74d16122dced4efa5565f378e40e0c801ae6b6a8e4a0f632e2dc2f9",
+            "24e8f2862631a49f474194862e2c5cd654659119ee9cad9f74a7b771f967ba86",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "ab0db8913d3b17011923f64e921d10b1a0290ffba81ac93c83fd09a19ac1c3e2",
+            "02c58eba4433c964fd627445a5e72fb8bbcaecf3ccbc7e51f38edd9e60d1e6c6",
             characterization.candidate_digest,
         ),
         (
             "state_statuses",
             (
-                ("explicit_mechanism_grouping", 1341),
-                ("explicit_mechanism_readback", 344),
-                ("non_readback", 437),
-                ("safe_mechanism_free_readback", 1427),
-                ("unresolved", 2665),
-                ("unsafe_inherited_readback", 235),
+                ("explicit_mechanism_grouping", 1345),
+                ("explicit_mechanism_readback", 345),
+                ("non_readback", 438),
+                ("safe_mechanism_free_readback", 1638),
+                ("unresolved", 2667),
+                ("unsafe_inherited_readback", 22),
             ),
             characterization.state_statuses,
         ),
@@ -1996,6 +1995,51 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     )
     assert defaults_readback[0].operations == (C_GET_ATTRIBUTE_VALUE,)
     assert defaults_readback[0].mechanisms == (NONE_VALUE,)
+    invariants_readback = [
+        finding
+        for finding in all_findings
+        if finding.path == "test_attribute_invariants.py"
+        and finding.function
+        in (
+            "_read_ulong_attr_state",
+            "_classify_imported_key_origin_invariant",
+            "TestDerivedAttributeInvariants."
+            "test_imported_aes_key_reports_not_local_no_key_gen_mechanism",
+        )
+    ]
+    assert len(invariants_readback) == 12
+    assert all(
+        finding.status == STATUS_SAFE_MECHANISM_FREE_READBACK for finding in invariants_readback
+    )
+    assert all(finding.uncertain is False for finding in invariants_readback)
+    visibility_readback = [
+        finding
+        for finding in all_findings
+        if finding.path == "test_object_visibility.py"
+        and finding.emitter == "assert_correct"
+        and finding.operations == (C_GET_ATTRIBUTE_VALUE,)
+    ]
+    assert len(visibility_readback) == 7
+    assert all(
+        finding.status == STATUS_SAFE_MECHANISM_FREE_READBACK for finding in visibility_readback
+    )
+    sensitivity_readback = [
+        finding
+        for finding in all_findings
+        if finding.path == "test_sensitivity.py"
+        and finding.function
+        in (
+            "_classify_get_attribute_rv",
+            "_record_mixed_sensitive_row",
+            "_record_mixed_safe_row",
+            "_record_sensitive_value_leak",
+            "TestSensitiveKeyValue.test_get_attribute_value_mixed_sensitive_template_continues",
+        )
+    ]
+    assert len(sensitivity_readback) == 7
+    assert all(
+        finding.status == STATUS_SAFE_MECHANISM_FREE_READBACK for finding in sensitivity_readback
+    )
     conftest = [
         finding
         for finding in all_findings
@@ -2006,7 +2050,7 @@ def test_current_tree_characterization_is_non_vacuous_pinned_and_not_zero_gate()
     assert len(conftest) == 1
     assert conftest[0].status == STATUS_UNRESOLVED
     assert conftest[0].operations == (UNKNOWN_OPERATION,)
-    assert conftest[0].forwarded_parameters == ("mechanism", "operation")
+    assert conftest[0].forwarded_parameters == ("inherit_mechanism", "mechanism", "operation")
 
     # Exact class and nested-helper sentinels exercise lexical ownership and caller
     # identity in the real tree, not only in the synthetic scanner fixtures.
