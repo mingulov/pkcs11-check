@@ -360,6 +360,7 @@ class TestDefaultStripIsPermitted:
                         kind="policy",
                         label="Default-strip unwrap result exposes protected key material",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "SECURITY: default-strip C_UnwrapKey result contains nonempty "
                             "CKA_VALUE while the same result key reports protective "
@@ -374,6 +375,7 @@ class TestDefaultStripIsPermitted:
                         kind="metadata",
                         label="Default-strip result-key protection readback",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "Default-strip result-key protection readback is malformed: "
                             f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}, "
@@ -577,6 +579,7 @@ class TestUnwrapTemplateBinding:
                             kind="metadata",
                             label="CKA_UNWRAP_TEMPLATE readback missing or malformed",
                             operation="C_GetAttributeValue",
+                            inherit_mechanism=False,
                             summary=template_readback_issue,
                         )
                     classify_policy_enforcement(
@@ -625,6 +628,7 @@ class TestUnwrapTemplateBinding:
                         kind="metadata",
                         label="CKA_UNWRAP_TEMPLATE readback missing or malformed",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             f"{template_readback_issue}; binding effect was not bypassed "
                             f"(CKA_SENSITIVE={_readback_repr(sensitive_after_raw)})"
@@ -644,6 +648,7 @@ class TestUnwrapTemplateBinding:
                         kind="metadata",
                         label="CKA_UNWRAP_TEMPLATE sensitivity result malformed",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         summary=(
                             "Module accepted CKA_UNWRAP_TEMPLATE but returned "
                             f"CKA_SENSITIVE={_readback_repr(sensitive_after_raw)}; binding "

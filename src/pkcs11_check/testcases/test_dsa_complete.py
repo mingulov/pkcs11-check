@@ -265,6 +265,7 @@ def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[b
             expected=2048,
             label="DSA parameter gen: CKA_PRIME_BITS readback",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             kind="metadata",
         )
     if subprime_bits is not MISSING_ATTRIBUTE:
@@ -274,6 +275,7 @@ def _assert_generated_dsa_pq_attrs(raw: Any, sh: int, dp_handle: int) -> tuple[b
             expected=256,
             label="DSA parameter gen: CKA_SUBPRIME_BITS readback",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             kind="metadata",
         )
 

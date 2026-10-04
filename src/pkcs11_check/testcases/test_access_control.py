@@ -81,6 +81,7 @@ def _require_access_bool(value: Any, label: str) -> bool:
             kind="metadata",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             summary=f"{label}: attribute unavailable",
         )
         return False
@@ -91,6 +92,7 @@ def _require_access_bool(value: Any, label: str) -> bool:
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         detail={"actual_type": type(value).__name__, "expected_type": "bool"},
         summary=f"{label}: malformed CK_BBOOL attribute value",
     )
@@ -340,6 +342,7 @@ class TestModifiableAttribute:
                         kind="metadata",
                         label="CKA_MODIFIABLE=False enforcement (create-time)",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         actual=e.rv,
                         summary="Module does not expose CKA_MODIFIABLE",
                     )

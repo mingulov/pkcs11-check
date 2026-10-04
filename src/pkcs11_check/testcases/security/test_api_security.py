@@ -330,6 +330,7 @@ class TestSensitiveExtraction:
                     kind="policy",
                     label="CKA_VALUE readable on CKA_SENSITIVE key",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         "SECURITY: CKA_VALUE readable on SENSITIVE key -- key material exposed"
                     ),
@@ -418,6 +419,7 @@ class TestSensitiveExtraction:
                     kind="policy",
                     label="RSA private exponent readable despite protective attributes",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         "SECURITY: RSA private exponent is readable while the same key "
                         f"reports CKA_SENSITIVE={sensitive_shown} and "
@@ -431,6 +433,7 @@ class TestSensitiveExtraction:
                     kind="metadata",
                     label="RSA private-key protection attributes malformed",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         "RSA private-key protection readback returned a malformed value: "
                         f"CKA_SENSITIVE={sensitive_shown}, "
@@ -445,6 +448,7 @@ class TestSensitiveExtraction:
                     kind="metadata",
                     label="RSA private exponent readback empty or malformed",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         "RSA private exponent readback is empty or malformed: "
                         f"{exponent_value!r}; CKA_SENSITIVE={sensitive_shown}, "
@@ -666,6 +670,7 @@ class TestKeyUsageRestrictions:
                     kind="policy",
                     label="CKA_VALUE readable on non-extractable key",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     summary=(
                         "SECURITY: CKA_VALUE readable on non-extractable key -- "
                         "key material exposed"

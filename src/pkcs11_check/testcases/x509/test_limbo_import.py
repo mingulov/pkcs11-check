@@ -163,6 +163,7 @@ class TestLimboCertImport:
                     expected=_portable_label(tc["id"]),
                     label="X509:CKA_LABEL round-trips on raw cert import",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
 

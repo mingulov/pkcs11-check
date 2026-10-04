@@ -160,6 +160,7 @@ class TestCertificateImport:
                     expected=CKC_X_509,
                     label="X509:CKA_CERTIFICATE_TYPE readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         except CkrAssertionError as exc:
@@ -255,6 +256,7 @@ class TestCertificateExtractFields:
                     expected=ca_cert_der,
                     label="X509:CKA_VALUE matches imported DER",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         except CkrAssertionError as exc:
@@ -433,6 +435,7 @@ class TestCertificateExtractFields:
                     expected=issuer,
                     label="X509:self-signed CA CKA_SUBJECT == CKA_ISSUER",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         except AssertionError as e:

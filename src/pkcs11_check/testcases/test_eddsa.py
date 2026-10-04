@@ -175,6 +175,7 @@ class TestEdDSAKeyGeneration:
                 expected=CKK_EC_EDWARDS,
                 label="Ed25519:public CKA_KEY_TYPE readback",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 kind="metadata",
             )
         if priv_kt is not MISSING_ATTRIBUTE:
@@ -183,6 +184,7 @@ class TestEdDSAKeyGeneration:
                 expected=CKK_EC_EDWARDS,
                 label="Ed25519:private CKA_KEY_TYPE readback",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 kind="metadata",
             )
 
@@ -205,6 +207,7 @@ class TestEdDSAKeyGeneration:
                 expected=ED25519_OID,
                 label="Ed25519:CKA_EC_PARAMS readback",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 kind="metadata",
             )
 
@@ -389,6 +392,7 @@ class TestEd448:
                 expected=int(CKK_EC_EDWARDS),
                 label="Ed448:CKA_KEY_TYPE readback",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 kind="metadata",
             )
 

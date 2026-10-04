@@ -112,6 +112,7 @@ def _record_malformed_readback(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         expected=CKR_OK,
         actual=CKR_OK,
         detail={
@@ -187,6 +188,7 @@ def _record_baseline_mismatch(
         kind="metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         expected=CKR_OK,
         actual=CKR_OK,
         detail={
@@ -419,6 +421,7 @@ def _read_back_for_effect(
             kind="metadata" if reason == "not_operational" else "lifecycle",
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=CKR_OK,
             actual=exc.rv,
             detail={"attributes": [int(attr) for attr in attrs]},
@@ -848,6 +851,7 @@ class TestSetAttributePositive:
                 expected=b"\xaa\xbb",
                 label="CKA_ID readback after C_SetAttributeValue",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 kind="metadata",
             )
         finally:

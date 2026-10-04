@@ -97,6 +97,7 @@ class TestCertificateLifecycle:
                     expected=True,
                     label="X509:CKA_TOKEN=True persistence readback",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         except CkrAssertionError as exc:
@@ -197,6 +198,7 @@ class TestCertificateLifecycle:
                     expected=cid,
                     label="X509:CKA_ID readback after set on certificate",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         except CkrAssertionError as exc:

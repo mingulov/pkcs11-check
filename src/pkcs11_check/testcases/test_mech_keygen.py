@@ -70,6 +70,7 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
                 kind="metadata",
                 label=f"{label}:CKA_LOCAL",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 summary=f"{label} CKA_LOCAL: missing attribute produced no classification",
             )
         return value
@@ -83,6 +84,7 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
                 kind="metadata",
                 label=f"{label}:CKA_LOCAL",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=rv,
                 summary=f"{label} CKA_LOCAL read rejected with non-clean CKR: {ckr_name(rv)}",
             )
@@ -92,6 +94,7 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
                 kind="metadata",
                 label=f"{label}:CKA_LOCAL",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=rv,
                 summary=f"{label} CKA_LOCAL read rejected with clean CKR: {ckr_name(rv)}",
             )
@@ -100,6 +103,7 @@ def _read_local_flag(rs: RawSession, handle: int, label: str) -> Any:
             kind="metadata",
             label=f"{label}:CKA_LOCAL",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=_LOCAL_READ_UNSUPPORTED_RVS + _LOCAL_READ_NONCLEAN_RVS,
             actual=rv,
             summary=f"{label} CKA_LOCAL read returned undefined CK_RV: {ckr_name(rv)}",
