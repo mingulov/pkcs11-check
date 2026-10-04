@@ -1,6 +1,6 @@
 """Probe: PKCS#11 v3.2 function error conditions via a raw session.
 
-Eight child bodies ported from the legacy ``ckr/test_ckr_v32_raw.py`` scripts,
+Nine child bodies ported from the legacy ``ckr/test_ckr_v32_raw.py`` scripts,
 dispatched on ``extra["probe"]``.  Each drives a v3.2 function
 (``C_VerifySignatureInit`` / ``C_VerifySignature`` / ``C_EncapsulateKey`` /
 ``C_DecapsulateKey`` / ``C_AsyncGetID`` / ``C_WrapKeyAuthenticated``) through a
@@ -140,12 +140,21 @@ def _decapsulate_null_pointers(ctx: ProbeContext) -> None:
 
 
 def _async_get_id_no_operation(ctx: ProbeContext) -> None:
-    """C_AsyncGetID with no pending async operation."""
-    id_buf = (ctypes.c_ubyte * 256)()
-    id_len = ctypes.c_ulong(256)
-    rv = ctx.raw.C_AsyncGetID(ctx.sh, id_buf, ctypes.byref(id_len))
+    """C_AsyncGetID with a valid selector and no pending async operation (fw#35)."""
+    name = ctypes.create_string_buffer(b"C_Digest")
+    async_id = ctypes.c_ulong(0)
+    rv = ctx.raw.C_AsyncGetID(ctx.sh, name, ctypes.byref(async_id))
     _emit_result("C_AsyncGetID", rv)
     _emit_complete("C_AsyncGetID")
+
+
+def _async_get_id_empty_selector(ctx: ProbeContext) -> None:
+    """C_AsyncGetID with an empty selector must return CKR_ARGUMENTS_BAD (fw#35)."""
+    name = ctypes.create_string_buffer(b"")
+    async_id = ctypes.c_ulong(0)
+    rv = ctx.raw.C_AsyncGetID(ctx.sh, name, ctypes.byref(async_id))
+    _emit_result("C_AsyncGetID.empty_selector", rv)
+    _emit_complete("C_AsyncGetID_empty_selector")
 
 
 def _wrap_auth_wrong_mechanism(ctx: ProbeContext) -> None:
@@ -170,6 +179,7 @@ _PROBES = {
     "decapsulate_wrong_mechanism": _decapsulate_wrong_mechanism,
     "decapsulate_null_pointers": _decapsulate_null_pointers,
     "async_get_id_no_operation": _async_get_id_no_operation,
+    "async_get_id_empty_selector": _async_get_id_empty_selector,
     "wrap_auth_wrong_mechanism": _wrap_auth_wrong_mechanism,
 }
 
