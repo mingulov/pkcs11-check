@@ -1258,7 +1258,7 @@ class TestAsyncLifecycle:
 
     TODO: Add full async lifecycle test when a module supports it:
       1. Start an async operation (e.g., async C_GenerateKeyPair)
-      2. Poll with C_AsyncGetID to get the operation ID
+      2. Get the operation ID with C_AsyncGetID (persistence identifier)
       3. Complete with C_AsyncComplete or C_AsyncJoin
       4. Verify the result matches a synchronous equivalent
     Currently no tested module supports async operations.
