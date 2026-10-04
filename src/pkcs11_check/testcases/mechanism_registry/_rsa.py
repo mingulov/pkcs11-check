@@ -171,10 +171,11 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_RSA_PKCS_KEY_PAIR_GEN,
         key_sizes=_RSA_SIZES,
         is_keypair=True,
+        input_constraint="x931",
         multi_part_supported=False,
         keygen_recipe=_rsa,
         expected_flags=_SIG_VER,
-        notes="RSA X9.31 sign/verify with pre-hash",
+        notes="RSA X9.31 sign/verify: digest || trailer-ID (app-applied trailer)",
     )
 
     # -- Hash-and-sign: SHA-1 through SHA-512 ------------------------------------
