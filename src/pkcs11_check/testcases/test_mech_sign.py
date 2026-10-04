@@ -216,6 +216,10 @@ class TestMechSignRoundtrip:
                 import hashlib
 
                 data = hashlib.sha256(data).digest()
+            elif config.input_constraint == "x931":
+                from pkcs11_check.testcases._x931 import x931_sign_input
+
+                data = x931_sign_input(data, "sha256")
             mech_param = make_mech_param_or_skip(entry)
 
             try:
@@ -270,6 +274,11 @@ class TestMechSignRoundtrip:
 
                 data_a = hashlib.sha256(data_a).digest()
                 data_b = hashlib.sha256(data_b).digest()
+            elif config.input_constraint == "x931":
+                from pkcs11_check.testcases._x931 import x931_sign_input
+
+                data_a = x931_sign_input(data_a, "sha256")
+                data_b = x931_sign_input(data_b, "sha256")
             mech_param = make_mech_param_or_skip(entry)
 
             try:

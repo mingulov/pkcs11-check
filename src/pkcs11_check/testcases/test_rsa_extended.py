@@ -9,14 +9,13 @@ OASIS PKCS#11 v3.2 spec: RSA.
 from __future__ import annotations
 
 import ctypes
-import hashlib
 import os
 from ctypes import byref
 from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import classify, xfail_as
 from pkcs11_check.raw.pack import (
     PackedMechanism,
     attr_ulong,
@@ -47,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
+    CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
     CKA_TOKEN,
@@ -68,6 +68,7 @@ from pkcs11_check.raw.types_std import (
     CKZ_DATA_SPECIFIED,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._x931 import verify_x931_signature, x931_sign_input
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
     KEYPAIR_RUNTIME_REJECT_RVS,
@@ -179,71 +180,129 @@ def _make_extractable_aes(rs: Any, bits: int = 128) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _read_rsa_pubkey_numbers_or_xfail(rs: Any, pub: int) -> tuple[int, int]:
+    """Read (n, e) for the X9.31 oracle; unreadable attrs xfail (fw#43)."""
+    try:
+        attrs = read_attributes(rs.raw, rs.sh, pub, [CKA_MODULUS, CKA_PUBLIC_EXPONENT])
+    except AssertionError as exc:
+        xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "RSA public-number readback not operational")
+        raise
+    n_bytes = attr_or_record(
+        attrs,
+        CKA_MODULUS,
+        label="X9.31 oracle CKA_MODULUS",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    e_bytes = attr_or_record(
+        attrs,
+        CKA_PUBLIC_EXPONENT,
+        label="X9.31 oracle CKA_PUBLIC_EXPONENT",
+        reason="not_operational",
+        inherit_mechanism=False,
+    )
+    if (
+        n_bytes is MISSING_ATTRIBUTE
+        or e_bytes is MISSING_ATTRIBUTE
+        or not isinstance(n_bytes, bytes)
+        or not isinstance(e_bytes, bytes)
+    ):
+        xfail_as(
+            "not_operational",
+            kind="crypto",
+            label="RSA public-number readback",
+            operation="C_GetAttributeValue",
+            mechanism="CKM_RSA_X9_31",
+            summary="unusable RSA public modulus/exponent for the X9.31 oracle",
+        )
+    return int.from_bytes(n_bytes, "big"), int.from_bytes(e_bytes, "big")
+
+
 class TestRSAX931:
-    """CKM_RSA_X9_31 sign/verify with pre-hashed data."""
+    """CKM_RSA_X9_31 sign/verify with digest || trailer-ID input (fw#43)."""
 
     def test_sign_verify_sha256(self, p11_raw_session: Any) -> None:
-        """Sign a SHA-256 digest with RSA X9.31 and verify."""
+        """Sign SHA-256 digest||trailer with RSA X9.31, verify + oracle-check."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_X9_31"):
             pytest.skip("CKM_RSA_X9_31 not supported")
 
         pub, priv = _rsa_keypair(rs, sign=True)
         try:
-            # X9.31 operates on pre-hashed data - must be exactly hash length
-            digest = hashlib.sha256(b"test data for X9.31 signing").digest()
-            assert len(digest) == 32
+            # X9.31 signs digest || trailer-ID (the application applies the
+            # trailer; a bare digest is invalid input).
+            message = b"test data for X9.31 signing"
+            sign_input = x931_sign_input(message, "sha256")
+            assert len(sign_input) == 33
 
             try:
-                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, sign_input)
             except AssertionError as exc:
                 xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign not operational")
                 raise
 
             assert len(sig) == 256  # 2048-bit RSA = 256 bytes
-            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, digest, sig)
+            n, e = _read_rsa_pubkey_numbers_or_xfail(rs, pub)
+            assert_correct(
+                actual=verify_x931_signature(sig, e, n, message, "sha256"),
+                expected=None,
+                label="CKM_RSA_X9_31:oracle SHA-256 signature block",
+                operation="C_Sign",
+                mechanism="CKM_RSA_X9_31",
+            )
+            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, sign_input, sig)
             assert result is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_sign_verify_sha1(self, p11_raw_session: Any) -> None:
-        """Sign a SHA-1 digest with RSA X9.31 and verify."""
+        """Sign SHA-1 digest||trailer with RSA X9.31, verify + oracle-check."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_X9_31"):
             pytest.skip("CKM_RSA_X9_31 not supported")
 
         pub, priv = _rsa_keypair(rs, sign=True)
         try:
-            digest = hashlib.sha1(b"test data for X9.31 SHA-1", usedforsecurity=False).digest()  # noqa: S324
-            assert len(digest) == 20
+            message = b"test data for X9.31 SHA-1"
+            sign_input = x931_sign_input(message, "sha1")
+            assert len(sign_input) == 21
 
             try:
-                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, sign_input)
             except AssertionError as exc:
                 xfail_if_known_ckr(
-                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign with SHA-1 digest not operational"
+                    exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign with SHA-1 input not operational"
                 )
                 raise
 
-            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, digest, sig)
+            n, e = _read_rsa_pubkey_numbers_or_xfail(rs, pub)
+            assert_correct(
+                actual=verify_x931_signature(sig, e, n, message, "sha1"),
+                expected=None,
+                label="CKM_RSA_X9_31:oracle SHA-1 signature block",
+                operation="C_Sign",
+                mechanism="CKM_RSA_X9_31",
+            )
+            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, sign_input, sig)
             assert result is True
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_tampered_signature_fails(self, p11_raw_session: Any) -> None:
-        """Verification with tampered signature should fail."""
+        """Verification with tampered signature should fail (module + oracle)."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_X9_31"):
             pytest.skip("CKM_RSA_X9_31 not supported")
 
         pub, priv = _rsa_keypair(rs, sign=True)
         try:
-            digest = hashlib.sha256(b"tamper detection test").digest()
+            message = b"tamper detection test"
+            sign_input = x931_sign_input(message, "sha256")
 
             try:
-                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, sign_input)
             except AssertionError as exc:
                 xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign not operational")
                 raise
@@ -253,32 +312,39 @@ class TestRSAX931:
             tampered[-1] ^= 0xFF
             tampered_sig = bytes(tampered)
 
-            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, digest, tampered_sig)
+            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, sign_input, tampered_sig)
             assert result is False
+            n, e = _read_rsa_pubkey_numbers_or_xfail(rs, pub)
+            reason = verify_x931_signature(tampered_sig, e, n, message, "sha256")
+            assert reason is not None, "oracle accepted a tampered X9.31 signature"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_wrong_digest_fails(self, p11_raw_session: Any) -> None:
-        """Verification with different digest should fail."""
+        """Verification against other input should fail (module + oracle)."""
         rs = p11_raw_session
         if not rs.has_mechanism("RSA_X9_31"):
             pytest.skip("CKM_RSA_X9_31 not supported")
 
         pub, priv = _rsa_keypair(rs, sign=True)
         try:
-            digest = hashlib.sha256(b"original data").digest()
+            message = b"original data"
+            other_message = b"different data"
+            sign_input = x931_sign_input(message, "sha256")
+            other_input = x931_sign_input(other_message, "sha256")
 
             try:
-                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, digest)
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_RSA_X9_31, sign_input)
             except AssertionError as exc:
                 xfail_if_known_ckr(exc, _RSA_OP_REJECT_RVS, "CKM_RSA_X9_31 sign not operational")
                 raise
 
-            wrong_digest = hashlib.sha256(b"different data").digest()
-
-            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, wrong_digest, sig)
+            result = verify_single(rs.raw, rs.sh, pub, CKM_RSA_X9_31, other_input, sig)
             assert result is False
+            n, e = _read_rsa_pubkey_numbers_or_xfail(rs, pub)
+            reason = verify_x931_signature(sig, e, n, other_message, "sha256")
+            assert reason is not None, "oracle accepted an X9.31 signature for other input"
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)
