@@ -1305,6 +1305,7 @@ def assert_correct(
     source: str | None = None,
     vector_id: str | None = None,
     kind: str = "crypto",
+    inherit_mechanism: bool = True,
 ) -> None:
     """KAT correctness check: equal values pass; a mismatch is wrong_result.
 
@@ -1312,6 +1313,8 @@ def assert_correct(
     ``pytest.fail`` via :func:`pkcs11_check.classification.classify`. ``kind``
     selects the verdict family (default ``"crypto"`` -- the common case for KAT
     outputs; pass ``"metadata"`` for a non-crypto attribute-value verdict).
+    Pass ``inherit_mechanism=False`` for mechanism-free readbacks so the
+    record cannot inherit a stale mechanism from the calling test.
     On match, returns normally with no side effects.
     """
     from pkcs11_check import classification as C
@@ -1324,6 +1327,7 @@ def assert_correct(
         label=label,
         operation=operation,
         mechanism=mechanism,
+        inherit_mechanism=inherit_mechanism,
         source=source,
         vector_id=vector_id,
         summary=f"{label}: output does not match known answer",
