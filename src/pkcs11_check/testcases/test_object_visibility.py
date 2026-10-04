@@ -270,6 +270,7 @@ class TestTokenObjectPersistence:
                     expected=b"persistent-value",
                     label="CKO_DATA:CKA_VALUE preserved across sessions (token)",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -308,6 +309,7 @@ class TestTokenObjectPersistence:
                     expected=label,
                     label="CKO_DATA:CKA_LABEL preserved across sessions",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
             attr_value = attr_or_record(
@@ -323,6 +325,7 @@ class TestTokenObjectPersistence:
                     expected=payload,
                     label="CKO_DATA:CKA_VALUE preserved across sessions",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -413,6 +416,7 @@ class TestPrivateVisibility:
                             expected=b"public-data",
                             label="CKO_DATA:public CKA_VALUE readback in public session",
                             operation="C_GetAttributeValue",
+                            inherit_mechanism=False,
                             kind="metadata",
                         )
             finally:
@@ -456,6 +460,7 @@ class TestPrivateVisibility:
                     expected=b"secret-stuff",
                     label="CKO_DATA:private CKA_VALUE readback after login",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -748,6 +753,7 @@ class TestTokenPrivateInteraction:
                     expected=b"priv-token-data",
                     label="CKO_DATA:private token CKA_VALUE readback in new session",
                     operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
                     kind="metadata",
                 )
         finally:
@@ -805,6 +811,7 @@ class TestSessionObjectCrossVisibility:
                                 expected=b"cross-visible",
                                 label="CKO_DATA:session object CKA_VALUE in concurrent session",
                                 operation="C_GetAttributeValue",
+                                inherit_mechanism=False,
                                 kind="metadata",
                             )
                 finally:

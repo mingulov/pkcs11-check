@@ -162,6 +162,7 @@ def _classify_get_attribute_rv(
             kind=kind,
             label=label,
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=expected,
             actual=rv,
             summary=f"{label}: accepted invalid (CKR_OK) -- must reject",
@@ -179,6 +180,7 @@ def _classify_get_attribute_rv(
         kind=kind if reason == "nonspec_reject" else "metadata",
         label=label,
         operation="C_GetAttributeValue",
+        inherit_mechanism=False,
         expected=expected,
         actual=rv,
     )
@@ -226,6 +228,7 @@ def _record_mixed_sensitive_row(
             kind="policy",
             label="C_GetAttributeValue mixed sensitive row",
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             actual=rv,
             detail={
                 "attribute": {"name": "CKA_VALUE", "id": int(CKA_VALUE)},
@@ -259,6 +262,7 @@ def _record_mixed_safe_row(
                 kind="policy",
                 label="C_GetAttributeValue mixed safe row length",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=rv,
                 detail={
                     "attribute": {"name": "CKA_LABEL", "id": int(CKA_LABEL)},
@@ -281,6 +285,7 @@ def _record_mixed_safe_row(
                 kind="policy",
                 label="C_GetAttributeValue mixed safe row value",
                 operation="C_GetAttributeValue",
+                inherit_mechanism=False,
                 actual=rv,
                 detail={
                     "attribute": {"name": "CKA_LABEL", "id": int(CKA_LABEL)},
@@ -359,6 +364,7 @@ def _record_sensitive_value_leak(
             kind="policy",
             label=("raw C_GetAttributeValue copied CKA_VALUE bytes for a protected AES key"),
             operation="C_GetAttributeValue",
+            inherit_mechanism=False,
             expected=(CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID),
             actual=rv,
             detail={
@@ -684,6 +690,7 @@ class TestSensitiveKeyValue:
                         kind="policy",
                         label="mixed C_GetAttributeValue CKA_SENSITIVE claim",
                         operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
                         mechanism=None,
                         actual=rv,
                         summary=(
