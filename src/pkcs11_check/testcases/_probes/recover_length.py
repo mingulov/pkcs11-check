@@ -55,6 +55,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
+    CKR_USER_NOT_LOGGED_IN,
 )
 from pkcs11_check.testcases._probes._emit import emit_provider_finding
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
@@ -72,6 +73,15 @@ _RECOVER_SETUP_RVS: frozenset[int] = frozenset(int(rv) for rv in KEYPAIR_RUNTIME
     int(CKR_OPERATION_NOT_INITIALIZED),
 }
 
+# Private-key setup steps additionally accept CKR_USER_NOT_LOGGED_IN: probe
+# login is skipped when no PIN is configured, so a login-gated token
+# conformantly refuses C_SignRecoverInit/C_SignRecover without login
+# (advertised but not operational). Public-key steps (keygen, verify) never
+# need login, so the same RV there stays a loud probe error.
+_PRIVATE_KEY_SETUP_RVS: frozenset[int] = _RECOVER_SETUP_RVS | {
+    int(CKR_USER_NOT_LOGGED_IN),
+}
+
 
 class _SetupXfailError(Exception):
     """Internal signal: a clean setup rejection was encountered; SETUP_XFAIL already printed."""
@@ -82,8 +92,8 @@ def _setup_xfail_rv(rv: int, purpose: str) -> NoReturn:
     raise _SetupXfailError()
 
 
-def _setup_xfail_if_known(rv: int, purpose: str) -> None:
-    if int(rv) in _RECOVER_SETUP_RVS:
+def _setup_xfail_if_known(rv: int, purpose: str, *, known: frozenset[int] | None = None) -> None:
+    if int(rv) in (known if known is not None else _RECOVER_SETUP_RVS):
         _setup_xfail_rv(rv, purpose)
 
 
@@ -156,18 +166,20 @@ def _sign_recover(raw: Any, sh: int, priv: Any, payload: bytes) -> bytes:
     rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
     if rv != CKR_OK:
         _setup_skip_if_init_not_supported(rv, "C_SignRecoverInit rejected")
-        _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
+        _setup_xfail_if_known(rv, "C_SignRecoverInit rejected", known=_PRIVATE_KEY_SETUP_RVS)
         raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
     payload_buf = _byte_array(payload)
     sig_len = CK_ULONG(0)
     rv = raw.C_SignRecover(sh, payload_buf, len(payload), None, ctypes.byref(sig_len))
     if rv != CKR_OK:
-        _setup_xfail_if_known(rv, "C_SignRecover size query rejected")
+        _setup_xfail_if_known(rv, "C_SignRecover size query rejected", known=_PRIVATE_KEY_SETUP_RVS)
         raise AssertionError(f"C_SignRecover size query returned {ckr_name(rv)}")
     sig_buf = (ctypes.c_ubyte * sig_len.value)()
     rv = raw.C_SignRecover(sh, payload_buf, len(payload), sig_buf, ctypes.byref(sig_len))
     if rv != CKR_OK:
-        _setup_xfail_if_known(rv, "C_SignRecover setup signing rejected")
+        _setup_xfail_if_known(
+            rv, "C_SignRecover setup signing rejected", known=_PRIVATE_KEY_SETUP_RVS
+        )
         raise AssertionError(f"C_SignRecover returned {ckr_name(rv)}")
     return bytes(sig_buf[: sig_len.value])
 
@@ -192,7 +204,7 @@ def _run_sign_huge_data_len(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
         if rv != CKR_OK:
             _setup_skip_if_init_not_supported(rv, "C_SignRecoverInit rejected")
-            _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
+            _setup_xfail_if_known(rv, "C_SignRecoverInit rejected", known=_PRIVATE_KEY_SETUP_RVS)
             raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
         data = (ctypes.c_ubyte * 16)(*range(16))
         sig_buf = (ctypes.c_ubyte * 256)()
@@ -400,13 +412,15 @@ def _run_sign_one_byte_guard(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         rv = raw.C_SignRecoverInit(sh, mech.byref(), priv.value)
         if rv != CKR_OK:
             _setup_skip_if_init_not_supported(rv, "C_SignRecoverInit rejected")
-            _setup_xfail_if_known(rv, "C_SignRecoverInit rejected")
+            _setup_xfail_if_known(rv, "C_SignRecoverInit rejected", known=_PRIVATE_KEY_SETUP_RVS)
             raise AssertionError(f"C_SignRecoverInit returned {ckr_name(rv)}")
 
         needed = CK_ULONG(0)
         rv = raw.C_SignRecover(sh, payload_buf, len(payload), None, ctypes.byref(needed))
         if rv != CKR_OK:
-            _setup_xfail_if_known(rv, "C_SignRecover size query rejected")
+            _setup_xfail_if_known(
+                rv, "C_SignRecover size query rejected", known=_PRIVATE_KEY_SETUP_RVS
+            )
             raise AssertionError(f"C_SignRecover size query returned {ckr_name(rv)}")
         if needed.value <= 1:
             _setup_xfail_rv(CKR_OK, f"C_SignRecover reported only {needed.value} output byte(s)")
