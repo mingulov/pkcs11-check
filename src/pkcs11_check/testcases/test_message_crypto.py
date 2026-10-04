@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import byref
 from typing import Any
 
@@ -20,6 +21,9 @@ from pkcs11_check.raw.recipes import (
 from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ULONG,
+    CKF_END_OF_MESSAGE,
+    CKF_MESSAGE_DECRYPT,
+    CKF_MESSAGE_ENCRYPT,
     CKF_MESSAGE_SIGN,
     CKF_MESSAGE_VERIFY,
     CKF_MULTI_MESSAGE,
@@ -112,6 +116,8 @@ def _skip_unless_message_functions(rs: Any, funcs: list[str]) -> None:
 
 
 _MESSAGE_FLAG_NAMES = {
+    int(CKF_MESSAGE_ENCRYPT): "CKF_MESSAGE_ENCRYPT",
+    int(CKF_MESSAGE_DECRYPT): "CKF_MESSAGE_DECRYPT",
     int(CKF_MESSAGE_SIGN): "CKF_MESSAGE_SIGN",
     int(CKF_MESSAGE_VERIFY): "CKF_MESSAGE_VERIFY",
     int(CKF_MULTI_MESSAGE): "CKF_MULTI_MESSAGE",
@@ -368,13 +374,29 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
+        _require_message_flags(
+            rs,
+            "AES_CBC",
+            (int(CKF_MESSAGE_ENCRYPT),),
+            "single message encrypt",
+        )
         key = gen_aes_key_or_xfail(rs, 256, purpose="message encrypt setup")
         plaintext = b"A" * 32
         try:
+            from pkcs11_check.raw.pack import mech_bytes
             from pkcs11_check.raw.recipes import message_encrypt
 
+            iv = os.urandom(16)
             try:
-                ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
+                ct = message_encrypt(
+                    rs.raw,
+                    rs.sh,
+                    key,
+                    CKM_AES_CBC,
+                    plaintext,
+                    mech_param=mech_bytes(CKM_AES_CBC, iv),
+                    msg_param=iv,
+                )
             except AssertionError as exc:
                 _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
@@ -391,13 +413,24 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_DECRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
+        _require_message_flags(
+            rs,
+            "AES_CBC",
+            (int(CKF_MESSAGE_ENCRYPT), int(CKF_MESSAGE_DECRYPT)),
+            "single message decrypt",
+        )
         key = gen_aes_key_or_xfail(rs, 256, purpose="message decrypt setup")
         plaintext = b"A" * 32
         try:
+            from pkcs11_check.raw.pack import mech_bytes
             from pkcs11_check.raw.recipes import message_decrypt, message_encrypt
 
+            iv = os.urandom(16)
+            cbc_param = mech_bytes(CKM_AES_CBC, iv)
             try:
-                ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
+                ct = message_encrypt(
+                    rs.raw, rs.sh, key, CKM_AES_CBC, plaintext, mech_param=cbc_param, msg_param=iv
+                )
             except AssertionError as exc:
                 _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
@@ -405,7 +438,9 @@ class TestMessageEncryptDecrypt:
                 )
                 raise
             try:
-                pt = message_decrypt(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
+                pt = message_decrypt(
+                    rs.raw, rs.sh, key, CKM_AES_CBC, ct, mech_param=cbc_param, msg_param=iv
+                )
             except AssertionError as exc:
                 _skip_if_message_op_not_implemented(exc, "message decrypt")
                 xfail_if_known_ckr(
@@ -428,27 +463,53 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
+        _require_message_flags(
+            rs,
+            "AES_CBC",
+            (int(CKF_MESSAGE_ENCRYPT), int(CKF_MULTI_MESSAGE)),
+            "multipart message encrypt",
+        )
         key = gen_aes_key_or_xfail(rs, 256, purpose="message multipart encrypt setup")
         plaintext = b"A" * 32
         try:
-            from pkcs11_check.raw.pack import mech_simple
+            from pkcs11_check.raw.pack import mech_bytes
 
-            packed = mech_simple(CKM_AES_CBC)
+            iv = os.urandom(16)
+            iv_buf = to_ubyte_buf(iv)
+            packed = mech_bytes(CKM_AES_CBC, iv)
             rv = rs.raw.C_MessageEncryptInit(rs.sh, packed.byref(), key)
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_MessageEncryptInit")
 
             in_buf = to_ubyte_buf(plaintext)
-            rv = rs.raw.C_EncryptMessageBegin(rs.sh, None, 0, in_buf, len(plaintext))
+            rv = rs.raw.C_EncryptMessageBegin(rs.sh, iv_buf, len(iv), None, 0)
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_EncryptMessageBegin")
 
             out_len = CK_ULONG(0)
-            rv = rs.raw.C_EncryptMessageNext(rs.sh, None, 0, None, 0, None, byref(out_len), 1)
+            rv = rs.raw.C_EncryptMessageNext(
+                rs.sh,
+                iv_buf,
+                len(iv),
+                in_buf,
+                len(plaintext),
+                None,
+                byref(out_len),
+                CKF_END_OF_MESSAGE,
+            )
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_EncryptMessageNext (size)")
             out_buf = (ctypes.c_ubyte * out_len.value)()
-            rv = rs.raw.C_EncryptMessageNext(rs.sh, None, 0, None, 0, out_buf, byref(out_len), 1)
+            rv = rs.raw.C_EncryptMessageNext(
+                rs.sh,
+                iv_buf,
+                len(iv),
+                in_buf,
+                len(plaintext),
+                out_buf,
+                byref(out_len),
+                CKF_END_OF_MESSAGE,
+            )
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_EncryptMessageNext")
 
@@ -466,13 +527,25 @@ class TestMessageEncryptDecrypt:
         _skip_unless_message_functions(rs, MESSAGE_DECRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
+        _require_message_flags(
+            rs,
+            "AES_CBC",
+            (int(CKF_MESSAGE_ENCRYPT), int(CKF_MESSAGE_DECRYPT), int(CKF_MULTI_MESSAGE)),
+            "multipart message decrypt",
+        )
         key = gen_aes_key_or_xfail(rs, 256, purpose="message multipart decrypt setup")
         plaintext = b"A" * 32
         try:
+            from pkcs11_check.raw.pack import mech_bytes
             from pkcs11_check.raw.recipes import message_encrypt
 
+            iv = os.urandom(16)
+            iv_buf = to_ubyte_buf(iv)
+            cbc_param = mech_bytes(CKM_AES_CBC, iv)
             try:
-                ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
+                ct = message_encrypt(
+                    rs.raw, rs.sh, key, CKM_AES_CBC, plaintext, mech_param=cbc_param, msg_param=iv
+                )
             except AssertionError as exc:
                 _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
@@ -480,24 +553,40 @@ class TestMessageEncryptDecrypt:
                 )
                 raise
 
-            from pkcs11_check.raw.pack import mech_simple
-
-            packed = mech_simple(CKM_AES_CBC)
+            packed = mech_bytes(CKM_AES_CBC, iv)
             rv = rs.raw.C_MessageDecryptInit(rs.sh, packed.byref(), key)
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_MessageDecryptInit")
 
             in_buf = to_ubyte_buf(ct)
-            rv = rs.raw.C_DecryptMessageBegin(rs.sh, None, 0, in_buf, len(ct))
+            rv = rs.raw.C_DecryptMessageBegin(rs.sh, iv_buf, len(iv), None, 0)
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_DecryptMessageBegin")
 
             out_len = CK_ULONG(0)
-            rv = rs.raw.C_DecryptMessageNext(rs.sh, None, 0, None, 0, None, byref(out_len), 1)
+            rv = rs.raw.C_DecryptMessageNext(
+                rs.sh,
+                iv_buf,
+                len(iv),
+                in_buf,
+                len(ct),
+                None,
+                byref(out_len),
+                CKF_END_OF_MESSAGE,
+            )
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_DecryptMessageNext (size)")
             out_buf = (ctypes.c_ubyte * out_len.value)()
-            rv = rs.raw.C_DecryptMessageNext(rs.sh, None, 0, None, 0, out_buf, byref(out_len), 1)
+            rv = rs.raw.C_DecryptMessageNext(
+                rs.sh,
+                iv_buf,
+                len(iv),
+                in_buf,
+                len(ct),
+                out_buf,
+                byref(out_len),
+                CKF_END_OF_MESSAGE,
+            )
             if rv != CKR_OK:
                 _handle_message_rv(rv, "C_DecryptMessageNext")
 
@@ -518,16 +607,27 @@ class TestMessageEncryptDecrypt:
     def test_message_encrypt_decrypt_roundtrip(self, p11_raw_session: Any) -> None:
         """Encrypt with message API, decrypt with standard C_Decrypt API (cross-verification)."""
         rs = p11_raw_session
-        _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS + MESSAGE_DECRYPT_FUNCS)
+        _skip_unless_message_functions(rs, MESSAGE_ENCRYPT_FUNCS)
         if not rs.has_mechanism("AES_CBC"):
             pytest.skip("CKM_AES_CBC not supported")
+        _require_message_flags(
+            rs,
+            "AES_CBC",
+            (int(CKF_MESSAGE_ENCRYPT),),
+            "message cross-verify",
+        )
         key = gen_aes_key_or_xfail(rs, 256, purpose="message cross-verify setup")
         plaintext = b"cross-verify test data padding!!"
         try:
+            from pkcs11_check.raw.pack import mech_bytes
             from pkcs11_check.raw.recipes import message_encrypt
 
+            iv = os.urandom(16)
+            cbc_param = mech_bytes(CKM_AES_CBC, iv)
             try:
-                ct = message_encrypt(rs.raw, rs.sh, key, CKM_AES_CBC, plaintext)
+                ct = message_encrypt(
+                    rs.raw, rs.sh, key, CKM_AES_CBC, plaintext, mech_param=cbc_param, msg_param=iv
+                )
             except AssertionError as exc:
                 _skip_if_message_op_not_implemented(exc, "message encrypt")
                 xfail_if_known_ckr(
@@ -546,7 +646,7 @@ class TestMessageEncryptDecrypt:
                         "encryption was a no-op (crypto break)"
                     ),
                 )
-            pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_CBC, ct)
+            pt = decrypt_single(rs.raw, rs.sh, key, CKM_AES_CBC, ct, mech_param=cbc_param)
             assert_correct(
                 actual=pt,
                 expected=plaintext,

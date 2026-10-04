@@ -303,6 +303,7 @@ def test_message_encrypt_uses_aes_keygen_xfail_helper(
         raw=_MessageEncryptRaw(),
         sh=1,
         has_mechanism=lambda name: name in {"AES_CBC", "AES_KEY_GEN"},
+        has_mechanism_flag=lambda _mechanism, _flag: True,
     )
 
     with pytest.raises(pytest.xfail.Exception, match="AES_KEY_GEN advertised"):
@@ -332,6 +333,7 @@ def test_message_encrypt_single_fns_is_skip_not_xfail(monkeypatch: pytest.Monkey
         raw=_MessageEncryptRaw(),
         sh=1,
         has_mechanism=lambda name: name in {"AES_CBC", "AES_KEY_GEN"},
+        has_mechanism_flag=lambda _mechanism, _flag: True,
     )
     monkeypatch.setattr(test_message_crypto, "gen_aes_key_or_xfail", lambda *_a, **_k: 42)
     monkeypatch.setattr(test_message_crypto, "destroy_quietly", lambda *_a, **_k: None)

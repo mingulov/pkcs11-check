@@ -1854,10 +1854,12 @@ def _message_crypto(
     msg_fn: str,
     *,
     cancel_flag: int,
+    final_fn: str,
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
+    msg_param: bytes | None = None,
 ) -> bytes:
-    """Shared Init + two-call Message pattern for encrypt/decrypt.
+    """Shared Init + two-call Message + Final pattern for encrypt/decrypt.
 
     ``cancel_flag`` is the message operation-class flag (e.g.
     ``CKF_MESSAGE_ENCRYPT``) used to cancel the dangling operation if a
@@ -1865,11 +1867,19 @@ def _message_crypto(
     the single-shot cancel-on-error fix (commit c509013) so a reused session is
     not left with an active op that would mis-attribute a spurious
     ``CKR_OPERATION_ACTIVE`` to a later call.
+
+    ``mech_param`` carries the Init mechanism parameters (omitted means NULL
+    per ``_resolve_mech``); ``msg_param`` carries the per-message parameters
+    (e.g. the CBC IV) for both ``C_*Message`` calls. The operation always ends
+    with ``final_fn`` on success: message completion and process finalization
+    are distinct (PKCS#11 base v3.0, sections 5.9-5.10).
     """
     mech = _resolve_mech(mechanism, mech_param)
     rv = getattr(raw, init_fn)(session, mech.byref(), key)
     expect_rv(rv, CKR_OK)
     try:
+        msg_buf = to_ubyte_buf(msg_param) if msg_param else None
+        msg_len = len(msg_param) if msg_param else 0
         aad_buf = to_ubyte_buf(aad) if aad else None
         aad_len = len(aad) if aad else 0
         in_buf = to_ubyte_buf(data)
@@ -1878,8 +1888,8 @@ def _message_crypto(
         fn = getattr(raw, msg_fn)
         rv = fn(
             session,
-            None,
-            0,
+            msg_buf,
+            msg_len,
             aad_buf,
             aad_len,
             in_buf,
@@ -1891,8 +1901,8 @@ def _message_crypto(
         out_buf = (ctypes.c_ubyte * out_len.value)()
         rv = fn(
             session,
-            None,
-            0,
+            msg_buf,
+            msg_len,
             aad_buf,
             aad_len,
             in_buf,
@@ -1900,6 +1910,8 @@ def _message_crypto(
             out_buf,
             byref(out_len),
         )
+        expect_rv(rv, CKR_OK)
+        rv = getattr(raw, final_fn)(session)
         expect_rv(rv, CKR_OK)
         return bytes(out_buf[: out_len.value])
     except BaseException:
@@ -1919,8 +1931,9 @@ def message_encrypt(
     *,
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
+    msg_param: bytes | None = None,
 ) -> bytes:
-    """Single-message encrypt via C_MessageEncryptInit + C_EncryptMessage."""
+    """Single-message encrypt via C_MessageEncryptInit + C_EncryptMessage + Final."""
     return _message_crypto(
         raw,
         session,
@@ -1930,8 +1943,10 @@ def message_encrypt(
         "C_MessageEncryptInit",
         "C_EncryptMessage",
         cancel_flag=int(CKF_MESSAGE_ENCRYPT),
+        final_fn="C_MessageEncryptFinal",
         aad=aad,
         mech_param=mech_param,
+        msg_param=msg_param,
     )
 
 
@@ -1944,8 +1959,9 @@ def message_decrypt(
     *,
     aad: bytes | None = None,
     mech_param: PackedMechanism | None = None,
+    msg_param: bytes | None = None,
 ) -> bytes:
-    """Single-message decrypt via C_MessageDecryptInit + C_DecryptMessage."""
+    """Single-message decrypt via C_MessageDecryptInit + C_DecryptMessage + Final."""
     return _message_crypto(
         raw,
         session,
@@ -1955,8 +1971,10 @@ def message_decrypt(
         "C_MessageDecryptInit",
         "C_DecryptMessage",
         cancel_flag=int(CKF_MESSAGE_DECRYPT),
+        final_fn="C_MessageDecryptFinal",
         aad=aad,
         mech_param=mech_param,
+        msg_param=msg_param,
     )
 
 
