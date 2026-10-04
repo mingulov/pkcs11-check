@@ -124,13 +124,24 @@ def _decrypt_or_xfail(rs: Any, key: int, data: bytes) -> bytes:
 
 
 def _record_wrong_attribute(
-    *, label: str, expected: Any, actual: str, kind: str = "metadata"
+    *,
+    label: str,
+    expected: Any,
+    actual: str,
+    kind: str = "metadata",
+    operation: str = "C_GetAttributeValue",
+    mechanism: str | None = None,
 ) -> C.Classification:
+    # Bare-readback shape by default (import/copy observations with no producer
+    # mechanism); callers checking a mechanism-produced value pass the producer
+    # operation + mechanism explicitly. Ambient mechanisms never attach either
+    # way: explicit wins, and inherit stays False for the bare shape.
     return C.record_as(
         "wrong_result",
         kind=kind,
         label=label,
-        operation="C_GetAttributeValue",
+        operation=operation,
+        mechanism=mechanism,
         inherit_mechanism=False,
         summary=f"{label}: provider returned {actual}; expected {expected!r}",
         detail={
@@ -142,8 +153,23 @@ def _record_wrong_attribute(
     )
 
 
-def _wrong_attribute(*, label: str, expected: Any, actual: str, kind: str = "metadata") -> NoReturn:
-    record = _record_wrong_attribute(label=label, expected=expected, actual=actual, kind=kind)
+def _wrong_attribute(
+    *,
+    label: str,
+    expected: Any,
+    actual: str,
+    kind: str = "metadata",
+    operation: str = "C_GetAttributeValue",
+    mechanism: str | None = None,
+) -> NoReturn:
+    record = _record_wrong_attribute(
+        label=label,
+        expected=expected,
+        actual=actual,
+        kind=kind,
+        operation=operation,
+        mechanism=mechanism,
+    )
     C.raise_for_record(record)
 
 
@@ -328,6 +354,8 @@ class TestKeyExport:
                     expected="256-byte bytes",
                     actual=f"{modulus!r}",
                     kind="crypto",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
                 )
             else:
                 first_mismatch = None
@@ -339,6 +367,8 @@ class TestKeyExport:
                     expected="non-empty bytes",
                     actual=f"{exponent!r}",
                     kind="crypto",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
                 )
                 if first_mismatch is None:
                     first_mismatch = mismatch
@@ -493,6 +523,8 @@ class TestKeyWrapUnwrap:
                     expected=key_bytes,
                     actual=f"{exported!r}",
                     kind="crypto",
+                    operation="C_UnwrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
                 )
         finally:
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
