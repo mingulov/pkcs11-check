@@ -297,7 +297,7 @@ def _digest_buffer_too_small(ctx: ProbeContext) -> None:
     mech = mech_simple(CKM_SHA256)
     rv = raw.C_DigestInit(sh, mech.byref())
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_DigestInit(CKM_SHA256) failed: {ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_DigestInit:0x{rv:08x}")
     else:
         guard = 0xAA
         buf_size = 64
@@ -348,13 +348,13 @@ def _encrypt_buffer_too_small(ctx: ProbeContext) -> None:
     key = CK_OBJECT_HANDLE(0)
     rv = raw.C_GenerateKey(sh, mech_kg.byref(), _template_ptr(attrs), attrs.count, byref(key))
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_GenerateKey for AES encrypt failed: {ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
     else:
         # EncryptInit
         mech = mech_simple(CKM_AES_ECB)
         rv = raw.C_EncryptInit(sh, mech.byref(), key.value)
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_EncryptInit(CKM_AES_ECB) failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_EncryptInit:0x{rv:08x}")
         else:
             # Encrypt with 1-byte output buffer
             data = (ctypes.c_ubyte * 16)(*([0] * 16))
@@ -411,13 +411,13 @@ def _sign_buffer_too_small(ctx: ProbeContext) -> None:
         byref(priv),
     )
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_GenerateKeyPair for RSA sign failed: {ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_GenerateKeyPair:0x{rv:08x}")
     else:
         # SignInit with SHA256_RSA_PKCS
         sign_mech = mech_simple(CKM_SHA256_RSA_PKCS)
         rv = raw.C_SignInit(sh, sign_mech.byref(), priv.value)
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_SignInit(CKM_SHA256_RSA_PKCS) failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_SignInit:0x{rv:08x}")
         else:
             data = (ctypes.c_ubyte * 32)(*([0x42] * 32))
 
@@ -1600,12 +1600,12 @@ def _get_operation_state_buffer_too_small(ctx: ProbeContext) -> None:
     mech = mech_simple(CKM_SHA256)
     rv = raw.C_DigestInit(sh, mech.byref())
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_DigestInit(CKM_SHA256) failed: {ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_DigestInit:0x{rv:08x}")
     else:
         data = (ctypes.c_ubyte * 16)(*([0x42] * 16))
         rv = raw.C_DigestUpdate(sh, data, 16)
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_DigestUpdate(CKM_SHA256) failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_DigestUpdate:0x{rv:08x}")
         else:
             needed = CK_ULONG(0)
             rv = raw.C_GetOperationState(sh, None, byref(needed))

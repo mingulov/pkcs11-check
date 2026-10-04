@@ -163,6 +163,69 @@ def test_decrypt_final_setup_refusal_emits_structured_marker(
     assert "SETUP_XFAIL" not in out
 
 
+class _RefuseSetupOp:
+    """Fake raw: one setup op refused with 0x06; keygen predecessors succeed."""
+
+    def __init__(self, op: str) -> None:
+        self._op = op
+
+    def C_GenerateKey(self, *args: Any) -> int:  # noqa: N802
+        if self._op == "C_GenerateKey":
+            return 0x06
+        args[-1]._obj.value = 7
+        return 0
+
+    def C_GenerateKeyPair(self, *args: Any) -> int:  # noqa: N802
+        if self._op == "C_GenerateKeyPair":
+            return 0x06
+        args[-2]._obj.value = 7
+        args[-1]._obj.value = 8
+        return 0
+
+    def C_DigestInit(self, *args: Any) -> int:  # noqa: N802
+        return 0x06 if self._op == "C_DigestInit" else 0
+
+    def C_DigestUpdate(self, *args: Any) -> int:  # noqa: N802
+        return 0x06 if self._op == "C_DigestUpdate" else 0
+
+    def C_EncryptInit(self, *args: Any) -> int:  # noqa: N802
+        return 0x06 if self._op == "C_EncryptInit" else 0
+
+    def C_SignInit(self, *args: Any) -> int:  # noqa: N802
+        return 0x06 if self._op == "C_SignInit" else 0
+
+
+@pytest.mark.parametrize(
+    ("probe", "op"),
+    [
+        ("_digest_buffer_too_small", "C_DigestInit"),
+        ("_encrypt_buffer_too_small", "C_GenerateKey"),
+        ("_encrypt_buffer_too_small", "C_EncryptInit"),
+        ("_sign_buffer_too_small", "C_GenerateKeyPair"),
+        ("_sign_buffer_too_small", "C_SignInit"),
+        ("_get_operation_state_buffer_too_small", "C_DigestInit"),
+        ("_get_operation_state_buffer_too_small", "C_DigestUpdate"),
+    ],
+)
+def test_digest_encrypt_sign_setup_refusal_emits_structured_marker(
+    probe: str, op: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Digest/encrypt/sign buffer probes emit SETUP_REFUSED:<Op>:0x<rv> (fw#28)."""
+    from pkcs11_check.testcases._probes import ckr_raw_buffer as raw_probe
+
+    ctx = ProbeContext(
+        raw=cast(Any, _RefuseSetupOp(op)),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    getattr(raw_probe, probe)(ctx)
+    out = capsys.readouterr().out
+    assert f"SETUP_REFUSED:{op}:0x00000006" in out
+    assert "SETUP_XFAIL" not in out
+
+
 def test_refused_line_tracked_as_setup_refusal() -> None:
     """SETUP_REFUSED lines feed setup_refusal_indices for ordering checks."""
     (_, _, _, _, _, _, _, _, setup_refusal_indices, _) = raw_buffer._parse_ec_facts(
