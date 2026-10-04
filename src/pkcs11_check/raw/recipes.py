@@ -61,11 +61,13 @@ from .types_std import (
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
+    CKA_SIGN_RECOVER,
     CKA_SUBPRIME,
     CKA_TOKEN,
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_VERIFY,
+    CKA_VERIFY_RECOVER,
     CKF_DECRYPT,
     CKF_DIGEST,
     CKF_ENCRYPT,
@@ -536,6 +538,7 @@ class RSAUsage(Flag):
 
     SIGN = auto()  # private CKA_SIGN / public CKA_VERIFY
     DECRYPT = auto()  # private CKA_DECRYPT / public CKA_ENCRYPT
+    RECOVER = auto()  # private CKA_SIGN_RECOVER / public CKA_VERIFY_RECOVER
 
 
 def rsa_usage_attrs(usage: RSAUsage) -> tuple[dict[CKA, Any], dict[CKA, Any]]:
@@ -548,6 +551,9 @@ def rsa_usage_attrs(usage: RSAUsage) -> tuple[dict[CKA, Any], dict[CKA, Any]]:
     if RSAUsage.DECRYPT in usage:
         priv[CKA_DECRYPT] = True
         pub[CKA_ENCRYPT] = True
+    if RSAUsage.RECOVER in usage:
+        priv[CKA_SIGN_RECOVER] = True
+        pub[CKA_VERIFY_RECOVER] = True
     return pub, priv
 
 

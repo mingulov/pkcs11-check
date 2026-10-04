@@ -42,6 +42,7 @@ from pkcs11_check.classification import (
 )
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
+    RSAUsage,
     destroy_quietly,
     gen_rsa_keypair,
     sign_recover_single,
@@ -549,7 +550,7 @@ class TestSignRecoverRecipes:
     @staticmethod
     def _gen_recover_key(rs: Any) -> tuple[int, int]:
         TestSignRecoverRecipes._check_sign_recover(rs)
-        return gen_rsa_keypair(rs.raw, rs.sh, 2048)
+        return gen_rsa_keypair(rs.raw, rs.sh, 2048, usage=RSAUsage.RECOVER)
 
     def test_sign_recover_single_returns_signature(self, p11_raw_session: Any) -> None:
         rs = p11_raw_session
