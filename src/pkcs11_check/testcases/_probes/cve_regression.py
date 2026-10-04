@@ -12,10 +12,12 @@ is to report ANY clean failure as an ``ERROR:`` line rather than propagate it, s
 actual crash yields a non-zero return code (the parent asserts rc == 0 and that the child
 printed either ``OK:`` or ``ERROR:``).
 
-Output protocol lines are byte-identical to the original generated script so the parent
-requires no changes:
+Output protocol lines are byte-identical to the original generated script:
   OK: RSA encrypt/decrypt cycle
   ERROR: <ExcType>: <message>
+plus a provider-finding marker when the roundtrip plaintext mismatches
+(wrong_result/crypto/C_Decrypt/CKM_RSA_PKCS), which the parent records
+before applying the crash-only disposition.
 
 All probes run at Level.LOGIN; the parent forwards the PIN via
 ``run_probe(pin=pin_from_config(...))`` -> ``_P11CHECK_PIN`` (Invariant I3).
@@ -37,6 +39,7 @@ from pkcs11_check.raw.recipes import (
     gen_rsa_keypair,
 )
 from pkcs11_check.raw.types_std import CKA_DECRYPT, CKA_ENCRYPT, CKM_RSA_PKCS
+from pkcs11_check.testcases._probes._emit import emit_provider_finding
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
 
@@ -57,6 +60,14 @@ def _run_rsa_encrypt_decrypt(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
         try:
             ct = encrypt_single(raw, sh, pub, CKM_RSA_PKCS, b"test data 722")
             pt = decrypt_single(raw, sh, priv, CKM_RSA_PKCS, ct)
+            if pt != b"test data 722":
+                emit_provider_finding(
+                    reason="wrong_result",
+                    kind="crypto",
+                    operation="C_Decrypt",
+                    mechanism="CKM_RSA_PKCS",
+                    detail="RSA roundtrip decrypted plaintext does not match",
+                )
             assert pt == b"test data 722"
             print("OK: RSA encrypt/decrypt cycle")
         except Exception as e:  # noqa: BLE001 - crash-safety probe reports ANY failure as ERROR:
