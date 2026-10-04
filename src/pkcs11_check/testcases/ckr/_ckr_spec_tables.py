@@ -4847,7 +4847,7 @@ CKR_SESSION: dict[str, CkrExpectation] = {
         spec_ckr=CKR_SESSION_ASYNC_NOT_SUPPORTED,
         compat_tuple=(CKR_SESSION_ASYNC_NOT_SUPPORTED, CKR_FUNCTION_FAILED),
         spec_ref="PKCS#11 v3.2",
-        testable=False,  # v3.0+ async sessions - not widely supported
+        testable=False,  # v3.2 async sessions - not widely supported
         # Untestable: v3.2 async sessions not widely supported
     ),
     "open_session_parallel_not_supported": CkrExpectation(
@@ -8028,7 +8028,7 @@ CKR_UNTESTABLE: dict[str, CkrExpectation] = {
         spec_ref="PKCS#11 v3.2",
         testable=False,  # Requires async-capable token with in-flight operation
         # Documented for completeness. CKR_PENDING is returned when an async
-        # operation has not yet completed. Requires v3.0+ async session support
+        # operation has not yet completed. Requires v3.2 async session support
         # which is not widely implemented.
     ),
     "ckr_fips_self_test_failed": CkrExpectation(

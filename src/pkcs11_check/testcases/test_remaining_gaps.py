@@ -1250,7 +1250,7 @@ class TestMessageFinalizers:
 
 
 class TestAsyncLifecycle:
-    """C_AsyncComplete, C_AsyncJoin, C_AsyncGetID - v3.0+ async operation management.
+    """C_AsyncComplete, C_AsyncJoin, C_AsyncGetID - v3.2 async operation management.
 
     Testing async lifecycle requires a module that actively supports async
     operations. Most current modules report the functions but do not have
@@ -1266,7 +1266,7 @@ class TestAsyncLifecycle:
 
     @pytest.mark.needs_function("C_AsyncComplete")
     def test_async_function_availability(self, p11_raw_session: Any) -> None:
-        """All three async functions should be in the v3.0 function list."""
+        """All three async functions should be in the v3.2 function list."""
         rs = p11_raw_session
         names = rs.raw.available_function_names()
         async_names = ("C_AsyncComplete", "C_AsyncJoin", "C_AsyncGetID")
