@@ -77,6 +77,7 @@ def test_provider_finding_marker_round_trips_without_classification_import(
         "src/pkcs11_check/testcases/_probes/error_path_kwp.py",
         "src/pkcs11_check/testcases/_probes/secret_key_value_len.py",
         "src/pkcs11_check/testcases/_probes/recover_length.py",
+        "src/pkcs11_check/testcases/_probes/cve_regression.py",
     ],
 )
 def test_terminal_child_probes_only_emit_facts(relative_path: str) -> None:

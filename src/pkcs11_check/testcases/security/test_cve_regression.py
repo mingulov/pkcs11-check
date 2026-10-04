@@ -110,6 +110,7 @@ from pkcs11_check.testcases.conftest import (
     skip_unless_mechanism_flag,
     xfail_if_known_ckr,
 )
+from pkcs11_check.testcases.security.conftest import handle_child_provider_finding
 
 pytestmark = pytest.mark.security
 
@@ -1143,6 +1144,17 @@ class TestDecryptCrashRegression:
             interface=getattr(p11_config, "interface", "auto"),
         )
         rc, out, err = result.returncode, result.stdout, result.stderr
+        if handle_child_provider_finding(
+            rc,
+            out,
+            err,
+            context="RSA encrypt/decrypt roundtrip",
+            expected_reason="wrong_result",
+            expected_kind="crypto",
+            operation="C_Decrypt",
+            mechanism="CKM_RSA_PKCS",
+        ):
+            return
         assert rc == 0, f"RSA encrypt/decrypt crashed (rc={rc}): {err}"
         assert "OK:" in out or "ERROR:" in out
 
