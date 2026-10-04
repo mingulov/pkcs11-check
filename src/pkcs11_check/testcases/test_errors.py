@@ -421,7 +421,15 @@ class TestInvalidOperations:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_decrypt_garbage(self, p11_raw_session: Any) -> None:
-        """Decrypting fixed invalid ciphertext should fail cleanly."""
+        """Decrypting fixed invalid ciphertext should fail cleanly.
+
+        CKR_OK takes the implicit-rejection distinguisher (fw#37): a blind
+        strip of an all-zero block can only yield zero bytes, while synthetic
+        rejection output is nonzero, and OpenSSL/NSS-style rejection is
+        deterministic per input. Identical nonzero output on a repeat decrypt
+        xfails as honest_deviation; all-zero, varying, or unrepeatable output
+        stays a loud accepted_invalid failure.
+        """
         rs = p11_raw_session
         skip_unless_mechanism(rs, "RSA_PKCS")
         pub, priv = _gen_rsa_keypair_or_xfail(
@@ -454,19 +462,83 @@ class TestInvalidOperations:
                 byref(out_len),
             )
             if rv == CKR_OK:
-                # RSA-PKCS unpadding of an all-zero block must fail: CKR_OK
-                # means the padding check was bypassed (crypto break) --
-                # fail, as the RSA-OAEP garbage probe does.
-                classify(
-                    "accepted_invalid",
-                    kind="crypto",
-                    label="C_Decrypt of random garbage under RSA-PKCS",
-                    operation="C_Decrypt",
-                    mechanism="CKM_RSA_PKCS",
-                    actual=rv,
-                    summary="module decrypted invalid RSA-PKCS padding with CKR_OK "
-                    "(padding bypass)",
-                )
+                recovered = bytes(out_buf[: out_len.value])
+                # Repeat the decrypt: identical output corroborates deterministic
+                # implicit rejection; anything else keeps the failure loud.
+                repeat: bytes | None = None
+                rv2 = rs.raw.C_DecryptInit(rs.sh, mech.byref(), priv)
+                if rv2 == CKR_OK:
+                    out_len2 = CK_ULONG(256)
+                    out_buf2 = (ctypes.c_ubyte * 256)()
+                    rv2 = rs.raw.C_Decrypt(
+                        rs.sh,
+                        in_buf,
+                        len(garbage),
+                        out_buf2,
+                        byref(out_len2),
+                    )
+                    if rv2 == CKR_OK:
+                        repeat = bytes(out_buf2[: out_len2.value])
+                if repeat is not None and any(recovered) and repeat == recovered:
+                    classify(
+                        "honest_deviation",
+                        kind="crypto",
+                        label="C_Decrypt of random garbage under RSA-PKCS",
+                        operation="C_Decrypt",
+                        mechanism="CKM_RSA_PKCS",
+                        actual=rv,
+                        summary="module returned CKR_OK with identical synthetic "
+                        f"nonzero plaintext ({len(recovered)} bytes) on repeat "
+                        "decrypt of invalid RSA-PKCS padding (implicit rejection "
+                        "countermeasure, OpenSSL/NSS-style), not a padding bypass",
+                        detail={
+                            "implicit_rejection": True,
+                            "deterministic": True,
+                            "out_len": len(recovered),
+                        },
+                    )
+                elif not any(recovered) or (repeat is not None and not any(repeat)):
+                    # RSA-PKCS unpadding of an all-zero block must fail, and no
+                    # unpad function creates nonzero bytes from zero input --
+                    # all-zero output means the padding check was bypassed
+                    # (crypto break), as the RSA-OAEP garbage probe treats it.
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label="C_Decrypt of random garbage under RSA-PKCS",
+                        operation="C_Decrypt",
+                        mechanism="CKM_RSA_PKCS",
+                        actual=rv,
+                        summary="module decrypted invalid RSA-PKCS padding with CKR_OK "
+                        "(padding bypass)",
+                        detail={
+                            "out_len": len(recovered),
+                            "repeat_len": None if repeat is None else len(repeat),
+                        },
+                    )
+                else:
+                    # Nonzero but nondeterministic (or unrepeatable) output fails
+                    # the identicality arm, so implicit rejection is unproven --
+                    # randomized rejection and memory disclosure both look like
+                    # this, and only the former is safe. Stay loud.
+                    repeat_desc = (
+                        "unavailable" if repeat is None else f"{len(repeat)} bytes, differing"
+                    )
+                    classify(
+                        "accepted_invalid",
+                        kind="crypto",
+                        label="C_Decrypt of random garbage under RSA-PKCS",
+                        operation="C_Decrypt",
+                        mechanism="CKM_RSA_PKCS",
+                        actual=rv,
+                        summary="module returned CKR_OK with nondeterministic output "
+                        f"({len(recovered)} bytes, repeat {repeat_desc}) "
+                        "for invalid RSA-PKCS padding (implicit rejection unproven)",
+                        detail={
+                            "out_len": len(recovered),
+                            "repeat_len": None if repeat is None else len(repeat),
+                        },
+                    )
             else:
                 classify_negative_rv(
                     rv,
