@@ -601,15 +601,18 @@ class TestSignRecoverRecipes:
             destroy_quietly(rs.raw, rs.sh, priv)
 
     def test_verify_recover_invalid_signature(self, p11_raw_session: Any) -> None:
-        """C_VerifyRecover should reject an invalid signature.
+        """C_VerifyRecover should reject an invalid-length signature.
 
-        Some modules return valid=True and non-empty recovered data for an
-        invalid (all-zero) signature block, failing to detect the invalid input.
+        Raw RSA recovery requires a signature block exactly k bytes long; a
+        short block must be rejected (CKR_SIGNATURE_LEN_RANGE). An all-zero
+        k-byte block would NOT be invalid input (0^e mod n = 0 recovers zero),
+        so a truncated block is used instead. Some modules return valid=True
+        and non-empty recovered data here, failing to validate the length.
         """
         rs = p11_raw_session
         pub, priv = self._gen_recover_key(rs)
         try:
-            bad_sig = b"\x00" * 256
+            bad_sig = b"\x00" * 255
             valid, recovered = verify_recover_single(rs.raw, rs.sh, pub, CKM_RSA_X_509, bad_sig)
             if valid is True or recovered != b"":
                 classify(
@@ -619,9 +622,9 @@ class TestSignRecoverRecipes:
                     operation="C_VerifyRecover",
                     mechanism="CKM_RSA_X_509",
                     summary=(
-                        f"Module C_VerifyRecover accepted invalid all-zero signature: "
+                        f"Module C_VerifyRecover accepted invalid-length signature: "
                         f"valid={valid}, recovered={recovered!r} -- "
-                        f"the signature block is not validated in C_VerifyRecover"
+                        f"the signature length is not validated in C_VerifyRecover"
                     ),
                 )
         finally:
