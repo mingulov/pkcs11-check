@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.3] - 2026-10-05
+
+Nine reported issues addressed across async, OTP, message-mode crypto, and
+RSA oracles; refused setup, readback attribution, and inventory pins
+carried through to zero unsafe findings.
+
+### Fixed
+
+- **Valid C_AsyncGetID selector for the no-op case; empty selector
+  split (#35).**
+- **Async slots attributed to PKCS#11 v3.2; GetID documented as the
+  persistence identifier (#36).**
+- **OTP registry entries claim NULL params (#40).**
+- **RECOVER RSA usage declared for recover-leg keygen (#42).**
+- **Message-mode CBC legs carry explicit IVs with flag gates and Next
+  routing (#41, #34).**
+- **Init-based negatives run on function-scoped sessions (#38).**
+- **v1.5 garbage-decrypt distinguisher for implicit-rejection
+  oracles (#37).**
+- **X9.31 digest||trailer transformer with raw-RSA oracle and registry
+  constraint (#43).**
+- **Digest/encrypt/sign/state setup chains migrated to
+  SETUP_REFUSED (#28).**
+- **recover_length setup RVs adjudicated for login-gated tokens.**
+- **Unsafe inherited readbacks cleared to zero with keymgmt producer
+  attribution.**
+- **CVE roundtrip mismatch migrated onto emit_provider_finding (channel
+  slice 2).**
+- **Readback-inventory characterization repinned to corrected counts.**
+
 ## [0.2.2] - 2026-10-01
 
 A correction release: the suite stops manufacturing evidence against
