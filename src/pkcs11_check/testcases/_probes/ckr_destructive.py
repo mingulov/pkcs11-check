@@ -45,6 +45,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pkcs11_check.raw.types_std import (
+    CK_NOTIFY,
     CKF_RW_SESSION,
     CKF_SERIAL_SESSION,
     CKR_OK,
@@ -66,7 +67,7 @@ def _init_token_session_exists(ctx: ProbeContext) -> None:
     # Open a session first
     sess = ctypes.c_ulong(0)
     rv = ctx.raw.C_OpenSession(
-        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess)
+        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, CK_NOTIFY(), ctypes.byref(sess)
     )
     assert rv == CKR_OK, f"OpenSession: 0x{rv:08x}"
 
@@ -95,7 +96,7 @@ def _set_pin_wrong_old(ctx: ProbeContext) -> None:
     slot = _discover_slot(ctx)
     sess = ctypes.c_ulong(0)
     rv = ctx.raw.C_OpenSession(
-        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess)
+        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, CK_NOTIFY(), ctypes.byref(sess)
     )
     assert rv == CKR_OK
     sh = sess.value
@@ -115,7 +116,7 @@ def _init_pin_not_logged_in(ctx: ProbeContext) -> None:
     slot = _discover_slot(ctx)
     sess = ctypes.c_ulong(0)
     rv = ctx.raw.C_OpenSession(
-        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess)
+        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, CK_NOTIFY(), ctypes.byref(sess)
     )
     assert rv == CKR_OK
     sh = sess.value
@@ -130,7 +131,7 @@ def _init_pin_short_pin(ctx: ProbeContext) -> None:
     slot = _discover_slot(ctx)
     sess = ctypes.c_ulong(0)
     rv = ctx.raw.C_OpenSession(
-        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess)
+        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, CK_NOTIFY(), ctypes.byref(sess)
     )
     assert rv == CKR_OK
     sh = sess.value
@@ -162,7 +163,7 @@ def _init_pin_token_not_initialized(ctx: ProbeContext) -> None:
     slot = sl[0]
     sess = ctypes.c_ulong(0)
     rv = ctx.raw.C_OpenSession(
-        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, None, ctypes.byref(sess)
+        slot, CKF_SERIAL_SESSION | CKF_RW_SESSION, None, CK_NOTIFY(), ctypes.byref(sess)
     )
     if rv != CKR_OK:
         print(f"CKR:0x{rv:08x}")

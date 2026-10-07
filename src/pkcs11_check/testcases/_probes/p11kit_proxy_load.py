@@ -25,9 +25,9 @@ def _load_and_init(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
     """C_Initialize the already-loaded module; report OK or ERROR (never propagate)."""
     raw = ctx.raw
     try:
-        raw.C_Initialize()
+        raw.C_Initialize(None)
         print("OK: p11-kit proxy loaded and initialized")
-        raw.C_Finalize()
+        raw.C_Finalize(None)
     except Exception as e:  # noqa: BLE001 - crash-safety probe reports ANY failure as ERROR:
         print(f"ERROR: {type(e).__name__}: {e}")
 
