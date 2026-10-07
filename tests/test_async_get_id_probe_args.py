@@ -30,12 +30,17 @@ class _FakeRaw:
 
     def __init__(self) -> None:
         self.names: list[bytes] = []
+        self.names_non_null: list[bool] = []
         self.id_objs: list[Any] = []
         # Must match the PKCS#11 entry-point name the probe calls.
         self.C_AsyncGetID = CK_C_AsyncGetID(self._get_id_impl)
 
     def _get_id_impl(self, sh: int, name: Any, pul_id: Any) -> int:
         del sh
+        # A NULL selector and an empty selector both read back as b"" (the
+        # callback receives a NULL pointer object, not None); the NULL case
+        # belongs to the lifecycle test, so record non-NULL here.
+        self.names_non_null.append(bool(name))
         raw = ctypes.cast(name, ctypes.c_char_p).value or b""
         self.names.append(bytes(raw))
         self.id_objs.append(pul_id.contents)
@@ -53,6 +58,7 @@ def test_no_operation_sends_valid_selector(capsys: Any) -> None:
     raw = _FakeRaw()
     ckr_v32_raw._async_get_id_no_operation(_ctx(raw))
     assert raw.names == [b"C_Digest"]
+    assert raw.names_non_null == [True]
     assert len(raw.id_objs) == 1
     assert isinstance(raw.id_objs[0], ctypes.c_ulong)
     out = capsys.readouterr().out
@@ -65,6 +71,7 @@ def test_empty_selector_is_distinct_case(capsys: Any) -> None:
     raw = _FakeRaw()
     ckr_v32_raw._async_get_id_empty_selector(_ctx(raw))
     assert raw.names == [b""]
+    assert raw.names_non_null == [True]
     assert len(raw.id_objs) == 1
     assert isinstance(raw.id_objs[0], ctypes.c_ulong)
     out = capsys.readouterr().out
