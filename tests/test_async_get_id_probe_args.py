@@ -11,24 +11,34 @@ from __future__ import annotations
 import ctypes
 from typing import Any
 
-from pkcs11_check.raw.types_std import CKR_ARGUMENTS_BAD, CKR_OPERATION_NOT_INITIALIZED
+from pkcs11_check.raw.types_std import (
+    CKR_ARGUMENTS_BAD,
+    CKR_OPERATION_NOT_INITIALIZED,
+    CK_C_AsyncGetID,
+)
 from pkcs11_check.testcases._probes import ckr_v32_raw
 from pkcs11_check.testcases._probes.session import ProbeContext
 
 
 class _FakeRaw:
-    """Refuse empty selectors; report no-job for valid ones (the fw#35 oracle)."""
+    """Refuse empty selectors; report no-job for valid ones (the fw#35 oracle).
+
+    ``C_AsyncGetID`` is the real entry-point prototype, so a selector the
+    declared ``CK_UTF8CHAR_PTR`` rejects fails here exactly as in production
+    (fw#49: a plain-Python fake hid the ``create_string_buffer`` mismatch).
+    """
 
     def __init__(self) -> None:
         self.names: list[bytes] = []
         self.id_objs: list[Any] = []
-
-    def C_AsyncGetID(self, sh: int, name: Any, pul_id: Any) -> int:  # noqa: N802
         # Must match the PKCS#11 entry-point name the probe calls.
+        self.C_AsyncGetID = CK_C_AsyncGetID(self._get_id_impl)
+
+    def _get_id_impl(self, sh: int, name: Any, pul_id: Any) -> int:
         del sh
         raw = ctypes.cast(name, ctypes.c_char_p).value or b""
         self.names.append(bytes(raw))
-        self.id_objs.append(pul_id._obj)
+        self.id_objs.append(pul_id.contents)
         if not raw:
             return int(CKR_ARGUMENTS_BAD)
         return int(CKR_OPERATION_NOT_INITIALIZED)

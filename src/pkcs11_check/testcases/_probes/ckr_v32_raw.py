@@ -141,7 +141,8 @@ def _decapsulate_null_pointers(ctx: ProbeContext) -> None:
 
 def _async_get_id_no_operation(ctx: ProbeContext) -> None:
     """C_AsyncGetID with a valid selector and no pending async operation (fw#35)."""
-    name = ctypes.create_string_buffer(b"C_Digest")
+    selector = b"C_Digest\0"
+    name = (ctypes.c_ubyte * len(selector)).from_buffer_copy(selector)
     async_id = ctypes.c_ulong(0)
     rv = ctx.raw.C_AsyncGetID(ctx.sh, name, ctypes.byref(async_id))
     _emit_result("C_AsyncGetID", rv)
@@ -150,7 +151,7 @@ def _async_get_id_no_operation(ctx: ProbeContext) -> None:
 
 def _async_get_id_empty_selector(ctx: ProbeContext) -> None:
     """C_AsyncGetID with an empty selector must return CKR_ARGUMENTS_BAD (fw#35)."""
-    name = ctypes.create_string_buffer(b"")
+    name = (ctypes.c_ubyte * 1)(0)
     async_id = ctypes.c_ulong(0)
     rv = ctx.raw.C_AsyncGetID(ctx.sh, name, ctypes.byref(async_id))
     _emit_result("C_AsyncGetID.empty_selector", rv)
