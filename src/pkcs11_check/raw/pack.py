@@ -11,6 +11,7 @@ from typing import Any
 from .types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
+    CK_CHAR,
     CK_DATE,
     CK_MECHANISM,
     CK_ULONG,
@@ -313,7 +314,11 @@ def attr_date(
     *,
     length: LengthArg | None = None,
 ) -> PackedAttribute:
-    storage = CK_DATE(year.encode("ascii"), month.encode("ascii"), day.encode("ascii"))
+    storage = CK_DATE(
+        (CK_CHAR * 4)(*year.encode("ascii")),
+        (CK_CHAR * 2)(*month.encode("ascii")),
+        (CK_CHAR * 2)(*day.encode("ascii")),
+    )
     return _build_attribute(
         attr_type,
         PointerArg.to_storage(storage, origin="attr_date"),
