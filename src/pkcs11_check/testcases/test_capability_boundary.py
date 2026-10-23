@@ -41,6 +41,7 @@ from pkcs11_check.raw.types_std import (
     CKM_EC_KEY_PAIR_GEN,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_CURVE_NOT_SUPPORTED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
@@ -150,6 +151,8 @@ _ENFORCED_REFUSAL_RVS: frozenset[int] = frozenset(
     }
 )
 
+_EC_ENFORCED_REFUSAL_RVS = _ENFORCED_REFUSAL_RVS | frozenset({CKR_CURVE_NOT_SUPPORTED})
+
 
 class BoundaryCase(Enum):
     BELOW_MIN = "below_min"
@@ -164,6 +167,7 @@ def classify_boundary_outcome(
     performed: bool,
     refusal: CkrAssertionError | None,
     weak: bool,
+    expected_refusal_rvs: frozenset[int] = _ENFORCED_REFUSAL_RVS,
 ) -> None:
     """Decide the verdict of one out-of-range attempt.
 
@@ -178,7 +182,7 @@ def classify_boundary_outcome(
     """
     if not performed:
         rv = getattr(refusal, "rv", None)
-        if rv is not None and rv in _ENFORCED_REFUSAL_RVS:
+        if rv is not None and rv in expected_refusal_rvs:
             return None  # enforced its boundary -> conformant pass
         # Refused, but with a non-canonical clean code: recorded deviation.
         xfail_as(
@@ -298,6 +302,7 @@ class TestECKeySizeBoundary:
             performed=performed,
             refusal=refusal,
             weak=(case is BoundaryCase.BELOW_MIN),
+            expected_refusal_rvs=_EC_ENFORCED_REFUSAL_RVS,
         )
 
     def test_ec_below_min_is_refused(self, p11_raw_session: Any) -> None:
