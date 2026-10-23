@@ -1891,13 +1891,13 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 1659, characterization.total),
-        ("candidate_total", 1450, characterization.candidate_total),
+        ("total", 1668, characterization.total),
+        ("candidate_total", 1459, characterization.candidate_total),
         ("file_total", 252, characterization.file_total),
         (
             "statuses",
             (
-                ("explicit_mechanism_grouping", 575),
+                ("explicit_mechanism_grouping", 584),
                 ("explicit_mechanism_readback", 57),
                 ("non_readback", 209),
                 ("safe_mechanism_free_readback", 170),
@@ -1907,18 +1907,18 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "c48b164df96a756371acb2c1fa2dd2cfb44b8ec6d4056c990eda0e2967e59f0e",
+            "bab2a3c340f074bb74a0823bf0b76e7c5b2ff65c41040d0296059ec6f1bed484",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "b286101e38caa8c60cf6e793ba5d6ff2cbad2313d48e8af3be3e72bad0966f3c",
+            "91a15ead2e9a39757d9d01752135d4b985b41ff3bccdb706214e5d8552b00bcb",
             characterization.candidate_digest,
         ),
         (
             "state_statuses",
             (
-                ("explicit_mechanism_grouping", 1354),
+                ("explicit_mechanism_grouping", 1372),
                 ("explicit_mechanism_readback", 345),
                 ("non_readback", 444),
                 ("safe_mechanism_free_readback", 1639),
@@ -1938,7 +1938,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("assert_correct", 278),
                 ("classify", 549),
                 ("fail_as", 243),
-                ("record_as", 283),
+                ("record_as", 292),
                 ("xfail_as", 174),
             ),
             characterization.direct_emitter_census,
