@@ -3005,10 +3005,12 @@ def test_session_exhaustion_xfail_when_advertised_aes_keygen_rejects_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(raw_recipes, "gen_aes_key", _raise_function_not_supported)
-    monkeypatch.setattr(test_session_exhaustion, "raw_open_session", lambda *_a, **_k: 7)
-    monkeypatch.setattr(test_session_exhaustion, "close_session_quietly", lambda *_a, **_k: None)
+    handles = iter(range(7, 108))
+    monkeypatch.setattr(
+        test_session_exhaustion, "raw_open_session", lambda *_a, **_k: next(handles)
+    )
     rs = SimpleNamespace(
-        raw=object(),
+        raw=SimpleNamespace(C_CloseSession=lambda *_a: int(CKR_OK)),
         sh=1,
         slot_id=1,
         has_mechanism=lambda name: name == "AES_KEY_GEN",
