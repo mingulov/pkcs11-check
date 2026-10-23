@@ -12,11 +12,13 @@ import pytest
 from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
     CK_X9_42_DH1_DERIVE_PARAMS,
     CK_X9_42_DH2_DERIVE_PARAMS,
     CK_X9_42_MQV_DERIVE_PARAMS,
     CKA_BASE,
     CKA_CLASS,
+    CKA_DERIVE,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_PRIME,
@@ -37,8 +39,10 @@ from pkcs11_check.raw.types_std import (
     CKM_X9_42_MQV_DERIVE,
     CKO_SECRET_KEY,
     CKR_GENERAL_ERROR,
+    CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
 )
 from pkcs11_check.testcases import test_x942_dh
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE
@@ -70,6 +74,397 @@ def _generated_param_attrs() -> dict[int, Any]:
     }
 
 
+class _X942GeneratedKeyRaw:
+    """Native-shaped fake that defaults omitted CKA_DERIVE to false."""
+
+    def __init__(
+        self,
+        derive_rv: int,
+        *,
+        default_derive: bool = False,
+        ignore_permission: bool = False,
+        bare_unexpected: bool = False,
+        missing_derive: bool = False,
+        bad_derive_type: bool = False,
+    ) -> None:
+        self.derive_rv = derive_rv
+        self.default_derive = default_derive
+        self.ignore_permission = ignore_permission
+        self.bare_unexpected = bare_unexpected
+        self.missing_derive = missing_derive
+        self.bad_derive_type = bad_derive_type
+        self.generated_derives: list[bool | None] = []
+        self.derive_calls: list[dict[str, Any]] = []
+        self.public_values: dict[int, bytes] = {}
+        self.private_public: dict[int, bytes] = {}
+        self.private_derive: dict[int, bool] = {}
+        self.derived_values: dict[int, bytes] = {}
+        self.live_handles: set[int] = set()
+        self.destroyed: list[int] = []
+        self._next_handle = 100
+
+    def C_GenerateKeyPair(  # noqa: N802
+        self,
+        _sh: int,
+        _mechanism: Any,
+        _public_template: Any,
+        _public_count: int,
+        private_template: Any,
+        private_count: int,
+        public_key: Any,
+        private_key: Any,
+    ) -> int:
+        public_handle = self._next_handle
+        private_handle = public_handle + 1
+        self._next_handle += 2
+        requested_derive: bool | None = None
+        for index in range(private_count):
+            attribute = private_template[index]
+            if int(attribute.type) == int(CKA_DERIVE):
+                value = ctypes.cast(
+                    attribute.pValue,
+                    ctypes.POINTER(ctypes.c_ubyte),
+                ).contents.value
+                requested_derive = bool(value)
+        self.generated_derives.append(requested_derive)
+        self.private_derive[private_handle] = (
+            self.default_derive if requested_derive is None else requested_derive
+        )
+        public_value = bytes((public_handle,))
+        self.public_values[public_handle] = public_value
+        self.private_public[private_handle] = public_value
+        self.live_handles.update((public_handle, private_handle))
+        ctypes.cast(public_key, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = public_handle
+        ctypes.cast(private_key, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = private_handle
+        return int(CKR_OK)
+
+    def C_DeriveKey(  # noqa: N802
+        self,
+        _sh: int,
+        mechanism: Any,
+        base_key: int,
+        _attrs: Any,
+        _attrs_count: int,
+        derived_key: Any,
+    ) -> int:
+        permitted = self.private_derive.get(int(base_key), False)
+        ck_mechanism = mechanism._obj
+        self.derive_calls.append(
+            {
+                "base_key": int(base_key),
+                "phase": "parameter" if permitted else "permission",
+                "mechanism": int(ck_mechanism.mechanism),
+            }
+        )
+        if self.bare_unexpected:
+            raise AssertionError("unexpected fake C_DeriveKey failure")
+        if not permitted and not self.ignore_permission:
+            return int(CKR_KEY_FUNCTION_NOT_PERMITTED)
+        if self.derive_rv == int(CKR_OK):
+            handle = self._next_handle
+            self._next_handle += 1
+            public_value = self.private_public[int(base_key)]
+            expected = pow(
+                int.from_bytes(public_value, "big"),
+                int.from_bytes(test_x942_dh._X942_RFC5114_BOB_PRIVATE, "big"),
+                int.from_bytes(test_x942_dh.X942_PRIME_2048, "big"),
+            ).to_bytes(len(test_x942_dh.X942_PRIME_2048), "big")[-32:]
+            self.derived_values[handle] = expected
+            self.live_handles.add(handle)
+            ctypes.cast(derived_key, ctypes.POINTER(CK_OBJECT_HANDLE)).contents.value = handle
+        return self.derive_rv
+
+    def C_GetAttributeValue(  # noqa: N802
+        self,
+        _sh: int,
+        handle: int,
+        attributes: Any,
+        count: int,
+    ) -> int:
+        for index in range(count):
+            attribute = attributes[index]
+            if int(attribute.type) == int(CKA_DERIVE):
+                if self.missing_derive:
+                    attribute.ulValueLen = ctypes.c_ulong(-1).value
+                    continue
+                if self.bad_derive_type:
+                    value = b"\x01\x00"
+                else:
+                    value = b"\x01" if self.private_derive.get(int(handle), False) else b"\x00"
+            elif int(attribute.type) == int(CKA_VALUE):
+                value_candidate = self.public_values.get(
+                    int(handle), self.derived_values.get(int(handle))
+                )
+                if value_candidate is None:
+                    attribute.ulValueLen = 0
+                    continue
+                value = value_candidate
+            else:
+                attribute.ulValueLen = 0
+                continue
+            if not attribute.pValue:
+                attribute.ulValueLen = len(value)
+            else:
+                ctypes.memmove(attribute.pValue, value, len(value))
+                attribute.ulValueLen = len(value)
+        return int(CKR_OK)
+
+    def C_DestroyObject(self, _sh: int, handle: int) -> int:  # noqa: N802
+        handle_value = int(handle)
+        self.destroyed.append(handle_value)
+        self.live_handles.discard(handle_value)
+        self.public_values.pop(handle_value, None)
+        self.private_public.pop(handle_value, None)
+        self.private_derive.pop(handle_value, None)
+        self.derived_values.pop(handle_value, None)
+        return int(CKR_OK)
+
+
+@pytest.mark.parametrize(
+    (
+        "requested_derive",
+        "default_derive",
+        "derive_rv",
+        "ignore_permission",
+        "bare_unexpected",
+        "missing_derive",
+        "outcome",
+    ),
+    (
+        (None, True, CKR_OK, False, False, False, "pass"),
+        (None, False, CKR_KEY_FUNCTION_NOT_PERMITTED, False, False, False, "pass"),
+        (False, False, CKR_KEY_FUNCTION_NOT_PERMITTED, False, False, False, "pass"),
+        (None, False, CKR_OK, True, False, False, "fail"),
+        (None, False, CKR_GENERAL_ERROR, True, False, False, "xfail"),
+        (None, False, CKR_OK, False, True, False, "bare"),
+        (None, False, CKR_OK, False, False, True, "missing"),
+    ),
+    ids=(
+        "healthy-default-true",
+        "default-false-canonical-refusal",
+        "explicit-false-canonical-refusal",
+        "ignored-false-policy-contradiction",
+        "other-clean-refusal",
+        "bare-unexpected",
+        "missing-readback",
+    ),
+)
+def test_x942_generated_permission_node_uses_production_oracle(
+    requested_derive: bool | None,
+    default_derive: bool,
+    derive_rv: int,
+    ignore_permission: bool,
+    bare_unexpected: bool,
+    missing_derive: bool,
+    outcome: str,
+) -> None:
+    """Native controls exercise the production permission/effect classifier."""
+    raw = _X942GeneratedKeyRaw(
+        int(derive_rv),
+        default_derive=default_derive,
+        ignore_permission=ignore_permission,
+        bare_unexpected=bare_unexpected,
+        missing_derive=missing_derive,
+    )
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: name in {"X9_42_DH_KEY_PAIR_GEN", "X9_42_DH_DERIVE"},
+    )
+    node = test_x942_dh.TestX942DHDerive().test_generated_derive_permission_matches_readback
+
+    if outcome == "fail":
+        with pytest.raises(pytest.fail.Exception, match="CKA_DERIVE=False"):
+            node(rs, requested_derive)
+    elif outcome == "xfail":
+        with pytest.raises(pytest.xfail.Exception):
+            node(rs, requested_derive)
+    elif outcome == "bare":
+        with pytest.raises(AssertionError, match="unexpected fake C_DeriveKey failure"):
+            node(rs, requested_derive)
+    else:
+        node(rs, requested_derive)
+
+    assert raw.generated_derives == [requested_derive]
+    assert not raw.live_handles
+    if outcome == "fail":
+        assert [record.reason for record in C.get_records()] == ["self_contradiction"]
+        assert C.get_records()[0].kind == "policy"
+    elif outcome == "xfail":
+        assert [record.reason for record in C.get_records()] == ["not_operational"]
+    elif outcome == "missing":
+        assert [record.reason for record in C.get_records()] == ["not_operational"]
+        assert raw.derive_calls == []
+    else:
+        assert C.get_records() == []
+
+
+def test_x942_bad_boolean_readback_does_not_inherit_foreign_mechanism() -> None:
+    """Malformed CKA_DERIVE readback stays mechanism-free under active context."""
+    raw = _X942GeneratedKeyRaw(
+        int(CKR_OK),
+        default_derive=True,
+        bad_derive_type=True,
+    )
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: name in {"X9_42_DH_KEY_PAIR_GEN", "X9_42_DH_DERIVE"},
+    )
+    node = test_x942_dh.TestX942DHDerive().test_generated_derive_permission_matches_readback
+    C.set_mechanism("CKM_STALE", operation="C_Stale")
+    try:
+        with pytest.raises(pytest.fail.Exception, match="native boolean"):
+            node(rs, None)
+        records = C.get_records()
+        assert len(records) == 1
+        record = records[0]
+        assert record.reason == "wrong_result"
+        assert record.kind == "metadata"
+        assert record.operation == "C_GetAttributeValue"
+        assert record.mechanism is None
+        assert raw.destroyed == [100, 101]
+        assert not raw.live_handles
+    finally:
+        C.set_mechanism(None, operation=None)
+
+
+@pytest.mark.parametrize(
+    ("case_cls", "method_name", "derive_rv", "generated_count", "derive_count"),
+    (
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_derive_shared_secret",
+            CKR_OK,
+            2,
+            2,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_derived_key_encrypts",
+            CKR_OK,
+            2,
+            2,
+        ),
+        (
+            test_x942_dh.TestX942DHParameterGen,
+            "test_generated_params_produce_valid_derive",
+            CKR_OK,
+            2,
+            2,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_x942_derive_rejects_missing_peer_public_value",
+            CKR_MECHANISM_PARAM_INVALID,
+            1,
+            1,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_x942_derive_rejects_malformed_peer_public_value",
+            CKR_MECHANISM_PARAM_INVALID,
+            1,
+            1,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_x942_derive_rejects_ckd_null_other_info",
+            CKR_MECHANISM_PARAM_INVALID,
+            2,
+            1,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_x942_derive_rejects_asn1_kdf_missing_other_info",
+            CKR_MECHANISM_PARAM_INVALID,
+            2,
+            1,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_x942_derive_rejects_invalid_kdf",
+            CKR_MECHANISM_PARAM_INVALID,
+            2,
+            1,
+        ),
+        (
+            test_x942_dh.TestX942DHDerive,
+            "test_different_exchanges_produce_different_secrets",
+            CKR_OK,
+            4,
+            2,
+        ),
+    ),
+)
+def test_x942_generated_derive_nodes_request_permission_before_parameter_handling(
+    monkeypatch: pytest.MonkeyPatch,
+    case_cls: type,
+    method_name: str,
+    derive_rv: int,
+    generated_count: int,
+    derive_count: int,
+) -> None:
+    """Every affected generated-key node reaches derive after explicit permission."""
+    raw = _X942GeneratedKeyRaw(int(derive_rv))
+
+    def _read_attributes(_raw: Any, _sh: int, handle: int, attrs: list[int]) -> dict[int, Any]:
+        if attrs == [CKA_PRIME, CKA_BASE, CKA_SUBPRIME, CKA_PRIME_BITS, CKA_SUBPRIME_BITS]:
+            assert handle == 77
+            return _generated_param_attrs()
+        assert attrs == [CKA_VALUE]
+        if method_name == "test_different_exchanges_produce_different_secrets":
+            value = raw.public_values.get(handle, raw.derived_values.get(handle, b"shared-secret"))
+        else:
+            value = raw.public_values.get(handle, b"shared-secret")
+        return {CKA_VALUE: value}
+
+    monkeypatch.setattr(test_x942_dh, "read_attributes", _read_attributes)
+    monkeypatch.setattr(
+        test_x942_dh,
+        "destroy_quietly",
+        lambda _raw, _sh, handle: raw.destroyed.append(int(handle)),
+    )
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_generate_x942_params_for_session",
+        lambda _rs: (77, 2048, 256),
+    )
+    plaintext = b"X9.42 DH test!!" + b"\x00"
+    monkeypatch.setattr(test_x942_dh, "encrypt_single", lambda *_args: b"ciphertext")
+    monkeypatch.setattr(test_x942_dh, "decrypt_single", lambda *_args: plaintext)
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=1,
+        has_mechanism=lambda name: (
+            name
+            in {
+                "X9_42_DH_PARAMETER_GEN",
+                "X9_42_DH_KEY_PAIR_GEN",
+                "X9_42_DH_DERIVE",
+            }
+        ),
+    )
+
+    try:
+        getattr(case_cls(), method_name)(rs)
+    except (pytest.skip.Exception, pytest.xfail.Exception) as exc:
+        raise AssertionError(
+            f"healthy fake unexpectedly skipped/xfailled {case_cls.__name__}.{method_name}"
+        ) from exc
+
+    assert raw.generated_derives == [True] * generated_count
+    assert len(raw.derive_calls) == derive_count
+    assert [call["phase"] for call in raw.derive_calls] == ["parameter"] * derive_count
+    assert [call["mechanism"] for call in raw.derive_calls] == [
+        int(CKM_X9_42_DH_DERIVE)
+    ] * derive_count
+    expected_destroyed = generated_count * 2 + (derive_count if derive_rv == CKR_OK else 0)
+    if method_name == "test_generated_params_produce_valid_derive":
+        expected_destroyed += 1
+    assert len(raw.destroyed) == expected_destroyed
+
+
 def test_x942_shared_secret_records_both_missing_public_values_before_gating(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -77,7 +472,11 @@ def test_x942_shared_secret_records_both_missing_public_values_before_gating(
     derive_calls: list[tuple[int, bytes]] = []
     destroyed: list[int] = []
 
-    monkeypatch.setattr(test_x942_dh, "_generate_x942_keypair", lambda *_args: next(generated))
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_generate_x942_keypair",
+        lambda *_args, **_kwargs: next(generated),
+    )
     monkeypatch.setattr(
         test_x942_dh,
         "read_attributes",
@@ -119,7 +518,11 @@ def test_x942_shared_secret_derives_independent_available_side_when_peer_is_miss
     derive_calls: list[tuple[int, bytes]] = []
     destroyed: list[int] = []
 
-    monkeypatch.setattr(test_x942_dh, "_generate_x942_keypair", lambda *_args: next(generated))
+    monkeypatch.setattr(
+        test_x942_dh,
+        "_generate_x942_keypair",
+        lambda *_args, **_kwargs: next(generated),
+    )
 
     def _read(_raw: Any, _sh: int, handle: int, _attrs: list[int]) -> dict[int, Any]:
         return {} if handle == 11 else {CKA_VALUE: b"bob-public"}

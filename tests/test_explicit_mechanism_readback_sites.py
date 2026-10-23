@@ -1078,6 +1078,16 @@ _X942_BYTES_PRODUCER_STATES: Counter[tuple[str, str, str]] = Counter(
             "CKM_X9_42_DH_DERIVE",
         ): 2,
         (
+            "TestX942DHDerive.test_generated_derive_permission_matches_readback",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 1,
+        (
+            "TestX942DHDerive.test_generated_derive_permission_matches_readback",
+            "C_DeriveKey",
+            "CKM_X9_42_DH_DERIVE",
+        ): 1,
+        (
             "TestX942DHDerive.test_x942_dh_derive_rfc5114_value_len_truncation",
             "C_DeriveKey",
             "CKM_X9_42_DH_DERIVE",

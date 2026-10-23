@@ -23,6 +23,7 @@ side providers stays wide).
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from pkcs11_check import classification as C  # noqa: N812 - existing classifica
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_X9_42_DH1_DERIVE_PARAMS,
+    CKA_DERIVE,
     CKA_VALUE_LEN,
     CKD_NULL,
     CKM_DH_PKCS_DERIVE,
@@ -370,3 +372,38 @@ def test_x942_derive_aes_extra_attrs_override_value_len(
     """P11C-007: explicit extra_attrs still override the pinned length."""
     seen = _capture_x942_derive_attrs(monkeypatch, {CKA_VALUE_LEN: 24})
     assert seen[CKA_VALUE_LEN] == 24
+
+
+def test_x942_generated_private_key_explicitly_allows_derive() -> None:
+    """The keygen path must send CKA_DERIVE=True, not rely on token defaults."""
+    seen_private_attributes: dict[int, bool] = {}
+
+    class _Raw:
+        def C_GenerateKeyPair(  # noqa: N802
+            self,
+            _sh: int,
+            _mechanism: Any,
+            _public_template: Any,
+            _public_count: int,
+            private_template: Any,
+            private_count: int,
+            _public_key: Any,
+            _private_key: Any,
+        ) -> int:
+            for index in range(private_count):
+                attribute = private_template[index]
+                if int(attribute.type) == int(CKA_DERIVE):
+                    value = ctypes.cast(
+                        attribute.pValue,
+                        ctypes.POINTER(ctypes.c_ubyte),
+                    ).contents.value
+                    seen_private_attributes[int(attribute.type)] = bool(value)
+            return 0
+
+    rs = SimpleNamespace(raw=_Raw(), sh=1)
+
+    test_x942_dh._generate_x942_keypair(rs, derive=True)
+
+    # A provider that defaults an omitted CKA_DERIVE to false must observe the
+    # explicit permission in the native private-key template.
+    assert seen_private_attributes == {int(CKA_DERIVE): True}
