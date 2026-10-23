@@ -566,7 +566,7 @@ def test_generic_valid_parameter_rejects_multipart(p11_raw_session: Any, family:
 def test_wrong_length_sign_rejects_original_message(
     p11_raw_session: Any, family: _Family, hash_name: str, hash_mech: CKM
 ) -> None:
-    """The preserved raw message is invalid for generic prehash Sign."""
+    """Reject wrong-length Sign, retaining its original conditional raw Verify."""
     rs = p11_raw_session
     _skip_if_no(rs, family)
     pub, priv = family.keygen(rs)
@@ -575,11 +575,24 @@ def test_wrong_length_sign_rejects_original_message(
         "hash": hash_name,
         "payload_hex": family.message.hex(),
         "payload_len": len(family.message),
+        "verify_payload_hex": family.message.hex(),
+        "verify_payload_len": len(family.message),
         "parameter": f"CK_HASH_SIGN_ADDITIONAL_CONTEXT({hash_name})",
     }
+    verify_detail: dict[str, Any] = {
+        "status": "unreached",
+        "phase": None,
+        "rv": None,
+        "rv_name": None,
+        "verified": "unreached",
+        "effect": "unreached",
+        "target_reached": False,
+    }
+    detail["conditional_verify"] = verify_detail
     terminal: classification.Classification | None = None
-    planned = ("C_SignInit", "C_Sign", "C_Sign")
+    planned = ("C_SignInit", "C_Sign", "C_Sign", "C_VerifyInit", "C_Verify")
     try:
+        param = mech_hash_sign_context(family.generic_mech, hash_mech=hash_mech)
         rs.raw.enable_rv_trace()
         try:
             signature = sign_single(
@@ -588,14 +601,14 @@ def test_wrong_length_sign_rejects_original_message(
                 priv,
                 family.generic_mech,
                 family.message,
-                mech_param=mech_hash_sign_context(family.generic_mech, hash_mech=hash_mech),
+                mech_param=param,
             )
         except CkrAssertionError as exc:
             phase, phase_error = _refusal_phase(
                 rs.raw,
                 exc,
                 detail,
-                phases=planned,
+                phases=planned[:3],
                 label=f"CKM_{family.generic_name} wrong-length Sign missing phase evidence",
                 mechanism=f"CKM_{family.generic_name}",
             )
@@ -619,7 +632,85 @@ def test_wrong_length_sign_rejects_original_message(
                 operation="C_Sign",
                 phase="C_Sign",
             )
+            # Keep the completed malformed-Sign failure primary while observing
+            # the original conditional chain. This signature is not a crypto oracle.
+            try:
+                verified = verify_single(
+                    rs.raw,
+                    rs.sh,
+                    pub,
+                    family.generic_mech,
+                    family.message,
+                    signature,
+                    mech_param=param,
+                )
+            except CkrAssertionError as exc:
+                trace = _last_trace(rs.raw, "C_VerifyInit", "C_Verify")
+                verify_detail.update(
+                    status="refused",
+                    verified="not_returned",
+                    effect="unknown",
+                    target_reached="unconfirmed",
+                    exception_rv=int(exc.rv),
+                    exception_rv_name=ckr_name(int(exc.rv)),
+                    last_trace=trace,
+                )
+                if trace.get("fn") in {"C_VerifyInit", "C_Verify"} and trace.get("rv") == int(
+                    exc.rv
+                ):
+                    at_verify = trace["fn"] == "C_Verify"
+                    verify_detail.update(
+                        phase=trace["fn"],
+                        rv=trace["rv"],
+                        rv_name=ckr_name(trace["rv"]),
+                        verified="not_returned" if at_verify else "unreached",
+                        effect="refused" if at_verify else "refused_before_verify",
+                        target_reached=at_verify,
+                    )
+                else:
+                    verify_detail["phase_evidence"] = "missing or inconsistent RV trace"
+            except Exception as exc:
+                # A later raw exception must not erase the already observed Sign
+                # acceptance. Without a returned RV the Verify phase is unconfirmed.
+                trace = _last_trace(rs.raw, "C_VerifyInit", "C_Verify")
+                verify_detail.update(
+                    status="raw_exception",
+                    verified="not_returned",
+                    effect="unknown",
+                    target_reached="unconfirmed",
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc)[:240],
+                    last_trace=trace,
+                )
+                if trace.get("fn") == "C_Verify":
+                    verify_detail.update(
+                        phase="C_Verify",
+                        rv=trace.get("rv"),
+                        rv_name=trace.get("rv_name"),
+                        target_reached=True,
+                    )
+            else:
+                trace = _last_trace(rs.raw, "C_Verify")
+                verify_detail.update(
+                    status="returned",
+                    phase=trace.get("fn"),
+                    rv=trace.get("rv"),
+                    rv_name=trace.get("rv_name"),
+                    verified=verified,
+                    effect="verification_accepted" if verified else "verification_rejected",
+                    target_reached=True if trace else "unconfirmed",
+                )
+                boolean_rvs = (
+                    {int(CKR_OK)}
+                    if verified
+                    else {int(CKR_SIGNATURE_INVALID), int(CKR_SIGNATURE_LEN_RANGE)}
+                )
+                if trace.get("rv") not in boolean_rvs:
+                    verify_detail["phase_evidence"] = "missing or inconsistent Verify effect trace"
         _phase_progress(detail, rs.raw, planned)
+        if verify_detail["status"] == "raw_exception":
+            detail["unobserved_phases"] = detail["unreached_phases"]
+            detail["unreached_phases"] = "indeterminate after raw exception"
     finally:
         _cleanup(rs, pub, priv, detail)
     if terminal is None:
