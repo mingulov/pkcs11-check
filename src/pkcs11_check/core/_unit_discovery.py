@@ -467,6 +467,9 @@ def discover_auto_isolation_units(
             collected_files.add(fk)
             nodeids_by_file_key.setdefault(fk, []).append(item.nodeid)
 
+    expanded_indexed_files: set[str] = set()
+    emitted_test_nodes: set[str] = set()
+
     for file_unit in file_units:
         file_path = Path(file_unit.split("::", 1)[0])
         file_key = normalize_policy_file_key(str(file_path))
@@ -481,7 +484,14 @@ def discover_auto_isolation_units(
             mode = "test"
         if mode == "test":
             nodeids = nodeids_by_file_key.get(file_key, [])
-            if not nodeids:
+            if nodeids:
+                # Distinct selectors for one file share this complete metadata
+                # list. Expand it once, while fallback below still runs for each
+                # selector when the global metadata collection was empty.
+                if file_key in expanded_indexed_files:
+                    continue
+                expanded_indexed_files.add(file_key)
+            else:
                 nodeids = discover_pytest_units(
                     [file_unit],
                     default_root,
@@ -493,7 +503,11 @@ def discover_auto_isolation_units(
             # runnable and key-matchable regardless of pytest's rootdir (which can
             # be dragged to '/' by a stray absolute path on the command line for an
             # installed package with no config file above it).
-            units.extend(_absolute_nodeid(file_key, nid) for nid in nodeids)
+            for nodeid in nodeids:
+                unit = _absolute_nodeid(file_key, nodeid)
+                if unit not in emitted_test_nodes:
+                    emitted_test_nodes.add(unit)
+                    units.append(unit)
         else:
             units.append(file_unit)
 
