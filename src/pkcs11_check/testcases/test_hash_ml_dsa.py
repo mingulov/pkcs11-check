@@ -12,6 +12,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pytest
@@ -114,6 +115,20 @@ def _generate_ml_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[int
     )
 
 
+def _hash_message(hash_name: str) -> bytes:
+    """Return the selected prehash of the preserved generic test message."""
+    algorithms = {
+        "SHA-256": hashlib.sha256,
+        "SHA-384": hashlib.sha384,
+        "SHA-512": hashlib.sha512,
+        "SHA3-256": hashlib.sha3_256,
+    }
+    try:
+        return algorithms[hash_name](_MESSAGE).digest()
+    except KeyError as exc:
+        raise ValueError(f"unsupported generic HashML-DSA hash: {hash_name}") from exc
+
+
 class TestHashMLDSAGeneric:
     """CKM_HASH_ML_DSA - generic pre-hash ML-DSA (single-part only).
 
@@ -142,14 +157,15 @@ class TestHashMLDSAGeneric:
         """CKM_HASH_ML_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT."""
         rs = p11_module_session
         _skip_if_no(rs, "HASH_ML_DSA")
-        _skip_if_no(rs, "ML_DSA")  # need keygen
+        _skip_if_no(rs, "ML_DSA_KEY_PAIR_GEN")
 
         mech_param = mech_hash_sign_context(CKM_HASH_ML_DSA, hash_mech=hash_mech)
+        digest = _hash_message(hash_name)
         pub, priv = _generate_ml_dsa_keypair(rs)
         try:
             try:
                 sig = sign_single(
-                    rs.raw, rs.sh, priv, CKM_HASH_ML_DSA, _MESSAGE, mech_param=mech_param
+                    rs.raw, rs.sh, priv, CKM_HASH_ML_DSA, digest, mech_param=mech_param
                 )
             except AssertionError as exc:
                 xfail_if_known_ckr(
@@ -160,7 +176,7 @@ class TestHashMLDSAGeneric:
                 raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(
-                rs.raw, rs.sh, pub, CKM_HASH_ML_DSA, _MESSAGE, sig, mech_param=mech_param
+                rs.raw, rs.sh, pub, CKM_HASH_ML_DSA, digest, sig, mech_param=mech_param
             )
             assert result is True
         finally:
@@ -187,7 +203,7 @@ class TestHashMLDSAVariants:
         """Sign + verify round-trip with CKM_HASH_ML_DSA_{hash}."""
         rs = p11_module_session
         _skip_if_no(rs, mech_attr)
-        _skip_if_no(rs, "ML_DSA")  # need keygen
+        _skip_if_no(rs, "ML_DSA_KEY_PAIR_GEN")
 
         mech = _HASH_VARIANTS[mech_attr]
         pub, priv = _generate_ml_dsa_keypair(rs)
@@ -209,7 +225,7 @@ class TestHashMLDSAVariants:
         """Tampered message must fail verification for CKM_HASH_ML_DSA_{hash}."""
         rs = p11_module_session
         _skip_if_no(rs, mech_attr)
-        _skip_if_no(rs, "ML_DSA")
+        _skip_if_no(rs, "ML_DSA_KEY_PAIR_GEN")
 
         mech = _HASH_VARIANTS[mech_attr]
         pub, priv = _generate_ml_dsa_keypair(rs)
@@ -242,7 +258,7 @@ class TestHashMLDSAVariants:
         """Sign/verify with an empty message (hash variants hash on-token)."""
         rs = p11_module_session
         _skip_if_no(rs, mech_attr)
-        _skip_if_no(rs, "ML_DSA")
+        _skip_if_no(rs, "ML_DSA_KEY_PAIR_GEN")
 
         mech = _HASH_VARIANTS[mech_attr]
         pub, priv = _generate_ml_dsa_keypair(rs)

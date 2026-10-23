@@ -56,7 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKM_XMSSMT,
     CKM_XMSSMT_KEY_PAIR_GEN,
 )
-from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig
+from pkcs11_check.testcases.mechanism_registry import KeygenRecipe, MechConfig, ParamRecipe
 
 _SIG_VER = CKF_SIGN | CKF_VERIFY
 _ML_KEM_SIZES = (512, 768, 1024)  # security levels (not raw bit sizes)
@@ -149,6 +149,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_ML_DSA_KEY_PAIR_GEN,
         key_sizes=_ML_DSA_SIZES,
         is_keypair=True,
+        param_recipe=ParamRecipe("hash_sign_context", {"hash_mech": "CKM_SHA256"}),
+        input_constraint="prehash",
+        multi_part_supported=False,
         param_required=True,
         keygen_recipe=_ml_dsa,
         expected_flags=_SIG_VER,
@@ -284,6 +287,9 @@ def populate(registry: dict[int, MechConfig]) -> None:
         keygen_mech=CKM_SLH_DSA_KEY_PAIR_GEN,
         key_sizes=(),
         is_keypair=True,
+        param_recipe=ParamRecipe("hash_sign_context", {"hash_mech": "CKM_SHA256"}),
+        input_constraint="prehash",
+        multi_part_supported=False,
         param_required=True,
         keygen_recipe=_slh_dsa,
         expected_flags=_SIG_VER,
