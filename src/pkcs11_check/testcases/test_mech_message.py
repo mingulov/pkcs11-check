@@ -11,8 +11,10 @@ Reference: PKCS#11 v3.2 (Message-based encryption functions).
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 from ctypes import byref
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -27,9 +29,18 @@ from pkcs11_check.raw.types_std import (
     CKA_SIGN,
     CKA_TOKEN,
     CKA_VERIFY,
-    CKK_AES,
+    CKF_MESSAGE_SIGN,
+    CKF_MESSAGE_VERIFY,
     CKK_GENERIC_SECRET,
     CKM,
+    CKM_BLAKE2B_160_HMAC,
+    CKM_BLAKE2B_160_HMAC_GENERAL,
+    CKM_BLAKE2B_256_HMAC,
+    CKM_BLAKE2B_256_HMAC_GENERAL,
+    CKM_BLAKE2B_384_HMAC,
+    CKM_BLAKE2B_384_HMAC_GENERAL,
+    CKM_BLAKE2B_512_HMAC,
+    CKM_BLAKE2B_512_HMAC_GENERAL,
     CKM_GENERIC_SECRET_KEY_GEN,
     CKR_ARGUMENTS_BAD,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
@@ -39,8 +50,10 @@ from pkcs11_check.raw.types_std import (
     CKR_OK,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._key_type_contracts import wrong_secret_key_type
 from pkcs11_check.testcases.conftest import (
     IMPORT_STORAGE_SHAPE_REJECTS,
+    assert_correct,
     classify_negative_rv,
     classify_policy_enforcement,
     import_secret_key_negotiated,
@@ -53,6 +66,8 @@ from pkcs11_check.testcases.mechanism_helpers import (
     generate_key_for_sign,
     make_mech_param_or_skip,
 )
+from pkcs11_check.testcases.mechanism_registry import get_config
+from pkcs11_check.testcases.test_message_crypto import _message_sign, _message_verify
 
 pytestmark = [
     pytest.mark.mechanism_coverage,
@@ -168,9 +183,7 @@ def _wrong_message_secret_key_type(entry: MechEntry) -> int:
         and config.keygen_mech == CKM_GENERIC_SECRET_KEY_GEN
     ):
         pytest.skip(f"{entry.mech_name}: generic-secret key type may be valid")
-    if expected_key_type == int(CKK_GENERIC_SECRET):
-        return int(CKK_AES)
-    return int(CKK_GENERIC_SECRET)
+    return wrong_secret_key_type(entry)
 
 
 def _import_wrong_message_key_or_xfail(
@@ -566,6 +579,164 @@ class TestRegistryMessageWrongKeyType:
                 init_name="C_MessageVerifyInit",
                 final_name="C_MessageVerifyFinal",
                 label=label,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+
+@dataclass(frozen=True)
+class _Blake2MessageCase:
+    name: str
+    mechanism: int
+    digest_size: int
+    general: bool
+
+
+_BLAKE2_MESSAGE_CASES: tuple[_Blake2MessageCase, ...] = (
+    _Blake2MessageCase("BLAKE2B_160_HMAC", CKM_BLAKE2B_160_HMAC, 20, False),
+    _Blake2MessageCase("BLAKE2B_160_HMAC_GENERAL", CKM_BLAKE2B_160_HMAC_GENERAL, 20, True),
+    _Blake2MessageCase("BLAKE2B_256_HMAC", CKM_BLAKE2B_256_HMAC, 32, False),
+    _Blake2MessageCase("BLAKE2B_256_HMAC_GENERAL", CKM_BLAKE2B_256_HMAC_GENERAL, 32, True),
+    _Blake2MessageCase("BLAKE2B_384_HMAC", CKM_BLAKE2B_384_HMAC, 48, False),
+    _Blake2MessageCase("BLAKE2B_384_HMAC_GENERAL", CKM_BLAKE2B_384_HMAC_GENERAL, 48, True),
+    _Blake2MessageCase("BLAKE2B_512_HMAC", CKM_BLAKE2B_512_HMAC, 64, False),
+    _Blake2MessageCase("BLAKE2B_512_HMAC_GENERAL", CKM_BLAKE2B_512_HMAC_GENERAL, 64, True),
+)
+
+
+def _blake2_message_entry(case: _Blake2MessageCase) -> MechEntry:
+    config = get_config(case.mechanism)
+    assert config is not None, f"{case.name}: no registry config"
+    return MechEntry(
+        mech_id=case.mechanism,
+        mech_name=case.name,
+        flags=0,
+        min_key_size=0,
+        max_key_size=0,
+        config=config,
+    )
+
+
+def _blake2_message_expected(case: _Blake2MessageCase, data: bytes, key: bytes) -> bytes:
+    full = hashlib.blake2b(data, key=key, digest_size=case.digest_size).digest()
+    return full[:8] if case.general else full
+
+
+class TestRegistryMessageBlake2GenericSecret:
+    """Positive message sign/verify coverage for legal generic-secret BLAKE2 keys."""
+
+    @pytest.mark.parametrize(
+        "case", _BLAKE2_MESSAGE_CASES, ids=[c.name for c in _BLAKE2_MESSAGE_CASES]
+    )
+    @pytest.mark.needs_function("C_MessageSignInit")
+    def test_registry_message_blake2_generic_secret_sign(
+        self,
+        p11_raw_session: RawSession,
+        case: _Blake2MessageCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.name):
+            pytest.skip(f"CKM_{case.name} not supported")
+        if not rs.has_mechanism_flag(case.name, int(CKF_MESSAGE_SIGN)):
+            pytest.skip(f"CKM_{case.name} does not advertise CKF_MESSAGE_SIGN")
+        _require_message_functions(rs, "C_MessageSignInit", "C_SignMessage", "C_MessageSignFinal")
+
+        entry = _blake2_message_entry(case)
+        key_bytes = b"\x42" * 32
+        data = b"message BLAKE2 generic-secret sign"
+        key = import_secret_key_negotiated(
+            rs,
+            CKK_GENERIC_SECRET,
+            key_bytes,
+            attrs={CKA_TOKEN: False, CKA_SIGN: True, CKA_VERIFY: True},
+            purpose=f"{case.name} message generic-secret sign setup",
+        )
+        try:
+            retained_mech = _message_init_mech_or_skip(entry)
+            rv = rs.raw.C_MessageSignInit(rs.sh, retained_mech.byref(), key)
+            _xfail_if_message_init_rejected(rv, label=f"C_MessageSignInit (CKM_{case.name})")
+            assert rv == CKR_OK, f"C_MessageSignInit(CKM_{case.name}) failed: 0x{rv:08x}"
+            _message_final_or_fail(rs, entry, final_name="C_MessageSignFinal")
+
+            actual = _message_sign(rs, key, _message_init_mech_or_skip(entry), data)
+            expected = _blake2_message_expected(case, data, key_bytes)
+            assert_correct(
+                actual=actual,
+                expected=expected,
+                label=f"CKM_{case.name}:C_MessageSign keyed BLAKE2 KAT",
+                operation="C_SignMessage",
+                mechanism=f"CKM_{case.name}",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, key)
+
+    @pytest.mark.parametrize(
+        "case", _BLAKE2_MESSAGE_CASES, ids=[c.name for c in _BLAKE2_MESSAGE_CASES]
+    )
+    @pytest.mark.needs_function("C_MessageVerifyInit")
+    def test_registry_message_blake2_generic_secret_verify(
+        self,
+        p11_raw_session: RawSession,
+        case: _Blake2MessageCase,
+    ) -> None:
+        rs = p11_raw_session
+        if not rs.has_mechanism(case.name):
+            pytest.skip(f"CKM_{case.name} not supported")
+        if not rs.has_mechanism_flag(case.name, int(CKF_MESSAGE_VERIFY)):
+            pytest.skip(f"CKM_{case.name} does not advertise CKF_MESSAGE_VERIFY")
+        _require_message_functions(
+            rs, "C_MessageVerifyInit", "C_VerifyMessage", "C_MessageVerifyFinal"
+        )
+
+        entry = _blake2_message_entry(case)
+        key_bytes = b"\x42" * 32
+        data = b"message BLAKE2 generic-secret verify"
+        key = import_secret_key_negotiated(
+            rs,
+            CKK_GENERIC_SECRET,
+            key_bytes,
+            attrs={CKA_TOKEN: False, CKA_SIGN: True, CKA_VERIFY: True},
+            purpose=f"{case.name} message generic-secret verify setup",
+        )
+        try:
+            retained_mech = _message_init_mech_or_skip(entry)
+            rv = rs.raw.C_MessageVerifyInit(rs.sh, retained_mech.byref(), key)
+            _xfail_if_message_init_rejected(rv, label=f"C_MessageVerifyInit (CKM_{case.name})")
+            assert rv == CKR_OK, f"C_MessageVerifyInit(CKM_{case.name}) failed: 0x{rv:08x}"
+            _message_final_or_fail(rs, entry, final_name="C_MessageVerifyFinal")
+
+            expected = _blake2_message_expected(case, data, key_bytes)
+            valid = _message_verify(
+                rs,
+                key,
+                _message_init_mech_or_skip(entry),
+                data,
+                expected,
+            )
+            assert_correct(
+                actual=valid,
+                expected=True,
+                label=f"CKM_{case.name}:C_MessageVerify keyed BLAKE2 valid tag",
+                operation="C_VerifyMessage",
+                mechanism=f"CKM_{case.name}",
+            )
+
+            wrong = bytearray(expected)
+            wrong[0] ^= 1
+            invalid = _message_verify(
+                rs,
+                key,
+                _message_init_mech_or_skip(entry),
+                data,
+                bytes(wrong),
+                expect_valid=False,
+            )
+            assert_correct(
+                actual=invalid,
+                expected=False,
+                label=f"CKM_{case.name}:C_MessageVerify rejects one-bit tag mutation",
+                operation="C_VerifyMessage",
+                mechanism=f"CKM_{case.name}",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, key)
