@@ -12,6 +12,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import pytest
@@ -41,7 +42,10 @@ from pkcs11_check.raw.types_std import (
     CKM_HASH_SLH_DSA_SHA512,
     CKM_HASH_SLH_DSA_SHAKE128,
     CKM_HASH_SLH_DSA_SHAKE256,
+    CKM_SHA3_256,
     CKM_SHA256,
+    CKM_SHA384,
+    CKM_SHA512,
     CKM_SLH_DSA_KEY_PAIR_GEN,
     CKP_SLH_DSA_SHA2_128S,
     CKR_DATA_LEN_RANGE,
@@ -114,6 +118,20 @@ def _generate_slh_dsa_keypair(rs: Any, param_set: int | None = None) -> tuple[in
     )
 
 
+def _hash_message(hash_name: str) -> bytes:
+    """Return the selected prehash of the preserved generic test message."""
+    algorithms = {
+        "SHA-256": hashlib.sha256,
+        "SHA-384": hashlib.sha384,
+        "SHA-512": hashlib.sha512,
+        "SHA3-256": hashlib.sha3_256,
+    }
+    try:
+        return algorithms[hash_name](_MESSAGE).digest()
+    except KeyError as exc:
+        raise ValueError(f"unsupported generic HashSLH-DSA hash: {hash_name}") from exc
+
+
 class TestHashSLHDSAGeneric:
     """CKM_HASH_SLH_DSA - generic pre-hash SLH-DSA (single-part only).
 
@@ -129,21 +147,62 @@ class TestHashSLHDSAGeneric:
         """CKM_HASH_SLH_DSA sign + verify with CK_HASH_SIGN_ADDITIONAL_CONTEXT (SHA-256)."""
         rs = p11_raw_session
         _skip_if_no(rs, "HASH_SLH_DSA")
-        _skip_if_no(rs, "SLH_DSA")  # need keygen
+        _skip_if_no(rs, "SLH_DSA_KEY_PAIR_GEN")
 
         mech_param = mech_hash_sign_context(CKM_HASH_SLH_DSA, hash_mech=CKM_SHA256)
+        digest = _hash_message("SHA-256")
         pub, priv = _generate_slh_dsa_keypair(rs)
         try:
             try:
                 sig = sign_single(
-                    rs.raw, rs.sh, priv, CKM_HASH_SLH_DSA, _MESSAGE, mech_param=mech_param
+                    rs.raw, rs.sh, priv, CKM_HASH_SLH_DSA, digest, mech_param=mech_param
                 )
             except AssertionError as exc:
                 xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, "CKM_HASH_SLH_DSA sign not operational")
                 raise
             assert isinstance(sig, bytes) and len(sig) > 0
             result = verify_single(
-                rs.raw, rs.sh, pub, CKM_HASH_SLH_DSA, _MESSAGE, sig, mech_param=mech_param
+                rs.raw, rs.sh, pub, CKM_HASH_SLH_DSA, digest, sig, mech_param=mech_param
+            )
+            assert result is True
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    @pytest.mark.parametrize(
+        "hash_name,hash_mech",
+        [
+            ("SHA-384", CKM_SHA384),
+            ("SHA-512", CKM_SHA512),
+            ("SHA3-256", CKM_SHA3_256),
+        ],
+    )
+    def test_sign_verify_roundtrip_for_hash(
+        self, p11_raw_session: Any, hash_name: str, hash_mech: int
+    ) -> None:
+        """Exercise generic HashSLH-DSA with each additional supported digest."""
+        rs = p11_raw_session
+        _skip_if_no(rs, "HASH_SLH_DSA")
+        _skip_if_no(rs, "SLH_DSA_KEY_PAIR_GEN")
+
+        mech_param = mech_hash_sign_context(CKM_HASH_SLH_DSA, hash_mech=hash_mech)
+        digest = _hash_message(hash_name)
+        pub, priv = _generate_slh_dsa_keypair(rs)
+        try:
+            try:
+                sig = sign_single(
+                    rs.raw, rs.sh, priv, CKM_HASH_SLH_DSA, digest, mech_param=mech_param
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc,
+                    _SIGN_ERROR_CKRS,
+                    f"CKM_HASH_SLH_DSA sign not operational ({hash_name})",
+                )
+                raise
+            assert isinstance(sig, bytes) and len(sig) > 0
+            result = verify_single(
+                rs.raw, rs.sh, pub, CKM_HASH_SLH_DSA, digest, sig, mech_param=mech_param
             )
             assert result is True
         finally:
@@ -170,7 +229,7 @@ class TestHashSLHDSAVariants:
         """Sign + verify round-trip with CKM_HASH_SLH_DSA_{hash}."""
         rs = p11_raw_session
         _skip_if_no(rs, mech_attr)
-        _skip_if_no(rs, "SLH_DSA")  # need keygen
+        _skip_if_no(rs, "SLH_DSA_KEY_PAIR_GEN")
 
         mech = _HASH_VARIANTS[mech_attr]
         pub, priv = _generate_slh_dsa_keypair(rs)
@@ -192,7 +251,7 @@ class TestHashSLHDSAVariants:
         """Tampered message must fail verification for CKM_HASH_SLH_DSA_{hash}."""
         rs = p11_raw_session
         _skip_if_no(rs, mech_attr)
-        _skip_if_no(rs, "SLH_DSA")
+        _skip_if_no(rs, "SLH_DSA_KEY_PAIR_GEN")
 
         mech = _HASH_VARIANTS[mech_attr]
         pub, priv = _generate_slh_dsa_keypair(rs)
@@ -202,7 +261,6 @@ class TestHashSLHDSAVariants:
             except AssertionError as exc:
                 xfail_if_known_ckr(exc, _SIGN_ERROR_CKRS, f"CKM_{mech_attr} sign not operational")
                 raise
-
             tampered = _MESSAGE[:-1] + bytes([_MESSAGE[-1] ^ 0xFF])
             try:
                 result = verify_single(rs.raw, rs.sh, pub, mech, tampered, sig)
@@ -225,7 +283,7 @@ class TestHashSLHDSAVariants:
         """Sign/verify with an empty message (hash variants hash on-token)."""
         rs = p11_raw_session
         _skip_if_no(rs, mech_attr)
-        _skip_if_no(rs, "SLH_DSA")
+        _skip_if_no(rs, "SLH_DSA_KEY_PAIR_GEN")
 
         mech = _HASH_VARIANTS[mech_attr]
         pub, priv = _generate_slh_dsa_keypair(rs)

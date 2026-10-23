@@ -16,7 +16,7 @@ def _session() -> SimpleNamespace:
     return SimpleNamespace(
         raw=object(),
         sh=1,
-        has_mechanism=lambda name: name in {"HASH_ML_DSA", "ML_DSA"},
+        has_mechanism=lambda name: name in {"HASH_ML_DSA", "ML_DSA_KEY_PAIR_GEN"},
     )
 
 
@@ -46,3 +46,27 @@ def test_hash_ml_dsa_sign_runtime_reject_is_xfail(
         test_hash_ml_dsa.TestHashMLDSAGeneric().test_sign_verify_roundtrip(
             _session(), "SHA-256", CKM_SHA256
         )
+
+
+def test_keygen_capability_is_checked_by_actual_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[bytes] = []
+    monkeypatch.setattr(test_hash_ml_dsa, "_generate_ml_dsa_keypair", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(test_hash_ml_dsa, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _sign(*args: Any, **_kwargs: Any) -> bytes:
+        seen.append(args[4])
+        return b"sig"
+
+    monkeypatch.setattr(test_hash_ml_dsa, "sign_single", _sign)
+    monkeypatch.setattr(test_hash_ml_dsa, "verify_single", lambda *_a, **_k: True)
+
+    session = SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name in {"HASH_ML_DSA", "ML_DSA_KEY_PAIR_GEN"},
+    )
+    test_hash_ml_dsa.TestHashMLDSAGeneric().test_sign_verify_roundtrip(
+        session, "SHA-256", CKM_SHA256
+    )
+    assert len(seen) == 1
+    assert len(seen[0]) == 32

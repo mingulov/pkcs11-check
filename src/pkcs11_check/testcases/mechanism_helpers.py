@@ -20,6 +20,7 @@ from pkcs11_check.raw.pack_mechanisms import (
     mech_ctr,
     mech_eddsa,
     mech_gcm,
+    mech_hash_sign_context,
     mech_oaep,
     mech_pbe,
     mech_pss,
@@ -36,6 +37,10 @@ from pkcs11_check.raw.recipes import (
     gen_keypair,
     gen_rsa_keypair,
     pack_attrs,
+    sign_multipart,
+    sign_single,
+    verify_multipart,
+    verify_single,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
@@ -332,6 +337,11 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
             hash_mech=_resolve_const(d.get("hash_mech", "CKM_SHA256")),
             mgf=_resolve_const(d.get("mgf", "CKG_MGF1_SHA256")),
         )
+    elif style == "hash_sign_context":
+        return mech_hash_sign_context(
+            CKM(mech_id),
+            hash_mech=_resolve_const(d.get("hash_mech", "CKM_SHA256")),
+        )
     elif style == "chacha20":
         nonce = os.urandom(12)
         return mech_chacha20(CKM(mech_id), nonce=nonce)
@@ -390,6 +400,208 @@ def build_test_params(mech_id: int, recipe: ParamRecipe) -> Any:
         return "SKIP"  # Needs runtime data
     # Unknown style
     return "SKIP"
+
+
+def run_legacy_null_parameter_sequence(
+    raw: Any,
+    session: int,
+    sign_key: int,
+    verify_key: int,
+    mechanism: CKM | int,
+    chain: str,
+) -> dict[str, Any]:
+    """Run a preserved registry sequence with an intentionally NULL parameter.
+
+    This family-neutral runner only dispatches existing raw recipes and returns their
+    effects. The owning testcase supplies key lifecycle, trace interpretation, and
+    classification; provider exceptions are intentionally allowed to propagate.
+    """
+    progress: list[dict[str, Any]] = []
+
+    def _remember(exc: CkrAssertionError) -> None:
+        # Preserve the original typed provider exception while making the
+        # completed prefix available to the caller.  In particular, a later
+        # multipart refusal must not erase an earlier successful malformed
+        # one-shot Sign.
+        setattr(exc, "_pkcs11_legacy_progress", list(progress))
+
+    def _verify_rv(phase: str, verified: bool) -> int | None:
+        # verify_single/verify_multipart return False for two distinct CK_RVs.
+        # Never describe that effect as CKR_OK; the wrapper enables the raw
+        # trace, while an untraced fake leaves the RV explicitly unknown.
+        entries = getattr(raw, "rv_trace", [])
+        if entries and entries[-1].get("fn") == phase:
+            rv = entries[-1].get("rv")
+            return int(rv) if rv is not None else None
+        return int(CKR_OK) if verified else None
+
+    if chain == "roundtrip-44":
+        data = b"hello pkcs11 sign test" * 2
+        try:
+            signature = sign_single(raw, session, sign_key, mechanism, data)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {"phase": "C_Sign", "effect": "completed", "rv": int(CKR_OK), "signature": signature}
+        )
+        try:
+            verified = verify_single(raw, session, verify_key, mechanism, data, signature)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_Verify",
+                "effect": "completed",
+                "rv": _verify_rv("C_Verify", verified),
+                "verified": verified,
+            }
+        )
+        return {"payload": data, "signature": signature, "verify": verified, "events": progress}
+    if chain == "tamper-25":
+        data = b"original data for signing"
+        changed = b"tampered data XXXXXXXXXXX"
+        try:
+            signature = sign_single(raw, session, sign_key, mechanism, data)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {"phase": "C_Sign", "effect": "completed", "rv": int(CKR_OK), "signature": signature}
+        )
+        try:
+            verified = verify_single(raw, session, verify_key, mechanism, changed, signature)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_Verify",
+                "effect": "completed",
+                "rv": _verify_rv("C_Verify", verified),
+                "verified": verified,
+            }
+        )
+        return {
+            "payload": data,
+            "verify_payload": changed,
+            "signature": signature,
+            "verify": verified,
+            "events": progress,
+        }
+    if chain == "multipart-136":
+        data = b"multipart signing test input data " * 4
+        chunk_size = len(data) // 4
+        chunks = [
+            data[:chunk_size],
+            data[chunk_size : 2 * chunk_size],
+            data[2 * chunk_size : 3 * chunk_size],
+            data[3 * chunk_size :],
+        ]
+        try:
+            signature = sign_multipart(raw, session, sign_key, mechanism, chunks)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_SignFinal",
+                "effect": "completed",
+                "rv": int(CKR_OK),
+                "signature": signature,
+            }
+        )
+        try:
+            verified = verify_multipart(raw, session, verify_key, mechanism, chunks, signature)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_VerifyFinal",
+                "effect": "completed",
+                "rv": _verify_rv("C_VerifyFinal", verified),
+                "verified": verified,
+            }
+        )
+        return {
+            "payload": data,
+            "chunks": chunks,
+            "signature": signature,
+            "verify": verified,
+            "events": progress,
+        }
+    if chain == "streaming-96":
+        data = b"multipart sign equivalence test " * 3
+        chunk_size = len(data) // 3
+        chunks = [data[:chunk_size], data[chunk_size : 2 * chunk_size], data[2 * chunk_size :]]
+        try:
+            single_signature = sign_single(raw, session, sign_key, mechanism, data)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_Sign",
+                "effect": "completed",
+                "rv": int(CKR_OK),
+                "signature": single_signature,
+            }
+        )
+        try:
+            multipart_signature = sign_multipart(raw, session, sign_key, mechanism, chunks)
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_SignFinal",
+                "effect": "completed",
+                "rv": int(CKR_OK),
+                "signature": multipart_signature,
+            }
+        )
+        try:
+            single_verify = verify_multipart(
+                raw, session, verify_key, mechanism, [data], single_signature
+            )
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_VerifyFinal",
+                "effect": "completed",
+                "rv": _verify_rv("C_VerifyFinal", single_verify),
+                "verified": single_verify,
+            }
+        )
+        try:
+            multipart_verify = verify_multipart(
+                raw, session, verify_key, mechanism, chunks, multipart_signature
+            )
+        except CkrAssertionError as exc:
+            _remember(exc)
+            raise
+        progress.append(
+            {
+                "phase": "C_VerifyFinal",
+                "effect": "completed",
+                "rv": _verify_rv("C_VerifyFinal", multipart_verify),
+                "verified": multipart_verify,
+            }
+        )
+        return {
+            "payload": data,
+            "chunks": chunks,
+            "single_signature": single_signature,
+            "multipart_signature": multipart_signature,
+            "single_verify": single_verify,
+            "multipart_verify": multipart_verify,
+            "events": progress,
+        }
+    raise ValueError(f"unknown legacy NULL-parameter chain: {chain!r}")
 
 
 # ---------------------------------------------------------------------------

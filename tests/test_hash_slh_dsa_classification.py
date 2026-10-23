@@ -7,6 +7,7 @@ reject CKR (mirroring test_hash_ml_dsa); a non-CKR error propagates.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -50,3 +51,25 @@ def test_sign_non_ckr_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(AssertionError, match="decoder bug") as ei:
         ths.TestHashSLHDSAGeneric().test_sign_verify_roundtrip(_RawSession())
     assert not isinstance(ei.value, XFailed)
+
+
+def test_keygen_capability_is_checked_by_actual_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[bytes] = []
+    monkeypatch.setattr(ths, "_generate_slh_dsa_keypair", lambda *_a, **_k: (1, 2))
+    monkeypatch.setattr(ths, "destroy_quietly", lambda *_a, **_k: None)
+
+    def _sign(*args: Any, **_kwargs: Any) -> bytes:
+        seen.append(args[4])
+        return b"sig"
+
+    monkeypatch.setattr(ths, "sign_single", _sign)
+    monkeypatch.setattr(ths, "verify_single", lambda *_a, **_k: True)
+
+    rs = SimpleNamespace(
+        raw=object(),
+        sh=1,
+        has_mechanism=lambda name: name in {"HASH_SLH_DSA", "SLH_DSA_KEY_PAIR_GEN"},
+    )
+    ths.TestHashSLHDSAGeneric().test_sign_verify_roundtrip(rs)
+    assert len(seen) == 1
+    assert len(seen[0]) == 32
