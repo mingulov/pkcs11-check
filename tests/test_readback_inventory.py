@@ -1907,12 +1907,12 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "4e47af3d09b6a2a0e079609736fb288f71e2c0354d1483c0c3f061017d10b379",
+            "0d8737e729733f1bddbb2b968664acdca2ed8dc37384fd4ce559e135ee1dc873",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "cad4b1edd5c6937a0780bacbebd9903335d6153fa6c8bd34c426075a45441490",
+            "6a7b33529658e0b74eeb86b04501b6ec47e8c013adcfda540abf1e9cffd48b2a",
             characterization.candidate_digest,
         ),
         (
@@ -1922,7 +1922,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_readback", 345),
                 ("non_readback", 438),
                 ("safe_mechanism_free_readback", 1639),
-                ("unresolved", 2678),
+                ("unresolved", 2679),
                 ("unsafe_inherited_readback", 22),
             ),
             characterization.state_statuses,
