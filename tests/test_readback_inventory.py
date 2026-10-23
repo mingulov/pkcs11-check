@@ -1891,7 +1891,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 1641, characterization.total),
+        ("total", 1642, characterization.total),
         ("candidate_total", 1433, characterization.candidate_total),
         ("file_total", 251, characterization.file_total),
         (
@@ -1899,7 +1899,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("explicit_mechanism_grouping", 575),
                 ("explicit_mechanism_readback", 57),
-                ("non_readback", 208),
+                ("non_readback", 209),
                 ("safe_mechanism_free_readback", 170),
                 ("unresolved", 631),
             ),
@@ -1907,7 +1907,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "0d8737e729733f1bddbb2b968664acdca2ed8dc37384fd4ce559e135ee1dc873",
+            "3480a67143282033796a62e243c2aace7663d62e697f78ac3f633c157411e0c9",
             characterization.digest,
         ),
         (
@@ -1920,7 +1920,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("explicit_mechanism_grouping", 1354),
                 ("explicit_mechanism_readback", 345),
-                ("non_readback", 438),
+                ("non_readback", 444),
                 ("safe_mechanism_free_readback", 1639),
                 ("unresolved", 2679),
                 ("unsafe_inherited_readback", 22),
@@ -1938,7 +1938,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("assert_correct", 278),
                 ("classify", 549),
                 ("fail_as", 243),
-                ("record_as", 265),
+                ("record_as", 266),
                 ("xfail_as", 174),
             ),
             characterization.direct_emitter_census,
