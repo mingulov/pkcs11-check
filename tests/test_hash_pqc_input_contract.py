@@ -54,6 +54,14 @@ from pkcs11_check.testcases.mechanism_helpers import build_test_params
 from pkcs11_check.testcases.mechanism_registry import ParamRecipe, get_config
 from pkcs11_check.testcases.mechanism_selection import MULTIPART_SIGN_VERIFY_ROUNDTRIP
 
+_ORIGINAL_WRONG_LENGTH_ROWS = (
+    ("ML-DSA", "SHA-256", CKM_SHA256),
+    ("ML-DSA", "SHA-384", CKM_SHA384),
+    ("ML-DSA", "SHA-512", CKM_SHA512),
+    ("ML-DSA", "SHA3-256", CKM_SHA3_256),
+    ("SLH-DSA", "SHA-256", CKM_SHA256),
+)
+
 
 def _recording_session(*mechanisms: str) -> SimpleNamespace:
     return SimpleNamespace(
@@ -498,7 +506,12 @@ def test_option_b_raw_contract_metadata_and_probe_shapes() -> None:
         "multipart-136",
         "streaming-96",
     }
-    assert len(contract._WRONG_LENGTH_CASES) == 5
+    actual_rows = [
+        (family.label, hash_name, hash_mech)
+        for family, hash_name, hash_mech in contract._WRONG_LENGTH_CASES
+    ]
+    assert len(actual_rows) == 5
+    assert set(actual_rows) == set(_ORIGINAL_WRONG_LENGTH_ROWS)
 
 
 def test_raw_fixture_generator_owns_distinct_open_and_teardown(
@@ -570,7 +583,7 @@ class _StatefulProbeFake:
             self._raise("C_SignInit", int(CKR_MECHANISM_PARAM_INVALID))
         if self.mode == "wrong_length_reject":
             self._raise("C_Sign", int(CKR_DATA_LEN_RANGE))
-        if self.mode == "changed_verify_true":
+        if self.mode in {"changed_verify_true", "wrong_length_accept"}:
             self.rv_trace.extend(
                 {"fn": fn, "rv": int(CKR_OK), "rv_name": "CKR_OK"}
                 for fn in ("C_SignInit", "C_Sign", "C_Sign")
@@ -593,6 +606,18 @@ class _StatefulProbeFake:
         return b"signature"
 
     def verify_single(self, data: bytes, signature: bytes, param: PackedMechanism | None) -> bool:
+        if self.mode == "wrong_length_accept":
+            self.rv_trace.extend(
+                [
+                    {"fn": "C_VerifyInit", "rv": int(CKR_OK), "rv_name": "CKR_OK"},
+                    {
+                        "fn": "C_Verify",
+                        "rv": int(CKR_SIGNATURE_INVALID),
+                        "rv_name": "CKR_SIGNATURE_INVALID",
+                    },
+                ]
+            )
+            return False
         if self.mode == "changed_verify_true":
             self.rv_trace.extend(
                 {"fn": fn, "rv": int(CKR_OK), "rv_name": "CKR_OK"}
@@ -686,7 +711,9 @@ def test_stateful_legacy_null_rejection_acceptance_and_precedence(
         else:
             chain = "roundtrip-44"
         if expected_reason is None:
-            contract.test_legacy_registry_null_parameter_chain(rs, actual_family, chain)
+            _must_complete(
+                lambda: contract.test_legacy_registry_null_parameter_chain(rs, actual_family, chain)
+            )
         else:
             with pytest.raises(pytest.fail.Exception):
                 contract.test_legacy_registry_null_parameter_chain(rs, actual_family, chain)
@@ -731,7 +758,7 @@ def test_stateful_seed_controls_make_actual_nodes_loud(
             contract.test_generic_valid_parameter_rejects_multipart(rs, family)
 
     if mode == "multipart_update_refusal":
-        call()
+        _must_complete(call)
         assert not classification.get_records()
     elif mode == "multipart_init_refusal" or mode == "multipart_vendor_refusal":
         with pytest.raises(pytest.xfail.Exception):
@@ -745,32 +772,52 @@ def test_stateful_seed_controls_make_actual_nodes_loud(
         with pytest.raises(pytest.fail.Exception):
             call()
         assert classification.get_records()
+        if mode == "wrong_length_accept":
+            rec = classification.get_records()[0]
+            assert rec.reason == "accepted_invalid" and rec.kind is None
+            assert rec.operation == "C_Sign"
+            assert rec.expected_ckr == ["CKR_DATA_LEN_RANGE"]
+            assert rec.actual_ckr == "CKR_OK"
+            assert [entry["fn"] for entry in fake.rv_trace] == [
+                "C_SignInit",
+                "C_Sign",
+                "C_Sign",
+                "C_VerifyInit",
+                "C_Verify",
+            ]
         if mode == "changed_verify_true":
             assert classification.get_records()[-1].reason == "wrong_result"
     assert fake.destroyed == [10, 11]
 
 
 @pytest.mark.parametrize(
-    ("family", "hash_name", "hash_mech"),
-    contract._WRONG_LENGTH_CASES,
-    ids=lambda value: value.label if isinstance(value, contract._Family) else str(value),
+    ("family_label", "hash_name", "hash_mech"),
+    _ORIGINAL_WRONG_LENGTH_ROWS,
 )
 def test_stateful_wrong_length_controls_cover_all_original_rows(
-    monkeypatch: pytest.MonkeyPatch,
-    family: contract._Family,
+    family_label: str,
     hash_name: str,
     hash_mech: int,
 ) -> None:
     """Every preserved ML/SLH wrong-length row reaches the real production node."""
-    fake = _StatefulProbeFake("wrong_length_reject")
-    _patch_stateful_contract(monkeypatch, fake)
-    actual_family = replace(family, keygen=lambda _rs: (10, 11))
+    fake = _RawPqcFake()
+    family = next(item for item in contract._FAMILIES if item.label == family_label)
     classification.clear()
-    contract.test_wrong_length_sign_rejects_original_message(
-        _stateful_session(fake), actual_family, hash_name, hash_mech
+    compliance.clear_notes()
+    _must_complete(
+        lambda: contract.test_wrong_length_sign_rejects_original_message(
+            _stateful_session(fake), _raw_family(family), hash_name, hash_mech
+        )
     )
     assert not classification.get_records()
-    assert fake.destroyed == [10, 11]
+    assert [event["fn"] for event in fake.calls] == [
+        "C_SignInit",
+        "C_Sign",
+        "C_DestroyObject",
+        "C_DestroyObject",
+    ]
+    assert fake.calls[1]["rv"] == int(CKR_DATA_LEN_RANGE)
+    assert len(compliance.get_notes()) == 1
 
 
 def test_stateful_raw_exception_is_not_relabelled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -794,11 +841,15 @@ class _RawPqcFake:
         refuse: tuple[str, int, int] | None = None,
         destroy_rv: int = int(CKR_OK),
         malformed_sign: bool = False,
+        accept_wrong_length: bool = False,
+        verify_exception: bool = False,
     ) -> None:
         self.null_parameters = null_parameters
         self.refuse = refuse  # function, ordinal invocation, exact CK_RV
         self.destroy_rv = destroy_rv
         self.malformed_sign = malformed_sign
+        self.accept_wrong_length = accept_wrong_length
+        self.verify_exception = verify_exception
         self.rv_trace: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
         self._counts: dict[str, int] = {}
@@ -854,7 +905,14 @@ class _RawPqcFake:
             self._active = ("sign", mechanism, hash_mech)
             self._data = b""
         return self._event(
-            "C_SignInit", rv, mechanism=mechanism, parameter_len=parameter_len, hash=hash_mech
+            "C_SignInit",
+            rv,
+            mechanism=mechanism,
+            parameter_len=parameter_len,
+            parameter_address=mech._obj.pParameter,
+            parameter_bytes=self._bytes(mech._obj.pParameter, parameter_len),
+            hash=hash_mech,
+            key=_key,
         )
 
     def C_Sign(self, _sh: int, data: Any, data_len: int, out: Any, out_len: Any) -> int:  # noqa: N802
@@ -862,7 +920,7 @@ class _RawPqcFake:
         payload = self._bytes(data, data_len)
         mechanism, hash_mech = self._active[1:]
         rv = self._refusal("C_Sign")
-        if rv is None and hash_mech is not None and data_len != 32:
+        if rv is None and hash_mech is not None and data_len != 32 and not self.accept_wrong_length:
             rv = int(CKR_DATA_LEN_RANGE)
         if rv is None:
             rv = int(CKR_OK)
@@ -886,7 +944,14 @@ class _RawPqcFake:
             self._active = ("verify", mechanism, hash_mech)
             self._data = b""
         return self._event(
-            "C_VerifyInit", rv, mechanism=mechanism, parameter_len=parameter_len, hash=hash_mech
+            "C_VerifyInit",
+            rv,
+            mechanism=mechanism,
+            parameter_len=parameter_len,
+            parameter_address=mech._obj.pParameter,
+            parameter_bytes=self._bytes(mech._obj.pParameter, parameter_len),
+            hash=hash_mech,
+            key=_key,
         )
 
     def C_Verify(  # noqa: N802
@@ -895,6 +960,9 @@ class _RawPqcFake:
         assert self._active is not None and self._active[0] == "verify"
         payload = self._bytes(data, data_len)
         signed = self._bytes(signature, signature_len)
+        if self.verify_exception:
+            self.calls.append({"fn": "C_Verify", "rv": None, "data": payload, "signature": signed})
+            raise ValueError("raw fake Verify failure")
         rv = self._refusal("C_Verify")
         if rv is None:
             if self.malformed_sign and len(signed) == 1:
@@ -965,6 +1033,155 @@ def test_healthy_method_control_fails_on_unexpected_noncompletion(outcome: Any) 
 
 def _raw_family(family: contract._Family) -> contract._Family:
     return replace(family, keygen=lambda _rs: (10, 11))
+
+
+@pytest.mark.parametrize(("family_label", "hash_name", "hash_mech"), _ORIGINAL_WRONG_LENGTH_ROWS)
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "verify_true",
+        "verify_false",
+        "verify_length_false",
+        "init_refusal",
+        "verify_refusal",
+        "raw_exception",
+    ],
+)
+def test_wrong_length_accepted_sign_preserves_conditional_raw_verify_and_primary_failure(
+    family_label: str, hash_name: str, hash_mech: int, outcome: str
+) -> None:
+    """Dropping the original conditional Verify must fail every retained raw/hash row."""
+    family = next(item for item in contract._FAMILIES if item.label == family_label)
+    expected_message, expected_mechanism, expected_length = {
+        "ML-DSA": (
+            b"HashML-DSA pre-hash signature test message 2026",
+            CKM_HASH_ML_DSA,
+            47,
+        ),
+        "SLH-DSA": (
+            b"HashSLH-DSA pre-hash signature test message 2026",
+            CKM_HASH_SLH_DSA,
+            48,
+        ),
+    }[family_label]
+    refusal = {
+        "verify_false": ("C_Verify", 1, int(CKR_SIGNATURE_INVALID)),
+        "verify_length_false": ("C_Verify", 1, int(CKR_SIGNATURE_LEN_RANGE)),
+        "init_refusal": ("C_VerifyInit", 1, int(CKR_FUNCTION_NOT_SUPPORTED)),
+        "verify_refusal": ("C_Verify", 1, int(CKR_FUNCTION_NOT_SUPPORTED)),
+    }.get(outcome)
+    fake = _RawPqcFake(
+        accept_wrong_length=True,
+        refuse=refusal,
+        verify_exception=outcome == "raw_exception",
+    )
+    classification.clear()
+    compliance.clear_notes()
+    with pytest.raises(pytest.fail.Exception) as failure:
+        _must_complete(
+            lambda: contract.test_wrong_length_sign_rejects_original_message(
+                _stateful_session(fake), _raw_family(family), hash_name, hash_mech
+            )
+        )
+    records = classification.get_records()
+    assert len(records) == 1
+    rec = records[0]
+    assert getattr(failure.value, "_pkcs11_check_classification", None) is rec
+    assert rec.reason == "accepted_invalid" and rec.outcome == "fail" and rec.kind is None
+    assert rec.operation == "C_Sign" and rec.mechanism == f"CKM_{family.generic_name}"
+    assert rec.expected_ckr == ["CKR_DATA_LEN_RANGE"] and rec.actual_ckr == "CKR_OK"
+    expected_phases = ["C_SignInit", "C_Sign", "C_Sign", "C_VerifyInit"]
+    if outcome != "init_refusal":
+        expected_phases.append("C_Verify")
+    assert [event["fn"] for event in fake.calls] == [
+        *expected_phases,
+        "C_DestroyObject",
+        "C_DestroyObject",
+    ]
+    expected_last_rv = {
+        "verify_true": int(CKR_OK),
+        "verify_false": int(CKR_SIGNATURE_INVALID),
+        "verify_length_false": int(CKR_SIGNATURE_LEN_RANGE),
+        "init_refusal": int(CKR_FUNCTION_NOT_SUPPORTED),
+        "verify_refusal": int(CKR_FUNCTION_NOT_SUPPORTED),
+        "raw_exception": None,
+    }[outcome]
+    assert [event["rv"] for event in fake.calls] == [
+        *([int(CKR_OK)] * (len(expected_phases) - 1)),
+        expected_last_rv,
+        int(CKR_OK),
+        int(CKR_OK),
+    ]
+    sign_calls = [event for event in fake.calls if event["fn"] == "C_Sign"]
+    assert [event["data"] for event in sign_calls] == [expected_message, expected_message]
+    assert [len(event["data"]) for event in sign_calls] == [expected_length, expected_length]
+    assert [event["output_query"] for event in sign_calls] == [True, False]
+    init_calls = [event for event in fake.calls if event["fn"] in {"C_SignInit", "C_VerifyInit"}]
+    assert [event["mechanism"] for event in init_calls] == [expected_mechanism] * 2
+    assert [event["hash"] for event in init_calls] == [hash_mech] * 2
+    assert [event["key"] for event in init_calls] == [11, 10]
+    assert [event["parameter_len"] for event in init_calls] == [
+        ctypes.sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT)
+    ] * 2
+    assert init_calls[0]["parameter_address"] == init_calls[1]["parameter_address"]
+    assert init_calls[0]["parameter_address"] is not None
+    assert init_calls[0]["parameter_bytes"] == init_calls[1]["parameter_bytes"]
+    param = CK_HASH_SIGN_ADDITIONAL_CONTEXT.from_buffer_copy(init_calls[0]["parameter_bytes"])
+    assert int(param.hash) == hash_mech and int(param.hedgeVariant) == int(CKH_HEDGE_PREFERRED)
+    assert param.pContext is None and int(param.ulContextLen) == 0
+    expected_signature = b"G" + expected_message
+    verify_calls = [event for event in fake.calls if event["fn"] == "C_Verify"]
+    if outcome == "init_refusal":
+        assert not verify_calls
+    else:
+        assert len(verify_calls) == 1
+        assert verify_calls[0]["data"] == expected_message
+        assert len(verify_calls[0]["data"]) == expected_length
+        assert verify_calls[0]["signature"] == expected_signature
+    assert rec.detail is not None
+    assert rec.detail["payload_hex"] == expected_message.hex()
+    assert rec.detail["payload_len"] == expected_length
+    assert rec.detail["verify_payload_hex"] == expected_message.hex()
+    assert rec.detail["verify_payload_len"] == expected_length
+    assert rec.detail["signature_len"] == len(expected_signature)
+    observation = rec.detail["conditional_verify"]
+    expected_status, expected_phase, expected_verified, expected_effect, expected_target = {
+        "verify_true": ("returned", "C_Verify", True, "verification_accepted", True),
+        "verify_false": ("returned", "C_Verify", False, "verification_rejected", True),
+        "verify_length_false": ("returned", "C_Verify", False, "verification_rejected", True),
+        "init_refusal": ("refused", "C_VerifyInit", "unreached", "refused_before_verify", False),
+        "verify_refusal": ("refused", "C_Verify", "not_returned", "refused", True),
+        "raw_exception": ("raw_exception", None, "not_returned", "unknown", "unconfirmed"),
+    }[outcome]
+    assert observation["status"] == expected_status
+    assert observation["phase"] == expected_phase
+    assert observation["verified"] == expected_verified
+    assert observation["effect"] == expected_effect
+    assert observation["target_reached"] == expected_target
+    assert observation["rv"] == expected_last_rv
+    assert observation["rv_name"] == (
+        None if expected_last_rv is None else ckr_name(expected_last_rv)
+    )
+    if outcome == "raw_exception":
+        assert observation["exception_type"] == "ValueError"
+        assert observation["exception_message"] == "raw fake Verify failure"
+        assert rec.detail["unreached_phases"] == "indeterminate after raw exception"
+        assert rec.detail["unobserved_phases"] == ["C_Verify"]
+    else:
+        assert rec.detail["unreached_phases"] == (["C_Verify"] if outcome == "init_refusal" else [])
+    expected_returned = expected_phases[:-1] if outcome == "raw_exception" else expected_phases
+    assert [event["phase"] for event in rec.detail["reached_phases"]] == expected_returned
+    assert [event["rv"] for event in rec.detail["reached_phases"]] == (
+        [int(CKR_OK)] * len(expected_returned)
+        if outcome == "raw_exception"
+        else [*([int(CKR_OK)] * (len(expected_phases) - 1)), expected_last_rv]
+    )
+    assert [event["handle"] for event in fake.calls if event["fn"] == "C_DestroyObject"] == [10, 11]
+    assert rec.detail["cleanup"] == {
+        "public": "best_effort_call_returned_unconfirmed",
+        "private": "best_effort_call_returned_unconfirmed",
+    }
+    assert not compliance.get_notes()
 
 
 @pytest.mark.parametrize("family", contract._FAMILIES, ids=lambda family: family.label)
