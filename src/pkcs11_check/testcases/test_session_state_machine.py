@@ -12,7 +12,7 @@ States:
 
 from __future__ import annotations
 
-from ctypes import byref
+from ctypes import byref, c_ubyte
 from typing import Any
 
 import pytest
@@ -24,7 +24,7 @@ from pkcs11_check.raw.bootstrap import (
 from pkcs11_check.raw.bootstrap import (
     open_session as _raw_open_session,
 )
-from pkcs11_check.raw.pack import template_from_dict
+from pkcs11_check.raw.pack import mech_simple, template_from_dict
 from pkcs11_check.raw.recipes import (
     create_object as _raw_create_object,
 )
@@ -34,9 +34,13 @@ from pkcs11_check.raw.recipes import (
     find_objects,
     generate_random,
     get_session_info,
+    read_attributes,
+    to_ubyte_buf,
 )
-from pkcs11_check.raw.rv import ckr_name, expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CK_ULONG,
     CK_UTF8CHAR,
     CKA_CLASS,
     CKA_LABEL,
@@ -50,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKO_PRIVATE_KEY,
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_SESSION_CLOSED,
     CKR_SESSION_COUNT,
@@ -67,6 +72,11 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
+from pkcs11_check.testcases._attribute_values import (
+    MISSING_ATTRIBUTE,
+    attr_or_record,
+    refusal_rv_for,
+)
 from pkcs11_check.testcases._so_login import (
     guard_so_lockout,
     resolve_so_pin,
@@ -74,10 +84,12 @@ from pkcs11_check.testcases._so_login import (
 )
 from pkcs11_check.testcases.conftest import (
     AES_KEYGEN_RUNTIME_REJECT_RVS,
+    classify_lifecycle_effect,
     classify_negative_rv,
     gen_aes_key_or_xfail,
     get_pin_bytes,
     is_known_error,
+    reject_or_classify,
     skip_unless_generate_random_supported,
     skip_unless_mechanism,
     xfail_if_known_ckr,
@@ -620,6 +632,294 @@ class TestSessionFlags:
 
 
 # ---------------------------------------------------------------------------
+# Logout object-lifetime oracles (QC9b)
+#
+# A successful C_Logout invalidates every old private-object handle
+# (session and token alike, permanently) and destroys the application's
+# private session objects; public session objects remain and private token
+# objects persist (PKCS#11 v3.0 section 5.6.10). Shared with
+# security/test_cve_regression.py, which owns the repaired single-session
+# premise.
+# ---------------------------------------------------------------------------
+
+
+def _note_logout_observation(description: str) -> None:
+    """Record a neutral logout-lifetime observation (never a verdict)."""
+    from pkcs11_check.compliance import ComplianceLevel, note
+
+    note(description, ComplianceLevel.STANDARD, reference="PKCS#11 v3.0 section 5.6.10")
+
+
+def _assert_explicit_lifetime_attrs(
+    raw: Any,
+    sh: int,
+    handle: int,
+    *,
+    label: str,
+    want_private: bool,
+    want_token: bool,
+) -> None:
+    """Prove a logout-lifetime stimulus: read back CKA_PRIVATE/CKA_TOKEN.
+
+    The destruction/hiding/persistence oracles are only sound for an object
+    proven to carry the requested visibility attributes. A module that
+    accepted creation but stored something else claimed success then
+    contradicted it (fail); unreadable attributes leave the premise
+    unprovable (xfail).
+    """
+    attrs = read_attributes(raw, sh, handle, [CKA_PRIVATE, CKA_TOKEN])
+    private_raw = attr_or_record(
+        attrs,
+        CKA_PRIVATE,
+        label=f"{label} CKA_PRIVATE readback",
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    token_raw = attr_or_record(
+        attrs,
+        CKA_TOKEN,
+        label=f"{label} CKA_TOKEN readback",
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    if private_raw is MISSING_ATTRIBUTE or token_raw is MISSING_ATTRIBUTE:
+        xfail_as(
+            "not_operational",
+            kind="metadata",
+            label=f"{label} lifetime premise",
+            summary=f"{label}: CKA_PRIVATE/CKA_TOKEN unreadable; lifetime premise unprovable",
+        )
+    classify_lifecycle_effect(
+        claimed_success=True,
+        effect_observed=(private_raw is not want_private or token_raw is not want_token),
+        label=f"{label} honors requested CKA_PRIVATE/CKA_TOKEN at creation",
+    )
+
+
+def _assert_old_private_handle_invalid(
+    raw: Any, sh: int, handle: int, *, label: str, phase: str
+) -> None:
+    """Probe an old private handle after logout; it must be unusable.
+
+    C_GetAttributeValue on an invalidated handle must reject with
+    CKR_OBJECT_HANDLE_INVALID: usability is a lifecycle self-contradiction
+    (fail), another clean code an honest deviation (xfail). ``phase`` names
+    the checkpoint: immediately after logout, or after relogin before
+    reacquisition.
+
+    ``read_attributes`` absorbs CKR_ATTRIBUTE_SENSITIVE and
+    CKR_ATTRIBUTE_TYPE_INVALID into its ``refusals`` channel instead of
+    raising; those refusals are non-canonical clean rejects (xfail with the
+    original RV), never usable handles (no fabricated ``accepted_invalid``).
+    A refusal-with-data (refusal CKR plus returned bytes) is a measured
+    self-contradiction, not a clean rejection: it is recorded structurally
+    via ``attr_or_record`` and then failed, never xfailed.
+    """
+    probe_label = f"old private handle for {label} ({phase})"
+    try:
+        observed = read_attributes(raw, sh, handle, [CKA_CLASS])
+    except CkrAssertionError as exc:
+        reject_or_classify(
+            exc,
+            (CKR_OBJECT_HANDLE_INVALID,),
+            label=probe_label,
+            kind="lifecycle",
+        )
+    else:
+        refusal_rv = refusal_rv_for(observed, CKA_CLASS)
+        if refusal_rv is not None:
+            reject_or_classify(
+                CkrAssertionError(
+                    f"Unexpected CK_RV {ckr_name(refusal_rv)}",
+                    refusal_rv,
+                ),
+                (CKR_OBJECT_HANDLE_INVALID,),
+                label=probe_label,
+                kind="lifecycle",
+            )
+        else:
+            probe_value = attr_or_record(
+                observed,
+                CKA_CLASS,
+                label=f"{probe_label} CKA_CLASS readback",
+                reason="not_operational",
+                kind="lifecycle",
+                inherit_mechanism=False,
+            )
+            if probe_value is MISSING_ATTRIBUTE:
+                classify_lifecycle_effect(
+                    claimed_success=True,
+                    effect_observed=True,
+                    label=f"{probe_label} neither usable nor cleanly rejected",
+                )
+            else:
+                reject_or_classify(
+                    None,
+                    (CKR_OBJECT_HANDLE_INVALID,),
+                    label=probe_label,
+                    kind="lifecycle",
+                )
+
+
+def _assert_post_relogin_presence(*, found: bool, must_exist: bool, label: str) -> None:
+    """Verdict for a post-relogin reacquisition search after logout.
+
+    The claimed success is the successful C_Logout. The contradicting
+    effect is a must-be-destroyed object reappearing (hidden, not
+    destroyed) or a must-persist object gone. Handle integers are never
+    compared: a reacquired handle may reuse the old integer.
+    """
+    classify_lifecycle_effect(
+        claimed_success=True,
+        effect_observed=(found != must_exist),
+        label=label,
+    )
+
+
+def _assert_reacquired_token_handle_usable(
+    raw: Any,
+    sh: int,
+    handle: int,
+    *,
+    label: str,
+    want_class: int,
+    want_label: str,
+) -> None:
+    """Prove a reacquired token handle usable with the expected identity.
+
+    A post-relogin search returning a handle is not enough: the handle
+    must answer attribute reads and report the expected class and label.
+    The search just claimed the object persists, so any unusability or
+    identity mismatch is a lifecycle self-contradiction (fail). Handle
+    integers are never compared: a reused integer is accepted.
+    """
+    try:
+        attrs = read_attributes(raw, sh, handle, [CKA_CLASS, CKA_LABEL])
+    except CkrAssertionError as exc:
+        classify_lifecycle_effect(
+            claimed_success=True,
+            effect_observed=True,
+            label=f"{label} reacquired handle unusable (observed {ckr_name(exc.rv)})",
+        )
+        return
+    class_raw = attr_or_record(
+        attrs,
+        CKA_CLASS,
+        label=f"{label} reacquired CKA_CLASS readback",
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    label_raw = attr_or_record(
+        attrs,
+        CKA_LABEL,
+        label=f"{label} reacquired CKA_LABEL readback",
+        reason="not_operational",
+        kind="metadata",
+        inherit_mechanism=False,
+    )
+    if class_raw is MISSING_ATTRIBUTE or label_raw is MISSING_ATTRIBUTE:
+        classify_lifecycle_effect(
+            claimed_success=True,
+            effect_observed=True,
+            label=f"{label} reacquired handle reports expected identity",
+        )
+        return
+    identity_ok = class_raw == want_class and label_raw == want_label
+    classify_lifecycle_effect(
+        claimed_success=True,
+        effect_observed=not identity_ok,
+        label=f"{label} reacquired handle reports expected identity",
+    )
+
+
+def _stage_held_open_find(raw: Any, sh: int) -> bool:
+    """Stage a held-open find for the logout observation leg."""
+    rv = raw.C_FindObjectsInit(sh, None, 0)
+    if rv != CKR_OK:
+        _note_logout_observation(
+            "Find-operation logout observation not staged: C_FindObjectsInit "
+            f"rejected with {ckr_name(rv)}"
+        )
+        return False
+    return True
+
+
+def _observe_held_open_find(raw: Any, sh: int) -> None:
+    """Continue the held-open find after logout; either outcome is conformant."""
+    buf = (CK_OBJECT_HANDLE * 8)()
+    count = CK_ULONG(0)
+    rv = raw.C_FindObjects(sh, buf, 8, byref(count))
+    raw.C_FindObjectsFinal(sh)
+    if rv == CKR_OK:
+        _note_logout_observation(
+            "Active C_FindObjects search survived C_Logout (remains usable); "
+            "PKCS#11 v3.0 section 5.6.10 permits active operations to remain "
+            "or terminate -- observation only"
+        )
+    else:
+        _note_logout_observation(
+            "Active C_FindObjects search ended across C_Logout "
+            f"(terminated with {ckr_name(rv)}); PKCS#11 v3.0 section 5.6.10 "
+            "permits active operations to remain or terminate -- observation only"
+        )
+
+
+def _stage_held_open_digest(rs: Any, sh: int) -> bool:
+    """Stage a held-open digest for the logout observation leg."""
+    if not rs.has_mechanism("SHA256"):
+        _note_logout_observation(
+            "Digest-operation logout observation not staged: CKM_SHA256 unavailable"
+        )
+        return False
+    mech = mech_simple(CKM_SHA256)
+    rv = rs.raw.C_DigestInit(sh, mech.byref())
+    if rv != CKR_OK:
+        _note_logout_observation(
+            "Digest-operation logout observation not staged: C_DigestInit "
+            f"rejected with {ckr_name(rv)}"
+        )
+        return False
+    return True
+
+
+def _observe_held_open_digest(raw: Any, sh: int) -> None:
+    """Continue the held-open digest after logout; either outcome is conformant."""
+    data = b"qc9b-digest-probe"
+    in_buf = to_ubyte_buf(data)
+    rv = raw.C_DigestUpdate(sh, in_buf, len(data))
+    out_buf = (c_ubyte * 64)()
+    out_len = CK_ULONG(64)
+    raw.C_DigestFinal(sh, out_buf, byref(out_len))
+    if rv == CKR_OK:
+        _note_logout_observation(
+            "Active C_Digest operation survived C_Logout (remains usable); "
+            "PKCS#11 v3.0 section 5.6.10 permits active operations to remain "
+            "or terminate -- observation only"
+        )
+    else:
+        _note_logout_observation(
+            "Active C_Digest operation ended across C_Logout "
+            f"(terminated with {ckr_name(rv)}); PKCS#11 v3.0 section 5.6.10 "
+            "permits active operations to remain or terminate -- observation only"
+        )
+
+
+def _abandon_held_open_operations(
+    raw: Any, find_sh: int, digest_sh: int, *, find_staged: bool, digest_staged: bool
+) -> None:
+    """Release staged observation operations when logout fails (no verdicts)."""
+    if find_staged:
+        raw.C_FindObjectsFinal(find_sh)
+    if digest_staged:
+        out_buf = (c_ubyte * 64)()
+        out_len = CK_ULONG(64)
+        raw.C_DigestFinal(digest_sh, out_buf, byref(out_len))
+
+
+# ---------------------------------------------------------------------------
 # Logout effects on private objects
 # ---------------------------------------------------------------------------
 
@@ -720,6 +1020,220 @@ class TestLogoutEffects:
         finally:
             _logout_safe(rs.raw, test_sh)
             close_session_quietly(rs.raw, test_sh)
+
+    def test_logout_object_lifetime_across_two_sessions(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """QC9b: logout destroys private session objects and invalidates handles.
+
+        Explicit private-session, public-session and private-token objects
+        across two sessions. A successful C_Logout invalidates ALL old
+        private handles, checked immediately after logout and after relogin
+        before reacquisition: the private session object is destroyed, the
+        public session object remains, and the private token object persists
+        and is reacquirable. Held-open crypto/find operations are observed
+        only (PKCS#11 v3.0 section 5.6.10 permits either outcome).
+        """
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured")
+        rs = p11_raw_session
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+        try:
+            s2 = raw_open_session(rs.raw, rs.slot_id, flags)
+            try:
+                _login_user_raw(rs.raw, s1, pin_bytes)
+
+                priv_label = f"qc9b-priv-session-{id(self)}"
+                pub_label = f"qc9b-pub-session-{id(self)}"
+                tok_label = f"qc9b-priv-token-{id(self)}"
+                priv_h = gen_aes_key_or_xfail(
+                    rs,
+                    128,
+                    attrs={
+                        CKA_TOKEN: False,
+                        CKA_PRIVATE: True,
+                        CKA_LABEL: priv_label,
+                    },
+                    purpose="QC9b private session object",
+                    sh=s1,
+                )
+                _assert_explicit_lifetime_attrs(
+                    rs.raw,
+                    s1,
+                    priv_h,
+                    label="QC9b private session object",
+                    want_private=True,
+                    want_token=False,
+                )
+                pub_h = _create_state_data_object(
+                    rs,
+                    s2,
+                    {
+                        CKA_CLASS: CKO_DATA,
+                        CKA_LABEL: pub_label,
+                        CKA_VALUE: b"qc9b-public",
+                        CKA_TOKEN: False,
+                        CKA_PRIVATE: False,
+                    },
+                )
+                _assert_explicit_lifetime_attrs(
+                    rs.raw,
+                    s2,
+                    pub_h,
+                    label="QC9b public session object",
+                    want_private=False,
+                    want_token=False,
+                )
+                tok_h = gen_aes_key_or_xfail(
+                    rs,
+                    128,
+                    attrs={
+                        CKA_TOKEN: True,
+                        CKA_PRIVATE: True,
+                        CKA_LABEL: tok_label,
+                    },
+                    purpose="QC9b private token object",
+                    sh=s1,
+                )
+                _assert_explicit_lifetime_attrs(
+                    rs.raw,
+                    s1,
+                    tok_h,
+                    label="QC9b private token object",
+                    want_private=True,
+                    want_token=True,
+                )
+
+                # Setup proof: each object is visible before logout.
+                tmpl_priv = template_from_dict({CKA_CLASS: CKO_SECRET_KEY, CKA_LABEL: priv_label})
+                tmpl_pub = template_from_dict({CKA_CLASS: CKO_DATA, CKA_LABEL: pub_label})
+                tmpl_tok = template_from_dict({CKA_CLASS: CKO_SECRET_KEY, CKA_LABEL: tok_label})
+                assert priv_h in find_objects(rs.raw, s1, tmpl_priv)
+                assert pub_h in find_objects(rs.raw, s2, tmpl_pub)
+                assert tok_h in find_objects(rs.raw, s2, tmpl_tok)
+
+                # Stage held-open operations for the observation legs.
+                find_staged = _stage_held_open_find(rs.raw, s1)
+                digest_staged = _stage_held_open_digest(rs, s2)
+
+                # Logout via s1; the oracle below needs it to succeed.
+                logout_rv = rs.raw.C_Logout(s1)
+                if logout_rv != CKR_OK:
+                    _abandon_held_open_operations(
+                        rs.raw, s1, s2, find_staged=find_staged, digest_staged=digest_staged
+                    )
+                    destroy_quietly(rs.raw, s1, priv_h)
+                    destroy_quietly(rs.raw, s2, pub_h)
+                    destroy_quietly(rs.raw, s1, tok_h)
+                    classify_negative_rv(
+                        logout_rv,
+                        (),
+                        label="C_Logout for object-lifetime oracle",
+                    )
+                    return
+
+                # Successful logout invalidates all old private handles:
+                # probe immediately after logout, from both sessions.
+                for sh in (s1, s2):
+                    _assert_old_private_handle_invalid(
+                        rs.raw,
+                        sh,
+                        priv_h,
+                        label="QC9b private session object",
+                        phase="immediately after C_Logout",
+                    )
+                    _assert_old_private_handle_invalid(
+                        rs.raw,
+                        sh,
+                        tok_h,
+                        label="QC9b private token object",
+                        phase="immediately after C_Logout",
+                    )
+                # The public session object remains usable across logout:
+                # any unusability right after logout fails, whatever the code.
+                try:
+                    pub_attrs = read_attributes(rs.raw, s2, pub_h, [CKA_CLASS])
+                except CkrAssertionError as exc:
+                    pub_usable: bool = False
+                    pub_observed = ckr_name(exc.rv)
+                else:
+                    pub_usable = CKA_CLASS in pub_attrs
+                    pub_observed = "CKR_OK with no CKA_CLASS" if not pub_usable else "CKR_OK"
+                classify_lifecycle_effect(
+                    claimed_success=True,
+                    effect_observed=not pub_usable,
+                    label="QC9b public session object remains usable across C_Logout "
+                    f"(observed {pub_observed})",
+                )
+
+                # Held-open operations: observe only, never a verdict.
+                if find_staged:
+                    _observe_held_open_find(rs.raw, s1)
+                if digest_staged:
+                    _observe_held_open_digest(rs.raw, s2)
+
+                # Relogin, then probe the old private handles again BEFORE
+                # reacquisition: relogin must not resurrect them.
+                _login_user_raw(rs.raw, s1, pin_bytes)
+                for sh in (s1, s2):
+                    _assert_old_private_handle_invalid(
+                        rs.raw,
+                        sh,
+                        priv_h,
+                        label="QC9b private session object",
+                        phase="after relogin before reacquisition",
+                    )
+                    _assert_old_private_handle_invalid(
+                        rs.raw,
+                        sh,
+                        tok_h,
+                        label="QC9b private token object",
+                        phase="after relogin before reacquisition",
+                    )
+
+                # Reacquisition verdicts. The private session object was
+                # destroyed (reappearing means hidden, not destroyed); the
+                # public session object remains; the private token object
+                # persists. Reacquired integers are never compared.
+                found_priv = find_objects(rs.raw, s1, tmpl_priv)
+                _assert_post_relogin_presence(
+                    found=len(found_priv) > 0,
+                    must_exist=False,
+                    label="QC9b private session object destroyed by C_Logout",
+                )
+                found_pub = find_objects(rs.raw, s2, tmpl_pub)
+                _assert_post_relogin_presence(
+                    found=len(found_pub) > 0,
+                    must_exist=True,
+                    label="QC9b public session object remains across C_Logout",
+                )
+                found_tok = find_objects(rs.raw, s2, tmpl_tok)
+                _assert_post_relogin_presence(
+                    found=len(found_tok) > 0,
+                    must_exist=True,
+                    label="QC9b private token object persists across C_Logout",
+                )
+                if len(found_tok) > 0:
+                    _assert_reacquired_token_handle_usable(
+                        rs.raw,
+                        s2,
+                        found_tok[0],
+                        label="QC9b private token object",
+                        want_class=int(CKO_SECRET_KEY),
+                        want_label=tok_label,
+                    )
+                for h in found_pub:
+                    destroy_quietly(rs.raw, s2, h)
+                for h in found_tok:
+                    destroy_quietly(rs.raw, s1, h)
+            finally:
+                _logout_safe(rs.raw, s2)
+                close_session_quietly(rs.raw, s2)
+        finally:
+            _logout_safe(rs.raw, s1)
+            close_session_quietly(rs.raw, s1)
 
     def test_generate_random_works_after_logout(
         self, p11_raw_session: Any, p11_config: Any

@@ -196,14 +196,52 @@ def test_random_oaep_diversity_is_diagnostic_not_oracle(
 def test_structured_bleichenbacher_distinction_still_fails_oracle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Distinct per-category CKRs still FAIL oracle, minus the query-count claim."""
+    """Distinct per-category CKRs still FAIL oracle, minus the query-count claim.
+
+    QF4: the structured v1.5 path collects phase-specific attempts through the
+    narrow ``_v15_decrypt_attempt`` seam (not ``decrypt_single``) and appends a
+    witness, its repeat, and an independent valid control. The stub serves the
+    alternating per-category rejects for every invalid ciphertext and the
+    exact expected plaintext for the valid control, so the persistent
+    category-correlated distinction stays the single terminal record.
+    """
+    from pkcs11_check.testcases._rsa_rejection import V15Attempt
+
     _stub_rsa_keygen(monkeypatch)
     monkeypatch.setattr(test_padding_oracle, "read_attributes", _rsa_attrs)
-    monkeypatch.setattr(
-        test_padding_oracle,
-        "decrypt_single",
-        _alternating_decrypt(CKR_ENCRYPTED_DATA_INVALID, CKR_DATA_INVALID),
-    )
+    _control_encoded, control_expected = test_padding_oracle._build_v15_valid_control(_K)
+    control_ct = pow(int.from_bytes(_control_encoded, "big"), _E, _N).to_bytes(_K, "big")
+    calls = 0
+
+    def _attempt(_raw: Any, _sh: int, _key: int, ciphertext: bytes) -> V15Attempt:
+        nonlocal calls
+        calls += 1
+        if ciphertext == control_ct:
+            return V15Attempt(
+                rv=int(CKR_OK),
+                phase="output",
+                init_rv=int(CKR_OK),
+                query_rv=int(CKR_OK),
+                query_estimate=len(control_expected),
+                output_rv=int(CKR_OK),
+                reported_len=len(control_expected),
+                capacity=len(control_expected),
+                output=control_expected,
+            )
+        rv = CKR_ENCRYPTED_DATA_INVALID if calls % 2 == 1 else CKR_DATA_INVALID
+        return V15Attempt(
+            rv=int(rv),
+            phase="output",
+            init_rv=int(CKR_OK),
+            query_rv=int(CKR_OK),
+            query_estimate=32,
+            output_rv=int(rv),
+            reported_len=None,
+            capacity=32,
+            output=None,
+        )
+
+    monkeypatch.setattr(test_padding_oracle, "_v15_decrypt_attempt", _attempt)
     classification.clear()
 
     with pytest.raises(Failed) as excinfo:
@@ -215,6 +253,7 @@ def test_structured_bleichenbacher_distinction_still_fails_oracle(
     assert "2^20" not in str(excinfo.value)
     assert "queries" not in str(excinfo.value)
     assert [r.reason for r in classification.get_records()] == ["oracle"]
+    assert calls == 103
 
 
 def test_structured_manger_distinction_still_fails_oracle(

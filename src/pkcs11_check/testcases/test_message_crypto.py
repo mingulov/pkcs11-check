@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.raw.pack import PackedMechanism, mech_simple
 from pkcs11_check.raw.recipes import (
     decrypt_single,
     destroy_quietly,
@@ -199,16 +200,14 @@ def _handle_message_rv(rv: int, context: str, *, advertised: bool = False) -> No
 def _message_sign(
     rs: Any,
     key: int,
-    mechanism: int,
+    mechanism: int | PackedMechanism,
     data: bytes,
 ) -> bytes:
-    mech = rs.raw._funcs["_pack_mech_simple"] if hasattr(rs.raw, "_pack_mech_simple") else None
-    if mech is None:
-        from pkcs11_check.raw.pack import mech_simple
-
-        packed = mech_simple(mechanism)
+    if isinstance(mechanism, PackedMechanism):
+        packed = mechanism
     else:
-        packed = mech(mechanism)
+        mech = rs.raw._funcs["_pack_mech_simple"] if hasattr(rs.raw, "_pack_mech_simple") else None
+        packed = mech_simple(mechanism) if mech is None else mech(mechanism)
 
     rv = rs.raw.C_MessageSignInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
@@ -232,15 +231,13 @@ def _message_sign(
 def _message_verify(
     rs: Any,
     key: int,
-    mechanism: int,
+    mechanism: int | PackedMechanism,
     data: bytes,
     signature: bytes,
     *,
     expect_valid: bool = True,
 ) -> bool:
-    from pkcs11_check.raw.pack import mech_simple
-
-    packed = mech_simple(mechanism)
+    packed = mechanism if isinstance(mechanism, PackedMechanism) else mech_simple(mechanism)
     rv = rs.raw.C_MessageVerifyInit(rs.sh, packed.byref(), key)
     if rv != CKR_OK:
         _handle_message_rv(rv, "C_MessageVerifyInit", advertised=True)

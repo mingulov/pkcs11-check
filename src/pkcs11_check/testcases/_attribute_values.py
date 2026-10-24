@@ -29,6 +29,35 @@ def _refusal_for(attrs: Mapping[Any, Any], attr: Any) -> AttrRefusal | None:
     return result if isinstance(result, AttrRefusal) else None
 
 
+def refusal_rv_for(attrs: Mapping[Any, Any], attr: Any) -> int | None:
+    """Return the clean-refusal CKR recorded for ``attr``, or ``None``.
+
+    This surfaces ONLY the refusal CKR integer that ``read_attributes``
+    recorded on its additive ``refusals`` channel (via :func:`_refusal_for`)
+    -- never attribute values, never bytes, never the ``AttrRefusal`` object
+    itself. A plain ``Mapping`` with no such channel (e.g. a test-double
+    dict) reports ``None`` rather than inventing a CKR.
+
+    A refusal-with-data (``leaked_len`` set: the module answered a refusal
+    CKR but still wrote real bytes) is a self-contradiction, not a clean
+    rejection, so it is deliberately NOT surfaced here -- ``None`` is
+    returned and the caller must route that shape through ``attr_or_record``
+    (which records the contradiction) plus a terminating classifier.
+    Forwarding its RV into a negative-operation classifier would downgrade
+    a measured contradiction to an honest-deviation xfail.
+
+    Use this only when the calling oracle must forward the original refusal
+    RV (e.g. into a negative-operation classifier); ordinary absence
+    handling stays on ``attr_or_record``, whose behavior is unchanged.
+    """
+    refusal = _refusal_for(attrs, attr)
+    if refusal is None:
+        return None
+    if refusal.leaked_len is not None:
+        return None
+    return refusal.ckr
+
+
 def _sentinel_without_ckr(attrs: Mapping[Any, Any], attr: Any) -> bool:
     """Whether the CK_UNAVAILABLE_INFORMATION sentinel was observed for ``attr``.
 

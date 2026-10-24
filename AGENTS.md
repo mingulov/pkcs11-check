@@ -20,11 +20,11 @@ See [docs/interpreting-results.md](docs/interpreting-results.md) for guidance on
 
 ## Git workflow - CRITICAL
 
-- **Development branch:** `dev` - ALL work merges here. NEVER merge directly to `main`.
-- **Main branch:** `main` - production snapshot, updated from `dev` only when the user says so
-- Feature branches → merge to `dev`, not `main`
+- Work on a task's feature branch and open or update its PR against `main`. A task may contain multiple independently tested commits; follow the user's requested PR scope.
+- Commit each finished bounded change with a conventional message after its relevant tests/lint and independent review pass. Push the feature branch and open or update the PR when it is green.
+- Agents never merge branches, push to `main`, tag, amend, rebase, or otherwise rewrite history without an explicit user request in the current session. Merge and release decisions remain with the user.
 - Worktrees: use `.worktrees/` directory (gitignored)
-- When finishing a branch: `git checkout dev && git merge <branch>` - NEVER `git checkout main`
+- Preserve unrelated changes, stashes and worktrees.
 
 ## Coding Rules
 

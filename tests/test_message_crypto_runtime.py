@@ -2,23 +2,35 @@
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
 from types import SimpleNamespace
 
 import pytest
 
 from pkcs11_check import classification
+from pkcs11_check.raw.pack import mech_ulong
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
+    CK_MECHANISM,
+    CK_ULONG,
+    CKA_SIGN,
+    CKA_TOKEN,
+    CKA_VERIFY,
     CKF_MESSAGE_SIGN,
     CKF_MESSAGE_VERIFY,
     CKF_MULTI_MESSAGE,
+    CKK_GENERIC_SECRET,
+    CKM_BLAKE2B_160_HMAC_GENERAL,
     CKR_ARGUMENTS_BAD,
     CKR_DEVICE_ERROR,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_MECHANISM_INVALID,
     CKR_OK,
+    CKR_SIGNATURE_INVALID,
 )
-from pkcs11_check.testcases import test_message_crypto
+from pkcs11_check.testcases import test_mech_message, test_message_crypto
+from pkcs11_check.testcases.conftest import assert_correct
 from tests._skip_assert import assert_skips, assert_xfails
 
 
@@ -184,8 +196,417 @@ class _ExactVerifyRaw:
         return self.verify_rv if signature is not None else int(CKR_OK)
 
 
+class _PackedSignRaw(_ExactSignRaw):
+    def C_MessageSignInit(  # noqa: N802
+        self, _session: int, mechanism: object, _key: int
+    ) -> int:
+        packed = ctypes.cast(mechanism, ctypes.POINTER(CK_MECHANISM)).contents
+        assert int(packed.mechanism) == int(CKM_BLAKE2B_160_HMAC_GENERAL)
+        assert int(packed.ulParameterLen) == ctypes.sizeof(CK_ULONG)
+        value = ctypes.cast(packed.pParameter, ctypes.POINTER(CK_ULONG)).contents.value
+        assert int(value) == 8
+        return super().C_MessageSignInit(_session, mechanism, _key)
+
+
+class _PackedVerifyRaw(_ExactVerifyRaw):
+    def C_MessageVerifyInit(  # noqa: N802
+        self, _session: int, mechanism: object, _key: int
+    ) -> int:
+        packed = ctypes.cast(mechanism, ctypes.POINTER(CK_MECHANISM)).contents
+        assert int(packed.mechanism) == int(CKM_BLAKE2B_160_HMAC_GENERAL)
+        assert int(packed.ulParameterLen) == ctypes.sizeof(CK_ULONG)
+        value = ctypes.cast(packed.pParameter, ctypes.POINTER(CK_ULONG)).contents.value
+        assert int(value) == 8
+        return super().C_MessageVerifyInit(_session, mechanism, _key)
+
+
+class _OutputSignRaw(_ExactSignRaw):
+    def __init__(self, output: bytes) -> None:
+        super().__init__()
+        self.output = output
+
+    def C_SignMessage(  # noqa: N802
+        self,
+        _session: int,
+        _params: object,
+        _params_len: int,
+        _data: object,
+        _data_len: int,
+        signature: object,
+        signature_len: object,
+    ) -> int:
+        signature_len._obj.value = len(self.output)  # type: ignore[attr-defined]
+        self.calls.append(
+            ("single-output" if signature is not None else "single-size", len(self.output))
+        )
+        if signature is not None:
+            for index, byte in enumerate(self.output):
+                signature[index] = byte  # type: ignore[index]
+        return int(CKR_OK)
+
+
+class _Blake2MessagePositiveRaw:
+    """Controllable raw module for the registry-driven BLAKE2 message nodes."""
+
+    def __init__(
+        self,
+        case: test_mech_message._Blake2MessageCase,
+        *,
+        accept_any_verify: bool = False,
+        wrong_sign_output: bool = False,
+        raise_on_sign: bool = False,
+        raise_on_verify: bool = False,
+    ) -> None:
+        self.case = case
+        self.accept_any_verify = accept_any_verify
+        self.wrong_sign_output = wrong_sign_output
+        self.raise_on_sign = raise_on_sign
+        self.raise_on_verify = raise_on_verify
+        self.calls: list[str] = []
+        self.verify_rvs: list[int] = []
+
+    def _check_mechanism(self, mechanism: object, operation: str, key: int) -> None:
+        packed = ctypes.cast(mechanism, ctypes.POINTER(CK_MECHANISM)).contents
+        assert int(packed.mechanism) == int(self.case.mechanism)
+        if self.case.general:
+            assert int(packed.ulParameterLen) == ctypes.sizeof(CK_ULONG)
+            value = ctypes.cast(packed.pParameter, ctypes.POINTER(CK_ULONG)).contents.value
+            assert int(value) == 8
+        else:
+            assert int(packed.ulParameterLen) == 0
+            assert not packed.pParameter
+        assert key == 99
+        self.calls.append(operation)
+
+    def _tag(self, data: object, data_len: int) -> bytes:
+        payload = bytes(data[:data_len])  # type: ignore[index]
+        full = hashlib.blake2b(
+            payload,
+            key=b"\x42" * 32,
+            digest_size=self.case.digest_size,
+        ).digest()
+        return full[:8] if self.case.general else full
+
+    def C_MessageSignInit(  # noqa: N802
+        self, _session: int, mechanism: object, key: int
+    ) -> int:
+        self._check_mechanism(mechanism, "sign-init", key)
+        return int(CKR_OK)
+
+    def C_SignMessage(  # noqa: N802
+        self,
+        _session: int,
+        _params: object,
+        _params_len: int,
+        data: object,
+        data_len: int,
+        signature: object,
+        signature_len: object,
+    ) -> int:
+        if self.raise_on_sign:
+            raise RuntimeError("sign effect sentinel")
+        tag = self._tag(data, data_len)
+        if self.wrong_sign_output:
+            tag = bytes([tag[0] ^ 1]) + tag[1:]
+        signature_len._obj.value = len(tag)  # type: ignore[attr-defined]
+        self.calls.append("sign-output" if signature is not None else "sign-size")
+        if signature is not None:
+            for index, byte in enumerate(tag):
+                signature[index] = byte  # type: ignore[index]
+        return int(CKR_OK)
+
+    def C_MessageSignFinal(self, _session: int) -> int:  # noqa: N802
+        self.calls.append("sign-final")
+        return int(CKR_OK)
+
+    def C_MessageVerifyInit(  # noqa: N802
+        self, _session: int, mechanism: object, key: int
+    ) -> int:
+        self._check_mechanism(mechanism, "verify-init", key)
+        return int(CKR_OK)
+
+    def C_VerifyMessage(  # noqa: N802
+        self,
+        _session: int,
+        _params: object,
+        _params_len: int,
+        data: object,
+        data_len: int,
+        signature: object,
+        signature_len: int,
+    ) -> int:
+        if self.raise_on_verify:
+            raise RuntimeError("verify effect sentinel")
+        expected = self._tag(data, data_len)
+        actual = bytes(signature[:signature_len])  # type: ignore[index]
+        self.calls.append("verify")
+        if self.accept_any_verify or actual == expected:
+            self.verify_rvs.append(int(CKR_OK))
+            return int(CKR_OK)
+        self.verify_rvs.append(int(CKR_SIGNATURE_INVALID))
+        return int(CKR_SIGNATURE_INVALID)
+
+    def C_MessageVerifyFinal(self, _session: int) -> int:  # noqa: N802
+        self.calls.append("verify-final")
+        return int(CKR_OK)
+
+
+class _MissingSignMessageRaw:
+    def C_MessageSignInit(self, _session: int, _mechanism: object, _key: int) -> int:  # noqa: N802
+        return int(CKR_OK)
+
+    def C_MessageSignFinal(self, _session: int) -> int:  # noqa: N802
+        return int(CKR_OK)
+
+
+class _MissingVerifyMessageRaw:
+    def C_MessageVerifyInit(  # noqa: N802
+        self, _session: int, _mechanism: object, _key: int
+    ) -> int:
+        return int(CKR_OK)
+
+    def C_MessageVerifyFinal(self, _session: int) -> int:  # noqa: N802
+        return int(CKR_OK)
+
+
 def _message_rs(raw: object) -> SimpleNamespace:
     return SimpleNamespace(raw=raw, sh=7)
+
+
+def _registry_message_rs(raw: _Blake2MessagePositiveRaw, flag: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        raw=raw,
+        sh=7,
+        has_mechanism=lambda name: name == raw.case.name,
+        has_mechanism_flag=lambda name, requested: name == raw.case.name and requested == flag,
+    )
+
+
+def _patch_registry_message_key_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[tuple[int, bytes, dict[int, object], str]], list[tuple[object, int, int]]]:
+    imported: list[tuple[int, bytes, dict[int, object], str]] = []
+    destroyed: list[tuple[object, int, int]] = []
+
+    def _import(
+        _rs: object,
+        key_type: int,
+        value: bytes,
+        *,
+        attrs: dict[int, object],
+        purpose: str,
+    ) -> int:
+        imported.append((int(key_type), value, dict(attrs), purpose))
+        return 99
+
+    monkeypatch.setattr(test_mech_message, "import_secret_key_negotiated", _import)
+    monkeypatch.setattr(
+        test_mech_message,
+        "destroy_quietly",
+        lambda raw, session, key: destroyed.append((raw, session, key)),
+    )
+    return imported, destroyed
+
+
+@pytest.mark.parametrize(
+    "case",
+    test_mech_message._BLAKE2_MESSAGE_CASES,
+    ids=[case.name for case in test_mech_message._BLAKE2_MESSAGE_CASES],
+)
+def test_registry_blake2_sign_node_executes_generic_secret_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    case: test_mech_message._Blake2MessageCase,
+) -> None:
+    classification.clear()
+    imported, destroyed = _patch_registry_message_key_setup(monkeypatch)
+    raw = _Blake2MessagePositiveRaw(case)
+    rs = _registry_message_rs(raw, int(CKF_MESSAGE_SIGN))
+
+    test_mech_message.TestRegistryMessageBlake2GenericSecret().test_registry_message_blake2_generic_secret_sign(
+        p11_raw_session=rs, case=case
+    )
+
+    assert imported == [
+        (
+            int(CKK_GENERIC_SECRET),
+            b"\x42" * 32,
+            {CKA_TOKEN: False, CKA_SIGN: True, CKA_VERIFY: True},
+            f"{case.name} message generic-secret sign setup",
+        )
+    ]
+    assert destroyed == [(raw, 7, 99)]
+    assert raw.calls == [
+        "sign-init",
+        "sign-final",
+        "sign-init",
+        "sign-size",
+        "sign-output",
+        "sign-final",
+    ]
+    assert classification.get_records() == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    test_mech_message._BLAKE2_MESSAGE_CASES,
+    ids=[case.name for case in test_mech_message._BLAKE2_MESSAGE_CASES],
+)
+def test_registry_blake2_verify_node_executes_generic_secret_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    case: test_mech_message._Blake2MessageCase,
+) -> None:
+    classification.clear()
+    imported, destroyed = _patch_registry_message_key_setup(monkeypatch)
+    raw = _Blake2MessagePositiveRaw(case)
+    rs = _registry_message_rs(raw, int(CKF_MESSAGE_VERIFY))
+
+    test_mech_message.TestRegistryMessageBlake2GenericSecret().test_registry_message_blake2_generic_secret_verify(
+        p11_raw_session=rs, case=case
+    )
+
+    assert imported == [
+        (
+            int(CKK_GENERIC_SECRET),
+            b"\x42" * 32,
+            {CKA_TOKEN: False, CKA_SIGN: True, CKA_VERIFY: True},
+            f"{case.name} message generic-secret verify setup",
+        )
+    ]
+    assert destroyed == [(raw, 7, 99)]
+    assert raw.calls == [
+        "verify-init",
+        "verify-final",
+        "verify-init",
+        "verify",
+        "verify-final",
+        "verify-init",
+        "verify",
+        "verify-final",
+    ]
+    assert raw.verify_rvs == [int(CKR_OK), int(CKR_SIGNATURE_INVALID)]
+    assert classification.get_records() == []
+
+
+def test_registry_blake2_sign_node_classifies_wrong_same_length_mac(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    imported, destroyed = _patch_registry_message_key_setup(monkeypatch)
+    case = test_mech_message._BLAKE2_MESSAGE_CASES[1]
+    raw = _Blake2MessagePositiveRaw(case, wrong_sign_output=True)
+
+    with pytest.raises(pytest.fail.Exception, match="output does not match"):
+        test_mech_message.TestRegistryMessageBlake2GenericSecret().test_registry_message_blake2_generic_secret_sign(
+            p11_raw_session=_registry_message_rs(raw, int(CKF_MESSAGE_SIGN)), case=case
+        )
+
+    assert imported and destroyed == [(raw, 7, 99)]
+    record = classification.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+
+
+def test_registry_blake2_verify_node_classifies_accept_any_wrong_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    classification.clear()
+    imported, destroyed = _patch_registry_message_key_setup(monkeypatch)
+    case = test_mech_message._BLAKE2_MESSAGE_CASES[1]
+    raw = _Blake2MessagePositiveRaw(case, accept_any_verify=True)
+
+    with pytest.raises(pytest.fail.Exception, match="output does not match"):
+        test_mech_message.TestRegistryMessageBlake2GenericSecret().test_registry_message_blake2_generic_secret_verify(
+            p11_raw_session=_registry_message_rs(raw, int(CKF_MESSAGE_VERIFY)), case=case
+        )
+
+    assert imported and destroyed == [(raw, 7, 99)]
+    record = classification.get_records()[-1]
+    assert record.reason == "wrong_result"
+    assert record.kind == "crypto"
+
+
+@pytest.mark.parametrize(
+    ("method_name", "flag", "error_text"),
+    [
+        (
+            "test_registry_message_blake2_generic_secret_sign",
+            int(CKF_MESSAGE_SIGN),
+            "sign effect sentinel",
+        ),
+        (
+            "test_registry_message_blake2_generic_secret_verify",
+            int(CKF_MESSAGE_VERIFY),
+            "verify effect sentinel",
+        ),
+    ],
+)
+def test_registry_blake2_nodes_preserve_effect_exception_and_destroy_key(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    flag: int,
+    error_text: str,
+) -> None:
+    classification.clear()
+    imported, destroyed = _patch_registry_message_key_setup(monkeypatch)
+    case = test_mech_message._BLAKE2_MESSAGE_CASES[1]
+    raw = _Blake2MessagePositiveRaw(
+        case,
+        raise_on_sign=flag == int(CKF_MESSAGE_SIGN),
+        raise_on_verify=flag == int(CKF_MESSAGE_VERIFY),
+    )
+
+    with pytest.raises(RuntimeError, match=error_text):
+        getattr(test_mech_message.TestRegistryMessageBlake2GenericSecret(), method_name)(
+            p11_raw_session=_registry_message_rs(raw, flag), case=case
+        )
+
+    assert imported
+    assert destroyed == [(raw, 7, 99)]
+    assert classification.get_records() == []
+
+
+@pytest.mark.parametrize(
+    ("method_name", "raw_type", "flag", "missing_name"),
+    [
+        (
+            "test_registry_message_blake2_generic_secret_sign",
+            _MissingSignMessageRaw,
+            int(CKF_MESSAGE_SIGN),
+            "C_SignMessage",
+        ),
+        (
+            "test_registry_message_blake2_generic_secret_verify",
+            _MissingVerifyMessageRaw,
+            int(CKF_MESSAGE_VERIFY),
+            "C_VerifyMessage",
+        ),
+    ],
+)
+def test_registry_blake2_nodes_skip_when_effect_function_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    raw_type: type[object],
+    flag: int,
+    missing_name: str,
+) -> None:
+    case = test_mech_message._BLAKE2_MESSAGE_CASES[0]
+    raw = raw_type()
+    rs = SimpleNamespace(
+        raw=raw,
+        sh=7,
+        has_mechanism=lambda name: name == case.name,
+        has_mechanism_flag=lambda name, requested: name == case.name and requested == flag,
+    )
+    monkeypatch.setattr(
+        test_mech_message,
+        "import_secret_key_negotiated",
+        lambda *_args, **_kwargs: pytest.fail("key import should not run before capability skip"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match=missing_name):
+        getattr(test_mech_message.TestRegistryMessageBlake2GenericSecret(), method_name)(
+            p11_raw_session=rs, case=case
+        )
 
 
 def test_message_verify_bad_signature_device_error_is_xfail(
@@ -372,6 +793,60 @@ def test_message_verify_single_finalizes_after_completed_message() -> None:
 
     assert test_message_crypto._message_verify(_message_rs(raw), 12, 1, b"data", b"sig") is True
     assert raw.calls == [("init", 0), ("single", 0), ("final", 0)]
+
+
+def test_message_sign_accepts_packed_general_mechanism() -> None:
+    raw = _PackedSignRaw()
+    packed = mech_ulong(CKM_BLAKE2B_160_HMAC_GENERAL, 8)
+
+    assert test_message_crypto._message_sign(_message_rs(raw), 11, packed, b"data") == b"sig"
+
+
+def test_message_verify_accepts_packed_general_mechanism() -> None:
+    raw = _PackedVerifyRaw()
+    packed = mech_ulong(CKM_BLAKE2B_160_HMAC_GENERAL, 8)
+
+    assert (
+        test_message_crypto._message_verify(_message_rs(raw), 12, packed, b"data", b"sig") is True
+    )
+
+
+def test_message_sign_healthy_and_wrong_same_length_outputs_are_distinguished() -> None:
+    expected = b"\xa5" * 8
+    healthy = _OutputSignRaw(expected)
+    assert test_message_crypto._message_sign(_message_rs(healthy), 11, 1, b"data") == expected
+
+    wrong = _OutputSignRaw(b"\x5a" * 8)
+    with pytest.raises(pytest.fail.Exception, match="output does not match"):
+        assert_correct(
+            actual=test_message_crypto._message_sign(_message_rs(wrong), 11, 1, b"data"),
+            expected=expected,
+            label="same-length message MAC",
+            operation="C_SignMessage",
+            mechanism="CKM_BLAKE2B_160_HMAC_GENERAL",
+        )
+
+
+def test_message_verify_strict_reject_and_accept_any_controls() -> None:
+    strict = _ExactVerifyRaw(int(CKR_SIGNATURE_INVALID))
+    assert (
+        test_message_crypto._message_verify(
+            _message_rs(strict), 12, 1, b"data", b"wrong!", expect_valid=False
+        )
+        is False
+    )
+
+    accept_any = _ExactVerifyRaw(int(CKR_OK))
+    with pytest.raises(pytest.fail.Exception, match="output does not match"):
+        assert_correct(
+            actual=test_message_crypto._message_verify(
+                _message_rs(accept_any), 12, 1, b"data", b"wrong!", expect_valid=False
+            ),
+            expected=False,
+            label="message verification rejects wrong tag",
+            operation="C_VerifyMessage",
+            mechanism="CKM_BLAKE2B_160_HMAC_GENERAL",
+        )
 
 
 def test_message_sign_multipart_uses_begin_once_and_repeats_final_part() -> None:

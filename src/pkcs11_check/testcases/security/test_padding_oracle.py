@@ -12,21 +12,33 @@ from __future__ import annotations
 
 import ctypes
 import secrets
+import sys
 import time
 from collections.abc import Iterable
 from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify, xfail_as
+from pkcs11_check.classification import (
+    Classification,
+    classify,
+    raise_for_record,
+    record_as,
+    xfail_as,
+)
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.pack import mech_bytes, mech_oaep, mech_simple
 from pkcs11_check.raw.recipes import (
+    OutputLengthOverrunError,
+    _alloc_module_output,
+    _cancel_operation,
+    _init_or_recover,
     decrypt_single,
     destroy_quietly,
     encrypt_single,
     generate_random,
     read_attributes,
+    to_ubyte_buf,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
 from pkcs11_check.raw.types_std import (
@@ -43,7 +55,20 @@ from pkcs11_check.raw.types_std import (
     CKM_RSA_PKCS,
     CKM_RSA_PKCS_OAEP,
     CKM_SHA_1,
+    CKR_BUFFER_TOO_SMALL,
     CKR_OK,
+)
+from pkcs11_check.testcases._rsa_rejection import (
+    V15Assessment,
+    V15Attempt,
+    V15SampleObservation,
+    V15ValidControl,
+    assess_v15_samples,
+    assessment_evidence,
+    attempt_evidence,
+    control_evidence,
+    observe_v15_sample,
+    sample_evidence,
 )
 from pkcs11_check.testcases.conftest import (
     CIPHER_OP_RUNTIME_REJECT_RVS,
@@ -305,6 +330,393 @@ def _sample_bleichenbacher_cat2(n: int, k: int) -> bytes:
     return encoded
 
 
+def _v15_decrypt_attempt(raw: Any, session: int, key: int, ciphertext: bytes) -> V15Attempt:
+    """One CKM_RSA_PKCS decrypt attempt with phase-specific evidence.
+
+    Narrow v1.5-local driver with ``decrypt_single``'s exact provider-visible
+    shape (init-or-recover, NULL size query, output call; best-effort cancel
+    on failure): CKR outcomes are returned as evidence instead of raised so
+    the structured collector retains every phase RV, the query estimate, the
+    final reported length, and the real capacity. Unexpected faults still
+    propagate after best-effort cancel, and a CKR_OK length beyond capacity
+    raises ``OutputLengthOverrunError`` exactly like the generic recipe.
+    """
+    mech = mech_simple(CKM_RSA_PKCS)
+    init_rv = _init_or_recover(raw, session, lambda: raw.C_DecryptInit(session, mech.byref(), key))
+    if init_rv != CKR_OK:
+        return V15Attempt(rv=int(init_rv), phase="init", init_rv=int(init_rv))
+    in_buf = to_ubyte_buf(ciphertext)
+    try:
+        query_len = CK_ULONG(0)
+        query_rv = raw.C_Decrypt(session, in_buf, len(ciphertext), None, ctypes.byref(query_len))
+        estimate = query_len.value
+        if query_rv not in (CKR_OK, CKR_BUFFER_TOO_SMALL):
+            _cancel_operation(raw, session, int(CKF_DECRYPT))
+            return V15Attempt(
+                rv=int(query_rv),
+                phase="query",
+                init_rv=int(init_rv),
+                query_rv=int(query_rv),
+                query_estimate=estimate,
+            )
+        out_buf = _alloc_module_output(estimate, what="C_Decrypt")
+        size = len(out_buf)
+        out_len = CK_ULONG(size)
+        output_rv = raw.C_Decrypt(session, in_buf, len(ciphertext), out_buf, ctypes.byref(out_len))
+        reported = out_len.value
+        if output_rv != CKR_OK:
+            _cancel_operation(raw, session, int(CKF_DECRYPT))
+            return V15Attempt(
+                rv=int(output_rv),
+                phase="output",
+                init_rv=int(init_rv),
+                query_rv=int(query_rv),
+                query_estimate=estimate,
+                output_rv=int(output_rv),
+                reported_len=reported,
+                capacity=size,
+            )
+        if reported > size:
+            raise _V15OverrunError(
+                call="C_Decrypt",
+                capacity=size,
+                reported=reported,
+                attempt=V15Attempt(
+                    rv=int(CKR_OK),
+                    phase="output",
+                    init_rv=int(init_rv),
+                    query_rv=int(query_rv),
+                    query_estimate=estimate,
+                    output_rv=int(CKR_OK),
+                    reported_len=reported,
+                    capacity=size,
+                    output=None,  # over-capacity bytes were never safely captured
+                ),
+            )
+        return V15Attempt(
+            rv=int(CKR_OK),
+            phase="output",
+            init_rv=int(init_rv),
+            query_rv=int(query_rv),
+            query_estimate=estimate,
+            output_rv=int(output_rv),
+            reported_len=reported,
+            capacity=size,
+            output=bytes(out_buf[:reported]),
+        )
+    except BaseException:
+        _cancel_operation(raw, session, int(CKF_DECRYPT))
+        raise
+
+
+class _V15OverrunError(OutputLengthOverrunError):
+    """Local overrun carrying the captured phase evidence (AMEND-4).
+
+    The generic exception keeps only call/capacity/reported; the structured
+    collector already validated the Init/query/output RVs and the query
+    estimate, so they ride along for the retained record instead of being
+    discarded on malformed provider output.
+    """
+
+    def __init__(self, *, call: str, capacity: int, reported: int, attempt: V15Attempt) -> None:
+        super().__init__(call=call, capacity=capacity, reported=reported)
+        self.attempt = attempt
+
+
+class _V15CollectionIncompleteError(Exception):
+    """Internal signal: collection stopped fail-closed after a retained finding."""
+
+
+def _v15_attempt_or_retain_overrun(
+    raw: Any,
+    session: int,
+    key: int,
+    ciphertext: bytes,
+    *,
+    sample_id: str,
+    category: str,
+    attempt_label: str,
+    encoded: bytes | None,
+    retained: list[Classification],
+) -> V15Attempt:
+    """Run one attempt; retain an overrun as ``wrong_result`` and stop closed.
+
+    A CKR_OK length beyond capacity makes safe collection impossible, so the
+    finding is recorded immediately and collection halts via
+    ``_V15CollectionIncompleteError`` (the terminal outcome is still the first
+    retained fail, which may predate this sample).
+    """
+    try:
+        return _v15_decrypt_attempt(raw, session, key, ciphertext)
+    except OutputLengthOverrunError as exc:
+        overrun_attempt = exc.attempt if isinstance(exc, _V15OverrunError) else None
+        retained.append(
+            record_as(
+                "wrong_result",
+                kind="crypto",
+                label="RSA PKCS#1 v1.5 malformed output length",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS",
+                summary=(
+                    f"RSA PKCS#1 v1.5 sample {sample_id}: module returned CKR_OK "
+                    f"claiming {exc.reported} output bytes but buffer capacity was "
+                    f"{exc.capacity}; malformed output length, not a proved "
+                    "plaintext exposure"
+                ),
+                detail={
+                    "sample_id": sample_id,
+                    "category": category,
+                    "attempt": attempt_label,
+                    "encoded_hex": None if encoded is None else encoded.hex(),
+                    "ciphertext_hex": ciphertext.hex(),
+                    "capacity": exc.capacity,
+                    "reported": exc.reported,
+                    "attempt_evidence": None
+                    if overrun_attempt is None
+                    else attempt_evidence(overrun_attempt),
+                },
+            )
+        )
+        raise _V15CollectionIncompleteError(sample_id) from exc
+
+
+def _retain_v15_sample_findings(
+    obs: V15SampleObservation,
+    *,
+    k: int,
+    e: int,
+    n: int,
+    retained: list[Classification],
+    skip_witness: bool = False,
+    skip_overlong: bool = False,
+) -> None:
+    """Retain one observation's validated hard findings (nonterminal).
+
+    Called during collection, before any later risky call, so a witnessed
+    exposure or malformed length survives a subsequent raw-call fault. Only
+    the terminal pytest outcome waits for the complete collection. The skip
+    flags support incremental retention: the witness first attempt is retained
+    before its risky exact repeat, and the completed observation then retains
+    only kinds the first attempt did not already establish (no duplicates).
+    """
+    if obs.witness and not skip_witness:
+        retained.append(
+            record_as(
+                "accepted_invalid",
+                kind="crypto",
+                label="RSA PKCS#1 v1.5 known-payload padding bypass",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS",
+                actual="CKR_OK",
+                summary=(
+                    f"SECURITY: RSA PKCS#1 v1.5 sample {obs.sample_id}: module "
+                    "returned CKR_OK with output exactly equal to the known "
+                    "would-be plaintext of the deliberately invalid short-PS "
+                    "encoding — observed padding bypass for this sample only; "
+                    "no timing/side-channel claim"
+                ),
+                detail={
+                    "sample_id": obs.sample_id,
+                    "k": k,
+                    "e": e,
+                    "n_hex": n.to_bytes(k, "big").hex(),
+                    "sample": sample_evidence(obs),
+                },
+            )
+        )
+    if obs.overlong_attempts and not skip_overlong:
+        retained.append(
+            record_as(
+                "wrong_result",
+                kind="crypto",
+                label="RSA PKCS#1 v1.5 malformed output length",
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS",
+                actual="CKR_OK",
+                summary=(
+                    f"RSA PKCS#1 v1.5 sample {obs.sample_id}: module returned "
+                    "CKR_OK with an output length exceeding the CKM_RSA_PKCS "
+                    f"k-11 maximum ({k - 11} bytes for k={k}); malformed output "
+                    "length, not a proved plaintext exposure"
+                ),
+                detail={
+                    "sample_id": obs.sample_id,
+                    "k": k,
+                    "mechanism_max": k - 11,
+                    "sample": sample_evidence(obs),
+                },
+            )
+        )
+
+
+def _raise_v15_terminal(retained: list[Classification]) -> None:
+    """Raise the terminal outcome: exposure first, else first fail/xfail, else pass.
+
+    Retention order is discovery order and stays untouched, but a witnessed
+    plaintext exposure (``accepted_invalid``) is terminally primary: when
+    the witness first attempt retains an overlength finding and only the
+    repeat exposes the exact known suffix, the terminal pytest outcome must
+    be the exposure, not the earlier-retained length finding.
+    """
+    for rec in retained:
+        if rec.outcome == "fail" and rec.reason == "accepted_invalid":
+            raise_for_record(rec)
+    for rec in retained:
+        if rec.outcome == "fail":
+            raise_for_record(rec)
+    for rec in retained:
+        if rec.outcome == "xfail":
+            raise_for_record(rec)
+
+
+def _v15_unresolved_reasons(assessment: V15Assessment) -> str:
+    """Summarize which synthetic gates failed (unresolved-posture detail)."""
+    reasons: list[str] = []
+    if assessment.valid_status != "correct":
+        reasons.append(f"valid control {assessment.valid_status}")
+    if assessment.oracle.status != "none":
+        reasons.append(f"category statuses {assessment.oracle.status}")
+    gates = assessment.gates
+    if not gates["no_rejects"]:
+        reasons.append("mixed accept/reject across invalid attempts")
+    if not gates["witness_accepted_stable"]:
+        reasons.append("no stable accepted witness repeat")
+    if not gates["cat1_variation"] or not gates["cat2_variation"]:
+        reasons.append("insufficient cross-input output variation")
+    if not gates["complete_evidence"]:
+        reasons.append("incomplete accepted-output evidence (missing bytes/length)")
+    if not gates["nonzero_outputs"]:
+        reasons.append("zero/empty accepted output")
+    return "; ".join(reasons) if reasons else "uncharacterized evidence gap"
+
+
+def _retain_v15_unresolved_posture(
+    assessment: V15Assessment,
+    evidence: dict[str, Any],
+    accepts: int,
+    retained: list[Classification],
+    *,
+    hard_fails: int = 0,
+) -> None:
+    """Retain the unresolved posture record (nonterminal; terminal picks it up).
+
+    Called only when something needs characterizing (accepted invalid
+    attempts or a transient status distinction); uniform rejection with no
+    status signal leaves the valid-control record (if any) as the terminal.
+    On completed runs with hard findings the record doubles as the corpus
+    carrier, preserving the full assessment evidence independently of the
+    fail terminal so replay and receipt cross-checking remain possible.
+    """
+    if hard_fails:
+        posture_label = "RSA PKCS#1 v1.5 completed-assessment corpus"
+        posture_summary = (
+            "RSA PKCS#1 v1.5 completed-assessment corpus preserved alongside "
+            f"{hard_fails} hard finding(s) for replay and receipt cross-checking "
+            f"({accepts} accepted invalid attempts; "
+            f"{_v15_unresolved_reasons(assessment)}; category statuses "
+            f"{assessment.oracle.status}) — assessment posture unresolved, "
+            "terminal severity carried by the hard finding(s); no "
+            "timing/side-channel claim"
+        )
+    elif accepts == 0 and assessment.oracle.status == "transient":
+        posture_label = "RSA PKCS#1 v1.5 transient status distinction"
+        posture_summary = (
+            "RSA PKCS#1 v1.5 first-attempt category statuses differ only within "
+            "the bounded startup window or through unrepeated statuses "
+            f"(cat-1 {assessment.oracle.cat1} vs cat-2 {assessment.oracle.cat2}); "
+            "no CKR_OK was observed and no proved category oracle exists — "
+            "visible unresolved evidence, no timing/side-channel claim"
+        )
+    else:
+        posture_label = "RSA PKCS#1 v1.5 unresolved CKR_OK evidence"
+        posture_summary = (
+            "RSA PKCS#1 v1.5 invalid-ciphertext CKR_OK evidence is unresolved "
+            f"({accepts} accepted invalid attempts; "
+            f"{_v15_unresolved_reasons(assessment)}); no plaintext exposure "
+            "proved and no implicit rejection established — visible unresolved "
+            "evidence, no timing/side-channel claim"
+        )
+    retained.append(
+        record_as(
+            "honest_deviation",
+            kind="crypto",
+            label=posture_label,
+            operation="C_Decrypt",
+            mechanism="CKM_RSA_PKCS",
+            summary=posture_summary,
+            detail={**evidence, "assessment": "unresolved"},
+        )
+    )
+
+
+def _destroy_v15_keys_scoped(raw: Any, session: int, handles: tuple[int, ...]) -> None:
+    """Destroy each owned key; attempts are independent and exception-safe.
+
+    A first-destroy fault neither skips the remaining destroys nor replaces an
+    in-flight primary finding (each cleanup fault is recorded as a distinct
+    teardown note). With no primary outcome in flight, the first fault is
+    re-raised after every destroy was attempted, preserving loud teardown.
+    """
+    from pkcs11_check.compliance import ComplianceLevel, note
+
+    faults: list[tuple[int, Exception]] = []
+    for handle in handles:
+        try:
+            destroy_quietly(raw, session, handle)
+        except Exception as exc:
+            faults.append((handle, exc))
+    for handle, fault in faults:
+        note(
+            "RSA PKCS#1 v1.5 structured-oracle teardown: C_DestroyObject for key "
+            f"{handle} raised {type(fault).__name__}: {fault}; the primary "
+            "finding (if any) is preserved and every owned key was still "
+            "destroy-attempted",
+            ComplianceLevel.EXTENDED,
+            reference="QF4 scoped exception-safe cleanup",
+        )
+    if faults and sys.exception() is None:
+        raise faults[0][1]
+
+
+#: Fixed plaintext of the independent v1.5 valid control (deterministic).
+_V15_CONTROL_MESSAGE = b"QF4-v15-valid-control-plaintext"
+#: Minimum modulus length admitting the valid control (2 + PS>=8 + 1 + M).
+_V15_MIN_CONTROL_K = 3 + 8 + len(_V15_CONTROL_MESSAGE)
+
+
+def _build_v15_ps7_witness(k: int) -> tuple[bytes, bytes]:
+    """Build the deterministic invalid short-PS witness block.
+
+    Returns ``(encoded, would_be_plaintext)`` for ``00 02 || PS7 nonzero ||
+    00 || payload`` padded to exactly ``k`` bytes, so the would-be naive-unpad
+    suffix is ``k-10`` bytes: one byte above the legal ``k-11`` maximum. Seven
+    padding bytes make the block invalid by construction (PS >= 8 required).
+    """
+    ps = bytes(range(1, 8))
+    assert len(ps) == 7 and all(b != 0 for b in ps)
+    payload = bytes((i * 37 + 11) % 256 for i in range(k - 10))
+    encoded = b"\x00\x02" + ps + b"\x00" + payload
+    assert len(encoded) == k
+    assert encoded[9] == 0x00
+    return encoded, payload
+
+
+def _build_v15_valid_control(k: int) -> tuple[bytes, bytes]:
+    """Build the deterministic valid control block and its expected plaintext.
+
+    Returns ``(encoded, expected)`` for ``00 02 || PS>=8 nonzero || 00 || M``
+    with a fixed bounded ``M``. Requires ``k >= _V15_MIN_CONTROL_K``; the
+    caller premise-checks that before any provider call.
+    """
+    ps_len = k - 3 - len(_V15_CONTROL_MESSAGE)
+    assert ps_len >= 8, f"modulus too small for the valid control (k={k})"
+    ps = bytes(((i * 53 + 7) % 255) + 1 for i in range(ps_len))
+    assert all(b != 0 for b in ps)
+    encoded = b"\x00\x02" + ps + b"\x00" + _V15_CONTROL_MESSAGE
+    assert len(encoded) == k
+    return encoded, _V15_CONTROL_MESSAGE
+
+
 def _sample_manger_cat1(boundary: int) -> int:
     """Sample an OAEP/Manger cat-1 representative: ``m`` in ``[1, B)``."""
     return secrets.randbelow(boundary - 1) + 1
@@ -457,6 +869,18 @@ class TestRSAPaddingOracle:
         prefix and short / no PS-separator, ensuring the per-category
         error sets are populated.
 
+        QF4 assessment model: per-sample evidence is collected without
+        emitting a verdict (the original 100 alternating cat-1/cat-2
+        attempts, then one deterministic invalid short-PS witness, its exact
+        repeat, and one independently constructed valid control: exactly 103
+        semantic decrypts), then assessed. Only exact output equality to a
+        known would-be payload witnesses exposure (fail); behavior consistent
+        with deterministic implicit rejection is a visible posture xfail, never
+        a security certificate; anything short of either stays a visible
+        unresolved xfail. A category-RV difference fails as an oracle only
+        with bounded repeated category-correlated status evidence; a startup
+        transient stays unresolved posture evidence.
+
         Closes Phase 4.5 GAP-P2 (HIGH).
         """
         rs = p11_raw_session
@@ -469,84 +893,320 @@ class TestRSAPaddingOracle:
 
         try:
             n, e, k = _read_rsa_public_numbers_or_xfail(rs, pub)
-
-            cat1_errors: set[str] = set()  # 00 02 prefix, missing PS-separator
-            cat2_errors: set[str] = set()  # arbitrary, no 00 02 prefix
-
-            samples_per_category = 50
-            for _ in range(samples_per_category):
-                # Cat-1: m starts with 0x00 0x02 followed by random non-zero
-                # bytes through to the end (no 0x00 separator → garbled
-                # plaintext but valid prefix). PS must be ≥ 8 bytes per
-                # PKCS#1 v1.5; our cat-1 has ≥ k-2 bytes which is far over.
-                # The leading 0x00 keeps m < n structurally; membership is
-                # asserted on the final encoded bytes.
-                m1_bytes = _sample_bleichenbacher_cat1(n, k)
-                m1 = int.from_bytes(m1_bytes, "big")
-                c1 = pow(m1, e, n)
-                c1_bytes = c1.to_bytes(k, "big")
-                result, error = _decrypt_result_or_error(
-                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c1_bytes
-                )
-                _record_invalid_decrypt_outcome(
-                    cat1_errors,
-                    result,
-                    error,
-                    label="RSA PKCS#1 v1.5 invalid cat-1 encoding",
-                    mechanism="CKM_RSA_PKCS",
-                )
-
-                # Cat-2: m sampled as the final integer representative with
-                # B <= m < n, so the top byte is nonzero and the encoding
-                # cannot begin 00 02 (P11C-0198-015). Membership is asserted
-                # on the final encoded bytes.
-                m2_bytes = _sample_bleichenbacher_cat2(n, k)
-                m2 = int.from_bytes(m2_bytes, "big")
-                c2 = pow(m2, e, n)
-                c2_bytes = c2.to_bytes(k, "big")
-                result, error = _decrypt_result_or_error(
-                    rs.raw, rs.sh, priv, CKM_RSA_PKCS, c2_bytes
-                )
-                _record_invalid_decrypt_outcome(
-                    cat2_errors,
-                    result,
-                    error,
-                    label="RSA PKCS#1 v1.5 invalid cat-2 encoding",
-                    mechanism="CKM_RSA_PKCS",
-                )
-
-            if cat1_errors != cat2_errors:
-                from pkcs11_check.compliance import ComplianceLevel, note
-
-                note(
-                    f"RSA PKCS#1 v1.5 returns category-distinguishable error "
-                    f"codes — cat-1 (00 02 prefix, bad PS): {cat1_errors}, "
-                    f"cat-2 (no 00 02 prefix): {cat2_errors}. This is the "
-                    f"Bleichenbacher 1998 leak channel.",
-                    ComplianceLevel.CRITICAL,
-                    reference="Bleichenbacher 'Chosen Ciphertext Attacks "
-                    "Against Protocols Based on the RSA Encryption Standard "
-                    "PKCS #1' (CRYPTO 1998); RFC 3218",
-                )
+            if k < _V15_MIN_CONTROL_K:
                 classify(
-                    "oracle",
+                    "not_operational",
                     kind="crypto",
-                    label="RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle",
+                    label="RSA PKCS#1 v1.5 valid-control construction",
                     operation="C_Decrypt",
                     mechanism="CKM_RSA_PKCS",
-                    summary="SECURITY: RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle — "
-                    f"cat-1 errors {cat1_errors} != cat-2 errors {cat2_errors}. "
-                    f"The module distinguishes the controlled 00 02-prefix "
-                    f"category from the no-prefix category via error codes.",
-                    detail={
-                        "channel": "error_code",
-                        "cat1": sorted(cat1_errors),
-                        "cat2": sorted(cat2_errors),
-                    },
+                    summary=(
+                        "RSA modulus too small for the independent valid control "
+                        f"(k={k}, need at least {_V15_MIN_CONTROL_K}); "
+                        "assessment unresolved"
+                    ),
+                    detail={"k": k, "minimum_k": _V15_MIN_CONTROL_K},
                 )
+            witness_encoded, witness_payload = _build_v15_ps7_witness(k)
+            control_encoded, control_expected = _build_v15_valid_control(k)
+            retained: list[Classification] = []
+            try:
+                observations: list[V15SampleObservation] = []
+
+                samples_per_category = 50
+                for index in range(samples_per_category):
+                    # Cat-1: m starts with 0x00 0x02 followed by random non-zero
+                    # bytes through to the end (no 0x00 separator → garbled
+                    # plaintext but valid prefix). PS must be ≥ 8 bytes per
+                    # PKCS#1 v1.5; our cat-1 has ≥ k-2 bytes which is far over.
+                    # The leading 0x00 keeps m < n structurally; membership is
+                    # asserted on the final encoded bytes.
+                    m1_bytes = _sample_bleichenbacher_cat1(n, k)
+                    m1 = int.from_bytes(m1_bytes, "big")
+                    c1 = pow(m1, e, n)
+                    c1_bytes = c1.to_bytes(k, "big")
+                    first1 = _v15_attempt_or_retain_overrun(
+                        rs.raw,
+                        rs.sh,
+                        priv,
+                        c1_bytes,
+                        sample_id=f"cat1-{index:02d}",
+                        category="cat1",
+                        attempt_label="first",
+                        encoded=m1_bytes,
+                        retained=retained,
+                    )
+                    if first1.rv != CKR_OK:
+                        _abort_decrypt_operation(rs.raw, rs.sh)
+                    obs1 = observe_v15_sample(
+                        sample_id=f"cat1-{index:02d}",
+                        category="cat1",
+                        historical=True,
+                        encoded=m1_bytes,
+                        ciphertext=c1_bytes,
+                        first=first1,
+                        repeated=None,
+                        would_be_plaintext=None,
+                        modulus_len=k,
+                        seq=2 * index,
+                    )
+                    observations.append(obs1)
+                    _retain_v15_sample_findings(obs1, k=k, e=e, n=n, retained=retained)
+
+                    # Cat-2: m sampled as the final integer representative with
+                    # B <= m < n, so the top byte is nonzero and the encoding
+                    # cannot begin 00 02 (P11C-0198-015). Membership is asserted
+                    # on the final encoded bytes.
+                    m2_bytes = _sample_bleichenbacher_cat2(n, k)
+                    m2 = int.from_bytes(m2_bytes, "big")
+                    c2 = pow(m2, e, n)
+                    c2_bytes = c2.to_bytes(k, "big")
+                    first2 = _v15_attempt_or_retain_overrun(
+                        rs.raw,
+                        rs.sh,
+                        priv,
+                        c2_bytes,
+                        sample_id=f"cat2-{index:02d}",
+                        category="cat2",
+                        attempt_label="first",
+                        encoded=m2_bytes,
+                        retained=retained,
+                    )
+                    if first2.rv != CKR_OK:
+                        _abort_decrypt_operation(rs.raw, rs.sh)
+                    obs2 = observe_v15_sample(
+                        sample_id=f"cat2-{index:02d}",
+                        category="cat2",
+                        historical=True,
+                        encoded=m2_bytes,
+                        ciphertext=c2_bytes,
+                        first=first2,
+                        repeated=None,
+                        would_be_plaintext=None,
+                        modulus_len=k,
+                        seq=2 * index + 1,
+                    )
+                    observations.append(obs2)
+                    _retain_v15_sample_findings(obs2, k=k, e=e, n=n, retained=retained)
+
+                # Known-payload witness plus its exact repeat: new strengthening,
+                # not historical coverage. Membership is asserted like cat-1.
+                w_int = int.from_bytes(witness_encoded, "big")
+                assert w_int < n
+                w_ct = pow(w_int, e, n).to_bytes(k, "big")
+                w_first = _v15_attempt_or_retain_overrun(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    w_ct,
+                    sample_id="witness",
+                    category="witness",
+                    attempt_label="first",
+                    encoded=witness_encoded,
+                    retained=retained,
+                )
+                if w_first.rv != CKR_OK:
+                    _abort_decrypt_operation(rs.raw, rs.sh)
+                # The first attempt's validated findings are retained BEFORE
+                # the risky exact repeat, so a repeat fault cannot erase an
+                # established exposure or overlength finding (AMEND-1).
+                w_first_only = observe_v15_sample(
+                    sample_id="witness",
+                    category="witness",
+                    historical=False,
+                    encoded=witness_encoded,
+                    ciphertext=w_ct,
+                    first=w_first,
+                    repeated=None,
+                    would_be_plaintext=witness_payload,
+                    modulus_len=k,
+                    seq=2 * samples_per_category,
+                )
+                _retain_v15_sample_findings(w_first_only, k=k, e=e, n=n, retained=retained)
+                w_repeat = _v15_attempt_or_retain_overrun(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    w_ct,
+                    sample_id="witness",
+                    category="witness",
+                    attempt_label="repeat",
+                    encoded=witness_encoded,
+                    retained=retained,
+                )
+                if w_repeat.rv != CKR_OK:
+                    _abort_decrypt_operation(rs.raw, rs.sh)
+                w_obs = observe_v15_sample(
+                    sample_id="witness",
+                    category="witness",
+                    historical=False,
+                    encoded=witness_encoded,
+                    ciphertext=w_ct,
+                    first=w_first,
+                    repeated=w_repeat,
+                    would_be_plaintext=witness_payload,
+                    modulus_len=k,
+                    seq=2 * samples_per_category,
+                )
+                observations.append(w_obs)
+                _retain_v15_sample_findings(
+                    w_obs,
+                    k=k,
+                    e=e,
+                    n=n,
+                    retained=retained,
+                    skip_witness=w_first_only.witness,
+                    skip_overlong=bool(w_first_only.overlong_attempts),
+                )
+
+                # Independent valid control (never provider-encrypted, so a
+                # mutually broken encrypt/decrypt pair cannot confirm itself).
+                v_int = int.from_bytes(control_encoded, "big")
+                assert v_int < n
+                v_ct = pow(v_int, e, n).to_bytes(k, "big")
+                v_attempt = _v15_attempt_or_retain_overrun(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    v_ct,
+                    sample_id="valid-control",
+                    category="control",
+                    attempt_label="first",
+                    encoded=control_encoded,
+                    retained=retained,
+                )
+                if v_attempt.rv != CKR_OK:
+                    _abort_decrypt_operation(rs.raw, rs.sh)
+                valid = V15ValidControl(
+                    encoded=control_encoded,
+                    ciphertext=v_ct,
+                    expected_plaintext=control_expected,
+                    attempt=v_attempt,
+                )
+                if valid.status == "wrong_output":
+                    retained.append(
+                        record_as(
+                            "wrong_result",
+                            kind="crypto",
+                            label="RSA PKCS#1 v1.5 valid-control decryption",
+                            operation="C_Decrypt",
+                            mechanism="CKM_RSA_PKCS",
+                            actual="CKR_OK",
+                            summary=(
+                                "independently constructed valid RSA PKCS#1 v1.5 "
+                                "ciphertext decrypted to the wrong plaintext; "
+                                "broken valid decryption"
+                            ),
+                            detail={
+                                "k": k,
+                                "e": e,
+                                "control": control_evidence(valid),
+                            },
+                        )
+                    )
+                elif valid.status == "rejected":
+                    retained.append(
+                        record_as(
+                            "not_operational",
+                            kind="crypto",
+                            label="RSA PKCS#1 v1.5 valid-control decryption",
+                            operation="C_Decrypt",
+                            mechanism="CKM_RSA_PKCS",
+                            actual=ckr_name(int(v_attempt.rv)),
+                            summary=(
+                                "independently constructed valid RSA PKCS#1 v1.5 "
+                                "ciphertext rejected "
+                                f"({ckr_name(int(v_attempt.rv))} at "
+                                f"{v_attempt.phase}); advertised positive "
+                                "operation unavailable, assessment unresolved"
+                            ),
+                            detail={
+                                "k": k,
+                                "e": e,
+                                "rv": ckr_name(int(v_attempt.rv)),
+                                "phase": v_attempt.phase,
+                                "control": control_evidence(valid),
+                            },
+                        )
+                    )
+
+                assessment = assess_v15_samples(observations, valid, modulus_len=k)
+                evidence = assessment_evidence(
+                    assessment, modulus_len=k, public_exponent=e, modulus=n
+                )
+                if assessment.oracle.status == "persistent":
+                    from pkcs11_check.compliance import ComplianceLevel, note
+
+                    note(
+                        "RSA PKCS#1 v1.5 returns category-distinguishable error "
+                        f"codes — cat-1 (00 02 prefix, bad PS): {assessment.oracle.cat1}, "
+                        f"cat-2 (no 00 02 prefix): {assessment.oracle.cat2}. This is the "
+                        "Bleichenbacher 1998 leak channel.",
+                        ComplianceLevel.CRITICAL,
+                        reference="Bleichenbacher 'Chosen Ciphertext Attacks "
+                        "Against Protocols Based on the RSA Encryption Standard "
+                        "PKCS #1' (CRYPTO 1998); RFC 3218",
+                    )
+                    retained.append(
+                        record_as(
+                            "oracle",
+                            kind="crypto",
+                            label="RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle",
+                            operation="C_Decrypt",
+                            mechanism="CKM_RSA_PKCS",
+                            summary="SECURITY: RSA PKCS#1 v1.5 Bleichenbacher 1998 oracle — "
+                            "repeated category-correlated status distinction past the "
+                            f"bounded startup window: cat-1 {assessment.oracle.cat1} vs "
+                            f"cat-2 {assessment.oracle.cat2} "
+                            f"(correlated: {assessment.oracle.correlated}). "
+                            "The module distinguishes the controlled 00 02-prefix "
+                            "category from the no-prefix category via error codes.",
+                            detail=evidence,
+                        )
+                    )
+                if assessment.oracle.status != "persistent":
+                    # The oracle record above already carries the full evidence;
+                    # every other completed assessment preserves its corpus via
+                    # the posture record, independently of fail terminals.
+                    if assessment.posture == "synthetic_consistent":
+                        retained.append(
+                            record_as(
+                                "honest_deviation",
+                                kind="crypto",
+                                label="RSA PKCS#1 v1.5 implicit-rejection posture",
+                                operation="C_Decrypt",
+                                mechanism="CKM_RSA_PKCS",
+                                summary=(
+                                    "RSA PKCS#1 v1.5 invalid ciphertexts returned "
+                                    "stable per-input, cross-input-varying outputs "
+                                    "and the independent valid control decrypted "
+                                    "exactly; consistent with deterministic "
+                                    "implicit rejection (OpenSSL/NSS-style "
+                                    "countermeasure), not a proved bypass — "
+                                    "posture evidence only, not a security "
+                                    "certificate; timing/side-channel safety "
+                                    "not assessed"
+                                ),
+                                detail={**evidence, "assessment": "synthetic_consistent"},
+                            )
+                        )
+                    elif assessment.posture == "unresolved":
+                        accepts = sum(1 for obs in observations if obs.any_accepted)
+                        hard_fails = sum(1 for rec in retained if rec.outcome == "fail")
+                        if accepts > 0 or assessment.oracle.status == "transient" or hard_fails > 0:
+                            _retain_v15_unresolved_posture(
+                                assessment,
+                                evidence,
+                                accepts,
+                                retained,
+                                hard_fails=hard_fails,
+                            )
+                _raise_v15_terminal(retained)
+            except _V15CollectionIncompleteError:
+                _raise_v15_terminal(retained)
+                raise AssertionError("incomplete collection returned without a finding")
         finally:
-            destroy_quietly(rs.raw, rs.sh, pub)
-            destroy_quietly(rs.raw, rs.sh, priv)
+            _destroy_v15_keys_scoped(rs.raw, rs.sh, (pub, priv))
 
     def test_oaep_manger_structured_oracle(self, p11_raw_session: Any) -> None:
         """RSA-OAEP Manger 2001 structured-ciphertext oracle.

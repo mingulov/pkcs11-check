@@ -33,11 +33,30 @@ def _session_with_mechanisms(*mechanisms: str) -> SimpleNamespace:
     )
 
 
-def test_dsa_complete_module_preserves_sign_and_slow_marks() -> None:
+def test_dsa_complete_marks_keep_keygen_bound_nodes_slow() -> None:
+    # QC5b refined this pin: the module keeps `sign` while `slow` moved to
+    # the keygen-bound classes, so the bounded fixed-vector class runs in
+    # the ordinary ("not slow") profile. Node-level selection for every
+    # pre-existing node is unchanged; only TestDSABoundedWidth is unmarked.
     mark = test_dsa_complete.pytestmark
     marks = mark if isinstance(mark, list) else [mark]
 
-    assert {item.mark.name for item in marks} == {"sign", "slow"}
+    assert {item.mark.name for item in marks} == {"sign"}
+
+    def _mark_names(owner: object) -> set[str]:
+        found = getattr(owner, "pytestmark", [])
+        items = found if isinstance(found, list) else [found]
+        # Module level holds MarkDecorators (.mark.name); class level holds
+        # Marks (.name) after pytest processes the decorator.
+        return {getattr(item, "mark", item).name for item in items}
+
+    for cls in (
+        test_dsa_complete.TestDSARaw,
+        test_dsa_complete.TestDSAPrehash,
+        test_dsa_complete.TestDSAParameterGen,
+    ):
+        assert "slow" in _mark_names(cls)
+    assert "slow" not in _mark_names(test_dsa_complete.TestDSABoundedWidth)
 
 
 def test_dsa_complete_prehash_matrix_includes_sha224() -> None:

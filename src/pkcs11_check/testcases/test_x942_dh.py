@@ -40,7 +40,7 @@ from pkcs11_check.raw.recipes import (
     get_mechanism_info,
     read_attributes,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CK_OBJECT_HANDLE,
@@ -98,6 +98,7 @@ from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
+    classify_policy_enforcement,
     is_known_error,
     reject_or_classify,
     xfail_if_known_ckr,
@@ -279,6 +280,7 @@ def _generate_x942_keypair(
     prime: bytes = X942_PRIME_2048,
     base: bytes = X942_GEN,
     subprime: bytes = X942_SUBPRIME,
+    derive: bool | None = None,
 ) -> tuple[int, int]:
     """Generate an X9.42 DH keypair using RFC 5114 parameters via raw C_GenerateKeyPair."""
     pub_tmpl = template(
@@ -288,10 +290,13 @@ def _generate_x942_keypair(
         attr_bytes(CKA_BASE, base),
         attr_bytes(CKA_SUBPRIME, subprime),
     )
-    priv_tmpl = template(
+    priv_attrs = [
         attr_ulong(CKA_CLASS, 0x00000003),  # CKO_PRIVATE_KEY
         attr_ulong(CKA_KEY_TYPE, CKK_X9_42_DH),
-    )
+    ]
+    if derive is not None:
+        priv_attrs.append(attr_bool(CKA_DERIVE, derive))
+    priv_tmpl = template(*priv_attrs)
     mech = mech_simple(CKM_X9_42_DH_KEY_PAIR_GEN)
     pub_h = CK_OBJECT_HANDLE(0)
     priv_h = CK_OBJECT_HANDLE(0)
@@ -1172,8 +1177,8 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        alice_pub, alice_priv = _generate_x942_keypair(rs)
-        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        alice_pub, alice_priv = _generate_x942_keypair(rs, derive=True)
+        bob_pub, bob_priv = _generate_x942_keypair(rs, derive=True)
         alice_shared = 0
         bob_shared = 0
         try:
@@ -1275,8 +1280,8 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        alice_pub, alice_priv = _generate_x942_keypair(rs)
-        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        alice_pub, alice_priv = _generate_x942_keypair(rs, derive=True)
+        bob_pub, bob_priv = _generate_x942_keypair(rs, derive=True)
         shared_key = 0
         bob_key = 0
         try:
@@ -1343,13 +1348,147 @@ class TestX942DHDerive:
             if bob_key:
                 destroy_quietly(rs.raw, rs.sh, bob_key)
 
+    @pytest.mark.parametrize(
+        "requested_derive",
+        (None, False),
+        ids=("omitted", "explicit-false"),
+    )
+    def test_generated_derive_permission_matches_readback(
+        self,
+        p11_raw_session: Any,
+        requested_derive: bool | None,
+    ) -> None:
+        """A generated key's reported CKA_DERIVE must match derive behavior."""
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        _skip_no_x942_derive(rs)
+
+        pub = 0
+        priv = 0
+        derived = 0
+        try:
+            pub, priv = _generate_x942_keypair(rs, derive=requested_derive)
+            public_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:generated public CKA_VALUE readback",
+            )
+            derive_allowed = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                priv,
+                CKA_DERIVE,
+                label="CKM_X9_42_DH_DERIVE:generated private CKA_DERIVE readback",
+            )
+            if public_value is MISSING_ATTRIBUTE or derive_allowed is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                public_value,
+                label="CKM_X9_42_DH_DERIVE:generated public CKA_VALUE readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                min_len=1,
+                require_nonzero=True,
+            )
+            if type(derive_allowed) is not bool:
+                classify(
+                    "wrong_result",
+                    kind="metadata",
+                    label="CKM_X9_42_DH_DERIVE:generated private CKA_DERIVE type",
+                    operation="C_GetAttributeValue",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    expected="CK_BBOOL boolean",
+                    actual=type(derive_allowed).__name__,
+                    summary=("generated private CKA_DERIVE readback was not a native boolean"),
+                )
+                return
+
+            try:
+                derived = derive_key(
+                    rs.raw,
+                    rs.sh,
+                    priv,
+                    CKM_X9_42_DH_DERIVE,
+                    attrs={
+                        CKA_CLASS: CKO_SECRET_KEY,
+                        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+                        CKA_VALUE_LEN: 32,
+                        CKA_SENSITIVE: False,
+                        CKA_EXTRACTABLE: True,
+                        CKA_TOKEN: False,
+                    },
+                    mech_param=_build_x942_derive_mech(_X942_RFC5114_BOB_PUBLIC),
+                )
+            except CkrAssertionError as exc:
+                if derive_allowed is False and exc.rv == int(CKR_KEY_FUNCTION_NOT_PERMITTED):
+                    classify_policy_enforcement(
+                        claimed=True,
+                        violated=False,
+                        label=("CKM_X9_42_DH_DERIVE:CKA_DERIVE=False permission refusal"),
+                    )
+                    return
+                _xfail_if_x942_derive_reject(exc)
+                raise
+
+            if derive_allowed is False:
+                classify_policy_enforcement(
+                    claimed=True,
+                    violated=True,
+                    label=("CKM_X9_42_DH_DERIVE:CKA_DERIVE=False accepted valid derive"),
+                )
+                return
+
+            expected_shared = pow(
+                int.from_bytes(public_value, "big"),
+                int.from_bytes(_X942_RFC5114_BOB_PRIVATE, "big"),
+                int.from_bytes(X942_PRIME_2048, "big"),
+            ).to_bytes(len(X942_PRIME_2048), "big")[-32:]
+            value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                derived,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_DERIVE:generated shared CKA_VALUE readback",
+            )
+            if value is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                value,
+                label="CKM_X9_42_DH_DERIVE:generated shared CKA_VALUE readback",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
+                expected_len=len(expected_shared),
+            )
+            assert_correct(
+                actual=value,
+                expected=expected_shared,
+                label="CKM_X9_42_DH_DERIVE:generated shared secret effect",
+                operation="C_DeriveKey",
+                mechanism="CKM_X9_42_DH_DERIVE",
+            )
+            classify_policy_enforcement(
+                claimed=True,
+                violated=False,
+                label="CKM_X9_42_DH_DERIVE:CKA_DERIVE=True permission effect",
+            )
+        finally:
+            if derived:
+                destroy_quietly(rs.raw, rs.sh, derived)
+            if pub:
+                destroy_quietly(rs.raw, rs.sh, pub)
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
     def test_x942_derive_rejects_missing_peer_public_value(self, p11_raw_session: Any) -> None:
         """CKM_X9_42_DH_DERIVE must reject a missing DH1 derive parameter struct."""
         rs = p11_raw_session
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        pub, priv = _generate_x942_keypair(rs)
+        pub, priv = _generate_x942_keypair(rs, derive=True)
         mech = mech_simple(CKM_X9_42_DH_DERIVE)
         derived = CK_OBJECT_HANDLE(0)
         attrs = template(
@@ -1388,7 +1527,7 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        pub, priv = _generate_x942_keypair(rs)
+        pub, priv = _generate_x942_keypair(rs, derive=True)
         mech = _build_x942_derive_mech(b"\x01")
         derived = CK_OBJECT_HANDLE(0)
         attrs = template(
@@ -1425,8 +1564,8 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        alice_pub, alice_priv = _generate_x942_keypair(rs)
-        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        alice_pub, alice_priv = _generate_x942_keypair(rs, derive=True)
+        bob_pub, bob_priv = _generate_x942_keypair(rs, derive=True)
         derived = CK_OBJECT_HANDLE(0)
         attrs = template(
             attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
@@ -1481,8 +1620,8 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        alice_pub, alice_priv = _generate_x942_keypair(rs)
-        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        alice_pub, alice_priv = _generate_x942_keypair(rs, derive=True)
+        bob_pub, bob_priv = _generate_x942_keypair(rs, derive=True)
         derived = CK_OBJECT_HANDLE(0)
         attrs = template(
             attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
@@ -1530,8 +1669,8 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        alice_pub, alice_priv = _generate_x942_keypair(rs)
-        bob_pub, bob_priv = _generate_x942_keypair(rs)
+        alice_pub, alice_priv = _generate_x942_keypair(rs, derive=True)
+        bob_pub, bob_priv = _generate_x942_keypair(rs, derive=True)
         derived = CK_OBJECT_HANDLE(0)
         attrs = template(
             attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
@@ -1896,10 +2035,10 @@ class TestX942DHDerive:
         _skip_no_x942_keygen(rs)
         _skip_no_x942_derive(rs)
 
-        _pub1, priv1 = _generate_x942_keypair(rs)
-        pub2, _priv2 = _generate_x942_keypair(rs)
-        _pub3, priv3 = _generate_x942_keypair(rs)
-        pub4, _priv4 = _generate_x942_keypair(rs)
+        _pub1, priv1 = _generate_x942_keypair(rs, derive=True)
+        pub2, _priv2 = _generate_x942_keypair(rs, derive=True)
+        _pub3, priv3 = _generate_x942_keypair(rs, derive=True)
+        pub4, _priv4 = _generate_x942_keypair(rs, derive=True)
         key1 = 0
         key2 = 0
         try:
@@ -2082,12 +2221,14 @@ class TestX942DHParameterGen:
                     prime=prime,
                     base=base,
                     subprime=subprime,
+                    derive=True,
                 )
                 bob_pub, bob_priv = _generate_x942_keypair(
                     rs,
                     prime=prime,
                     base=base,
                     subprime=subprime,
+                    derive=True,
                 )
             except AssertionError as e:
                 _xfail_if_x942_keypair_reject(e)

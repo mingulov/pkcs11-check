@@ -48,6 +48,7 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
+    CKA_PRIVATE,
     CKA_SENSITIVE,
     CKA_TOKEN,
     CKA_TRUSTED,
@@ -111,6 +112,11 @@ from pkcs11_check.testcases.conftest import (
     xfail_if_known_ckr,
 )
 from pkcs11_check.testcases.security.conftest import handle_child_provider_finding
+from pkcs11_check.testcases.test_session_state_machine import (
+    _assert_explicit_lifetime_attrs,
+    _assert_old_private_handle_invalid,
+    _assert_post_relogin_presence,
+)
 
 pytestmark = pytest.mark.security
 
@@ -698,9 +704,23 @@ class TestTookanUnwrapAttrs:
 
 
 class TestSessionObjectsAfterLogout:
-    """Session objects surviving logout (task 7.25).
+    """Explicit private session objects destroyed by logout (task 7.25).
 
-    Per spec, session objects should be destroyed on logout.
+    A successful C_Logout destroys the application's private session
+    objects and invalidates every old private handle; public session
+    objects legitimately remain (PKCS#11 v3.0 section 5.6.10). The
+    explicit-privacy oracle below fails a surviving explicitly private
+    session object.
+
+    R9 preservation map (old node ID -> retained/new node IDs): the BASE
+    ``TestSessionObjectsAfterLogout::test_session_objects_after_logout``
+    ran the omitted-attribute stimulus (label-only template, survival
+    noted). Its explicit-premise repair keeps that node ID in
+    ``test_session_objects_after_logout``; the byte-identical legacy
+    stimulus (label-only template, survival noted with repaired wording)
+    is retained as the independently selectable
+    ``test_default_visibility_after_logout`` below, so an explicit-oracle
+    xfail/failure can never gate the old detector.
     """
 
     def test_session_objects_after_logout(
@@ -708,31 +728,120 @@ class TestSessionObjectsAfterLogout:
         p11_raw_session: Any,
         p11_config: Any,
     ) -> None:
-        """Create session objects, logout, verify they're gone."""
+        """Explicit private session object destroyed by logout."""
         rs = p11_raw_session
         pin_bytes = get_pin_bytes(p11_config)
         if pin_bytes is None:
             pytest.skip("No PIN configured - can't test logout")
+        login_user(rs.raw, rs.sh, 1, pin_bytes)
 
-        label = f"logout-test-{id(self)}".encode()
+        private_label = f"logout-explicit-private-{id(self)}".encode()
 
-        # Generate a key with a unique label
-        key = gen_aes_key_or_xfail(
+        # Explicit stimulus: request private + session attributes, then read
+        # them back to prove the oracle's premise before logout.
+        private_key = gen_aes_key_or_xfail(
             rs,
             128,
-            attrs={CKA_LABEL: label},
-            purpose="session object after logout",
+            attrs={CKA_LABEL: private_label, CKA_TOKEN: False, CKA_PRIVATE: True},
+            purpose="explicit private session object after logout",
+        )
+        _assert_explicit_lifetime_attrs(
+            rs.raw,
+            rs.sh,
+            private_key,
+            label="explicit private session object",
+            want_private=True,
+            want_token=False,
         )
 
-        # Verify it exists
-        tmpl = template(attr_bytes(CKA_LABEL, label))
-        found = find_objects(rs.raw, rs.sh, tmpl)
-        assert len(found) >= 1
+        # Verify it exists while logged in.
+        tmpl = template(attr_bytes(CKA_LABEL, private_label))
+        assert len(find_objects(rs.raw, rs.sh, tmpl)) >= 1
 
         # Logout (not close)
         rv = rs.raw.C_Logout(rs.sh)
         if rv != CKR_OK:
-            destroy_quietly(rs.raw, rs.sh, key)
+            destroy_quietly(rs.raw, rs.sh, private_key)
+            classify_negative_rv(
+                rv,
+                (),
+                label="C_Logout after session-object probe",
+            )
+            return
+
+        # Successful logout invalidates all old private handles: probe
+        # immediately after logout ...
+        _assert_old_private_handle_invalid(
+            rs.raw,
+            rs.sh,
+            private_key,
+            label="explicit private session object",
+            phase="immediately after C_Logout",
+        )
+
+        # Re-login and check
+        login_user(rs.raw, rs.sh, 1, pin_bytes)
+
+        # ... and again after relogin BEFORE reacquisition: relogin must not
+        # resurrect the invalidated handle.
+        _assert_old_private_handle_invalid(
+            rs.raw,
+            rs.sh,
+            private_key,
+            label="explicit private session object",
+            phase="after relogin before reacquisition",
+        )
+
+        # The explicitly private session object must be destroyed, not
+        # merely hidden: it must not reappear once logged back in.
+        tmpl2 = template(attr_bytes(CKA_LABEL, private_label))
+        found_after = find_objects(rs.raw, rs.sh, tmpl2)
+        if len(found_after) > 0:
+            for h in found_after:
+                destroy_quietly(rs.raw, rs.sh, h)
+        _assert_post_relogin_presence(
+            found=len(found_after) > 0,
+            must_exist=False,
+            label="explicit private session object destroyed by C_Logout",
+        )
+
+    def test_default_visibility_after_logout(
+        self,
+        p11_raw_session: Any,
+        p11_config: Any,
+    ) -> None:
+        """R9-retained default/visibility observation after logout.
+
+        The BASE ``test_session_objects_after_logout`` stimulus, kept as an
+        independently selectable node: an omitted-attribute (label-only)
+        object whose post-relogin visibility is recorded as an observation,
+        never a verdict (it was never proven private).
+        """
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+        if pin_bytes is None:
+            pytest.skip("No PIN configured - can't test logout")
+        login_user(rs.raw, rs.sh, 1, pin_bytes)
+
+        default_label = f"logout-default-{id(self)}".encode()
+
+        # Legacy stimulus, byte-identical to BASE: no explicit
+        # CKA_PRIVATE/CKA_TOKEN requested.
+        default_key = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_LABEL: default_label},
+            purpose="default-attribute session object after logout",
+        )
+
+        # Verify it exists while logged in.
+        tmpl = template(attr_bytes(CKA_LABEL, default_label))
+        assert len(find_objects(rs.raw, rs.sh, tmpl)) >= 1
+
+        # Logout (not close)
+        rv = rs.raw.C_Logout(rs.sh)
+        if rv != CKR_OK:
+            destroy_quietly(rs.raw, rs.sh, default_key)
             classify_negative_rv(
                 rv,
                 (),
@@ -743,20 +852,26 @@ class TestSessionObjectsAfterLogout:
         # Re-login and check
         login_user(rs.raw, rs.sh, 1, pin_bytes)
 
-        tmpl2 = template(attr_bytes(CKA_LABEL, label))
-        found_after = find_objects(rs.raw, rs.sh, tmpl2)
-        # Session objects may or may not survive logout - module-specific
-        # But the operation must not crash
-        if len(found_after) > 0:
+        # Default/visibility observation (preserved old stimulus): the
+        # omitted-attribute object was never proven private, so its
+        # survival is recorded as an observation, never a verdict.
+        tmpl2 = template(attr_bytes(CKA_LABEL, default_label))
+        found_default = find_objects(rs.raw, rs.sh, tmpl2)
+        if len(found_default) > 0:
             from pkcs11_check.compliance import ComplianceLevel, note
 
             note(
-                "Session objects survive C_Logout",
+                "Default-attribute session object visible after C_Logout and "
+                "relogin (created without explicit CKA_PRIVATE/CKA_TOKEN; "
+                "visibility observation only -- the destruction oracle applies "
+                "to the explicitly private object)",
                 ComplianceLevel.NOT_RECOMMENDED,
-                reference="PKCS#11 spec: session objects should be destroyed on logout",
+                reference="PKCS#11 v3.0 section 5.6.10: only private session "
+                "objects must be destroyed on logout; public session objects "
+                "legitimately remain",
             )
             # Cleanup surviving objects
-            for h in found_after:
+            for h in found_default:
                 destroy_quietly(rs.raw, rs.sh, h)
 
 

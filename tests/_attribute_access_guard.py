@@ -3064,6 +3064,8 @@ class _Analyzer:
                     elif module == _ATTRIBUTE_HELPER_MODULE:
                         if alias.name == "attr_or_record":
                             bindings[bound] = "helper"
+                        elif alias.name == "refusal_rv_for":
+                            bindings[bound] = "refusal-rv"
                         elif alias.name == "MISSING_ATTRIBUTE":
                             bindings[bound] = "sentinel"
                     elif module == _CLASSIFICATION_MODULE and alias.name in {"fail_as", "xfail_as"}:
@@ -4547,6 +4549,8 @@ class _Analyzer:
                 elif module == _ATTRIBUTE_HELPER_MODULE:
                     if alias.name == "attr_or_record":
                         state.bindings[bound] = "helper"
+                    elif alias.name == "refusal_rv_for":
+                        state.bindings[bound] = "refusal-rv"
                     elif alias.name == "MISSING_ATTRIBUTE":
                         state.bindings[bound] = "sentinel"
                 elif module == _CLASSIFICATION_MODULE and alias.name in {"fail_as", "xfail_as"}:
@@ -4645,7 +4649,14 @@ class _Analyzer:
             binding = state.bindings.get(node.id)
             if binding == "unknown":
                 return _Value()
-            if binding in {"direct", "helper", "record", "sentinel", "terminal"}:
+            if binding in {
+                "direct",
+                "helper",
+                "record",
+                "refusal-rv",
+                "sentinel",
+                "terminal",
+            }:
                 return _Value(callable_kind=binding)
             if binding is not None and binding.startswith("module:"):
                 return _Value(callable_kind=binding)
@@ -4671,6 +4682,8 @@ class _Analyzer:
                 return _Value(callable_kind="direct")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "attr_or_record":
                 return _Value(callable_kind="helper")
+            if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "refusal_rv_for":
+                return _Value(callable_kind="refusal-rv")
             if module_name == _ATTRIBUTE_HELPER_MODULE and node.attr == "MISSING_ATTRIBUTE":
                 return _Value(callable_kind="sentinel")
             if module_name == _CLASSIFICATION_MODULE and node.attr in {"fail_as", "xfail_as"}:
@@ -4908,6 +4921,10 @@ class _Analyzer:
         if "terminal" in callable_kinds:
             builtin_results.append(_Value(terminal=True))
         if "record" in callable_kinds:
+            builtin_results.append(_Value())
+        if "refusal-rv" in callable_kinds:
+            # refusal_rv_for() returns only an untainted CKR int (or None):
+            # no provider value, no optional to discharge. Mirrors "record".
             builtin_results.append(_Value())
         if "tainted-copy" in callable_kinds:
             mapping_id = f"copy:{self.path}:{node.lineno}:{node.col_offset + 1}"

@@ -376,25 +376,34 @@ def test_decrypt_garbage_uses_repeatable_ciphertext(monkeypatch: pytest.MonkeyPa
     assert decrypted_inputs == [bytes(256)]
 
 
-def test_decrypt_garbage_accepted_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CKR_OK on invalid RSA-PKCS padding bypasses the padding check (F-2)."""
+def test_decrypt_garbage_accepted_is_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """QF4: in-bounds (245 B) CKR_OK on fixed garbage is unresolved, not a bypass."""
     _stub_rsa_setup(monkeypatch)
+    # 245 = k-11: in-bounds (capacity 256), so the verdict is unresolved
+    # honest_deviation xfail rather than a wrong_result length failure.
+    payload = bytes((i * 37 + 11) % 256 for i in range(245))
+
+    def _decrypt(_sh: int, _in_buf: Any, _in_len: int, out_buf: Any, out_len: Any) -> int:
+        for i, byte in enumerate(payload):
+            out_buf[i] = byte
+        ctypes.cast(out_len, ctypes.POINTER(CK_ULONG)).contents.value = len(payload)
+        return int(CKR_OK)
+
     raw = SimpleNamespace(
         C_DecryptInit=lambda *_args: 0,
-        C_Decrypt=lambda *_args: 0,
+        C_Decrypt=_decrypt,
     )
     rs = _session_with_mechanisms("RSA_PKCS", "RSA_PKCS_KEY_PAIR_GEN", raw=raw)
 
-    with pytest.raises(Failed) as ei:
+    with pytest.raises(XFailed, match="unresolved"):
         test_errors.TestInvalidOperations().test_decrypt_garbage(rs)
-    assert not isinstance(ei.value, XFailed)
 
     records = C.get_records()
     assert len(records) == 1
     record = records[0]
-    assert record.reason == "accepted_invalid"
-    assert record.outcome == "fail"
-    assert record.severity == "CRITICAL"
+    assert record.reason == "honest_deviation"
+    assert record.outcome == "xfail"
+    assert record.severity == "LOW"
     assert record.kind == "crypto"
     assert record.label == "C_Decrypt of random garbage under RSA-PKCS"
     assert record.mechanism == "CKM_RSA_PKCS"
@@ -402,10 +411,15 @@ def test_decrypt_garbage_accepted_fails(monkeypatch: pytest.MonkeyPatch) -> None
     assert record.expected_ckr is None
     assert record.actual_ckr == "CKR_OK"
     assert record.summary == (
-        "module decrypted invalid RSA-PKCS padding with CKR_OK (padding bypass)"
+        "module returned CKR_OK for the fixed all-zero invalid RSA-PKCS ciphertext; "
+        "one input plus a repeat cannot prove plaintext exposure (no "
+        "separator-defined would-be plaintext) or implicit rejection (no "
+        "cross-input or valid-control evidence) — visible unresolved evidence"
     )
     assert record.spec_ref == "PKCS#11 v3.2 · C_Decrypt · CKM_RSA_PKCS"
-    assert record.detail is None
+    assert record.detail is not None
+    assert record.detail["assessment"] == "unresolved"
+    assert record.detail["stable"] is True
 
 
 def test_decrypt_garbage_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:

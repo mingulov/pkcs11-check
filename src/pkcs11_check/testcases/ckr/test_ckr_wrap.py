@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
 from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
@@ -37,10 +38,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
-    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
-    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
@@ -201,28 +200,38 @@ class TestWrapKeyErrors:
             pytest.skip("AES_KEY_WRAP not supported")
 
         wrap_key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_WRAP: True})
-        target = gen_aes_key(
-            rs.raw,
-            rs.sh,
-            128,
-            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
-        )
-        # Destroy the wrap key so its handle is now stale.
-        rv = rs.raw.C_DestroyObject(rs.sh, wrap_key)
-        if rv != CKR_OK:
-            destroy_quietly(rs.raw, rs.sh, target)
-            raise AssertionError(
-                f"Could not destroy wrap key for stale-handle test (CKR=0x{rv:08x})"
-            )
+        target: int | None = None
+        wrap_key_destroyed = False
         try:
+            # The wrapping key is owned as soon as generation succeeds.  Keep that
+            # ownership through target setup so a failed target recipe cannot leak it.
+            target_handle = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            target = target_handle
+
+            # Destroy the wrap key so its handle is now stale.  A clean failure here
+            # must retain the original CK_RV while the finally block releases both
+            # still-owned objects.
+            rv = rs.raw.C_DestroyObject(rs.sh, wrap_key)
+            if rv != CKR_OK:
+                raise AssertionError(
+                    f"Could not destroy wrap key for stale-handle test (CKR=0x{rv:08x})"
+                )
+            wrap_key_destroyed = True
+
             mech = mech_simple(CKM_AES_KEY_WRAP)
             wrapped_len = CK_ULONG(256)
             wrapped_buf = (ctypes.c_ubyte * 256)()
+            C.set_mechanism("CKM_AES_KEY_WRAP", "C_WrapKey", expect_success=False)
             rv = rs.raw.C_WrapKey(
                 rs.sh,
                 mech.byref(),
                 wrap_key,  # stale
-                target,
+                target_handle,
                 wrapped_buf,
                 byref(wrapped_len),
             )
@@ -247,17 +256,17 @@ class TestWrapKeyErrors:
                         "(expected CKR_WRAPPING_KEY_HANDLE_INVALID)"
                     ),
                 )
-            accepted = (
-                CKR_WRAPPING_KEY_HANDLE_INVALID,
-                CKR_KEY_HANDLE_INVALID,
-                CKR_OBJECT_HANDLE_INVALID,
-            )
-            assert rv in accepted, (
-                f"Unexpected CK_RV 0x{rv:08x} on stale wrap-key handle; "
-                f"expected one of {[hex(c) for c in accepted]}"
+            classify_negative_rv(
+                rv,
+                (CKR_WRAPPING_KEY_HANDLE_INVALID,),
+                label="C_WrapKey:stale-wrap-key-handle",
+                kind="lifecycle",
             )
         finally:
-            destroy_quietly(rs.raw, rs.sh, target)
+            if target is not None:
+                destroy_quietly(rs.raw, rs.sh, target)
+            if not wrap_key_destroyed:
+                destroy_quietly(rs.raw, rs.sh, wrap_key)
 
     def test_wrapping_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Wrap key of wrong type for mechanism -> CKR_WRAPPING_KEY_TYPE_INCONSISTENT.

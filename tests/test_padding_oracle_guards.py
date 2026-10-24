@@ -53,17 +53,21 @@ def test_rsa_public_numbers_guard_returns_valid_modulus(
     assert k == 256
 
 
-@pytest.mark.parametrize(
-    ("label", "mechanism"),
-    [
-        ("RSA PKCS#1 invalid", "CKM_RSA_PKCS"),
-        ("RSA OAEP invalid cat-2", "CKM_RSA_PKCS_OAEP"),
-    ],
-)
-def test_structured_invalid_decrypt_success_is_a_finding(label: str, mechanism: str) -> None:
+def test_structured_oaep_cat2_invalid_decrypt_success_is_a_finding() -> None:
+    """OAEP cat-2 CKR_OK stays a hard finding (QF4 narrows this helper to OAEP).
+
+    The structured PKCS#1 v1.5 path no longer routes through
+    ``_record_invalid_decrypt_outcome``: a v1.5 CKR_OK is assessed output
+    evidence (witness / synthetic-consistent / unresolved), not an automatic
+    ``accepted_invalid``. OAEP keeps the direct contract.
+    """
     with pytest.raises(Failed, match="deliberately invalid encoding"):
         test_padding_oracle._record_invalid_decrypt_outcome(
-            set(), b"garbage", None, label=label, mechanism=mechanism
+            set(),
+            b"garbage",
+            None,
+            label="RSA OAEP invalid cat-2",
+            mechanism="CKM_RSA_PKCS_OAEP",
         )
 
 

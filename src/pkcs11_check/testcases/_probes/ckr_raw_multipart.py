@@ -12,8 +12,9 @@ Two groups:
     C_*Init must reject with CKR_OPERATION_NOT_INITIALIZED.
   - ``digest_update_after_final`` / ``encrypt_update_after_final``: run a full multipart op to
     completion, then a C_*Update on the terminated operation (PKCS#11 v3.2 §5.2) -- must reject
-    with CKR_OPERATION_NOT_INITIALIZED.  Setup failures print ``SETUP_XFAIL:...`` (advertised
-    capability not operational -> parent xfail).
+    with CKR_OPERATION_NOT_INITIALIZED.  Refused setups print a lone
+    ``SETUP_REFUSED:<Op>:0x<rv>`` (advertised capability not operational -> parent xfail
+    with setup attribution, target untested); the post-final target never runs.
 
 Runs through ``probe_main`` at ``Level.LOGIN``: the infra does C_Initialize + slot discovery +
 ``C_OpenSession`` + (only when ``_P11CHECK_PIN`` is set) ``C_Login`` before handing the probe
@@ -24,11 +25,13 @@ formatted the PIN literal into the generated child-script source (Invariant I3).
 teardown + rv-trace are handled by ``probe_main`` atexit, matching the legacy
 ``_p11check_cleanup_session`` / rv-trace setup.
 
-Output protocol (byte-identical to the legacy child, for ``_classify_multipart_ckr`` over the
-first ``CKR:0x...`` line):
-  ``CKR:0x{rv:08x}``   -- return value of the tested multipart call
-  ``SETUP_XFAIL:...``  -- a setup step (Init/Update/Final/keygen) cleanly failed before the probe
-  ``OK``               -- probe reached its expected point
+Output protocol (for ``_classify_multipart_ckr`` over the first ``CKR:0x...`` line):
+  ``CKR:0x{rv:08x}``       -- return value of the tested multipart call
+  ``SETUP_REFUSED:<Op>:0x<rv>`` -- a setup step with valid inputs was refused (target
+                              -- untested); structured op + refusal CKR (issue #28),
+                              -- parsed by the shared CKR helper into a setup-
+                              -- attributed not_operational record
+  ``OK``                   -- probe reached its expected point
 
 A wrong CK_RV is classified in the parent (not via an in-child ``assert``); a crash
 (returncode < 0) is a provider crash finding.
@@ -46,6 +49,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key
+from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_MECHANISM,
     CKM_AES_ECB,
@@ -153,23 +157,20 @@ def _digest_update_after_final(ctx: ProbeContext) -> None:
     # Init
     rv_init = ctx.raw.C_DigestInit(ctx.sh, ctypes.byref(mech))
     if rv_init != CKR_OK:
-        print(f"SETUP_XFAIL: C_DigestInit(SHA256) not operational: 0x{rv_init:08x}")
-        print("OK")
+        print(f"SETUP_REFUSED:C_DigestInit:0x{rv_init:08x}")
     else:
         # Feed some data
         data = (ctypes.c_ubyte * 4)(*[0x61, 0x62, 0x63, 0x64])
         rv_upd = ctx.raw.C_DigestUpdate(ctx.sh, data, 4)
         if rv_upd != CKR_OK:
-            print(f"SETUP_XFAIL: C_DigestUpdate failed: 0x{rv_upd:08x}")
-            print("OK")
+            print(f"SETUP_REFUSED:C_DigestUpdate:0x{rv_upd:08x}")
         else:
             # Finalize
             digest_buf = (ctypes.c_ubyte * 64)()
             digest_len = ctypes.c_ulong(64)
             rv_final = ctx.raw.C_DigestFinal(ctx.sh, digest_buf, ctypes.byref(digest_len))
             if rv_final != CKR_OK:
-                print(f"SETUP_XFAIL: C_DigestFinal failed: 0x{rv_final:08x}")
-                print("OK")
+                print(f"SETUP_REFUSED:C_DigestFinal:0x{rv_final:08x}")
             else:
                 # Probe: C_DigestUpdate after Final -- must return OPERATION_NOT_INITIALIZED
                 data2 = (ctypes.c_ubyte * 4)(*[0x65, 0x66, 0x67, 0x68])
@@ -186,9 +187,10 @@ def _encrypt_update_after_final(ctx: ProbeContext) -> None:
     key_handle = 0
     try:
         key_handle = gen_aes_key(ctx.raw, sh, 128)
-    except AssertionError as exc:
-        print(f"SETUP_XFAIL: AES_KEY_GEN not operational: {exc}")
-        print("OK")
+    except CkrAssertionError as exc:
+        # gen_aes_key raises only via expect_rv on its single C_GenerateKey,
+        # so exc.rv is exactly the refusing call's CK_RV.
+        print(f"SETUP_REFUSED:C_GenerateKey:0x{exc.rv:08x}")
     if key_handle:
         mech_enc = CK_MECHANISM()
         mech_enc.mechanism = int(CKM_AES_ECB)
@@ -198,8 +200,7 @@ def _encrypt_update_after_final(ctx: ProbeContext) -> None:
         rv_init = ctx.raw.C_EncryptInit(sh, ctypes.byref(mech_enc), key_handle)
         if rv_init != CKR_OK:
             destroy_quietly(ctx.raw, sh, key_handle)
-            print(f"SETUP_XFAIL: C_EncryptInit(AES_ECB) not operational: 0x{rv_init:08x}")
-            print("OK")
+            print(f"SETUP_REFUSED:C_EncryptInit:0x{rv_init:08x}")
         else:
             # Feed one block
             plain = (ctypes.c_ubyte * 16)(*([0] * 16))
@@ -208,8 +209,7 @@ def _encrypt_update_after_final(ctx: ProbeContext) -> None:
             rv_upd = ctx.raw.C_EncryptUpdate(sh, plain, 16, enc_buf, ctypes.byref(enc_len))
             if rv_upd != CKR_OK:
                 destroy_quietly(ctx.raw, sh, key_handle)
-                print(f"SETUP_XFAIL: C_EncryptUpdate failed: 0x{rv_upd:08x}")
-                print("OK")
+                print(f"SETUP_REFUSED:C_EncryptUpdate:0x{rv_upd:08x}")
             else:
                 # Finalize
                 fin_buf = (ctypes.c_ubyte * 32)()
@@ -217,8 +217,7 @@ def _encrypt_update_after_final(ctx: ProbeContext) -> None:
                 rv_final = ctx.raw.C_EncryptFinal(sh, fin_buf, ctypes.byref(fin_len))
                 destroy_quietly(ctx.raw, sh, key_handle)
                 if rv_final != CKR_OK:
-                    print(f"SETUP_XFAIL: C_EncryptFinal failed: 0x{rv_final:08x}")
-                    print("OK")
+                    print(f"SETUP_REFUSED:C_EncryptFinal:0x{rv_final:08x}")
                 else:
                     # Probe: C_EncryptUpdate after Final -- must be OPERATION_NOT_INITIALIZED
                     plain2 = (ctypes.c_ubyte * 16)(*([0xFF] * 16))
