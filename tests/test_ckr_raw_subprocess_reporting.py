@@ -7,7 +7,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -20,7 +20,9 @@ from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.health import outcome_counts
+from pkcs11_check.testcases._probes import ckr_raw_multipart as multipart_probe
 from pkcs11_check.testcases._probes import ckr_v30_raw, ckr_v32_raw
+from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases.ckr import (
     test_ckr_dual,
@@ -1327,6 +1329,144 @@ def test_double_digest_init_dispatches_digest_probe(
     assert params["probe"] == "double_digest_init"
 
 
+# --- QF5 multipart-family rollout: after-final setup refusals (fw#28) ---
+#
+# Each fake refuses exactly one setup call with CKR_FUNCTION_FAILED (0x06)
+# and records every raw call. The post-final target Update must never run
+# (exact call-sequence assertion), cleanup effects are preserved, and the
+# refusal path emits a lone SETUP_REFUSED marker (no legacy text, no CKR
+# measurement, no OK completion).
+
+
+class _MultipartDigestFake:
+    def __init__(self, refuse: str) -> None:
+        self._refuse = refuse
+        self.calls: list[str] = []
+
+    def _rv(self, op: str) -> int:
+        self.calls.append(op)
+        return 0x06 if op == self._refuse else 0
+
+    def C_DigestInit(self, *args: Any) -> int:  # noqa: N802
+        return self._rv("C_DigestInit")
+
+    def C_DigestUpdate(self, *args: Any) -> int:  # noqa: N802
+        return self._rv("C_DigestUpdate")
+
+    def C_DigestFinal(self, *args: Any) -> int:  # noqa: N802
+        return self._rv("C_DigestFinal")
+
+
+class _MultipartEncryptFake:
+    def __init__(self, refuse: str) -> None:
+        self._refuse = refuse
+        self.calls: list[str] = []
+
+    def C_GenerateKey(self, *args: Any) -> int:  # noqa: N802
+        self.calls.append("C_GenerateKey")
+        if self._refuse == "C_GenerateKey":
+            return 0x06
+        args[-1]._obj.value = 7
+        return 0
+
+    def C_EncryptInit(self, *args: Any) -> int:  # noqa: N802
+        self.calls.append("C_EncryptInit")
+        return 0x06 if self._refuse == "C_EncryptInit" else 0
+
+    def C_EncryptUpdate(self, *args: Any) -> int:  # noqa: N802
+        self.calls.append("C_EncryptUpdate")
+        return 0x06 if self._refuse == "C_EncryptUpdate" else 0
+
+    def C_EncryptFinal(self, *args: Any) -> int:  # noqa: N802
+        self.calls.append("C_EncryptFinal")
+        return 0x06 if self._refuse == "C_EncryptFinal" else 0
+
+    def C_DestroyObject(self, *args: Any) -> int:  # noqa: N802
+        self.calls.append("C_DestroyObject")
+        return 0
+
+
+@pytest.mark.parametrize(
+    ("probe", "op", "refuse", "expected_calls"),
+    [
+        (
+            "_digest_update_after_final",
+            "C_DigestInit",
+            "C_DigestInit",
+            ["C_DigestInit"],
+        ),
+        (
+            "_digest_update_after_final",
+            "C_DigestUpdate",
+            "C_DigestUpdate",
+            ["C_DigestInit", "C_DigestUpdate"],
+        ),
+        (
+            "_digest_update_after_final",
+            "C_DigestFinal",
+            "C_DigestFinal",
+            ["C_DigestInit", "C_DigestUpdate", "C_DigestFinal"],
+        ),
+        (
+            "_encrypt_update_after_final",
+            "C_GenerateKey",
+            "C_GenerateKey",
+            ["C_GenerateKey"],
+        ),
+        (
+            "_encrypt_update_after_final",
+            "C_EncryptInit",
+            "C_EncryptInit",
+            ["C_GenerateKey", "C_EncryptInit", "C_DestroyObject"],
+        ),
+        (
+            "_encrypt_update_after_final",
+            "C_EncryptUpdate",
+            "C_EncryptUpdate",
+            ["C_GenerateKey", "C_EncryptInit", "C_EncryptUpdate", "C_DestroyObject"],
+        ),
+        (
+            "_encrypt_update_after_final",
+            "C_EncryptFinal",
+            "C_EncryptFinal",
+            [
+                "C_GenerateKey",
+                "C_EncryptInit",
+                "C_EncryptUpdate",
+                "C_EncryptFinal",
+                "C_DestroyObject",
+            ],
+        ),
+    ],
+)
+def test_migrated_multipart_site_emits_setup_refused(
+    probe: str,
+    op: str,
+    refuse: str,
+    expected_calls: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """QF5 multipart rollout: each refused setup emits SETUP_REFUSED, target unrun."""
+    if probe == "_digest_update_after_final":
+        fake: Any = _MultipartDigestFake(refuse)
+    else:
+        fake = _MultipartEncryptFake(refuse)
+    ctx = ProbeContext(
+        raw=cast(Any, fake),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    getattr(multipart_probe, probe)(ctx)
+    out = capsys.readouterr().out
+    assert f"SETUP_REFUSED:{op}:0x00000006" in out
+    assert "SETUP_XFAIL" not in out
+    assert not any(line.startswith("CKR:") for line in out.splitlines())
+    assert "OK" not in out.splitlines()
+    assert fake.calls == expected_calls
+
+
 def test_shared_helper_records_structured_setup_refusal() -> None:
     """QF5: the shared CKR helper attributes a refusal to the setup op + RV."""
     with pytest.raises(pytest.xfail.Exception, match="setup C_EncryptInit refused"):
@@ -1487,6 +1627,129 @@ def test_shared_helper_legacy_setup_marker_keeps_leniency() -> None:
             "",
             context="C_EncryptUpdate after C_EncryptFinal",
         )
+
+
+def test_shared_helper_refusal_survives_json_grouping_without_target_credit(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """QF5 + fix round 1: captured M7 probe output keeps attribution via grouping.
+
+    End-to-end: production multipart probe (C_EncryptFinal refused) →
+    production parent → production ``extract_groups``. The refusing op/RV
+    survive grouping; the untested post-final C_EncryptUpdate gets no credit.
+    """
+    fake = _MultipartEncryptFake("C_EncryptFinal")
+    ctx = ProbeContext(
+        raw=cast(Any, fake),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    multipart_probe._encrypt_update_after_final(ctx)
+    out = capsys.readouterr().out
+    assert "SETUP_REFUSED:C_EncryptFinal:0x00000006" in out
+    with pytest.raises(pytest.xfail.Exception, match="setup C_EncryptFinal refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            out,
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+    groups = _grouped_parent_records(
+        tmp_path,
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_multipart.py::Test::after_final",
+    )
+    assert len(groups) == 1
+    grp = groups[0]
+    assert grp["operation"] == "C_EncryptFinal"
+    assert grp["expected_ckr"] == ["CKR_OK"]
+    assert grp["actual_ckr"] == "CKR_FUNCTION_FAILED"
+    assert grp["reason"] == "not_operational"
+    assert grp["outcome"] == "xfail"
+    assert grp["detail"]["setup_operation"] == "C_EncryptFinal"
+    assert grp["detail"]["setup_rv"] == 0x06
+    assert grp["detail"]["target_reached"] is False
+    assert grp["count"] == 1
+    assert all(group["operation"] != "C_EncryptUpdate" for group in groups)
+    counts = outcome_counts(groups)
+    assert counts["xfail"] == 1
+    assert counts["fail"] == 0
+    assert counts["harness_error"] == 0
+    assert counts["crash"] == 0
+
+
+# --- Fix round 1: multipart end-to-end grouping proof + grouping controls ---
+
+
+@pytest.mark.parametrize(
+    ("probe", "refuse", "op", "target"),
+    [
+        ("_digest_update_after_final", "C_DigestInit", "C_DigestInit", "C_DigestUpdate"),
+        ("_digest_update_after_final", "C_DigestUpdate", "C_DigestUpdate", None),
+        ("_digest_update_after_final", "C_DigestFinal", "C_DigestFinal", "C_DigestUpdate"),
+        ("_encrypt_update_after_final", "C_GenerateKey", "C_GenerateKey", "C_EncryptUpdate"),
+        ("_encrypt_update_after_final", "C_EncryptInit", "C_EncryptInit", "C_EncryptUpdate"),
+        ("_encrypt_update_after_final", "C_EncryptUpdate", "C_EncryptUpdate", None),
+        ("_encrypt_update_after_final", "C_EncryptFinal", "C_EncryptFinal", "C_EncryptUpdate"),
+    ],
+)
+def test_injected_multipart_refusals_survive_production_grouping(
+    probe: str,
+    refuse: str,
+    op: str,
+    target: str | None,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """Fix round 1: every injected multipart refusal keeps attribution via grouping.
+
+    End-to-end per site: production probe → production parent → production
+    ``extract_groups``. Same-name setup/target sites (pre-final Update refused)
+    keep attribution via target_reached=false + xfail; distinct-target sites
+    additionally credit no group to the untested post-final Update.
+    """
+    fake: Any
+    if probe == "_digest_update_after_final":
+        fake = _MultipartDigestFake(refuse)
+        context = "C_DigestUpdate after C_DigestFinal"
+    else:
+        fake = _MultipartEncryptFake(refuse)
+        context = "C_EncryptUpdate after C_EncryptFinal"
+    ctx = ProbeContext(
+        raw=cast(Any, fake),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    getattr(multipart_probe, probe)(ctx)
+    out = capsys.readouterr().out
+    assert f"SETUP_REFUSED:{op}:0x00000006" in out
+    with pytest.raises(pytest.xfail.Exception, match=f"setup {op} refused"):
+        assert_ckr_subprocess_ok(0, out, "", context=context)
+    groups = _grouped_parent_records(
+        tmp_path,
+        f"src/pkcs11_check/testcases/ckr/test_ckr_raw_multipart.py::Test::{probe}",
+    )
+    assert len(groups) == 1
+    grp = groups[0]
+    assert grp["operation"] == op
+    assert grp["expected_ckr"] == ["CKR_OK"]
+    assert grp["actual_ckr"] == "CKR_FUNCTION_FAILED"
+    assert grp["reason"] == "not_operational"
+    assert grp["outcome"] == "xfail"
+    assert grp["detail"]["setup_operation"] == op
+    assert grp["detail"]["setup_rv"] == 0x06
+    assert grp["detail"]["target_reached"] is False
+    assert grp["count"] == 1
+    if target is not None:
+        assert all(group["operation"] != target for group in groups)
+    counts = outcome_counts(groups)
+    assert counts["xfail"] == 1
+    assert counts["fail"] == 0
+    assert counts["harness_error"] == 0
+    assert counts["crash"] == 0
 
 
 def test_grouped_identical_refusals_merge_across_nodeids(tmp_path: Path) -> None:
