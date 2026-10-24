@@ -43,6 +43,11 @@ class _EncryptStateRaw:
         self.abort_count += 1
         return 0
 
+    def C_Login(self, *_args: Any) -> int:  # noqa: N802 - raw PKCS#11 API shape
+        # The repaired logout premise logs in explicitly before creating
+        # objects; the fake token accepts (CKR_OK).
+        return 0
+
 
 class _KeygenRejectRaw(_EncryptStateRaw):
     def C_GenerateKey(self, *_args: Any) -> int:  # noqa: N802 - raw PKCS#11 API shape
