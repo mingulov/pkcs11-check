@@ -211,6 +211,46 @@ def split_raw_ecdsa(sig: bytes, coord_len: int) -> tuple[int, int]:
 SECP256R1_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 
+def assert_exact_dss_width_or_classify(
+    sig: bytes,
+    *,
+    half_len: int,
+    label: str,
+    operation: str,
+    mechanism: str,
+) -> None:
+    """Fail unless a token-produced DSS signature is exactly ``2 * half_len`` bytes.
+
+    Width legs (Sign-must-return-2*nLen, PKCS#11 v3.2 section 6.3.1) call this
+    BEFORE :func:`parse_raw_dss_or_classify`: the parser leniently xfails a
+    well-formed DER signature where raw encoding is required, but a
+    token-created signature of any other width -- DER-shaped or not --
+    violates the width rule and must fail.
+    """
+    expected_len = 2 * half_len
+    if len(sig) == expected_len:
+        return
+    fail_as(
+        "wrong_result",
+        kind="crypto",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=f"{expected_len}-byte raw r||s",
+        actual=f"{len(sig)}-byte output",
+        summary=(
+            f"{label}: token-created DSS signature has wrong length "
+            f"(got {len(sig)} bytes, expected exactly {expected_len} raw r||s); "
+            "Sign output must be exactly 2*nLen (PKCS#11 v3.2 section 6.3.1)"
+        ),
+        detail={
+            "expected_length": expected_len,
+            "actual_length": len(sig),
+            "half_length": half_len,
+        },
+    )
+
+
 def parse_raw_dss_or_classify(
     sig: bytes,
     *,

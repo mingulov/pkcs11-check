@@ -17,7 +17,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.classification import classify, fail_as, record_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import (
     PackedMechanism,
@@ -36,19 +36,23 @@ from pkcs11_check.raw.recipes import (
     verify_multipart,
     verify_single,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_BYTE,
     CK_DSA_PARAMETER_GEN_PARAM,
     CK_OBJECT_HANDLE,
     CKA_BASE,
+    CKA_CLASS,
+    CKA_KEY_TYPE,
     CKA_PRIME,
     CKA_PRIME_BITS,
     CKA_SIGN,
     CKA_SUBPRIME,
     CKA_SUBPRIME_BITS,
     CKA_TOKEN,
+    CKA_VALUE,
     CKA_VERIFY,
+    CKK_DSA,
     CKM_DSA,
     CKM_DSA_FIPS_G_GEN,
     CKM_DSA_KEY_PAIR_GEN,
@@ -65,7 +69,11 @@ from pkcs11_check.raw.types_std import (
     CKM_DSA_SHA512,
     CKM_DSA_SHAWE_TAYLOR_PARAMETER_GEN,
     CKM_SHA256,
+    CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKR_ARGUMENTS_BAD,
+    CKR_ATTRIBUTE_SENSITIVE,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_BUFFER_TOO_SMALL,
     CKR_DATA_LEN_RANGE,
@@ -91,7 +99,9 @@ from pkcs11_check.testcases._signature_policy import (
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
+    create_object_negotiated,
     is_known_error,
+    skip_unless_create_object_supported,
     xfail_if_known_ckr,
 )
 
@@ -121,9 +131,12 @@ _DSA_PARAMETER_RUNTIME_REJECT_RVS = (
 )
 
 # DSA parameter/key generation is heavy on several modules (10-32s per case
-# on some modules); the whole file is keygen-bound. Marked slow so a basic run can skip
-# it with -m "not slow"; it still runs in the full profile.
-pytestmark = [pytest.mark.sign, pytest.mark.slow]
+# on some modules); the keygen-bound classes below stay marked slow so a basic
+# run can skip them with -m "not slow" (they still run in the full profile).
+# The mark lives on the classes -- not the module -- so the bounded
+# fixed-vector class (TestDSABoundedWidth, QC5b) runs in the ordinary
+# selected profile without any generation on its hot path.
+pytestmark = [pytest.mark.sign]
 
 # Distinct-digest sample size for the repeated-r invariant below.
 _DISTINCT_MESSAGE_SAMPLES = 20
@@ -155,6 +168,113 @@ _DSA_HASH_MECHS = [
     pytest.param("DSA_SHA3_384", CKM_DSA_SHA3_384, id="SHA3-384"),
     pytest.param("DSA_SHA3_512", CKM_DSA_SHA3_512, id="SHA3-512"),
 ]
+
+# Fixed DSA-2048/256 keypair (QC5b, issue #57.2): RFC 6979 (Pornin,
+# "Deterministic Usage of DSA and ECDSA", August 2013), Appendix A.2.2.
+# y == g**x mod p and the SHA-256("sample") signature below were verified
+# with an independent DSA implementation at transcription time. Importing
+# this vector bounds the ordinary-profile leg: no parameter or keypair
+# generation runs on its hot path.
+_FIXED_DSA_P = bytes.fromhex(
+    "9db6fb5951b66bb6fe1e140f1d2ce5502374161fd6538df1648218642f0b5c48"
+    "c8f7a41aadfa187324b87674fa1822b00f1ecf8136943d7c55757264e5a1a44f"
+    "fe012e9936e00c1d3e9310b01c7d179805d3058b2a9f4bb6f9716bfe6117c6b5"
+    "b3cc4d9be341104ad4a80ad6c94e005f4b993e14f091eb51743bf33050c38de2"
+    "35567e1b34c3d6a5c0ceaa1a0f368213c3d19843d0b4b09dcb9fc72d39c8de41"
+    "f1bf14d4bb4563ca28371621cad3324b6a2d392145bebfac748805236f5ca2fe"
+    "92b871cd8f9c36d3292b5509ca8caa77a2adfc7bfd77dda6f71125a7456fea15"
+    "3e433256a2261c6a06ed3693797e7995fad5aabbcfbe3eda2741e375404ae25b"
+)
+_FIXED_DSA_Q = bytes.fromhex("f2c3119374ce76c9356990b465374a17f23f9ed35089bd969f61c6dde9998c1f")
+_FIXED_DSA_G = bytes.fromhex(
+    "5c7ff6b06f8f143fe8288433493e4769c4d988ace5be25a0e24809670716c613"
+    "d7b0cee6932f8faa7c44d2cb24523da53fbe4f6ec3595892d1aa58c4328a06c4"
+    "6a15662e7eaa703a1decf8bbb2d05dbe2eb956c142a338661d10461c0d135472"
+    "085057f3494309ffa73c611f78b32adbb5740c361c9f35be90997db2014e2ef5"
+    "aa61782f52abeb8bd6432c4dd097bc5423b285dafb60dc364e8161f4a2a35aca"
+    "3a10b1c4d203cc76a470a33afdcbdd92959859abd8b56e1725252d78eac66e71"
+    "ba9ae3f1dd2487199874393cd4d832186800654760e1e34c09e4d155179f9ec0"
+    "dc4473f996bdce6eed1cabed8b6f116f7ad9cf505df0f998e34ab27514b0ffe7"
+)
+_FIXED_DSA_X = bytes.fromhex("69c7548c21d0dfea6b9a51c9ead4e27c33d3b3f180316e5bcab92c933f0e4dbc")
+_FIXED_DSA_Y = bytes.fromhex(
+    "667098c654426c78d7f8201eac6c203ef030d43605032c2f1fa937e5237dbd94"
+    "9f34a0a2564fe126dc8b715c5141802ce0979c8246463c40e6b6bdaa2513fa61"
+    "1728716c2e4fd53bc95b89e69949d96512e873b9c8f8dfd499cc312882561ade"
+    "cb31f658e934c0c197f2c4d96b05cbad67381e7b768891e4da3843d24d94cdfb"
+    "5126e9b8bf21e8358ee0e0a30ef13fd6a664c0dce3731f7fb49a4845a4fd8254"
+    "687972a2d382599c9bac4e0ed7998193078913032558134976410b89d2c171d1"
+    "23ac35fd977219597aa7d15c1a9a428e59194f75c721ebcbcfae44696a499afa"
+    "74e04299f132026601638cb87ab79190d4a0986315da8eec6561c938996beadf"
+)
+_FIXED_DSA_Q_INT = int.from_bytes(_FIXED_DSA_Q, "big")
+_FIXED_DSA_HALF_LEN = 32
+_FIXED_DSA_SAMPLE_DIGEST = hashlib.sha256(b"sample").digest()
+_FIXED_DSA_SAMPLE_R = bytes.fromhex(
+    "eace8bdbbe353c432a795d9ec556c6d021f7a03f42c36e9bc87e4ac7932cc809"
+)
+_FIXED_DSA_SAMPLE_S = bytes.fromhex(
+    "7081e175455f9247b812b74583e9e94f9ea79bd640dc962533b0680793a38d53"
+)
+
+# Clean C_CreateObject refusals while staging the fixed DSA vector: the
+# module advertises CKM_DSA but cannot stage the vector, so the padded-half
+# oracle never ran -- xfail (recorded), never a crypto finding. Notably
+# CKR_DOMAIN_PARAMS_INVALID is NOT here: the RFC 6979 parameters are valid,
+# so rejecting them is a provider bug and must fail loudly.
+_DSA_IMPORT_RUNTIME_REJECT_RVS = (
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ARGUMENTS_BAD,
+    CKR_FUNCTION_FAILED,
+    CKR_DEVICE_ERROR,
+    CKR_GENERAL_ERROR,
+    CKR_KEY_SIZE_RANGE,
+)
+
+
+def _import_fixed_dsa_keypair(rs: Any) -> tuple[int, int]:
+    """Import the fixed RFC 6979 DSA-2048 keypair (bounded, no generation).
+
+    Returns (pub_handle, priv_handle). A clean refusal raises
+    CkrAssertionError for the caller to route (xfail); the public half is
+    destroyed if the private import fails.
+    """
+    pub = create_object_negotiated(
+        rs,
+        {
+            CKA_CLASS: CKO_PUBLIC_KEY,
+            CKA_KEY_TYPE: CKK_DSA,
+            CKA_TOKEN: False,
+            CKA_PRIME: _FIXED_DSA_P,
+            CKA_SUBPRIME: _FIXED_DSA_Q,
+            CKA_BASE: _FIXED_DSA_G,
+            CKA_VALUE: _FIXED_DSA_Y,
+            CKA_VERIFY: True,
+        },
+        purpose="QC5b fixed DSA-2048 public import",
+    )
+    try:
+        priv = create_object_negotiated(
+            rs,
+            {
+                CKA_CLASS: CKO_PRIVATE_KEY,
+                CKA_KEY_TYPE: CKK_DSA,
+                CKA_TOKEN: False,
+                CKA_PRIME: _FIXED_DSA_P,
+                CKA_SUBPRIME: _FIXED_DSA_Q,
+                CKA_BASE: _FIXED_DSA_G,
+                CKA_VALUE: _FIXED_DSA_X,
+                CKA_SIGN: True,
+            },
+            purpose="QC5b fixed DSA-2048 private import",
+        )
+    except BaseException:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        raise
+    return pub, priv
 
 
 def _dsa_parameter_gen_param_mech(
@@ -551,6 +671,7 @@ def _dsa_invalid_verify_rejected_or_xfail(
         return signature_rejected_or_xfail(exc, label)
 
 
+@pytest.mark.slow
 class TestDSARaw:
     """Tests for raw CKM_DSA with pre-hashed data."""
 
@@ -839,6 +960,7 @@ class TestDSARaw:
             destroy_quietly(rs.raw, rs.sh, dp)
 
 
+@pytest.mark.slow
 class TestDSAPrehash:
     """Tests for prehash DSA variants (SHA-1, SHA-224, SHA-384, SHA-512, SHA3-*)."""
 
@@ -1118,6 +1240,7 @@ class TestDSAPrehash:
             destroy_quietly(rs.raw, rs.sh, dp)
 
 
+@pytest.mark.slow
 class TestDSAParameterGen:
     """Tests for DSA domain-parameter generation mechanisms."""
 
@@ -1338,3 +1461,193 @@ class TestDSAParameterGen:
                 destroy_quietly(rs.raw, rs.sh, priv)
         finally:
             destroy_quietly(rs.raw, rs.sh, dp)
+
+
+class TestDSABoundedWidth:
+    """Even padded-half DSA rejection over a bounded fixed-vector fixture.
+
+    QC5b (issue #57.2): NO slow mark -- this class runs in the ordinary
+    selected profile (``-m "not slow"``) because it imports the fixed
+    RFC 6979 DSA-2048 vector instead of generating parameters.
+
+    SELECTION RECORD: overlong-DSA-signature coverage formerly existed ONLY
+    as TestDSARaw::test_raw_dsa_overlong_signature_length_fails, which is
+    slow-marked (DSA-2048 generation on its hot path) and therefore excluded
+    from the ordinary profile. That node is RETAINED unchanged as the
+    slow odd-length (``sig + b"\\x00"``) negative. The even padded-half case
+    (zero bytes prepended to EACH half, equal halves, same scalars, even
+    total length) is now selected as
+    TestDSABoundedWidth::test_fixed_dsa_even_padded_halves_rejected[pad-1]
+    and [pad-100]. Slow generation, truncation
+    (test_raw_dsa_wrong_signature_length_fails) and the odd-length negative
+    stay distinct nodes by design.
+    """
+
+    @pytest.mark.parametrize(
+        "pad_len", [pytest.param(1, id="pad-1"), pytest.param(100, id="pad-100")]
+    )
+    def test_fixed_dsa_even_padded_halves_rejected(
+        self, p11_module_session: Any, pad_len: int
+    ) -> None:
+        """Even zero-padded DSA halves must be rejected (issue #57.2).
+
+        PKCS#11 v3.2 Table 59 (section 6.2.11) fixes the C_Verify signature
+        length at 2x the subprime length (64 bytes here); the padded form is
+        longer with unchanged scalars, so acceptance is an accepted_invalid
+        crypto break -> fail, a clean signature reject -> pass, and a
+        non-clean refusal -> xfail. The unpadded token signature is the
+        control and must verify.
+        """
+        rs = p11_module_session
+        if not rs.has_mechanism("DSA"):
+            pytest.skip("CKM_DSA not supported")
+        skip_unless_create_object_supported(rs)
+
+        try:
+            pub, priv = _import_fixed_dsa_keypair(rs)
+        except AssertionError as exc:
+            xfail_if_known_ckr(
+                exc,
+                _DSA_IMPORT_RUNTIME_REJECT_RVS,
+                "CKM_DSA advertised but fixed-vector DSA import is not operational",
+            )
+            raise
+        try:
+            self._assert_import_coherence(rs, pub)
+            digest = hashlib.sha1(  # noqa: S324
+                b"QC5b even padded-half stimulus", usedforsecurity=False
+            ).digest()
+            try:
+                sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, digest)
+            except CkrAssertionError as exc:
+                # A clean refusal produces no output -> not_operational xfail
+                # (original RV preserved); it demonstrates no wrong signature.
+                xfail_if_op_not_operational(exc, "CKM_DSA QC5b padded-half stimulus sign")
+            # Premise: the stimulus must be a well-formed 64-byte raw
+            # signature with scalars in range of the FIXED subprime; a
+            # malformed token signature is itself a wrong_result finding.
+            parse_raw_dss_or_classify(
+                sig,
+                half_len=_FIXED_DSA_HALF_LEN,
+                order=_FIXED_DSA_Q_INT,
+                label="CKM_DSA:sign QC5b padded-half stimulus",
+                operation="C_Sign",
+                mechanism="CKM_DSA",
+            )
+            try:
+                control = verify_single(rs.raw, rs.sh, pub, CKM_DSA, digest, sig)
+            except CkrAssertionError as exc:
+                # A clean refusal of the control never evaluated it -> the
+                # premise is unestablished, not_operational xfail (original RV
+                # preserved). An evaluated rejection (False) below stays a
+                # genuine verification contradiction -> fail.
+                xfail_if_op_not_operational(exc, "CKM_DSA fixed-key fresh-signature control")
+            assert_correct(
+                actual=control,
+                expected=True,
+                label="CKM_DSA fixed-key fresh-signature control",
+                operation="C_Verify",
+                mechanism="CKM_DSA",
+            )
+            padded = (
+                b"\x00" * pad_len
+                + sig[:_FIXED_DSA_HALF_LEN]
+                + b"\x00" * pad_len
+                + sig[_FIXED_DSA_HALF_LEN:]
+            )
+            result = _dsa_invalid_verify_rejected_or_xfail(
+                rs,
+                pub,
+                CKM_DSA,
+                digest,
+                padded,
+                "CKM_DSA even padded-half signature",
+            )
+            if result is True:
+                classify(
+                    "accepted_invalid",
+                    kind="crypto",
+                    label="CKM_DSA even padded-half signature",
+                    operation="C_Verify",
+                    mechanism="CKM_DSA",
+                    summary="CKM_DSA accepted an even zero-padded overlong signature",
+                )
+            assert result is False
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    @staticmethod
+    def _assert_import_coherence(rs: Any, pub: int) -> None:
+        """Prove the imported public key carries exactly the fixed material."""
+        try:
+            attrs = read_attributes(
+                rs.raw, rs.sh, pub, [CKA_PRIME, CKA_SUBPRIME, CKA_BASE, CKA_VALUE]
+            )
+        except CkrAssertionError as exc:
+            if exc.rv in (int(CKR_ATTRIBUTE_SENSITIVE), int(CKR_ATTRIBUTE_TYPE_INVALID)):
+                xfail_as(
+                    "not_operational",
+                    kind="metadata",
+                    label="CKM_DSA fixed-vector import coherence",
+                    operation="C_GetAttributeValue",
+                    inherit_mechanism=False,
+                    actual=exc.rv,
+                    summary=(
+                        "Cannot read back the fixed DSA public key "
+                        f"for the import-coherence check: {exc}"
+                    ),
+                )
+            raise
+        expected = (
+            (CKA_PRIME, _FIXED_DSA_P),
+            (CKA_SUBPRIME, _FIXED_DSA_Q),
+            (CKA_BASE, _FIXED_DSA_G),
+            (CKA_VALUE, _FIXED_DSA_Y),
+        )
+        # Validate EVERY present attribute BEFORE terminating for omissions: a
+        # missing attribute must not hide a contradiction in a returned
+        # sibling. Mismatch failures carry the missing-attribute evidence
+        # alongside so the omission is not lost either.
+        mismatched = [t for t, exp in expected if t in attrs and attrs[t] != exp]
+        missing = [t for t, _exp in expected if t not in attrs]
+        missing_evidence = [{"name": str(t), "id": int(t)} for t in missing]
+        for attr_type in mismatched[:-1]:
+            record_as(
+                "wrong_result",
+                kind="metadata",
+                label="CKM_DSA fixed-vector import coherence",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                summary="Fixed DSA public-key attribute differs from the imported material",
+                detail={
+                    "attribute": {"name": str(attr_type), "id": int(attr_type)},
+                    "missing_attributes": missing_evidence,
+                },
+            )
+        if mismatched:
+            attr_type = mismatched[-1]
+            fail_as(
+                "wrong_result",
+                kind="metadata",
+                label="CKM_DSA fixed-vector import coherence",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                summary="Fixed DSA public-key attribute differs from the imported material",
+                detail={
+                    "attribute": {"name": str(attr_type), "id": int(attr_type)},
+                    "missing_attributes": missing_evidence,
+                },
+            )
+        if missing:
+            xfail_as(
+                "not_operational",
+                kind="metadata",
+                label="CKM_DSA fixed-vector import coherence",
+                operation="C_GetAttributeValue",
+                inherit_mechanism=False,
+                summary=(
+                    "Fixed DSA public-key attribute unavailable for the import-coherence check"
+                ),
+                detail={"missing_attributes": missing_evidence},
+            )
