@@ -5,8 +5,13 @@ rejects. Converted from a flat ``assert rv in (CKR_SESSION_HANDLE_INVALID,
 CKR_SESSION_CLOSED)`` to a 3-way ``classify_negative_rv``:
 
 - ``CKR_OK`` (the module performed an op on a closed session) -> ``fail``,
-- ``CKR_SESSION_HANDLE_INVALID`` / ``CKR_SESSION_CLOSED`` (spec) -> ``pass``,
-- any other clean reject code -> ``xfail``.
+- ``CKR_SESSION_HANDLE_INVALID`` (canonical) -> ``pass``,
+- ``CKR_SESSION_CLOSED`` (alternate clean refusal, original RV preserved) or
+  any other clean reject code -> ``xfail``.
+
+The stale premise itself is proven: the invalidating ``C_CloseSession`` must
+return ``CKR_OK`` explicitly (see ``tests/test_search_lifecycle_contract.py``
+for the close-proof legs).
 """
 
 from __future__ import annotations
@@ -34,11 +39,14 @@ from pkcs11_check.testcases import test_session_edge_cases as tse
 from tests._skip_assert import assert_xfails
 
 
-def _session(op_rv: int) -> SimpleNamespace:
+def _session(op_rv: int, *, close_rv: int = int(CKR_OK)) -> SimpleNamespace:
     def _op(*_a: object, **_k: object) -> int:
         return int(op_rv)
 
-    raw = SimpleNamespace(C_FindObjectsInit=_op, C_GenerateKey=_op)
+    def _close(*_a: object, **_k: object) -> int:
+        return int(close_rv)
+
+    raw = SimpleNamespace(C_FindObjectsInit=_op, C_GenerateKey=_op, C_CloseSession=_close)
     return SimpleNamespace(raw=raw, sh=1, slot_id=0)
 
 
@@ -46,7 +54,6 @@ def _patch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tse, "get_pin_bytes", lambda *_a, **_k: None)
     monkeypatch.setattr(tse, "raw_open_session", lambda *_a, **_k: 7)
     monkeypatch.setattr(tse, "login_user", lambda *_a, **_k: None)
-    monkeypatch.setattr(tse, "close_session_quietly", lambda *_a, **_k: None)
 
 
 def _run_find(monkeypatch: pytest.MonkeyPatch, op_rv: int) -> None:
@@ -67,7 +74,19 @@ def test_find_accepted_on_closed_session_fails(monkeypatch: pytest.MonkeyPatch) 
 
 def test_find_spec_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_find(monkeypatch, int(CKR_SESSION_HANDLE_INVALID))
-    _run_find(monkeypatch, int(CKR_SESSION_CLOSED))
+
+
+def test_find_session_closed_xfails_with_original_rv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch(monkeypatch)
+    session = _session(int(CKR_SESSION_CLOSED))
+    assert_xfails(tse.TestStaleSessionHandles().test_find_after_close, session, SimpleNamespace())
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "nonspec_reject"
+    assert records[0].actual_ckr == ckr_name(int(CKR_SESSION_CLOSED))
+    assert records[0].expected_ckr == [ckr_name(int(CKR_SESSION_HANDLE_INVALID))]
 
 
 def test_find_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,7 +102,23 @@ def test_gen_accepted_on_closed_session_fails(monkeypatch: pytest.MonkeyPatch) -
 
 def test_gen_spec_reject_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _run_gen(monkeypatch, int(CKR_SESSION_HANDLE_INVALID))
-    _run_gen(monkeypatch, int(CKR_SESSION_CLOSED))
+
+
+def test_gen_session_closed_xfails_with_original_rv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch(monkeypatch)
+    session = _session(int(CKR_SESSION_CLOSED))
+    assert_xfails(
+        tse.TestStaleSessionHandles().test_generate_key_after_close,
+        session,
+        SimpleNamespace(),
+    )
+    records = get_records()
+    assert len(records) == 1
+    assert records[0].reason == "nonspec_reject"
+    assert records[0].actual_ckr == ckr_name(int(CKR_SESSION_CLOSED))
+    assert records[0].expected_ckr == [ckr_name(int(CKR_SESSION_HANDLE_INVALID))]
 
 
 def test_gen_other_reject_xfails(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,6 +5,7 @@ References: rep11.md Iteration 2.
 
 from __future__ import annotations
 
+import uuid
 from ctypes import byref
 from dataclasses import dataclass, field
 from typing import Any, NoReturn
@@ -47,8 +48,8 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_MECHANISM_INVALID,
+    CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
-    CKR_SESSION_CLOSED,
     CKR_SESSION_COUNT,
     CKR_SESSION_HANDLE_INVALID,
     CKU_USER,
@@ -358,6 +359,308 @@ def _reopen_and_search(
     return new_sh, None, found
 
 
+# --- Stale-search oracles (QC6c) -------------------------------------------
+#
+# A session the test itself closed is stale from that point on: under v3.2
+# S5.1.2 an operation naming the closed handle must refuse with the canonical
+# CKR_SESSION_HANDLE_INVALID. CKR_SESSION_CLOSED (the closed-during
+# notification) is an alternate clean refusal recorded as xfail with the
+# original RV preserved; acceptance (CKR_OK) is a fail under the applicable
+# effect oracle. Closure itself is always proven with an explicit CKR_OK --
+# no quiet close on a stale-premise path.
+
+_SEARCH_CLOSE_LABEL = "C_FindObjects:stale search after C_CloseSession"
+_SEARCH_CLOSE_ALL_LABEL = "C_FindObjects:stale search after C_CloseAllSessions"
+_SEARCH_REUSE_LABEL = "C_FindObjects:search state across handle reuse"
+
+_STALE_SEARCH_LABEL = "pkcs11-check-stale-search"
+_SEARCH_REUSE_OBJECT_LABEL = "pkcs11-check-search-handle-reuse"
+_STALE_SEARCH_MAX_OBJECTS = 8
+
+# Pre-call fill for stale-search output buffers. A slot still holding this
+# value after C_FindObjects returned proves the provider left it untouched;
+# 0 is the null handle (no object). Delivery is proven only by a slot that
+# is neither (see _observe_stale_find).
+_STALE_SEARCH_SENTINEL = 0xA5A5A5A5
+
+_FIND_ACCEPTED = "find_accepted"
+_FIND_DELIVERED_ON_ERROR = "find_delivered_on_error"
+_FIND_UNDEFINED = "find_undefined"
+_FINAL_ACCEPTED = "final_accepted"
+_FINAL_UNDEFINED = "final_undefined"
+_SEARCH_ALTERNATE = "search_alternate"
+
+
+def _fail_stale_search(
+    *,
+    reason: str,
+    kind: str,
+    label: str,
+    operation: str,
+    expected: object,
+    actual: object,
+    summary: str,
+    detail: dict[str, Any],
+) -> NoReturn:
+    fail_as(
+        reason,
+        kind=kind,
+        label=label,
+        operation=operation,
+        expected=expected,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _xfail_stale_search(
+    *, label: str, operation: str, actual: int, summary: str, detail: dict[str, Any]
+) -> NoReturn:
+    xfail_as(
+        "nonspec_reject",
+        label=label,
+        operation=operation,
+        expected=CKR_SESSION_HANDLE_INVALID,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _xfail_stale_staging(
+    *,
+    label: str,
+    operation: str,
+    expected: object,
+    actual: object,
+    summary: str,
+    detail: dict[str, Any],
+) -> NoReturn:
+    xfail_as(
+        "not_operational",
+        label=label,
+        operation=operation,
+        expected=expected,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _raise_stale_staging(
+    *,
+    label: str,
+    operation: str,
+    rv: int,
+    expected: object,
+    actual: object,
+    summary: str,
+    detail: dict[str, Any],
+) -> NoReturn:
+    """Raise a staging premise that never established: defined clean RVs xfail.
+
+    A clean refusal (HOST_MEMORY, FUNCTION_FAILED, even after earlier success)
+    never claimed the premise, so no contradiction is proven. Only an
+    undefined RV fails (metadata). Callers stop the dependent probe.
+    """
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        _xfail_stale_staging(
+            label=label,
+            operation=operation,
+            expected=expected,
+            actual=actual,
+            summary=summary,
+            detail=detail,
+        )
+    _fail_stale_search(
+        reason="self_contradiction",
+        kind="metadata",
+        label=label,
+        operation=operation,
+        expected=expected,
+        actual=actual,
+        summary=summary,
+        detail=detail,
+    )
+
+
+def _observe_stale_find(
+    *, rv_find: int, raw_count: int, buf: Any, capacity: int
+) -> tuple[int, list[int], bool]:
+    """Observe a stale Find's output: raw count, bounded buffer, proven delivery.
+
+    C_FindObjects supplies no zero-on-error guarantee for host output memory,
+    so a bare nonzero count proves nothing. Delivery is proven only when the
+    provider both claims objects (0 < count <= capacity) on a defined error
+    leg AND at least one claimed slot holds a non-trivial handle (neither the
+    pre-call sentinel nor the null handle 0). The buffer snapshot is bounded
+    to the claimed prefix so a malformed count can never over-read.
+    """
+    claim_len = min(max(raw_count, 0), capacity)
+    buffer_head = [int(buf[i]) for i in range(claim_len)]
+    proven = (
+        rv_find != CKR_OK
+        and (is_standard_ckr(rv_find) or is_vendor_defined_ckr(rv_find))
+        and 0 < raw_count <= capacity
+        and any(h != _STALE_SEARCH_SENTINEL and h != 0 for h in buffer_head)
+    )
+    return raw_count, buffer_head, proven
+
+
+def _decide_stale_search(
+    *, rv_find: int, delivered_proven: bool, rv_final: int
+) -> tuple[str, int, str] | None:
+    """Decide the stale-search verdict from the retained observations.
+
+    The Find leg is adjudicated before the Final leg. Either leg accepting
+    (CKR_OK), the Find leg provably delivering objects while refusing (see
+    _observe_stale_find), or either leg returning an undefined RV is fail;
+    canonical CKR_SESSION_HANDLE_INVALID on both legs is the only pass; any
+    other defined clean refusal is xfail. Returns ``(tag, rv, operation)`` or
+    ``None`` for the canonical pass.
+    """
+    if rv_find == CKR_OK:
+        return (_FIND_ACCEPTED, rv_find, "C_FindObjects")
+    if not is_standard_ckr(rv_find) and not is_vendor_defined_ckr(rv_find):
+        return (_FIND_UNDEFINED, rv_find, "C_FindObjects")
+    if delivered_proven:
+        return (_FIND_DELIVERED_ON_ERROR, rv_find, "C_FindObjects")
+    if rv_final == CKR_OK:
+        return (_FINAL_ACCEPTED, rv_final, "C_FindObjectsFinal")
+    if not is_standard_ckr(rv_final) and not is_vendor_defined_ckr(rv_final):
+        return (_FINAL_UNDEFINED, rv_final, "C_FindObjectsFinal")
+    if rv_find == CKR_SESSION_HANDLE_INVALID and rv_final == CKR_SESSION_HANDLE_INVALID:
+        return None
+    if rv_find != CKR_SESSION_HANDLE_INVALID:
+        return (_SEARCH_ALTERNATE, rv_find, "C_FindObjects")
+    return (_SEARCH_ALTERNATE, rv_final, "C_FindObjectsFinal")
+
+
+def _raise_stale_search(
+    *,
+    label: str,
+    tag: str,
+    rv: int,
+    operation: str,
+    delivered: int,
+    rv_find: int,
+    rv_final: int,
+    buffer: list[int] | None = None,
+) -> NoReturn:
+    """Emit the retained stale-search verdict with literal attribution."""
+    both = {"find_rv": ckr_name(rv_find), "final_rv": ckr_name(rv_final)}
+    find_detail: dict[str, Any] = {"delivered": delivered, **both}
+    if buffer is not None:
+        find_detail["buffer"] = list(buffer)
+    if tag == _FIND_ACCEPTED:
+        _fail_stale_search(
+            reason="accepted_invalid",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            expected=CKR_SESSION_HANDLE_INVALID,
+            actual=rv,
+            summary=(
+                f"{label}: C_FindObjects returned CKR_OK on the closed session "
+                f"(delivered {delivered} objects) instead of refusing; the active "
+                "search survived the close"
+            ),
+            detail=dict(find_detail),
+        )
+    elif tag == _FIND_DELIVERED_ON_ERROR:
+        _fail_stale_search(
+            reason="self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            expected=CKR_SESSION_HANDLE_INVALID,
+            actual=rv,
+            summary=(
+                f"{label}: C_FindObjects refused with {ckr_name(rv)} but delivered "
+                f"{delivered} objects"
+            ),
+            detail=dict(find_detail),
+        )
+    elif tag == _FIND_UNDEFINED:
+        _fail_stale_search(
+            reason="self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            expected=CKR_SESSION_HANDLE_INVALID,
+            actual=rv,
+            summary=(
+                f"{label}: {operation} returned undefined CK_RV {ckr_name(rv)} "
+                "on the closed session"
+            ),
+            detail=dict(find_detail),
+        )
+    elif tag == _FINAL_UNDEFINED:
+        _fail_stale_search(
+            reason="self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            expected=CKR_SESSION_HANDLE_INVALID,
+            actual=rv,
+            summary=(
+                f"{label}: {operation} returned undefined CK_RV {ckr_name(rv)} "
+                "on the closed session"
+            ),
+            detail=dict(find_detail),
+        )
+    elif tag == _FINAL_ACCEPTED:
+        _fail_stale_search(
+            reason="accepted_invalid",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            expected=CKR_SESSION_HANDLE_INVALID,
+            actual=rv,
+            summary=(
+                f"{label}: C_FindObjectsFinal returned CKR_OK on the closed session "
+                "instead of refusing; search state was carried across the close"
+            ),
+            detail=dict(find_detail),
+        )
+    elif tag == _SEARCH_ALTERNATE:
+        _xfail_stale_search(
+            label=label,
+            operation=operation,
+            actual=rv,
+            summary=(
+                f"{label}: {operation} refused with {ckr_name(rv)} instead of "
+                "CKR_SESSION_HANDLE_INVALID"
+            ),
+            detail=dict(find_detail),
+        )
+    else:
+        raise AssertionError(f"unknown stale-search verdict tag: {tag!r}")
+
+
+def _raise_unproven_close(*, label: str, handle: int, close_rv: int) -> NoReturn:
+    """Raise a stale premise whose invalidating close did not claim CKR_OK.
+
+    Honest refusals xfail (not_operational, original RV); only an undefined
+    RV fails (metadata). Callers best-effort-clean the still-live handle
+    before raising and stop the dependent probe.
+    """
+    _raise_stale_staging(
+        label=label,
+        operation="C_CloseSession",
+        rv=close_rv,
+        expected=CKR_OK,
+        actual=close_rv,
+        summary=(
+            f"{label}: C_CloseSession returned {ckr_name(close_rv)} instead of "
+            "CKR_OK, so the session was never proven closed and the stale "
+            "premise is unproven"
+        ),
+        detail={"handle": handle},
+    )
+
+
 class TestStaleSessionHandles:
     """Reuse closed session handle - must get error, not crash (task 7.7)."""
 
@@ -372,15 +675,22 @@ class TestStaleSessionHandles:
         if pin_bytes is not None:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
 
-        # Close the session
-        close_session_quietly(rs.raw, test_sh)
+        # Prove the session closed: the stale premise below is only valid on
+        # an explicit CKR_OK (v3.2 S5.1.2 invalid-before-invocation).
+        label = "C_FindObjectsInit on closed session"
+        close_rv = int(rs.raw.C_CloseSession(test_sh))
+        if close_rv != CKR_OK:
+            close_session_quietly(rs.raw, test_sh)
+            _raise_unproven_close(label=label, handle=test_sh, close_rv=close_rv)
 
-        # Try to use the closed session -- must reject, not crash or succeed
+        # Try to use the closed session -- must reject, not crash or succeed.
+        # Canonical CKR_SESSION_HANDLE_INVALID passes; CKR_SESSION_CLOSED is
+        # an alternate clean refusal recorded as xfail with the original RV.
         rv = rs.raw.C_FindObjectsInit(test_sh, None, 0)
         classify_negative_rv(
             rv,
-            (CKR_SESSION_HANDLE_INVALID, CKR_SESSION_CLOSED),
-            label="C_FindObjectsInit on closed session",
+            (CKR_SESSION_HANDLE_INVALID,),
+            label=label,
         )
 
     def test_generate_key_after_close(self, p11_raw_session: Any, p11_config: Any) -> None:
@@ -393,8 +703,13 @@ class TestStaleSessionHandles:
         if pin_bytes is not None:
             login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
 
-        # Close the session
-        close_session_quietly(rs.raw, test_sh)
+        # Prove the session closed: the stale premise below is only valid on
+        # an explicit CKR_OK (v3.2 S5.1.2 invalid-before-invocation).
+        label = "C_GenerateKey on closed session"
+        close_rv = int(rs.raw.C_CloseSession(test_sh))
+        if close_rv != CKR_OK:
+            close_session_quietly(rs.raw, test_sh)
+            _raise_unproven_close(label=label, handle=test_sh, close_rv=close_rv)
 
         # Try to generate a key on the closed session
         from pkcs11_check.raw.pack import attr_ulong, template
@@ -405,9 +720,431 @@ class TestStaleSessionHandles:
         rv = rs.raw.C_GenerateKey(test_sh, mech.byref(), tmpl.ptr, tmpl.count, byref(key_h))
         classify_negative_rv(
             rv,
-            (CKR_SESSION_HANDLE_INVALID, CKR_SESSION_CLOSED),
-            label="C_GenerateKey on closed session",
+            (CKR_SESSION_HANDLE_INVALID,),
+            label=label,
         )
+
+
+class TestActiveSearchInvalidation:
+    """Active-search invalidation across session close (QC6c).
+
+    Separate from ``TestCloseAllSessions``: these oracles start a real
+    ``C_FindObjectsInit`` search, invalidate the session, then drive the
+    stale handle through the rest of the search lifecycle.
+    """
+
+    @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+    def test_find_and_final_after_close(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Find/Final on a session closed mid-search must refuse with effects pinned."""
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        if pin_bytes is not None:
+            login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
+
+        label = _SEARCH_CLOSE_LABEL
+        tmpl = template_from_dict({CKA_LABEL: _STALE_SEARCH_LABEL})
+        rv_init = int(rs.raw.C_FindObjectsInit(test_sh, tmpl.ptr, tmpl.count))
+        if rv_init != CKR_OK:
+            close_session_quietly(rs.raw, test_sh)
+            _raise_stale_staging(
+                label=label,
+                operation="C_FindObjectsInit",
+                rv=rv_init,
+                expected=CKR_OK,
+                actual=rv_init,
+                summary=(
+                    f"{label}: C_FindObjectsInit returned {ckr_name(rv_init)} on "
+                    "the live session, so no active search was ever staged"
+                ),
+                detail={"handle": test_sh},
+            )
+
+        close_rv = int(rs.raw.C_CloseSession(test_sh))
+        if close_rv != CKR_OK:
+            close_session_quietly(rs.raw, test_sh)
+            _raise_unproven_close(label=label, handle=test_sh, close_rv=close_rv)
+
+        # Both stale legs are observed before any verdict is emitted, so one
+        # alternate refusal cannot hide the other leg's acceptance.
+        found = CK_ULONG(0)
+        buf = (CK_OBJECT_HANDLE * _STALE_SEARCH_MAX_OBJECTS)()
+        for i in range(_STALE_SEARCH_MAX_OBJECTS):
+            buf[i] = _STALE_SEARCH_SENTINEL
+        rv_find = int(rs.raw.C_FindObjects(test_sh, buf, _STALE_SEARCH_MAX_OBJECTS, byref(found)))
+        rv_final = int(rs.raw.C_FindObjectsFinal(test_sh))
+        delivered, buffer_head, proven = _observe_stale_find(
+            rv_find=rv_find,
+            raw_count=int(found.value),
+            buf=buf,
+            capacity=_STALE_SEARCH_MAX_OBJECTS,
+        )
+        decision = _decide_stale_search(rv_find=rv_find, delivered_proven=proven, rv_final=rv_final)
+        if decision is not None:
+            tag, rv, operation = decision
+            _raise_stale_search(
+                label=label,
+                tag=tag,
+                rv=rv,
+                operation=operation,
+                delivered=delivered,
+                rv_find=rv_find,
+                rv_final=rv_final,
+                buffer=buffer_head,
+            )
+
+    @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
+    def test_find_and_final_after_close_all(self, p11_raw_session: Any, p11_config: Any) -> None:
+        """Find/Final after C_CloseAllSessions must refuse with effects pinned."""
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        test_sh = raw_open_session(rs.raw, rs.slot_id, flags)
+        if pin_bytes is not None:
+            login_user(rs.raw, test_sh, CKU_USER, pin_bytes)
+
+        label = _SEARCH_CLOSE_ALL_LABEL
+        tmpl = template_from_dict({CKA_LABEL: _STALE_SEARCH_LABEL})
+        rv_init = int(rs.raw.C_FindObjectsInit(test_sh, tmpl.ptr, tmpl.count))
+        if rv_init != CKR_OK:
+            close_session_quietly(rs.raw, test_sh)
+            _raise_stale_staging(
+                label=label,
+                operation="C_FindObjectsInit",
+                rv=rv_init,
+                expected=CKR_OK,
+                actual=rv_init,
+                summary=(
+                    f"{label}: C_FindObjectsInit returned {ckr_name(rv_init)} on "
+                    "the live session, so no active search was ever staged"
+                ),
+                detail={"handle": test_sh},
+            )
+
+        refusal: _CloseAllPending | None = None
+        decision: tuple[str, int, str] | None = None
+        rv_find = int(CKR_OK)
+        rv_final = int(CKR_OK)
+        delivered = 0
+        buffer_head: list[int] = []
+        try:
+            rv_close = int(rs.raw.C_CloseAllSessions(rs.slot_id))
+            if rv_close != CKR_OK:
+                refusal = _close_all_refusal_pending(rv_close)
+            else:
+                found = CK_ULONG(0)
+                buf = (CK_OBJECT_HANDLE * _STALE_SEARCH_MAX_OBJECTS)()
+                for i in range(_STALE_SEARCH_MAX_OBJECTS):
+                    buf[i] = _STALE_SEARCH_SENTINEL
+                rv_find = int(
+                    rs.raw.C_FindObjects(test_sh, buf, _STALE_SEARCH_MAX_OBJECTS, byref(found))
+                )
+                rv_final = int(rs.raw.C_FindObjectsFinal(test_sh))
+                delivered, buffer_head, proven = _observe_stale_find(
+                    rv_find=rv_find,
+                    raw_count=int(found.value),
+                    buf=buf,
+                    capacity=_STALE_SEARCH_MAX_OBJECTS,
+                )
+                decision = _decide_stale_search(
+                    rv_find=rv_find, delivered_proven=proven, rv_final=rv_final
+                )
+        finally:
+            close_session_quietly(rs.raw, test_sh)
+        if refusal is not None:
+            _raise_close_all(refusal)
+        if decision is not None:
+            tag, rv, operation = decision
+            _raise_stale_search(
+                label=label,
+                tag=tag,
+                rv=rv,
+                operation=operation,
+                delivered=delivered,
+                rv_find=rv_find,
+                rv_final=rv_final,
+                buffer=buffer_head,
+            )
+
+    def test_search_state_not_resurrected_on_handle_reuse(
+        self, p11_raw_session: Any, p11_config: Any
+    ) -> None:
+        """A fresh search after close + reopen must behave as a fresh search.
+
+        The reopened session keeps temporal identity: even when the token
+        reissues the closed session's integer, the new session is live and
+        its search must not resurrect the former session's results.
+
+        The staged object uses a per-run unique label, so a pre-existing
+        same-label token object can never false-positive the premise, and
+        only the probe-owned staged handle can fail. A fresh hit on the
+        staged handle is disambiguated by an independent liveness probe
+        (C_DestroyObject): a live object is persistence (object-lifetime,
+        QC9b territory), a gone object behind a returned handle is true
+        search-state resurrection (the QC6c property, proven independent of
+        destruction). Non-probe-owned hits are unrelated and pass.
+        """
+        rs = p11_raw_session
+        pin_bytes = get_pin_bytes(p11_config)
+
+        flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
+        label = _SEARCH_REUSE_LABEL
+        search_label = f"{_SEARCH_REUSE_OBJECT_LABEL}-{uuid.uuid4().hex[:8]}"
+        capacity = _STALE_SEARCH_MAX_OBJECTS
+        s1 = raw_open_session(rs.raw, rs.slot_id, flags)
+        s1_live = True
+        key: int | None = None
+        staged = 0
+        try:
+            if pin_bytes is not None:
+                login_user(rs.raw, s1, CKU_USER, pin_bytes)
+
+            key = gen_aes_key_or_xfail(
+                rs,
+                128,
+                attrs={
+                    CKA_LABEL: search_label,
+                    CKA_TOKEN: False,
+                    CKA_PRIVATE: False,
+                },
+                sh=s1,
+            )
+            staged = key
+            tmpl = template_from_dict({CKA_LABEL: search_label})
+            rv_init = int(rs.raw.C_FindObjectsInit(s1, tmpl.ptr, tmpl.count))
+            if rv_init != CKR_OK:
+                _raise_stale_staging(
+                    label=label,
+                    operation="C_FindObjectsInit",
+                    rv=rv_init,
+                    expected=CKR_OK,
+                    actual=rv_init,
+                    summary=(
+                        f"{label}: pre-close C_FindObjectsInit returned "
+                        f"{ckr_name(rv_init)}, so the resurrection premise is unproven"
+                    ),
+                    detail={"handle": s1, "staged_handle": key},
+                )
+
+            pre_count = CK_ULONG(0)
+            pre_buf = (CK_OBJECT_HANDLE * capacity)()
+            rv_pre = int(rs.raw.C_FindObjects(s1, pre_buf, capacity, byref(pre_count)))
+            pre_hits: list[int] = []
+            if rv_pre == CKR_OK:
+                raw_pre = int(pre_count.value)
+                if raw_pre > capacity:
+                    buffer_obs = [int(pre_buf[i]) for i in range(capacity)]
+                    _fail_stale_search(
+                        reason="self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_FindObjects",
+                        expected=(f"find count <= {capacity}",),
+                        actual=f"find count {raw_pre}",
+                        summary=(
+                            f"{label}: pre-close C_FindObjects claimed CKR_OK with "
+                            f"count {raw_pre} on a {capacity}-element buffer"
+                        ),
+                        detail={
+                            "handle": s1,
+                            "staged_handle": key,
+                            "count": raw_pre,
+                            "capacity": capacity,
+                            "buffer": buffer_obs,
+                        },
+                    )
+                pre_hits = [int(pre_buf[i]) for i in range(raw_pre)]
+            if rv_pre != CKR_OK or key not in pre_hits:
+                _raise_stale_staging(
+                    label=label,
+                    operation="C_FindObjects",
+                    rv=rv_pre,
+                    expected=CKR_OK,
+                    actual=rv_pre,
+                    summary=(
+                        f"{label}: pre-close search returned {ckr_name(rv_pre)} with "
+                        f"hits {pre_hits} instead of the staged object {key}, so the "
+                        "resurrection premise is unproven"
+                    ),
+                    detail={
+                        "handle": s1,
+                        "staged_handle": key,
+                        "hits": pre_hits,
+                        "expectation": "pre-close search returns the staged object",
+                    },
+                )
+
+            close_rv = int(rs.raw.C_CloseSession(s1))
+            if close_rv != CKR_OK:
+                _raise_unproven_close(label=label, handle=s1, close_rv=close_rv)
+
+            # Proven closed: release s1 ownership before opening s2 so a
+            # numerically reused handle can never cause stale cleanup. The
+            # close destroyed s1's session objects; never touch key via s1.
+            s1_live = False
+            key = None
+
+            try:
+                s2 = raw_open_session(rs.raw, rs.slot_id, flags)
+            except CkrAssertionError as exc:
+                _raise_stale_staging(
+                    label=label,
+                    operation="C_OpenSession",
+                    rv=exc.rv,
+                    expected=CKR_OK,
+                    actual=exc.rv,
+                    summary=(
+                        f"{label}: reopening a session after the proven close "
+                        f"returned {ckr_name(exc.rv)}, so no fresh search can be staged"
+                    ),
+                    detail={"handle": s1},
+                )
+            try:
+                proof_rv = _session_info_rv(rs.raw, s2)
+                if proof_rv != CKR_OK:
+                    _raise_stale_staging(
+                        label=label,
+                        operation="C_GetSessionInfo",
+                        rv=proof_rv,
+                        expected=CKR_OK,
+                        actual=proof_rv,
+                        summary=(
+                            f"{label}: reopened session {s2} is unusable "
+                            f"({ckr_name(proof_rv)}), so no fresh search can be staged"
+                        ),
+                        detail={"handle": s2},
+                    )
+                rv_fresh_init = int(rs.raw.C_FindObjectsInit(s2, tmpl.ptr, tmpl.count))
+                if rv_fresh_init != CKR_OK:
+                    _raise_stale_staging(
+                        label=label,
+                        operation="C_FindObjectsInit",
+                        rv=rv_fresh_init,
+                        expected=CKR_OK,
+                        actual=rv_fresh_init,
+                        summary=(
+                            f"{label}: fresh C_FindObjectsInit on reopened session "
+                            f"{s2} returned {ckr_name(rv_fresh_init)}"
+                        ),
+                        detail={"handle": s2},
+                    )
+                fresh_count = CK_ULONG(0)
+                fresh_buf = (CK_OBJECT_HANDLE * capacity)()
+                rv_fresh = int(rs.raw.C_FindObjects(s2, fresh_buf, capacity, byref(fresh_count)))
+                if rv_fresh != CKR_OK:
+                    _raise_stale_staging(
+                        label=label,
+                        operation="C_FindObjects",
+                        rv=rv_fresh,
+                        expected=CKR_OK,
+                        actual=rv_fresh,
+                        summary=(
+                            f"{label}: fresh C_FindObjects on reopened session {s2} "
+                            f"returned {ckr_name(rv_fresh)}"
+                        ),
+                        detail={"handle": s2},
+                    )
+                raw_fresh = int(fresh_count.value)
+                if raw_fresh > capacity:
+                    buffer_obs = [int(fresh_buf[i]) for i in range(capacity)]
+                    _fail_stale_search(
+                        reason="self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_FindObjects",
+                        expected=(f"find count <= {capacity}",),
+                        actual=f"find count {raw_fresh}",
+                        summary=(
+                            f"{label}: fresh C_FindObjects claimed CKR_OK with "
+                            f"count {raw_fresh} on a {capacity}-element buffer"
+                        ),
+                        detail={
+                            "stale_handle": s1,
+                            "fresh_handle": s2,
+                            "staged_handle": staged,
+                            "count": raw_fresh,
+                            "capacity": capacity,
+                            "buffer": buffer_obs,
+                        },
+                    )
+                found = [int(fresh_buf[i]) for i in range(raw_fresh)]
+                # Release the fresh search; its terminator RV is irrelevant to
+                # the verdict already decided by the Find observations.
+                rs.raw.C_FindObjectsFinal(s2)
+                if staged in found:
+                    liveness_rv = int(rs.raw.C_DestroyObject(s2, staged))
+                    if liveness_rv == CKR_OK:
+                        _fail_stale_search(
+                            reason="self_contradiction",
+                            kind="lifecycle",
+                            label=label,
+                            operation="C_CloseSession",
+                            expected=("session object destroyed by C_CloseSession",),
+                            actual=f"surviving object {staged}",
+                            summary=(
+                                f"{label}: staged session object {staged} survived "
+                                f"C_CloseSession({s1}) and is still live on reopened "
+                                f"session {s2} (object-lifetime persistence, QC9b "
+                                "territory; not resurrected search state)"
+                            ),
+                            detail={
+                                "stale_handle": s1,
+                                "fresh_handle": s2,
+                                "handle_reused": s2 == s1,
+                                "staged_handle": staged,
+                                "found": found,
+                                "liveness_rv": ckr_name(liveness_rv),
+                            },
+                        )
+                    if liveness_rv == CKR_OBJECT_HANDLE_INVALID:
+                        _fail_stale_search(
+                            reason="self_contradiction",
+                            kind="lifecycle",
+                            label=label,
+                            operation="C_FindObjects",
+                            expected=("fresh search finds no trace of the closed session",),
+                            actual=f"resurrected {found}",
+                            summary=(
+                                f"{label}: fresh search on reopened session {s2} "
+                                f"resurrected {found} from closed session {s1}"
+                            ),
+                            detail={
+                                "stale_handle": s1,
+                                "fresh_handle": s2,
+                                "handle_reused": s2 == s1,
+                                "staged_handle": staged,
+                                "found": found,
+                                "liveness_rv": ckr_name(liveness_rv),
+                            },
+                        )
+                    _raise_stale_staging(
+                        label=label,
+                        operation="C_DestroyObject",
+                        rv=liveness_rv,
+                        expected=(CKR_OK, CKR_OBJECT_HANDLE_INVALID),
+                        actual=liveness_rv,
+                        summary=(
+                            f"{label}: liveness probe for staged object {staged} "
+                            f"returned {ckr_name(liveness_rv)}, so persistence and "
+                            "resurrection cannot be distinguished"
+                        ),
+                        detail={
+                            "stale_handle": s1,
+                            "fresh_handle": s2,
+                            "staged_handle": staged,
+                            "found": found,
+                        },
+                    )
+            finally:
+                close_session_quietly(rs.raw, s2)
+        finally:
+            if s1_live:
+                if key is not None:
+                    destroy_quietly(rs.raw, s1, key)
+                close_session_quietly(rs.raw, s1)
 
 
 class TestCloseAllSessions:
