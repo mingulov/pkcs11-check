@@ -2473,6 +2473,55 @@ def check(raw, session, handle):
     assert _violations(source) == []
 
 
+def test_refusal_rv_for_allowed_use_is_clean() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import refusal_rv_for
+
+def probe(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return refusal_rv_for(attrs, CKA_VALUE)
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    refusal_rv = refusal_rv_for(attrs, CKA_VALUE)
+    if refusal_rv is None:
+        return None
+    return classify(refusal_rv)
+"""
+
+    assert _violations(source) == []
+
+
+def test_refusal_rv_for_module_attribute_form_is_clean() -> None:
+    source = """
+import pkcs11_check.testcases._attribute_values as values
+from pkcs11_check.raw.recipes import read_attributes
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return values.refusal_rv_for(attrs, CKA_VALUE)
+"""
+
+    assert _violations(source) == []
+
+
+def test_unknown_accessor_from_helper_module_still_escapes() -> None:
+    source = """
+from pkcs11_check.raw.recipes import read_attributes
+from pkcs11_check.testcases._attribute_values import refusal_rv_for_typo
+
+def check(raw, session, handle):
+    attrs = read_attributes(raw, session, handle, [CKA_VALUE])
+    return refusal_rv_for_typo(attrs, CKA_VALUE)
+"""
+
+    # Control: an unrecognized name from the helper module stays "unknown",
+    # so the tainted argument escapes -- proving the tests above pass by
+    # recognition, not vacuously.
+    assert _kinds(source) == ["taint_escape"]
+
+
 def test_attr_or_record_without_absence_branch_is_reported() -> None:
     source = """
 from pkcs11_check.raw.recipes import read_attributes
