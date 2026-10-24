@@ -642,11 +642,14 @@ def import_rsa_private_key_negotiated(
     iqmp: bytes,
     attrs: Mapping[Any, Any] | None = None,
     purpose: str = "RSA private key import",
+    preserve_policy_attrs: bool = False,
 ) -> int:
     """Import an RSA private key from CRT components, negotiating storage shape.
 
     Same canonical template as ``raw.recipes.import_rsa_private_key``; clean
     storage-shape rejects retry via ``create_object_negotiated`` variants.
+    ``preserve_policy_attrs`` keeps the requested CKA_SENSITIVE and
+    CKA_EXTRACTABLE values on every retry variant.
     """
     from pkcs11_check.raw.types_std import (
         CKA_COEFFICIENT,
@@ -675,7 +678,9 @@ def import_rsa_private_key_negotiated(
     }
     if attrs:
         base.update(attrs)
-    return create_object_negotiated(rs, base, purpose=purpose)
+    return create_object_negotiated(
+        rs, base, purpose=purpose, preserve_policy_attrs=preserve_policy_attrs
+    )
 
 
 def ec_public_key_binding_defect(rs: Any, handle: int, requested_params: bytes) -> str | None:
@@ -732,12 +737,15 @@ def import_secret_key_negotiated(
     *,
     attrs: Mapping[Any, Any] | None = None,
     purpose: str = "secret key import",
+    preserve_policy_attrs: bool = False,
 ) -> int:
     """Import a secret key by value, negotiating storage-shape requirements.
 
     Same canonical template as ``raw.recipes.import_secret_key``; on a clean
     storage-shape reject it retries via ``create_object_negotiated`` variants
     (unique CKA_LABEL, then CKA_TOKEN=TRUE -- for label-keyed token-only stores).
+    ``preserve_policy_attrs`` keeps the requested CKA_SENSITIVE and
+    CKA_EXTRACTABLE values on every retry variant.
     """
     base: dict[Any, Any] = {
         CKA_CLASS: CKO_SECRET_KEY,
@@ -746,7 +754,9 @@ def import_secret_key_negotiated(
     }
     if attrs:
         base.update(attrs)
-    return create_object_negotiated(rs, base, purpose=purpose)
+    return create_object_negotiated(
+        rs, base, purpose=purpose, preserve_policy_attrs=preserve_policy_attrs
+    )
 
 
 def import_ec_public_key_negotiated(
@@ -783,11 +793,13 @@ def import_ec_private_key_negotiated(
     key_type: int = int(CKK_EC),
     attrs: Mapping[Any, Any] | None = None,
     purpose: str = "EC private key import",
+    preserve_policy_attrs: bool = False,
 ) -> int:
     """Import an EC/Edwards/Montgomery private key, negotiating storage-shape template
     requirements. Same canonical template as ``raw.recipes.import_ec_private_key``; on a
     clean storage-shape reject it retries via ``create_object_negotiated`` variants
-    (and inherits the per-shape winner cache)."""
+    (and inherits the per-shape winner cache). ``preserve_policy_attrs`` keeps the
+    requested CKA_SENSITIVE and CKA_EXTRACTABLE values on every retry variant."""
     from pkcs11_check.raw.types_std import CKO_PRIVATE_KEY
 
     base: dict[Any, Any] = {
@@ -801,7 +813,9 @@ def import_ec_private_key_negotiated(
     }
     if attrs:
         base.update(attrs)
-    return create_object_negotiated(rs, base, purpose=purpose)
+    return create_object_negotiated(
+        rs, base, purpose=purpose, preserve_policy_attrs=preserve_policy_attrs
+    )
 
 
 def gen_rsa_keypair_or_xfail(

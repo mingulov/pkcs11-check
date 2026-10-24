@@ -70,7 +70,9 @@ def _next_import_label() -> bytes:
     return f"p11chk-import-{next(_import_label_counter)}".encode()
 
 
-def _storage_variants(base: dict[Any, Any]) -> list[dict[Any, Any]]:
+def _storage_variants(
+    base: dict[Any, Any], *, preserve_policy_attrs: bool = False
+) -> list[dict[Any, Any]]:
     """Spec-equivalent storage variants, canonical-minimal first (negotiation G1)."""
     variants: list[dict[Any, Any]] = [base]
     labeled = base if CKA_LABEL in base else {**base, CKA_LABEL: _next_import_label()}
@@ -79,6 +81,11 @@ def _storage_variants(base: dict[Any, Any]) -> list[dict[Any, Any]]:
     tokened = labeled if base.get(CKA_TOKEN, False) else {**labeled, CKA_TOKEN: True}
     if tokened is not labeled:
         variants.append(tokened)
+    if preserve_policy_attrs:
+        # The caller adjudicates the seal itself: every variant keeps the
+        # requested CKA_SENSITIVE/CKA_EXTRACTABLE controls, so a win never
+        # silently drops the protection under test.
+        return variants
     dropped = {k: v for k, v in tokened.items() if k not in _IMPORT_DROPPABLE_POLICY_ATTRS}
     if dropped != tokened:
         variants.append(dropped)
@@ -98,6 +105,7 @@ def create_object_negotiated(
     attrs: Mapping[Any, Any],
     *,
     purpose: str = "key import",
+    preserve_policy_attrs: bool = False,
 ) -> int:
     """Create an object, negotiating storage-shape requirements (label / token).
 
@@ -111,13 +119,20 @@ def create_object_negotiated(
     identity is consulted. The winning variant is cached per template shape per
     process (see _IMPORT_SHAPE_WINNERS); callers destroy the object in their
     cleanup path regardless of which variant won.
+
+    When ``preserve_policy_attrs`` is set, the control-dropping variant is not
+    offered: every accepted template retains the requested CKA_SENSITIVE and
+    CKA_EXTRACTABLE values. Preserving callers share the winner cache with
+    dropping callers safely: the preserved list is a positional prefix of the
+    full list (same templates at indexes 0..N), and a cached dropped-winner
+    index falls outside the preserved range, so the range guard re-learns.
     """
     from pkcs11_check.raw.recipes import create_object
     from pkcs11_check.raw.rv import CkrAssertionError as _CkrError
     from pkcs11_check.testcases._negotiation import negotiate_request
 
     base = dict(attrs)
-    variants = _storage_variants(base)
+    variants = _storage_variants(base, preserve_policy_attrs=preserve_policy_attrs)
     shape_key = _import_shape_key(base)
 
     def attempt(delta: Mapping[Any, Any]) -> int:
