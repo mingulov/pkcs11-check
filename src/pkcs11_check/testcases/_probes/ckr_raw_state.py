@@ -22,12 +22,12 @@ Dispatch on ``extra["probe"]`` (one child body each):
   ``"double_sign_init"``       -> two ``C_SignInit`` (or first_init_failed suffix)
   ``"double_decrypt_init"``    -> two ``C_DecryptInit`` (first CKR_OK, print second rv)
 
-Output protocol (byte-identical to the legacy child, for ``assert_ckr_subprocess_ok`` +
-the parent ``_classify_state_ckr``):
-  ``CKR:0x{rv:08x}``                             -- return value of the second *Init call
-  ``CKR:0x{rv:08x}:first_init_failed``           -- double_sign_init when the first fails
-  ``OK``                                         -- probe reached its expected point
-  ``SETUP_XFAIL:C_GenerateKey failed:{name}``    -- shared AES keygen setup reject
+Output protocol (for ``assert_ckr_subprocess_ok`` + the parent ``_classify_state_ckr``):
+  ``CKR:0x{rv:08x}``                   -- return value of the second *Init call
+  ``CKR:0x{rv:08x}:first_init_failed`` -- double_sign_init when the first fails
+  ``OK``                               -- probe reached its expected point
+  ``SETUP_REFUSED:C_GenerateKey:0x<rv>`` -- shared AES keygen refused with valid
+                                       -- inputs (target untested, issue #28)
 
 A wrong CK_RV trips the child ``assert`` (non-zero exit) -> the parent reports a child
 failure; a crash (returncode < 0) is a provider crash finding.
@@ -44,7 +44,6 @@ from ctypes import byref, cast
 from typing import Any
 
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
-from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE_PTR,
     CK_OBJECT_HANDLE,
@@ -69,7 +68,7 @@ def _template_ptr(attrs: Any) -> Any:
 def _gen_key(ctx: ProbeContext) -> int | None:
     """Generate the shared AES key (mirrors the legacy preamble).
 
-    Returns the key handle, or ``None`` after printing the setup-xfail line when
+    Returns the key handle, or ``None`` after printing the setup-refused line when
     ``C_GenerateKey`` cleanly refuses (advertised-but-not-operational keygen).
     """
     mech_keygen = mech_simple(CKM_AES_KEY_GEN)
@@ -85,7 +84,7 @@ def _gen_key(ctx: ProbeContext) -> int | None:
         ctx.sh, mech_keygen.byref(), _template_ptr(attrs), attrs.count, byref(key)
     )
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_GenerateKey failed:{ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         return None
     return key.value
 

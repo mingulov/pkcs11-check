@@ -21,6 +21,7 @@ from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKR_FUNCTION_NOT_SUPPORTED
 from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.health import outcome_counts
 from pkcs11_check.testcases._probes import ckr_raw_multipart as multipart_probe
+from pkcs11_check.testcases._probes import ckr_raw_state as state_probe
 from pkcs11_check.testcases._probes import ckr_v30_raw, ckr_v32_raw
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
@@ -1672,6 +1673,108 @@ def test_shared_helper_refusal_survives_json_grouping_without_target_credit(
     assert grp["detail"]["target_reached"] is False
     assert grp["count"] == 1
     assert all(group["operation"] != "C_EncryptUpdate" for group in groups)
+    counts = outcome_counts(groups)
+    assert counts["xfail"] == 1
+    assert counts["fail"] == 0
+    assert counts["harness_error"] == 0
+    assert counts["crash"] == 0
+
+
+# --- QF5 state-family rollout: shared keygen setup refusal (fw#28) ---
+#
+# The state probes share one keygen preamble. A refused C_GenerateKey must
+# emit a lone SETUP_REFUSED marker and return before dispatching the
+# state-violation handler: the fake below implements only C_GenerateKey, so
+# any handler call is an AttributeError (the target provably never runs)
+# and no CKR measurement or OK completion may appear.
+
+
+class _StateKeygenRefused:
+    def C_GenerateKey(self, *args: Any) -> int:  # noqa: N802
+        return 0x06
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "double_encrypt_init",
+        "encrypt_then_sign_init",
+        "double_digest_init",
+        "double_sign_init",
+        "double_decrypt_init",
+    ],
+)
+def test_migrated_state_keygen_emits_setup_refused(
+    probe: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """QF5 state rollout: refused shared keygen emits SETUP_REFUSED, target unrun."""
+    ctx = ProbeContext(
+        raw=cast(Any, _StateKeygenRefused()),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    state_probe._run(ctx, {"probe": probe})
+    out = capsys.readouterr().out
+    assert "SETUP_REFUSED:C_GenerateKey:0x00000006" in out
+    assert "SETUP_XFAIL" not in out
+    assert not any(line.startswith("CKR:") for line in out.splitlines())
+    assert "OK" not in out.splitlines()
+
+
+@pytest.mark.parametrize(
+    ("probe", "targets"),
+    [
+        ("double_encrypt_init", frozenset({"C_EncryptInit"})),
+        ("encrypt_then_sign_init", frozenset({"C_EncryptInit", "C_SignInit"})),
+        ("double_digest_init", frozenset({"C_DigestInit"})),
+        ("double_sign_init", frozenset({"C_SignInit"})),
+        ("double_decrypt_init", frozenset({"C_DecryptInit"})),
+    ],
+)
+def test_state_keygen_refusal_credits_no_state_target(
+    probe: str, targets: frozenset[str], capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """QF5 + fix round 1: captured state probe output groups under setup only.
+
+    End-to-end per state probe: production probe (shared keygen refused) →
+    production parent → production ``extract_groups``. The refusing keygen
+    keeps attribution; no state target operation gets group/coverage credit.
+    """
+    ctx = ProbeContext(
+        raw=cast(Any, _StateKeygenRefused()),
+        sh=1,
+        slot_id=1,
+        cleanup=lambda: None,
+        module_path="test-module",
+    )
+    state_probe._run(ctx, {"probe": probe})
+    out = capsys.readouterr().out
+    assert "SETUP_REFUSED:C_GenerateKey:0x00000006" in out
+    with pytest.raises(pytest.xfail.Exception, match="setup C_GenerateKey refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            out,
+            "",
+            context="CKR operation-state raw probe",
+        )
+    groups = _grouped_parent_records(
+        tmp_path,
+        f"src/pkcs11_check/testcases/ckr/test_ckr_raw_state.py::Test::{probe}",
+    )
+    assert len(groups) == 1
+    grp = groups[0]
+    assert grp["operation"] == "C_GenerateKey"
+    assert grp["expected_ckr"] == ["CKR_OK"]
+    assert grp["actual_ckr"] == "CKR_FUNCTION_FAILED"
+    assert grp["reason"] == "not_operational"
+    assert grp["outcome"] == "xfail"
+    assert grp["detail"]["setup_operation"] == "C_GenerateKey"
+    assert grp["detail"]["setup_rv"] == 0x06
+    assert grp["detail"]["target_reached"] is False
+    assert grp["count"] == 1
+    assert not (targets & {group["operation"] for group in groups})
     counts = outcome_counts(groups)
     assert counts["xfail"] == 1
     assert counts["fail"] == 0
