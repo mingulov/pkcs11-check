@@ -7,7 +7,6 @@ Uses pkcs11_check.raw.RawPKCS11 - wrapper handles buffer sizing internally.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
@@ -24,7 +23,6 @@ from pkcs11_check.classification import (
 )
 from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
-    _CK_ULONG_MAX,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
@@ -36,6 +34,10 @@ from pkcs11_check.testcases._subprocess_preamble import (
     pin_from_config,
 )
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
+from pkcs11_check.testcases.ckr._subprocess import (
+    parse_setup_refused_payload,
+    setup_refused_record,
+)
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess]
 
@@ -52,9 +54,6 @@ _EC_ATTRS = (
 )
 _EC_ROLES = frozenset({"target_key", "compressed_pub", "priv", "pub"})
 _EC_CLEANUP_ORDER = ("target_key", "compressed_pub", "priv", "pub")
-# SETUP_REFUSED payload grammar (issue #28, hardened F1): "<Op>:0x<rv>" with a
-# bare C_ entry-point name. Anything else is a malformed marker, never an xfail.
-_SETUP_REFUSED_OP_RE = re.compile(r"C_[A-Za-z0-9_]+")
 _BUFFER_FIELD_NAMES = frozenset(
     {
         "CKR",
@@ -1141,49 +1140,14 @@ def _check_buffer_probe(
         if prefix == "SETUP_REFUSED:":
             # Structured setup refusal (issue #28): "<Op>:0x<rv>" names the
             # refused setup step so the record cannot masquerade as a tested
-            # target. Same xfail bucket as SETUP_XFAIL -- a clean refusal of
-            # valid setup is advertised-but-not-operational -- but the setup
-            # operation + CKR stay visible and the target is marked untested.
-            setup_parts = payload.split(":")
-            if len(setup_parts) != 2:
+            # target. Grammar + record shape are shared with the other CKR
+            # families (ckr/_subprocess); anything unparseable fails loud.
+            parsed = parse_setup_refused_payload(payload)
+            if parsed is None:
                 malformed_marker = prefix.removesuffix(":")
                 continue
-            setup_op, rv_text = setup_parts
-            if _SETUP_REFUSED_OP_RE.fullmatch(setup_op) is None:
-                malformed_marker = prefix.removesuffix(":")
-                continue
-            try:
-                setup_rv = int(rv_text, 0)
-            except ValueError:
-                malformed_marker = prefix.removesuffix(":")
-                continue
-            # A refusal reporting CKR_OK contradicts itself; an unrepresentable
-            # rv cannot be a CK_RV the child observed. Both fail loud (F1).
-            if not 0 < setup_rv <= _CK_ULONG_MAX:
-                malformed_marker = prefix.removesuffix(":")
-                continue
-            outcome, severity = derive_verdict(reason, kind)
-            semantic.append(
-                Classification(
-                    reason=reason,
-                    outcome=outcome,
-                    severity=severity,
-                    kind=kind,
-                    label=context,
-                    operation=setup_op,
-                    expected_ckr=[ckr_name(int(CKR_OK))],
-                    actual_ckr=ckr_name(setup_rv),
-                    summary=(
-                        f"{context}: setup {setup_op} refused "
-                        f"with {ckr_name(setup_rv)} (target untested)"
-                    ),
-                    detail={
-                        "protocol_marker": prefix.removesuffix(":"),
-                        "setup_operation": setup_op,
-                        "setup_rv": setup_rv,
-                    },
-                )
-            )
+            setup_op, setup_rv = parsed
+            semantic.append(setup_refused_record(context, setup_op, setup_rv))
             continue
         outcome, severity = derive_verdict(reason, kind)
         semantic.append(

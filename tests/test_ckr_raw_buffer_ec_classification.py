@@ -796,7 +796,7 @@ def test_ec_child_ready_then_import_refusal_reaches_parent(monkeypatch: pytest.M
     )
     child_output = "\n".join(emitted) + "\n"
 
-    with pytest.raises(pytest.xfail.Exception, match="compressed EC public-key import rejected"):
+    with pytest.raises(pytest.xfail.Exception, match="setup C_CreateObject refused"):
         _check_ec(0, child_output, "", context="EC setup")
 
 
@@ -804,9 +804,9 @@ def test_ec_child_ready_then_import_refusal_reaches_parent(monkeypatch: pytest.M
 @pytest.mark.parametrize(
     ("refusal", "marker"),
     [
-        ("import", "compressed EC public-key import rejected"),
-        ("keygen", "C_GenerateKey for ECDH-AES target key failed"),
-        ("size", "ECDH-AES C_WrapKey size query failed"),
+        ("import", "SETUP_REFUSED:C_CreateObject"),
+        ("keygen", "SETUP_REFUSED:C_GenerateKey"),
+        ("size", "SETUP_REFUSED:C_WrapKey"),
     ],
 )
 def test_each_post_ready_refusal_is_flushed_before_cleanup_crash(
