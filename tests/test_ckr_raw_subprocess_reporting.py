@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -10,13 +11,15 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import HARNESS_REASONS, get_records
+from pkcs11_check.classification import HARNESS_REASONS, get_records, serialize
 from pkcs11_check.core.subprocess_trace import (
     drain_subprocess_rv_trace,
 )
 from pkcs11_check.raw import recipes as raw_recipes
 from pkcs11_check.raw.rv import CkrAssertionError
-from pkcs11_check.raw.types_std import CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKR_FUNCTION_NOT_SUPPORTED
+from pkcs11_check.report.extract import extract_groups
+from pkcs11_check.report.health import outcome_counts
 from pkcs11_check.testcases._probes import ckr_v30_raw, ckr_v32_raw
 from pkcs11_check.testcases._subprocess_preamble import SUBPROCESS_TIMEOUT_MARKER
 from pkcs11_check.testcases.ckr import (
@@ -1322,3 +1325,291 @@ def test_double_digest_init_dispatches_digest_probe(
     probe, params = calls[0]
     assert probe == "ckr_dual"
     assert params["probe"] == "double_digest_init"
+
+
+def test_shared_helper_records_structured_setup_refusal() -> None:
+    """QF5: the shared CKR helper attributes a refusal to the setup op + RV."""
+    with pytest.raises(pytest.xfail.Exception, match="setup C_EncryptInit refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_REFUSED:C_EncryptInit:0x00000006\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+    setup = [
+        record
+        for record in get_records()
+        if record.detail is not None and record.detail.get("protocol_marker") == "SETUP_REFUSED"
+    ]
+    assert len(setup) == 1
+    record = setup[0]
+    assert record.reason == "not_operational"
+    assert record.outcome == "xfail"
+    assert record.operation == "C_EncryptInit"
+    assert record.expected_ckr == ["CKR_OK"]
+    assert record.actual_ckr == "CKR_FUNCTION_FAILED"
+    assert "target untested" in record.summary
+    assert record.detail is not None
+    assert record.detail["setup_operation"] == "C_EncryptInit"
+    assert record.detail["setup_rv"] == 0x06
+    assert record.detail["target_reached"] is False
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "SETUP_REFUSED:\n",
+        "SETUP_REFUSED:not-a-payload\n",
+        "SETUP_REFUSED:C_EncryptInit:-1\n",
+        "SETUP_REFUSED:!!!:0x6\n",
+        "SETUP_REFUSED:C_EncryptInit:0x0\n",
+        f"SETUP_REFUSED:C_EncryptInit:0x{_CK_ULONG_MAX + 1:X}\n",
+        "SETUP_REFUSED:C_A:B:0x6\n",
+        "SETUP_REFUSED:C_!!!:0x6\n",
+    ],
+)
+def test_shared_helper_malformed_refusal_is_harness_error(line: str) -> None:
+    """QF5: empty/garbage/contradictory/unrepresentable refusals fail loud."""
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        assert_ckr_subprocess_ok(0, line, "", context="C_EncryptUpdate after C_EncryptFinal")
+    assert any(record.reason == "harness_error" for record in get_records())
+
+
+def test_shared_helper_max_ulong_refusal_still_xfails() -> None:
+    """QF5: the largest representable CK_RV is a refusal, not malformed (boundary)."""
+    with pytest.raises(pytest.xfail.Exception, match="setup C_EncryptInit refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            f"SETUP_REFUSED:C_EncryptInit:0x{_CK_ULONG_MAX:X}\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nSETUP_REFUSED:C_GenerateKey:0x00000006\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nSETUP_XFAIL:legacy key setup refused\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nDEVIATION_XFAIL:safely refused at end\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nOK\n",
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\nCKR:0x00000091\nOK\n",
+        "CKR:0x00000091\nSETUP_REFUSED:C_GenerateKey:0x00000006\n",
+        "SETUP_REFUSED:not-a-payload\nSETUP_XFAIL:legacy key setup refused\n",
+    ],
+)
+def test_shared_helper_refusal_contradictions_are_malformed(stdout: str) -> None:
+    """QF5: duplicate/contradictory refusals fail loud, never xfail."""
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        assert_ckr_subprocess_ok(0, stdout, "", context="C_EncryptUpdate after C_EncryptFinal")
+    assert any(record.reason == "harness_error" for record in get_records())
+
+
+def test_shared_helper_refusal_contradiction_with_provider_fail_raises_fail() -> None:
+    """QF5: fail-before-malformed -- parsed provider evidence beats the protocol failure."""
+    stdout = (
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+        "BREAK:target produced output after refused setup\n"
+    )
+    with pytest.raises(pytest.fail.Exception, match="target produced output"):
+        assert_ckr_subprocess_ok(0, stdout, "", context="C_EncryptUpdate after C_EncryptFinal")
+    assert any(record.reason == "self_contradiction" for record in get_records())
+
+
+@pytest.mark.parametrize(
+    "empty_marker",
+    ["SETUP_XFAIL:", "DEVIATION_XFAIL:", "BREAK:"],
+)
+@pytest.mark.parametrize("refusal_first", [True, False])
+def test_shared_helper_refusal_beside_empty_marker_is_malformed(
+    empty_marker: str, refusal_first: bool
+) -> None:
+    """Fix round 1: a valid refusal must not override an empty legacy marker.
+
+    Either order fails loud as malformed-marker harness evidence. The xfail
+    branch is caught explicitly: an uncaught refusal xfail would report as an
+    expected xfail and mask the defect this test pins.
+    """
+    refusal = "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+    malformed_line = f"{empty_marker}\n"
+    stdout = refusal + malformed_line if refusal_first else malformed_line + refusal
+    try:
+        assert_ckr_subprocess_ok(0, stdout, "", context="C_EncryptUpdate after C_EncryptFinal")
+    except pytest.xfail.Exception as exc:
+        # Caught first: XFailed subclasses Failed in this pytest, so the fail
+        # branch below would otherwise swallow the exact regression pinned here.
+        pytest.fail(f"refusal overrode empty {empty_marker} marker with xfail: {exc!r}")
+    except pytest.fail.Exception as exc:
+        assert "malformed" in str(exc)
+    else:
+        pytest.fail(f"refusal beside empty {empty_marker} marker must fail loud")
+    assert any(record.reason == "harness_error" for record in get_records())
+
+
+def test_shared_helper_empty_marker_with_refusal_keeps_provider_fail_first() -> None:
+    """Fix round 1: parsed provider BREAK still beats refusal+empty-marker evidence."""
+    stdout = (
+        "SETUP_REFUSED:C_GenerateKey:0x00000006\n"
+        "SETUP_XFAIL:\n"
+        "BREAK:target produced output after refused setup\n"
+    )
+    with pytest.raises(pytest.fail.Exception, match="target produced output"):
+        assert_ckr_subprocess_ok(0, stdout, "", context="C_EncryptUpdate after C_EncryptFinal")
+    assert any(record.reason == "self_contradiction" for record in get_records())
+
+
+def test_shared_helper_lone_refusal_without_completion_still_xfails() -> None:
+    """QF5: a lone refusal without OK is terminal, not probe_incomplete."""
+    with pytest.raises(pytest.xfail.Exception, match="setup C_DigestInit refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_REFUSED:C_DigestInit:0x00000006\n",
+            "",
+            context="C_DigestUpdate after C_DigestFinal",
+        )
+    assert [record.reason for record in get_records()] == ["not_operational"]
+
+
+def test_shared_helper_legacy_setup_marker_keeps_leniency() -> None:
+    """QF5 pin: legacy SETUP_XFAIL (even beside OK/duplicates) still xfails."""
+    with pytest.raises(pytest.xfail.Exception, match="legacy key setup refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_XFAIL:legacy key setup refused\nOK\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+    with pytest.raises(pytest.xfail.Exception):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_XFAIL:first setup refusal\nSETUP_XFAIL:second setup refusal\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+
+
+def test_grouped_identical_refusals_merge_across_nodeids(tmp_path: Path) -> None:
+    """Fix round 1 merge control: grouping merges identical keys (count 2).
+
+    A serialization round-trip alone can never merge; count==2 with both
+    nodeids proves the production grouping ran.
+    """
+    with pytest.raises(pytest.xfail.Exception, match="setup C_GenerateKey refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_REFUSED:C_GenerateKey:0x00000006\n",
+            "",
+            context="CKR operation-state raw probe",
+        )
+    payload = json.loads(json.dumps(serialize(get_records())))
+    base = "src/pkcs11_check/testcases/ckr/test_ckr_raw_state.py::Test"
+    groups = extract_groups(
+        _write_report_jsonl(
+            tmp_path, [(f"{base}::test_one", payload), (f"{base}::test_two", payload)]
+        ),
+        crashes=[],
+    )
+    assert len(groups) == 1
+    assert groups[0]["operation"] == "C_GenerateKey"
+    assert groups[0]["count"] == 2
+    assert len(groups[0]["nodeids"]) == 2
+
+
+def test_grouped_legacy_setup_xfail_keeps_unattributed_operation(tmp_path: Path) -> None:
+    """Fix round 1 legacy control: free-text refusals group without an operation."""
+    with pytest.raises(pytest.xfail.Exception, match="legacy key setup refused"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_XFAIL:legacy key setup refused\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+    groups = _grouped_parent_records(
+        tmp_path,
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_multipart.py::Test::legacy",
+    )
+    assert len(groups) == 1
+    assert groups[0]["reason"] == "not_operational"
+    assert groups[0]["operation"] is None
+    assert groups[0]["outcome"] == "xfail"
+
+
+def test_grouped_refusal_contradiction_accounts_harness_error(tmp_path: Path) -> None:
+    """Fix round 1 malformed control: refusal+OK groups a harness_error failure."""
+    with pytest.raises(pytest.fail.Exception, match="malformed"):
+        assert_ckr_subprocess_ok(
+            0,
+            "SETUP_REFUSED:C_GenerateKey:0x00000006\nOK\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+    groups = _grouped_parent_records(
+        tmp_path,
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_multipart.py::Test::contradiction",
+    )
+    # Both observations survive grouping; the raised headline was the failure.
+    assert sorted(group["reason"] for group in groups) == [
+        "harness_error",
+        "not_operational",
+    ]
+    failed = [group for group in groups if group["reason"] == "harness_error"]
+    assert len(failed) == 1
+    assert failed[0]["outcome"] == "fail"
+    counts = outcome_counts(groups)
+    assert counts["harness_error"] == 1
+    assert counts["xfail"] == 1
+    assert counts["fail"] == 0
+    assert counts["crash"] == 0
+
+
+def test_grouped_provider_break_accounts_fail(tmp_path: Path) -> None:
+    """Fix round 1 provider control: BREAK groups as a self_contradiction fail."""
+    with pytest.raises(pytest.fail.Exception, match="target produced output"):
+        assert_ckr_subprocess_ok(
+            0,
+            "BREAK:target produced output after refused setup\n",
+            "",
+            context="C_EncryptUpdate after C_EncryptFinal",
+        )
+    groups = _grouped_parent_records(
+        tmp_path,
+        "src/pkcs11_check/testcases/ckr/test_ckr_raw_multipart.py::Test::provider_fail",
+    )
+    assert len(groups) == 1
+    assert groups[0]["reason"] == "self_contradiction"
+    assert groups[0]["outcome"] == "fail"
+    counts = outcome_counts(groups)
+    assert counts["fail"] == 1
+    assert counts["xfail"] == 0
+    assert counts["harness_error"] == 0
+
+
+# --- Fix round 1: production JSONL/grouping test helpers (finding 2) ---
+
+
+def _write_report_jsonl(tmp_path: Path, entries: list[tuple[str, list[Any]]]) -> Path:
+    """Write TestReport lines carrying phase-scoped pkcs11_classification lists.
+
+    Same record shape the runner persists (cf. test_report_extract.py); the
+    payload round-trips through JSON exactly as the JSONL artifact requires.
+    """
+    lines = [
+        {
+            "$report_type": "TestReport",
+            "when": "call",
+            "nodeid": nodeid,
+            "outcome": "failed",
+            "user_properties": [["pkcs11_classification", payload]],
+        }
+        for nodeid, payload in entries
+    ]
+    path = tmp_path / "report.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    return path
+
+
+def _grouped_parent_records(tmp_path: Path, nodeid: str) -> list[dict[str, Any]]:
+    """Feed parent records through the production JSONL report grouping."""
+    payload = json.loads(json.dumps(serialize(get_records())))
+    return extract_groups(_write_report_jsonl(tmp_path, [(nodeid, payload)]), crashes=[])

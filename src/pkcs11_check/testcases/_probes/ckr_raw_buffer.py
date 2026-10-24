@@ -50,9 +50,11 @@ Output protocol (consumed structurally by the parent classifier):
   ``RETRY_CKR:`` / ``RETRY_LENGTH:`` / ``RETRY_OUTPUT_CORRECT:`` -- retry effects when applicable
   ``SETUP_XFAIL:...``      -- a setup step (Init/keygen/size-query) cleanly failed before the probe
   ``SETUP_REFUSED:<Op>:0x<rv>`` -- a setup step with valid inputs was refused (target untested);
-                              -- structured op + refusal CKR; emitted by the AES-CBC-PAD
-                              -- families (issue #28), parsed by the parent into a setup-
-                              -- attributed not_operational record
+                              -- structured op + refusal CKR (issue #28), parsed by the
+                              -- parent into a setup-attributed not_operational record
+                              -- with target_reached=false. Kept distinct from absent
+                              -- APIs, short rosters and unsaveable state, which stay
+                              -- free-text ``SETUP_XFAIL`` (different cases, QF5).
   ``OK``                   -- probe reached its expected point
 
 The uppercase legacy locals (``GUARD`` / ``BUF_SIZE`` / ``DECLARED`` / ``GUARD_SIZE``) are
@@ -459,7 +461,7 @@ def _get_slot_list_guard(ctx: ProbeContext) -> None:
     needed = CK_ULONG(0)
     rv = raw.C_GetSlotList(0, None, byref(needed))
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_GetSlotList size query failed: {ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_GetSlotList:0x{rv:08x}")
     elif needed.value <= 1:
         print(f"SETUP_XFAIL:C_GetSlotList returned only {needed.value} slot(s)")
     else:
@@ -507,7 +509,7 @@ def _get_mechanism_list_guard(ctx: ProbeContext) -> None:
     needed = CK_ULONG(0)
     rv = raw.C_GetMechanismList(slot_id, None, byref(needed))
     if rv != CKR_OK:
-        print(f"SETUP_XFAIL:C_GetMechanismList size query failed: {ckr_name(rv)}")
+        print(f"SETUP_REFUSED:C_GetMechanismList:0x{rv:08x}")
     elif needed.value <= 1:
         print(f"SETUP_XFAIL:C_GetMechanismList returned only {needed.value} mechanism(s)")
     else:
@@ -559,7 +561,7 @@ def _get_interface_list_guard(ctx: ProbeContext) -> None:
         if rv == CKR_FUNCTION_NOT_SUPPORTED:
             print("SETUP_XFAIL:C_GetInterfaceList returned CKR_FUNCTION_NOT_SUPPORTED")
         elif rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_GetInterfaceList size query failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GetInterfaceList:0x{rv:08x}")
         elif needed.value <= 1:
             print(f"SETUP_XFAIL:C_GetInterfaceList returned only {needed.value} interface(s)")
         else:
@@ -629,13 +631,13 @@ def _find_objects_max_count_one_guard(ctx: ProbeContext) -> None:
                 byref(handle),
             )
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_CreateObject(CKO_DATA) failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_CreateObject:0x{rv:08x}")
                 break
             created.append(handle.value)
         else:
             rv = raw.C_FindObjectsInit(sh, _template_ptr(search_tmpl), search_tmpl.count)
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_FindObjectsInit failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_FindObjectsInit:0x{rv:08x}")
             else:
                 search_active = True
                 guard = 0xD4
@@ -695,7 +697,7 @@ def _get_attribute_value_guard(ctx: ProbeContext) -> None:
             byref(obj),
         )
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_CreateObject(CKO_DATA) failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_CreateObject:0x{rv:08x}")
         else:
             query_attr = CK_ATTRIBUTE()
             query_attr.type = CKA_LABEL
@@ -703,7 +705,7 @@ def _get_attribute_value_guard(ctx: ProbeContext) -> None:
             query_attr.ulValueLen = 0
             rv = raw.C_GetAttributeValue(sh, obj.value, byref(query_attr), 1)
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_GetAttributeValue size query failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_GetAttributeValue:0x{rv:08x}")
             elif query_attr.ulValueLen != len(label):
                 print(
                     "SETUP_XFAIL:C_GetAttributeValue size query reported "
@@ -1267,7 +1269,7 @@ def _wrap_key_buffer_too_small(ctx: ProbeContext) -> None:
             byref(wrap_key),
         )
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_GenerateKey for AES wrap key failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
         else:
             rv = raw.C_GenerateKey(
                 sh,
@@ -1277,7 +1279,7 @@ def _wrap_key_buffer_too_small(ctx: ProbeContext) -> None:
                 byref(target_key),
             )
             if rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_GenerateKey for AES target key failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}")
             else:
                 mech = mech_simple(CKM_AES_KEY_WRAP)
                 needed = CK_ULONG(0)
@@ -1290,7 +1292,7 @@ def _wrap_key_buffer_too_small(ctx: ProbeContext) -> None:
                     byref(needed),
                 )
                 if rv != CKR_OK:
-                    print(f"SETUP_XFAIL:C_WrapKey size query failed: {ckr_name(rv)}")
+                    print(f"SETUP_REFUSED:C_WrapKey:0x{rv:08x}")
                 elif needed.value <= 1:
                     print(f"SETUP_XFAIL:C_WrapKey reported only {needed.value} output byte(s)")
                 else:
@@ -1382,7 +1384,7 @@ def _ecdh_aes_wrap_compressed_public_key_buffer_too_small(ctx: ProbeContext) -> 
             byref(priv),
         )
         if rv != CKR_OK:
-            print(f"SETUP_XFAIL:C_GenerateKeyPair for ECDH-AES wrap failed: {ckr_name(rv)}")
+            print(f"SETUP_REFUSED:C_GenerateKeyPair:0x{rv:08x}")
         else:
             if sh is None:
                 print("SETUP_XFAIL:login session was not established")
@@ -1489,10 +1491,7 @@ def _ecdh_aes_wrap_compressed_public_key_buffer_too_small(ctx: ProbeContext) -> 
                 byref(compressed_pub),
             )
             if rv != CKR_OK:
-                print(
-                    f"SETUP_XFAIL:compressed EC public-key import rejected: {ckr_name(rv)}",
-                    flush=True,
-                )
+                print(f"SETUP_REFUSED:C_CreateObject:0x{rv:08x}", flush=True)
             else:
                 target_attrs = template(
                     attr_ulong(CKA_VALUE_LEN, 16),
@@ -1508,10 +1507,7 @@ def _ecdh_aes_wrap_compressed_public_key_buffer_too_small(ctx: ProbeContext) -> 
                     byref(target_key),
                 )
                 if rv != CKR_OK:
-                    print(
-                        f"SETUP_XFAIL:C_GenerateKey for ECDH-AES target key failed: {ckr_name(rv)}",
-                        flush=True,
-                    )
+                    print(f"SETUP_REFUSED:C_GenerateKey:0x{rv:08x}", flush=True)
                 else:
                     mech = mech_ecdh_aes_kw(
                         CKM_ECDH_AES_KEY_WRAP,
@@ -1528,10 +1524,7 @@ def _ecdh_aes_wrap_compressed_public_key_buffer_too_small(ctx: ProbeContext) -> 
                         byref(needed),
                     )
                     if rv != CKR_OK:
-                        print(
-                            f"SETUP_XFAIL:ECDH-AES C_WrapKey size query failed: {ckr_name(rv)}",
-                            flush=True,
-                        )
+                        print(f"SETUP_REFUSED:C_WrapKey:0x{rv:08x}", flush=True)
                     elif needed.value <= 1:
                         print(
                             "SETUP_XFAIL:ECDH-AES C_WrapKey reported only "
@@ -1614,7 +1607,7 @@ def _get_operation_state_buffer_too_small(ctx: ProbeContext) -> None:
             elif rv == CKR_OPERATION_NOT_INITIALIZED:
                 print("SETUP_XFAIL:C_GetOperationState reported no active digest operation")
             elif rv != CKR_OK:
-                print(f"SETUP_XFAIL:C_GetOperationState size query failed: {ckr_name(rv)}")
+                print(f"SETUP_REFUSED:C_GetOperationState:0x{rv:08x}")
             elif needed.value <= 1:
                 print(f"SETUP_XFAIL:C_GetOperationState returned only {needed.value} state byte(s)")
             else:
