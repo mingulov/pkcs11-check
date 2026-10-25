@@ -41,6 +41,7 @@ from _pytest.outcomes import Failed
 from pkcs11_check import classification as C  # noqa: N812 - matches project convention
 from pkcs11_check.raw.attr_metadata import ATTR_VALUE_TYPES
 from pkcs11_check.raw.types_std import (
+    CK_UNAVAILABLE_INFORMATION,
     CKA_BASE,
     CKA_CLASS,
     CKA_COEFFICIENT,
@@ -82,6 +83,15 @@ _TYPE_INVALID = int(CKR_ATTRIBUTE_TYPE_INVALID)
 _U64 = 0xFFFFFFFFFFFFFFFF
 _U32 = 0xFFFFFFFF
 _UNKNOWN_RV = 0x7FFFFFFF
+
+# On 4-byte CK_ULONG platforms (Win64 LLP64) the platform sentinel is itself
+# 0xFFFFFFFF, so the legacy 64-bit-only premise cannot be expressed there.
+_skip_if_32bit_spelling_is_sentinel = pytest.mark.skipif(
+    int(CK_UNAVAILABLE_INFORMATION) == 0xFFFFFFFF,
+    reason=(
+        "the 32-bit spelling is indistinguishable from the platform sentinel on 4-byte CK_ULONG"
+    ),
+)
 
 _VEC_DIR = Path(__file__).resolve().parents[1] / "data" / "wycheproof" / "testvectors_v1"
 
@@ -681,8 +691,6 @@ def test_mixed_sensitive_row_carries_member_identity() -> None:
 
 
 def test_mixed_sensitive_row_default_is_cka_value() -> None:
-    from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION
-
     # Sentinel length: conformant, no record regardless of spelling.
     records: list[Any] = []
     ts._record_mixed_sensitive_row(
@@ -1791,6 +1799,7 @@ def _legacy_mixed(p11: SimpleNamespace) -> None:
     ts.TestSensitiveKeyValue().test_get_attribute_value_mixed_sensitive_template_continues(p11)
 
 
+@_skip_if_32bit_spelling_is_sentinel
 def test_legacy_mixed_32bit_sensitive_row_still_fails() -> None:
     # BASE/current regression pin: the legacy probe never accepted the 32-bit
     # spelling on its sensitive row; the matrix-only normalization keeps it so.
@@ -1801,6 +1810,7 @@ def test_legacy_mixed_32bit_sensitive_row_still_fails() -> None:
     assert _records_by_reason("wrong_result")
 
 
+@_skip_if_32bit_spelling_is_sentinel
 def test_legacy_mixed_32bit_label_row_still_fails() -> None:
     # Same, for the safe row: a 32-bit length there is wrong_result on the
     # legacy path (BASE), not an explicit-unavailable xfail.
