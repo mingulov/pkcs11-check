@@ -8,6 +8,7 @@ Uses RFC 3526 Group 14 (2048-bit MODP) for known-good parameters.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any
@@ -42,6 +43,7 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_PRIME,
     CKA_PRIME_BITS,
     CKA_SENSITIVE,
@@ -56,6 +58,7 @@ from pkcs11_check.raw.types_std import (
     CKM_DH_PKCS_KEY_PAIR_GEN,
     CKM_DH_PKCS_PARAMETER_GEN,
     CKO_PRIVATE_KEY,
+    CKO_PUBLIC_KEY,
     CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_VALUE_INVALID,
@@ -74,6 +77,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._exact_search import check_exact_and_changed_search, flip_last_byte
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
@@ -498,6 +502,56 @@ class TestDHKeyAgreement:
             )
             if shape_record is not None:
                 C.raise_for_record(shape_record)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_dh_search_by_exact_public_value(self, p11_raw_session: Any) -> None:
+        """Search the generated DH public key by its exact readback value (QC6a).
+
+        Scoped by a per-node unique label plus class/type: the generated
+        handle must appear among the exact-value results, and a
+        changed-value control differing only in the last value byte must
+        not match it. Only key-pair generation is the premise (no derive).
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("CKM_DH_PKCS_KEY_PAIR_GEN not supported")
+
+        search_label = f"pkcs11-check-qc6a-dh-{uuid.uuid4().hex[:8]}"
+        pub, priv = _gen_dh_keypair(rs.raw, rs.sh, extra_pub={CKA_LABEL: search_label})
+        try:
+            pub_value, shape_record = _dh_read_and_validate(
+                rs,
+                pub,
+                attr=CKA_VALUE,
+                leg="public",
+                label="CKM_DH_PKCS_KEY_PAIR_GEN:public CKA_VALUE exact-search readback",
+                expected="non-empty bytes",
+                expected_length=None,
+                producer_operation="C_GenerateKeyPair",
+                producer_mechanism=_DH_KEYPAIR_MECHANISM_NAME,
+            )
+            _dh_raise_hard([shape_record])
+            if pub_value is MISSING_ATTRIBUTE:
+                return
+            exact_template = {
+                CKA_LABEL: search_label,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_DH,
+                CKA_VALUE: pub_value,
+            }
+            changed_template = {
+                **exact_template,
+                CKA_VALUE: flip_last_byte(pub_value),
+            }
+            check_exact_and_changed_search(
+                rs,
+                exact_template=exact_template,
+                changed_template=changed_template,
+                expected_handle=pub,
+                label="DH exact public-value search",
+            )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, priv)

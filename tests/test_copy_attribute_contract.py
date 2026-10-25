@@ -33,6 +33,7 @@ Covered production behavior:
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import sys
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -51,6 +52,7 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
     CKA_ALLOWED_MECHANISMS,
     CKA_ALWAYS_AUTHENTICATE,
+    CKA_BASE,
     CKA_CLASS,
     CKA_COPYABLE,
     CKA_DECRYPT,
@@ -59,10 +61,12 @@ from pkcs11_check.raw.types_std import (
     CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_MODULUS,
+    CKA_PRIME,
     CKA_PRIVATE,
     CKA_PUBLIC_EXPONENT,
     CKA_SENSITIVE,
     CKA_SIGN,
+    CKA_SUBPRIME,
     CKA_TOKEN,
     CKA_UNWRAP,
     CKA_VALUE,
@@ -74,6 +78,7 @@ from pkcs11_check.raw.types_std import (
     CKM_AES_CBC,
     CKM_AES_ECB,
     CKM_AES_KEY_WRAP,
+    CKM_DSA,
     CKM_RSA_PKCS_KEY_PAIR_GEN,
     CKM_SHA256_RSA_PKCS,
     CKO_PRIVATE_KEY,
@@ -93,6 +98,7 @@ from pkcs11_check.raw.types_std import (
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_OPERATION_NOT_INITIALIZED,
+    CKR_SIGNATURE_INVALID,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_TOKEN_NOT_PRESENT,
     CKR_USER_NOT_LOGGED_IN,
@@ -100,6 +106,7 @@ from pkcs11_check.raw.types_std import (
     CKR_WRAPPED_KEY_INVALID,
     CKU_CONTEXT_SPECIFIC,
 )
+from pkcs11_check.testcases import test_dsa_complete as tdsa
 from pkcs11_check.testcases import test_keymgmt as tkeymgmt
 from pkcs11_check.testcases.security import test_api_security as tapi
 from pkcs11_check.testcases.security import test_tookan as ttookan
@@ -125,6 +132,8 @@ _WRAPPED_INVALID = int(CKR_WRAPPED_KEY_INVALID)
 _USER_TYPE_INVALID = int(CKR_USER_TYPE_INVALID)
 _CONTEXT_SPECIFIC = int(CKU_CONTEXT_SPECIFIC)
 _OP_NOT_INITIALIZED = int(CKR_OPERATION_NOT_INITIALIZED)
+_SIGNATURE_INVALID = int(CKR_SIGNATURE_INVALID)
+_DSA_MECH = int(CKM_DSA)
 _UNDEFINED_RV = 0x7FFFFFFF
 _U64 = 0xFFFFFFFFFFFFFFFF
 
@@ -276,6 +285,7 @@ class _CopyFake:
         encrypt_output_for: dict[tuple[str, int], bytes] | None = None,
         decrypt_output_for: dict[tuple[str, int], bytes] | None = None,
         cbc_as_ecb_for: set[str] | None = None,
+        dsa_verify_refuse_roles: set[str] | None = None,
     ) -> None:
         self._copy_mode = copy_mode
         self._copy_refuse_rv = copy_refuse_rv
@@ -319,6 +329,9 @@ class _CopyFake:
         self._encrypt_output_for = dict(encrypt_output_for or {})
         self._decrypt_output_for = dict(decrypt_output_for or {})
         self._cbc_as_ecb_for = set(cbc_as_ecb_for or ())
+        self._dsa_verify_refuse_roles = set(dsa_verify_refuse_roles or ())
+        self._sign_mech: int | None = None
+        self._verify_op: int | None = None
         self.op_sequence: list[str] = []
         self._context_authed = False
         self._rsa_key: Any = None
@@ -499,6 +512,11 @@ class _CopyFake:
 
     def C_SignInit(self, _sh: int, mech: Any, handle: int) -> int:  # noqa: N802
         mech_id, _ = _decode_mech(mech)
+        if mech_id == _DSA_MECH:
+            # QC6b DSA public-copy legs: genuine DSA math over stored attrs.
+            self._sign_mech = mech_id
+            self._sign_op = int(handle)
+            return _OK
         assert mech_id == int(CKM_SHA256_RSA_PKCS), mech_id
         self.op_sequence.append("init")
         if self._sign_init_script:
@@ -519,9 +537,86 @@ class _CopyFake:
             self._context_authed = False
         return _OK
 
+    def _dsa_params(self, stored: _StoredObject) -> tuple[int, int, int]:
+        prime = int.from_bytes(stored.attrs[int(CKA_PRIME)], "big")
+        subprime = int.from_bytes(stored.attrs[int(CKA_SUBPRIME)], "big")
+        base = int.from_bytes(stored.attrs[int(CKA_BASE)], "big")
+        return prime, subprime, base
+
+    def _dsa_sign(self, stored: _StoredObject, data: bytes) -> bytes:
+        prime, subprime, base = self._dsa_params(stored)
+        private = int.from_bytes(stored.attrs[int(CKA_VALUE)], "big")
+        z = int.from_bytes(data, "big")
+        half = (subprime.bit_length() + 7) // 8
+        nonce_src = hashlib.sha256(stored.attrs[int(CKA_VALUE)] + data).digest()
+        nonce = int.from_bytes(nonce_src, "big") % (subprime - 1) + 1
+        while True:
+            r = pow(base, nonce, prime) % subprime
+            if r:
+                s = pow(nonce, -1, subprime) * (z + private * r) % subprime
+                if s:
+                    return r.to_bytes(half, "big") + s.to_bytes(half, "big")
+            nonce = nonce % (subprime - 1) + 1
+
+    def _dsa_verify(self, stored: _StoredObject, data: bytes, sig: bytes) -> bool:
+        prime, subprime, base = self._dsa_params(stored)
+        public_bytes = stored.crypto_value
+        if public_bytes is None:
+            raw_value = stored.attrs.get(int(CKA_VALUE))
+            assert isinstance(raw_value, bytes), raw_value
+            public_bytes = raw_value
+        public = int.from_bytes(public_bytes, "big")
+        half = (subprime.bit_length() + 7) // 8
+        if len(sig) != 2 * half:
+            return False
+        r = int.from_bytes(sig[:half], "big")
+        s = int.from_bytes(sig[half:], "big")
+        if not (0 < r < subprime and 0 < s < subprime):
+            return False
+        z = int.from_bytes(data, "big")
+        w = pow(s, -1, subprime)
+        v = pow(base, z * w % subprime, prime) * pow(public, r * w % subprime, prime)
+        return v % prime % subprime == r
+
+    def C_VerifyInit(self, _sh: int, mech: Any, handle: int) -> int:  # noqa: N802
+        mech_id, _ = _decode_mech(mech)
+        assert mech_id == _DSA_MECH, mech_id
+        stored = self.objects.get(int(handle))
+        assert stored is not None, f"verify on unknown handle {handle}"
+        if stored.role in self._dsa_verify_refuse_roles:
+            return _FUNCTION_FAILED
+        self._verify_op = int(handle)
+        return _OK
+
+    def C_Verify(  # noqa: N802
+        self, _sh: int, in_buf: Any, in_len: int, sig_buf: Any, sig_len: int
+    ) -> int:
+        if self._verify_op is None:
+            return _OP_NOT_INITIALIZED
+        stored = self.objects.get(self._verify_op)
+        assert stored is not None, f"verify on unknown handle {self._verify_op}"
+        self._verify_op = None
+        data = bytes(in_buf[:in_len])
+        sig = bytes(sig_buf[:sig_len])
+        return _OK if self._dsa_verify(stored, data, sig) else _SIGNATURE_INVALID
+
     def C_Sign(  # noqa: N802
         self, _sh: int, in_buf: Any, in_len: int, out: Any, out_len: Any
     ) -> int:
+        if self._sign_mech == _DSA_MECH:
+            if out is None:
+                _fill_ulong(out_len, 64)
+                return _OK
+            if self._sign_op is None:
+                return _OP_NOT_INITIALIZED
+            stored = self.objects.get(self._sign_op)
+            assert stored is not None, f"DSA sign on unknown handle {self._sign_op}"
+            self._sign_op = None
+            self._sign_mech = None
+            payload = self._dsa_sign(stored, bytes(in_buf[:in_len]))
+            ctypes.memmove(out, payload, len(payload))
+            _fill_ulong(out_len, len(payload))
+            return _OK
         self.sign_attempts += 1
         if out is None:
             _fill_ulong(out_len, 256)
@@ -4552,4 +4647,133 @@ def test_h2_premise_24byte_witness_still_fails() -> None:
     assert (record.detail or {}).get("matches_original") is False, record.detail
     assert (record.detail or {}).get("witness_match") is True, record.detail
     assert fake.set_calls == [], "premise must fail before the change is attempted"
+    _assert_cleaned_up(fake)
+
+
+# ---------------------------------------------------------------------------
+# QC6b (#58.3): DSA public-value copy observations. The fake token performs
+# genuine DSA sign/verify over the stored object attributes (fixed RFC 6979
+# pair), so an applied CKA_VALUE template changes verification behaviour
+# while an ignored one preserves it -- the two-tier oracle observes both.
+# ---------------------------------------------------------------------------
+
+
+def _qc6b_rs(fake: _CopyFake) -> SimpleNamespace:
+    return _rs(fake, mechs={"DSA"})
+
+
+def _qc6b_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The create-supported probe would mint a stray fake object; the premise
+    # guard is staging only, never part of the copy verdict under test.
+    monkeypatch.setattr(tdsa, "skip_unless_create_object_supported", lambda _rs: None)
+
+
+def _qc6b_empty(rs: SimpleNamespace) -> None:
+    cls = getattr(tdsa, "TestDSAPublicCopyObservations")
+    cls().test_fixed_dsa_public_copy_empty_template_observation(rs)
+
+
+def _qc6b_unchanged(rs: SimpleNamespace) -> None:
+    cls = getattr(tdsa, "TestDSAPublicCopyObservations")
+    cls().test_fixed_dsa_public_copy_unchanged_value_observation(rs)
+
+
+def _qc6b_different(rs: SimpleNamespace) -> None:
+    cls = getattr(tdsa, "TestDSAPublicCopyObservations")
+    cls().test_fixed_dsa_public_copy_different_value_ignored_or_refused(rs)
+
+
+def test_qc6b_public_empty_and_unchanged_rvs_not_cross_compared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty and unchanged-value DSA public copies are separate observations.
+
+    Either direction of RV divergence (one accepts, the other refuses)
+    still passes both nodes: no RV cross-equality is ever asserted.
+    """
+    _qc6b_patch(monkeypatch)
+    accept_unchanged = _CopyFake(copy_mode="apply")
+    _qc6b_unchanged(_qc6b_rs(accept_unchanged))
+    assert C.get_records() == [], "observation notes emit no classifications"
+    _assert_cleaned_up(accept_unchanged)
+    assert _copy_template_of(accept_unchanged)[int(CKA_VALUE)] == tdsa._FIXED_DSA_Y
+    C.clear()
+    refuse_empty = _CopyFake(copy_refuse_rv=_TEMPLATE_INCONSISTENT)
+    _qc6b_empty(_qc6b_rs(refuse_empty))
+    assert C.get_records() == []
+    _assert_cleaned_up(refuse_empty)
+    assert refuse_empty.copy_calls[0] == {}, refuse_empty.copy_calls
+    C.clear()
+    refuse_unchanged = _CopyFake(copy_refuse_rv=_ACTION_PROHIBITED)
+    _qc6b_unchanged(_qc6b_rs(refuse_unchanged))
+    assert C.get_records() == []
+    _assert_cleaned_up(refuse_unchanged)
+    C.clear()
+    accept_empty = _CopyFake(copy_mode="apply")
+    _qc6b_empty(_qc6b_rs(accept_empty))
+    assert C.get_records() == []
+    _assert_cleaned_up(accept_empty)
+
+
+def test_qc6b_public_different_value_refused_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each plausible refusal of a forbidden DSA public-value copy passes."""
+    _qc6b_patch(monkeypatch)
+    for rv in _COPY_REFUSE_RVS:
+        fake = _CopyFake(copy_refuse_rv=rv)
+        _qc6b_different(_qc6b_rs(fake))
+        record = _terminal_record()
+        assert record.reason == "sanctioned_refusal", record.summary
+        assert record.outcome == "pass", record.summary
+        assert record.actual_ckr == ckr_name(rv), record.summary
+        _assert_pass_records()
+        _assert_cleaned_up(fake)
+        C.clear()
+
+
+def test_qc6b_public_different_value_ignored_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accepted-but-ignored different Y xfails as an ignored-input deviation."""
+    _qc6b_patch(monkeypatch)
+    fake = _CopyFake(copy_mode="ignore")
+    assert_xfails(_qc6b_different, _qc6b_rs(fake))
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "ignored-input", record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc6b_public_different_value_mutated_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Applied different Y (readback changed, verify flips) fails."""
+    _qc6b_patch(monkeypatch)
+    fake = _CopyFake(copy_mode="apply")
+    _run_must_fail(_qc6b_different, _qc6b_rs(fake))
+    _assert_fail_record("self_contradiction", "policy")
+    _assert_cleaned_up(fake)
+
+
+def test_qc6b_public_different_value_unproved_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readback changed but verify still original is unproved, never mutated."""
+    _qc6b_patch(monkeypatch)
+    fake = _CopyFake(copy_mode="apply", copy_crypto_follows_source=True)
+    assert_xfails(_qc6b_different, _qc6b_rs(fake))
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc6b_public_different_value_verify_refused_unproved_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused verify-under-copy leaves the accepted change unproved."""
+    _qc6b_patch(monkeypatch)
+    fake = _CopyFake(copy_mode="apply", dsa_verify_refuse_roles={"copy"})
+    assert_xfails(_qc6b_different, _qc6b_rs(fake))
+    record = _assert_xfail_record("honest_deviation")
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
     _assert_cleaned_up(fake)

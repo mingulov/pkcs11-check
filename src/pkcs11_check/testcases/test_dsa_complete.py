@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import uuid
 from ctypes import byref
 from typing import Any, NoReturn
 
@@ -29,6 +30,7 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import (
+    copy_object,
     destroy_quietly,
     read_attributes,
     sign_multipart,
@@ -36,14 +38,16 @@ from pkcs11_check.raw.recipes import (
     verify_multipart,
     verify_single,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, expect_rv
+from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, expect_rv
 from pkcs11_check.raw.types_std import (
     CK_BYTE,
     CK_DSA_PARAMETER_GEN_PARAM,
     CK_OBJECT_HANDLE,
     CKA_BASE,
     CKA_CLASS,
+    CKA_COPYABLE,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_PRIME,
     CKA_PRIME_BITS,
     CKA_SIGN,
@@ -91,7 +95,16 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._copy_mutability import (
+    COPY_FORBIDDEN_REFUSE_RVS,
+    classify_forbidden_change_refusal,
+    classify_ignored_or_mutated,
+    classify_rv_validity_or_none,
+    read_qc3_attributes,
+    validate_qc3_shape,
+)
 from pkcs11_check.testcases._ec_export import parse_raw_dss_or_classify
+from pkcs11_check.testcases._exact_search import check_exact_and_changed_search, flip_last_byte
 from pkcs11_check.testcases._signature_policy import (
     signature_rejected_or_xfail,
     xfail_if_op_not_operational,
@@ -235,25 +248,36 @@ _DSA_IMPORT_RUNTIME_REJECT_RVS = (
 )
 
 
-def _import_fixed_dsa_keypair(rs: Any) -> tuple[int, int]:
+def _import_fixed_dsa_keypair(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> tuple[int, int]:
     """Import the fixed RFC 6979 DSA-2048 keypair (bounded, no generation).
 
     Returns (pub_handle, priv_handle). A clean refusal raises
     CkrAssertionError for the caller to route (xfail); the public half is
     destroyed if the private import fails.
+
+    ``label`` and ``copyable`` are default-omitted and land on the public
+    half only when requested (QC6a search scoping / QC6b copy premise), so
+    the QC5b stimulus stays byte-identical.
     """
+    public_attrs: dict[Any, Any] = {
+        CKA_CLASS: CKO_PUBLIC_KEY,
+        CKA_KEY_TYPE: CKK_DSA,
+        CKA_TOKEN: False,
+        CKA_PRIME: _FIXED_DSA_P,
+        CKA_SUBPRIME: _FIXED_DSA_Q,
+        CKA_BASE: _FIXED_DSA_G,
+        CKA_VALUE: _FIXED_DSA_Y,
+        CKA_VERIFY: True,
+    }
+    if label is not None:
+        public_attrs[CKA_LABEL] = label
+    if copyable is not None:
+        public_attrs[CKA_COPYABLE] = copyable
     pub = create_object_negotiated(
         rs,
-        {
-            CKA_CLASS: CKO_PUBLIC_KEY,
-            CKA_KEY_TYPE: CKK_DSA,
-            CKA_TOKEN: False,
-            CKA_PRIME: _FIXED_DSA_P,
-            CKA_SUBPRIME: _FIXED_DSA_Q,
-            CKA_BASE: _FIXED_DSA_G,
-            CKA_VALUE: _FIXED_DSA_Y,
-            CKA_VERIFY: True,
-        },
+        public_attrs,
         purpose="QC5b fixed DSA-2048 public import",
     )
     try:
@@ -1651,3 +1675,395 @@ class TestDSABoundedWidth:
                 ),
                 detail={"missing_attributes": missing_evidence},
             )
+
+
+def _stage_fixed_dsa_pair(
+    rs: Any, *, label: str | None = None, copyable: bool | None = None
+) -> tuple[int, int]:
+    """Stage the fixed DSA pair for QC6a/QC6b and prove import coherence.
+
+    Setup routing matches the QC5b bounded-width leg: a clean refusal of
+    the (valid) fixed vector xfails with the original RV, and coherence
+    of every present public attribute is established before any search
+    or copy verdict consumes the staged handles. On any staging verdict
+    both handles are destroyed before the outcome propagates.
+    """
+    if not rs.has_mechanism("DSA"):
+        pytest.skip("CKM_DSA not supported")
+    skip_unless_create_object_supported(rs)
+    try:
+        pub, priv = _import_fixed_dsa_keypair(rs, label=label, copyable=copyable)
+    except AssertionError as exc:
+        xfail_if_known_ckr(
+            exc,
+            _DSA_IMPORT_RUNTIME_REJECT_RVS,
+            "CKM_DSA advertised but fixed-vector DSA import is not operational",
+        )
+        raise
+    try:
+        TestDSABoundedWidth._assert_import_coherence(rs, pub)
+    except BaseException:
+        destroy_quietly(rs.raw, rs.sh, pub)
+        destroy_quietly(rs.raw, rs.sh, priv)
+        raise
+    return pub, priv
+
+
+class TestDSAPublicValueSearch:
+    """Exact public-value search over the fixed DSA vector (QC6a, #58.1).
+
+    No slow mark: staging is the bounded fixed import, so the node runs
+    in the ordinary selected profile like TestDSABoundedWidth.
+    """
+
+    def test_fixed_dsa_search_by_exact_public_value(self, p11_module_session: Any) -> None:
+        """Search the fixed DSA public key by its independent known Y.
+
+        Coherence proves the stored attributes equal the fixed material
+        before searching, so the template value is the fixed Y itself --
+        not a provider readback fed back to itself. The changed-Y control
+        differs only in the last byte (stored bytes are searched
+        verbatim; value encodings are QC7a's concern, not asserted here).
+        """
+        rs = p11_module_session
+        search_label = f"pkcs11-check-qc6a-dsa-{uuid.uuid4().hex[:8]}"
+        pub, priv = _stage_fixed_dsa_pair(rs, label=search_label)
+        try:
+            exact_template = {
+                CKA_LABEL: search_label,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_DSA,
+                CKA_VALUE: _FIXED_DSA_Y,
+            }
+            changed_template = {
+                **exact_template,
+                CKA_VALUE: flip_last_byte(_FIXED_DSA_Y),
+            }
+            check_exact_and_changed_search(
+                rs,
+                exact_template=exact_template,
+                changed_template=changed_template,
+                expected_handle=pub,
+                label="DSA exact public-value search",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+
+# QC6b citation gate (pinned from the standard text, NOT copied from QC3's
+# secret-material row): PKCS#11 v3.2 section 6.2.2, Table 56 (DSA Public
+# Key Object Attributes) lists CKA_VALUE with footnotes 1,4 only -- no
+# Table 13 footnote 8 ("May be modified after object is created with a
+# C_SetAttributeValue call, or in the process of copying object with a
+# C_CopyObject call"). Section 4.1.3 limits attributes modifiable during
+# C_CopyObject to those described as modifiable (footnote 8) plus
+# CKA_TOKEN / CKA_PRIVATE / CKA_MODIFIABLE / CKA_DESTROYABLE. A
+# different-value CKA_VALUE copy of a DSA public key is therefore
+# forbidden, so the different-value node below carries the normative
+# two-tier oracle (refused -> pass; accepted+ignored -> xfail;
+# accepted+mutated -> fail). Secret-material copy rows are settled by
+# QC3a (TestCopyForbiddenMutation in test_keymgmt.py) and are not
+# duplicated here; this is the DSA *public-value* slice of QC6b.
+_DSA_PUBLIC_VALUE_COPY_CITATION = (
+    "PKCS#11 v3.2 §6.2.2 Table 56: DSA public-key CKA_VALUE carries footnotes "
+    "1,4 only (no Table 13 footnote 8 modifiable marker); §4.1.3 limits "
+    "C_CopyObject template changes to modifiable attributes plus "
+    "CKA_TOKEN/CKA_PRIVATE/CKA_MODIFIABLE/CKA_DESTROYABLE, so a "
+    "different-value CKA_VALUE copy is forbidden"
+)
+
+_QC6B_DIGEST = hashlib.sha1(  # noqa: S324
+    b"QC6b DSA public copy stimulus", usedforsecurity=False
+).digest()
+
+
+def _qc6b_baseline_signature(rs: Any, pub: int, priv: int, *, label: str) -> bytes:
+    """Validated sign/verify baseline over the fixed pair (premise first)."""
+    try:
+        sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, _QC6B_DIGEST)
+    except CkrAssertionError as exc:
+        xfail_if_op_not_operational(exc, f"{label}: baseline sign")
+    parse_raw_dss_or_classify(
+        sig,
+        half_len=_FIXED_DSA_HALF_LEN,
+        order=_FIXED_DSA_Q_INT,
+        label=f"{label}: baseline sign",
+        operation="C_Sign",
+        mechanism="CKM_DSA",
+    )
+    try:
+        control = verify_single(rs.raw, rs.sh, pub, CKM_DSA, _QC6B_DIGEST, sig)
+    except CkrAssertionError as exc:
+        xfail_if_op_not_operational(exc, f"{label}: baseline verify")
+    assert_correct(
+        actual=control,
+        expected=True,
+        label=f"{label}: baseline verify under the original public key",
+        operation="C_Verify",
+        mechanism="CKM_DSA",
+    )
+    return sig
+
+
+def _qc6b_unproved(label: str, detail: dict[str, Any], summary: str) -> NoReturn:
+    xfail_as(
+        "honest_deviation",
+        kind="policy",
+        label=label,
+        operation="C_CopyObject",
+        inherit_mechanism=False,
+        actual=int(CKR_OK),
+        spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+        summary=summary,
+        detail={"disposition": "unproved-effect", **detail},
+    )
+
+
+def _check_dsa_public_copy_different(
+    rs: Any,
+    copy: int,
+    *,
+    sig: bytes,
+    changed: bytes,
+    label: str,
+) -> NoReturn:
+    """Two-tier verdict for an accepted forbidden different-Y (QC6b).
+
+    Both observations (material readback, verify-under-copy) complete
+    before the verdict. Mutation FAILS only when proved independently:
+    readback shows the changed value AND the copy no longer verifies a
+    signature the original verifies. Readback-original plus
+    verify-passes is ignored input (xfail); every mixed or missing
+    observation is unproved-effect (xfail), never mutated or ignored.
+    """
+    attrs = read_qc3_attributes(
+        rs,
+        copy,
+        [CKA_VALUE],
+        label=label,
+        premise=False,
+        spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+    )
+    readback = attr_or_record(
+        attrs,
+        CKA_VALUE,
+        label=f"{label}: material readback",
+        reason="not_operational",
+        kind="policy",
+        inherit_mechanism=False,
+    )
+    verifies: bool | None = None
+    verify_rv: int | None = None
+    try:
+        verifies = verify_single(rs.raw, rs.sh, copy, CKM_DSA, _QC6B_DIGEST, sig)
+    except CkrAssertionError as exc:
+        verify_rv = exc.rv
+    detail: dict[str, Any] = {
+        "readback_present": readback is not MISSING_ATTRIBUTE,
+        "verify_under_copy": verifies,
+        "verify_under_original": True,
+    }
+    if verify_rv is not None:
+        classify_rv_validity_or_none(
+            verify_rv,
+            label=f"{label}: verify under copy",
+            operation="C_Verify",
+            mechanism="CKM_DSA",
+            kind="policy",
+        )
+        _qc6b_unproved(
+            label,
+            {**detail, "verify_rv": ckr_name(verify_rv)},
+            f"{label}: accepted but verify under copy refused with "
+            f"{ckr_name(verify_rv)}; effect unproved",
+        )
+    if readback is MISSING_ATTRIBUTE:
+        _qc6b_unproved(
+            label,
+            detail,
+            f"{label}: accepted but the copy's public value is unavailable; effect unproved",
+        )
+    value = validate_qc3_shape(
+        readback,
+        "value",
+        attr_name="CKA_VALUE",
+        label=label,
+        premise=False,
+        spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+        expected_len=len(_FIXED_DSA_Y),
+    )
+    detail["readback_matches_original"] = value == _FIXED_DSA_Y
+    detail["readback_matches_changed"] = value == changed
+    if detail["readback_matches_original"] and verifies:
+        classify_ignored_or_mutated(
+            mutated=False,
+            label=label,
+            operation="C_CopyObject",
+            spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+            ignored_summary=(
+                f"{label}: different-value copy accepted but the copy keeps "
+                "the original public value and still verifies (input ignored)"
+            ),
+            mutated_summary=f"{label}: different-value copy changed the public value",
+            detail={**detail, "disposition": "ignored-input"},
+        )
+    if detail["readback_matches_changed"] and not verifies:
+        classify_ignored_or_mutated(
+            mutated=True,
+            label=label,
+            operation="C_CopyObject",
+            spec_ref=_DSA_PUBLIC_VALUE_COPY_CITATION,
+            ignored_summary=f"{label}: different-value copy ignored",
+            mutated_summary=(
+                f"{label}: different-value copy applied the forbidden new "
+                "public value (readback changed and verification flipped)"
+            ),
+            detail={**detail, "disposition": "mutated"},
+        )
+    _qc6b_unproved(
+        label,
+        detail,
+        f"{label}: accepted with mixed readback/verify evidence; effect unproved",
+    )
+
+
+class TestDSAPublicCopyObservations:
+    """DSA public-value copy rows (QC6b, #58.3): empty / unchanged / different.
+
+    Empty-template and unchanged-value copies are separate compatibility
+    observations (noted, never cross-compared by RV); only the
+    different-value row carries the normative oracle pinned by
+    _DSA_PUBLIC_VALUE_COPY_CITATION. The source requests CKA_COPYABLE
+    explicitly, so a staging refusal is a setup outcome, never a copy
+    verdict. Secret-material rows live in QC3a and are not duplicated.
+    """
+
+    def _observe_public_copy(
+        self, rs: Any, pub: int, priv: int, template: dict[Any, Any], *, leg: str
+    ) -> None:
+        try:
+            sig = sign_single(rs.raw, rs.sh, priv, CKM_DSA, _QC6B_DIGEST)
+        except CkrAssertionError as exc:
+            classify_rv_validity_or_none(
+                exc.rv, label=f"{leg} copy", operation="C_Sign", mechanism="CKM_DSA"
+            )
+            note(
+                f"{leg} DSA public copy: baseline sign refused with "
+                f"{ckr_name(exc.rv)}; copy not attempted",
+                ComplianceLevel.STANDARD,
+                reference="QC6b #58.3 compatibility observation",
+            )
+            return
+        try:
+            copy = copy_object(rs.raw, rs.sh, pub, template)
+        except CkrAssertionError as exc:
+            classify_rv_validity_or_none(exc.rv, label=f"{leg} copy", operation="C_CopyObject")
+            note(
+                f"{leg} DSA public copy refused with {ckr_name(exc.rv)} (no material to compare)",
+                ComplianceLevel.STANDARD,
+                reference="QC6b #58.3 compatibility observation",
+            )
+            return
+        try:
+            try:
+                attrs = read_attributes(rs.raw, rs.sh, copy, [CKA_VALUE])
+            except CkrAssertionError as exc:
+                classify_rv_validity_or_none(
+                    exc.rv,
+                    label=f"{leg} copy readback",
+                    operation="C_GetAttributeValue",
+                )
+                material = f"copy readback refused with {ckr_name(exc.rv)}"
+            else:
+                readback = attr_or_record(
+                    attrs,
+                    CKA_VALUE,
+                    label=f"{leg} DSA public copy: material readback",
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                if readback is MISSING_ATTRIBUTE:
+                    material = "copy material unavailable (CKA_VALUE missing)"
+                else:
+                    material = (
+                        f"copy material matches the fixed public value: {readback == _FIXED_DSA_Y}"
+                    )
+            try:
+                verified = verify_single(rs.raw, rs.sh, copy, CKM_DSA, _QC6B_DIGEST, sig)
+            except CkrAssertionError as exc:
+                classify_rv_validity_or_none(
+                    exc.rv,
+                    label=f"{leg} copy use observation",
+                    operation="C_Verify",
+                    mechanism="CKM_DSA",
+                )
+                behavior = f"verify under copy refused with {ckr_name(exc.rv)}"
+            else:
+                behavior = f"verify under copy: {verified}"
+            note(
+                f"{leg} DSA public copy accepted (CKR_OK); {material}; {behavior}",
+                ComplianceLevel.STANDARD,
+                reference="QC6b #58.3 compatibility observation",
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, copy)
+
+    def test_fixed_dsa_public_copy_empty_template_observation(
+        self, p11_module_session: Any
+    ) -> None:
+        """Compatibility observation: DSA public copy with an empty template."""
+        rs = p11_module_session
+        pub, priv = _stage_fixed_dsa_pair(rs, copyable=True)
+        try:
+            self._observe_public_copy(rs, pub, priv, {}, leg="empty-template")
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_fixed_dsa_public_copy_unchanged_value_observation(
+        self, p11_module_session: Any
+    ) -> None:
+        """Compatibility observation: copy restating the same public value.
+
+        Separate from the empty-template row; its RV is never compared
+        with that node's (unchanged input need not behave like omission).
+        """
+        rs = p11_module_session
+        pub, priv = _stage_fixed_dsa_pair(rs, copyable=True)
+        try:
+            self._observe_public_copy(
+                rs, pub, priv, {CKA_VALUE: _FIXED_DSA_Y}, leg="unchanged-value"
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_fixed_dsa_public_copy_different_value_ignored_or_refused(
+        self, p11_module_session: Any
+    ) -> None:
+        """Copy with a different DSA public value must refuse or ignore it."""
+        rs = p11_module_session
+        label = "C_CopyObject DSA public CKA_VALUE different-value (QC6b)"
+        pub, priv = _stage_fixed_dsa_pair(rs, copyable=True)
+        try:
+            sig = _qc6b_baseline_signature(rs, pub, priv, label=label)
+            changed = flip_last_byte(_FIXED_DSA_Y)
+            try:
+                copy = copy_object(rs.raw, rs.sh, pub, {CKA_VALUE: changed})
+            except CkrAssertionError as exc:
+                classify_forbidden_change_refusal(
+                    exc,
+                    COPY_FORBIDDEN_REFUSE_RVS,
+                    label=label,
+                    operation="C_CopyObject",
+                )
+                return
+            try:
+                _check_dsa_public_copy_different(rs, copy, sig=sig, changed=changed, label=label)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, copy)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
