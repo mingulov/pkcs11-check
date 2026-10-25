@@ -12,11 +12,12 @@ never hidden behind the other leg's xfail.
 
 Attribution: an Init refusal is recorded against ``C_FindObjectsInit``;
 Find output defects and the expected-among / not-among verdicts against
-``C_FindObjects``. A clean standard or vendor-defined refusal of an
-advertised search is ``not_operational`` (original RV preserved); an
-undefined RV fails the metadata return-value contract. Search templates
-carry stored readback bytes verbatim; records carry only handle lists,
-counts and RV names -- never key material.
+``C_FindObjects``; termination defects against ``C_FindObjectsFinal``
+without displacing a stronger Find verdict. A clean standard or
+vendor-defined refusal of an advertised search is ``not_operational``
+(original RV preserved); an undefined RV fails the metadata return-value
+contract. Search templates carry stored readback bytes verbatim; records
+carry only handle lists, counts and RV names -- never key material.
 """
 
 from __future__ import annotations
@@ -89,6 +90,36 @@ def _refusal_record(
     )
 
 
+def _final_record(rv: int, *, label: str, detail: dict[str, Any]) -> C.Classification:
+    """Record a Final defect: clean RV xfail, undefined RV metadata fail (P5)."""
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        return C.record_as(
+            "not_operational",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjectsFinal",
+            inherit_mechanism=False,
+            expected=int(CKR_OK),
+            actual=rv,
+            summary=f"{label}: C_FindObjectsFinal refused to release the exact-value search",
+            detail=detail,
+        )
+    return C.record_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation="C_FindObjectsFinal",
+        inherit_mechanism=False,
+        expected=int(CKR_OK),
+        actual=rv,
+        summary=(
+            f"{label}: C_FindObjectsFinal returned an undefined RV "
+            "(return-value contract violation)"
+        ),
+        detail=detail,
+    )
+
+
 def observe_exact_search(
     rs: Any,
     template_attrs: Mapping[Any, Any],
@@ -114,6 +145,7 @@ def observe_exact_search(
         )
     found: list[int] = []
     record: C.Classification | None = None
+    final_rv = int(CKR_OK)
     try:
         for _page in range(MAX_PAGES):
             handles = (CK_OBJECT_HANDLE * PAGE_SIZE)()
@@ -168,9 +200,20 @@ def observe_exact_search(
             )
     finally:
         try:
-            rs.raw.C_FindObjectsFinal(rs.sh)
+            final_rv = int(rs.raw.C_FindObjectsFinal(rs.sh))
         except AttributeError:
             pass
+    if final_rv != int(CKR_OK):
+        final_record = _final_record(
+            final_rv,
+            label=label,
+            detail={"session": int(rs.sh), "handles_seen": found},
+        )
+        # Preserve the stronger verdict (P5): a Final FAIL outranks a
+        # Find xfail; an existing FAIL -- or the first xfail -- stands.
+        # Either way the sibling leg is still observed by the caller.
+        if record is None or (final_record.outcome == "fail" and record.outcome != "fail"):
+            record = final_record
     if record is not None:
         return ExactSearchObservation(handles=None, record=record)
     return ExactSearchObservation(handles=tuple(found), record=None)
