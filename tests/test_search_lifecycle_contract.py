@@ -27,6 +27,8 @@ from typing import Any
 
 import pytest
 from _pytest.outcomes import Failed, XFailed
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from pkcs11_check.classification import get_records
 from pkcs11_check.raw.rv import ckr_name
@@ -34,18 +36,36 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_SESSION_HANDLE,
     CK_ULONG,
+    CKA_BASE,
+    CKA_CLASS,
+    CKA_EC_PARAMS,
+    CKA_EC_POINT,
+    CKA_KEY_TYPE,
     CKA_LABEL,
+    CKA_PRIME,
     CKA_PRIVATE,
+    CKA_SUBPRIME,
     CKA_TOKEN,
+    CKA_VALUE,
     CKA_VALUE_LEN,
+    CKK_DH,
+    CKK_DSA,
+    CKK_EC,
+    CKK_X9_42_DH,
     CKM_AES_KEY_GEN,
+    CKO_PUBLIC_KEY,
     CKR_FUNCTION_FAILED,
     CKR_OBJECT_HANDLE_INVALID,
     CKR_OK,
     CKR_SESSION_CLOSED,
     CKR_SESSION_HANDLE_INVALID,
 )
+from pkcs11_check.testcases import test_dh_key_agreement as dh_case
+from pkcs11_check.testcases import test_dsa_complete as dsa_case
+from pkcs11_check.testcases import test_mech_derive as derive_case
 from pkcs11_check.testcases import test_session_edge_cases as tse
+from pkcs11_check.testcases import test_x942_dh as x942_case
+from pkcs11_check.testcases._ec_export import ConventionalECPoint
 from tests._skip_assert import assert_xfails
 
 _OK = int(CKR_OK)
@@ -83,7 +103,7 @@ def _decode_template(tmpl: Any, count: int) -> dict[int, Any]:
         elif atype in (int(CKA_TOKEN), int(CKA_PRIVATE)):
             assert alen == 1, (atype, alen)
             decoded[atype] = bool(raw[0]) if raw else False
-        elif atype == int(CKA_VALUE_LEN):
+        elif atype in (int(CKA_VALUE_LEN), int(CKA_CLASS), int(CKA_KEY_TYPE)):
             decoded[atype] = int.from_bytes(raw, "little") if raw else 0
         else:
             decoded[atype] = raw
@@ -188,10 +208,10 @@ class _SearchRaw:
         self.find_sessions.append(int(sh))
         entry = self._find_script.pop(0)
         if len(entry) == 2:
-            rv, found = entry  # type: ignore[misc]
+            rv, found = entry
             report_count = len(found)
         else:
-            rv, found, report_count = entry  # type: ignore[misc]
+            rv, found, report_count = entry
         for index, handle in enumerate(found[:max_count]):
             handles[index] = handle
         ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = report_count
@@ -1195,3 +1215,498 @@ def test_reuse_genkey_refusal_closes_s1(monkeypatch: pytest.MonkeyPatch) -> None
     record = _assert_xfail_record("not_operational")
     assert record.operation == "C_GenerateKey"
     assert _S1 in raw.closed
+
+
+# --- Part D: QC6a exact public-value search ---------------------------------
+#
+# Drives the real DH / X9.42 / DSA / derived-EC search nodes through the
+# shared exact-search helper at the raw C_FindObjects* layer (_SearchRaw).
+# Staging (key generation / import / derive / readback) is monkeypatched in
+# each production module's namespace; verdicts, templates, pagination and
+# cleanup are the production code under test.
+
+_QC6_PUB = 41
+_QC6_PRIV = 42
+_QC6_OTHER = 77
+_QC6_OTHER2 = 78
+_QC6_Y = bytes(range(1, 33))
+_QC6_Y_CHANGED = _QC6_Y[:-1] + bytes([_QC6_Y[-1] ^ 1])
+
+
+def _qc6_session(raw: _SearchRaw, mechs: set[str]) -> Any:
+    return SimpleNamespace(
+        raw=raw,
+        sh=1,
+        slot_id=0,
+        has_mechanism=lambda name: name in mechs,
+    )
+
+
+def _qc6_pass_script(pub: int = _QC6_PUB) -> list[tuple[int, tuple[int, ...]]]:
+    """Exact leg finds pub among others then exhausts; changed leg is empty."""
+    return [(_OK, (_QC6_OTHER, pub)), (_OK, ()), (_OK, ())]
+
+
+def _qc6_raw(find_script: list[Any], *, init_script: list[int] | None = None) -> _SearchRaw:
+    return _SearchRaw(
+        init_script=init_script if init_script is not None else [_OK, _OK],
+        find_script=find_script,
+        final_rv=_OK,
+    )
+
+
+def _stage_dh_search(monkeypatch: pytest.MonkeyPatch, readback: dict[Any, Any]) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def _gen(*_args: Any, **kwargs: Any) -> tuple[int, int]:
+        captured["gen_kwargs"] = dict(kwargs)
+        return _QC6_PUB, _QC6_PRIV
+
+    monkeypatch.setattr(dh_case, "_gen_dh_keypair", _gen)
+    monkeypatch.setattr(dh_case, "read_attributes", lambda *_a, **_k: dict(readback))
+    return captured
+
+
+def _run_dh_search(raw: _SearchRaw) -> None:
+    # Keygen-only premise: DH_PKCS_DERIVE is deliberately NOT advertised.
+    session = _qc6_session(raw, {"DH_PKCS_KEY_PAIR_GEN"})
+    dh_case.TestDHKeyAgreement().test_dh_search_by_exact_public_value(session)
+
+
+def _assert_staged_destroyed(raw: _SearchRaw, staged: list[int]) -> None:
+    assert raw.destroyed == [(1, handle) for handle in staged], raw.destroyed
+
+
+def test_exact_search_expected_among_others_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expected-among (not global exactly-one) passes with unrelated hits."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(_qc6_pass_script())
+    _run_dh_search(raw)
+    assert get_records() == []
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_only_other_handle_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A result set holding only a foreign handle fails (no len>=1 oracle)."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (_QC6_OTHER,)), (_OK, ()), (_OK, ())])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjects"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_empty_result_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Init OK plus an exhausted empty exact search fails."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, ()), (_OK, ())])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    _assert_fail_record("self_contradiction", "metadata")
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_changed_value_search_matching_expected_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The changed-value leg must not return the staged handle."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (_QC6_PUB,)), (_OK, ()), (_OK, (_QC6_PUB,)), (_OK, ())])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjects"
+    assert len(raw.init_calls) == 2
+    exact_attrs = raw.init_calls[0]["attrs"]
+    changed_attrs = raw.init_calls[1]["attrs"]
+    assert exact_attrs[int(CKA_VALUE)] == _QC6_Y
+    assert changed_attrs[int(CKA_VALUE)] == _QC6_Y_CHANGED
+    assert changed_attrs[int(CKA_LABEL)] == exact_attrs[int(CKA_LABEL)]
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_dh_exact_search_template_is_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DH template is exactly {unique label, class, CKK_DH, exact value}."""
+    captured = _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(_qc6_pass_script())
+    _run_dh_search(raw)
+    attrs = raw.init_calls[0]["attrs"]
+    label = attrs.pop(int(CKA_LABEL))
+    assert isinstance(label, str) and label.startswith("pkcs11-check-qc6a-dh-")
+    assert captured["gen_kwargs"]["extra_pub"][CKA_LABEL] == label
+    assert attrs == {
+        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+        int(CKA_KEY_TYPE): int(CKK_DH),
+        int(CKA_VALUE): _QC6_Y,
+    }
+
+
+def test_exact_search_init_refusal_xfails_not_operational(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean FindObjectsInit refusal xfails with the original RV kept."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, ())], init_script=[_CLEAN_REJECT, _OK])
+    assert_xfails(_run_dh_search, raw)
+    record = _assert_xfail_record("not_operational")
+    assert record.operation == "C_FindObjectsInit"
+    assert record.actual_ckr == ckr_name(_CLEAN_REJECT)
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_init_undefined_rv_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An undefined FindObjectsInit RV fails the return-value contract."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, ())], init_script=[_UNDEFINED_RV, _OK])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjectsInit"
+    assert len(raw.init_calls) == 2, "changed leg still observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_changed_leg_init_refusal_xfails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exact-leg pass cannot hide a changed-leg Init refusal."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (_QC6_PUB,)), (_OK, ())], init_script=[_OK, _CLEAN_REJECT])
+    assert_xfails(_run_dh_search, raw)
+    record = _assert_xfail_record("not_operational")
+    assert record.actual_ckr == ckr_name(_CLEAN_REJECT)
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_paginates_until_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exhaustion pages past a full first page to the expected handle."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (_QC6_OTHER,)), (_OK, (_QC6_PUB,)), (_OK, ()), (_OK, ())])
+    _run_dh_search(raw)
+    assert get_records() == []
+    assert len(raw.find_sessions) == 4
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_absent_after_exhaustion_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absence is decided only after the terminating empty page."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (_QC6_OTHER,)), (_OK, (_QC6_OTHER2,)), (_OK, ()), (_OK, ())])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    _assert_fail_record("self_contradiction", "metadata")
+    assert len(raw.find_sessions) == 4
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_malformed_count_fails_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reported count above capacity fails; the other leg still runs."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (), 17), (_OK, ())])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjects"
+    assert record.detail is not None
+    assert record.detail["count"] == 17
+    assert len(raw.init_calls) == 2, "changed leg still observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_cleanup_destroys_only_staged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Foreign search hits are never destroyed, on the failing path too."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (_QC6_OTHER,)), (_OK, ()), (_OK, (_QC6_OTHER2,)), (_OK, ())])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    assert (1, _QC6_OTHER) not in raw.destroyed
+    assert (1, _QC6_OTHER2) not in raw.destroyed
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_dh_exact_search_missing_readback_never_searches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing DH public readback records xfail and never calls FindInit."""
+    _stage_dh_search(monkeypatch, {})
+    raw = _qc6_raw(_qc6_pass_script())
+    _run_dh_search(raw)
+    _assert_xfail_record("not_operational")
+    assert raw.init_calls == []
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_dh_exact_search_malformed_readback_never_searches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty DH public readback is a shape fail before any search."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: b""})
+    raw = _qc6_raw(_qc6_pass_script())
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    _assert_fail_record("wrong_result", "metadata")
+    assert raw.init_calls == []
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def _stage_x942_search(monkeypatch: pytest.MonkeyPatch, readback: dict[Any, Any]) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def _gen(*_args: Any, **kwargs: Any) -> tuple[int, int]:
+        captured["gen_kwargs"] = dict(kwargs)
+        return _QC6_PUB, _QC6_PRIV
+
+    monkeypatch.setattr(x942_case, "_generate_x942_keypair", _gen)
+    monkeypatch.setattr(x942_case, "read_attributes", lambda *_a, **_k: dict(readback))
+    return captured
+
+
+def _run_x942_search(raw: _SearchRaw) -> None:
+    session = _qc6_session(raw, {"X9_42_DH_KEY_PAIR_GEN"})
+    x942_case.TestX942DHKeyPairGen().test_keypair_search_by_exact_public_value(session)
+
+
+def test_x942_exact_search_template_is_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """X9.42 template is exactly {unique label, class, CKK_X9_42_DH, value}."""
+    captured = _stage_x942_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(_qc6_pass_script())
+    _run_x942_search(raw)
+    assert get_records() == []
+    attrs = raw.init_calls[0]["attrs"]
+    label = attrs.pop(int(CKA_LABEL))
+    assert isinstance(label, str) and label.startswith("pkcs11-check-qc6a-x942-")
+    assert captured["gen_kwargs"]["label"] == label
+    assert attrs == {
+        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+        int(CKA_KEY_TYPE): int(CKK_X9_42_DH),
+        int(CKA_VALUE): _QC6_Y,
+    }
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_x942_exact_search_missing_readback_never_searches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing X9.42 public readback records xfail and never searches."""
+    _stage_x942_search(monkeypatch, {})
+    raw = _qc6_raw(_qc6_pass_script())
+    _run_x942_search(raw)
+    _assert_xfail_record("not_operational")
+    assert raw.init_calls == []
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def _fixed_dsa_attrs(**overrides: Any) -> dict[Any, Any]:
+    attrs: dict[Any, Any] = {
+        CKA_PRIME: dsa_case._FIXED_DSA_P,
+        CKA_SUBPRIME: dsa_case._FIXED_DSA_Q,
+        CKA_BASE: dsa_case._FIXED_DSA_G,
+        CKA_VALUE: dsa_case._FIXED_DSA_Y,
+    }
+    attrs.update(overrides)
+    return attrs
+
+
+def _stage_dsa_search(monkeypatch: pytest.MonkeyPatch, readback: dict[Any, Any]) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def _import(*_args: Any, **kwargs: Any) -> tuple[int, int]:
+        captured["import_kwargs"] = dict(kwargs)
+        return _QC6_PUB, _QC6_PRIV
+
+    monkeypatch.setattr(dsa_case, "_import_fixed_dsa_keypair", _import)
+    monkeypatch.setattr(dsa_case, "skip_unless_create_object_supported", lambda _rs: None)
+    monkeypatch.setattr(dsa_case, "read_attributes", lambda *_a, **_k: dict(readback))
+    return captured
+
+
+def _run_dsa_search(raw: _SearchRaw) -> None:
+    session = _qc6_session(raw, {"DSA"})
+    dsa_case.TestDSAPublicValueSearch().test_fixed_dsa_search_by_exact_public_value(session)
+
+
+def test_dsa_exact_search_template_is_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DSA template is exactly {unique label, class, CKK_DSA, fixed Y}."""
+    captured = _stage_dsa_search(monkeypatch, _fixed_dsa_attrs())
+    raw = _qc6_raw(_qc6_pass_script())
+    _run_dsa_search(raw)
+    assert get_records() == []
+    attrs = raw.init_calls[0]["attrs"]
+    label = attrs.pop(int(CKA_LABEL))
+    assert isinstance(label, str) and label.startswith("pkcs11-check-qc6a-dsa-")
+    assert captured["import_kwargs"]["label"] == label
+    assert attrs == {
+        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+        int(CKA_KEY_TYPE): int(CKK_DSA),
+        int(CKA_VALUE): dsa_case._FIXED_DSA_Y,
+    }
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_dsa_exact_search_incoherent_import_never_searches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrong present Y fails coherence before search, even with an omission."""
+    readback = _fixed_dsa_attrs()
+    readback[CKA_VALUE] = _QC6_Y
+    del readback[CKA_BASE]
+    _stage_dsa_search(monkeypatch, readback)
+    raw = _qc6_raw(_qc6_pass_script())
+    with pytest.raises(Failed):
+        _run_dsa_search(raw)
+    _assert_fail_record("wrong_result", "metadata")
+    assert raw.init_calls == []
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+_EC_PUB = 11
+_EC_PRIV = 12
+_EC_DERIVED = 21
+_EC_PARAMS = bytes.fromhex("06082a8648ce3d030107")
+
+
+def _ec_public_key() -> ec.EllipticCurvePublicKey:
+    return ec.generate_private_key(ec.SECP256R1()).public_key()
+
+
+def _sec1(pub: ec.EllipticCurvePublicKey) -> bytes:
+    return pub.public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+
+
+def _der_wrap(sec1: bytes) -> bytes:
+    assert len(sec1) < 128
+    return bytes([0x04, len(sec1)]) + sec1
+
+
+def _stage_ec_search(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    derived: ConventionalECPoint,
+    original: ConventionalECPoint,
+    params: bytes | None = _EC_PARAMS,
+) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def _derive(*_args: Any, **kwargs: Any) -> int:
+        captured["derive_kwargs"] = dict(kwargs)
+        return _EC_DERIVED
+
+    monkeypatch.setattr(derive_case, "gen_ec_keypair", lambda *_a, **_k: (_EC_PUB, _EC_PRIV))
+    monkeypatch.setattr(derive_case, "derive_key", _derive)
+    monkeypatch.setattr(derive_case, "mech_simple", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        derive_case,
+        "read_attributes",
+        lambda *_a, **_k: {} if params is None else {CKA_EC_PARAMS: params},
+    )
+    points = {_EC_DERIVED: derived, _EC_PUB: original}
+    monkeypatch.setattr(
+        derive_case,
+        "read_conventional_ec_point_or_xfail",
+        lambda _rs, handle, _curve, *, label="": points[handle],
+    )
+    return captured
+
+
+def _run_ec_search(raw: _SearchRaw) -> None:
+    session = _qc6_session(raw, {"EC_KEY_PAIR_GEN", "PUB_KEY_FROM_PRIV_KEY"})
+    derive_case.TestDerivedECPublicSearch().test_derived_ec_public_search_by_exact_params_and_point(
+        session
+    )
+
+
+def _ec_pair_same() -> tuple[ConventionalECPoint, ConventionalECPoint, bytes]:
+    pub = _ec_public_key()
+    sec1 = _sec1(pub)
+    point = ConventionalECPoint(sec1, sec1, pub)
+    return point, point, sec1
+
+
+def test_derived_ec_exact_search_template_is_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EC template is exactly {label, class, CKK_EC, params, point}."""
+    derived, original, sec1 = _ec_pair_same()
+    captured = _stage_ec_search(monkeypatch, derived=derived, original=original)
+    raw = _qc6_raw(_qc6_pass_script(pub=_EC_DERIVED))
+    _run_ec_search(raw)
+    assert get_records() == []
+    attrs = raw.init_calls[0]["attrs"]
+    label = attrs.pop(int(CKA_LABEL))
+    assert isinstance(label, str) and label.startswith("pkcs11-check-qc6a-ec-")
+    assert captured["derive_kwargs"]["attrs"][CKA_LABEL] == label
+    assert attrs == {
+        int(CKA_CLASS): int(CKO_PUBLIC_KEY),
+        int(CKA_KEY_TYPE): int(CKK_EC),
+        int(CKA_EC_PARAMS): _EC_PARAMS,
+        int(CKA_EC_POINT): sec1,
+    }
+    _assert_staged_destroyed(raw, [_EC_PUB, _EC_PRIV, _EC_DERIVED])
+
+
+def test_derived_ec_search_uses_provider_bytes_not_sec1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DER-wrapped derived point is searched by its provider bytes verbatim."""
+    pub = _ec_public_key()
+    sec1 = _sec1(pub)
+    provider_bytes = _der_wrap(sec1)
+    derived = ConventionalECPoint(provider_bytes, sec1, pub)
+    original = ConventionalECPoint(sec1, sec1, pub)
+    _stage_ec_search(monkeypatch, derived=derived, original=original)
+    raw = _qc6_raw(_qc6_pass_script(pub=_EC_DERIVED))
+    _run_ec_search(raw)
+    exact_point = raw.init_calls[0]["attrs"][int(CKA_EC_POINT)]
+    assert exact_point == provider_bytes
+    assert exact_point != sec1
+    changed_point = raw.init_calls[1]["attrs"][int(CKA_EC_POINT)]
+    assert changed_point == provider_bytes[:-1] + bytes([provider_bytes[-1] ^ 1])
+    assert raw.init_calls[1]["attrs"][int(CKA_EC_PARAMS)] == _EC_PARAMS
+
+
+def test_derived_ec_point_differs_from_original_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid but wrong derived point fails the semantic oracle pre-search."""
+    derived_pub, original_pub = _ec_public_key(), _ec_public_key()
+    derived = ConventionalECPoint(_sec1(derived_pub), _sec1(derived_pub), derived_pub)
+    original = ConventionalECPoint(_sec1(original_pub), _sec1(original_pub), original_pub)
+    _stage_ec_search(monkeypatch, derived=derived, original=original)
+    raw = _qc6_raw(_qc6_pass_script(pub=_EC_DERIVED))
+    with pytest.raises(Failed):
+        _run_ec_search(raw)
+    record = _assert_fail_record("wrong_result", "crypto")
+    assert record.operation == "C_DeriveKey"
+    assert raw.init_calls == []
+    _assert_staged_destroyed(raw, [_EC_PUB, _EC_PRIV, _EC_DERIVED])
+
+
+def test_derived_ec_missing_params_or_point_xfails_without_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing derived CKA_EC_PARAMS xfails recorded and never searches."""
+    derived, original, _sec1_bytes = _ec_pair_same()
+    _stage_ec_search(monkeypatch, derived=derived, original=original, params=None)
+    raw = _qc6_raw(_qc6_pass_script(pub=_EC_DERIVED))
+    assert_xfails(_run_ec_search, raw)
+    _assert_xfail_record("not_operational")
+    assert raw.init_calls == []
+    _assert_staged_destroyed(raw, [_EC_PUB, _EC_PRIV, _EC_DERIVED])

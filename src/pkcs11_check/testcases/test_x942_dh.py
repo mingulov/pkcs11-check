@@ -14,6 +14,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 from __future__ import annotations
 
 import ctypes
+import uuid
 from collections.abc import Callable, Mapping
 from ctypes import byref
 from typing import Any, NoReturn
@@ -55,6 +56,7 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_PRIME,
     CKA_PRIME_BITS,
     CKA_SENSITIVE,
@@ -95,6 +97,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._exact_search import check_exact_and_changed_search, flip_last_byte
 from pkcs11_check.testcases.conftest import (
     assert_correct,
     classify_negative_rv,
@@ -281,15 +284,24 @@ def _generate_x942_keypair(
     base: bytes = X942_GEN,
     subprime: bytes = X942_SUBPRIME,
     derive: bool | None = None,
+    label: str | None = None,
 ) -> tuple[int, int]:
-    """Generate an X9.42 DH keypair using RFC 5114 parameters via raw C_GenerateKeyPair."""
-    pub_tmpl = template(
+    """Generate an X9.42 DH keypair using RFC 5114 parameters via raw C_GenerateKeyPair.
+
+    ``label`` is default-omitted: the public template gains CKA_LABEL only
+    when a caller requests it (QC6a exact-value search scoping), so every
+    pre-existing node's stimulus stays byte-identical.
+    """
+    pub_attrs = [
         attr_ulong(CKA_CLASS, 0x00000002),  # CKO_PUBLIC_KEY
         attr_ulong(CKA_KEY_TYPE, CKK_X9_42_DH),
         attr_bytes(CKA_PRIME, prime),
         attr_bytes(CKA_BASE, base),
         attr_bytes(CKA_SUBPRIME, subprime),
-    )
+    ]
+    if label is not None:
+        pub_attrs.append(attr_bytes(CKA_LABEL, label.encode("utf-8")))
+    pub_tmpl = template(*pub_attrs)
     priv_attrs = [
         attr_ulong(CKA_CLASS, 0x00000003),  # CKO_PRIVATE_KEY
         attr_ulong(CKA_KEY_TYPE, CKK_X9_42_DH),
@@ -1023,6 +1035,56 @@ class TestX942DHKeyPairGen:
                 operation="C_GenerateKeyPair",
                 mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
                 min_len=1,
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_keypair_search_by_exact_public_value(self, p11_raw_session: Any) -> None:
+        """Search the generated X9.42 public key by exact readback value (QC6a).
+
+        Scoped by a per-node unique label plus class/type: the generated
+        handle must appear among the exact-value results, and a
+        changed-value control differing only in the last value byte must
+        not match it.
+        """
+        rs = p11_raw_session
+        _skip_no_x942_keygen(rs)
+        search_label = f"pkcs11-check-qc6a-x942-{uuid.uuid4().hex[:8]}"
+        pub, priv = _generate_x942_keypair(rs, label=search_label)
+        try:
+            pub_value = _read_attr_or_record(
+                rs.raw,
+                rs.sh,
+                pub,
+                CKA_VALUE,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_VALUE exact-search readback",
+            )
+            if pub_value is MISSING_ATTRIBUTE:
+                return
+            _assert_x942_bytes(
+                pub_value,
+                label="CKM_X9_42_DH_KEY_PAIR_GEN:public-key CKA_VALUE exact-search readback",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_X9_42_DH_KEY_PAIR_GEN",
+                min_len=1,
+            )
+            exact_template = {
+                CKA_LABEL: search_label,
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_X9_42_DH,
+                CKA_VALUE: pub_value,
+            }
+            changed_template = {
+                **exact_template,
+                CKA_VALUE: flip_last_byte(pub_value),
+            }
+            check_exact_and_changed_search(
+                rs,
+                exact_template=exact_template,
+                changed_template=changed_template,
+                expected_handle=pub,
+                label="X9.42 DH exact public-value search",
             )
         finally:
             destroy_quietly(rs.raw, rs.sh, pub)

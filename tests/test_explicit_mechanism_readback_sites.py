@@ -1068,6 +1068,11 @@ _X942_BYTES_PRODUCER_STATES: Counter[tuple[str, str, str]] = Counter(
             "CKM_X9_42_DH_KEY_PAIR_GEN",
         ): 2,
         (
+            "TestX942DHKeyPairGen.test_keypair_search_by_exact_public_value",
+            "C_GenerateKeyPair",
+            "CKM_X9_42_DH_KEY_PAIR_GEN",
+        ): 1,
+        (
             "TestX942DHDerive.test_derive_shared_secret",
             "C_GenerateKeyPair",
             "CKM_X9_42_DH_KEY_PAIR_GEN",

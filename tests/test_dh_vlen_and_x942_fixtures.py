@@ -36,7 +36,14 @@ from pkcs11_check import classification as C  # noqa: N812 - existing classifica
 from pkcs11_check.raw.rv import CkrAssertionError
 from pkcs11_check.raw.types_std import (
     CK_X9_42_DH1_DERIVE_PARAMS,
+    CKA_BASE,
+    CKA_CLASS,
+    CKA_COPYABLE,
     CKA_DERIVE,
+    CKA_KEY_TYPE,
+    CKA_LABEL,
+    CKA_PRIME,
+    CKA_SUBPRIME,
     CKA_VALUE_LEN,
     CKD_NULL,
     CKM_DH_PKCS_DERIVE,
@@ -47,6 +54,7 @@ from pkcs11_check.raw.types_std import (
     CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_dh_key_agreement as dh
+from pkcs11_check.testcases import test_dsa_complete as dsa_case
 from pkcs11_check.testcases import test_x942_dh
 
 
@@ -407,3 +415,97 @@ def test_x942_generated_private_key_explicitly_allows_derive() -> None:
     # A provider that defaults an omitted CKA_DERIVE to false must observe the
     # explicit permission in the native private-key template.
     assert seen_private_attributes == {int(CKA_DERIVE): True}
+
+
+# ---------------------------------------------------------------------------
+# Part D - QC6a label hooks: omitted by default (R9 stimulus preservation),
+# sent only when requested, for the X9.42 keypair generator and the fixed
+# DSA import. Capture at the raw / negotiated-create layer.
+# ---------------------------------------------------------------------------
+
+
+def _capture_x942_public_template(**kwargs: Any) -> dict[int, bytes]:
+    captured: dict[int, bytes] = {}
+
+    class _Raw:
+        def C_GenerateKeyPair(  # noqa: N802
+            self,
+            _sh: int,
+            _mechanism: Any,
+            public_template: Any,
+            public_count: int,
+            _private_template: Any,
+            _private_count: int,
+            _public_key: Any,
+            _private_key: Any,
+        ) -> int:
+            for index in range(public_count):
+                attribute = public_template[index]
+                atype = int(attribute.type)
+                alen = int(attribute.ulValueLen)
+                addr = attribute.pValue
+                captured[atype] = ctypes.string_at(addr, alen) if addr and alen else b""
+            return 0
+
+    rs = SimpleNamespace(raw=_Raw(), sh=1)
+    test_x942_dh._generate_x942_keypair(rs, **kwargs)
+    return captured
+
+
+def test_x942_keypair_label_omitted_by_default() -> None:
+    """The default X9.42 public template gains no CKA_LABEL (R9)."""
+    captured = _capture_x942_public_template()
+    assert int(CKA_LABEL) not in captured
+    assert set(captured) == {
+        int(CKA_CLASS),
+        int(CKA_KEY_TYPE),
+        int(CKA_PRIME),
+        int(CKA_BASE),
+        int(CKA_SUBPRIME),
+    }
+
+
+def test_x942_keypair_label_sent_when_requested() -> None:
+    """An explicit label reaches the X9.42 public template as UTF-8 bytes."""
+    captured = _capture_x942_public_template(label="qc6a-x942-label")
+    assert captured[int(CKA_LABEL)] == b"qc6a-x942-label"
+
+
+def _capture_dsa_import_templates(
+    monkeypatch: pytest.MonkeyPatch, **kwargs: Any
+) -> list[dict[Any, Any]]:
+    calls: list[dict[Any, Any]] = []
+    handles = iter([301, 302])
+
+    def _create(_rs: Any, attrs: dict[Any, Any], *, purpose: str = "") -> int:
+        del purpose
+        calls.append(dict(attrs))
+        return next(handles)
+
+    monkeypatch.setattr(dsa_case, "create_object_negotiated", _create)
+    rs = SimpleNamespace(raw=object(), sh=1)
+    dsa_case._import_fixed_dsa_keypair(rs, **kwargs)
+    return calls
+
+
+def test_dsa_fixed_import_label_omitted_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default fixed-DSA import gains no label and no copyable flag."""
+    calls = _capture_dsa_import_templates(monkeypatch)
+    assert len(calls) == 2
+    for attrs in calls:
+        assert CKA_LABEL not in attrs
+        assert CKA_COPYABLE not in attrs
+
+
+def test_dsa_fixed_import_label_and_copyable_sent_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Label + copyable land on the public half only when requested."""
+    calls = _capture_dsa_import_templates(monkeypatch, label="qc6a-dsa-label", copyable=True)
+    public, private = calls
+    assert public[CKA_LABEL] == "qc6a-dsa-label"
+    assert public[CKA_COPYABLE] is True
+    assert CKA_LABEL not in private
+    assert CKA_COPYABLE not in private
