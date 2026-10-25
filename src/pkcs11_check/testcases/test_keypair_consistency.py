@@ -9,6 +9,7 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+from ctypes import byref
 from typing import Any
 
 import pytest
@@ -16,24 +17,40 @@ import pytest
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.ec import encode_named_curve_parameters
+from pkcs11_check.raw.pack import attr_bytes, template
 from pkcs11_check.raw.recipes import (
+    create_object,
     destroy_quietly,
+    find_objects,
+    pack_attrs,
     read_attributes,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
+    CK_OBJECT_HANDLE,
+    CKA_CLASS,
     CKA_EC_PARAMS,
     CKA_EC_POINT,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_MODULUS,
+    CKA_MODULUS_BITS,
     CKA_PUBLIC_EXPONENT,
+    CKA_TOKEN,
+    CKA_VERIFY,
     CKK_EC,
+    CKK_RSA,
+    CKO_PUBLIC_KEY,
+    CKR_ATTRIBUTE_READ_ONLY,
     CKR_OK,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases.conftest import (
     gen_ec_keypair_or_xfail,
     gen_rsa_keypair_or_xfail,
+    require_keygen_key_size,
+    skip_unless_create_object_supported,
 )
 
 pytestmark = pytest.mark.keymgmt
@@ -49,11 +66,13 @@ def _attribute_info(attr: int) -> dict[str, Any]:
     return {"name": ATTR_NAMES.get(int(attr), f"0x{int(attr):08x}"), "id": int(attr)}
 
 
-def _provider_detail(attr: int, *, leg: str) -> dict[str, Any]:
+def _provider_detail(
+    attr: int, *, leg: str, producer_operation: str = "C_GenerateKeyPair"
+) -> dict[str, Any]:
     return {
         "attribute": _attribute_info(attr),
         "leg": leg,
-        "producer_operation": "C_GenerateKeyPair",
+        "producer_operation": producer_operation,
         "producer_mechanism": "",
     }
 
@@ -71,6 +90,7 @@ def _read_leg(
     leg: str,
     label: str,
     mechanism: str,
+    producer_operation: str = "C_GenerateKeyPair",
 ) -> tuple[Any, C.Classification | None]:
     """Read one key leg, retaining a non-terminating provider result."""
     try:
@@ -89,7 +109,10 @@ def _read_leg(
             inherit_mechanism=False,
             expected=CKR_OK,
             actual=exc.rv,
-            detail=_with_producer(_provider_detail(attr, leg=leg), mechanism=mechanism),
+            detail=_with_producer(
+                _provider_detail(attr, leg=leg, producer_operation=producer_operation),
+                mechanism=mechanism,
+            ),
             summary=(
                 f"{label}: attribute read returned {ckr_name(exc.rv)}"
                 if reason == "self_contradiction"
@@ -116,7 +139,12 @@ def _read_leg(
     record = records[-1]
     if record.detail is None:
         record.detail = {}
-    record.detail.update(_with_producer(_provider_detail(attr, leg=leg), mechanism=mechanism))
+    record.detail.update(
+        _with_producer(
+            _provider_detail(attr, leg=leg, producer_operation=producer_operation),
+            mechanism=mechanism,
+        )
+    )
     return value, record
 
 
@@ -128,8 +156,12 @@ def _record_wrong_attribute(
     expected: str,
     actual: Any,
     mechanism: str,
+    producer_operation: str = "C_GenerateKeyPair",
 ) -> C.Classification:
-    detail = _with_producer(_provider_detail(attr, leg=leg), mechanism=mechanism)
+    detail = _with_producer(
+        _provider_detail(attr, leg=leg, producer_operation=producer_operation),
+        mechanism=mechanism,
+    )
     detail.update({"expected": expected, "actual": repr(actual)})
     return C.record_as(
         "wrong_result",
@@ -533,3 +565,365 @@ class TestECKeypairConsistency:
             _raise_strongest(records)
         finally:
             _destroy_pair(rs, pub, priv)
+
+
+# --- QC7b (#59.2/.3): always-selected CKA_MODULUS_BITS ------------------------
+#
+# Table 37 lists CKA_MODULUS_BITS on every RSA public key; it equals the
+# integer bit length of CKA_MODULUS (int.from_bytes(...).bit_length(),
+# so leading-zero padding does not inflate it). Footnote 2 forbids the
+# caller from supplying it to C_CreateObject. The gated ACVP keygen
+# coverage is preserved untouched; these nodes are always selected.
+
+_QC7_HANDLE_SENTINEL = 0x51515151
+_KNOWN_RSA_CACHE: dict[str, tuple[int, bytes, bytes]] = {}
+
+
+def _known_rsa_public() -> tuple[int, bytes, bytes]:
+    """Independent known RSA-2048 public material: (n, n_bytes, e_bytes)."""
+    cached = _KNOWN_RSA_CACHE.get("rsa2048")
+    if cached is not None:
+        return cached
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    numbers = rsa.generate_private_key(65537, 2048).public_key().public_numbers()
+    n_bytes = numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
+    e_bytes = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
+    result = (numbers.n, n_bytes, e_bytes)
+    _KNOWN_RSA_CACHE["rsa2048"] = result
+    return result
+
+
+def _check_modulus_bits(
+    rs: Any,
+    handle: int,
+    *,
+    expected_bits: int,
+    label: str,
+    producer_operation: str,
+    expected_modulus_int: int | None = None,
+) -> list[C.Classification]:
+    """Read MODULUS and MODULUS_BITS (both always) and judge bit length."""
+    mechanism = "CKM_RSA_PKCS_KEY_PAIR_GEN" if producer_operation == "C_GenerateKeyPair" else ""
+    records: list[C.Classification] = []
+    modulus, modulus_read = _read_leg(
+        rs,
+        handle,
+        CKA_MODULUS,
+        leg="public",
+        label=f"{label}:modulus",
+        mechanism=mechanism,
+        producer_operation=producer_operation,
+    )
+    if modulus_read is not None:
+        records.append(modulus_read)
+    bits, bits_read = _read_leg(
+        rs,
+        handle,
+        CKA_MODULUS_BITS,
+        leg="public",
+        label=f"{label}:modulus-bits",
+        mechanism=mechanism,
+        producer_operation=producer_operation,
+    )
+    if bits_read is not None:
+        records.append(bits_read)
+
+    if modulus is not MISSING_ATTRIBUTE and (type(modulus) is not bytes or len(modulus) == 0):
+        records.append(
+            _record_wrong_attribute(
+                attr=CKA_MODULUS,
+                leg="public",
+                label=f"{label}:modulus",
+                expected="non-empty bytes",
+                actual=modulus,
+                mechanism=mechanism,
+                producer_operation=producer_operation,
+            )
+        )
+    if (
+        modulus is not MISSING_ATTRIBUTE
+        and type(modulus) is bytes
+        and len(modulus) > 0
+        and expected_modulus_int is not None
+        and int.from_bytes(modulus, "big") != expected_modulus_int
+    ):
+        records.append(
+            _record_wrong_attribute(
+                attr=CKA_MODULUS,
+                leg="public",
+                label=f"{label}:modulus",
+                expected="the imported known modulus integer",
+                actual=f"{len(modulus)}-byte modulus with a different integer value",
+                mechanism=mechanism,
+                producer_operation=producer_operation,
+            )
+        )
+    if bits is not MISSING_ATTRIBUTE:
+        if isinstance(bits, bool) or not isinstance(bits, int):
+            records.append(
+                _record_wrong_attribute(
+                    attr=CKA_MODULUS_BITS,
+                    leg="public",
+                    label=f"{label}:modulus-bits",
+                    expected="CK_ULONG integer (not bool/bytes)",
+                    actual=bits,
+                    mechanism=mechanism,
+                    producer_operation=producer_operation,
+                )
+            )
+        elif modulus is not MISSING_ATTRIBUTE and type(modulus) is bytes and len(modulus) > 0:
+            bit_length = int.from_bytes(modulus, "big").bit_length()
+            if bits != bit_length or bits != expected_bits:
+                records.append(
+                    _record_wrong_attribute(
+                        attr=CKA_MODULUS_BITS,
+                        leg="public",
+                        label=f"{label}:modulus-bits",
+                        expected=(f"integer bit length {bit_length} (requested {expected_bits})"),
+                        actual=bits,
+                        mechanism=mechanism,
+                        producer_operation=producer_operation,
+                    )
+                )
+    return records
+
+
+def _import_known_rsa_public_or_xfail(
+    rs: Any, modulus_bytes: bytes, exponent_bytes: bytes, *, purpose: str
+) -> int:
+    """Import the known RSA public key omitting MODULUS_BITS (valid control)."""
+    try:
+        return create_object(
+            rs.raw,
+            rs.sh,
+            {
+                CKA_CLASS: CKO_PUBLIC_KEY,
+                CKA_KEY_TYPE: CKK_RSA,
+                CKA_MODULUS: modulus_bytes,
+                CKA_PUBLIC_EXPONENT: exponent_bytes,
+                CKA_TOKEN: False,
+                CKA_VERIFY: True,
+            },
+        )
+    except CkrAssertionError as exc:
+        if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            C.xfail_as(
+                "not_operational",
+                kind="metadata",
+                label=purpose,
+                operation="C_CreateObject",
+                inherit_mechanism=False,
+                expected=CKR_OK,
+                actual=exc.rv,
+                detail=_with_producer(
+                    _provider_detail(
+                        CKA_MODULUS_BITS, leg="public", producer_operation="C_CreateObject"
+                    ),
+                    mechanism="",
+                ),
+                summary=f"{purpose}: import refused with {ckr_name(exc.rv)}",
+            )
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=purpose,
+            operation="C_CreateObject",
+            inherit_mechanism=False,
+            expected=CKR_OK,
+            actual=exc.rv,
+            summary=f"{purpose}: import returned undefined CK_RV {ckr_name(exc.rv)}",
+        )
+
+
+class TestRSAModulusBits:
+    """QC7b: CKA_MODULUS_BITS on generated/imported RSA public keys."""
+
+    @pytest.mark.parametrize("bits", [2048, 3072])
+    def test_generated_modulus_bits_match(self, p11_raw_session: Any, bits: int) -> None:
+        """Generated RSA public MODULUS_BITS equals the modulus bit length."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("RSA_PKCS_KEY_PAIR_GEN"):
+            pytest.skip("RSA key generation not supported")
+        require_keygen_key_size(rs, "RSA_PKCS_KEY_PAIR_GEN", bits, label=f"RSA-{bits} modulus bits")
+        pub, priv = gen_rsa_keypair_or_xfail(rs, bits)
+        try:
+            records = _check_modulus_bits(
+                rs,
+                pub,
+                expected_bits=bits,
+                label=f"RSA-{bits} CKA_MODULUS_BITS",
+                producer_operation="C_GenerateKeyPair",
+            )
+            _raise_strongest(records)
+        finally:
+            _destroy_pair(rs, pub, priv)
+
+    def test_imported_known_modulus_bits(self, p11_raw_session: Any) -> None:
+        """Imported known RSA public key reports MODULUS_BITS (bits omitted)."""
+        rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
+        n, n_bytes, e_bytes = _known_rsa_public()
+        handle = _import_known_rsa_public_or_xfail(
+            rs, n_bytes, e_bytes, purpose="QC7b known RSA public import"
+        )
+        try:
+            records = _check_modulus_bits(
+                rs,
+                handle,
+                expected_bits=n.bit_length(),
+                label="imported RSA CKA_MODULUS_BITS",
+                producer_operation="C_CreateObject",
+                expected_modulus_int=n,
+            )
+            _raise_strongest(records)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, handle)
+
+    def test_imported_leading_zero_modulus_bits(self, p11_raw_session: Any) -> None:
+        """Leading-zero-padded modulus template still yields the bit length.
+
+        A clean refusal of the padded encoding xfails with the original
+        RV; acceptance requires bits/modulus integer equality.
+        """
+        rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
+        n, n_bytes, e_bytes = _known_rsa_public()
+        handle = _import_known_rsa_public_or_xfail(
+            rs, b"\x00" + n_bytes, e_bytes, purpose="QC7b padded RSA public import"
+        )
+        try:
+            records = _check_modulus_bits(
+                rs,
+                handle,
+                expected_bits=n.bit_length(),
+                label="padded imported RSA CKA_MODULUS_BITS",
+                producer_operation="C_CreateObject",
+                expected_modulus_int=n,
+            )
+            _raise_strongest(records)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, handle)
+
+    @pytest.mark.parametrize("supplied", ["correct", "wrong"])
+    def test_create_with_modulus_bits_rejected(self, p11_raw_session: Any, supplied: str) -> None:
+        """C_CreateObject with forbidden MODULUS_BITS rejects with no object."""
+        rs = p11_raw_session
+        skip_unless_create_object_supported(rs)
+        n, n_bytes, e_bytes = _known_rsa_public()
+        supplied_bits = n.bit_length() if supplied == "correct" else 1024
+        label_text = f"qc7-forbidden-modulus-bits-{supplied}"
+        attrs: dict[Any, Any] = {
+            CKA_CLASS: CKO_PUBLIC_KEY,
+            CKA_KEY_TYPE: CKK_RSA,
+            CKA_MODULUS: n_bytes,
+            CKA_PUBLIC_EXPONENT: e_bytes,
+            CKA_MODULUS_BITS: supplied_bits,
+            CKA_TOKEN: False,
+            CKA_VERIFY: True,
+            CKA_LABEL: label_text,
+        }
+        tmpl = template(*pack_attrs(attrs))
+        handle = CK_OBJECT_HANDLE(_QC7_HANDLE_SENTINEL)
+        rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
+        label = f"forbidden CKA_MODULUS_BITS on C_CreateObject ({supplied})"
+        records: list[C.Classification] = []
+        leaked: list[int] = []
+        detail = _with_producer(
+            _provider_detail(CKA_MODULUS_BITS, leg="public", producer_operation="C_CreateObject"),
+            mechanism="",
+        )
+        try:
+            found = find_objects(
+                rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, label_text.encode()))
+            )
+            if rv == int(CKR_OK):
+                leaked_handle = int(handle.value)
+                if leaked_handle != _QC7_HANDLE_SENTINEL:
+                    leaked.append(leaked_handle)
+                leaked.extend(h for h in found if h not in leaked)
+                stored_note = "not-read"
+                if leaked_handle != _QC7_HANDLE_SENTINEL:
+                    try:
+                        stored_bits, _stored_read = _read_leg(
+                            rs,
+                            leaked_handle,
+                            CKA_MODULUS_BITS,
+                            leg="public",
+                            label=f"{label}:stored-bits note",
+                            mechanism="",
+                            producer_operation="C_CreateObject",
+                        )
+                        if stored_bits is MISSING_ATTRIBUTE:
+                            stored_note = "caller-value-dropped"
+                        elif stored_bits == supplied_bits:
+                            stored_note = "caller-value-stored"
+                        else:
+                            stored_note = "caller-value-overwritten"
+                    except CkrAssertionError:
+                        stored_note = "stored-bits-unreadable"
+                records.append(
+                    C.record_as(
+                        "accepted_invalid",
+                        kind="metadata",
+                        label=label,
+                        operation="C_CreateObject",
+                        inherit_mechanism=False,
+                        expected=(CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT),
+                        actual=rv,
+                        detail={**detail, "stored": stored_note},
+                        summary=f"{label}: forbidden attribute accepted (CKR_OK)",
+                    )
+                )
+            elif int(handle.value) != _QC7_HANDLE_SENTINEL or found:
+                leaked.extend(found)
+                if int(handle.value) != _QC7_HANDLE_SENTINEL:
+                    leaked.append(int(handle.value))
+                records.append(
+                    C.record_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_CreateObject",
+                        inherit_mechanism=False,
+                        actual=rv,
+                        detail=detail,
+                        summary=(
+                            f"{label}: refusal {ckr_name(rv)} mutated the output "
+                            "handle or left an object behind"
+                        ),
+                    )
+                )
+            elif rv in (int(CKR_ATTRIBUTE_READ_ONLY), int(CKR_TEMPLATE_INCONSISTENT)):
+                pass  # Canonical rejection, sentinel untouched, zero inventory.
+            elif is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+                records.append(
+                    C.record_as(
+                        "nonspec_reject",
+                        kind="metadata",
+                        label=label,
+                        operation="C_CreateObject",
+                        inherit_mechanism=False,
+                        expected=(CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT),
+                        actual=rv,
+                        detail=detail,
+                        summary=f"{label}: rejected with {ckr_name(rv)}",
+                    )
+                )
+            else:
+                records.append(
+                    C.record_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label=label,
+                        operation="C_CreateObject",
+                        inherit_mechanism=False,
+                        actual=rv,
+                        detail=detail,
+                        summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
+                    )
+                )
+        finally:
+            for leaked_handle in dict.fromkeys(leaked):
+                destroy_quietly(rs.raw, rs.sh, leaked_handle)
+        _raise_strongest(records)
