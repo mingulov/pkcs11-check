@@ -1,3 +1,4 @@
+tests/test_attribute_encoding_contract.py
 tests/test_byte_kdf_protection_contract.py
 tests/test_ccm_ecma_b0_contract.py
 tests/test_ckr_ctypes_abi.py
@@ -9,6 +10,7 @@ tests/test_llp64_sim_census.py
 tests/test_logout_object_lifetime_contract.py
 tests/test_no_implicit_text_encoding.py
 tests/test_no_literal_width_ulong_params.py
+tests/test_object_identity_contract.py
 tests/test_object_policy_effect_contract.py
 tests/test_platform_width_guard.py
 tests/test_protected_component_contract.py
