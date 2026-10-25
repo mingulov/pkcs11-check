@@ -12,7 +12,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from pkcs11_check.classification import fail_as, xfail_as
+from pkcs11_check.classification import fail_as, record_as, xfail_as
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -444,6 +444,38 @@ def _xfail_stale_staging(
         expected=expected,
         actual=actual,
         summary=summary,
+        detail=detail,
+    )
+
+
+def _record_fresh_final(rv: int, *, label: str, detail: dict[str, Any]) -> None:
+    """Record a fresh-search Final defect without terminating (P5).
+
+    The fresh Find observations keep their own verdicts; this only keeps
+    a bad terminator on a live session from passing silently. Clean
+    refusals record the staging not_operational xfail shape; an
+    undefined RV records the metadata FAIL shape.
+    """
+    summary = f"{label}: fresh C_FindObjectsFinal on the reopened session returned {ckr_name(rv)}"
+    if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+        record_as(
+            "not_operational",
+            label=label,
+            operation="C_FindObjectsFinal",
+            expected=CKR_OK,
+            actual=rv,
+            summary=summary,
+            detail=detail,
+        )
+        return
+    record_as(
+        "self_contradiction",
+        kind="metadata",
+        label=label,
+        operation="C_FindObjectsFinal",
+        expected=CKR_OK,
+        actual=rv,
+        summary=f"{summary} (return-value contract violation)",
         detail=detail,
     )
 
@@ -1071,9 +1103,21 @@ class TestActiveSearchInvalidation:
                         },
                     )
                 found = [int(fresh_buf[i]) for i in range(raw_fresh)]
-                # Release the fresh search; its terminator RV is irrelevant to
-                # the verdict already decided by the Find observations.
-                rs.raw.C_FindObjectsFinal(s2)
+                # Release the fresh search. The terminator result is
+                # recorded without terminating (P5): the Find verdicts
+                # below are unchanged, but a bad Final is never silent.
+                rv_fresh_final = int(rs.raw.C_FindObjectsFinal(s2))
+                if rv_fresh_final != CKR_OK:
+                    _record_fresh_final(
+                        rv_fresh_final,
+                        label=label,
+                        detail={
+                            "stale_handle": s1,
+                            "fresh_handle": s2,
+                            "staged_handle": staged,
+                            "final_rv": ckr_name(rv_fresh_final),
+                        },
+                    )
                 if staged in found:
                     liveness_rv = int(rs.raw.C_DestroyObject(s2, staged))
                     if liveness_rv == CKR_OK:

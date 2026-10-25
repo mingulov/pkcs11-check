@@ -30,6 +30,7 @@ from _pytest.outcomes import Failed, XFailed
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from pkcs11_check._plugin_report_attach import _apply_recorded_outcome
 from pkcs11_check.classification import get_records
 from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.raw.types_std import (
@@ -66,6 +67,7 @@ from pkcs11_check.testcases import test_mech_derive as derive_case
 from pkcs11_check.testcases import test_session_edge_cases as tse
 from pkcs11_check.testcases import test_x942_dh as x942_case
 from pkcs11_check.testcases._ec_export import ConventionalECPoint
+from pkcs11_check.testcases._exact_search import observe_exact_search
 from tests._skip_assert import assert_xfails
 
 _OK = int(CKR_OK)
@@ -128,6 +130,7 @@ class _SearchRaw:
         find_script: list[tuple[int, tuple[int, ...]] | tuple[int, tuple[int, ...], int]]
         | None = None,
         final_rv: int = _HANDLE_INVALID,
+        final_script: list[int] | None = None,
         info_rv: int = _OK,
         opens: list[int] | None = None,
         open_rv: int = _OK,
@@ -141,6 +144,7 @@ class _SearchRaw:
         self._init_script = list(init_script if init_script is not None else [_OK])
         self._find_script = list(find_script if find_script is not None else [(_OK, ())])
         self._final_rv = final_rv
+        self._final_script = list(final_script) if final_script is not None else None
         self._info_rv = info_rv
         self._opens = list(opens if opens is not None else [_S1])
         self._open_script = list(open_script if open_script is not None else [open_rv])
@@ -220,6 +224,8 @@ class _SearchRaw:
     def C_FindObjectsFinal(self, sh: int) -> int:  # noqa: N802
         self.ops.append("final")
         self.final_sessions.append(int(sh))
+        if self._final_script:
+            return self._final_script.pop(0)
         return self._final_rv
 
     def C_GenerateKey(  # noqa: N802
@@ -795,6 +801,7 @@ def _reuse_raw(
     pre_hits: tuple[int, ...] = (_KEY,),
     pre_rv: int = _OK,
     fresh_rv: int = _OK,
+    final_rv: int = _OK,
     close_rv: int = _OK,
     init_script: list[int] | None = None,
     destroy_script: list[int] | None = None,
@@ -808,7 +815,7 @@ def _reuse_raw(
         find_script=list(find_script)
         if find_script is not None
         else [(pre_rv, pre_hits), (fresh_rv, fresh_hits)],
-        final_rv=_OK,
+        final_rv=final_rv,
         info_rv=info_rv,
         close_rv=close_rv,
         destroy_script=list(destroy_script) if destroy_script is not None else None,
@@ -1247,11 +1254,17 @@ def _qc6_pass_script(pub: int = _QC6_PUB) -> list[tuple[int, tuple[int, ...]]]:
     return [(_OK, (_QC6_OTHER, pub)), (_OK, ()), (_OK, ())]
 
 
-def _qc6_raw(find_script: list[Any], *, init_script: list[int] | None = None) -> _SearchRaw:
+def _qc6_raw(
+    find_script: list[Any],
+    *,
+    init_script: list[int] | None = None,
+    final_script: list[int] | None = None,
+) -> _SearchRaw:
     return _SearchRaw(
         init_script=init_script if init_script is not None else [_OK, _OK],
         find_script=find_script,
         final_rv=_OK,
+        final_script=final_script,
     )
 
 
@@ -1710,3 +1723,167 @@ def test_derived_ec_missing_params_or_point_xfails_without_search(
     _assert_xfail_record("not_operational")
     assert raw.init_calls == []
     _assert_staged_destroyed(raw, [_EC_PUB, _EC_PRIV, _EC_DERIVED])
+
+
+# --- PR64 P5: C_FindObjectsFinal results are captured and classified ------
+
+
+def _reported_outcome_p5() -> str:
+    """Replay the record stream through the real report hook (P5 sibling)."""
+    report = SimpleNamespace(outcome="passed")
+    _apply_recorded_outcome(report, get_records())
+    if report.outcome == "failed":
+        return "fail"
+    if getattr(report, "wasxfail", None) is not None:
+        return "xfail"
+    return "pass"
+
+
+def test_exact_search_final_clean_refusal_xfails_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5: a clean Final refusal xfails; the sibling leg still runs."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(_qc6_pass_script(), final_script=[_CLEAN_REJECT, _OK])
+    assert_xfails(_run_dh_search, raw)
+    record = _assert_xfail_record("not_operational")
+    assert record.operation == "C_FindObjectsFinal", record.operation
+    assert record.actual_ckr == ckr_name(_CLEAN_REJECT), record.actual_ckr
+    assert len(raw.init_calls) == 2, "changed leg still observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_final_undefined_rv_fails_metadata_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5: an undefined Final RV fails the return-value contract."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(_qc6_pass_script(), final_script=[_UNDEFINED_RV, _OK])
+    with pytest.raises(Failed):
+        _run_dh_search(raw)
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjectsFinal", record.operation
+    assert record.actual_ckr == ckr_name(_UNDEFINED_RV), record.actual_ckr
+    assert len(raw.init_calls) == 2, "changed leg still observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_final_failure_keeps_stronger_find_fail_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5: a Final xfail never replaces a proved Find failure."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_OK, (), 17), (_OK, ())], final_script=[_CLEAN_REJECT, _OK])
+    with pytest.raises(Failed) as ei:
+        _run_dh_search(raw)
+    assert not isinstance(ei.value, XFailed)
+    records = get_records()
+    fails = [r for r in records if r.outcome == "fail"]
+    xfails = [r for r in records if r.outcome == "xfail"]
+    assert len(fails) == 1, [(r.reason, r.operation) for r in records]
+    assert fails[0].operation == "C_FindObjects", fails[0].operation
+    assert (fails[0].detail or {}).get("count") == 17, fails[0].detail
+    assert len(xfails) == 1, [(r.reason, r.operation) for r in records]
+    assert xfails[0].operation == "C_FindObjectsFinal", xfails[0].operation
+    assert len(raw.init_calls) == 2, "changed leg still observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_exact_search_final_undefined_beats_find_refusal_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5: an undefined Final FAIL outranks a clean Find-refusal xfail."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw([(_CLEAN_REJECT, ()), (_OK, ())], final_script=[_UNDEFINED_RV, _OK])
+    with pytest.raises(Failed) as ei:
+        _run_dh_search(raw)
+    assert not isinstance(ei.value, XFailed)
+    records = get_records()
+    fails = [r for r in records if r.outcome == "fail"]
+    xfails = [r for r in records if r.outcome == "xfail"]
+    assert len(fails) == 1, [(r.reason, r.operation) for r in records]
+    assert fails[0].reason == "self_contradiction", fails[0].reason
+    assert fails[0].kind == "metadata", fails[0].kind
+    assert fails[0].operation == "C_FindObjectsFinal", fails[0].operation
+    assert len(xfails) == 1, [(r.reason, r.operation) for r in records]
+    assert xfails[0].operation == "C_FindObjects", xfails[0].operation
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+class _NoFinalRaw:
+    """Raw surface without C_FindObjectsFinal (fake-tolerance pin, P5)."""
+
+    # noqa comments below: raw PKCS#11 entry-point names are mandated.
+    def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
+        return _OK
+
+    def C_FindObjects(  # noqa: N802
+        self, _sh: int, _handles: Any, _max_count: int, found_ptr: Any
+    ) -> int:
+        ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = 0
+        return _OK
+
+
+def test_observe_exact_search_without_final_tolerated_p5() -> None:
+    """P5 pin: a raw without C_FindObjectsFinal still yields its handles."""
+    rs = SimpleNamespace(raw=_NoFinalRaw(), sh=1)
+    observed = observe_exact_search(rs, {CKA_LABEL: "p5-no-final"}, label="p5-no-final")
+    assert observed.handles == ()
+    assert observed.record is None
+    assert get_records() == []
+
+
+def test_reuse_fresh_final_clean_refusal_recorded_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5 sibling: fresh Final refusal is recorded, verdict flow unchanged."""
+    raw = _reuse_raw((), final_rv=_CLEAN_REJECT)
+    _patch_no_open(monkeypatch)
+    _run_reuse(raw)
+    records = get_records()
+    assert len(records) == 1, [(r.reason, r.operation) for r in records]
+    assert records[0].reason == "not_operational", records[0].reason
+    assert records[0].outcome == "xfail", records[0].outcome
+    assert records[0].operation == "C_FindObjectsFinal", records[0].operation
+    assert records[0].actual_ckr == ckr_name(_CLEAN_REJECT), records[0].actual_ckr
+    assert _reported_outcome_p5() == "xfail"
+    assert raw.closed == [_S1, _S2_REUSED]
+
+
+def test_reuse_fresh_final_undefined_recorded_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5 sibling: an undefined fresh Final RV records a metadata FAIL."""
+    raw = _reuse_raw((), final_rv=_UNDEFINED_RV)
+    _patch_no_open(monkeypatch)
+    _run_reuse(raw)
+    records = get_records()
+    assert len(records) == 1, [(r.reason, r.operation) for r in records]
+    assert records[0].reason == "self_contradiction", records[0].reason
+    assert records[0].kind == "metadata", records[0].kind
+    assert records[0].outcome == "fail", records[0].outcome
+    assert records[0].operation == "C_FindObjectsFinal", records[0].operation
+    assert records[0].actual_ckr == ckr_name(_UNDEFINED_RV), records[0].actual_ckr
+    assert _reported_outcome_p5() == "fail"
+    assert raw.closed == [_S1, _S2_REUSED]
+
+
+def test_reuse_fresh_final_failure_preserves_resurrection_fail_p5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P5 sibling: the recorded Final defect never hides resurrection."""
+    raw = _reuse_raw((_KEY,), destroy_script=[_OBJECT_INVALID], final_rv=_CLEAN_REJECT)
+    _patch_no_open(monkeypatch)
+    with pytest.raises(Failed) as ei:
+        _run_reuse(raw)
+    assert not isinstance(ei.value, XFailed)
+    records = get_records()
+    fails = [r for r in records if r.outcome == "fail"]
+    xfails = [r for r in records if r.outcome == "xfail"]
+    assert len(fails) == 1, [(r.reason, r.operation) for r in records]
+    assert fails[0].reason == "self_contradiction", fails[0].reason
+    assert fails[0].kind == "lifecycle", fails[0].kind
+    assert "resurrect" in fails[0].summary, fails[0].summary
+    assert len(xfails) == 1, [(r.reason, r.operation) for r in records]
+    assert xfails[0].operation == "C_FindObjectsFinal", xfails[0].operation
+    assert raw.closed == [_S1, _S2_REUSED]
