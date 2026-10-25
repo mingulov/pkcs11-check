@@ -130,26 +130,56 @@ def _record_bool_readback(
     )
 
 
+def _strongest_record(
+    records: list[classification.Classification],
+) -> classification.Classification | None:
+    """Reduce deferred observations to the single strongest terminal record.
+
+    A later honest deviation must never hide an earlier hard contradiction.
+    The reduction is independent of probe/append order.
+    """
+    if not records:
+        return None
+    priorities = {
+        "CRITICAL": 3,
+        "HIGH": 2,
+        "MEDIUM": 1,
+        "LOW": 0,
+        "INFO": 0,
+    }
+    return max(
+        records,
+        key=lambda record: (
+            record.outcome == "fail",
+            priorities.get(record.severity, 0),
+        ),
+    )
+
+
 def _raise_deferred_hard(records: list[classification.Classification]) -> None:
     """Raise a deferred provider contradiction after independent probes complete."""
-    if records:
-        # A later honest deviation must never hide an earlier hard contradiction.
-        # Keep the reduction independent of probe/append order.
-        priorities = {
-            "CRITICAL": 3,
-            "HIGH": 2,
-            "MEDIUM": 1,
-            "LOW": 0,
-            "INFO": 0,
-        }
-        strongest = max(
-            records,
-            key=lambda record: (
-                record.outcome == "fail",
-                priorities.get(record.severity, 0),
-            ),
-        )
+    strongest = _strongest_record(records)
+    if strongest is not None:
         classification.raise_for_record(strongest)
+
+
+def _deferred_terminal(
+    records: list[classification.Classification],
+) -> BaseException | None:
+    """Build the terminal outcome deferred records would raise, without raising.
+
+    Lets the ``finally`` cleanup group a deferred xfail/fail together with any
+    ``C_DestroyObject`` fault instead of masking either signal.  The exception
+    is built by the same ``raise_for_record`` mapping the post-cleanup raise
+    uses, so the grouped pending outcome is identical to the clean-path one.
+    """
+    strongest = _strongest_record(records)
+    if strongest is None:
+        return None
+    try:
+        classification.raise_for_record(strongest)
+    except BaseException as exc:
+        return exc
 
 
 def _classify_policy_negative_rv(
@@ -791,33 +821,32 @@ def _destroy_owned_handles(
     *,
     pending: BaseException | None,
 ) -> None:
-    """Destroy every deduplicated handle while preserving an earlier exception."""
-    cleanup_errors: list[tuple[int, BaseException]] = []
+    """Destroy every deduplicated handle while preserving an earlier exception.
+
+    Every handle is attempted even when the first ``C_DestroyObject`` faults
+    so subsequent probes see no litter.  Cleanup faults keep their original
+    type and propagate alongside a pending outcome in a
+    ``BaseExceptionGroup`` so no exception is masked: ``raise ... from ...``
+    would hide the cleanup fault when pytest treats the pending outcome as an
+    expected terminal, and a ``harness_error`` record would mislabel a
+    provider-side cleanup fault as harness code.  A single resulting
+    exception raises as-is; an empty outcome returns normally and the caller
+    re-raises its pending outcome.
+    """
+    cleanup_errors: list[BaseException] = []
     for handle in handles:
         try:
             destroy_quietly(raw, session, handle)
-        except BaseException as exc:
-            cleanup_errors.append((handle, exc))
-    for handle, cleanup_exc in cleanup_errors:
-        classification.record_as(
-            "harness_error",
-            kind="lifecycle",
-            label=f"C_DestroyObject cleanup for owned handle {handle}",
-            operation="C_DestroyObject",
-            detail={
-                "handle": handle,
-                "exception_type": type(cleanup_exc).__name__,
-                "exception": repr(cleanup_exc),
-            },
-            summary=(
-                "C_DestroyObject cleanup raised "
-                f"{type(cleanup_exc).__name__} for owned handle {handle}"
-            ),
-        )
-    if cleanup_errors:
-        cleanup_error = cleanup_errors[0][1]
-        if pending is None or getattr(pending, "_pkcs11_check_classification", None) is not None:
-            raise cleanup_error
+        except BaseException as exc:  # noqa: BLE001 - provider faults vary
+            cleanup_errors.append(exc)
+    if not cleanup_errors:
+        return
+    if pending is None and len(cleanup_errors) == 1:
+        raise cleanup_errors[0]
+    parts: list[BaseException] = (
+        [pending, *cleanup_errors] if pending is not None else cleanup_errors
+    )
+    raise BaseExceptionGroup("key usage policy cleanup failures", parts)
 
 
 def _record_handle_on_rejection(
@@ -1178,6 +1207,8 @@ class TestKEMKeyUsagePolicy:
         finally:
             _remember_handle(returned_handles, seen_handles, pub)
             _remember_handle(returned_handles, seen_handles, priv)
+            if pending is None:
+                pending = _deferred_terminal(deferred_records)
             _destroy_owned_handles(
                 rs.raw,
                 rs.sh,
@@ -1480,6 +1511,8 @@ class TestKEMKeyUsagePolicy:
         finally:
             _remember_handle(returned_handles, seen_handles, restr_pub)
             _remember_handle(returned_handles, seen_handles, restr_priv)
+            if pending is None:
+                pending = _deferred_terminal(deferred_records)
             _destroy_owned_handles(
                 rs.raw,
                 rs.sh,

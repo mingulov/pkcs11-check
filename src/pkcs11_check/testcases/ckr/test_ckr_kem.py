@@ -16,7 +16,9 @@ import pytest
 
 from pkcs11_check.classification import classify
 from pkcs11_check.raw.pack import (
+    attr_array,
     attr_bool,
+    attr_bytes,
     attr_ulong,
     mech_simple,
     template,
@@ -25,9 +27,11 @@ from pkcs11_check.raw.recipes import destroy_quietly
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
+    CKA_ALLOWED_MECHANISMS,
     CKA_DECAPSULATE,
     CKA_ENCAPSULATE,
     CKA_EXTRACTABLE,
+    CKA_LABEL,
     CKA_PARAMETER_SET,
     CKA_SENSITIVE,
     CKA_TOKEN,
@@ -37,26 +41,43 @@ from pkcs11_check.raw.types_std import (
     CKP_ML_KEM_768,
     CKR_OK,
 )
+from pkcs11_check.testcases.ckr import _object_policy as _qc4
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEM, assert_ckr
 
 pytestmark = [pytest.mark.access, pytest.mark.pqc]
 
 
-def _generate_ml_kem_keypair(raw: Any, sh: int) -> tuple[int, int]:
+def _generate_ml_kem_keypair(
+    raw: Any,
+    sh: int,
+    *,
+    pub_list: list[int] | None = None,
+    priv_list: list[int] | None = None,
+    tag: str | None = None,
+) -> tuple[int, int]:
     """Generate ML-KEM-768 keypair for tests. Returns (pub_handle, priv_handle)."""
     mech = mech_simple(CKM_ML_KEM_KEY_PAIR_GEN)
-    pub_tmpl = template(
+    pub_packed = [
         attr_bool(CKA_ENCAPSULATE, True),
         attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
         attr_bool(CKA_TOKEN, False),
-    )
-    priv_tmpl = template(
+    ]
+    priv_packed = [
         attr_bool(CKA_DECAPSULATE, True),
         attr_ulong(CKA_PARAMETER_SET, CKP_ML_KEM_768),
         attr_bool(CKA_TOKEN, False),
         attr_bool(CKA_SENSITIVE, False),
         attr_bool(CKA_EXTRACTABLE, False),
-    )
+    ]
+    if pub_list is not None:
+        pub_packed.append(attr_array(CKA_ALLOWED_MECHANISMS, pub_list))
+    if priv_list is not None:
+        priv_packed.append(attr_array(CKA_ALLOWED_MECHANISMS, priv_list))
+    if tag is not None:
+        pub_packed.append(attr_bytes(CKA_LABEL, f"{tag}-pub".encode()))
+        priv_packed.append(attr_bytes(CKA_LABEL, f"{tag}-priv".encode()))
+    pub_tmpl = template(*pub_packed)
+    priv_tmpl = template(*priv_packed)
     pub = CK_OBJECT_HANDLE(0)
     priv = CK_OBJECT_HANDLE(0)
     from pkcs11_check.raw.rv import expect_rv
@@ -238,3 +259,23 @@ class TestDecapsulateKeyErrors:
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+
+@pytest.mark.needs_function("C_EncapsulateKey")
+class TestAllowedMechanismsEncapsulate:
+    """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the encapsulate public key."""
+
+    @pytest.mark.parametrize("leg", ["included", "excluded"])
+    def test_encapsulate_policy_leg(self, p11_raw_session: Any, leg: str) -> None:
+        """Included must complete with a verified effect; excluded must refuse."""
+        _qc4._run_encapsulate_policy_leg(p11_raw_session, leg)
+
+
+@pytest.mark.needs_function("C_DecapsulateKey")
+class TestAllowedMechanismsDecapsulate:
+    """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the decapsulate private key."""
+
+    @pytest.mark.parametrize("leg", ["included", "excluded"])
+    def test_decapsulate_policy_leg(self, p11_raw_session: Any, leg: str) -> None:
+        """Included must complete with a verified effect; excluded must refuse."""
+        _qc4._run_decapsulate_policy_leg(p11_raw_session, leg)

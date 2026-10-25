@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _pytest.outcomes import XFailed
 
 from pkcs11_check import classification as C  # noqa: N812
 from pkcs11_check.raw.rv import CkrAssertionError
@@ -191,14 +192,22 @@ def test_provider_xfail_does_not_mask_cleanup_error(
         args[-2]._obj.value = 1088
         return int(CKR_BUFFER_TOO_SMALL) if calls == 1 else int(CKR_FUNCTION_NOT_SUPPORTED)
 
-    with pytest.raises(OSError, match="cleanup failed for 1"):
+    with pytest.raises(BaseExceptionGroup, match="key usage policy cleanup failures") as exc_info:
         policy.TestKEMKeyUsagePolicy().test_encapsulate_flag_false_rejected(
             _session(SimpleNamespace(C_EncapsulateKey=_encapsulate))
         )
+    group = exc_info.value
+    assert len(group.exceptions) == 3, group.exceptions
+    assert isinstance(group.exceptions[0], XFailed)
+    assert getattr(group.exceptions[0], "_pkcs11_check_classification", None) is not None
+    assert [str(exc) for exc in group.exceptions[1:]] == [
+        "cleanup failed for 1",
+        "cleanup failed for 2",
+    ]
     assert destroyed == [1, 2]
     records = C.get_records()
     assert any(record.reason == "nonspec_reject" for record in records)
-    assert [record for record in records if record.reason == "harness_error"]
+    assert not any(record.reason == "harness_error" for record in records)
 
 
 def test_cleanup_error_is_recorded_without_replacing_plain_provider_exception(
@@ -218,12 +227,108 @@ def test_cleanup_error_is_recorded_without_replacing_plain_provider_exception(
         args[-2]._obj.value = 1088
         raise OSError("provider call failed")
 
-    with pytest.raises(OSError, match="provider call failed"):
+    with pytest.raises(BaseExceptionGroup, match="key usage policy cleanup failures") as exc_info:
         policy.TestKEMKeyUsagePolicy().test_encapsulate_flag_false_rejected(
             _session(SimpleNamespace(C_EncapsulateKey=_encapsulate))
         )
+    group = exc_info.value
+    assert [str(exc) for exc in group.exceptions] == [
+        "provider call failed",
+        "cleanup failed for 31",
+        "cleanup failed for 1",
+        "cleanup failed for 2",
+    ]
     assert destroyed == [31, 1, 2]
-    assert any(record.reason == "harness_error" for record in C.get_records())
+    assert not any(record.reason == "harness_error" for record in C.get_records())
+
+
+def test_deferred_terminal_empty_is_none() -> None:
+    """F15: no deferred records means no pending outcome for cleanup."""
+    assert policy._deferred_terminal([]) is None
+
+
+def test_deferred_terminal_matches_raise_for_record_mapping() -> None:
+    """F15: the early-built terminal equals the clean-path raise, tag included."""
+    record = C.record_as("nonspec_reject", kind="policy", label="L", operation="op", summary="S")
+    terminal = policy._deferred_terminal([record])
+    assert isinstance(terminal, XFailed)
+    assert getattr(terminal, "_pkcs11_check_classification", None) is record
+    with pytest.raises(XFailed):
+        policy._raise_deferred_hard([record])
+
+
+def test_deferred_terminal_non_terminating_strongest_is_value_error() -> None:
+    """F15: a pass-outcome strongest record builds the ValueError the raise path throws."""
+    record = C.record_as(
+        "sanctioned_refusal", kind="policy", label="L", operation="op", summary="S"
+    )
+    terminal = policy._deferred_terminal([record])
+    assert isinstance(terminal, ValueError)
+    with pytest.raises(ValueError, match="not terminating"):
+        policy._raise_deferred_hard([record])
+
+
+def test_decapsulate_deferred_terminal_reaches_cleanup_without_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F16: the decaps leg builds its deferred terminal before cleanup (F15)."""
+    monkeypatch.setattr(policy, "_gen_ml_kem_keypair", lambda *_a, **_k: (1, 2))
+    calls = 0
+
+    def _encapsulate(*args: Any) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            args[-1]._obj.value = 0
+            args[-2]._obj.value = 1088
+            return int(CKR_BUFFER_TOO_SMALL)
+        args[-1]._obj.value = 31
+        args[-2]._obj.value = 1088
+        return int(CKR_OK)
+
+    def _decapsulate(*args: Any) -> int:
+        args[-1]._obj.value = 0
+        return int(CKR_FUNCTION_NOT_SUPPORTED)
+
+    with pytest.raises(XFailed):
+        policy.TestKEMKeyUsagePolicy().test_decapsulate_flag_false_rejected(
+            _session(SimpleNamespace(C_EncapsulateKey=_encapsulate, C_DecapsulateKey=_decapsulate))
+        )
+    records = C.get_records()
+    assert any(record.reason == "nonspec_reject" for record in records)
+    assert not any(record.reason == "harness_error" for record in records)
+
+
+def test_cleanup_error_without_primary_raises_as_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F15: a lone cleanup failure with no primary raises unchanged, unlabeled."""
+
+    def _destroy(_raw: object, _sh: object, _handle: int) -> None:
+        raise OSError("cleanup failed for 7")
+
+    monkeypatch.setattr(policy, "destroy_quietly", _destroy)
+    with pytest.raises(OSError, match="cleanup failed for 7"):
+        policy._destroy_owned_handles(object(), 7, [7], pending=None)
+    assert C.get_records() == []
+
+
+def test_multiple_cleanup_errors_without_primary_group_without_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F15: several cleanup failures with no primary raise grouped, unlabeled."""
+
+    def _destroy(_raw: object, _sh: object, handle: int) -> None:
+        raise OSError(f"cleanup failed for {handle}")
+
+    monkeypatch.setattr(policy, "destroy_quietly", _destroy)
+    with pytest.raises(BaseExceptionGroup, match="key usage policy cleanup failures") as exc_info:
+        policy._destroy_owned_handles(object(), 7, [7, 8], pending=None)
+    assert [str(exc) for exc in exc_info.value.exceptions] == [
+        "cleanup failed for 7",
+        "cleanup failed for 8",
+    ]
+    assert C.get_records() == []
 
 
 def test_advertised_clean_setup_refusal_is_visible_xfail(

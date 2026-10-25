@@ -774,7 +774,9 @@ def test_missing_token_readback_does_not_claim_promotion_effect(
 def test_optional_absence_escape_hatch_is_scoped_to_kcv() -> None:
     testcase_root = Path(__file__).parents[1] / "src" / "pkcs11_check" / "testcases"
     approved_source = testcase_root / "test_attribute_enforcement.py"
+    peer_source = testcase_root / "ckr" / "_object_policy.py"
     guarded_calls: list[ast.Call] = []
+    peer_guarded_calls: list[ast.Call] = []
     for source in testcase_root.rglob("*.py"):
         tree = ast.parse(source.read_text(encoding="utf-8"))
         parents: dict[ast.AST, ast.AST] = {
@@ -794,17 +796,32 @@ def test_optional_absence_escape_hatch_is_scoped_to_kcv() -> None:
             )
             if function_name != "attr_or_record" or keyword is None:
                 continue
-            assert source == approved_source
             assert isinstance(keyword.value, ast.Constant) and keyword.value.value is True
             assert len(call.args) >= 2
             assert isinstance(call.args[1], ast.Name)
-            assert call.args[1].id == "CKA_CHECK_VALUE"
-            ancestor = parents[call]
-            while not isinstance(ancestor, ast.ClassDef):
-                ancestor = parents[ancestor]
-            assert ancestor.name == "TestCheckValue"
-            guarded_calls.append(call)
+            attr_name = call.args[1].id
+            if source == approved_source:
+                assert attr_name == "CKA_CHECK_VALUE"
+                ancestor = parents[call]
+                while not isinstance(ancestor, ast.ClassDef):
+                    ancestor = parents[ancestor]
+                assert ancestor.name == "TestCheckValue"
+                guarded_calls.append(call)
+                continue
+            # R1 adjudicated pair (ckr/_object_policy.py, CKA_ALLOWED_MECHANISMS):
+            # the peer allow-list attribute is spec-optional -- its spec table
+            # row carries NO MUST-specify footnote markers, verified identical
+            # to the approved CKA_CHECK_VALUE precedent (which likewise
+            # carries none), so absence is conformant and the hatch docstring
+            # ("reserved for attributes the specification explicitly makes
+            # optional") covers Task 16 peer-allow-list observation exactly.
+            # Key components stay hatch-free (R2: required, never optional).
+            # PKCS#11 v3.2 Table 26 (CKA_ALLOWED_MECHANISMS row).
+            assert source == peer_source
+            assert attr_name == "CKA_ALLOWED_MECHANISMS"
+            peer_guarded_calls.append(call)
     assert guarded_calls
+    assert len(peer_guarded_calls) == 1
 
 
 def test_attribute_enforcement_access_slice_is_analyzer_clean() -> None:

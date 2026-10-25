@@ -56,6 +56,7 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
+from pkcs11_check.testcases.ckr import _object_policy as _qc4
 from pkcs11_check.testcases.ckr._malformed_attrs import (
     make_attr_null_pointer,
     make_bool_attr_overlong,
@@ -794,3 +795,107 @@ class TestDestroyObjectErrors:
             effect_observed=len(survivors) > 0,
             label="destroy an object then find its tagged content (use-after-destroy)",
         )
+
+
+_MESSAGE_USE = pytest.param("message", marks=pytest.mark.needs_function("C_MessageEncryptInit"))
+
+
+class TestAllowedMechanismsDerive:
+    """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the C_DeriveKey base key."""
+
+    @pytest.mark.parametrize("leg", ["included", "excluded"])
+    @pytest.mark.parametrize("use", ["classic", _MESSAGE_USE])
+    def test_derive_policy_leg(self, p11_raw_session: Any, leg: str, use: str) -> None:
+        """Included must complete with a verified effect; excluded must refuse."""
+        _qc4._run_derive_policy_leg(p11_raw_session, leg, use)
+
+
+class TestAllowedMechanismsWrap:
+    """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the C_WrapKey wrapping key."""
+
+    @pytest.mark.parametrize("leg", ["included", "excluded"])
+    @pytest.mark.parametrize("use", ["classic", _MESSAGE_USE])
+    def test_wrap_policy_leg(self, p11_raw_session: Any, leg: str, use: str) -> None:
+        """Included must complete with a verified effect; excluded must refuse."""
+        _qc4._run_wrap_policy_leg(p11_raw_session, leg, use)
+
+
+class TestAllowedMechanismsUnwrap:
+    """QC4a (#56.1): ALLOWED_MECHANISMS enforcement on the C_UnwrapKey unwrapping key."""
+
+    @pytest.mark.parametrize("leg", ["included", "excluded"])
+    @pytest.mark.parametrize("use", ["classic", _MESSAGE_USE])
+    def test_unwrap_policy_leg(self, p11_raw_session: Any, leg: str, use: str) -> None:
+        """Included must complete with a verified effect; excluded must refuse."""
+        _qc4._run_unwrap_policy_leg(p11_raw_session, leg, use)
+
+
+class TestMalformedObjectCreate:
+    """QC4b (#56.2): malformed class/type C_CreateObject templates."""
+
+    @pytest.mark.parametrize(
+        ("family", "malformation"),
+        [
+            ("rsa", "swap_secret_class_asym_type"),
+            ("rsa", "swap_asym_class_secret_type"),
+            ("rsa", "missing_modulus"),
+            ("rsa", "missing_exponent"),
+            ("ec", "swap_secret_class_asym_type"),
+            ("ec", "swap_asym_class_secret_type"),
+            ("ec", "missing_params"),
+            ("ec", "missing_point"),
+            ("pqc", "swap_secret_class_asym_type"),
+            ("pqc", "swap_asym_class_secret_type"),
+            ("pqc", "missing_params"),
+        ],
+    )
+    def test_create_malformed_template(
+        self, p11_raw_session: Any, family: str, malformation: str
+    ) -> None:
+        """Refusal proves zero delta; acceptance is inspected and used."""
+        _qc4._run_create_malformed_cell(p11_raw_session, family, malformation)
+
+
+class TestMalformedObjectUnwrap:
+    """QC4b (#56.2): malformed class/type C_UnwrapKey templates."""
+
+    @pytest.mark.parametrize(
+        ("family", "malformation"),
+        [
+            ("rsa", "swap_secret_class_asym_type"),
+            ("rsa", "swap_asym_class_secret_type"),
+            ("ec", "swap_secret_class_asym_type"),
+            ("ec", "swap_asym_class_secret_type"),
+            ("pqc", "swap_secret_class_asym_type"),
+            ("pqc", "swap_asym_class_secret_type"),
+        ],
+    )
+    def test_unwrap_malformed_template(
+        self, p11_raw_session: Any, family: str, malformation: str
+    ) -> None:
+        """Refusal proves zero delta; acceptance is inspected and used."""
+        _qc4._run_unwrap_malformed_cell(p11_raw_session, family, malformation)
+
+
+class TestMalformedObjectGenerate:
+    """QC4b (#56.2): malformed class/type C_GenerateKeyPair templates."""
+
+    @pytest.mark.parametrize(
+        ("family", "malformation"),
+        [
+            ("rsa", "swap_secret_class_asym_type"),
+            ("rsa", "swap_asym_class_secret_type"),
+            ("rsa", "missing_modulus_bits"),
+            ("ec", "swap_secret_class_asym_type"),
+            ("ec", "swap_asym_class_secret_type"),
+            ("ec", "missing_params"),
+            ("pqc", "swap_secret_class_asym_type"),
+            ("pqc", "swap_asym_class_secret_type"),
+            ("pqc", "missing_params"),
+        ],
+    )
+    def test_generate_malformed_template(
+        self, p11_raw_session: Any, family: str, malformation: str
+    ) -> None:
+        """Refusal proves zero delta; acceptance is inspected and used."""
+        _qc4._run_generate_malformed_cell(p11_raw_session, family, malformation)
