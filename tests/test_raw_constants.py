@@ -230,6 +230,23 @@ class TestPlatformDependentConstants:
         val = ctypes.c_ulong(CK_UNAVAILABLE_INFORMATION)
         assert val.value == CK_UNAVAILABLE_INFORMATION
 
+    def test_ck_unavailable_information_round_trips_through_ck_ulong(self) -> None:
+        # G3: the constant must serialize at exactly the host CK_ULONG width
+        # and survive the round trip -- catches a generator change that
+        # widens the constant beyond the field it is compared against.
+        from pkcs11_check.raw.types_std import CK_ULONG, CK_UNAVAILABLE_INFORMATION
+
+        raw = bytes(CK_ULONG(int(CK_UNAVAILABLE_INFORMATION)))
+        assert len(raw) == ctypes.sizeof(ctypes.c_ulong)
+        assert CK_ULONG.from_buffer_copy(raw).value == int(CK_UNAVAILABLE_INFORMATION)
+
+    def test_ck_unavailable_information_32_round_trips_through_uint32(self) -> None:
+        from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION_32
+
+        raw = bytes(ctypes.c_uint32(int(CK_UNAVAILABLE_INFORMATION_32)))
+        assert len(raw) == 4
+        assert ctypes.c_uint32.from_buffer_copy(raw).value == int(CK_UNAVAILABLE_INFORMATION_32)
+
     def test_ck_unavailable_information_is_all_bits_set(self) -> None:
         from pkcs11_check.raw.types_std import CK_UNAVAILABLE_INFORMATION
 
