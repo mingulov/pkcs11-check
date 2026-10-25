@@ -37,6 +37,8 @@ from .types_std import (
     CK_SESSION_INFO,
     CK_SLOT_INFO,
     CK_ULONG,
+    CK_UNAVAILABLE_INFORMATION,
+    CK_UNAVAILABLE_INFORMATION_32,
     CKA,
     CKA_BASE,
     CKA_CLASS,
@@ -1240,6 +1242,17 @@ class AttrReadResult(dict[int, Any]):
 _ATTR_REFUSAL_CODES = (CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
 
 
+def _is_unavailable_length(val: int) -> bool:
+    """Whether a returned length is the CK_UNAVAILABLE_INFORMATION sentinel.
+
+    Sensitive or type-invalid attributes report ``ulValueLen`` as
+    ``(CK_ULONG)-1``; some modules use the 32-bit spelling even on 64-bit
+    platforms, so both generated spellings count. On a 4-byte ``CK_ULONG``
+    host the two values coincide.
+    """
+    return val in (int(CK_UNAVAILABLE_INFORMATION), int(CK_UNAVAILABLE_INFORMATION_32))
+
+
 def read_attributes(
     raw: RawPKCS11,
     session: int,
@@ -1275,15 +1288,6 @@ def read_attributes(
         tmpl[i].pValue = None
         tmpl[i].ulValueLen = 0
 
-    # CK_UNAVAILABLE_INFORMATION sentinel: ulValueLen set to (CK_ULONG)-1 for
-    # sensitive or type-invalid attributes. Some modules return 0xFFFFFFFF
-    # (32-bit sentinel) even on 64-bit platforms.
-    _ck_unavailable_64 = ctypes.c_ulong(-1).value  # 0xFFFFFFFFFFFFFFFF on 64-bit
-    _ck_unavailable_32 = 0xFFFFFFFF
-
-    def _is_unavailable(val: int) -> bool:
-        return val == _ck_unavailable_64 or val == _ck_unavailable_32
-
     # First call: query sizes
     rv1 = raw.C_GetAttributeValue(session, handle, tmpl, count)
     expect_rv(rv1, CKR_OK, CKR_ATTRIBUTE_SENSITIVE, CKR_ATTRIBUTE_TYPE_INVALID)
@@ -1292,7 +1296,7 @@ def read_attributes(
     buffers: list[Any] = []
     for i in range(count):
         size = tmpl[i].ulValueLen
-        if _is_unavailable(size):
+        if _is_unavailable_length(size):
             buffers.append(None)
             continue
         buf = _alloc_module_output(size, what="C_GetAttributeValue")
@@ -1315,7 +1319,7 @@ def read_attributes(
     result = AttrReadResult()
     for i, at in enumerate(attr_types):
         size = tmpl[i].ulValueLen
-        if _is_unavailable(size) or buffers[i] is None:
+        if _is_unavailable_length(size) or buffers[i] is None:
             # Attribute sensitive or type invalid, correctly signalled via the
             # CK_UNAVAILABLE_INFORMATION sentinel -- do not invent a CKR: only
             # record a refusal when one was actually observed on this call.

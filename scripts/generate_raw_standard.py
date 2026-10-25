@@ -693,6 +693,13 @@ def _render_types_module(
             # Platform-dependent value like ~0UL: emit runtime expression
             cls = _resolve_constant_type(name)
             lines.append(f"{name} = {cls}(_CK_ULONG_MAX, {name!r})")
+            if name == "CK_UNAVAILABLE_INFORMATION":
+                # The 32-bit spelling some modules return even on 64-bit
+                # platforms; emitted here so the sentinel has one seam.
+                lines.append(
+                    "CK_UNAVAILABLE_INFORMATION_32 = "
+                    "CK_CONSTANT(0xffffffff, 'CK_UNAVAILABLE_INFORMATION_32')"
+                )
         else:
             cls = _resolve_constant_type(name)
             lines.append(f"{name} = {cls}(0x{value:08x}, {name!r})")
