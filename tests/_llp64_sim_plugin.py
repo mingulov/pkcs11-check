@@ -45,6 +45,8 @@ PATCH_SITES: tuple[tuple[str, str], ...] = (
     ("test_object_policy_effect_contract", "_U64"),
     ("test_protected_component_contract", _SENTINEL_NAME),
     ("test_protected_component_contract", "_U64"),
+    ("test_wrap_kem_handle_contract", _SENTINEL_NAME),
+    ("test_wrap_kem_handle_contract", "_U64"),
 )
 
 #: Production modules imported eagerly at patch time (before collection, so
