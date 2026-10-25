@@ -15,6 +15,19 @@ if TYPE_CHECKING:
 
     from _pytest.terminal import TerminalReporter
 
+# Sentinel-value simulation: inert unless PKCS11_CHECK_SIM_LLP64=1. Applied at
+# conftest load, before any test module is collected, so import-time skipif
+# conditions see the collapsed sentinel. Value-level only (Python ints), never
+# an LLP64 ABI proof -- see tests/_llp64_sim_plugin.py.
+_SIM_LLP64 = os.environ.get("PKCS11_CHECK_SIM_LLP64") == "1"
+if _SIM_LLP64:
+    from tests._llp64_sim_plugin import apply_sim_patch as _apply_sim_patch
+    from tests._llp64_sim_plugin import (
+        patch_collected_modules as _patch_collected_modules,
+    )
+
+    _apply_sim_patch()
+
 
 @pytest.fixture
 def classification_report_plugin_enabled() -> None:
@@ -130,6 +143,8 @@ _vector_skipped_modules: set[str] = set()
 
 def pytest_collection_modifyitems(config: pytest.Config, items: Iterable[pytest.Item]) -> None:
     """Skip vector-dependent meta-tests when any required data dir is not fetched."""
+    if _SIM_LLP64:
+        _patch_collected_modules(list(items))
     for item in items:
         module_name = Path(str(item.fspath)).name
         required = _VECTOR_DEPENDENT_MODULES.get(module_name)

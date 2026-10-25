@@ -36,6 +36,14 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
       - run: uv sync --frozen --extra dev
       - run: uv run pytest tests/ -v --timeout=60
+      # Sentinel-value simulation: rerun the pinned contract files with
+      # CK_UNAVAILABLE_INFORMATION collapsed to its 32-bit spelling, as on a
+      # 4-byte CK_ULONG host. Value-level logic only -- not LLP64 ABI proof.
+      # Local command: PKCS11_CHECK_SIM_LLP64=1 uv run pytest $(cat tests/_llp64_sim_files.txt)
+      - name: Sentinel-value simulation (collapsed sentinel)
+        env:
+          PKCS11_CHECK_SIM_LLP64: "1"
+        run: uv run pytest $(cat tests/_llp64_sim_files.txt) -q --timeout=60
 
   meta-tests-ascii-locale:
     # Catch locale-dependent text I/O on LINUX, where it is cheap and deterministic.

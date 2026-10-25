@@ -1,0 +1,1 @@
+tests/test_protected_component_contract.py

@@ -6,6 +6,7 @@
 uv run pkcs11-check version              # check CLI works
 uv run python -m pytest tests/test_python_source_syntax.py tests/test_security_subprocess_regressions.py tests/test_subprocess_result_policy.py  # fast syntax/generated-subprocess gate
 uv run python -m pytest tests/           # run meta-tests
+PKCS11_CHECK_SIM_LLP64=1 uv run pytest $(cat tests/_llp64_sim_files.txt)  # sentinel-value sim: contract tests with CK_UNAVAILABLE_INFORMATION collapsed to its 32-bit spelling (value-level only, not an LLP64 ABI proof)
 uv run ruff check src/ tests/            # lint
 uv run ruff format src/ tests/           # format
 uv run mypy src/                         # type check
