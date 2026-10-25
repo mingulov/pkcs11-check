@@ -66,6 +66,7 @@ from pkcs11_check.raw.recipes import (
     message_decrypt,
     message_encrypt,
     pack_attrs,
+    partition_proved_new,
     read_attributes,
     sign_single,
     to_ubyte_buf,
@@ -2769,6 +2770,8 @@ def _adjudicate_malformed_refusal(
     before: list[int],
     spec_ref: str,
     error_handles: Iterable[int] = (),
+    attempt_templates: Iterable[dict[Any, Any]] = (),
+    identities: Iterable[tuple[int, int]] = (),
 ) -> None:
     """Rejection leg: record validity, inventory, terminate strongest (N7).
 
@@ -2780,21 +2783,39 @@ def _adjudicate_malformed_refusal(
     Termination raises for the strongest retained record; only a
     standard refusal with a proved zero delta reaches the pass.
 
-    The delta is taken against the FULL inventory (P2): *before* and the
-    post-refusal snapshot list every visible object, so any handle only
-    in the later snapshot is live and proved newly owned by this attempt
-    whatever label it carries. Error-path output handles are unspecified
-    and are never trusted: they are recorded as evidence only and are
-    destroyed solely as members of the proved-new delta, never directly.
+    The delta is taken against the FULL inventory (P2), then partitioned
+    by correlation to the attempt (R1): only a delta handle proved by
+    attempt label, token/class/type/material, or error-output membership
+    is judged and destroyed. An unproved delta is an honest deviation,
+    left alive, and never reaches the pass. Error-path output handles
+    are unspecified and are never trusted directly.
     """
     outputs = [int(handle) for handle in error_handles if handle]
     retained = _record_rv_validity(rv, label=label, operation=operation, kind="policy")
+    inventory_operation = "C_FindObjects"
     try:
         after = _find_all(rs)
-    except CkrAssertionError as exc:
-        inventory_retained = _record_rv_validity(
-            exc.rv, label=f"{label}: inventory", operation="C_FindObjects", kind="policy"
+        inventory_operation = "C_GetAttributeValue"
+        before_set = set(before)
+        delta = [handle for handle in after if handle not in before_set]
+        leaked, unproved = partition_proved_new(
+            rs.raw,
+            rs.sh,
+            before,
+            after,
+            attempt_templates=attempt_templates,
+            identities=identities,
+            error_handles=outputs,
         )
+    except CkrAssertionError as exc:
+        if inventory_operation == "C_GetAttributeValue":
+            inventory_retained = _record_rv_validity(
+                exc.rv, label=f"{label}: inventory", operation="C_GetAttributeValue", kind="policy"
+            )
+        else:
+            inventory_retained = _record_rv_validity(
+                exc.rv, label=f"{label}: inventory", operation="C_FindObjects", kind="policy"
+            )
         candidates = [rec for rec in (retained, inventory_retained) if rec is not None]
         if candidates:
             strongest = _strongest_record(candidates)
@@ -2824,8 +2845,6 @@ def _adjudicate_malformed_refusal(
                 **({"error_output_handles": outputs} if outputs else {}),
             },
         )
-    before_set = set(before)
-    leaked = [handle for handle in after if handle not in before_set]
     if leaked:
         # F14: the established contradiction is RECORDED BEFORE cleanup
         # runs (leak evidence first, then destroy); a destroy failure is
@@ -2862,11 +2881,34 @@ def _adjudicate_malformed_refusal(
         # The proved zero delta rides in the retained record's detail.
         detail = retained.detail if isinstance(retained.detail, dict) else {}
         detail.setdefault("refusal_rv", ckr_name(rv))
-        detail["inventory_delta"] = 0
+        detail["inventory_delta"] = len(delta)
+        if unproved:
+            detail["unproved_new_handles"] = unproved
         if outputs:
             detail["error_output_handles"] = outputs
         retained.detail = detail
         raise_for_record(retained)
+    if unproved:
+        xfail_as(
+            "honest_deviation",
+            kind="policy",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            spec_ref=spec_ref,
+            summary=(
+                f"{label}: refused with {ckr_name(rv)} but the inventory delta "
+                "is unproved; zero-delta unproved"
+            ),
+            detail={
+                "disposition": "unproved-effect",
+                "refusal_rv": ckr_name(rv),
+                "inventory_delta": len(delta),
+                "unproved_new_handles": unproved,
+                **({"error_output_handles": outputs} if outputs else {}),
+            },
+        )
     emit_qc4_pass(
         label=label,
         operation=operation,
@@ -3787,6 +3829,28 @@ def _create_aes_secret_control(attempt: dict[Any, Any], label: str) -> dict[Any,
     return control
 
 
+def _swap_coherent_identities(
+    requested: tuple[int, int],
+    *,
+    malformation: str,
+    family_type: int,
+    asym_class: int,
+) -> tuple[tuple[int, int], ...]:
+    """Requested plus well-formed coerced identities for swap cells (R1).
+
+    A provider that normalizes a swapped class/type template creates the
+    material under its coherent identity instead of the malformed one;
+    both stay correlation candidates (material/token still must match).
+    """
+    identities = [requested]
+    if malformation == "swap_secret_class_asym_type":
+        identities.append((int(asym_class), int(family_type)))
+        identities.append((int(CKO_SECRET_KEY), int(CKK_AES)))
+    elif malformation == "swap_asym_class_secret_type":
+        identities.append((int(CKO_SECRET_KEY), int(CKK_AES)))
+    return tuple(dict.fromkeys(identities))
+
+
 def _cell_material_is_aes(family: str, malformation: str) -> bool:
     """True when the cell's template carries AES value material (F7).
 
@@ -4008,6 +4072,7 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
     attempt_label = malformed_label("create", family, malformation)
     ctrl_label = control_label("create", family, malformation)
     pqc: PqcFamily | None = resolve_pqc_family(rs) if family == "pqc" else None
+    family_type = {"rsa": int(CKK_RSA), "ec": int(CKK_EC)}.get(family, pqc.key_type if pqc else 0)
     src_pub = 0
     src_priv = 0
     try:
@@ -4058,6 +4123,13 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 before=before,
                 spec_ref=_QC4B_SPEC,
                 error_handles=(int(handle.value),),
+                attempt_templates=(attempt_attrs,),
+                identities=_swap_coherent_identities(
+                    requested,
+                    malformation=malformation,
+                    family_type=family_type,
+                    asym_class=int(CKO_PUBLIC_KEY),
+                ),
             )
             return
         try:
@@ -4503,6 +4575,13 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 before=before,
                 spec_ref=_QC4B_SPEC,
                 error_handles=(int(handle.value),),
+                attempt_templates=(attempt_attrs,),
+                identities=_swap_coherent_identities(
+                    requested,
+                    malformation=malformation,
+                    family_type=family_type,
+                    asym_class=int(CKO_PRIVATE_KEY),
+                ),
             )
             return
         try:
@@ -4751,6 +4830,7 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
     keygen_mech, pub_attrs, priv_attrs, requested = _generate_templates(
         family, pqc, malformation, attempt_label
     )
+    family_type = {"rsa": int(CKK_RSA), "ec": int(CKK_EC)}.get(family, pqc.key_type if pqc else 0)
     ctrl_pub, ctrl_priv = _generate_family_source(rs, family, pqc, label=ctrl_label)
     _cleanup_owned(rs, [ctrl_pub, ctrl_priv])
     try:
@@ -4781,6 +4861,12 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             before=before,
             spec_ref=_QC4B_SPEC,
             error_handles=(int(pub_handle.value), int(priv_handle.value)),
+            attempt_templates=(pub_attrs, priv_attrs),
+            identities=(
+                requested,
+                (int(CKO_PUBLIC_KEY), family_type),
+                (int(CKO_PRIVATE_KEY), family_type),
+            ),
         )
         return
     try:

@@ -41,10 +41,18 @@ MAX_PAGES = 128
 
 @dataclass(frozen=True)
 class ExactSearchObservation:
-    """One leg's search outcome: handles on success, else a recorded verdict."""
+    """One leg's search outcome.
+
+    ``handles`` is set only when the Find loop exhausted cleanly, so a
+    membership verdict can be evaluated even when ``final_record`` carries
+    a separate ``C_FindObjectsFinal`` defect. ``record`` carries the
+    strongest verdict for an incomplete search, whose handles stay
+    unevaluated.
+    """
 
     handles: tuple[int, ...] | None
     record: C.Classification | None
+    final_record: C.Classification | None = None
 
 
 def flip_last_byte(value: bytes) -> bytes:
@@ -203,20 +211,24 @@ def observe_exact_search(
             final_rv = int(rs.raw.C_FindObjectsFinal(rs.sh))
         except AttributeError:
             pass
+    final_record: C.Classification | None = None
     if final_rv != int(CKR_OK):
         final_record = _final_record(
             final_rv,
             label=label,
             detail={"session": int(rs.sh), "handles_seen": found},
         )
-        # Preserve the stronger verdict (P5): a Final FAIL outranks a
-        # Find xfail; an existing FAIL -- or the first xfail -- stands.
-        # Either way the sibling leg is still observed by the caller.
-        if record is None or (final_record.outcome == "fail" and record.outcome != "fail"):
-            record = final_record
     if record is not None:
-        return ExactSearchObservation(handles=None, record=record)
-    return ExactSearchObservation(handles=tuple(found), record=None)
+        # Incomplete search: handles stay unevaluated. Preserve the
+        # stronger verdict (P5): a Final FAIL outranks a Find xfail; an
+        # existing FAIL -- or the first xfail -- stands.
+        strongest = record
+        if final_record is not None and final_record.outcome == "fail" and record.outcome != "fail":
+            strongest = final_record
+        return ExactSearchObservation(handles=None, record=strongest, final_record=final_record)
+    # Exhausted search: keep the result set evaluable even when Final
+    # failed, so a membership FAIL is not displaced by the Final record.
+    return ExactSearchObservation(handles=tuple(found), record=None, final_record=final_record)
 
 
 def expected_among_record(
@@ -226,11 +238,10 @@ def expected_among_record(
     label: str,
 ) -> C.Classification | None:
     """Record a fail unless *expected_handle* is among the search results."""
-    if observation.record is not None:
+    if observation.handles is None:
         return observation.record
-    assert observation.handles is not None
     if expected_handle in observation.handles:
-        return None
+        return observation.final_record or observation.record
     return C.record_as(
         "self_contradiction",
         kind="metadata",
@@ -257,11 +268,10 @@ def expected_not_among_record(
     label: str,
 ) -> C.Classification | None:
     """Record a fail if *expected_handle* matches the changed-value template."""
-    if observation.record is not None:
+    if observation.handles is None:
         return observation.record
-    assert observation.handles is not None
     if expected_handle not in observation.handles:
-        return None
+        return observation.final_record or observation.record
     return C.record_as(
         "self_contradiction",
         kind="metadata",

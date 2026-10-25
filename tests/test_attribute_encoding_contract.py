@@ -30,13 +30,16 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
+    CKA_CLASS,
     CKA_DERIVE,
     CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
     CKA_SIGN_RECOVER,
+    CKA_TOKEN,
     CKA_VALUE,
     CKA_VERIFY_RECOVER,
+    CKO_PRIVATE_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_SENSITIVE,
     CKR_ATTRIBUTE_TYPE_INVALID,
@@ -94,6 +97,7 @@ class _EncodingRaw:
         self.destroyed: list[int] = []
         self.staged: list[int] = []
         self.create_calls: list[dict[int, bytes]] = []
+        self.attr_reads: list[int] = []
         self.genpair_calls: list[dict[str, Any]] = []
         self.derive_calls: list[int] = []
         self._next_handle = 100
@@ -115,8 +119,19 @@ class _EncodingRaw:
         self.forbidden_handle_write: int | None = None
         self.forbidden_leak = "none"  # none | labeled | unlabeled
         self.forbidden_ok_without_object = False
+        # R2 knob: on the accepting forbidden create, return CKR_OK with
+        # this pre-existing handle and allocate nothing.
+        self.forbidden_ok_existing_handle: int | None = None
+        # R1 knob: plant an unrelated token object during the refused leg.
+        self.forbidden_foreign_delta = False
+        self.foreign_delta_handle: int | None = None
         self.refuse_padded_modulus_rv: int | None = None
         self.derive_on_false_claim = "refuse"  # refuse | succeed
+        # R3 knobs for the false-claim refusal: mutate the output to the
+        # base/foreign handle, or allocate a derived object anyway.
+        self.derive_refusal_write = "none"  # none | base | foreign | new | new-silent
+        self.derive_refusal_foreign_handle: int | None = None
+        self.derive_refusal_new_handle: int | None = None
 
     def _alloc(self, attrs: dict[int, bytes], role: str) -> int:
         self._next_handle += 1
@@ -128,6 +143,7 @@ class _EncodingRaw:
 
     # -- attribute reads -------------------------------------------------
     def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        self.attr_reads.append(int(handle))
         stored = self.objects.get(int(handle))
         assert stored is not None, f"read from unknown handle {handle}"
         role = self.roles.get(int(handle), "")
@@ -185,9 +201,19 @@ class _EncodingRaw:
                     if self.forbidden_leak == "unlabeled":
                         leak_attrs.pop(int(CKA_LABEL), None)
                     self._alloc(leak_attrs, "create")
+                if self.forbidden_foreign_delta:
+                    foreign_attrs = {
+                        int(CKA_LABEL): b"foreign-delta",
+                        int(CKA_TOKEN): b"\x01",
+                        int(CKA_CLASS): _ulong_blob(int(CKO_PRIVATE_KEY)),
+                    }
+                    self.foreign_delta_handle = self._alloc(foreign_attrs, "create")
                 if self.forbidden_handle_write is not None:
                     _write_handle(handle_ptr, self.forbidden_handle_write)
                 return refusal
+            if self.forbidden_ok_existing_handle is not None:
+                _write_handle(handle_ptr, self.forbidden_ok_existing_handle)
+                return _OK  # CKR_OK naming a pre-existing object; nothing created.
             if self.forbidden_ok_without_object:
                 return _OK  # CKR_OK, sentinel untouched, nothing created.
             # accept: fall through and create (the seeded defect).
@@ -287,7 +313,7 @@ class _EncodingRaw:
         for i, handle in enumerate(take):
             handles[i] = handle
         ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = len(take)
-        self._search = []
+        self._search = self._search[len(take) :]
         return _OK
 
     def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
@@ -298,15 +324,28 @@ class _EncodingRaw:
         self, _sh: int, _mech: Any, base: int, tmpl: Any, count: int, handle_ptr: Any
     ) -> int:
         self.derive_calls.append(int(base))
+        attrs = _decode_template(tmpl, int(count))
         stored = self.objects.get(int(base), {})
         if stored.get(_DERIVE) == b"\x01":
-            derived = self._alloc({_VALUE: b"\x22" * 32}, "derived")
+            derived = self._alloc({**attrs, _VALUE: b"\x22" * 32}, "derived")
             _write_handle(handle_ptr, derived)
             return _OK
         if self.derive_on_false_claim == "succeed":
-            derived = self._alloc({_VALUE: b"\x22" * 32}, "derived")
+            derived = self._alloc({**attrs, _VALUE: b"\x22" * 32}, "derived")
             _write_handle(handle_ptr, derived)
             return _OK
+        if self.derive_refusal_write == "base":
+            _write_handle(handle_ptr, int(base))
+        elif (
+            self.derive_refusal_write == "foreign"
+            and self.derive_refusal_foreign_handle is not None
+        ):
+            _write_handle(handle_ptr, self.derive_refusal_foreign_handle)
+        elif self.derive_refusal_write in ("new", "new-silent"):
+            new_handle = self._alloc({**attrs, _VALUE: b"\x22" * 32}, "derived")
+            self.derive_refusal_new_handle = new_handle
+            if self.derive_refusal_write == "new":
+                _write_handle(handle_ptr, new_handle)
         return _NOT_PERMITTED
 
 
@@ -764,6 +803,64 @@ def test_create_with_modulus_bits_ok_without_object_fails() -> None:
     assert fake.staged == []
 
 
+def test_create_with_modulus_bits_ok_preexisting_handle_fails_without_touching_it_r2() -> None:
+    """R2: CKR_OK naming a pre-existing object proves no creation."""
+    fake = _EncodingRaw()
+    planted = fake._alloc(
+        {int(CKA_LABEL): b"foreign-pre-existing", _MODULUS_BITS: _ulong_blob(2048)},
+        "create",
+    )
+    fake.forbidden_create_mode = "accept"
+    fake.forbidden_ok_existing_handle = planted
+    with pytest.raises(Failed):
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+    detail = _forbidden_record("self_contradiction").detail
+    assert detail["handle_after"] == planted
+    assert detail["handle_class"] == "pre-existing"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert detail["stored_bits"] is None
+    assert planted in fake.objects
+    assert fake.destroyed == []
+    assert planted not in fake.attr_reads
+
+
+def test_create_with_modulus_bits_refusal_foreign_delta_xfails_unproved_alive_r1() -> None:
+    """R1: an uncorrelated delta object is never judged or destroyed."""
+    fake = _EncodingRaw()
+    fake.forbidden_foreign_delta = True
+    assert_xfails(
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected,
+        _rs(fake),
+        "correct",
+    )
+    foreign = fake.foreign_delta_handle
+    assert foreign is not None
+    records = [record for record in C.get_records() if record.outcome == "xfail"]
+    assert len(records) == 1
+    assert records[0].reason == "honest_deviation"
+    detail = records[0].detail or {}
+    assert detail["proved_new_handles"] == []
+    assert detail["unproved_new_handles"] == [foreign]
+    assert foreign in fake.objects
+    assert fake.destroyed == []
+
+
+def test_create_with_modulus_bits_refusal_unlabeled_leak_beyond_first_page_r4() -> None:
+    """R4: exhaustive inventory catches a proved leak past handle 256."""
+    fake = _EncodingRaw()
+    fake.forbidden_leak = "unlabeled"
+    litter = [fake._alloc({int(CKA_LABEL): f"litter-{i}".encode()}, "create") for i in range(300)]
+    with pytest.raises(Failed):
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+    detail = _forbidden_record("self_contradiction").detail
+    proved = detail["proved_new_handles"]
+    assert len(proved) == 1, detail
+    assert fake.destroyed == proved
+    assert all(handle in fake.objects for handle in litter)
+    assert not any(handle in fake.destroyed for handle in litter)
+
+
 def test_create_with_wrong_modulus_bits_other_clean_refusal_xfails() -> None:
     fake = _EncodingRaw()
     fake.forbidden_create_mode = "general"
@@ -968,4 +1065,61 @@ def test_derive_claim_false_but_derive_succeeds_fails() -> None:
             _rs(fake)
         )
     assert any(rec.reason == "wrong_result" for rec in _records())
+    _assert_cleanup(fake)
+
+
+def test_derive_refusal_writing_base_handle_passes_without_double_destroy_r3() -> None:
+    """R3: a refusal output naming the staged base key is detail only."""
+    fake = _EncodingRaw()
+    _seed_bbools(fake)
+    fake.derive_refusal_write = "base"
+    defaults_case.TestOmittedUsageFlagDefaults().test_derive_false_claim_blocks_derive(_rs(fake))
+    assert not any(rec.outcome == "fail" for rec in _records())
+    _assert_cleanup(fake)
+
+
+def test_derive_refusal_writing_foreign_handle_passes_foreign_alive_r3() -> None:
+    """R3: a refusal output naming a foreign object never destroys it."""
+    fake = _EncodingRaw()
+    _seed_bbools(fake)
+    foreign = fake._alloc({int(CKA_LABEL): b"foreign"}, "create")
+    fake.derive_refusal_write = "foreign"
+    fake.derive_refusal_foreign_handle = foreign
+    defaults_case.TestOmittedUsageFlagDefaults().test_derive_false_claim_blocks_derive(_rs(fake))
+    assert not any(rec.outcome == "fail" for rec in _records())
+    assert foreign in fake.objects
+    assert foreign not in fake.destroyed
+    assert sorted(set(fake.staged) - {foreign}) == sorted(fake.destroyed)
+    assert len(fake.destroyed) == len(set(fake.destroyed))
+
+
+def test_derive_refusal_silent_new_object_fails_and_cleans_up_r3() -> None:
+    """R3: a refusal that silently creates a proved-new object fails."""
+    fake = _EncodingRaw()
+    _seed_bbools(fake)
+    fake.derive_refusal_write = "new-silent"
+    with pytest.raises(Failed):
+        defaults_case.TestOmittedUsageFlagDefaults().test_derive_false_claim_blocks_derive(
+            _rs(fake)
+        )
+    assert any(rec.reason == "self_contradiction" for rec in _records())
+    new_handle = fake.derive_refusal_new_handle
+    assert new_handle is not None
+    assert fake.destroyed.count(new_handle) == 1
+    _assert_cleanup(fake)
+
+
+def test_derive_refusal_written_new_object_fails_and_cleans_up_r3() -> None:
+    """R3 guard: a refusal writing its proved-new object fails, destroyed once."""
+    fake = _EncodingRaw()
+    _seed_bbools(fake)
+    fake.derive_refusal_write = "new"
+    with pytest.raises(Failed):
+        defaults_case.TestOmittedUsageFlagDefaults().test_derive_false_claim_blocks_derive(
+            _rs(fake)
+        )
+    assert any(rec.reason == "self_contradiction" for rec in _records())
+    new_handle = fake.derive_refusal_new_handle
+    assert new_handle is not None
+    assert fake.destroyed.count(new_handle) == 1
     _assert_cleanup(fake)

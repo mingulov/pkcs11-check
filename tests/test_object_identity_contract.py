@@ -12,6 +12,7 @@ Records must never carry unique-id bytes -- lengths only.
 from __future__ import annotations
 
 import ctypes
+import sys
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
@@ -25,8 +26,12 @@ from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
+    CKA_CLASS,
     CKA_LABEL,
+    CKA_TOKEN,
     CKA_UNIQUE_ID,
+    CKO_PRIVATE_KEY,
+    CKO_SECRET_KEY,
     CKR_ATTRIBUTE_READ_ONLY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_BUFFER_TOO_SMALL,
@@ -73,6 +78,7 @@ class _IdentityRaw:
         self.create_calls: list[dict[int, bytes]] = []
         self.genkey_calls: list[dict[int, bytes]] = []
         self.copy_calls: list[dict[int, bytes]] = []
+        self.attr_reads: list[int] = []
         self._next_handle = 200
         self._uid_counter = 0
         self._search: list[int] = []
@@ -87,6 +93,13 @@ class _IdentityRaw:
         # per-operation object leaked before returning the refusal.
         self.override_handle_write: int | None = None
         self.override_leak_by_op: dict[str, str] = {}  # op -> labeled | unlabeled
+        self.override_leak_write_created: bool = False
+        # R2 knob: on an accepting override leg, return CKR_OK with this
+        # pre-existing handle and allocate nothing.
+        self.override_ok_existing_handle: int | None = None
+        # R1 knob: plant an unrelated token object during the refused op.
+        self.override_foreign_delta_by_op: dict[str, bool] = {}
+        self.foreign_delta_handle: int | None = None
 
     def _fresh_uid(self) -> bytes:
         self._uid_counter += 1
@@ -136,10 +149,27 @@ class _IdentityRaw:
             leak_attrs = dict(attrs)
             if leak == "unlabeled":
                 leak_attrs.pop(int(CKA_LABEL), None)
-            self._alloc(leak_attrs)
+            leaked = self._alloc(leak_attrs)
+            if self.override_leak_write_created:
+                _write_handle(handle_ptr, leaked)
+        if self.override_foreign_delta_by_op.get(op):
+            foreign_attrs = {
+                int(CKA_LABEL): b"foreign-delta",
+                int(CKA_TOKEN): b"\x01",
+                int(CKA_CLASS): int(CKO_PRIVATE_KEY).to_bytes(
+                    ctypes.sizeof(CK_ULONG), sys.byteorder
+                ),
+            }
+            self.foreign_delta_handle = self._alloc(foreign_attrs, uid=b"foreign-id")
         if self.override_handle_write is not None:
             _write_handle(handle_ptr, self.override_handle_write)
         return refusal
+
+    def _apply_override_ok_existing(self, attrs: dict[int, bytes], handle_ptr: Any) -> bool:
+        if _UID not in attrs or self.override_ok_existing_handle is None:
+            return False
+        _write_handle(handle_ptr, self.override_ok_existing_handle)
+        return True
 
     def _alloc_with_override(self, attrs: dict[int, bytes]) -> int:
         if _UID in attrs and self.override_mode == "honor":
@@ -156,6 +186,7 @@ class _IdentityRaw:
         return _OK
 
     def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        self.attr_reads.append(int(handle))
         stored = self.objects.get(int(handle))
         assert stored is not None, f"read from unknown handle {handle}"
         row_rvs: list[int] = []
@@ -183,6 +214,8 @@ class _IdentityRaw:
         refusal = self._apply_override_refusal("create", attrs, handle_ptr)
         if refusal is not None:
             return refusal
+        if self._apply_override_ok_existing(attrs, handle_ptr):
+            return _OK
         _write_handle(handle_ptr, self._alloc_with_override(attrs))
         return _OK
 
@@ -190,10 +223,16 @@ class _IdentityRaw:
         self, _sh: int, _mech: Any, tmpl: Any, count: int, handle_ptr: Any
     ) -> int:
         attrs = _decode_template(tmpl, int(count))
+        # Generated secret keys always expose their class on readback.
+        attrs.setdefault(
+            int(CKA_CLASS), int(CKO_SECRET_KEY).to_bytes(ctypes.sizeof(CK_ULONG), sys.byteorder)
+        )
         self.genkey_calls.append(attrs)
         refusal = self._apply_override_refusal("generate", attrs, handle_ptr)
         if refusal is not None:
             return refusal
+        if self._apply_override_ok_existing(attrs, handle_ptr):
+            return _OK
         _write_handle(handle_ptr, self._alloc_with_override(attrs))
         return _OK
 
@@ -222,6 +261,8 @@ class _IdentityRaw:
         refusal = self._apply_override_refusal("copy", attrs, handle_ptr)
         if refusal is not None:
             return refusal
+        if self._apply_override_ok_existing(attrs, handle_ptr):
+            return _OK
         source = dict(self.objects.get(int(handle), {}))
         source.update(attrs)
         if _UID in attrs and self.override_mode == "honor":
@@ -254,7 +295,7 @@ class _IdentityRaw:
         for i, handle in enumerate(take):
             handles[i] = handle
         ctypes.cast(found_ptr, ctypes.POINTER(CK_ULONG)).contents.value = len(take)
-        self._search = []
+        self._search = self._search[len(take) :]
         return _OK
 
     def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
@@ -575,6 +616,80 @@ def test_unique_id_override_refusal_unlabeled_new_object_fails() -> None:
     assert detail["handle_class"] == "sentinel"
     assert detail["found_by_label"] == []
     assert detail["new_handles"] == fake.staged
+    _assert_cleanup(fake)
+
+
+def test_unique_id_override_ok_preexisting_handle_fails_without_touching_it_r2() -> None:
+    """R2: CKR_OK naming a pre-existing object proves no creation."""
+    fake = _IdentityRaw()
+    planted = fake._alloc({int(CKA_LABEL): b"foreign-pre-existing"}, uid=_CALLER_UID)
+    fake.override_mode = "honor"
+    fake.override_ok_existing_handle = planted
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    detail = _record("self_contradiction", "C_CreateObject").detail
+    assert detail["handle_after"] == planted
+    assert detail["handle_class"] == "pre-existing"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert planted in fake.objects
+    assert fake.destroyed == []
+    assert planted not in fake.attr_reads
+
+
+def test_unique_id_override_refusal_foreign_delta_xfails_unproved_alive_r1() -> None:
+    """R1: an uncorrelated delta object is never judged or destroyed."""
+    fake = _IdentityRaw()
+    fake.override_mode = "read_only"
+    fake.override_foreign_delta_by_op = {"create": True}
+    assert_xfails(
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create,
+        _rs(fake),
+    )
+    foreign = fake.foreign_delta_handle
+    assert foreign is not None
+    records = [record for record in C.get_records() if record.outcome == "xfail"]
+    assert len(records) == 1
+    assert records[0].reason == "honest_deviation"
+    detail = records[0].detail or {}
+    assert detail["proved_new_handles"] == []
+    assert detail["unproved_new_handles"] == [foreign]
+    assert foreign in fake.objects
+    assert fake.destroyed == []
+
+
+def test_unique_id_override_refusal_unlabeled_leak_beyond_first_page_r4() -> None:
+    """R4: exhaustive inventory catches a proved leak past handle 256."""
+    fake = _IdentityRaw()
+    fake.override_mode = "read_only"
+    fake.override_leak_by_op = {"create": "unlabeled"}
+    litter = [
+        fake._alloc({int(CKA_LABEL): f"litter-{i}".encode()}, uid=f"litter-{i}".encode())
+        for i in range(300)
+    ]
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    detail = _record("self_contradiction", "C_CreateObject").detail
+    proved = detail["proved_new_handles"]
+    assert len(proved) == 1, detail
+    assert fake.destroyed == proved
+    assert all(handle in fake.objects for handle in litter)
+    assert not any(handle in fake.destroyed for handle in litter)
+
+
+def test_unique_id_override_generate_unlabeled_leak_written_fails_r1() -> None:
+    """R1/R7: an unlabeled AES leak written to the error output is proved
+    by the known Generate identity and destroyed."""
+    fake = _IdentityRaw()
+    fake.override_mode = "read_only"
+    fake.override_leak_by_op = {"generate": "unlabeled"}
+    fake.override_leak_write_created = True
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_generate_and_copy(
+            _rs(fake)
+        )
+    detail = _record("self_contradiction", "C_GenerateKey").detail
+    assert detail["proved_new_handles"], detail
     _assert_cleanup(fake)
 
 

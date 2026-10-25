@@ -1789,6 +1789,56 @@ def test_exact_search_final_failure_keeps_stronger_find_fail_p5(
     _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
 
 
+def test_exact_search_final_failure_keeps_membership_fail_r5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R5: a clean Final failure must not suppress the exact-leg membership FAIL."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(
+        [(_OK, (_QC6_OTHER,)), (_OK, ()), (_OK, ())],
+        final_script=[_CLEAN_REJECT, _OK],
+    )
+    with pytest.raises(Failed) as ei:
+        _run_dh_search(raw)
+    assert not isinstance(ei.value, XFailed)
+    records = get_records()
+    fails = [r for r in records if r.outcome == "fail"]
+    xfails = [r for r in records if r.outcome == "xfail"]
+    assert len(fails) == 1, [(r.reason, r.operation) for r in records]
+    assert fails[0].reason == "self_contradiction", fails[0].reason
+    assert fails[0].kind == "metadata", fails[0].kind
+    assert fails[0].operation == "C_FindObjects", fails[0].operation
+    assert len(xfails) == 1, [(r.reason, r.operation) for r in records]
+    assert xfails[0].operation == "C_FindObjectsFinal", xfails[0].operation
+    assert len(raw.init_calls) == 2, "changed leg still observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
+def test_changed_search_final_failure_keeps_membership_fail_r5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R5: a clean Final failure must not suppress the changed-leg FAIL."""
+    _stage_dh_search(monkeypatch, {CKA_VALUE: _QC6_Y})
+    raw = _qc6_raw(
+        [(_OK, (_QC6_PUB,)), (_OK, ()), (_OK, (_QC6_PUB,)), (_OK, ())],
+        final_script=[_OK, _CLEAN_REJECT],
+    )
+    with pytest.raises(Failed) as ei:
+        _run_dh_search(raw)
+    assert not isinstance(ei.value, XFailed)
+    records = get_records()
+    fails = [r for r in records if r.outcome == "fail"]
+    xfails = [r for r in records if r.outcome == "xfail"]
+    assert len(fails) == 1, [(r.reason, r.operation) for r in records]
+    assert fails[0].reason == "self_contradiction", fails[0].reason
+    assert fails[0].kind == "metadata", fails[0].kind
+    assert fails[0].operation == "C_FindObjects", fails[0].operation
+    assert len(xfails) == 1, [(r.reason, r.operation) for r in records]
+    assert xfails[0].operation == "C_FindObjectsFinal", xfails[0].operation
+    assert len(raw.init_calls) == 2, "both legs observed"
+    _assert_staged_destroyed(raw, [_QC6_PUB, _QC6_PRIV])
+
+
 def test_exact_search_final_undefined_beats_find_refusal_p5(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

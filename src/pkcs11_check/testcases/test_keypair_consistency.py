@@ -21,8 +21,9 @@ from pkcs11_check.raw.pack import attr_bytes, template
 from pkcs11_check.raw.recipes import (
     create_object,
     destroy_quietly,
-    find_objects,
+    find_objects_exhaustive,
     pack_attrs,
+    partition_proved_new,
     read_attributes,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
@@ -580,15 +581,23 @@ _KNOWN_RSA_CACHE: dict[str, tuple[int, bytes, bytes]] = {}
 
 
 def _qc7_inventory(rs: Any) -> list[int]:
-    """All currently visible object handles (unfiltered FindObjects)."""
-    return find_objects(rs.raw, rs.sh)
+    """All currently visible object handles (exhaustive unfiltered search)."""
+    return find_objects_exhaustive(rs.raw, rs.sh)
 
 
-def _qc7_handle_class(handle_value: int, *, found: list[int], new_handles: list[int]) -> str:
+def _qc7_handle_class(
+    handle_value: int,
+    *,
+    found: list[int],
+    new_handles: list[int],
+    before: list[int] | None = None,
+) -> str:
     if handle_value == _QC7_HANDLE_SENTINEL:
         return "sentinel"
     if handle_value == 0:
         return "zero"
+    if before is not None and handle_value in before:
+        return "pre-existing"
     if handle_value in found or handle_value in new_handles:
         return "new-live"
     return "dead-nonzero"
@@ -858,37 +867,70 @@ class TestRSAModulusBits:
             mechanism="",
         )
         try:
-            found = find_objects(
+            found = find_objects_exhaustive(
                 rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, label_text.encode()))
             )
             inventory_after = _qc7_inventory(rs)
-            new_handles = sorted(set(inventory_after) - set(inventory_before))
+            before_set = set(inventory_before)
+            new_handles = sorted(set(inventory_after) - before_set)
             handle_after = int(handle.value)
+            proved_new, unproved_new = partition_proved_new(
+                rs.raw,
+                rs.sh,
+                inventory_before,
+                inventory_after,
+                attempt_templates=(attrs,),
+                error_handles=(handle_after,),
+            )
+            proved_set = set(proved_new)
+            found_new = [h for h in found if h in proved_set]
             detail = {
                 **detail,
                 "handle_after": handle_after,
                 "handle_class": _qc7_handle_class(
-                    handle_after, found=found, new_handles=new_handles
+                    handle_after,
+                    found=found_new,
+                    new_handles=proved_new,
+                    before=inventory_before,
                 ),
                 "found_by_label": list(found),
                 "new_handles": new_handles,
+                "proved_new_handles": proved_new,
+                "unproved_new_handles": unproved_new,
                 "supplied_bits": supplied_bits,
                 "true_bits": true_bits,
                 "stored_bits": None,
             }
             if rv == int(CKR_OK):
-                # Locatable object: the output handle when it names a live
-                # object, else the label/inventory-delta evidence. A bare
-                # handle naming nothing is never read or destroyed.
+                # A success output handle is not ownership proof (R2):
+                # only a proved-new handle (inventory delta, or a
+                # baseline-filtered label hit) may be read or destroyed.
+                # A returned pre-existing handle is evidence only.
+                preexisting_output = handle_after in before_set
+                if preexisting_output:
+                    records.append(
+                        C.record_as(
+                            "self_contradiction",
+                            kind="metadata",
+                            label=label,
+                            operation="C_CreateObject",
+                            inherit_mechanism=False,
+                            actual=rv,
+                            detail=detail,
+                            summary=(
+                                f"{label}: CKR_OK returned pre-existing object "
+                                f"{handle_after} instead of a newly created object"
+                            ),
+                        )
+                    )
                 target = 0
-                if handle_after in inventory_after:
+                if not preexisting_output and handle_after in proved_set:
                     target = handle_after
-                elif found:
-                    target = found[0]
-                elif new_handles:
-                    target = new_handles[0]
-                leaked.extend(found)
-                leaked.extend(h for h in new_handles if h not in leaked)
+                elif found_new:
+                    target = found_new[0]
+                elif proved_new:
+                    target = proved_new[0]
+                leaked.extend(h for h in proved_new if h not in leaked)
                 stored_bits: int | None = None
                 stored_malformed = False
                 stored_note = "not-read"
@@ -924,7 +966,9 @@ class TestRSAModulusBits:
                     "stored_bits": stored_bits,
                     "stored": stored_note,
                 }
-                if target and (
+                if preexisting_output and not target:
+                    pass  # Already recorded above; no proved-new object to judge.
+                elif target and (
                     stored_malformed or (stored_bits is not None and stored_bits != true_bits)
                 ):
                     records.append(
@@ -991,9 +1035,8 @@ class TestRSAModulusBits:
                             ),
                         )
                     )
-            elif found or new_handles:
-                leaked.extend(found)
-                leaked.extend(h for h in new_handles if h not in leaked)
+            elif proved_new:
+                leaked.extend(h for h in proved_new if h not in leaked)
                 records.append(
                     C.record_as(
                         "self_contradiction",
@@ -1004,6 +1047,26 @@ class TestRSAModulusBits:
                         actual=rv,
                         detail=detail,
                         summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+                    )
+                )
+            elif unproved_new and (
+                rv in (int(CKR_ATTRIBUTE_READ_ONLY), int(CKR_TEMPLATE_INCONSISTENT))
+                or is_standard_ckr(rv)
+                or is_vendor_defined_ckr(rv)
+            ):
+                records.append(
+                    C.record_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label=label,
+                        operation="C_CreateObject",
+                        inherit_mechanism=False,
+                        actual=rv,
+                        detail={**detail, "disposition": "unproved-effect"},
+                        summary=(
+                            f"{label}: refusal {ckr_name(rv)} with an unproved "
+                            "inventory delta; zero-delta unproved"
+                        ),
                     )
                 )
             elif handle_after not in (_QC7_HANDLE_SENTINEL, 0):

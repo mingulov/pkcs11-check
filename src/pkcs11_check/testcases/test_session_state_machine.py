@@ -173,10 +173,12 @@ def _cleanup_owned_token_object(raw: Any, sh: int, pin_bytes: bytes | None, tmpl
     Token objects survive logout and session close, so a terminal
     verdict must not leak them. The object is reacquired by exact
     template -- relogging in first when it is invisible in the public
-    state -- and everything found is destroyed. Never raises: a cleanup
-    failure is noted on the primary exception when one is in flight and
-    otherwise swallowed, so the primary finding is never masked.
+    state -- and everything found is destroyed. A cleanup failure is
+    noted on the primary exception when one is in flight and otherwise
+    raised, so the primary finding is never masked and a leak is never
+    silent.
     """
+    pending = sys.exception()
     try:
         found = find_objects(raw, sh, tmpl)
         if not found:
@@ -185,9 +187,9 @@ def _cleanup_owned_token_object(raw: Any, sh: int, pin_bytes: bytes | None, tmpl
         for handle in found:
             destroy_quietly(raw, sh, handle)
     except Exception as exc:  # cleanup must never mask the primary verdict
-        pending = sys.exception()
-        if pending is not None:
-            pending.add_note(f"owned token cleanup also raised {type(exc).__name__}: {exc}")
+        if pending is None:
+            raise
+        pending.add_note(f"owned token cleanup also raised {type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------
