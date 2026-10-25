@@ -12,6 +12,8 @@ States:
 
 from __future__ import annotations
 
+import sys
+import uuid
 from ctypes import byref, c_ubyte
 from typing import Any
 
@@ -163,6 +165,29 @@ def _logout_safe(raw: Any, sh: int) -> None:
     rv = raw.C_Logout(sh)
     # Silently accept any error -- just cleaning up
     _ = rv
+
+
+def _cleanup_owned_token_object(raw: Any, sh: int, pin_bytes: bytes | None, tmpl: Any) -> None:
+    """Best-effort destroy of an owned private token object (P1).
+
+    Token objects survive logout and session close, so a terminal
+    verdict must not leak them. The object is reacquired by exact
+    template -- relogging in first when it is invisible in the public
+    state -- and everything found is destroyed. Never raises: a cleanup
+    failure is noted on the primary exception when one is in flight and
+    otherwise swallowed, so the primary finding is never masked.
+    """
+    try:
+        found = find_objects(raw, sh, tmpl)
+        if not found:
+            _login_user_raw(raw, sh, pin_bytes)
+            found = find_objects(raw, sh, tmpl)
+        for handle in found:
+            destroy_quietly(raw, sh, handle)
+    except Exception as exc:  # cleanup must never mask the primary verdict
+        pending = sys.exception()
+        if pending is not None:
+            pending.add_note(f"owned token cleanup also raised {type(exc).__name__}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1042,12 +1067,16 @@ class TestLogoutEffects:
         s1 = raw_open_session(rs.raw, rs.slot_id, flags)
         try:
             s2 = raw_open_session(rs.raw, rs.slot_id, flags)
+            tok_label: str | None = None
+            tok_created = False
+            tok_cleaned = False
             try:
                 _login_user_raw(rs.raw, s1, pin_bytes)
 
-                priv_label = f"qc9b-priv-session-{id(self)}"
-                pub_label = f"qc9b-pub-session-{id(self)}"
-                tok_label = f"qc9b-priv-token-{id(self)}"
+                nonce = uuid.uuid4().hex[:12]
+                priv_label = f"qc9b-priv-session-{nonce}"
+                pub_label = f"qc9b-pub-session-{nonce}"
+                tok_label = f"qc9b-priv-token-{nonce}"
                 priv_h = gen_aes_key_or_xfail(
                     rs,
                     128,
@@ -1097,6 +1126,7 @@ class TestLogoutEffects:
                     purpose="QC9b private token object",
                     sh=s1,
                 )
+                tok_created = True
                 _assert_explicit_lifetime_attrs(
                     rs.raw,
                     s1,
@@ -1127,6 +1157,7 @@ class TestLogoutEffects:
                     destroy_quietly(rs.raw, s1, priv_h)
                     destroy_quietly(rs.raw, s2, pub_h)
                     destroy_quietly(rs.raw, s1, tok_h)
+                    tok_cleaned = True
                     classify_negative_rv(
                         logout_rv,
                         (),
@@ -1228,7 +1259,15 @@ class TestLogoutEffects:
                     destroy_quietly(rs.raw, s2, h)
                 for h in found_tok:
                     destroy_quietly(rs.raw, s1, h)
+                tok_cleaned = True
             finally:
+                if tok_created and not tok_cleaned and tok_label is not None:
+                    _cleanup_owned_token_object(
+                        rs.raw,
+                        s1,
+                        pin_bytes,
+                        template_from_dict({CKA_CLASS: CKO_SECRET_KEY, CKA_LABEL: tok_label}),
+                    )
                 _logout_safe(rs.raw, s2)
                 close_session_quietly(rs.raw, s2)
         finally:
