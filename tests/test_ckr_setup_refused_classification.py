@@ -21,6 +21,7 @@ from pkcs11_check.report.extract import extract_groups
 from pkcs11_check.report.health import outcome_counts
 from pkcs11_check.testcases._probes.session import ProbeContext
 from pkcs11_check.testcases.ckr import test_ckr_raw_buffer as raw_buffer
+from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 from tests._skip_assert import assert_xfails
 
 
@@ -612,6 +613,77 @@ def test_refused_new_op_with_ok_is_malformed() -> None:
             context="C_GetOperationState undersized state buffer guard",
         )
     assert any(record.reason == "harness_error" for record in get_records())
+
+
+def _assert_undefined_refusal_fails_metadata() -> None:
+    setup = [
+        record
+        for record in get_records()
+        if record.detail is not None and record.detail.get("protocol_marker") == "SETUP_REFUSED"
+    ]
+    assert len(setup) == 1, [(r.reason, r.operation) for r in get_records()]
+    record = setup[0]
+    assert record.reason == "self_contradiction", record.summary
+    assert record.kind == "metadata", record.summary
+    assert record.outcome == "fail", record.summary
+    assert record.operation == "C_GenerateKey", record.operation
+    assert record.expected_ckr == ["CKR_OK"]
+    assert record.actual_ckr == "0x7fffffff", record.actual_ckr
+    assert record.detail is not None
+    assert record.detail["setup_operation"] == "C_GenerateKey"
+    assert record.detail["setup_rv"] == 0x7FFFFFFF
+    assert record.detail["target_reached"] is False
+    assert not any(r.reason == "harness_error" for r in get_records())
+
+
+def test_refused_undefined_rv_fails_metadata_p4() -> None:
+    """P4: an undefined setup RV is a metadata FAIL, not an operational xfail."""
+    try:
+        raw_buffer._check_buffer_probe(
+            0, "SETUP_REFUSED:C_GenerateKey:0x7fffffff\n", "", context="buffer probe"
+        )
+    except pytest.xfail.Exception as exc:
+        # XFailed subclasses Failed: catch first so the downgrade cannot pass.
+        pytest.fail(f"undefined setup RV downgraded to xfail: {exc!r}")
+    except pytest.fail.Exception:
+        pass
+    else:
+        pytest.fail("undefined setup RV must fail loud")
+    _assert_undefined_refusal_fails_metadata()
+
+
+def test_refused_undefined_rv_fails_metadata_ckr_subprocess_p4() -> None:
+    """P4: same classification through the shared CKR subprocess parent."""
+    try:
+        assert_ckr_subprocess_ok(0, "SETUP_REFUSED:C_GenerateKey:0x7fffffff\n", "", context="repro")
+    except pytest.xfail.Exception as exc:
+        pytest.fail(f"undefined setup RV downgraded to xfail: {exc!r}")
+    except pytest.fail.Exception:
+        pass
+    else:
+        pytest.fail("undefined setup RV must fail loud")
+    _assert_undefined_refusal_fails_metadata()
+
+
+def test_refused_vendor_rv_still_xfails_p4() -> None:
+    """P4 pin: a vendor-defined setup RV keeps the not_operational xfail."""
+    assert_xfails(
+        raw_buffer._check_buffer_probe,
+        0,
+        "SETUP_REFUSED:C_GenerateKey:0x80000001\n",
+        "",
+        context="buffer probe",
+    )
+    setup = [
+        record
+        for record in get_records()
+        if record.detail is not None and record.detail.get("protocol_marker") == "SETUP_REFUSED"
+    ]
+    assert len(setup) == 1
+    assert setup[0].reason == "not_operational"
+    assert setup[0].outcome == "xfail"
+    assert setup[0].detail is not None
+    assert setup[0].detail["target_reached"] is False
 
 
 # --- Fix round 1: end-to-end grouping/coverage proof (finding 2) ---

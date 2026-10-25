@@ -11,7 +11,7 @@ from pkcs11_check.classification import (
     raise_for_record,
     record,
 )
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import _CK_ULONG_MAX, CKR_OK
 from pkcs11_check.testcases._probes.honeypot import SETUP_XFAIL_PREFIX
 from pkcs11_check.testcases._subprocess_result import assert_subprocess_completed
@@ -56,27 +56,39 @@ def parse_setup_refused_payload(payload: str) -> tuple[str, int] | None:
 
 
 def setup_refused_record(context: str, setup_op: str, setup_rv: int) -> Classification:
-    """Build the structured not_operational record for a validated refusal.
+    """Build the structured record for a validated setup refusal.
 
     The record names the exact refusing setup operation + CKR against the
     valid setup contract (CKR_OK) and marks the guarded target unreached, so
     report grouping attributes the outcome to the setup call, never the
-    untested target. Same xfail bucket as SETUP_XFAIL -- a clean refusal of
-    valid setup is advertised-but-not-operational.
+    untested target. A standard or vendor-defined refusal keeps the
+    not_operational xfail bucket (same as SETUP_XFAIL -- a clean refusal of
+    valid setup is advertised-but-not-operational). An RV that is neither
+    standard nor vendor-defined breaks the return-value contract itself:
+    it records as a self_contradiction/metadata FAIL with the exact
+    operation/RV and target_reached preserved (P4), never an xfail.
+    Malformed marker syntax stays harness_error in the callers.
     """
-    outcome, severity = derive_verdict("not_operational", None)
+    if is_standard_ckr(setup_rv) or is_vendor_defined_ckr(setup_rv):
+        reason, kind = "not_operational", None
+        summary = f"{context}: setup {setup_op} refused with {ckr_name(setup_rv)} (target untested)"
+    else:
+        reason, kind = "self_contradiction", "metadata"
+        summary = (
+            f"{context}: setup {setup_op} refused with undefined "
+            f"{ckr_name(setup_rv)} (return-value contract violation; target untested)"
+        )
+    outcome, severity = derive_verdict(reason, kind)
     return Classification(
-        reason="not_operational",
+        reason=reason,
         outcome=outcome,
         severity=severity,
-        kind=None,
+        kind=kind,
         label=context,
         operation=setup_op,
         expected_ckr=[ckr_name(int(CKR_OK))],
         actual_ckr=ckr_name(setup_rv),
-        summary=(
-            f"{context}: setup {setup_op} refused with {ckr_name(setup_rv)} (target untested)"
-        ),
+        summary=summary,
         detail={
             "protocol_marker": "SETUP_REFUSED",
             "setup_operation": setup_op,
