@@ -14,6 +14,7 @@ from pkcs11_check.raw.recipes import destroy_quietly
 from pkcs11_check.raw.types_std import CKA_SIGN, CKA_TOKEN, CKA_VERIFY
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._subprocess_preamble import pin_from_config
+from pkcs11_check.testcases.ckr import _object_policy as _qc4
 from pkcs11_check.testcases.ckr._subprocess import assert_ckr_subprocess_ok
 from pkcs11_check.testcases.conftest import gen_rsa_keypair_or_xfail
 
@@ -98,3 +99,20 @@ class TestWrongAsymmetricKeyTypeContinuation:
             stderr,
             context=("C_VerifyInit(CKM_ECDSA, RSA public key) followed by C_Verify if accepted"),
         )
+
+
+class TestMalformedRsaSignDownstream:
+    """QC4c (#56.3): downstream RSA-sign leg for admitted malformed creates."""
+
+    @pytest.mark.parametrize(
+        "malformation",
+        [
+            "swap_secret_class_asym_type",
+            "swap_asym_class_secret_type",
+            "missing_modulus",
+            "missing_exponent",
+        ],
+    )
+    def test_rsa_sign_downstream(self, p11_raw_session: Any, malformation: str) -> None:
+        """Refused creation skips as inapplicable; admitted keys run the sign path."""
+        _qc4._run_rsa_sign_downstream(p11_raw_session, malformation)
