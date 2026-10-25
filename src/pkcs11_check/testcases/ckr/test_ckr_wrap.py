@@ -280,6 +280,24 @@ def _inventory_or_unproved(
                 summary=f"{label}: leak inventory returned undefined CK_RV {ckr_name(exc.rv)}",
                 detail=detail,
             )
+        if refusal_rv is not None and not (
+            is_standard_ckr(refusal_rv) or is_vendor_defined_ckr(refusal_rv)
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=operation,
+                mechanism=mechanism,
+                expected=canonical,
+                actual=refusal_rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    f"{label}: refused with undefined CK_RV {ckr_name(refusal_rv)}; "
+                    "the failed leak inventory cannot downgrade it"
+                ),
+                detail=detail,
+            )
         xfail_as(
             "honest_deviation",
             kind="lifecycle",

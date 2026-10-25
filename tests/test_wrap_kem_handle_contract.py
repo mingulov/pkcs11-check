@@ -34,6 +34,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_FUNCTION_FAILED,
+    CKR_GENERAL_ERROR,
     CKR_KEY_HANDLE_INVALID,
     CKR_KEY_UNEXTRACTABLE,
     CKR_OBJECT_HANDLE_INVALID,
@@ -113,6 +114,14 @@ class _Token:
             int(CKA_NEVER_EXTRACTABLE): False,
         }
         self.operational_wrap_rv: int = _OK
+        # Integrated-review (R9) scripting.
+        self.fail_find_from_call: int | None = None
+        self.find_fail_rv: int = int(CKR_GENERAL_ERROR)
+        self.stage_rv: int | None = None
+        self.stage_secret_mode: str = "created"  # created|foreign
+        self.unwrap_rv: int = _OK
+        self.unwrap_creates_on_refusal: bool = False
+        self.unwrap_created_handle: int | None = None
         self.session = SimpleNamespace(raw=self, sh=7, has_mechanism=lambda _n: True)
 
     # -- staging factories (monkeypatched into production modules) ----------
@@ -151,6 +160,9 @@ class _Token:
     def C_FindObjectsInit(self, _sh: int, _tmpl: Any, _count: int) -> int:  # noqa: N802
         self.events.append("find-init")
         self.find_calls += 1
+        if self.fail_find_from_call is not None and self.find_calls >= self.fail_find_from_call:
+            self._find_pending = []
+            return self.find_fail_rv
         self._find_pending = [h for h, o in self.objects.items() if not o.destroyed]
         return _OK
 
@@ -234,6 +246,13 @@ class _Token:
         )
         if not self._live(int(unwrapping)):
             return self._probe_out(out)
+        if self.unwrap_rv != _OK:
+            if self.unwrap_creates_on_refusal:
+                created = self._issue("unwrapped")
+                self.objects[created].attrs = dict(self.unwrapped_attrs)
+                self.unwrap_created_handle = created
+                _fill(out, created, CK_OBJECT_HANDLE)
+            return self.unwrap_rv
         handle = self._issue("unwrapped")
         self.objects[handle].attrs = dict(self.unwrapped_attrs)
         _fill(out, handle, CK_OBJECT_HANDLE)
@@ -254,9 +273,14 @@ class _Token:
         self.encap_calls.append({"pub": int(pub), "query": ct_buf is None})
         if not self._live(int(pub)):
             return self._probe_out(secret)
+        if self.stage_rv is not None:
+            return self.stage_rv
         if ct_buf is not None:
             ctypes.memmove(ct_buf, _CT_PATTERN, len(_CT_PATTERN))
         _fill(ct_len, len(_CT_PATTERN))
+        if self.stage_secret_mode == "foreign":
+            _fill(secret, int(pub), CK_OBJECT_HANDLE)
+            return _OK
         handle = self._issue("kem-secret")
         _fill(secret, handle, CK_OBJECT_HANDLE)
         return _OK
@@ -824,3 +848,124 @@ def test_minimal_unwrap_template_really_omits_extractable_and_sensitive(
     assert int.from_bytes(attrs[int(CKA_CLASS)], sys.byteorder) == int(CKO_SECRET_KEY)
     assert int.from_bytes(attrs[int(CKA_KEY_TYPE)], sys.byteorder) == int(CKK_AES)
     assert attrs[int(CKA_TOKEN)] == b"\x00"
+
+
+# --- Integrated re-review R9: staging ownership, undefined-RV preservation,
+# --- and QC8b refused-unwrap creation ---------------------------------------
+
+
+def test_decap_staging_foreign_secret_fails_without_destroying_it_r9(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.probe_rv = int(CKR_UNWRAPPING_KEY_HANDLE_INVALID)
+    fake.stage_secret_mode = "foreign"
+    _patch_kem(monkeypatch, fake)
+    rec = _must_fail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "self_contradiction"
+    pub = fake.created[0]
+    assert fake.destroyed.count(pub) == 1
+    _assert_cleaned(fake)
+
+
+def test_decap_staging_undefined_rv_fails_r9(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _Token()
+    fake.stage_rv = _UNDEFINED
+    _patch_kem(monkeypatch, fake)
+    rec = _must_fail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "metadata"
+    _assert_cleaned(fake)
+
+
+def test_decap_staging_clean_refusal_still_xfails_r9(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.stage_rv = int(CKR_FUNCTION_FAILED)
+    _patch_kem(monkeypatch, fake)
+    rec = _must_xfail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "not_operational"
+    _assert_cleaned(fake)
+
+
+@pytest.mark.parametrize("role", ["wrapped", "encap"])
+def test_undefined_refusal_survives_clean_inventory_failure_r9(
+    monkeypatch: pytest.MonkeyPatch, role: str
+) -> None:
+    fake = _Token()
+    fake.probe_rv = _UNDEFINED
+    fake.fail_find_from_call = 2
+    if role == "wrapped":
+        _patch_wrap(monkeypatch, fake)
+        rec = _must_fail(
+            tcw.TestWrapKeyErrors().test_wrapped_key_handle_invalid,
+            fake.session,
+            False,
+            handle_kind="zero",
+        )
+    else:
+        _patch_kem(monkeypatch, fake)
+        rec = _must_fail(
+            tkem.TestEncapsulateKeyErrors().test_encapsulation_key_handle_invalid,
+            fake.session,
+            False,
+            handle_kind="zero",
+        )
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "metadata"
+    assert rec.detail["inventory_rv"] == "CKR_GENERAL_ERROR"
+    _assert_cleaned(fake)
+
+
+def test_omitted_unwrap_clean_refusal_still_xfails_r9(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.unwrap_rv = int(CKR_FUNCTION_FAILED)
+    rec = _must_xfail(_run_omitted, monkeypatch, fake)
+    assert rec.reason == "not_operational"
+    _assert_cleaned(fake)
+
+
+def test_omitted_unwrap_refusal_creating_object_fails_r9(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.unwrap_rv = int(CKR_FUNCTION_FAILED)
+    fake.unwrap_creates_on_refusal = True
+    rec = _must_fail(_run_omitted, monkeypatch, fake)
+    assert rec.reason == "self_contradiction"
+    created = fake.unwrap_created_handle
+    assert created is not None
+    assert fake.destroyed.count(created) == 1
+    _assert_cleaned(fake)
+
+
+def test_explicit_false_unwrap_refusal_creating_object_fails_r9(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.unwrap_rv = int(CKR_FUNCTION_FAILED)
+    fake.unwrap_creates_on_refusal = True
+    rec = _must_fail(_run_explicit_false, monkeypatch, fake)
+    assert rec.reason == "self_contradiction"
+    created = fake.unwrap_created_handle
+    assert created is not None
+    assert fake.destroyed.count(created) == 1
+    _assert_cleaned(fake)
