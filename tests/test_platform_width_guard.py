@@ -22,6 +22,26 @@ sentinel has exactly one patchable source (see ``tests/_llp64_sim_plugin.py``).
 Pinned stimulus-max sites (oversize lengths, not sentinels) are allowlisted
 by (file, bound name) and stale-checked.
 
+S4 pins the exact census of module-level bindings whose value folds to one
+of the two width literals (``0xFFFFFFFF`` / ``0xFFFFFFFFFFFFFFFF``) in
+``src/`` + ``tests/`` -- literals, ``(1 << 32) - 1``-style constant
+expressions, ``int()``/``CK_CONSTANT()`` wraps and same-file aliases alike.
+Bindings routed through the seam (``int(CK_UNAVAILABLE_INFORMATION)``) do
+not fold to a literal and need no entry. The census makes S1's input
+population exhaustive: a new width-literal binding fails here until it is
+routed through the seam or added as a deliberate census entry.
+
+Known bounded miss (E11, Slice-2 review): a bare
+``assert predicate(computed_spelling)`` has no comparison against a
+spelling for S1 to key on, and a helper-computed spelling does not fold
+in ``_spell_names``. The only ``_is_unavailable_length`` consumer in
+``tests/`` today is ``tests/test_sentinel_width_invariant.py`` -- the
+runtime oracle for that predicate, host-width-relative since the I1
+fix and run on real LLP64 by the windows-contracts job. Covering this
+shape needs computed-spelling folding plus a rule for which calls are
+acceptance predicates; that is declared here and pinned as a miss
+below, not silently treated as a spare.
+
 These are value-level static checks only; neither proves anything about the
 real LLP64 ABI (struct layouts, field truncation, DLL calls stay CI-only).
 """
@@ -63,7 +83,7 @@ _S2_ALLOWLIST: dict[tuple[str, str], str] = {
         "_OVERSIZED_DATALEN",
     ): _MAX,
     ("src/pkcs11_check/testcases/security/test_api_boundary.py", "_CK_ULONG_MAX"): _MAX,
-    ("src/pkcs11_check/testcases/security/test_operation_state_uaf.py", "_UAF_RV_MAX"): _MAX,
+    ("src/pkcs11_check/testcases/security/test_operation_state_uaf.py", "_UAF_RV_MAX"): _RV_MAX,
     ("tests/test_windows_abi_bigvalues.py", "expected"): "oracle for the stimulus-max sites",
     ("tests/test_signature_width_contract.py", "ulValueLen"): _FAKE_LEN,
     ("tests/test_x942_dh_runtime_classification.py", "ulValueLen"): _FAKE_LEN,
@@ -150,12 +170,26 @@ def _tag_spells(tree: ast.Module, s32: set[str], splat: set[str]) -> dict[str, s
     return tags
 
 
+def _is_skip_shaped(node: ast.expr) -> bool:
+    """A ``skipif``/``xfail`` mark (called or bare), not just any decorator."""
+    func = node.func if isinstance(node, ast.Call) else node
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+    return name in {"skipif", "xfail"}
+
+
 def _gate_names(tree: ast.Module) -> set[str]:
-    """Module names bound to a width gate (its value mentions a width token)."""
+    """Module names bound to a width gate.
+
+    The binding value must be a skip-shaped mark mentioning a width token
+    (or the gate itself). A name bound to e.g. ``parametrize`` over sentinel
+    values is a stimulus table, not a gate, and must not exempt anything.
+    """
     gates = {"requires_64bit_ck_ulong"}
     for node in tree.body:
         names, value = _bound_names(node)
-        if names and value is not None and _value_names(value) & _WIDTH_TOKENS:
+        if not names or value is None or not (_value_names(value) & _WIDTH_TOKENS):
+            continue
+        if _is_skip_shaped(value) or "requires_64bit_ck_ulong" in _value_names(value):
             gates |= names
     return gates
 
@@ -163,7 +197,9 @@ def _gate_names(tree: ast.Module) -> set[str]:
 def _decorated_gated(decorators: list[ast.expr], gates: set[str]) -> bool:
     for dec in decorators:
         names = _value_names(dec)
-        if names & gates or names & _WIDTH_TOKENS:
+        if names & gates:
+            return True
+        if _is_skip_shaped(dec) and names & _WIDTH_TOKENS:
             return True
     return False
 
@@ -181,21 +217,50 @@ def _body_refs(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.Module:
     return ast.Module(body=list(fn.body), type_ignores=[])
 
 
-def _accept_both(body: ast.AST, s32: set[str], splat: set[str]) -> bool:
-    """Both spellings accepted together: a literal container, or an ``or``."""
+def _or_covers_both(node: ast.BoolOp, s32: set[str], splat: set[str]) -> bool:
+    has32 = hasplat = False
+    for value in node.values:
+        v32, vplat = _spell_refs(value, s32, splat)
+        has32, hasplat = has32 or v32, hasplat or vplat
+    return has32 and hasplat
+
+
+def _distinguishing_comparisons(body: ast.AST, s32: set[str], splat: set[str]) -> tuple[bool, bool]:
+    """Spellings compared *outside* an accept-both context, per comparison.
+
+    A comparison is accept-both when both spellings appear in it (the
+    ``x in (S32, SPLAT)`` membership) or when it sits inside an ``or`` whose
+    operands together cover both spellings (``x == S32 or x == SPLAT``).
+    An accept-both assertion elsewhere in the body does not exempt a
+    distinguishing comparison elsewhere: the exemption is scoped to the
+    comparison it contains.
+    """
+    parents: dict[int, ast.AST] = {}
     for node in ast.walk(body):
-        if isinstance(node, (ast.Tuple, ast.Set, ast.List)):
-            has32, hasplat = _spell_refs(node, s32, splat)
-            if has32 and hasplat:
-                return True
-        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
-            has32 = hasplat = False
-            for value in node.values:
-                v32, vplat = _spell_refs(value, s32, splat)
-                has32, hasplat = has32 or v32, hasplat or vplat
-            if has32 and hasplat:
-                return True
-    return False
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+
+    def accept_both(node: ast.Compare, has32: bool, hasplat: bool) -> bool:
+        if has32 and hasplat:
+            return True
+        cur: ast.AST | None = node
+        while cur is not None:
+            cur = parents.get(id(cur))
+            if isinstance(cur, ast.BoolOp) and isinstance(cur.op, ast.Or):
+                return _or_covers_both(cur, s32, splat)
+            if isinstance(cur, ast.stmt):
+                return False
+        return False
+
+    out32 = outplat = False
+    for node in ast.walk(body):
+        if not isinstance(node, ast.Compare):
+            continue
+        has32, hasplat = _spell_refs(node, s32, splat)
+        if accept_both(node, has32, hasplat):
+            continue
+        out32, outplat = out32 or has32, outplat or hasplat
+    return out32, outplat
 
 
 def _expects_failure(body: ast.AST) -> bool:
@@ -215,9 +280,16 @@ def _expects_failure(body: ast.AST) -> bool:
 
 
 def _width_branched(body: ast.AST) -> bool:
-    """An in-body sizeof(c_ulong) branch (the width split is explicit)."""
-    names = _value_names(body)
-    return "sizeof" in names and bool(names & {"c_ulong", "CK_ULONG"})
+    """The body branches on sizeof(c_ulong) (the width split is explicit).
+
+    A bare mention (``w = sizeof(c_ulong)``) is not a branch and exempts
+    nothing; the sizeof call must appear in an ``if``/conditional test.
+    """
+    for node in ast.walk(body):
+        test = node.test if isinstance(node, (ast.If, ast.IfExp)) else None
+        if test is not None and any(_is_sizeof_ulong(n) for n in ast.walk(test)):
+            return True
+    return False
 
 
 def s1_offenders_in_source(source: str, label: str) -> list[str]:
@@ -245,12 +317,8 @@ def s1_offenders_in_source(source: str, label: str) -> list[str]:
             return
         local32, localplat = _spell_names(list(fn.body))
         s32, splat = mod32 | local32, modplat | localplat
-        cmp32 = cmpplat = False
-        for node in ast.walk(body):
-            if isinstance(node, ast.Compare):
-                c32, cplat = _spell_refs(node, s32, splat)
-                cmp32, cmpplat = cmp32 or c32, cmpplat or cplat
-        direct = cmp32 and cmpplat and not _accept_both(body, s32, splat)
+        cmp32, cmpplat = _distinguishing_comparisons(body, s32, splat)
+        direct = cmp32 and cmpplat
         # Stimulus shape: a 32-bit sentinel name/tag driven at a probe that
         # must still fail. Bare 0xFFFFFFFF literals alone do not count --
         # they are also ordinary CK_ULONG-max stimuli.
@@ -262,12 +330,7 @@ def s1_offenders_in_source(source: str, label: str) -> list[str]:
         }
         drives32 = bool(body_names & s32) or any(tags.get(s) == "32" for s in strings)
         _, bodyplat = _spell_refs(body, s32, splat)
-        stimulus = (
-            drives32
-            and _expects_failure(body)
-            and (bodyplat or bool(assigned_plat))
-            and not _accept_both(body, s32, splat)
-        )
+        stimulus = drives32 and _expects_failure(body) and (bodyplat or bool(assigned_plat))
         if direct or stimulus:
             where = f"{cls}::{fn.name}" if cls else fn.name
             offenders.append(f"{label}::{where}")
@@ -355,6 +418,115 @@ def s2_sites_in_source(source: str, label: str) -> list[tuple[str, str, int]]:
     return sorted(set(sites))
 
 
+def _fold_int(node: ast.AST, known: dict[str, int]) -> int | None:
+    """Constant-fold a small int expression; ``None`` when not provable.
+
+    Handles the width-literal spellings in the tree: plain literals,
+    ``(1 << 32) - 1`` / ``2**64 - 1`` arithmetic, ``int()`` /
+    ``CK_CONSTANT()`` wraps, and names already folded in this module.
+    Anything derived from ``sizeof`` or a seam import (the width-relative
+    recomputes S2 owns, and ``int(CK_UNAVAILABLE_INFORMATION)``) does not
+    fold, by design.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Name):
+        return known.get(node.id)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        value = _fold_int(node.operand, known)
+        return None if value is None else -value
+    if (
+        isinstance(node, ast.Call)
+        and node.args
+        and _value_names(node.func) & {"int", "CK_CONSTANT"}
+    ):
+        return _fold_int(node.args[0], known)
+    if isinstance(node, ast.BinOp):
+        left, right = _fold_int(node.left, known), _fold_int(node.right, known)
+        if left is None or right is None:
+            return None
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.LShift) and 0 <= right <= 128:
+            return left << right
+        if isinstance(node.op, ast.RShift) and 0 <= right <= 128:
+            return left >> right
+        if isinstance(node.op, ast.Pow) and 0 <= right <= 128:
+            return int(left**right)
+        if isinstance(node.op, ast.BitOr):
+            return left | right
+        if isinstance(node.op, ast.BitAnd):
+            return left & right
+    return None
+
+
+def s4_bindings_in_source(source: str) -> dict[str, int]:
+    """Module-level bindings folding to a width literal: name -> value."""
+    tree = ast.parse(source)
+    bindings: list[tuple[str, ast.expr]] = []
+    for node in tree.body:
+        names, value = _bound_names(node)
+        if value is not None:
+            bindings.extend((name, value) for name in sorted(names))
+    known: dict[str, int] = {}
+    changed = True
+    while changed:  # fixpoint so alias chains of any length resolve
+        changed = False
+        for name, value in bindings:
+            folded = _fold_int(value, known)
+            if name not in known and folded in (_S32, _SPLAT):
+                known[name] = folded
+                changed = True
+    return known
+
+
+def s4_census() -> list[tuple[str, str]]:
+    """Sorted (file, name) width-literal bindings across ``src/`` + ``tests/``."""
+    out: list[tuple[str, str]] = []
+    for tree in (_ROOT / "src", _ROOT / "tests"):
+        for path in sorted(tree.rglob("*.py")):
+            rel = path.relative_to(_ROOT).as_posix()
+            bindings = s4_bindings_in_source(path.read_text(encoding="utf-8"))
+            out.extend((rel, name) for name in bindings)
+    return sorted(out)
+
+
+# S4 ratchet pin: every module-level width-literal binding in src/ + tests/.
+# Adding an entry is a deliberate, reviewable act -- prefer routing through
+# CK_UNAVAILABLE_INFORMATION / CK_UNAVAILABLE_INFORMATION_32 instead.
+_S4_CENSUS: tuple[tuple[str, str], ...] = (
+    # the generated 32-bit seam definition itself
+    ("src/pkcs11_check/raw/types_std.py", "CK_UNAVAILABLE_INFORMATION_32"),
+    # 32-bit-max / oversized-length stimuli (fixed 32-bit values by design)
+    ("src/pkcs11_check/testcases/_probes/arithmetic_overflow.py", "_ULONG_32BIT_MAX"),
+    ("src/pkcs11_check/testcases/security/test_arithmetic_overflow.py", "_ULONG_32BIT_MAX"),
+    (
+        "src/pkcs11_check/testcases/security/test_scalar_attr_length_extended.py",
+        "_WILD_OVERSIZED_LENGTH",
+    ),
+    # the sim's collapsed value, contract-fake unavailable spellings, and
+    # the detectors' own spelling constants
+    ("tests/_llp64_sim_plugin.py", "COLLAPSED_SENTINEL"),
+    ("tests/test_byte_kdf_protection_contract.py", "_U64"),
+    ("tests/test_copy_attribute_contract.py", "_U64"),
+    ("tests/test_llp64_sim_census.py", "_S32"),
+    ("tests/test_llp64_sim_census.py", "_SPLAT"),
+    ("tests/test_logout_object_lifetime_contract.py", "_UNAVAILABLE"),
+    ("tests/test_object_policy_effect_contract.py", "_U64"),
+    ("tests/test_platform_width_guard.py", "_S32"),
+    ("tests/test_platform_width_guard.py", "_SPLAT"),
+    ("tests/test_protected_component_contract.py", "_U32"),
+    ("tests/test_protected_component_contract.py", "_U64"),
+    # the 64-bit-value gating guard's own window bounds
+    ("tests/test_security_64bit_value_gating.py", "_HIGH"),
+    ("tests/test_security_64bit_value_gating.py", "_LOW"),
+)
+
+
 def test_s1_detector_fires_and_spares() -> None:
     """Synthetic RED/GREEN: a guard that cannot fail is not a guard."""
     ungated_direct = (
@@ -414,6 +586,52 @@ def test_s1_detector_fires_and_spares() -> None:
     )
     assert s1_offenders_in_source(audited, "x.py") == []
 
+    # Slice-1 review M2: exemptions are scoped, not body-wide. An accept-both
+    # assert elsewhere does not spare distinguishing comparisons...
+    accept_elsewhere = (
+        "def test_pin(x):\n"
+        "    assert x in (0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)\n"
+        "    assert x == 0xFFFFFFFFFFFFFFFF\n"
+        "    assert x != 0xFFFFFFFF\n"
+    )
+    assert s1_offenders_in_source(accept_elsewhere, "x.py") == ["x.py::test_pin"]
+
+    # ...but an ``or`` over both spellings stays accept-both.
+    or_both = "def test_pin(x):\n    assert x == 0xFFFFFFFF or x == 0xFFFFFFFFFFFFFFFF\n"
+    assert s1_offenders_in_source(or_both, "x.py") == []
+
+    # A non-skip decorator mentioning a width name is not a gate.
+    parametrize_not_gate = (
+        "import pytest\n"
+        "CK_UNAVAILABLE_INFORMATION = 0xFFFFFFFFFFFFFFFF\n"
+        "@pytest.mark.parametrize('v', [CK_UNAVAILABLE_INFORMATION])\n"
+        "def test_pin(x, v):\n"
+        "    assert x == CK_UNAVAILABLE_INFORMATION\n"
+        "    assert x != 0xFFFFFFFF\n"
+    )
+    assert s1_offenders_in_source(parametrize_not_gate, "x.py") == ["x.py::test_pin"]
+
+    # A bare sizeof mention without a branch is not a width split.
+    sizeof_mention = (
+        "import ctypes\n"
+        "def test_pin(x):\n"
+        "    w = ctypes.sizeof(ctypes.c_ulong)\n"
+        "    assert x == 0xFFFFFFFFFFFFFFFF\n"
+        "    assert x != 0xFFFFFFFF\n"
+    )
+    assert s1_offenders_in_source(sizeof_mention, "x.py") == ["x.py::test_pin"]
+
+    # E11 declared miss (see module docstring): a bare assert-predicate
+    # over a helper-computed spelling is not an S1 premise shape. This
+    # pins the miss -- if S1 ever flags it, re-adjudicate E11 here.
+    bare_predicate = (
+        "def _sentinel(w):\n"
+        "    return (1 << w) - 1\n"
+        "def test_pin():\n"
+        "    assert _is_unavailable_length(_sentinel(64))\n"
+    )
+    assert s1_offenders_in_source(bare_predicate, "x.py") == []
+
 
 def test_s2_detector_fires_and_spares() -> None:
     bad = "import ctypes\n_X = ctypes.c_ulong(-1).value\n"
@@ -460,4 +678,41 @@ def test_s2_no_local_sentinel_recompute() -> None:
     assert not stale, (
         "stale S2 allowlist entries (site disappeared -- remove them):\n  "
         + "\n  ".join(f"{f} ({n})" for f, n in sorted(stale))
+    )
+
+
+def test_s4_detector_fires_and_spares() -> None:
+    """Synthetic: literal, computed and aliased bindings fold; seam spares."""
+    src = (
+        "_LIT = 0xFFFFFFFF\n"
+        "_COMPUTED = (1 << 32) - 1\n"
+        "_POW = 2**64 - 1\n"
+        "_WRAPPED = int(0xFFFFFFFFFFFFFFFF)\n"
+        "_GEN = CK_CONSTANT(0xFFFFFFFF)\n"
+        "_ALIAS = _LIT\n"
+        "_CHAIN = _ALIAS\n"
+        "_SEAM = int(CK_UNAVAILABLE_INFORMATION)\n"
+        "_OTHER = 0xFFFFFFFE\n"
+        "def f() -> None:\n"
+        "    _LOCAL = 0xFFFFFFFF\n"
+    )
+    assert s4_bindings_in_source(src) == {
+        "_LIT": _S32,
+        "_COMPUTED": _S32,
+        "_POW": _SPLAT,
+        "_WRAPPED": _SPLAT,
+        "_GEN": _S32,
+        "_ALIAS": _S32,
+        "_CHAIN": _S32,
+    }
+
+
+def test_s4_width_literal_census_is_pinned() -> None:
+    found = s4_census()
+    assert found == list(_S4_CENSUS), (
+        "module-level width-literal bindings drifted from the S4 census.\n"
+        "  new (route through CK_UNAVAILABLE_INFORMATION / "
+        "_32, or add a deliberate census entry): "
+        f"{sorted(set(found) - set(_S4_CENSUS))}\n"
+        f"  stale (remove the pin): {sorted(set(_S4_CENSUS) - set(found))}"
     )
