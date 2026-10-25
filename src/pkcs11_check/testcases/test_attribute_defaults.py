@@ -25,8 +25,10 @@ from pkcs11_check.raw.recipes import (
     create_object,
     derive_key,
     destroy_quietly,
+    find_objects_exhaustive,
     gen_keypair,
     pack_attrs,
+    partition_proved_new,
     read_attributes,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
@@ -45,6 +47,7 @@ from pkcs11_check.raw.types_std import (
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_LOCAL,
     CKA_MODIFIABLE,
     CKA_MODULUS_BITS,
@@ -800,6 +803,8 @@ class TestOmittedUsageFlagDefaults:
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_GENERIC_SECRET,
                 CKA_TOKEN: False,
+                # Attempt-specific correlation for the R3 inventory proof.
+                CKA_LABEL: "qc7d-derived",
                 CKA_SENSITIVE: False,
                 CKA_EXTRACTABLE: True,
             }
@@ -861,7 +866,33 @@ class TestOmittedUsageFlagDefaults:
                     )
                 )
 
-            # Judged leg: raw derive under the proven False claim.
+            # Judged leg: raw derive under the proven False claim. The
+            # refusal effect is judged by exhaustive inventory (R3): an
+            # error-path output handle is evidence only, never ownership.
+            try:
+                inventory_before = find_objects_exhaustive(rs.raw, rs.sh)
+            except CkrAssertionError as exc:
+                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                    raise
+                records.append(
+                    C.record_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="QC7d derive inventory",
+                        operation="C_FindObjects",
+                        inherit_mechanism=False,
+                        actual=getattr(exc, "rv", None),
+                        detail=_qc7d_detail(
+                            CKA_DERIVE,
+                            leg="private",
+                            disposition="unproved-effect",
+                            inventory_error=f"{type(exc).__name__}: {exc}",
+                        ),
+                        summary="derive leak inventory failed; zero-delta unproved",
+                    )
+                )
+                _qc7d_raise_strongest(records)
+                return
             mech = mech_ecdh(CKM_ECDH1_DERIVE, kdf=CKD_NULL, public_data=peer_point)
             tmpl = template(*pack_attrs(derived_attrs))
             out_handle = CK_OBJECT_HANDLE(_QC7D_HANDLE_SENTINEL)
@@ -870,9 +901,37 @@ class TestOmittedUsageFlagDefaults:
                     rs.sh, mech.byref(), priv, tmpl.ptr, tmpl.count, byref(out_handle)
                 )
             )
+            out_value = int(out_handle.value)
+            proved_new: list[int] = []
+            unproved_new: list[int] = []
+            inventory_failed = False
+            inventory_rv: int | None = None
+            try:
+                inventory_after = find_objects_exhaustive(rs.raw, rs.sh)
+                proved_new, unproved_new = partition_proved_new(
+                    rs.raw,
+                    rs.sh,
+                    inventory_before,
+                    inventory_after,
+                    attempt_templates=(derived_attrs,),
+                    error_handles=(out_value,),
+                )
+            except CkrAssertionError as exc:
+                if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+                    raise
+                inventory_failed = True
+                inventory_rv = exc.rv
+            judge_detail = _qc7d_detail(
+                CKA_DERIVE,
+                leg="private",
+                error_output_handle=out_value,
+                proved_new_handles=proved_new,
+                unproved_new_handles=unproved_new,
+            )
+            if inventory_rv is not None:
+                judge_detail["inventory_rv"] = ckr_name(inventory_rv)
             if rv == int(CKR_OK):
-                if int(out_handle.value) != _QC7D_HANDLE_SENTINEL:
-                    derived.append(int(out_handle.value))
+                derived.extend(h for h in proved_new if h not in derived)
                 records.append(
                     C.record_as(
                         "wrong_result",
@@ -881,25 +940,43 @@ class TestOmittedUsageFlagDefaults:
                         operation="C_DeriveKey",
                         inherit_mechanism=False,
                         actual=rv,
-                        detail=_qc7d_detail(CKA_DERIVE, leg="private"),
+                        detail=judge_detail,
                         summary=(
                             "private key claims CKA_DERIVE=False yet C_DeriveKey "
                             "succeeded (claim/effect contradiction)"
                         ),
                     )
                 )
-            elif int(out_handle.value) != _QC7D_HANDLE_SENTINEL:
-                derived.append(int(out_handle.value))
+            elif proved_new:
+                derived.extend(h for h in proved_new if h not in derived)
                 records.append(
                     C.record_as(
                         "self_contradiction",
+                        kind="lifecycle",
+                        label="CKA_DERIVE=False derive refusal output",
+                        operation="C_DeriveKey",
+                        inherit_mechanism=False,
+                        actual=rv,
+                        detail=judge_detail,
+                        summary=(f"derive refusal {ckr_name(rv)} left a proved-new object behind"),
+                    )
+                )
+            elif (inventory_failed or unproved_new) and (
+                is_standard_ckr(rv) or is_vendor_defined_ckr(rv)
+            ):
+                records.append(
+                    C.record_as(
+                        "honest_deviation",
                         kind="metadata",
                         label="CKA_DERIVE=False derive refusal output",
                         operation="C_DeriveKey",
                         inherit_mechanism=False,
                         actual=rv,
-                        detail=_qc7d_detail(CKA_DERIVE, leg="private"),
-                        summary=(f"derive refusal {ckr_name(rv)} mutated the output handle"),
+                        detail={**judge_detail, "disposition": "unproved-effect"},
+                        summary=(
+                            f"derive refusal {ckr_name(rv)} with an unproved "
+                            "inventory delta; zero-delta unproved"
+                        ),
                     )
                 )
             elif is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
@@ -913,13 +990,13 @@ class TestOmittedUsageFlagDefaults:
                         operation="C_DeriveKey",
                         inherit_mechanism=False,
                         actual=rv,
-                        detail=_qc7d_detail(CKA_DERIVE, leg="private"),
+                        detail=judge_detail,
                         summary=f"derive returned undefined CK_RV {ckr_name(rv)}",
                     )
                 )
             _qc7d_raise_strongest(records)
         finally:
-            for handle in derived:
+            for handle in dict.fromkeys(derived):
                 destroy_quietly(rs.raw, rs.sh, handle)
             if control_pub:
                 destroy_quietly(rs.raw, rs.sh, control_pub)

@@ -32,10 +32,11 @@ from pkcs11_check.raw.recipes import (
     decapsulate_key,
     destroy_quietly,
     encapsulate_key,
-    find_objects,
+    find_objects_exhaustive,
     gen_keypair,
     import_secret_key,
     pack_attrs,
+    partition_proved_new,
     read_attributes,
 )
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name, is_standard_ckr, is_vendor_defined_ckr
@@ -551,15 +552,23 @@ class TestUniqueIdGeneration:
 
 
 def _inventory(rs: Any) -> list[int]:
-    """All currently visible object handles (unfiltered FindObjects)."""
-    return find_objects(rs.raw, rs.sh)
+    """All currently visible object handles (exhaustive unfiltered search)."""
+    return find_objects_exhaustive(rs.raw, rs.sh)
 
 
-def _handle_class(handle_value: int, *, found: list[int], new_handles: list[int]) -> str:
+def _handle_class(
+    handle_value: int,
+    *,
+    found: list[int],
+    new_handles: list[int],
+    before: list[int] | None = None,
+) -> str:
     if handle_value == _HANDLE_SENTINEL:
         return "sentinel"
     if handle_value == 0:
         return "zero"
+    if before is not None and handle_value in before:
+        return "pre-existing"
     if handle_value in found or handle_value in new_handles:
         return "new-live"
     return "dead-nonzero"
@@ -575,32 +584,84 @@ def _judge_override(
     label_text: str | None,
     leaked: list[int],
     inventory_before: list[int],
+    attempt_attrs: dict[Any, Any] | None = None,
+    identities: tuple[tuple[int, int], ...] = (),
 ) -> list[C.Classification]:
     """Two-tier override oracle shared by Create/Generate/Copy legs.
 
     Refusal legs judge objects, not output-buffer writes (adjudicated O1):
     the spec defines no handle state on a failed creator, so only a
-    leftover object (by label, or in the before/after inventory delta)
-    FAILs; a dead nonzero handle write is an honest deviation; zero and
-    the untouched sentinel are the normalized writes.
+    proved-new leftover object FAILs; an unproved inventory delta is an
+    honest deviation and is left alive. A dead nonzero handle write is an
+    honest deviation; zero and the untouched sentinel are normalized.
     """
     records: list[C.Classification] = []
     found: list[int] = []
     if label_text is not None:
-        found = find_objects(rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, label_text.encode())))
-    new_handles = sorted(set(_inventory(rs)) - set(inventory_before))
+        found = find_objects_exhaustive(
+            rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, label_text.encode()))
+        )
+    before_set = set(inventory_before)
+    inventory_after = _inventory(rs)
+    new_handles = sorted(set(inventory_after) - before_set)
+    proved_new, unproved_new = partition_proved_new(
+        rs.raw,
+        rs.sh,
+        inventory_before,
+        inventory_after,
+        attempt_templates=(attempt_attrs,) if attempt_attrs is not None else (),
+        identities=identities,
+        error_handles=(handle_value,),
+    )
+    proved_set = set(proved_new)
+    found_new = [handle for handle in found if handle in proved_set]
     judge_detail: dict[str, Any] = {
         "handle_after": handle_value,
-        "handle_class": _handle_class(handle_value, found=found, new_handles=new_handles),
+        "handle_class": _handle_class(
+            handle_value, found=found_new, new_handles=proved_new, before=inventory_before
+        ),
         "found_by_label": list(found),
         "new_handles": new_handles,
+        "proved_new_handles": proved_new,
+        "unproved_new_handles": unproved_new,
     }
     if rv == int(CKR_OK):
+        # A success output handle is not ownership proof (R2): only a
+        # proved-new handle (inventory delta, or a baseline-filtered
+        # label hit) may be read or destroyed. A returned handle that
+        # already existed proves the creator created nothing for this
+        # attempt; it is evidence only and is never touched.
+        leaked.extend(h for h in proved_new if h not in leaked)
+        if handle_value in before_set:
+            records.append(
+                C.record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation=producer_operation,
+                    inherit_mechanism=False,
+                    actual=rv,
+                    detail=_detail(
+                        producer_operation=producer_operation,
+                        outcome="pre-existing-handle",
+                        **judge_detail,
+                    ),
+                    summary=(
+                        f"{label}: CKR_OK returned pre-existing object "
+                        f"{handle_value} instead of a newly created object"
+                    ),
+                )
+            )
+            if not proved_new:
+                return records
         created = handle_value
-        if created != _HANDLE_SENTINEL:
-            leaked.append(created)
-        leaked.extend(h for h in found if h not in leaked)
-        target = created if created != _HANDLE_SENTINEL else (found[0] if found else 0)
+        target = 0
+        if created != _HANDLE_SENTINEL and created in proved_set:
+            target = created
+        elif found_new:
+            target = found_new[0]
+        elif proved_new:
+            target = proved_new[0]
         stored: bytes | None = None
         if target:
             stored, stored_records = _read_unique_id(
@@ -643,12 +704,11 @@ def _judge_override(
                 )
             )
         return records
-    if found or new_handles:
-        # A refused creator left an object behind. A bare handle_value is
-        # destroyed only via found/new_handles, never on its own (it may
-        # name a pre-existing object).
-        leaked.extend(found)
-        leaked.extend(h for h in new_handles if h not in leaked)
+    if proved_new:
+        # A refused creator left a proved-new object behind. Only those
+        # correlated handles are destroyed by the caller; a bare
+        # handle_value and any unproved delta are never touched.
+        leaked.extend(h for h in proved_new if h not in leaked)
         records.append(
             C.record_as(
                 "self_contradiction",
@@ -659,6 +719,28 @@ def _judge_override(
                 actual=rv,
                 detail=_detail(producer_operation=producer_operation, **judge_detail),
                 summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+            )
+        )
+    elif unproved_new and (
+        rv == int(CKR_ATTRIBUTE_READ_ONLY) or is_standard_ckr(rv) or is_vendor_defined_ckr(rv)
+    ):
+        records.append(
+            C.record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=label,
+                operation=producer_operation,
+                inherit_mechanism=False,
+                actual=rv,
+                detail=_detail(
+                    producer_operation=producer_operation,
+                    disposition="unproved-effect",
+                    **judge_detail,
+                ),
+                summary=(
+                    f"{label}: refusal {ckr_name(rv)} with an unproved "
+                    "inventory delta; zero-delta unproved"
+                ),
             )
         )
     elif handle_value not in (_HANDLE_SENTINEL, 0):
@@ -740,6 +822,7 @@ class TestUniqueIdOverride:
                 label_text=label_text,
                 leaked=leaked,
                 inventory_before=inventory_before,
+                attempt_attrs=attrs,
             )
         finally:
             _destroy_all(rs, leaked)
@@ -782,6 +865,8 @@ class TestUniqueIdOverride:
                     label_text="qc7c-override-generate",
                     leaked=leaked,
                     inventory_before=gen_inventory_before,
+                    attempt_attrs=gen_attrs,
+                    identities=((int(CKO_SECRET_KEY), int(CKK_AES)),),
                 )
             )
 
@@ -820,6 +905,8 @@ class TestUniqueIdOverride:
                     label_text="qc7c-override-copy",
                     leaked=leaked,
                     inventory_before=copy_inventory_before,
+                    attempt_attrs=copy_attrs,
+                    identities=((int(CKO_SECRET_KEY), int(CKK_AES)),),
                 )
             )
             reread_id, reread_records = _read_unique_id(

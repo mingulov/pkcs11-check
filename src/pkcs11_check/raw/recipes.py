@@ -9,7 +9,7 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from ctypes import byref
 from dataclasses import dataclass
 from enum import Flag, auto
@@ -28,7 +28,7 @@ from .pack import (
     template,
     template_ptr_count,
 )
-from .rv import expect_rv
+from .rv import CkrAssertionError, expect_rv, is_standard_ckr, is_vendor_defined_ckr
 from .types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
@@ -53,6 +53,7 @@ from .types_std import (
     CKA_GOSTR3410_PARAMS,
     CKA_GOSTR3411_PARAMS,
     CKA_KEY_TYPE,
+    CKA_LABEL,
     CKA_MODULUS,
     CKA_MODULUS_BITS,
     CKA_PARAMETER_SET,
@@ -1436,6 +1437,302 @@ def find_objects(
     expect_rv(rv, CKR_OK)
 
     return [handles[i] for i in range(found.value)]
+
+
+_FIND_EXHAUSTIVE_PAGE_SIZE = 256
+_FIND_EXHAUSTIVE_MAX_PAGES = 1024
+_PROOF_MATERIAL_ATTRS = (
+    int(CKA_MODULUS),
+    int(CKA_PUBLIC_EXPONENT),
+    int(CKA_EC_PARAMS),
+    int(CKA_EC_POINT),
+    int(CKA_PARAMETER_SET),
+    int(CKA_VALUE),
+)
+#: Material whose equality is causally strong on its own (a shared public
+#: exponent or curve OID is not).
+_PROOF_STRONG_MATERIAL_ATTRS = (
+    int(CKA_MODULUS),
+    int(CKA_EC_POINT),
+    int(CKA_VALUE),
+)
+
+
+def find_objects_exhaustive(
+    raw: RawPKCS11,
+    session: int,
+    tmpl: Any = None,
+    *,
+    page_size: int = _FIND_EXHAUSTIVE_PAGE_SIZE,
+    max_pages: int = _FIND_EXHAUSTIVE_MAX_PAGES,
+) -> list[int]:
+    """Find every matching object by paging to the terminating empty page.
+
+    ``find_objects`` deliberately keeps its single-call semantics for
+    ordinary callers. This inventory helper is for before/after deltas:
+    a short page is never exhaustion, a reported count above capacity
+    fails before indexing, and the search is finalized on error paths.
+    """
+    if page_size <= 0 or max_pages <= 0:
+        raise ValueError("page_size and max_pages must be positive")
+    if tmpl is not None:
+        rv = raw.C_FindObjectsInit(session, tmpl.ptr, tmpl.count)
+    else:
+        rv = raw.C_FindObjectsInit(session, None, 0)
+    expect_rv(rv, CKR_OK)
+    out: list[int] = []
+    try:
+        for _page in range(max_pages):
+            handles = (CK_OBJECT_HANDLE * page_size)()
+            found = CK_ULONG(0)
+            rv = raw.C_FindObjects(session, handles, page_size, byref(found))
+            expect_rv(rv, CKR_OK)
+            raw_count = int(found.value)
+            if raw_count > page_size:
+                raise AssertionError(
+                    f"C_FindObjects reported count {raw_count} above capacity {page_size}"
+                )
+            out.extend(int(handles[i]) for i in range(raw_count))
+            if raw_count == 0:
+                break
+        else:
+            raise AssertionError(
+                f"C_FindObjects did not report an empty page within {max_pages} pages"
+            )
+    except BaseException:
+        try:
+            raw.C_FindObjectsFinal(session)
+        except AttributeError:
+            pass
+        raise
+    rv = raw.C_FindObjectsFinal(session)
+    expect_rv(rv, CKR_OK)
+    return out
+
+
+def _proof_label_bytes(value: Any) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    return None
+
+
+def _proof_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, (bytes, bytearray)) and len(value) == 1 and value[0] in (0, 1):
+        return bool(value[0])
+    return None
+
+
+def _proof_ulong(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, (bytes, bytearray)) and len(value) in (4, 8):
+        return int.from_bytes(value, byteorder=sys.byteorder)
+    return None
+
+
+def _proof_nonempty_material(value: Any) -> bool:
+    if isinstance(value, (bytes, bytearray, str)):
+        return len(value) > 0
+    return value is not None and value != 0
+
+
+def _proof_material_equal(expected: Any, actual: Any) -> bool:
+    expected_bytes = _proof_label_bytes(expected)
+    actual_bytes = _proof_label_bytes(actual)
+    if expected_bytes is not None or isinstance(expected, (bytes, bytearray, str)):
+        return expected_bytes is not None and expected_bytes == actual_bytes
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        return _proof_ulong(actual) == int(expected)
+    return bool(actual == expected)
+
+
+def partition_proved_new(
+    raw: RawPKCS11,
+    session: int,
+    before: Iterable[int],
+    after: Iterable[int],
+    *,
+    attempt_templates: Iterable[Mapping[Any, Any]] = (),
+    identities: Iterable[tuple[int, int]] = (),
+    error_handles: Iterable[int] = (),
+) -> tuple[list[int], list[int]]:
+    """Partition an inventory delta into proved-owned and unproved handles.
+
+    A delta handle is proved only by per-template correlation to the
+    attempt: the token flag must match (an omitted flag excludes only a
+    readable token object), no readable attempted material attribute
+    may be contradicted by any attempt template, and at least one
+    attempt-specific link must hold -- the exact attempt label, a
+    matching strong material value (modulus, EC point, or secret value;
+    common selectors such as an exponent or parameter set never prove
+    alone), error-output membership combined with a matching identity,
+    or completion of a complementary public/private pair anchored by an
+    independently proved half and sharing strong material with it
+    (CKA_ID equality is not pairing evidence: PKCS#11 does not enforce
+    its association or uniqueness). Class/type alone never proves. A clean
+    correlation-read refusal leaves the handle unproved; an undefined
+    read RV propagates so it keeps its failure classification. Anything
+    unproved must be left alive by the caller.
+    """
+    identity_set: set[tuple[int, int]] = {(int(cls), int(typ)) for cls, typ in identities}
+    # Each spec: (label, token, (class, type) | None, {attr: expected values}).
+    specs: list[tuple[bytes | None, bool | None, tuple[int, int] | None, dict[int, set[Any]]]] = []
+    all_material: set[int] = set()
+    for tmpl in attempt_templates:
+        norm: dict[int, Any] = {}
+        for key, value in tmpl.items():
+            try:
+                norm[int(key)] = value  # noqa: B909 - enum keys are ints by design
+            except (TypeError, ValueError):
+                continue
+        obj_class = _proof_ulong(norm.get(int(CKA_CLASS)))
+        key_type = _proof_ulong(norm.get(int(CKA_KEY_TYPE)))
+        spec_identity = (
+            (obj_class, key_type) if obj_class is not None and key_type is not None else None
+        )
+        spec_material: dict[int, set[Any]] = {}
+        for attr in _PROOF_MATERIAL_ATTRS:
+            if attr in norm and isinstance(norm[attr], (bytes, bytearray, str, int)):
+                if not isinstance(norm[attr], bool):
+                    spec_material.setdefault(attr, set()).add(norm[attr])
+                    all_material.add(attr)
+        specs.append(
+            (
+                _proof_label_bytes(norm.get(int(CKA_LABEL))),
+                _proof_bool(norm.get(int(CKA_TOKEN))),
+                spec_identity,
+                spec_material,
+            )
+        )
+    if not specs and identity_set:
+        specs.append((None, None, None, {}))
+
+    before_set = {int(handle) for handle in before}
+    delta = [int(handle) for handle in after if int(handle) not in before_set]
+    error_set = {int(handle) for handle in error_handles if handle}
+    read_attrs = [int(CKA_LABEL), int(CKA_TOKEN), int(CKA_CLASS), int(CKA_KEY_TYPE)]
+    read_attrs.extend(attr for attr in sorted(all_material) if attr not in read_attrs)
+    for attr in _PROOF_STRONG_MATERIAL_ATTRS:
+        if attr not in read_attrs:
+            read_attrs.append(attr)
+    proved: list[int] = []
+    unproved: list[int] = []
+    infos: dict[int, tuple[tuple[int, int] | None, bool | None, bool, dict[int, Any]]] = {}
+    for handle in delta:
+        try:
+            attrs = read_attributes(raw, session, handle, read_attrs)
+        except CkrAssertionError as exc:
+            if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+                infos[handle] = (None, None, False, {})
+                unproved.append(handle)
+                continue
+            raise
+        label = _proof_label_bytes(attrs.get(int(CKA_LABEL)))
+        token = _proof_bool(attrs.get(int(CKA_TOKEN)))
+        obj_class = _proof_ulong(attrs.get(int(CKA_CLASS)))
+        key_type = _proof_ulong(attrs.get(int(CKA_KEY_TYPE)))
+        actual_identity = (
+            (obj_class, key_type) if obj_class is not None and key_type is not None else None
+        )
+
+        def _material_contradicted(spec_material: dict[int, set[Any]]) -> bool:
+            return any(
+                attr in attrs
+                and not any(
+                    _proof_material_equal(expected, attrs[attr]) for expected in expected_values
+                )
+                for attr, expected_values in spec_material.items()
+            )
+
+        any_contradiction = any(_material_contradicted(spec[3]) for spec in specs)
+        infos[handle] = (actual_identity, token, any_contradiction, attrs)
+        if any_contradiction:
+            unproved.append(handle)
+            continue
+
+        def _spec_matches(
+            spec: tuple[bytes | None, bool | None, tuple[int, int] | None, dict[int, set[Any]]],
+        ) -> bool:
+            spec_label, spec_token, spec_identity, spec_material = spec
+            if spec_token is None:
+                # Omitted flag: the session default is False, but a
+                # missing readback is not a token object either.
+                if token is True:
+                    return False
+            elif token != spec_token:
+                return False
+            strong_hits = 0
+            for attr, expected_values in spec_material.items():
+                if attr not in attrs:
+                    continue
+                if not any(
+                    _proof_material_equal(expected, attrs[attr]) for expected in expected_values
+                ):
+                    return False  # Readable attempted material contradicted.
+                if attr in _PROOF_STRONG_MATERIAL_ATTRS and _proof_nonempty_material(attrs[attr]):
+                    strong_hits += 1
+            if spec_label is not None and label == spec_label:
+                return True
+            if strong_hits:
+                return True
+            identity_ok = actual_identity is not None and (
+                actual_identity == spec_identity or actual_identity in identity_set
+            )
+            return handle in error_set and identity_ok
+
+        if any(_spec_matches(spec) for spec in specs):
+            proved.append(handle)
+        else:
+            unproved.append(handle)
+    if len(delta) == 2 and len(specs) >= 2 and unproved and proved:
+        # Pair completion only extends an independently proved half to a
+        # complementary mate that is cryptographically paired with it:
+        # a shared readable strong material value (e.g. the RSA modulus
+        # or EC point present on both halves). A whole foreign pair, or
+        # a foreign mate beside a proved anchor, stays unproved/alive.
+        pair_ids = [infos[handle][0] for handle in delta]
+        first_attrs, second_attrs = (infos[handle][3] for handle in delta)
+
+        shared_strong = False
+        strong_contradiction = False
+        for attr in _PROOF_STRONG_MATERIAL_ATTRS:
+            if attr not in first_attrs or attr not in second_attrs:
+                continue
+            if _proof_material_equal(first_attrs[attr], second_attrs[attr]):
+                if _proof_nonempty_material(first_attrs[attr]) and _proof_nonempty_material(
+                    second_attrs[attr]
+                ):
+                    shared_strong = True
+            else:
+                strong_contradiction = True
+        paired = not strong_contradiction and shared_strong
+        spec_tokens = {spec[1] for spec in specs if spec[1] is not None}
+        pair_token_ok = all(
+            (infos[handle][1] in spec_tokens) if spec_tokens else (infos[handle][1] is False)
+            for handle in delta
+        )
+        if (
+            paired
+            and pair_token_ok
+            and all(identity is not None for identity in pair_ids)
+            and {identity[0] for identity in pair_ids if identity is not None}
+            == {int(CKO_PUBLIC_KEY), int(CKO_PRIVATE_KEY)}
+            and len({identity[1] for identity in pair_ids if identity is not None}) == 1
+            and not any(infos[handle][2] for handle in delta)
+        ):
+            proved = list(delta)
+            unproved = []
+    return proved, unproved
 
 
 def wrap_key(

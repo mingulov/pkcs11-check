@@ -346,6 +346,7 @@ class _PolicyFake:
         sentinel_ok_label: bytes | None = None,
         leak_labeled: bytes | None = None,
         leak_unlabeled: bytes | None = None,
+        foreign_delta_for_label: bytes | None = None,
         refusal_out_handle: int | None = None,
         extra_for_label: bytes | None = None,
         extra_attrs: dict[int, Any] | None = None,
@@ -403,6 +404,8 @@ class _PolicyFake:
         self.find_pages: list[int] = []
         self._leak_labeled = leak_labeled
         self._leak_unlabeled = leak_unlabeled
+        self._foreign_delta_for_label = foreign_delta_for_label
+        self.foreign_delta_handle: int | None = None
         self._refusal_out_handle = refusal_out_handle
         self._extra_for_label = extra_for_label
         self._extra_attrs = dict(extra_attrs or {})
@@ -600,6 +603,20 @@ class _PolicyFake:
         dropped.pop(int(CKA_LABEL), None)
         return self._store(dropped, role=role)
 
+    def _maybe_foreign_delta(self, attrs: dict[int, Any]) -> None:
+        """Plant an unrelated token object during the refused attempt (R1)."""
+        if self._foreign_delta_for_label is None or self._label_of(attrs) != (
+            self._foreign_delta_for_label
+        ):
+            return
+        foreign = {
+            int(CKA_LABEL): "foreign-delta",
+            int(CKA_TOKEN): True,
+            int(CKA_CLASS): int(CKO_PRIVATE_KEY),
+            int(CKA_KEY_TYPE): int(CKK_AES),
+        }
+        self.foreign_delta_handle = self._store(foreign, role="foreign")
+
     def _apply_extra(self, attrs: dict[int, Any]) -> None:
         if self._extra_for_label is not None and self._label_of(attrs) == self._extra_for_label:
             attrs.update(self._extra_attrs)
@@ -619,6 +636,7 @@ class _PolicyFake:
         if scripted is not None:
             self._maybe_leak(attrs, role="create")
             leaked = self._maybe_leak_unlabeled(attrs, role="create")
+            self._maybe_foreign_delta(attrs)
             if leaked is not None:
                 _fill_ulong(out, leaked)
             if self._refusal_out_handle is not None:
@@ -663,6 +681,25 @@ class _PolicyFake:
             self._maybe_leak(priv_attrs, role="keypair-priv")
             leaked_pub = self._maybe_leak_unlabeled(pub_attrs, role="keypair-pub")
             leaked_priv = self._maybe_leak_unlabeled(priv_attrs, role="keypair-priv")
+            # Real key objects always expose CKA_CLASS/CKA_KEY_TYPE; the
+            # raw leaked templates may omit them (priv halves especially).
+            _type_by_gen = {
+                int(CKM_RSA_PKCS_KEY_PAIR_GEN): int(CKK_RSA),
+                int(CKM_EC_KEY_PAIR_GEN): int(CKK_EC),
+                int(CKM_ML_DSA_KEY_PAIR_GEN): int(CKK_ML_DSA),
+                int(CKM_SLH_DSA_KEY_PAIR_GEN): int(CKK_SLH_DSA),
+                int(CKM_ML_KEM_KEY_PAIR_GEN): int(CKK_ML_KEM),
+            }
+            for leaked, obj_class in (
+                (leaked_pub, int(CKO_PUBLIC_KEY)),
+                (leaked_priv, int(CKO_PRIVATE_KEY)),
+            ):
+                if leaked is not None:
+                    leaked_attrs = self.objects[leaked].attrs
+                    leaked_attrs.setdefault(int(CKA_CLASS), obj_class)
+                    if mech_id in _type_by_gen:
+                        leaked_attrs.setdefault(int(CKA_KEY_TYPE), _type_by_gen[mech_id])
+            self._maybe_foreign_delta(pub_attrs)
             if leaked_pub is not None:
                 _fill_ulong(pub_out, leaked_pub)
             if leaked_priv is not None:
@@ -970,6 +1007,7 @@ class _PolicyFake:
         if scripted is not None:
             self._maybe_leak(attrs, role="unwrap")
             leaked = self._maybe_leak_unlabeled(attrs, role="unwrap")
+            self._maybe_foreign_delta(attrs)
             if leaked is not None:
                 _fill_ulong(out, leaked)
             return scripted
@@ -5201,6 +5239,20 @@ def test_qc4b_create_refusal_foreign_error_handle_not_destroyed_p2() -> None:
     assert (record.detail or {}).get("error_output_handles") == [100], record.detail
     assert 100 not in fake.destroyed, fake.destroyed
     assert fake.objects[100].destroyed is False
+
+
+def test_qc4b_create_refusal_foreign_delta_xfails_unproved_alive_r1() -> None:
+    """R1: a delta object uncorrelated to the attempt is left alive."""
+    label = _attempt_label("create", "rsa", "missing_modulus")
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCONSISTENT], foreign_delta_for_label=label)
+    assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
+    record = _assert_xfail_record("honest_deviation")
+    foreign = fake.foreign_delta_handle
+    assert foreign is not None
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert (record.detail or {}).get("unproved_new_handles") == [foreign], record.detail
+    assert foreign not in fake.destroyed, fake.destroyed
+    assert fake.objects[foreign].destroyed is False
 
 
 def _over_capacity_raw(calls: list[str]) -> Any:

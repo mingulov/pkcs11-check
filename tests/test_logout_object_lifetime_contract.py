@@ -1214,13 +1214,29 @@ def test_failed_oracle_cleanup_failure_preserves_primary_p1(
 
     monkeypatch.setattr(tssm, "_login_user_raw", _flaky_login)
 
-    with pytest.raises(Failed, match="accepted invalid"):
+    with pytest.raises(Failed, match="accepted invalid") as ei:
         _run_matrix(raw)
 
+    notes = getattr(ei.value, "__notes__", [])
+    assert any("cleanup relogin boom" in note for note in notes), notes
     records = C.get_records()
     assert len(records) == 1
     assert records[0].reason == "accepted_invalid"
     assert "private token object" in records[0].label
+
+
+def test_owned_token_cleanup_without_primary_raises_r6(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R6: with no primary verdict in flight, cleanup failure is not swallowed."""
+
+    def _boom_find(_raw: Any, _sh: int, _tmpl: Any) -> list[int]:
+        raise RuntimeError("cleanup find boom")
+
+    monkeypatch.setattr(tssm, "find_objects", _boom_find)
+
+    with pytest.raises(RuntimeError, match="cleanup find boom"):
+        tssm._cleanup_owned_token_object(object(), 1, b"1234", object())
 
 
 def test_token_label_unique_across_runs_p1() -> None:
