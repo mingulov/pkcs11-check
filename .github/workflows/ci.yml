@@ -109,6 +109,24 @@ jobs:
             --marker "not security" \
             --match "test_encrypt or test_sign or test_digest"
 
+  windows-contracts:
+    # Fast first Windows signal: provider-free contract/guard meta-tests only
+    # (tests/_windows_contract_files.txt, census-pinned on Linux by
+    # tests/test_llp64_sim_census.py). Surfaces LLP64 value/layout premises in
+    # minutes instead of waiting for smoke-windows. Latency leg only, never
+    # ABI proof: smoke-windows below remains the sole real-DLL gate and does
+    # not depend on this job.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --frozen --extra dev
+      - name: Contract + platform-guard meta-tests (provider-free)
+        env:
+          PKCS11_CHECK_REQUIRE_GIT_GUARDS: "1"
+        shell: pwsh
+        run: uv run pytest (Get-Content tests/_windows_contract_files.txt) -q --timeout=60
+
   smoke-windows:
     # Real-Windows conformance gate (the workspace's Wine smoke only *reproduces*
     # the ABI). uv installs the package normally, so the pytest plugin entry point
