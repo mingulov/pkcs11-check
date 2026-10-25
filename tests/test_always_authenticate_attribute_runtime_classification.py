@@ -166,9 +166,11 @@ def test_present_incorrect_always_auth_readback_is_hard_failure(
         assert "expected_shape" not in rec.detail
         assert "actual_type" not in rec.detail
     else:
+        # F11/N2 re-verdict: type+length redaction, never value bytes.
         assert rec.detail["expected_shape"] == "CK_BBOOL"
         assert rec.detail["actual_type"] == "bytes"
-        assert rec.detail["actual_repr"] == repr(value)
+        assert rec.detail["actual_len"] == len(value)
+        assert "actual_repr" not in rec.detail
         assert "actual_value" not in rec.detail
     assert destroyed == [11, 22]
 

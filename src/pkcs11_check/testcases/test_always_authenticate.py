@@ -193,6 +193,11 @@ def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             return None
 
         if type(value) is not bool:
+            # F11/N2 (minimal redaction): type+length only, never value bytes.
+            if isinstance(value, (bytes, bytearray, list, tuple, str)):
+                _actual_len: int | None = len(value)
+            else:
+                _actual_len = None
             fail_as(
                 "wrong_result",
                 kind="policy",
@@ -206,7 +211,7 @@ def _try_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
                     "expected_shape": "CK_BBOOL",
                     "expected_value": True,
                     "actual_type": type(value).__name__,
-                    "actual_repr": repr(value),
+                    "actual_len": _actual_len,
                     "producer_operation": "C_GenerateKeyPair",
                     "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
                 },

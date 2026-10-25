@@ -20,6 +20,7 @@ from pkcs11_check.classification import (
     record_as,
     xfail_as,
 )
+from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import mech_bytes
 from pkcs11_check.raw.recipes import (
     copy_object,
@@ -40,6 +41,7 @@ from pkcs11_check.raw.rv import (
 )
 from pkcs11_check.raw.types_std import (
     CKA_CLASS,
+    CKA_COPYABLE,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
@@ -60,6 +62,7 @@ from pkcs11_check.raw.types_std import (
     CKO_SECRET_KEY,
     CKR_ACTION_PROHIBITED,
     CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_DATA_LEN_RANGE,
     CKR_DEVICE_ERROR,
@@ -73,17 +76,26 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_UNEXTRACTABLE,
     CKR_MECHANISM_INVALID,
     CKR_MECHANISM_PARAM_INVALID,
+    CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
     CKR_WRAPPED_KEY_LEN_RANGE,
 )
 from pkcs11_check.testcases._attribute_values import MISSING_ATTRIBUTE, attr_or_record
+from pkcs11_check.testcases._copy_mutability import (
+    classify_rv_validity_or_none,
+    read_qc3_attributes,
+    validate_qc3_shape,
+    validate_wrap_chain,
+    xfail_qc3_setup_refusal,
+)
 from pkcs11_check.testcases._negotiation import TEMPLATE_SHAPE_REJECTS
 from pkcs11_check.testcases.conftest import (
     classify_policy_enforcement,
     gen_aes_key_or_xfail,
     is_known_error,
     reject_or_classify,
+    skip_unless_mechanism,
     unwrap_key_for_mechanism_roundtrip,
     xfail_if_known_ckr,
 )
@@ -313,7 +325,18 @@ class TestSensitivePreservation:
                 )
             except CkrAssertionError as exc:
                 if exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
-                    return  # Copy not supported - ok
+                    xfail_as(
+                        "not_operational",
+                        kind="policy",
+                        label="C_CopyObject CKA_SENSITIVE preservation (copy unsupported)",
+                        operation="C_CopyObject",
+                        inherit_mechanism=False,
+                        actual=exc.rv,
+                        summary=(
+                            "C_CopyObject not supported "
+                            f"({ckr_name(exc.rv)}); preservation premise void"
+                        ),
+                    )
                 raise
             try:
                 copy_attrs = read_attributes(rs.raw, rs.sh, copied, [CKA_SENSITIVE])
@@ -1214,3 +1237,350 @@ class TestKeyTypeConfusionOnUnwrap:
         finally:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
             destroy_quietly(rs.raw, rs.sh, target_h)
+
+
+#: The specified non-extractability refusal (PKCS#11 v3.2: a key "can't be
+#: wrapped because its CKA_EXTRACTABLE is CK_FALSE"): the ONLY negative-wrap
+#: RV that passes. Alternates route through ``reject_or_classify`` as visible
+#: alternate-refusal xfails (vendor/undefined per its arms).
+_QC3C_NEGATIVE_WRAP_PASS_RV = CKR_KEY_UNEXTRACTABLE
+
+#: F6a: QC3c known material (all 16-byte). Source and wrapper/control are
+#: IMPORTED (not generated) so every leg has known material for the local
+#: oracle; EXTRACTABLE is still OMITTED on the source (brief-compliant) and
+#: the actual default is read back as before.
+_QC3C_SOURCE_VALUE = bytes(range(0x20, 0x30))
+_QC3C_WRAPPER_VALUE = bytes(range(0x80, 0x90))
+_QC3C_CONTROL_VALUE = bytes(range(0x90, 0xA0))
+
+#: Clean setup refusals for the QC3c imports (C_CreateObject).
+_QC3C_IMPORT_SETUP_REJECT_RVS = (
+    CKR_ACTION_PROHIBITED,
+    CKR_ATTRIBUTE_READ_ONLY,
+    CKR_ATTRIBUTE_TYPE_INVALID,
+    CKR_ATTRIBUTE_VALUE_INVALID,
+    CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
+    CKR_FUNCTION_NOT_SUPPORTED,
+)
+
+
+def _qc3c_import_source(rs: Any) -> int:
+    """Import the QC3c known-value source (EXTRACTABLE omitted, default read)."""
+    try:
+        return import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            _QC3C_SOURCE_VALUE,
+            attrs={CKA_COPYABLE: True, CKA_TOKEN: False},
+        )
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label="QC3c omitted-EXTRACTABLE source setup",
+            operation="C_CreateObject",
+            kind="policy",
+        )
+        # G2: every clean standard setup refusal xfails with the RV preserved
+        # (no bare raise); the tuple only selects the summary wording.
+        xfail_qc3_setup_refusal(
+            exc,
+            _QC3C_IMPORT_SETUP_REJECT_RVS,
+            label="QC3c omitted-EXTRACTABLE source setup",
+        )
+
+
+def _qc3c_import_wrapper(rs: Any) -> int:
+    """Import the QC3c known-value wrapping key (WRAP+UNWRAP, F5)."""
+    try:
+        return import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            _QC3C_WRAPPER_VALUE,
+            attrs={
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_EXTRACTABLE: True,
+                CKA_SENSITIVE: False,
+                CKA_TOKEN: False,
+            },
+        )
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label="QC3c control wrapping key setup",
+            operation="C_CreateObject",
+            kind="policy",
+        )
+        # G2: every clean standard setup refusal xfails with the RV preserved
+        # (no bare raise); the tuple only selects the summary wording.
+        xfail_qc3_setup_refusal(
+            exc,
+            _QC3C_IMPORT_SETUP_REJECT_RVS,
+            label="QC3c control wrapping key setup",
+        )
+
+
+def _qc3c_import_control(rs: Any) -> int:
+    """Import the QC3c known-value extractable control target."""
+    try:
+        return import_secret_key(
+            rs.raw,
+            rs.sh,
+            CKK_AES,
+            _QC3C_CONTROL_VALUE,
+            attrs={CKA_EXTRACTABLE: True, CKA_TOKEN: False},
+        )
+    except CkrAssertionError as exc:
+        classify_rv_validity_or_none(
+            exc.rv,
+            label="QC3c extractable control target setup",
+            operation="C_CreateObject",
+            kind="policy",
+        )
+        # G2: every clean standard setup refusal xfails with the RV preserved
+        # (no bare raise); the tuple only selects the summary wording.
+        xfail_qc3_setup_refusal(
+            exc,
+            _QC3C_IMPORT_SETUP_REJECT_RVS,
+            label="QC3c extractable control target setup",
+        )
+
+
+def _qc3c_flag_text(value: Any) -> str:
+    """Render an EXTRACTABLE readback without inventing a value."""
+    if value is MISSING_ATTRIBUTE:
+        return "<unavailable>"
+    return repr(bool(value))
+
+
+class TestExtractableDefaultThroughCopy:
+    """QC3c: the omitted-EXTRACTABLE default survives copy (#55.4)."""
+
+    def test_copy_preserves_omitted_extractable_default(self, p11_raw_session: Any) -> None:
+        """A false-claiming source requires a non-extractable copy.
+
+        The source omits CKA_EXTRACTABLE; the actual default is read back.
+        An unreadable source readback claims true (creation accepted an
+        omission, which cannot promise protection), so only a source
+        reading back false demands the copy preserve non-extractability.
+        The negative wrap leg runs only with a passing extractable wrap
+        control in the same run; otherwise it is inapplicable, not passed.
+        """
+        rs = p11_raw_session
+        label = "C_CopyObject omitted CKA_EXTRACTABLE default (QC3c)"
+        # F6a: imported known-value source (EXTRACTABLE still omitted).
+        src = _qc3c_import_source(rs)
+        try:
+            src_attrs = read_qc3_attributes(rs, src, [CKA_EXTRACTABLE], label=label, premise=True)
+            src_flag = attr_or_record(
+                src_attrs,
+                CKA_EXTRACTABLE,
+                label=f"{label}: source default readback",
+                reason="not_operational",
+                kind="policy",
+                inherit_mechanism=False,
+            )
+            if src_flag is not MISSING_ATTRIBUTE:
+                src_flag = validate_qc3_shape(
+                    src_flag,
+                    "bool",
+                    attr_name="CKA_EXTRACTABLE",
+                    label=label,
+                    premise=True,
+                )
+            claims_false = src_flag is not MISSING_ATTRIBUTE and src_flag is False
+            try:
+                copy = copy_object(rs.raw, rs.sh, src, {})
+            except CkrAssertionError as exc:
+                if exc.rv == int(CKR_FUNCTION_NOT_SUPPORTED):
+                    pytest.skip(f"{label}: C_CopyObject not supported ({ckr_name(exc.rv)})")
+                classify_rv_validity_or_none(
+                    exc.rv, label=label, operation="C_CopyObject", kind="policy"
+                )
+                xfail_as(
+                    "not_operational",
+                    kind="policy",
+                    label=label,
+                    operation="C_CopyObject",
+                    inherit_mechanism=False,
+                    actual=exc.rv,
+                    summary=(
+                        f"{label}: empty-template copy refused with "
+                        f"{ckr_name(exc.rv)}; copy premise void"
+                    ),
+                )
+            try:
+                copy_attrs = read_qc3_attributes(
+                    rs, copy, [CKA_EXTRACTABLE], label=label, premise=True
+                )
+                copy_flag = attr_or_record(
+                    copy_attrs,
+                    CKA_EXTRACTABLE,
+                    label=f"{label}: copy readback",
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                if copy_flag is not MISSING_ATTRIBUTE:
+                    copy_flag = validate_qc3_shape(
+                        copy_flag,
+                        "bool",
+                        attr_name="CKA_EXTRACTABLE",
+                        label=label,
+                        premise=True,
+                    )
+                if not claims_false:
+                    note(
+                        "QC3c: source EXTRACTABLE default "
+                        f"{_qc3c_flag_text(src_flag)} claims true; copy reads "
+                        f"{_qc3c_flag_text(copy_flag)} "
+                        "(preservation/tightening observed, nothing demanded)",
+                        ComplianceLevel.STANDARD,
+                        reference="QC3c #55.4 compatibility observation",
+                    )
+                    return
+                escalated_flag = copy_flag is not MISSING_ATTRIBUTE and copy_flag is True
+                skip_unless_mechanism(rs, "AES_KEY_WRAP")
+                # F6a: imported known-value wrapper and control (WRAP+UNWRAP, F5).
+                wrapper = _qc3c_import_wrapper(rs)
+                try:
+                    control = _qc3c_import_control(rs)
+                    try:
+                        try:
+                            control_blob = wrap_key(
+                                rs.raw, rs.sh, wrapper, control, CKM_AES_KEY_WRAP
+                            )
+                        except CkrAssertionError as exc:
+                            classify_rv_validity_or_none(
+                                exc.rv,
+                                label=label,
+                                operation="C_WrapKey",
+                                mechanism="CKM_AES_KEY_WRAP",
+                                kind="policy",
+                            )
+                            pytest.skip(
+                                f"{label}: wrap negative inapplicable; "
+                                "extractable-control wrap failed with "
+                                f"{ckr_name(exc.rv)}"
+                            )
+                        # F6b: local oracle (no provider use); reference mode deleted.
+                        control_result = validate_wrap_chain(
+                            control_blob,
+                            kek=_QC3C_WRAPPER_VALUE,
+                            expected_key=_QC3C_CONTROL_VALUE,
+                            label=label,
+                        )
+                        if not control_result.validated:
+                            pytest.skip(
+                                f"{label}: wrap negative inapplicable; "
+                                "extractable-control wrap unvalidated "
+                                f"({control_result.evidence.get('stage')})"
+                            )
+                        try:
+                            blob = wrap_key(rs.raw, rs.sh, wrapper, copy, CKM_AES_KEY_WRAP)
+                        except CkrAssertionError as exc:
+                            classify_rv_validity_or_none(
+                                exc.rv,
+                                label=label,
+                                operation="C_WrapKey",
+                                mechanism="CKM_AES_KEY_WRAP",
+                                kind="policy",
+                            )
+                            if escalated_flag:
+                                xfail_as(
+                                    "honest_deviation",
+                                    kind="policy",
+                                    label=label,
+                                    operation="C_WrapKey",
+                                    inherit_mechanism=False,
+                                    actual=exc.rv,
+                                    summary=(
+                                        f"{label}: copy claims EXTRACTABLE=True but "
+                                        f"wrap refused with {ckr_name(exc.rv)} "
+                                        "(contradictory; exposure unproved)"
+                                    ),
+                                    detail={
+                                        "copy_claims_extractable": True,
+                                        "wrap_rv": ckr_name(exc.rv),
+                                    },
+                                )
+                            reject_or_classify(
+                                exc,
+                                (_QC3C_NEGATIVE_WRAP_PASS_RV,),
+                                label=label,
+                                kind="policy",
+                            )
+                            record_as(
+                                "sanctioned_refusal",
+                                kind="policy",
+                                label=label,
+                                operation="C_WrapKey",
+                                inherit_mechanism=False,
+                                actual=exc.rv,
+                                expected=(_QC3C_NEGATIVE_WRAP_PASS_RV,),
+                                summary=(
+                                    f"{label}: wrap of non-extractable copy refused "
+                                    f"with {ckr_name(exc.rv)} (control wrap passed)"
+                                ),
+                            )
+                            return
+                        # F6b: local oracle over the known copy material (the copy
+                        # preserves the known source value through the empty template).
+                        result = validate_wrap_chain(
+                            blob,
+                            kek=_QC3C_WRAPPER_VALUE,
+                            expected_key=_QC3C_SOURCE_VALUE,
+                            label=label,
+                        )
+                        if not result.validated:
+                            xfail_as(
+                                "honest_deviation",
+                                kind="policy",
+                                label=label,
+                                operation="C_WrapKey",
+                                inherit_mechanism=False,
+                                # F13/M1: the wrap was accepted (CKR_OK established);
+                                # validation RVs stay in detail.
+                                actual=int(CKR_OK),
+                                summary=(
+                                    f"{label}: copy wrap completed but exposure "
+                                    "unvalidated "
+                                    f"({result.evidence.get('stage')}); "
+                                    "escalation unproved"
+                                ),
+                                detail={
+                                    "disposition": "unproved-effect",
+                                    "copy_claims_extractable": escalated_flag,
+                                    **result.evidence,
+                                },
+                            )
+                        fail_as(
+                            "self_contradiction",
+                            kind="policy",
+                            label=label,
+                            operation="C_WrapKey",
+                            inherit_mechanism=False,
+                            # F13/M1: accepted wrap (CKR_OK); validation in detail.
+                            actual=int(CKR_OK),
+                            summary=(
+                                f"{label}: copy of non-extractable source exposes "
+                                "material via wrap "
+                                f"(copy_claims_extractable={escalated_flag}; "
+                                "validated oracle)"
+                            ),
+                            detail={
+                                "copy_claims_extractable": escalated_flag,
+                                **result.evidence,
+                            },
+                        )
+                    finally:
+                        destroy_quietly(rs.raw, rs.sh, control)
+                finally:
+                    destroy_quietly(rs.raw, rs.sh, wrapper)
+            finally:
+                destroy_quietly(rs.raw, rs.sh, copy)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, src)
