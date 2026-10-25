@@ -1180,3 +1180,57 @@ def test_matrix_no_pin_skips() -> None:
             _session(raw), _config(pin=None)
         )
     assert raw.creations == []
+
+
+def test_failed_oracle_destroys_owned_token_object_p1() -> None:
+    """P1: a detected defect must not leave the private token key behind."""
+    raw = _FakeRaw(stale_ok_prefixes=(_TOK_PREFIX,))
+
+    with pytest.raises(Failed, match="accepted invalid"):
+        _run_matrix(raw)
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "accepted_invalid"
+    assert "private token object" in records[0].label
+    tok_h = _handle_by_prefix(raw, _TOK_PREFIX)
+    assert raw.objects[tok_h].destroyed is True, "owned token object leaked on failure"
+    assert any(handle == tok_h for _session, handle in raw.destroys), raw.destroys
+
+
+def test_failed_oracle_cleanup_failure_preserves_primary_p1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1 pin: cleanup relogin failure never masks the primary finding."""
+    raw = _FakeRaw(stale_ok_prefixes=(_TOK_PREFIX,))
+    original = tssm._login_user_raw
+    calls: list[int] = []
+
+    def _flaky_login(raw_arg: Any, sh: int, pin_bytes: bytes | None) -> None:
+        calls.append(1)
+        if len(calls) > 1:
+            raise RuntimeError("cleanup relogin boom")
+        original(raw_arg, sh, pin_bytes)
+
+    monkeypatch.setattr(tssm, "_login_user_raw", _flaky_login)
+
+    with pytest.raises(Failed, match="accepted invalid"):
+        _run_matrix(raw)
+
+    records = C.get_records()
+    assert len(records) == 1
+    assert records[0].reason == "accepted_invalid"
+    assert "private token object" in records[0].label
+
+
+def test_token_label_unique_across_runs_p1() -> None:
+    """P1: the owned token label is run-unique, never a recycled identity."""
+    labels: list[bytes] = []
+    for _ in range(2):
+        C.clear()
+        raw = _FakeRaw()
+        _run_matrix(raw)
+        _session_id, decoded = _creation_by_prefix(raw, _TOK_PREFIX)
+        label = decoded[int(CKA_LABEL)]
+        labels.append(label if isinstance(label, bytes) else str(label).encode())
+    assert labels[0] != labels[1], labels
