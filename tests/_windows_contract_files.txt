@@ -3,6 +3,7 @@ tests/test_byte_kdf_protection_contract.py
 tests/test_ccm_ecma_b0_contract.py
 tests/test_ckr_ctypes_abi.py
 tests/test_copy_attribute_contract.py
+tests/test_derived_key_format_contract.py
 tests/test_dss_signature_shape_contract.py
 tests/test_hash_pqc_input_contract.py
 tests/test_honest_region_contract.py
@@ -23,4 +24,5 @@ tests/test_windows_abi.py
 tests/test_windows_abi_bigvalues.py
 tests/test_windows_abi_crash.py
 tests/test_windows_abi_loading.py
+tests/test_wrap_kem_handle_contract.py
 tests/test_wycheproof_gcm_iv_contract.py
