@@ -81,7 +81,12 @@ class _IdentityRaw:
         self.getinfo_rv = _OK
         self.uid_mode = "fresh"  # fresh | missing | empty | duplicate | nonutf8
         self.copy_uid_mode = "fresh"  # fresh | same
-        self.override_mode = "read_only"  # read_only | general | honor | ignore
+        self.override_mode = "read_only"  # read_only | general | type_invalid | honor | ignore
+        # O1 knobs: value written into the output handle on an override
+        # refusal (None leaves the prefilled sentinel untouched), and a
+        # per-operation object leaked before returning the refusal.
+        self.override_handle_write: int | None = None
+        self.override_leak_by_op: dict[str, str] = {}  # op -> labeled | unlabeled
 
     def _fresh_uid(self) -> bytes:
         self._uid_counter += 1
@@ -115,7 +120,26 @@ class _IdentityRaw:
             return _READ_ONLY
         if self.override_mode == "general":
             return _GENERAL
+        if self.override_mode == "type_invalid":
+            return _TYPE_INVALID
         return None  # honor / ignore: create
+
+    def _apply_override_refusal(
+        self, op: str, attrs: dict[int, bytes], handle_ptr: Any
+    ) -> int | None:
+        """Refuse a caller-UID template, applying the O1 leak/handle knobs."""
+        refusal = self._override_outcome(attrs)
+        if refusal is None:
+            return None
+        leak = self.override_leak_by_op.get(op, "none")
+        if leak != "none":
+            leak_attrs = dict(attrs)
+            if leak == "unlabeled":
+                leak_attrs.pop(int(CKA_LABEL), None)
+            self._alloc(leak_attrs)
+        if self.override_handle_write is not None:
+            _write_handle(handle_ptr, self.override_handle_write)
+        return refusal
 
     def _alloc_with_override(self, attrs: dict[int, bytes]) -> int:
         if _UID in attrs and self.override_mode == "honor":
@@ -156,7 +180,7 @@ class _IdentityRaw:
             return int(CKR_TEMPLATE_INCOMPLETE)
         attrs = _decode_template(tmpl, int(count))
         self.create_calls.append(attrs)
-        refusal = self._override_outcome(attrs)
+        refusal = self._apply_override_refusal("create", attrs, handle_ptr)
         if refusal is not None:
             return refusal
         _write_handle(handle_ptr, self._alloc_with_override(attrs))
@@ -167,7 +191,7 @@ class _IdentityRaw:
     ) -> int:
         attrs = _decode_template(tmpl, int(count))
         self.genkey_calls.append(attrs)
-        refusal = self._override_outcome(attrs)
+        refusal = self._apply_override_refusal("generate", attrs, handle_ptr)
         if refusal is not None:
             return refusal
         _write_handle(handle_ptr, self._alloc_with_override(attrs))
@@ -195,7 +219,7 @@ class _IdentityRaw:
     ) -> int:
         attrs = _decode_template(tmpl, int(count)) if tmpl is not None else {}
         self.copy_calls.append(attrs)
-        refusal = self._override_outcome(attrs)
+        refusal = self._apply_override_refusal("copy", attrs, handle_ptr)
         if refusal is not None:
             return refusal
         source = dict(self.objects.get(int(handle), {}))
@@ -458,4 +482,125 @@ def test_unique_id_non_utf8_bytes_bucket() -> None:
     fake = _IdentityRaw()
     fake.uid_mode = "nonutf8"
     identity_case.TestUniqueIdGeneration().test_created_objects_have_distinct_unique_ids(_rs(fake))
+    _assert_cleanup(fake)
+
+
+# --- O1 refusal oracle (Task 18 Docker adjudication) --------------------------
+#
+# On a refused creator the spec defines no output-handle state: verdicts
+# judge objects (label inventory + before/after inventory delta), never a
+# bare handle write. Zero (CK_INVALID_HANDLE) and the untouched sentinel
+# are the normalized writes; a dead nonzero write is an honest deviation.
+
+_DEAD_HANDLE = 987_654
+
+
+def _record(reason: str, label_part: str = "") -> Any:
+    matches = [rec for rec in C.get_records() if rec.reason == reason and label_part in rec.label]
+    assert len(matches) == 1, [(rec.reason, rec.label) for rec in C.get_records()]
+    return matches[0]
+
+
+def test_unique_id_override_zero_write_read_only_passes() -> None:
+    fake = _IdentityRaw()
+    fake.override_handle_write = 0
+    identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    assert fake.staged == []
+    assert fake.destroyed == []
+
+
+def test_unique_id_override_zero_write_clean_refusal_xfails_nonspec() -> None:
+    fake = _IdentityRaw()
+    fake.override_mode = "general"
+    fake.override_handle_write = 0
+    assert_xfails(
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create,
+        _rs(fake),
+    )
+    detail = _record("nonspec_reject", "C_CreateObject").detail
+    assert detail["handle_after"] == 0
+    assert detail["handle_class"] == "zero"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert fake.staged == []
+    assert fake.destroyed == []
+
+
+def test_unique_id_override_zero_write_generate_and_copy_read_only_passes() -> None:
+    fake = _IdentityRaw()
+    fake.override_handle_write = 0
+    identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_generate_and_copy(
+        _rs(fake)
+    )
+    _assert_cleanup(fake)
+    assert 0 not in fake.destroyed
+
+
+def test_unique_id_override_dead_nonzero_handle_xfails_honest_deviation() -> None:
+    fake = _IdentityRaw()
+    fake.override_handle_write = _DEAD_HANDLE
+    assert_xfails(
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create,
+        _rs(fake),
+    )
+    detail = _record("honest_deviation", "C_CreateObject").detail
+    assert detail["handle_after"] == _DEAD_HANDLE
+    assert detail["handle_class"] == "dead-nonzero"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert fake.staged == []
+    assert _DEAD_HANDLE not in fake.destroyed
+
+
+def test_unique_id_override_refusal_labeled_leak_fails() -> None:
+    fake = _IdentityRaw()
+    fake.override_mode = "general"
+    fake.override_leak_by_op = {"create": "labeled"}
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    detail = _record("self_contradiction", "C_CreateObject").detail
+    assert detail["handle_class"] == "sentinel"
+    assert detail["found_by_label"] == fake.staged
+    assert detail["new_handles"] == fake.staged
+    _assert_cleanup(fake)
+
+
+def test_unique_id_override_refusal_unlabeled_new_object_fails() -> None:
+    fake = _IdentityRaw()
+    fake.override_mode = "general"
+    fake.override_leak_by_op = {"create": "unlabeled"}
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_create(_rs(fake))
+    detail = _record("self_contradiction", "C_CreateObject").detail
+    assert detail["handle_class"] == "sentinel"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == fake.staged
+    _assert_cleanup(fake)
+
+
+def test_unique_id_override_generate_leak_copy_zero_write_node() -> None:
+    # SoftHSM shape from the adjudication: Generate refuses with
+    # CKR_ATTRIBUTE_TYPE_INVALID yet leaks the labeled key (FAIL); Copy
+    # refuses cleanly writing only CK_INVALID_HANDLE (nonspec xfail
+    # record). The node FAILs via Generate alone.
+    fake = _IdentityRaw()
+    fake.override_mode = "type_invalid"
+    fake.override_handle_write = 0
+    fake.override_leak_by_op = {"generate": "labeled"}
+    with pytest.raises(Failed):
+        identity_case.TestUniqueIdOverride().test_unique_id_override_rejected_on_generate_and_copy(
+            _rs(fake)
+        )
+    generate = _record("self_contradiction", "C_GenerateKey")
+    assert generate.detail["found_by_label"] != []
+    copy = _record("nonspec_reject", "C_CopyObject")
+    assert copy.detail["handle_after"] == 0
+    assert copy.detail["handle_class"] == "zero"
+    assert copy.detail["found_by_label"] == []
+    assert copy.detail["new_handles"] == []
+    assert not [
+        rec
+        for rec in C.get_records()
+        if rec.reason == "self_contradiction" and "C_CopyObject" in rec.label
+    ]
     _assert_cleanup(fake)
