@@ -14,7 +14,8 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check import classification as C  # noqa: N812 - existing classification convention
+from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.raw.pack import (
     attr_array,
     attr_bool,
@@ -24,6 +25,12 @@ from pkcs11_check.raw.pack import (
     template,
 )
 from pkcs11_check.raw.recipes import destroy_quietly
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CK_ULONG,
@@ -39,12 +46,207 @@ from pkcs11_check.raw.types_std import (
     CKM_ML_KEM,
     CKM_ML_KEM_KEY_PAIR_GEN,
     CKP_ML_KEM_768,
+    CKR_KEY_HANDLE_INVALID,
     CKR_OK,
+    CKR_UNWRAPPING_KEY_HANDLE_INVALID,
 )
 from pkcs11_check.testcases.ckr import _object_policy as _qc4
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_KEM, assert_ckr
 
 pytestmark = [pytest.mark.access, pytest.mark.pqc]
+
+#: Output-handle prefill for refusal probes (Task 18 O1 sentinel shape).
+_HANDLE_SENTINEL = 0x51515151
+#: Fixed sentinel-shaped never-issued handle, below 2**32 (LP64/LLP64-safe).
+_NEVER_ISSUED_HANDLE = 0x5EEDF00D
+_CT_LEN = 1088
+
+
+def _nonissued_handle(handle_kind: str) -> int:
+    if handle_kind == "zero":
+        return 0
+    if handle_kind == "never_issued":
+        return _NEVER_ISSUED_HANDLE
+    raise ValueError(f"not a non-issued handle kind: {handle_kind!r}")
+
+
+def _judge_kem_handle_probe(
+    *,
+    rv: int,
+    canonical: int,
+    label: str,
+    operation: str,
+    handle_after: int,
+    new_handles: list[int],
+    proved_new_handles: list[int] | None = None,
+) -> None:
+    """Judge one KEM invalid-handle probe (uniform tiers + O1 + R1).
+
+    Only a proved-new delta object fails; templates are empty, so proof
+    is output-handle membership in the delta outside the baseline. An
+    unproved delta xfails and is left alive by the caller.
+    """
+    handle_class = (
+        "sentinel"
+        if handle_after == _HANDLE_SENTINEL
+        else "zero"
+        if handle_after == 0
+        else "new-live"
+        if handle_after in new_handles
+        else "dead-nonzero"
+    )
+    proved = list(proved_new_handles) if proved_new_handles is not None else []
+    unproved = [handle for handle in new_handles if handle not in proved]
+    detail: dict[str, Any] = {
+        "handle_after": handle_after,
+        "handle_class": handle_class,
+        "new_handles": list(new_handles),
+        "proved_new_handles": proved,
+        "unproved_new_handles": unproved,
+    }
+    if rv == int(CKR_OK):
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism="CKM_ML_KEM",
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: accepted an invalid handle (expected {ckr_name(canonical)})",
+            detail=detail,
+        )
+    if proved:
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism="CKM_ML_KEM",
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+            detail=detail,
+        )
+    if unproved and (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism="CKM_ML_KEM",
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=(
+                f"{label}: refusal {ckr_name(rv)} with an unproved "
+                "inventory delta; zero-delta unproved"
+            ),
+            detail={**detail, "disposition": "unproved-effect"},
+        )
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            mechanism="CKM_ML_KEM",
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
+            detail=detail,
+        )
+    if handle_after not in (_HANDLE_SENTINEL, 0):
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism="CKM_ML_KEM",
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=(
+                f"{label}: refusal {ckr_name(rv)} wrote non-invalid output "
+                f"handle {handle_after}; no object created"
+            ),
+            detail=detail,
+        )
+    if rv == canonical:
+        return
+    classify(
+        "nonspec_reject",
+        kind="lifecycle",
+        label=label,
+        operation=operation,
+        mechanism="CKM_ML_KEM",
+        expected=canonical,
+        actual=rv,
+        spec_ref="PKCS#11 v3.2",
+        detail=detail,
+    )
+
+
+def _inventory_or_unproved(
+    rs: Any,
+    *,
+    label: str,
+    operation: str,
+    canonical: int,
+    refusal_rv: int | None = None,
+) -> list[int]:
+    """Full inventory, or an unproved-effect verdict on failure (M2)."""
+    try:
+        return _qc4._find_all(rs)
+    except CkrAssertionError as exc:
+        detail: dict[str, Any] = {
+            "disposition": "unproved-effect",
+            "inventory_rv": ckr_name(exc.rv),
+        }
+        if refusal_rv is not None:
+            detail["refusal_rv"] = ckr_name(refusal_rv)
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: inventory",
+                operation="C_FindObjects",
+                mechanism="CKM_ML_KEM",
+                expected=canonical,
+                actual=exc.rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=f"{label}: leak inventory returned undefined CK_RV {ckr_name(exc.rv)}",
+                detail=detail,
+            )
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism="CKM_ML_KEM",
+            expected=canonical,
+            actual=refusal_rv if refusal_rv is not None else exc.rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: leak inventory failed with {ckr_name(exc.rv)}; zero-delta unproved",
+            detail=detail,
+        )
+        raise AssertionError("unreachable: xfail_as always raises") from exc
+
+
+def _proved_new(handle_after: int, before: list[int], new_handles: list[int]) -> list[int]:
+    """Delta membership of the output handle is the only ownership proof."""
+    if handle_after in new_handles and handle_after not in before:
+        return [handle_after]
+    return []
+
+
+def _probe_cleanup(rs: Any, *, proved_new_handles: list[int]) -> None:
+    """Destroy only proved-new handles; unproved delta stays alive (R1)."""
+    for handle in proved_new_handles:
+        destroy_quietly(rs.raw, rs.sh, handle)
 
 
 def _generate_ml_kem_keypair(
@@ -177,6 +379,79 @@ class TestEncapsulateKeyErrors:
             destroy_quietly(rs.raw, rs.sh, pub)
             destroy_quietly(rs.raw, rs.sh, _priv)
 
+    @pytest.mark.parametrize("handle_kind", ["destroyed", "zero", "never_issued"])
+    def test_encapsulation_key_handle_invalid(
+        self, p11_raw_session: Any, ckr_strict: bool, handle_kind: str
+    ) -> None:
+        """QC8a role 4: invalid encap key -> CKR_KEY_HANDLE_INVALID.
+
+        Spec-table key ``encap_key_handle_invalid``. A single raw
+        C_EncapsulateKey call with a real ciphertext buffer: the recipe's
+        two-call size query could itself create a secret and corrupt a
+        refusal probe.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
+            pytest.skip("ML_KEM not supported")
+        pub, priv = _generate_ml_kem_keypair(rs.raw, rs.sh)
+        pub_destroyed = False
+        try:
+            if handle_kind == "destroyed":
+                rv = rs.raw.C_DestroyObject(rs.sh, pub)
+                if rv != CKR_OK:
+                    raise AssertionError(
+                        f"Could not destroy ML-KEM public key for stale test (CKR=0x{rv:08x})"
+                    )
+                pub_destroyed = True
+                invalid = pub
+            else:
+                invalid = _nonissued_handle(handle_kind)
+            before = _inventory_or_unproved(
+                rs,
+                label="C_EncapsulateKey:invalid-encapsulation-key-handle",
+                operation="C_EncapsulateKey",
+                canonical=int(CKR_KEY_HANDLE_INVALID),
+            )
+            mech = mech_simple(CKM_ML_KEM)
+            ct_buf = (ctypes.c_ubyte * _CT_LEN)()
+            ct_len = CK_ULONG(_CT_LEN)
+            secret = CK_OBJECT_HANDLE(_HANDLE_SENTINEL)
+            secret_tmpl = template()
+            C.set_mechanism("CKM_ML_KEM", "C_EncapsulateKey", expect_success=False)
+            rv = rs.raw.C_EncapsulateKey(
+                rs.sh,
+                mech.byref(),
+                invalid,
+                secret_tmpl.ptr,
+                secret_tmpl.count,
+                ct_buf,
+                byref(ct_len),
+                byref(secret),
+            )
+            after = _inventory_or_unproved(
+                rs,
+                label="C_EncapsulateKey:invalid-encapsulation-key-handle",
+                operation="C_EncapsulateKey",
+                canonical=int(CKR_KEY_HANDLE_INVALID),
+                refusal_rv=int(rv),
+            )
+            new_handles = sorted(set(after) - set(before))
+            proved_new = _proved_new(int(secret.value), before, new_handles)
+            _probe_cleanup(rs, proved_new_handles=proved_new)
+            _judge_kem_handle_probe(
+                rv=int(rv),
+                canonical=int(CKR_KEY_HANDLE_INVALID),
+                label="C_EncapsulateKey:invalid-encapsulation-key-handle",
+                operation="C_EncapsulateKey",
+                handle_after=int(secret.value),
+                new_handles=new_handles,
+                proved_new_handles=proved_new,
+            )
+        finally:
+            if not pub_destroyed:
+                destroy_quietly(rs.raw, rs.sh, pub)
+            destroy_quietly(rs.raw, rs.sh, priv)
+
 
 @pytest.mark.needs_function("C_DecapsulateKey")
 class TestDecapsulateKeyErrors:
@@ -259,6 +534,122 @@ class TestDecapsulateKeyErrors:
         finally:
             destroy_quietly(rs.raw, rs.sh, _pub)
             destroy_quietly(rs.raw, rs.sh, priv)
+
+    @pytest.mark.parametrize("handle_kind", ["destroyed", "zero", "never_issued"])
+    def test_decapsulation_key_handle_invalid(
+        self, p11_raw_session: Any, ckr_strict: bool, handle_kind: str
+    ) -> None:
+        """QC8a role 5: invalid decap key -> CKR_UNWRAPPING_KEY_HANDLE_INVALID.
+
+        Spec-table key ``decap_unwrapping_key_handle_invalid``. The
+        ciphertext is a real encapsulation against the valid public half,
+        so no ciphertext defect can mask the handle check.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("ML_KEM"):
+            pytest.skip("ML_KEM not supported")
+        pub, priv = _generate_ml_kem_keypair(rs.raw, rs.sh)
+        priv_destroyed = False
+        staged_secret = 0
+        try:
+            # Stage a real ciphertext with a single raw encapsulate call.
+            mech = mech_simple(CKM_ML_KEM)
+            stage_buf = (ctypes.c_ubyte * _CT_LEN)()
+            stage_len = CK_ULONG(_CT_LEN)
+            stage_secret = CK_OBJECT_HANDLE(0)
+            stage_tmpl = template()
+            rv = rs.raw.C_EncapsulateKey(
+                rs.sh,
+                mech.byref(),
+                pub,
+                stage_tmpl.ptr,
+                stage_tmpl.count,
+                stage_buf,
+                byref(stage_len),
+                byref(stage_secret),
+            )
+            # Only an accepted staging handle is owned; a handle-shaped
+            # write on refusal is never blind-destroyed (O1/P2 rule).
+            staged_secret = int(stage_secret.value) if rv == CKR_OK else 0
+            if rv != CKR_OK:
+                xfail_as(
+                    "not_operational",
+                    label="C_EncapsulateKey:ML-KEM staging",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    actual=rv,
+                    summary=f"ML-KEM encapsulate staging not operational: {ckr_name(rv)}",
+                )
+            if not (0 < int(stage_len.value) <= _CT_LEN):
+                fail_as(
+                    "wrong_result",
+                    kind="metadata",
+                    label="C_EncapsulateKey:ML-KEM staging ciphertext length",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    actual=int(stage_len.value),
+                    summary="Staging encapsulate reported an implausible ciphertext length",
+                )
+            ciphertext = bytes(stage_buf[: int(stage_len.value)])
+            if staged_secret:
+                destroy_quietly(rs.raw, rs.sh, staged_secret)
+                staged_secret = 0
+            if handle_kind == "destroyed":
+                rv = rs.raw.C_DestroyObject(rs.sh, priv)
+                if rv != CKR_OK:
+                    raise AssertionError(
+                        f"Could not destroy ML-KEM private key for stale test (CKR=0x{rv:08x})"
+                    )
+                priv_destroyed = True
+                invalid = priv
+            else:
+                invalid = _nonissued_handle(handle_kind)
+            # No object creation between the destroy above and the probe.
+            before = _inventory_or_unproved(
+                rs,
+                label="C_DecapsulateKey:invalid-decapsulation-key-handle",
+                operation="C_DecapsulateKey",
+                canonical=int(CKR_UNWRAPPING_KEY_HANDLE_INVALID),
+            )
+            ct_buf = (ctypes.c_ubyte * len(ciphertext)).from_buffer_copy(ciphertext)
+            secret = CK_OBJECT_HANDLE(_HANDLE_SENTINEL)
+            secret_tmpl = template()
+            C.set_mechanism("CKM_ML_KEM", "C_DecapsulateKey", expect_success=False)
+            rv = rs.raw.C_DecapsulateKey(
+                rs.sh,
+                mech.byref(),
+                invalid,
+                secret_tmpl.ptr,
+                secret_tmpl.count,
+                ct_buf,
+                len(ciphertext),
+                byref(secret),
+            )
+            after = _inventory_or_unproved(
+                rs,
+                label="C_DecapsulateKey:invalid-decapsulation-key-handle",
+                operation="C_DecapsulateKey",
+                canonical=int(CKR_UNWRAPPING_KEY_HANDLE_INVALID),
+                refusal_rv=int(rv),
+            )
+            new_handles = sorted(set(after) - set(before))
+            proved_new = _proved_new(int(secret.value), before, new_handles)
+            _probe_cleanup(rs, proved_new_handles=proved_new)
+            _judge_kem_handle_probe(
+                rv=int(rv),
+                canonical=int(CKR_UNWRAPPING_KEY_HANDLE_INVALID),
+                label="C_DecapsulateKey:invalid-decapsulation-key-handle",
+                operation="C_DecapsulateKey",
+                handle_after=int(secret.value),
+                new_handles=new_handles,
+                proved_new_handles=proved_new,
+            )
+        finally:
+            if staged_secret:
+                destroy_quietly(rs.raw, rs.sh, staged_secret)
+            destroy_quietly(rs.raw, rs.sh, pub)
+            if not priv_destroyed:
+                destroy_quietly(rs.raw, rs.sh, priv)
 
 
 @pytest.mark.needs_function("C_EncapsulateKey")

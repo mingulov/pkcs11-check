@@ -9,6 +9,8 @@ Uses the raw PKCS#11 API via pkcs11_check.raw.
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
 from collections.abc import Callable
 from ctypes import byref
 from typing import Any, NamedTuple, NoReturn
@@ -28,6 +30,7 @@ from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import (
     attr_bytes,
     mech_hkdf,
+    mech_simple,
     mech_string_data,
     mech_ulong,
     template,
@@ -50,9 +53,12 @@ from pkcs11_check.raw.rv import (
 )
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
+    CK_ULONG,
     CKA_ALWAYS_SENSITIVE,
     CKA_CLASS,
+    CKA_DECRYPT,
     CKA_DERIVE,
+    CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
     CKA_LABEL,
@@ -62,13 +68,20 @@ from pkcs11_check.raw.types_std import (
     CKA_VALUE,
     CKA_VALUE_LEN,
     CKA_WRAP,
+    CKK_CDMF,
+    CKK_DES,
+    CKK_DES2,
+    CKK_DES3,
     CKK_GENERIC_SECRET,
     CKM_AES_KEY_WRAP,
     CKM_CONCATENATE_BASE_AND_DATA,
     CKM_CONCATENATE_BASE_AND_KEY,
     CKM_CONCATENATE_DATA_AND_BASE,
+    CKM_DES3_ECB,
+    CKM_DES_ECB,
     CKM_EXTRACT_KEY_FROM_KEY,
     CKM_HKDF_DERIVE,
+    CKM_SHA1_KEY_DERIVATION,
     CKM_SHA256,
     CKM_XOR_BASE_AND_DATA,
     CKO_SECRET_KEY,
@@ -2913,3 +2926,439 @@ class TestHkdfInheritanceScope:
             hkdf=True,
             derive=lambda sources, attrs: _derive_hkdf_child(rs, sources, attrs),
         )
+
+
+# ---------------------------------------------------------------------------
+# QC8c: DES-family parity on byte-operation / SHA-1 derives (#61.3)
+#
+# Appended after the QC2 block; the QC2 tables and helpers above are
+# read-only here and no QC2 verdict changes. Parity is asserted only
+# where a sentence is pinned: the five §6.43 byte mechanisms and
+# CKM_SHA1_KEY_DERIVATION without DES3. Bases are unsealed and known, so
+# expected bytes come from Python, never from a provider twin (the
+# generic-secret twin is a control that must stay unadjusted).
+# ---------------------------------------------------------------------------
+
+_DES_PARITY_MECH_NAMES: tuple[str, ...] = tuple(_BYTE_KDF_MECH_IDS)
+_DES_PARITY_TYPE_NAMES: tuple[str, ...] = ("DES", "DES3", "DES2", "CDMF")
+_DES_PARITY_TYPES: dict[str, tuple[int, int]] = {
+    "DES": (int(CKK_DES), 8),
+    "DES2": (int(CKK_DES2), 16),
+    "DES3": (int(CKK_DES3), 24),
+    "CDMF": (int(CKK_CDMF), 8),
+}
+_DES_PARITY_SHA1_TYPES: tuple[str, ...] = ("DES",)
+_SHA1_DERIVATION_NAME = "CKM_SHA1_KEY_DERIVATION"
+_KAT_BLOCK = bytes.fromhex("0123456789abcdef")
+
+
+def _odd_parity_adjust(raw: bytes) -> bytes:
+    """Force every byte to odd parity by flipping the LSB where needed."""
+    return bytes(b if b.bit_count() % 2 == 1 else b ^ 0x01 for b in raw)
+
+
+def _parity_pattern(length: int, start: int, step: int = 1) -> bytes:
+    return bytes((start + i * step) % 256 for i in range(length))
+
+
+def _des_parity_materials(mech_name: str, out_len: int) -> tuple[bytes, bytes, bytes]:
+    """Return (base, aux-or-data, raw expected) sized to exactly ``out_len``."""
+    if mech_name == _EXTRACT_NAME:
+        base = _parity_pattern(32, 0x10)
+        return base, b"", base[:out_len]
+    if mech_name == "CKM_XOR_BASE_AND_DATA":
+        base = _parity_pattern(out_len, 0x10)
+        data = _parity_pattern(out_len, 0x40, step=3)
+        return base, data, bytes(a ^ b for a, b in zip(base, data, strict=True))
+    base_len = out_len // 2 + 1
+    base = _parity_pattern(base_len, 0x10)
+    aux = _parity_pattern(out_len - base_len, 0x40, step=3)
+    if mech_name == _BASE_AND_KEY_NAME:
+        return base, aux, base + aux
+    if mech_name == "CKM_CONCATENATE_BASE_AND_DATA":
+        return base, aux, base + aux
+    if mech_name == "CKM_CONCATENATE_DATA_AND_BASE":
+        return base, aux, aux + base
+    raise ValueError(f"not a DES-parity byte mechanism: {mech_name!r}")
+
+
+def _require_even_parity_premise(raw: bytes, *, label: str) -> None:
+    """Fail as harness error when a row cannot expose missing adjustment."""
+    if any(b.bit_count() % 2 == 0 for b in raw):
+        return
+    fail_as(
+        "harness_error",
+        label=label,
+        operation="C_DeriveKey",
+        inherit_mechanism=False,
+        summary=f"{label}: raw expected bytes are already all odd parity; row proves nothing",
+    )
+
+
+def _des_parity_mech_param(mech_name: str, sources: list[int], aux: bytes) -> Any:
+    mech_id = _BYTE_KDF_MECH_IDS[mech_name]
+    if mech_name == _BASE_AND_KEY_NAME:
+        return mech_ulong(mech_id, sources[1])
+    if mech_name == _EXTRACT_NAME:
+        return mech_ulong(mech_id, 0)
+    return mech_string_data(mech_id, aux)
+
+
+def _import_parity_source(rs: Any, value: bytes, *, label: str, mech_name: str) -> int:
+    try:
+        return _import_generic_secret(rs, value)
+    except CkrAssertionError as exc:
+        _xfail_setup_refusal(
+            exc.rv,
+            label=f"{label}: unsealed source import",
+            operation="C_CreateObject",
+            mechanism=None,
+            summary=f"{label}: unsealed source import refused for {mech_name}; row unprovable",
+        )
+
+
+def _derive_parity_child(
+    rs: Any,
+    *,
+    mech_name: str,
+    mech_id: int,
+    base: int,
+    mech_param: Any,
+    child_attrs: dict[int, Any],
+    label: str,
+) -> int:
+    rv, handle = _derive_raw(rs, mech_id, base, child_attrs, mech_param=mech_param)
+    if rv != int(CKR_OK):
+        _xfail_setup_refusal(
+            rv,
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=mech_name,
+            spec_ref=_DERIVE_SPEC,
+            summary=f"{label}: advertised derive refused cleanly ({ckr_name(rv)})",
+        )
+    if handle == 0:
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=mech_name,
+            spec_ref=_DERIVE_SPEC,
+            summary=f"{label}: CKR_OK derive returned a zero handle",
+        )
+    return handle
+
+
+def _read_derived_value(rs: Any, handle: int, *, label: str) -> bytes:
+    try:
+        value = _read_attr_or_record(rs.raw, rs.sh, handle, CKA_VALUE, label=label)
+    except CkrAssertionError as exc:
+        _xfail_setup_refusal(
+            exc.rv,
+            label=label,
+            operation="C_GetAttributeValue",
+            mechanism=None,
+            spec_ref=_READ_SPEC,
+            summary=f"{label}: derived value readback refused; format unprovable",
+        )
+    if value is MISSING_ATTRIBUTE:
+        for record in get_records():
+            if record.label == label:
+                raise_for_record(record)
+        xfail_as(
+            "not_operational",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            summary=f"{label}: derived CKA_VALUE unavailable",
+        )
+    if not isinstance(value, bytes):
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label=label,
+            operation="C_GetAttributeValue",
+            inherit_mechanism=False,
+            expected="bytes",
+            actual=type(value).__name__,
+            summary=f"{label}: provider returned a non-byte CKA_VALUE",
+        )
+    return bytes(value)
+
+
+def _assert_des_ecb_kat(
+    rs: Any, handle: int, *, adjusted: bytes, type_name: str, label: str
+) -> None:
+    """Functional KAT: provider ECB on a fixed block vs the TripleDES oracle.
+
+    DES ignores parity bits, so this proves material/operability only;
+    the byte check in ``_assert_des_child_value`` is the parity detector.
+    CDMF has no ECB mechanism here, so its rows stop at byte equality.
+    """
+    if type_name == "DES":
+        ecb_id, ecb_name, short = int(CKM_DES_ECB), "CKM_DES_ECB", "DES_ECB"
+    elif type_name in ("DES3", "DES2"):
+        ecb_id, ecb_name, short = int(CKM_DES3_ECB), "CKM_DES3_ECB", "DES3_ECB"
+    else:
+        return
+    if not rs.has_mechanism(short):
+        return
+    mech = mech_simple(ecb_id)
+    rv = rs.raw.C_EncryptInit(rs.sh, mech.byref(), handle)
+    if rv != int(CKR_OK):
+        _xfail_setup_refusal(
+            int(rv),
+            label=f"{label}: ECB KAT init",
+            operation="C_EncryptInit",
+            mechanism=ecb_name,
+            summary=f"{label}: ECB KAT init refused ({ckr_name(int(rv))})",
+        )
+    in_buf = (ctypes.c_ubyte * len(_KAT_BLOCK)).from_buffer_copy(_KAT_BLOCK)
+    out_buf = (ctypes.c_ubyte * len(_KAT_BLOCK))()
+    out_len = CK_ULONG(len(_KAT_BLOCK))
+    rv = rs.raw.C_Encrypt(rs.sh, in_buf, len(_KAT_BLOCK), out_buf, byref(out_len))
+    if rv != int(CKR_OK):
+        _xfail_setup_refusal(
+            int(rv),
+            label=f"{label}: ECB KAT encrypt",
+            operation="C_Encrypt",
+            mechanism=ecb_name,
+            summary=f"{label}: ECB KAT encrypt refused ({ckr_name(int(rv))})",
+        )
+    if int(out_len.value) != len(_KAT_BLOCK):
+        classify(
+            "wrong_result",
+            kind="metadata",
+            label=f"{label}: ECB KAT output length",
+            operation="C_Encrypt",
+            mechanism=ecb_name,
+            expected=len(_KAT_BLOCK),
+            actual=int(out_len.value),
+            summary=f"{label}: ECB KAT produced {int(out_len.value)} bytes",
+        )
+    from cryptography.hazmat.decrepit.ciphers import algorithms
+    from cryptography.hazmat.primitives.ciphers import Cipher, modes
+
+    effective = (
+        adjusted * 3
+        if len(adjusted) == 8
+        else adjusted + adjusted[:8]
+        if len(adjusted) == 16
+        else adjusted
+    )
+    encryptor = Cipher(algorithms.TripleDES(effective), modes.ECB()).encryptor()  # nosec B305
+    expected = encryptor.update(_KAT_BLOCK) + encryptor.finalize()
+    assert_correct(
+        actual=bytes(out_buf[: int(out_len.value)]),
+        expected=expected,
+        label=f"{label}:ECB KAT",
+        operation="C_Encrypt",
+        mechanism=ecb_name,
+    )
+
+
+def _assert_des_child_value(
+    rs: Any,
+    handle: int,
+    *,
+    mech_name: str,
+    type_name: str,
+    out_len: int,
+    raw_expected: bytes,
+) -> None:
+    value = _read_derived_value(rs, handle, label=f"{mech_name}->{type_name}:CKA_VALUE readback")
+    _assert_misc_bytes_length(
+        value,
+        expected_len=out_len,
+        label=f"{mech_name}->{type_name}:derived DES value length",
+        mechanism=mech_name,
+    )
+    even_positions = [i for i, b in enumerate(value) if b.bit_count() % 2 == 0]
+    if even_positions:
+        classify(
+            "wrong_result",
+            kind="crypto",
+            label=f"{mech_name}->{type_name}:derived DES parity",
+            operation="C_DeriveKey",
+            mechanism=mech_name,
+            summary=(
+                f"{mech_name}->{type_name}: derived key bytes at positions "
+                f"{even_positions} have even parity; adjustment missing"
+            ),
+            detail={"even_positions": even_positions},
+        )
+    adjusted = _odd_parity_adjust(raw_expected)
+    assert_correct(
+        actual=value,
+        expected=adjusted,
+        label=f"{mech_name}->{type_name}:derived DES value",
+        operation="C_DeriveKey",
+        mechanism=mech_name,
+    )
+    _assert_des_ecb_kat(
+        rs, handle, adjusted=adjusted, type_name=type_name, label=f"{mech_name}->{type_name}"
+    )
+
+
+def _assert_generic_child_value(
+    rs: Any, handle: int, *, mech_name: str, raw_expected: bytes
+) -> None:
+    value = _read_derived_value(rs, handle, label=f"{mech_name}->generic:CKA_VALUE readback")
+    _assert_misc_bytes_length(
+        value,
+        expected_len=len(raw_expected),
+        label=f"{mech_name}->generic:derived value length",
+        mechanism=mech_name,
+    )
+    assert_correct(
+        actual=value,
+        expected=raw_expected,
+        label=f"{mech_name}:generic-secret twin value",
+        operation="C_DeriveKey",
+        mechanism=mech_name,
+    )
+
+
+def _des_child_attrs(key_type: int, out_len: int) -> dict[int, Any]:
+    return {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: key_type,
+        CKA_VALUE_LEN: out_len,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_ENCRYPT: True,
+        CKA_DECRYPT: True,
+    }
+
+
+def _generic_child_attrs(out_len: int) -> dict[int, Any]:
+    return {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_VALUE_LEN: out_len,
+        CKA_TOKEN: False,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+    }
+
+
+class TestDerivedDesParity:
+    """QC8c: DES-family output bytes of byte/SHA-1 derives are parity-adjusted."""
+
+    @pytest.mark.parametrize("type_name", _DES_PARITY_TYPE_NAMES)
+    @pytest.mark.parametrize("mech_name", _DES_PARITY_MECH_NAMES)
+    def test_byte_derive_des_parity(
+        self, p11_raw_session: Any, mech_name: str, type_name: str
+    ) -> None:
+        """Byte-derive to DES-family: odd parity, adjusted bytes, ECB KAT.
+
+        DES2/CDMF are admission-gated rows of the same table: a clean
+        template/mechanism refusal xfails visibly instead of skipping.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism(mech_name.removeprefix("CKM_")):
+            pytest.skip(f"{mech_name} not supported")
+        key_type, out_len = _DES_PARITY_TYPES[type_name]
+        label = f"qc8c-{mech_name}->{type_name}"
+        base_bytes, aux_bytes, raw_expected = _des_parity_materials(mech_name, out_len)
+        assert len(raw_expected) == out_len
+        _require_even_parity_premise(raw_expected, label=label)
+        sources: list[int] = []
+        children: list[int] = []
+        try:
+            sources.append(_import_parity_source(rs, base_bytes, label=label, mech_name=mech_name))
+            if mech_name == _BASE_AND_KEY_NAME:
+                sources.append(
+                    _import_parity_source(rs, aux_bytes, label=label, mech_name=mech_name)
+                )
+            child = _derive_parity_child(
+                rs,
+                mech_name=mech_name,
+                mech_id=_BYTE_KDF_MECH_IDS[mech_name],
+                base=sources[0],
+                mech_param=_des_parity_mech_param(mech_name, sources, aux_bytes),
+                child_attrs=_des_child_attrs(key_type, out_len),
+                label=f"{label}: DES-family derive",
+            )
+            children.append(child)
+            _assert_des_child_value(
+                rs,
+                child,
+                mech_name=mech_name,
+                type_name=type_name,
+                out_len=out_len,
+                raw_expected=raw_expected,
+            )
+            twin = _derive_parity_child(
+                rs,
+                mech_name=mech_name,
+                mech_id=_BYTE_KDF_MECH_IDS[mech_name],
+                base=sources[0],
+                mech_param=_des_parity_mech_param(mech_name, sources, aux_bytes),
+                child_attrs=_generic_child_attrs(out_len),
+                label=f"{label}: generic-secret twin derive",
+            )
+            children.append(twin)
+            _assert_generic_child_value(rs, twin, mech_name=mech_name, raw_expected=raw_expected)
+        finally:
+            for handle in children:
+                destroy_quietly(rs.raw, rs.sh, handle)
+            for handle in sources:
+                destroy_quietly(rs.raw, rs.sh, handle)
+
+    def test_sha1_derive_des_parity(self, p11_raw_session: Any) -> None:
+        """SHA-1 derive to DES only: DES3 is excluded, never asserted."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("SHA1_KEY_DERIVATION"):
+            pytest.skip("CKM_SHA1_KEY_DERIVATION not supported")
+        label = "qc8c-CKM_SHA1_KEY_DERIVATION"
+        base_bytes = _parity_pattern(20, 0x20)
+        digest = hashlib.sha1(base_bytes, usedforsecurity=False).digest()
+        sources: list[int] = []
+        children: list[int] = []
+        try:
+            sources.append(
+                _import_parity_source(rs, base_bytes, label=label, mech_name=_SHA1_DERIVATION_NAME)
+            )
+            for type_name in _DES_PARITY_SHA1_TYPES:
+                key_type, out_len = _DES_PARITY_TYPES[type_name]
+                raw_expected = digest[:out_len]
+                _require_even_parity_premise(raw_expected, label=f"{label}->{type_name}")
+                child = _derive_parity_child(
+                    rs,
+                    mech_name=_SHA1_DERIVATION_NAME,
+                    mech_id=int(CKM_SHA1_KEY_DERIVATION),
+                    base=sources[0],
+                    mech_param=mech_simple(CKM_SHA1_KEY_DERIVATION),
+                    child_attrs=_des_child_attrs(key_type, out_len),
+                    label=f"{label}->{type_name}: derive",
+                )
+                children.append(child)
+                _assert_des_child_value(
+                    rs,
+                    child,
+                    mech_name=_SHA1_DERIVATION_NAME,
+                    type_name=type_name,
+                    out_len=out_len,
+                    raw_expected=raw_expected,
+                )
+                twin = _derive_parity_child(
+                    rs,
+                    mech_name=_SHA1_DERIVATION_NAME,
+                    mech_id=int(CKM_SHA1_KEY_DERIVATION),
+                    base=sources[0],
+                    mech_param=mech_simple(CKM_SHA1_KEY_DERIVATION),
+                    child_attrs=_generic_child_attrs(out_len),
+                    label=f"{label}->generic: twin derive",
+                )
+                children.append(twin)
+                _assert_generic_child_value(
+                    rs, twin, mech_name=_SHA1_DERIVATION_NAME, raw_expected=raw_expected
+                )
+        finally:
+            for handle in children:
+                destroy_quietly(rs.raw, rs.sh, handle)
+            for handle in sources:
+                destroy_quietly(rs.raw, rs.sh, handle)
