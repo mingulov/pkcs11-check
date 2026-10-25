@@ -44,6 +44,7 @@ from pkcs11_check.raw.types_std import (
     CKR_KEY_FUNCTION_NOT_PERMITTED,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
+    CKR_TEMPLATE_INCONSISTENT,
 )
 from pkcs11_check.testcases import test_attribute_defaults as defaults_case
 from pkcs11_check.testcases import test_keypair_consistency as pair_case
@@ -107,7 +108,13 @@ class _EncodingRaw:
         self.create_overrides: dict[int, bytes] = {}
         self.create_transform: Callable[[dict[int, bytes]], dict[int, bytes]] | None = None
         self.modulus_bits_mode = "derive"  # derive | missing | eight_len | wrong
-        self.forbidden_create_mode = "read_only"  # read_only | general | accept
+        self.forbidden_create_mode = "read_only"  # read_only | general | inconsistent | accept
+        # O1/O2 knobs for the forbidden-MODULUS_BITS create leg: value
+        # written into the output handle on refusal, an object leaked
+        # before returning the refusal, and CKR_OK without any object.
+        self.forbidden_handle_write: int | None = None
+        self.forbidden_leak = "none"  # none | labeled | unlabeled
+        self.forbidden_ok_without_object = False
         self.refuse_padded_modulus_rv: int | None = None
         self.derive_on_false_claim = "refuse"  # refuse | succeed
 
@@ -167,10 +174,22 @@ class _EncodingRaw:
         attrs = _decode_template(tmpl, int(count))
         self.create_calls.append(attrs)
         if _MODULUS_BITS in attrs:
-            if self.forbidden_create_mode == "read_only":
-                return _READ_ONLY
-            if self.forbidden_create_mode == "general":
-                return _GENERAL
+            refusal = {
+                "read_only": _READ_ONLY,
+                "general": _GENERAL,
+                "inconsistent": int(CKR_TEMPLATE_INCONSISTENT),
+            }.get(self.forbidden_create_mode)
+            if refusal is not None:
+                if self.forbidden_leak != "none":
+                    leak_attrs = dict(attrs)
+                    if self.forbidden_leak == "unlabeled":
+                        leak_attrs.pop(int(CKA_LABEL), None)
+                    self._alloc(leak_attrs, "create")
+                if self.forbidden_handle_write is not None:
+                    _write_handle(handle_ptr, self.forbidden_handle_write)
+                return refusal
+            if self.forbidden_ok_without_object:
+                return _OK  # CKR_OK, sentinel untouched, nothing created.
             # accept: fall through and create (the seeded defect).
         modulus = attrs.get(_MODULUS)
         if (
@@ -641,12 +660,108 @@ def test_create_with_modulus_bits_read_only_passes(supplied: str) -> None:
     assert any(_MODULUS_BITS in call for call in fake.create_calls)
 
 
-def test_create_with_correct_modulus_bits_accepted_fails_and_cleans_up() -> None:
+def _forbidden_record(reason: str) -> Any:
+    matches = [
+        rec
+        for rec in _records()
+        if rec.reason == reason and "forbidden CKA_MODULUS_BITS" in rec.label
+    ]
+    assert len(matches) == 1, [(rec.reason, rec.label) for rec in _records()]
+    return matches[0]
+
+
+# O2 (Task 18 Docker adjudication): acceptance judges stored bits against
+# the true modulus bit length, not against the supplied value. Storing the
+# true value (or dropping the attribute) is an honest deviation; storing a
+# false value FAILs. The stored-equals-supplied note stays provenance-honest.
+def test_create_with_correct_modulus_bits_accepted_stored_true_xfails_and_cleans_up() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "accept"
+    assert_xfails(
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected,
+        _rs(fake),
+        "correct",
+    )
+    detail = _forbidden_record("honest_deviation").detail
+    assert detail["supplied_bits"] == detail["true_bits"]
+    assert detail["stored_bits"] == detail["true_bits"]
+    assert detail["stored"] == "stored-equals-supplied"
+    assert detail["handle_class"] == "new-live"
+    assert detail["found_by_label"] == fake.staged
+    assert detail["new_handles"] == fake.staged
+    _assert_cleanup(fake)
+
+
+def test_create_with_wrong_modulus_bits_accepted_stored_wrong_fails_and_cleans_up() -> None:
     fake = _EncodingRaw()
     fake.forbidden_create_mode = "accept"
     with pytest.raises(Failed):
-        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "wrong")
+    detail = _forbidden_record("accepted_invalid").detail
+    assert detail["supplied_bits"] == 1024
+    assert detail["stored_bits"] == 1024
+    assert detail["true_bits"] != 1024
+    assert detail["stored"] == "stored-equals-supplied"
     _assert_cleanup(fake)
+
+
+def test_create_with_modulus_bits_accepted_stored_overwritten_to_true_xfails() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "accept"
+
+    def _true_bits(stored: dict[int, bytes]) -> dict[int, bytes]:
+        out = dict(stored)
+        modulus = out.get(_MODULUS)
+        if modulus is not None and _MODULUS_BITS in out:
+            out[_MODULUS_BITS] = _ulong_blob(int.from_bytes(modulus, "big").bit_length())
+        return out
+
+    fake.create_transform = _true_bits
+    assert_xfails(
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected,
+        _rs(fake),
+        "wrong",
+    )
+    detail = _forbidden_record("honest_deviation").detail
+    assert detail["supplied_bits"] == 1024
+    assert detail["stored_bits"] == detail["true_bits"]
+    assert detail["stored"] == "caller-value-overwritten"
+    _assert_cleanup(fake)
+
+
+def test_create_with_modulus_bits_accepted_stored_dropped_xfails_and_cleans_up() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "accept"
+
+    def _drop_bits(stored: dict[int, bytes]) -> dict[int, bytes]:
+        out = dict(stored)
+        out.pop(_MODULUS_BITS, None)
+        return out
+
+    fake.create_transform = _drop_bits
+    assert_xfails(
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected,
+        _rs(fake),
+        "correct",
+    )
+    detail = _forbidden_record("honest_deviation").detail
+    assert detail["supplied_bits"] == detail["true_bits"]
+    assert detail["stored_bits"] is None
+    _assert_cleanup(fake)
+
+
+def test_create_with_modulus_bits_ok_without_object_fails() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "accept"
+    fake.forbidden_ok_without_object = True
+    with pytest.raises(Failed):
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+    detail = _forbidden_record("self_contradiction").detail
+    assert detail["handle_class"] == "sentinel"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert detail["stored_bits"] is None
+    assert fake.staged == []
 
 
 def test_create_with_wrong_modulus_bits_other_clean_refusal_xfails() -> None:
@@ -659,6 +774,78 @@ def test_create_with_wrong_modulus_bits_other_clean_refusal_xfails() -> None:
     )
     assert any(rec.actual_ckr == "CKR_GENERAL_ERROR" for rec in _records())
     assert fake.staged == []
+
+
+# O1 rows for the modulus refusal branch: judge objects, not handle writes.
+@pytest.mark.parametrize("mode", ["read_only", "inconsistent"])
+def test_create_with_modulus_bits_zero_write_canonical_passes(mode: str) -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = mode
+    fake.forbidden_handle_write = 0
+    pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+    assert fake.staged == []
+    assert fake.destroyed == []
+
+
+def test_create_with_modulus_bits_zero_write_general_xfails_nonspec() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "general"
+    fake.forbidden_handle_write = 0
+    assert_xfails(
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected,
+        _rs(fake),
+        "wrong",
+    )
+    detail = _forbidden_record("nonspec_reject").detail
+    assert detail["handle_after"] == 0
+    assert detail["handle_class"] == "zero"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert fake.staged == []
+    assert fake.destroyed == []
+
+
+def test_create_with_modulus_bits_dead_nonzero_xfails_honest_deviation() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_handle_write = 987_654
+    assert_xfails(
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected,
+        _rs(fake),
+        "correct",
+    )
+    detail = _forbidden_record("honest_deviation").detail
+    assert detail["handle_after"] == 987_654
+    assert detail["handle_class"] == "dead-nonzero"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == []
+    assert fake.staged == []
+    assert 987_654 not in fake.destroyed
+
+
+def test_create_with_modulus_bits_refusal_labeled_leak_fails_and_cleans_up() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "general"
+    fake.forbidden_leak = "labeled"
+    with pytest.raises(Failed):
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+    detail = _forbidden_record("self_contradiction").detail
+    assert detail["handle_class"] == "sentinel"
+    assert detail["found_by_label"] == fake.staged
+    assert detail["new_handles"] == fake.staged
+    _assert_cleanup(fake)
+
+
+def test_create_with_modulus_bits_refusal_unlabeled_new_object_fails_and_cleans_up() -> None:
+    fake = _EncodingRaw()
+    fake.forbidden_create_mode = "general"
+    fake.forbidden_leak = "unlabeled"
+    with pytest.raises(Failed):
+        pair_case.TestRSAModulusBits().test_create_with_modulus_bits_rejected(_rs(fake), "correct")
+    detail = _forbidden_record("self_contradiction").detail
+    assert detail["handle_class"] == "sentinel"
+    assert detail["found_by_label"] == []
+    assert detail["new_handles"] == fake.staged
+    _assert_cleanup(fake)
 
 
 # --- QC7d: strict CK_BBOOL + minimal pairs (#13-#17) --------------------------

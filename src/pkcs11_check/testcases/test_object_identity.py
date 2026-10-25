@@ -550,6 +550,21 @@ class TestUniqueIdGeneration:
             _destroy_all(rs, [h for h, _, _ in staged])
 
 
+def _inventory(rs: Any) -> list[int]:
+    """All currently visible object handles (unfiltered FindObjects)."""
+    return find_objects(rs.raw, rs.sh)
+
+
+def _handle_class(handle_value: int, *, found: list[int], new_handles: list[int]) -> str:
+    if handle_value == _HANDLE_SENTINEL:
+        return "sentinel"
+    if handle_value == 0:
+        return "zero"
+    if handle_value in found or handle_value in new_handles:
+        return "new-live"
+    return "dead-nonzero"
+
+
 def _judge_override(
     rs: Any,
     *,
@@ -559,12 +574,27 @@ def _judge_override(
     producer_operation: str,
     label_text: str | None,
     leaked: list[int],
+    inventory_before: list[int],
 ) -> list[C.Classification]:
-    """Two-tier override oracle shared by Create/Generate/Copy legs."""
+    """Two-tier override oracle shared by Create/Generate/Copy legs.
+
+    Refusal legs judge objects, not output-buffer writes (adjudicated O1):
+    the spec defines no handle state on a failed creator, so only a
+    leftover object (by label, or in the before/after inventory delta)
+    FAILs; a dead nonzero handle write is an honest deviation; zero and
+    the untouched sentinel are the normalized writes.
+    """
     records: list[C.Classification] = []
     found: list[int] = []
     if label_text is not None:
         found = find_objects(rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, label_text.encode())))
+    new_handles = sorted(set(_inventory(rs)) - set(inventory_before))
+    judge_detail: dict[str, Any] = {
+        "handle_after": handle_value,
+        "handle_class": _handle_class(handle_value, found=found, new_handles=new_handles),
+        "found_by_label": list(found),
+        "new_handles": new_handles,
+    }
     if rv == int(CKR_OK):
         created = handle_value
         if created != _HANDLE_SENTINEL:
@@ -587,7 +617,9 @@ def _judge_override(
                     inherit_mechanism=False,
                     expected=CKR_ATTRIBUTE_READ_ONLY,
                     actual=rv,
-                    detail=_detail(producer_operation=producer_operation, outcome="honored"),
+                    detail=_detail(
+                        producer_operation=producer_operation, outcome="honored", **judge_detail
+                    ),
                     summary=f"{label}: caller-supplied CKA_UNIQUE_ID was honored",
                 )
             )
@@ -601,7 +633,9 @@ def _judge_override(
                     inherit_mechanism=False,
                     expected=CKR_ATTRIBUTE_READ_ONLY,
                     actual=rv,
-                    detail=_detail(producer_operation=producer_operation, outcome="ignored"),
+                    detail=_detail(
+                        producer_operation=producer_operation, outcome="ignored", **judge_detail
+                    ),
                     summary=(
                         f"{label}: caller-supplied CKA_UNIQUE_ID was accepted but "
                         "ignored (stored ID differs); refusal is required"
@@ -609,10 +643,12 @@ def _judge_override(
                 )
             )
         return records
-    if handle_value != _HANDLE_SENTINEL or found:
+    if found or new_handles:
+        # A refused creator left an object behind. A bare handle_value is
+        # destroyed only via found/new_handles, never on its own (it may
+        # name a pre-existing object).
         leaked.extend(found)
-        if handle_value != _HANDLE_SENTINEL:
-            leaked.append(handle_value)
+        leaked.extend(h for h in new_handles if h not in leaked)
         records.append(
             C.record_as(
                 "self_contradiction",
@@ -621,15 +657,28 @@ def _judge_override(
                 operation=producer_operation,
                 inherit_mechanism=False,
                 actual=rv,
-                detail=_detail(producer_operation=producer_operation),
+                detail=_detail(producer_operation=producer_operation, **judge_detail),
+                summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+            )
+        )
+    elif handle_value not in (_HANDLE_SENTINEL, 0):
+        records.append(
+            C.record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=label,
+                operation=producer_operation,
+                inherit_mechanism=False,
+                actual=rv,
+                detail=_detail(producer_operation=producer_operation, **judge_detail),
                 summary=(
-                    f"{label}: refusal {ckr_name(rv)} mutated the output handle "
-                    "or left an object behind"
+                    f"{label}: refusal {ckr_name(rv)} wrote non-invalid output "
+                    f"handle {handle_value}; no object created"
                 ),
             )
         )
     elif rv == int(CKR_ATTRIBUTE_READ_ONLY):
-        pass  # Canonical: refused, sentinel untouched, zero inventory.
+        pass  # Canonical: refused, no object (sentinel or zero write).
     elif is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
         records.append(
             C.record_as(
@@ -640,7 +689,7 @@ def _judge_override(
                 inherit_mechanism=False,
                 expected=CKR_ATTRIBUTE_READ_ONLY,
                 actual=rv,
-                detail=_detail(producer_operation=producer_operation),
+                detail=_detail(producer_operation=producer_operation, **judge_detail),
                 summary=f"{label}: rejected with {ckr_name(rv)}",
             )
         )
@@ -653,7 +702,7 @@ def _judge_override(
                 operation=producer_operation,
                 inherit_mechanism=False,
                 actual=rv,
-                detail=_detail(producer_operation=producer_operation),
+                detail=_detail(producer_operation=producer_operation, **judge_detail),
                 summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
             )
         )
@@ -678,6 +727,7 @@ class TestUniqueIdOverride:
         }
         tmpl = template(*pack_attrs(attrs))
         handle = CK_OBJECT_HANDLE(_HANDLE_SENTINEL)
+        inventory_before = _inventory(rs)
         rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
         leaked: list[int] = []
         try:
@@ -689,6 +739,7 @@ class TestUniqueIdOverride:
                 producer_operation="C_CreateObject",
                 label_text=label_text,
                 leaked=leaked,
+                inventory_before=inventory_before,
             )
         finally:
             _destroy_all(rs, leaked)
@@ -715,6 +766,7 @@ class TestUniqueIdOverride:
             gen_tmpl = template(*pack_attrs(gen_attrs))
             gen_handle = CK_OBJECT_HANDLE(_HANDLE_SENTINEL)
             mech = mech_simple(int(CKM_AES_KEY_GEN))
+            gen_inventory_before = _inventory(rs)
             gen_rv = int(
                 rs.raw.C_GenerateKey(
                     rs.sh, mech.byref(), gen_tmpl.ptr, gen_tmpl.count, byref(gen_handle)
@@ -729,6 +781,7 @@ class TestUniqueIdOverride:
                     producer_operation="C_GenerateKey",
                     label_text="qc7c-override-generate",
                     leaked=leaked,
+                    inventory_before=gen_inventory_before,
                 )
             )
 
@@ -751,6 +804,7 @@ class TestUniqueIdOverride:
             }
             copy_tmpl = template(*pack_attrs(copy_attrs))
             copy_handle = CK_OBJECT_HANDLE(_HANDLE_SENTINEL)
+            copy_inventory_before = _inventory(rs)
             copy_rv = int(
                 rs.raw.C_CopyObject(
                     rs.sh, source, copy_tmpl.ptr, copy_tmpl.count, byref(copy_handle)
@@ -765,6 +819,7 @@ class TestUniqueIdOverride:
                     producer_operation="C_CopyObject",
                     label_text="qc7c-override-copy",
                     leaked=leaked,
+                    inventory_before=copy_inventory_before,
                 )
             )
             reread_id, reread_records = _read_unique_id(

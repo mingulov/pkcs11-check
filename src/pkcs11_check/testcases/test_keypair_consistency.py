@@ -579,6 +579,21 @@ _QC7_HANDLE_SENTINEL = 0x51515151
 _KNOWN_RSA_CACHE: dict[str, tuple[int, bytes, bytes]] = {}
 
 
+def _qc7_inventory(rs: Any) -> list[int]:
+    """All currently visible object handles (unfiltered FindObjects)."""
+    return find_objects(rs.raw, rs.sh)
+
+
+def _qc7_handle_class(handle_value: int, *, found: list[int], new_handles: list[int]) -> str:
+    if handle_value == _QC7_HANDLE_SENTINEL:
+        return "sentinel"
+    if handle_value == 0:
+        return "zero"
+    if handle_value in found or handle_value in new_handles:
+        return "new-live"
+    return "dead-nonzero"
+
+
 def _known_rsa_public() -> tuple[int, bytes, bytes]:
     """Independent known RSA-2048 public material: (n, n_bytes, e_bytes)."""
     cached = _KNOWN_RSA_CACHE.get("rsa2048")
@@ -807,11 +822,19 @@ class TestRSAModulusBits:
 
     @pytest.mark.parametrize("supplied", ["correct", "wrong"])
     def test_create_with_modulus_bits_rejected(self, p11_raw_session: Any, supplied: str) -> None:
-        """C_CreateObject with forbidden MODULUS_BITS rejects with no object."""
+        """C_CreateObject with forbidden MODULUS_BITS: stored-vs-true tiers.
+
+        Refusal legs judge objects, not handle writes (adjudicated O1).
+        Acceptance judges the stored bits against the true modulus bit
+        length (O2): stored == true or dropped is an honest deviation,
+        stored != true FAILs as false metadata, and CKR_OK with no
+        locatable object FAILs as a self-contradiction.
+        """
         rs = p11_raw_session
         skip_unless_create_object_supported(rs)
         n, n_bytes, e_bytes = _known_rsa_public()
-        supplied_bits = n.bit_length() if supplied == "correct" else 1024
+        true_bits = n.bit_length()
+        supplied_bits = true_bits if supplied == "correct" else 1024
         label_text = f"qc7-forbidden-modulus-bits-{supplied}"
         attrs: dict[Any, Any] = {
             CKA_CLASS: CKO_PUBLIC_KEY,
@@ -825,6 +848,7 @@ class TestRSAModulusBits:
         }
         tmpl = template(*pack_attrs(attrs))
         handle = CK_OBJECT_HANDLE(_QC7_HANDLE_SENTINEL)
+        inventory_before = _qc7_inventory(rs)
         rv = int(rs.raw.C_CreateObject(rs.sh, tmpl.ptr, tmpl.count, byref(handle)))
         label = f"forbidden CKA_MODULUS_BITS on C_CreateObject ({supplied})"
         records: list[C.Classification] = []
@@ -837,48 +861,139 @@ class TestRSAModulusBits:
             found = find_objects(
                 rs.raw, rs.sh, template(attr_bytes(CKA_LABEL, label_text.encode()))
             )
+            inventory_after = _qc7_inventory(rs)
+            new_handles = sorted(set(inventory_after) - set(inventory_before))
+            handle_after = int(handle.value)
+            detail = {
+                **detail,
+                "handle_after": handle_after,
+                "handle_class": _qc7_handle_class(
+                    handle_after, found=found, new_handles=new_handles
+                ),
+                "found_by_label": list(found),
+                "new_handles": new_handles,
+                "supplied_bits": supplied_bits,
+                "true_bits": true_bits,
+                "stored_bits": None,
+            }
             if rv == int(CKR_OK):
-                leaked_handle = int(handle.value)
-                if leaked_handle != _QC7_HANDLE_SENTINEL:
-                    leaked.append(leaked_handle)
-                leaked.extend(h for h in found if h not in leaked)
+                # Locatable object: the output handle when it names a live
+                # object, else the label/inventory-delta evidence. A bare
+                # handle naming nothing is never read or destroyed.
+                target = 0
+                if handle_after in inventory_after:
+                    target = handle_after
+                elif found:
+                    target = found[0]
+                elif new_handles:
+                    target = new_handles[0]
+                leaked.extend(found)
+                leaked.extend(h for h in new_handles if h not in leaked)
+                stored_bits: int | None = None
+                stored_malformed = False
                 stored_note = "not-read"
-                if leaked_handle != _QC7_HANDLE_SENTINEL:
+                if target:
                     try:
-                        stored_bits, _stored_read = _read_leg(
+                        stored_value, _stored_read = _read_leg(
                             rs,
-                            leaked_handle,
+                            target,
                             CKA_MODULUS_BITS,
                             leg="public",
                             label=f"{label}:stored-bits note",
                             mechanism="",
                             producer_operation="C_CreateObject",
                         )
-                        if stored_bits is MISSING_ATTRIBUTE:
+                        if stored_value is MISSING_ATTRIBUTE:
                             stored_note = "caller-value-dropped"
-                        elif stored_bits == supplied_bits:
-                            stored_note = "caller-value-stored"
+                        elif isinstance(stored_value, bool) or not isinstance(stored_value, int):
+                            stored_note = "stored-bits-malformed"
+                            stored_malformed = True
                         else:
-                            stored_note = "caller-value-overwritten"
+                            stored_bits = stored_value
+                            stored_note = (
+                                "stored-equals-supplied"
+                                if stored_value == supplied_bits
+                                else "caller-value-overwritten"
+                            )
                     except CkrAssertionError:
                         stored_note = "stored-bits-unreadable"
-                records.append(
-                    C.record_as(
-                        "accepted_invalid",
-                        kind="metadata",
-                        label=label,
-                        operation="C_CreateObject",
-                        inherit_mechanism=False,
-                        expected=(CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT),
-                        actual=rv,
-                        detail={**detail, "stored": stored_note},
-                        summary=f"{label}: forbidden attribute accepted (CKR_OK)",
+                ok_detail = {
+                    **detail,
+                    "supplied_bits": supplied_bits,
+                    "true_bits": true_bits,
+                    "stored_bits": stored_bits,
+                    "stored": stored_note,
+                }
+                if target and (
+                    stored_malformed or (stored_bits is not None and stored_bits != true_bits)
+                ):
+                    records.append(
+                        C.record_as(
+                            "accepted_invalid",
+                            kind="metadata",
+                            label=label,
+                            operation="C_CreateObject",
+                            inherit_mechanism=False,
+                            expected=(CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT),
+                            actual=rv,
+                            detail=ok_detail,
+                            summary=(
+                                f"{label}: forbidden attribute accepted (CKR_OK) and "
+                                "false CKA_MODULUS_BITS metadata stored"
+                            ),
+                        )
                     )
-                )
-            elif int(handle.value) != _QC7_HANDLE_SENTINEL or found:
+                elif not target:
+                    records.append(
+                        C.record_as(
+                            "self_contradiction",
+                            kind="metadata",
+                            label=label,
+                            operation="C_CreateObject",
+                            inherit_mechanism=False,
+                            actual=rv,
+                            detail=ok_detail,
+                            summary=f"{label}: CKR_OK without a created object",
+                        )
+                    )
+                elif stored_bits is not None and stored_bits == true_bits:
+                    records.append(
+                        C.record_as(
+                            "honest_deviation",
+                            kind="metadata",
+                            label=label,
+                            operation="C_CreateObject",
+                            inherit_mechanism=False,
+                            expected=(CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT),
+                            actual=rv,
+                            detail=ok_detail,
+                            summary=(
+                                f"{label}: forbidden attribute accepted (CKR_OK); "
+                                "stored CKA_MODULUS_BITS equals the true modulus "
+                                "bit length"
+                            ),
+                        )
+                    )
+                else:
+                    records.append(
+                        C.record_as(
+                            "honest_deviation",
+                            kind="metadata",
+                            label=label,
+                            operation="C_CreateObject",
+                            inherit_mechanism=False,
+                            expected=(CKR_ATTRIBUTE_READ_ONLY, CKR_TEMPLATE_INCONSISTENT),
+                            actual=rv,
+                            detail=ok_detail,
+                            summary=(
+                                f"{label}: forbidden attribute accepted (CKR_OK) and "
+                                "ignored/dropped; no false bits proven"
+                            ),
+                        )
+                    )
+            elif found or new_handles:
                 leaked.extend(found)
-                if int(handle.value) != _QC7_HANDLE_SENTINEL:
-                    leaked.append(int(handle.value))
+                leaked.extend(h for h in new_handles if h not in leaked)
                 records.append(
                     C.record_as(
                         "self_contradiction",
@@ -888,14 +1003,27 @@ class TestRSAModulusBits:
                         inherit_mechanism=False,
                         actual=rv,
                         detail=detail,
+                        summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+                    )
+                )
+            elif handle_after not in (_QC7_HANDLE_SENTINEL, 0):
+                records.append(
+                    C.record_as(
+                        "honest_deviation",
+                        kind="metadata",
+                        label=label,
+                        operation="C_CreateObject",
+                        inherit_mechanism=False,
+                        actual=rv,
+                        detail=detail,
                         summary=(
-                            f"{label}: refusal {ckr_name(rv)} mutated the output "
-                            "handle or left an object behind"
+                            f"{label}: refusal {ckr_name(rv)} wrote non-invalid output "
+                            f"handle {handle_after}; no object created"
                         ),
                     )
                 )
             elif rv in (int(CKR_ATTRIBUTE_READ_ONLY), int(CKR_TEMPLATE_INCONSISTENT)):
-                pass  # Canonical rejection, sentinel untouched, zero inventory.
+                pass  # Canonical rejection, no object (sentinel or zero write).
             elif is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
                 records.append(
                     C.record_as(
