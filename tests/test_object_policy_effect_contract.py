@@ -345,6 +345,8 @@ class _PolicyFake:
         find_page_cap: int | None = None,
         sentinel_ok_label: bytes | None = None,
         leak_labeled: bytes | None = None,
+        leak_unlabeled: bytes | None = None,
+        refusal_out_handle: int | None = None,
         extra_for_label: bytes | None = None,
         extra_attrs: dict[int, Any] | None = None,
         keypair_pub_extra: dict[int, Any] | None = None,
@@ -400,6 +402,8 @@ class _PolicyFake:
         self._sentinel_ok_label = sentinel_ok_label
         self.find_pages: list[int] = []
         self._leak_labeled = leak_labeled
+        self._leak_unlabeled = leak_unlabeled
+        self._refusal_out_handle = refusal_out_handle
         self._extra_for_label = extra_for_label
         self._extra_attrs = dict(extra_attrs or {})
         self._keypair_pub_extra = dict(keypair_pub_extra or {})
@@ -472,6 +476,7 @@ class _PolicyFake:
         self._find_seq = 0
         self._find_offset = 0
         self._find_search: bytes | None = None
+        self._find_all = False
 
     # -- key material --------------------------------------------------------
 
@@ -587,6 +592,14 @@ class _PolicyFake:
             if role == "keypair-pub":
                 self._rsa_handles.add(handle)
 
+    def _maybe_leak_unlabeled(self, attrs: dict[int, Any], *, role: str) -> int | None:
+        """Refused creation that still creates, but drops CKA_LABEL (PR64 P2)."""
+        if self._leak_unlabeled is None or self._label_of(attrs) != self._leak_unlabeled:
+            return None
+        dropped = dict(attrs)
+        dropped.pop(int(CKA_LABEL), None)
+        return self._store(dropped, role=role)
+
     def _apply_extra(self, attrs: dict[int, Any]) -> None:
         if self._extra_for_label is not None and self._label_of(attrs) == self._extra_for_label:
             attrs.update(self._extra_attrs)
@@ -605,6 +618,11 @@ class _PolicyFake:
         scripted = self._pop(self._create_script)
         if scripted is not None:
             self._maybe_leak(attrs, role="create")
+            leaked = self._maybe_leak_unlabeled(attrs, role="create")
+            if leaked is not None:
+                _fill_ulong(out, leaked)
+            if self._refusal_out_handle is not None:
+                _fill_ulong(out, self._refusal_out_handle)
             return scripted
         # Content-based capability gap (F7): refuse creates of a key type the
         # module does not support. Scripts take precedence when non-None.
@@ -643,6 +661,12 @@ class _PolicyFake:
         if scripted is not None:
             self._maybe_leak(pub_attrs, role="keypair-pub")
             self._maybe_leak(priv_attrs, role="keypair-priv")
+            leaked_pub = self._maybe_leak_unlabeled(pub_attrs, role="keypair-pub")
+            leaked_priv = self._maybe_leak_unlabeled(priv_attrs, role="keypair-priv")
+            if leaked_pub is not None:
+                _fill_ulong(pub_out, leaked_pub)
+            if leaked_priv is not None:
+                _fill_ulong(priv_out, leaked_priv)
             return scripted
         rsa_gen = int(CKM_RSA_PKCS_KEY_PAIR_GEN)
         ec_gen = int(CKM_EC_KEY_PAIR_GEN)
@@ -822,6 +846,9 @@ class _PolicyFake:
         if fail is not None and fail[0] == "init":
             return fail[1]
         decoded = _decode_template(tmpl, count) if count else {}
+        # An empty template matches every live object (full inventory, P2);
+        # a non-empty template keeps the label-filtered semantics.
+        self._find_all = count == 0
         self._find_search = decoded.get(int(CKA_LABEL))
         self._find_offset = 0
         return _OK
@@ -833,7 +860,8 @@ class _PolicyFake:
         matched = [
             handle
             for handle, stored in self.objects.items()
-            if not stored.destroyed and self._label_of(stored.attrs) == self._find_search
+            if not stored.destroyed
+            and (self._find_all or self._label_of(stored.attrs) == self._find_search)
         ]
         # Paged cursor (F12): each call continues where the previous stopped.
         # An optional page cap (N6) models a provider returning fewer
@@ -941,6 +969,9 @@ class _PolicyFake:
         scripted = self._pop(self._unwrap_script)
         if scripted is not None:
             self._maybe_leak(attrs, role="unwrap")
+            leaked = self._maybe_leak_unlabeled(attrs, role="unwrap")
+            if leaked is not None:
+                _fill_ulong(out, leaked)
             return scripted
         # False-UNWRAP-default provider (F6): an unwrapping key without an
         # explicit CKA_UNWRAP=True is refused, like a strict module.
@@ -5102,3 +5133,120 @@ def test_qc4a_wrap_sentinel_peer_read_records_deviation_n9() -> None:
     assert _reported_outcome() == "xfail", [(rec.reason, rec.outcome) for rec in C.get_records()]
     _assert_cleaned_up(fake)
     _assert_no_secret_bytes()
+
+
+# PR64 review group (P2, P6): refused creation must account for every
+# independently proved-new object, and inventory counts are validated.
+
+
+@pytest.mark.parametrize(("family", "malformation"), _CREATE_CELLS)
+def test_qc4b_create_refuse_unlabeled_leak_fails_p2(family: str, malformation: str) -> None:
+    """P2: a refusal creating an unlabeled object fails, never sanctioned_refusal."""
+    label = _attempt_label("create", family, malformation)
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCONSISTENT], leak_unlabeled=label)
+    _run_must_fail(_qc4b_create, _rs(fake), family, malformation)
+    record = _assert_fail_record("self_contradiction", "lifecycle")
+    assert "leak" in (record.summary or "").lower(), record.summary
+    assert (record.detail or {}).get("leaked_count") == 1, record.detail
+    _assert_cleaned_up(fake)
+
+
+@pytest.mark.parametrize(("family", "malformation"), _UNWRAP_CELLS)
+def test_qc4b_unwrap_refuse_unlabeled_leak_fails_p2(family: str, malformation: str) -> None:
+    """P2: an unwrap refusal creating an unlabeled object fails as leaked."""
+    label = _attempt_label("unwrap", family, malformation)
+    fake = _PolicyFake(unwrap_script=[None, _TEMPLATE_INCONSISTENT], leak_unlabeled=label)
+    _run_must_fail(_qc4b_unwrap, _rs(fake), family, malformation)
+    record = _assert_fail_record("self_contradiction", "lifecycle")
+    assert "leak" in (record.summary or "").lower(), record.summary
+    assert (record.detail or {}).get("leaked_count") == 1, record.detail
+    _assert_cleaned_up(fake)
+
+
+@pytest.mark.parametrize(("family", "malformation"), _GENERATE_CELLS)
+def test_qc4b_generate_refuse_unlabeled_leak_fails_p2(family: str, malformation: str) -> None:
+    """P2: a generate refusal creating unlabeled halves fails as leaked."""
+    label = _attempt_label("generate", family, malformation)
+    fake = _PolicyFake(keypair_script=[None, _TEMPLATE_INCONSISTENT], leak_unlabeled=label)
+    _run_must_fail(_qc4b_generate, _rs(fake), family, malformation)
+    record = _assert_fail_record("self_contradiction", "lifecycle")
+    assert "leak" in (record.summary or "").lower(), record.summary
+    assert (record.detail or {}).get("leaked_count") == 2, record.detail
+    _assert_cleaned_up(fake)
+
+
+def test_qc4b_create_unlabeled_leak_records_error_output_p2() -> None:
+    """P2: the error-path handle is evidence only; the delta proves the leak."""
+    label = _attempt_label("create", "rsa", "missing_modulus")
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCONSISTENT], leak_unlabeled=label)
+    _run_must_fail(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
+    record = _assert_fail_record("self_contradiction", "lifecycle")
+    leaked = fake.created[-1]
+    assert int(CKA_LABEL) not in fake.objects[leaked].attrs, fake.objects[leaked].attrs
+    assert (record.detail or {}).get("error_output_handles") == [leaked], record.detail
+    assert (record.detail or {}).get("leaked_count") == 1, record.detail
+    _assert_cleaned_up(fake)
+    _assert_no_secret_bytes()
+
+
+def test_qc4b_create_refusal_foreign_error_handle_not_destroyed_p2() -> None:
+    """P2 guard: an unspecified error handle aliasing a foreign object is kept."""
+    fake = _PolicyFake(create_script=[None, _TEMPLATE_INCONSISTENT], refusal_out_handle=100)
+    fake.plant_litter(b"foreign-planted", 1)
+    assert fake.created == [100]
+    _qc4b_create(_rs(fake), "rsa", "missing_modulus")
+    _assert_terminal_pass()
+    record = _terminal_record()
+    assert (record.detail or {}).get("inventory_delta") == 0, record.detail
+    assert (record.detail or {}).get("error_output_handles") == [100], record.detail
+    assert 100 not in fake.destroyed, fake.destroyed
+    assert fake.objects[100].destroyed is False
+
+
+def _over_capacity_raw(calls: list[str]) -> Any:
+    """Raw stub whose Find claims CKR_OK with a count above capacity (P6)."""
+
+    def _init(_sh: int, _tmpl: Any, _count: int) -> int:
+        calls.append("init")
+        return _OK
+
+    def _find(_sh: int, _handles: Any, _size: int, found: Any) -> int:
+        calls.append("find")
+        _fill_ulong(found, 257)
+        return _OK
+
+    def _final(_sh: int) -> int:
+        calls.append("final")
+        return _OK
+
+    return SimpleNamespace(C_FindObjectsInit=_init, C_FindObjects=_find, C_FindObjectsFinal=_final)
+
+
+def test_find_by_label_over_capacity_count_fails_structured_p6() -> None:
+    """P6: count 257 on a 256 buffer is a structured metadata FAIL, Final kept."""
+    mod = _policy_module()
+    calls: list[str] = []
+    rs = SimpleNamespace(raw=_over_capacity_raw(calls), sh=1)
+    with pytest.raises(Failed):
+        mod._find_by_label(rs, "qc4b-over-capacity")
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjects", record.operation
+    detail = record.detail or {}
+    assert detail.get("count") == 257, detail
+    assert detail.get("capacity") == mod._FIND_PAGE_SIZE, detail
+    assert calls == ["init", "find", "final"], calls
+
+
+def test_find_all_over_capacity_count_fails_structured_p6() -> None:
+    """P6: the full-inventory twin carries the same capacity discipline."""
+    mod = _policy_module()
+    calls: list[str] = []
+    rs = SimpleNamespace(raw=_over_capacity_raw(calls), sh=1)
+    with pytest.raises(Failed):
+        mod._find_all(rs)
+    record = _assert_fail_record("self_contradiction", "metadata")
+    assert record.operation == "C_FindObjects", record.operation
+    detail = record.detail or {}
+    assert detail.get("count") == 257, detail
+    assert detail.get("capacity") == mod._FIND_PAGE_SIZE, detail
+    assert calls == ["init", "find", "final"], calls

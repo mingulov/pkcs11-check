@@ -2632,17 +2632,18 @@ def _adjudicate_uses(
 _FIND_PAGE_SIZE = 256
 
 
-def _find_by_label(rs: Any, label: str) -> list[int]:
-    """Inventory ALL objects carrying *label* (raises CkrAssertionError on refusal).
+def _run_inventory(rs: Any, ptr: Any, count: int, *, record_label: str) -> list[int]:
+    """Exhaust one Find search, validating every reported count (P6).
 
     Loops Find batches until an empty page (F12/N6): a provider may
     return fewer handles than requested at any point (§5.7.8), so a
-    short nonempty page proves nothing about what follows it.
-    Finalizes the search on both success and failure paths (mirroring
-    the recipe's cleanup).
+    short nonempty page proves nothing about what follows it. A count
+    above the allocated capacity under CKR_OK is a provider metadata
+    contradiction -- recorded structured (raw count + capacity) and
+    failed loud, never indexed. Finalizes the search on both success
+    and failure paths (mirroring the recipe's cleanup).
     """
-    tmpl = template(attr_bytes(CKA_LABEL, label.encode("utf-8")))
-    rv = rs.raw.C_FindObjectsInit(rs.sh, tmpl.ptr, tmpl.count)
+    rv = rs.raw.C_FindObjectsInit(rs.sh, ptr, count)
     expect_rv(rv, CKR_OK)
     out: list[int] = []
     try:
@@ -2651,9 +2652,28 @@ def _find_by_label(rs: Any, label: str) -> list[int]:
             found = CK_ULONG(0)
             rv = rs.raw.C_FindObjects(rs.sh, handles, _FIND_PAGE_SIZE, byref(found))
             expect_rv(rv, CKR_OK)
-            count = int(found.value)
-            out.extend(int(handles[i]) for i in range(count))
-            if count == 0:
+            raw_count = int(found.value)
+            if raw_count > _FIND_PAGE_SIZE:
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=record_label,
+                    operation="C_FindObjects",
+                    inherit_mechanism=False,
+                    expected=f"find count <= {_FIND_PAGE_SIZE}",
+                    actual=f"find count {raw_count}",
+                    summary=(
+                        f"{record_label}: C_FindObjects claimed CKR_OK with count "
+                        f"{raw_count} on a {_FIND_PAGE_SIZE}-element buffer"
+                    ),
+                    detail={
+                        "session": int(rs.sh),
+                        "count": raw_count,
+                        "capacity": _FIND_PAGE_SIZE,
+                    },
+                )
+            out.extend(int(handles[i]) for i in range(raw_count))
+            if raw_count == 0:
                 break
     except BaseException:
         try:
@@ -2664,6 +2684,23 @@ def _find_by_label(rs: Any, label: str) -> list[int]:
     rv = rs.raw.C_FindObjectsFinal(rs.sh)
     expect_rv(rv, CKR_OK)
     return out
+
+
+def _find_by_label(rs: Any, label: str) -> list[int]:
+    """Inventory ALL objects carrying *label* (raises CkrAssertionError on refusal)."""
+    tmpl = template(attr_bytes(CKA_LABEL, label.encode("utf-8")))
+    return _run_inventory(rs, tmpl.ptr, tmpl.count, record_label=label)
+
+
+def _find_all(rs: Any) -> list[int]:
+    """Inventory EVERY live object visible to the session (empty template).
+
+    The refusal legs delta against this full inventory (P2): an object
+    present after the attempt but absent before it is independently
+    proved new -- and owned by this attempt -- whatever label (if any)
+    it carries, so a label-dropped partial creation cannot hide.
+    """
+    return _run_inventory(rs, None, 0, record_label="full inventory")
 
 
 def _record_rv_validity(
@@ -2729,9 +2766,9 @@ def _adjudicate_malformed_refusal(
     *,
     label: str,
     operation: str,
-    attempt_label: str,
     before: list[int],
     spec_ref: str,
+    error_handles: Iterable[int] = (),
 ) -> None:
     """Rejection leg: record validity, inventory, terminate strongest (N7).
 
@@ -2742,10 +2779,18 @@ def _adjudicate_malformed_refusal(
     §5.18.4 / §5.18.2: a refused creation must create nothing).
     Termination raises for the strongest retained record; only a
     standard refusal with a proved zero delta reaches the pass.
+
+    The delta is taken against the FULL inventory (P2): *before* and the
+    post-refusal snapshot list every visible object, so any handle only
+    in the later snapshot is live and proved newly owned by this attempt
+    whatever label it carries. Error-path output handles are unspecified
+    and are never trusted: they are recorded as evidence only and are
+    destroyed solely as members of the proved-new delta, never directly.
     """
+    outputs = [int(handle) for handle in error_handles if handle]
     retained = _record_rv_validity(rv, label=label, operation=operation, kind="policy")
     try:
-        after = _find_by_label(rs, attempt_label)
+        after = _find_all(rs)
     except CkrAssertionError as exc:
         inventory_retained = _record_rv_validity(
             exc.rv, label=f"{label}: inventory", operation="C_FindObjects", kind="policy"
@@ -2756,6 +2801,8 @@ def _adjudicate_malformed_refusal(
             detail = strongest.detail if isinstance(strongest.detail, dict) else {}
             detail.setdefault("refusal_rv", ckr_name(rv))
             detail["inventory_rv"] = ckr_name(exc.rv)
+            if outputs:
+                detail["error_output_handles"] = outputs
             strongest.detail = detail
             raise_for_record(strongest)
         xfail_as(
@@ -2774,6 +2821,7 @@ def _adjudicate_malformed_refusal(
                 "disposition": "unproved-effect",
                 "refusal_rv": ckr_name(rv),
                 "inventory_rv": ckr_name(exc.rv),
+                **({"error_output_handles": outputs} if outputs else {}),
             },
         )
     before_set = set(before)
@@ -2791,10 +2839,14 @@ def _adjudicate_malformed_refusal(
             actual=rv,
             spec_ref=spec_ref,
             summary=(
-                f"{label}: refused with {ckr_name(rv)} yet {len(leaked)} labeled "
+                f"{label}: refused with {ckr_name(rv)} yet {len(leaked)} new "
                 "object(s) appeared (leaked object)"
             ),
-            detail={"leaked_count": len(leaked), "refusal_rv": ckr_name(rv)},
+            detail={
+                "leaked_count": len(leaked),
+                "refusal_rv": ckr_name(rv),
+                **({"error_output_handles": outputs} if outputs else {}),
+            },
         )
         errors = _destroy_all(rs, leaked)
         try:
@@ -2811,6 +2863,8 @@ def _adjudicate_malformed_refusal(
         detail = retained.detail if isinstance(retained.detail, dict) else {}
         detail.setdefault("refusal_rv", ckr_name(rv))
         detail["inventory_delta"] = 0
+        if outputs:
+            detail["error_output_handles"] = outputs
         retained.detail = detail
         raise_for_record(retained)
     emit_qc4_pass(
@@ -2820,7 +2874,11 @@ def _adjudicate_malformed_refusal(
         summary=(
             f"{label}: malformed template refused with {ckr_name(rv)}; zero inventory delta proved"
         ),
-        detail={"refusal_rv": ckr_name(rv), "inventory_delta": 0},
+        detail={
+            "refusal_rv": ckr_name(rv),
+            "inventory_delta": 0,
+            **({"error_output_handles": outputs} if outputs else {}),
+        },
         actual=rv,
     )
 
@@ -3985,7 +4043,7 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             void_qc4_setup_exc(exc, (), label=f"{label} legal control", operation="C_CreateObject")
         _cleanup_owned(rs, [control])
         try:
-            before = _find_by_label(rs, attempt_label)
+            before = _find_all(rs)
         except CkrAssertionError as exc:
             void_qc4_setup_exc(exc, (), label=f"{label}: inventory", operation="C_FindObjects")
         tmpl = template(*pack_attrs(attempt_attrs))
@@ -3997,9 +4055,9 @@ def _run_create_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 rv,
                 label=label,
                 operation="C_CreateObject",
-                attempt_label=attempt_label,
                 before=before,
                 spec_ref=_QC4B_SPEC,
+                error_handles=(int(handle.value),),
             )
             return
         try:
@@ -4419,7 +4477,7 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
             )
         _cleanup_owned(rs, [control])
         try:
-            before = _find_by_label(rs, attempt_label)
+            before = _find_all(rs)
         except CkrAssertionError as exc:
             void_qc4_setup_exc(exc, (), label=f"{label}: inventory", operation="C_FindObjects")
         tmpl = template(*pack_attrs(attempt_attrs))
@@ -4442,9 +4500,9 @@ def _run_unwrap_malformed_cell(rs: Any, family: str, malformation: str) -> None:
                 rv,
                 label=label,
                 operation="C_UnwrapKey",
-                attempt_label=attempt_label,
                 before=before,
                 spec_ref=_QC4B_SPEC,
+                error_handles=(int(handle.value),),
             )
             return
         try:
@@ -4696,7 +4754,7 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
     ctrl_pub, ctrl_priv = _generate_family_source(rs, family, pqc, label=ctrl_label)
     _cleanup_owned(rs, [ctrl_pub, ctrl_priv])
     try:
-        before = _find_by_label(rs, attempt_label)
+        before = _find_all(rs)
     except CkrAssertionError as exc:
         void_qc4_setup_exc(exc, (), label=f"{label}: inventory", operation="C_FindObjects")
     pub_tmpl = template(*pack_attrs(pub_attrs))
@@ -4720,9 +4778,9 @@ def _run_generate_malformed_cell(rs: Any, family: str, malformation: str) -> Non
             rv,
             label=label,
             operation="C_GenerateKeyPair",
-            attempt_label=attempt_label,
             before=before,
             spec_ref=_QC4B_SPEC,
+            error_handles=(int(pub_handle.value), int(priv_handle.value)),
         )
         return
     try:
