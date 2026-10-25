@@ -46,6 +46,7 @@ from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_OBJECT_HANDLE,
     CK_UNAVAILABLE_INFORMATION,
+    CK_UNAVAILABLE_INFORMATION_32,
     CKA_ALWAYS_SENSITIVE,
     CKA_BASE,
     CKA_CLASS,
@@ -322,7 +323,7 @@ def _record_mixed_sensitive_row(
     platforms).
     """
     if int(attr[0].ulValueLen) == int(CK_UNAVAILABLE_INFORMATION) or (
-        accept_32bit and int(attr[0].ulValueLen) == 0xFFFFFFFF
+        accept_32bit and int(attr[0].ulValueLen) == int(CK_UNAVAILABLE_INFORMATION_32)
     ):
         return
     records.append(
@@ -362,7 +363,7 @@ def _record_mixed_safe_row(
     reported_length = int(attr[1].ulValueLen)
     unavailable = (
         reported_length == int(CK_UNAVAILABLE_INFORMATION)
-        or (accept_32bit and reported_length == 0xFFFFFFFF)
+        or (accept_32bit and reported_length == int(CK_UNAVAILABLE_INFORMATION_32))
     ) and rv in (
         CKR_ATTRIBUTE_TYPE_INVALID,
         CKR_BUFFER_TOO_SMALL,
@@ -1235,7 +1236,7 @@ _MATRIX_SENTINEL_BYTE = 0xA5
 _MATRIX_READABLE_MAX = 65536
 
 _UNAVAILABLE_64 = int(CK_UNAVAILABLE_INFORMATION)
-_UNAVAILABLE_32 = 0xFFFFFFFF
+_UNAVAILABLE_32 = int(CK_UNAVAILABLE_INFORMATION_32)
 
 # Attribute-read returns that guarantee completed per-member processing: the
 # three special attribute-status returns (spec section 5.7.5) plus CKR_OK.
