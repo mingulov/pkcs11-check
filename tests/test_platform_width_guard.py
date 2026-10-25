@@ -465,23 +465,30 @@ def _fold_int(node: ast.AST, known: dict[str, int]) -> int | None:
 
 
 def s4_bindings_in_source(source: str) -> dict[str, int]:
-    """Module-level bindings folding to a width literal: name -> value."""
+    """Module-level bindings folding to a width literal: name -> value.
+
+    The folding environment keeps every safely foldable integer
+    intermediate (P7) -- a computed sentinel such as
+    ``_SENT = (1 << _BITS) - 1`` only folds when ``_BITS`` itself folds,
+    even though 64 is no sentinel. Only the reported bindings are
+    filtered to the two sentinel values.
+    """
     tree = ast.parse(source)
     bindings: list[tuple[str, ast.expr]] = []
     for node in tree.body:
         names, value = _bound_names(node)
         if value is not None:
             bindings.extend((name, value) for name in sorted(names))
-    known: dict[str, int] = {}
+    env: dict[str, int] = {}
     changed = True
     while changed:  # fixpoint so alias chains of any length resolve
         changed = False
         for name, value in bindings:
-            folded = _fold_int(value, known)
-            if name not in known and folded in (_S32, _SPLAT):
-                known[name] = folded
+            folded = _fold_int(value, env)
+            if name not in env and folded is not None:
+                env[name] = folded
                 changed = True
-    return known
+    return {name: value for name, value in env.items() if value in (_S32, _SPLAT)}
 
 
 def s4_census() -> list[tuple[str, str]]:
@@ -704,6 +711,23 @@ def test_s4_detector_fires_and_spares() -> None:
         "_GEN": _S32,
         "_ALIAS": _S32,
         "_CHAIN": _S32,
+    }
+
+
+def test_s4_computed_sentinel_via_intermediate_constant() -> None:
+    """P7: foldable intermediates feed computed sentinels; only sentinels report."""
+    src = (
+        "_BITS = 64\n"
+        "_SENT = (1 << _BITS) - 1\n"
+        "_ALIAS = _SENT\n"
+        "_HALF = 32\n"
+        "_W32 = (1 << _HALF) - 1\n"
+        "_OTHER = _BITS + 1\n"
+    )
+    assert s4_bindings_in_source(src) == {
+        "_SENT": _SPLAT,
+        "_ALIAS": _SPLAT,
+        "_W32": _S32,
     }
 
 
