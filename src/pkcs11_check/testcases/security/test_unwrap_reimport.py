@@ -54,11 +54,21 @@ from pkcs11_check.classification import (
     raise_for_record,
 )
 from pkcs11_check.compliance import ComplianceLevel, note
-from pkcs11_check.raw.pack import attr_bool, attr_template, attr_ulong, mech_simple, template
+from pkcs11_check.raw.pack import (
+    attr_bool,
+    attr_template,
+    attr_ulong,
+    mech_simple,
+    template,
+    template_ptr_count,
+)
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
+    find_objects_exhaustive,
     gen_aes_key,
+    pack_attrs,
     read_attributes,
+    to_ubyte_buf,
     unwrap_key,
     wrap_key,
 )
@@ -701,6 +711,207 @@ class TestUnwrapTemplateBinding:
             destroy_quietly(rs.raw, rs.sh, wrap_h)
 
 
+def _qc8b_unwrap(
+    rs: Any,
+    wrap_h: int,
+    wrapped: bytes,
+    attrs: dict[Any, Any],
+    *,
+    label: str,
+) -> int:
+    """QC8b unwrap with an exhaustive before/after inventory bracket (R9-03).
+
+    A refused unwrap that nevertheless creates an object must not be
+    indistinguishable from a clean refusal: the output handle is owned
+    (and destroyable) only when the inventory delta proves it new. A
+    proved creation on refusal is destroyed and fails; an unproved
+    delta stays alive as an honest-deviation xfail; a clean zero-delta
+    refusal keeps the node's historical tiers (known operational
+    rejects xfail ``not_operational``, anything else propagates).
+    """
+
+    def _inventory() -> list[int]:
+        return find_objects_exhaustive(rs.raw, rs.sh)
+
+    try:
+        before = _inventory()
+    except CkrAssertionError as exc:
+        if not _is_defined_rv(int(exc.rv)):
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: inventory",
+                operation="C_FindObjects",
+                mechanism="CKM_AES_KEY_WRAP",
+                actual=int(exc.rv),
+                inherit_mechanism=False,
+                summary=f"{label}: inventory returned undefined CK_RV {ckr_name(int(exc.rv))}",
+            )
+        classify(
+            "not_operational",
+            label=f"{label}: inventory",
+            operation="C_FindObjects",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=int(exc.rv),
+            inherit_mechanism=False,
+            summary=f"{label}: inventory failed with {ckr_name(int(exc.rv))}; unwrap unproved",
+        )
+        raise AssertionError("unreachable: classify always raises") from exc
+    mech = mech_simple(CKM_AES_KEY_WRAP)
+    packed = pack_attrs(attrs)
+    tmpl = template(*packed) if packed else None
+    in_buf = to_ubyte_buf(wrapped)
+    handle = CK_OBJECT_HANDLE(0)
+    rv = int(
+        rs.raw.C_UnwrapKey(
+            rs.sh,
+            mech.byref(),
+            wrap_h,
+            in_buf,
+            len(wrapped),
+            *template_ptr_count(tmpl),
+            byref(handle),
+        )
+    )
+    handle_after = int(handle.value)
+    detail: dict[str, Any] = {"handle_after": handle_after}
+    try:
+        after = _inventory()
+    except CkrAssertionError as exc:
+        detail["inventory_rv"] = ckr_name(int(exc.rv))
+        detail["disposition"] = "unproved-effect"
+        if rv != int(CKR_OK) and not _is_defined_rv(rv):
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_UnwrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                actual=rv,
+                inherit_mechanism=False,
+                summary=f"{label}: refused with undefined CK_RV {ckr_name(rv)}",
+                detail=detail,
+            )
+        if not _is_defined_rv(int(exc.rv)):
+            classify(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: inventory",
+                operation="C_FindObjects",
+                mechanism="CKM_AES_KEY_WRAP",
+                actual=int(exc.rv),
+                inherit_mechanism=False,
+                summary=f"{label}: inventory returned undefined CK_RV {ckr_name(int(exc.rv))}",
+                detail=detail,
+            )
+        if rv == int(CKR_OK):
+            classify(
+                "not_operational",
+                label=label,
+                operation="C_UnwrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                actual=int(exc.rv),
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: unwrap succeeded but the result handle's ownership "
+                    f"is unproved; inventory failed with {ckr_name(int(exc.rv))}"
+                ),
+                detail=detail,
+            )
+        classify(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: refusal inventory failed with {ckr_name(int(exc.rv))}; "
+                "zero-delta unproved"
+            ),
+            detail=detail,
+        )
+        raise AssertionError("unreachable: classify always raises") from exc
+    new_handles = sorted(set(after) - set(before))
+    proved_new = [handle_after] if handle_after in new_handles else []
+    detail["new_handles"] = new_handles
+    detail["proved_new_handles"] = proved_new
+    if rv == int(CKR_OK):
+        if proved_new:
+            return handle_after
+        classify(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: unwrap reported success but handle {handle_after} "
+                "is not a proved-new object in the exhaustive inventory delta"
+            ),
+            detail=detail,
+        )
+    if not _is_defined_rv(rv):
+        if proved_new:
+            destroy_quietly(rs.raw, rs.sh, handle_after)
+        classify(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=f"{label}: refused with undefined CK_RV {ckr_name(rv)}",
+            detail=detail,
+        )
+    if proved_new:
+        destroy_quietly(rs.raw, rs.sh, handle_after)
+        classify(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: unwrap refused with {ckr_name(rv)} but created object {handle_after}"
+            ),
+            detail=detail,
+        )
+    if new_handles:
+        classify(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: unwrap refused with {ckr_name(rv)} but the inventory "
+                f"gained unproved objects {new_handles}"
+            ),
+            detail=detail,
+        )
+    if rv in {int(r) for r in _WRAP_UNWRAP_OP_REJECT_RVS}:
+        classify(
+            "not_operational",
+            label="CKM_AES_KEY_WRAP unwrap not operational",
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=f"CKM_AES_KEY_WRAP unwrap not operational: {ckr_name(rv)}",
+            detail=detail,
+        )
+    raise AssertionError(f"{label}: C_UnwrapKey refused with {ckr_name(rv)} (0x{rv:08x})")
+
+
 class TestUnwrapOmittedExtractableDefault:
     """QC8b (#61.2): omitted unwrap CKA_EXTRACTABLE defaults to CK_TRUE.
 
@@ -751,16 +962,13 @@ class TestUnwrapOmittedExtractableDefault:
                 CKA_KEY_TYPE: CKK_AES,
                 CKA_TOKEN: False,
             }
-            unwrapped_h: int | None = None
-            try:
-                unwrapped_h = unwrap_key(
-                    rs.raw, rs.sh, wrap_h, wrapped, CKM_AES_KEY_WRAP, unwrap_template
-                )
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc, _WRAP_UNWRAP_OP_REJECT_RVS, "CKM_AES_KEY_WRAP unwrap not operational"
-                )
-                raise
+            unwrapped_h = _qc8b_unwrap(
+                rs,
+                wrap_h,
+                wrapped,
+                unwrap_template,
+                label="C_UnwrapKey:omitted-extractable-default",
+            )
             try:
                 attrs = read_attributes(
                     rs.raw,
@@ -996,16 +1204,13 @@ class TestUnwrapOmittedExtractableDefault:
                 CKA_EXTRACTABLE: False,
                 CKA_SENSITIVE: True,
             }
-            unwrapped_h: int | None = None
-            try:
-                unwrapped_h = unwrap_key(
-                    rs.raw, rs.sh, wrap_h, wrapped, CKM_AES_KEY_WRAP, caller_template
-                )
-            except AssertionError as exc:
-                xfail_if_known_ckr(
-                    exc, _WRAP_UNWRAP_OP_REJECT_RVS, "CKM_AES_KEY_WRAP unwrap not operational"
-                )
-                raise
+            unwrapped_h = _qc8b_unwrap(
+                rs,
+                wrap_h,
+                wrapped,
+                caller_template,
+                label="C_UnwrapKey:explicit-false-negative-control",
+            )
             try:
                 attrs = read_attributes(
                     rs.raw, rs.sh, unwrapped_h, [CKA_EXTRACTABLE, CKA_SENSITIVE]

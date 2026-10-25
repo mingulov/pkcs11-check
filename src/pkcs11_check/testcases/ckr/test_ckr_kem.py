@@ -221,6 +221,24 @@ def _inventory_or_unproved(
                 summary=f"{label}: leak inventory returned undefined CK_RV {ckr_name(exc.rv)}",
                 detail=detail,
             )
+        if refusal_rv is not None and not (
+            is_standard_ckr(refusal_rv) or is_vendor_defined_ckr(refusal_rv)
+        ):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=operation,
+                mechanism="CKM_ML_KEM",
+                expected=canonical,
+                actual=refusal_rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    f"{label}: refused with undefined CK_RV {ckr_name(refusal_rv)}; "
+                    "the failed leak inventory cannot downgrade it"
+                ),
+                detail=detail,
+            )
         xfail_as(
             "honest_deviation",
             kind="lifecycle",
@@ -232,6 +250,46 @@ def _inventory_or_unproved(
             spec_ref="PKCS#11 v3.2",
             summary=f"{label}: leak inventory failed with {ckr_name(exc.rv)}; zero-delta unproved",
             detail=detail,
+        )
+        raise AssertionError("unreachable: xfail_as always raises") from exc
+
+
+def _staging_inventory(rs: Any) -> list[int]:
+    """Inventory bracketing decap ciphertext staging (R9-01).
+
+    Staging ownership must be proved before the staged secret may be
+    destroyed, exactly as for a judged probe: a clean inventory failure
+    xfails the staging as not operational, an undefined inventory RV
+    keeps its metadata failure.
+    """
+    try:
+        return _qc4._find_all(rs)
+    except CkrAssertionError as exc:
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label="C_EncapsulateKey:ML-KEM staging inventory",
+                operation="C_FindObjects",
+                mechanism="CKM_ML_KEM",
+                actual=exc.rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    "Staging inventory returned undefined CK_RV "
+                    f"{ckr_name(exc.rv)}; staged-secret ownership unprovable"
+                ),
+            )
+        xfail_as(
+            "not_operational",
+            label="C_EncapsulateKey:ML-KEM staging inventory",
+            operation="C_FindObjects",
+            mechanism="CKM_ML_KEM",
+            actual=exc.rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=(
+                f"Staging inventory failed with {ckr_name(exc.rv)}; "
+                "staged-secret ownership unprovable"
+            ),
         )
         raise AssertionError("unreachable: xfail_as always raises") from exc
 
@@ -558,6 +616,7 @@ class TestDecapsulateKeyErrors:
             stage_len = CK_ULONG(_CT_LEN)
             stage_secret = CK_OBJECT_HANDLE(0)
             stage_tmpl = template()
+            stage_before = _staging_inventory(rs)
             rv = rs.raw.C_EncapsulateKey(
                 rs.sh,
                 mech.byref(),
@@ -568,10 +627,21 @@ class TestDecapsulateKeyErrors:
                 byref(stage_len),
                 byref(stage_secret),
             )
-            # Only an accepted staging handle is owned; a handle-shaped
-            # write on refusal is never blind-destroyed (O1/P2 rule).
-            staged_secret = int(stage_secret.value) if rv == CKR_OK else 0
             if rv != CKR_OK:
+                if not (is_standard_ckr(int(rv)) or is_vendor_defined_ckr(int(rv))):
+                    fail_as(
+                        "self_contradiction",
+                        kind="metadata",
+                        label="C_EncapsulateKey:ML-KEM staging",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        actual=int(rv),
+                        spec_ref="PKCS#11 v3.2",
+                        summary=(
+                            "ML-KEM encapsulate staging refused with undefined "
+                            f"CK_RV {ckr_name(int(rv))}"
+                        ),
+                    )
                 xfail_as(
                     "not_operational",
                     label="C_EncapsulateKey:ML-KEM staging",
@@ -590,6 +660,33 @@ class TestDecapsulateKeyErrors:
                     actual=int(stage_len.value),
                     summary="Staging encapsulate reported an implausible ciphertext length",
                 )
+            # The staging output handle is owned only when the exhaustive
+            # delta proves it new; a pre-existing handle handed back as
+            # the staged secret is never destroyed here (R9-01).
+            stage_after = _staging_inventory(rs)
+            stage_new = sorted(set(stage_after) - set(stage_before))
+            stage_proved = _proved_new(int(stage_secret.value), stage_before, stage_new)
+            if not stage_proved:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_EncapsulateKey:ML-KEM staging",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    actual=int(rv),
+                    spec_ref="PKCS#11 v3.2",
+                    summary=(
+                        "Staging encapsulate reported success but its secret "
+                        f"handle {int(stage_secret.value)} is not a proved-new "
+                        "object in the exhaustive inventory delta"
+                    ),
+                    detail={
+                        "handle_after": int(stage_secret.value),
+                        "new_handles": stage_new,
+                        "proved_new_handles": stage_proved,
+                    },
+                )
+            staged_secret = stage_proved[0]
             ciphertext = bytes(stage_buf[: int(stage_len.value)])
             if staged_secret:
                 destroy_quietly(rs.raw, rs.sh, staged_secret)
