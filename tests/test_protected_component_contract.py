@@ -2435,3 +2435,84 @@ def test_unsealed_alternate_ok_unavailable_never_exonerates() -> None:
     assert any("unproven" in record.label for record in hards)
     assert not _records_by_reason("self_contradiction")
     assert not any("constant overwrite" in record.label for record in C.get_records())
+
+
+# --- PR64 P3: RSA scrub differential selects a span-varying alternate ------
+#
+# The constant scrub writes 0x5A over the first 16 buffer bytes. The crafted
+# primary exponent holds 0x5A only at offset 10, so the suspected fragment
+# is deterministically (10, 1): an alternate sharing that one byte cannot
+# prove constancy, and selection must move on to a varying planting.
+
+
+def _p3_rsa_components(fill: int, *, exponent_10: int) -> dict[str, bytes]:
+    """Deterministic RSA component shapes with a controlled fragment byte."""
+    private_exponent = bytearray(bytes([fill]) * 256)
+    private_exponent[10] = exponent_10
+    return {
+        "modulus": bytes([fill + 1]) * 256,
+        "public_exponent": b"\x01\x00\x01",
+        "private_exponent": bytes(private_exponent),
+        "prime_1": bytes([fill + 2]) * 128,
+        "prime_2": bytes([fill + 3]) * 128,
+        "exponent_1": bytes([fill + 4]) * 128,
+        "exponent_2": bytes([fill + 5]) * 128,
+        "coefficient": bytes([fill + 6]) * 128,
+    }
+
+
+def _p3_stub_rsa_components(
+    monkeypatch: pytest.MonkeyPatch, sequence: list[dict[str, bytes]]
+) -> list[int]:
+    """Serve crafted RSA components in order, repeating the last one."""
+    calls: list[int] = []
+
+    def _next() -> dict[str, bytes]:
+        calls.append(1)
+        return sequence[min(len(calls) - 1, len(sequence) - 1)]
+
+    monkeypatch.setattr(ts, "_matrix_rsa_components", _next)
+    return calls
+
+
+def test_rsa_scrub_collision_pair_stays_visible_xfail_p3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P3: primary and first alternate share the 0x5A fragment byte at
+    # offset 10; bounded selection must plant a varying alternate instead
+    # of failing closed on the collision. Constant scrub stays a visible
+    # deviation, with exactly one alternate import (selection is local).
+    primary = _p3_rsa_components(0x11, exponent_10=0x5A)
+    colliding = _p3_rsa_components(0x22, exponent_10=0x5A)
+    varying = _p3_rsa_components(0x33, exponent_10=0x33)
+    calls = _p3_stub_rsa_components(monkeypatch, [primary, colliding, varying])
+    fake = _MatrixFake(
+        dict(_RSA_SENSITIVE),
+        multi={int(CKA_PRIVATE_EXPONENT): "scribble"},
+    )
+    assert_xfails(_sealed, _rs(fake), "rsa", "import", "both")
+    findings = _records_by_reason("honest_deviation")
+    assert findings
+    assert any("aggregate" in record.label for record in findings)
+    assert not _records_by_reason("wrong_result")
+    assert not _records_by_reason("self_contradiction")
+    assert not [r for r in C.get_records() if "alternate" in r.label]
+    assert fake.create_calls == 2, fake.create_calls
+    assert len(calls) >= 3, calls
+
+
+def test_rsa_scrub_unvaryable_span_stays_inconclusive_hard_p3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P3 pin: when no bounded alternate varies the span, the differential
+    # still fails closed as an inconclusive hard finding (no leak claim).
+    primary = _p3_rsa_components(0x11, exponent_10=0x5A)
+    colliding = _p3_rsa_components(0x22, exponent_10=0x5A)
+    _p3_stub_rsa_components(monkeypatch, [primary, colliding])
+    fake = _MatrixFake(
+        dict(_RSA_SENSITIVE),
+        multi={int(CKA_PRIVATE_EXPONENT): "scribble"},
+    )
+    _assert_fails_non_xfail(_sealed, _rs(fake), "rsa", "import", "both")
+    assert _records_by_reason("wrong_result")
+    assert not _records_by_reason("self_contradiction")

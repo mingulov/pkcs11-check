@@ -1765,6 +1765,20 @@ def _matrix_rsa_components() -> dict[str, bytes]:
     }
 
 
+def _matrix_rsa_known(comp: dict[str, bytes]) -> dict[int, bytes | None]:
+    """Map RSA CRT components to their attribute ids (known material)."""
+    return {
+        int(CKA_MODULUS): comp["modulus"],
+        int(CKA_PUBLIC_EXPONENT): comp["public_exponent"],
+        int(CKA_PRIVATE_EXPONENT): comp["private_exponent"],
+        int(CKA_PRIME_1): comp["prime_1"],
+        int(CKA_PRIME_2): comp["prime_2"],
+        int(CKA_EXPONENT_1): comp["exponent_1"],
+        int(CKA_EXPONENT_2): comp["exponent_2"],
+        int(CKA_COEFFICIENT): comp["coefficient"],
+    }
+
+
 def _matrix_keypair_or_xfail(
     rs: Any,
     mechanism: int,
@@ -2160,16 +2174,7 @@ def _matrix_import_rsa(
     return _MatrixKey(
         handle=handle,
         cleanup=(handle,),
-        known={
-            int(CKA_MODULUS): comp["modulus"],
-            int(CKA_PUBLIC_EXPONENT): comp["public_exponent"],
-            int(CKA_PRIVATE_EXPONENT): comp["private_exponent"],
-            int(CKA_PRIME_1): comp["prime_1"],
-            int(CKA_PRIME_2): comp["prime_2"],
-            int(CKA_EXPONENT_1): comp["exponent_1"],
-            int(CKA_EXPONENT_2): comp["exponent_2"],
-            int(CKA_COEFFICIENT): comp["coefficient"],
-        },
+        known=_matrix_rsa_known(comp),
         label=label,
         producer_operation="C_CreateObject",
         producer_mechanism=None,
@@ -2703,18 +2708,56 @@ def _matrix_differential_varies_fragment(
     return False
 
 
+#: Bounded local attempts to select RSA alternate components that vary
+#: the compared span (P3). Each attempt is one local key generation; the
+#: first varying candidate is planted, so the common case costs one.
+_MATRIX_RSA_ALT_ATTEMPTS = 8
+
+
+def _matrix_rsa_alt_components(
+    *,
+    secret: bytes,
+    attr: int,
+    observed: bytes,
+    fragment: tuple[int, int] | None,
+) -> dict[str, bytes]:
+    """Select valid RSA components varying the compared span (P3).
+
+    Two distinct RSA keys can share the short suspected fragment (e.g.
+    one 0x5A byte matched by constant scrub output); planting such a
+    colliding alternate cannot prove constancy and would fail closed on
+    a coin flip. Selection is local and bounded: candidates are checked
+    against the span before any import, and when none varies within the
+    bound the last candidate is returned so the verdict stays
+    inconclusive (fail closed) on real evidence.
+    """
+    comp = _matrix_rsa_components()
+    for _ in range(_MATRIX_RSA_ALT_ATTEMPTS - 1):
+        if _matrix_differential_varies_fragment(
+            secret, _matrix_rsa_known(comp).get(int(attr)), observed, fragment
+        ):
+            return comp
+        comp = _matrix_rsa_components()
+    return comp
+
+
 def _matrix_differential_import(
     rs: Any,
     family: _MatrixFamily,
     sensitive: bool,
     extractable: bool,
     purpose: str,
+    *,
+    secret: bytes | None = None,
+    attr: int = 0,
+    observed: bytes = b"",
+    fragment: tuple[int, int] | None = None,
 ) -> _MatrixKey | None:
     """Import a second key with different planted material for the differential.
 
     Returns None when the differential setup itself fails (a swallowed setup
-    refusal honestly records why); RSA regenerates, so its planting always
-    differs.
+    refusal honestly records why). RSA regenerates, and its alternate is
+    selected to vary the compared span (see _matrix_rsa_alt_components).
     """
     label = f"p11chk-qc1d-{next(_matrix_alt_label_counter)}".encode()
     try:
@@ -2723,7 +2766,16 @@ def _matrix_differential_import(
                 rs, sensitive, extractable, label, purpose, material=_MATRIX_AES_SECRET_ALT
             )
         if family.family == "rsa":
-            return _matrix_import_rsa(rs, sensitive, extractable, label, purpose)
+            components = (
+                _matrix_rsa_alt_components(
+                    secret=secret, attr=attr, observed=observed, fragment=fragment
+                )
+                if secret is not None
+                else None
+            )
+            return _matrix_import_rsa(
+                rs, sensitive, extractable, label, purpose, components=components
+            )
         if family.family == "ec":
             return _matrix_import_ec_family(
                 rs,
@@ -2856,7 +2908,17 @@ def _matrix_disclosure_verdict(
         return "undetermined"
     if fragment is not None and len(secret) >= 16 and fragment[1] == len(secret):
         return "tracking"
-    alt = _matrix_differential_import(rs, family, sensitive, extractable, purpose)
+    alt = _matrix_differential_import(
+        rs,
+        family,
+        sensitive,
+        extractable,
+        purpose,
+        secret=secret,
+        attr=int(attr),
+        observed=observed,
+        fragment=fragment,
+    )
     if alt is None:
         return "inconclusive"
     try:
