@@ -16,7 +16,12 @@ from pkcs11_check.classification import classify, fail_as, xfail_as
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bool, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import destroy_quietly, gen_aes_key, import_secret_key
-from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
@@ -38,11 +43,13 @@ from pkcs11_check.raw.types_std import (
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_ATTRIBUTE_VALUE_INVALID,
     CKR_KEY_FUNCTION_NOT_PERMITTED,
+    CKR_KEY_HANDLE_INVALID,
     CKR_KEY_SIZE_RANGE,
     CKR_KEY_TYPE_INCONSISTENT,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
+    CKR_UNWRAPPING_KEY_HANDLE_INVALID,
     CKR_WRAPPED_KEY_INVALID,
     CKR_WRAPPED_KEY_LEN_RANGE,
     CKR_WRAPPING_KEY_HANDLE_INVALID,
@@ -51,6 +58,7 @@ from pkcs11_check.raw.types_std import (
 from pkcs11_check.testcases._error_tuples import TEMPLATE_ERRORS
 from pkcs11_check.testcases.ckr._ckr_spec import CKR_WRAP, assert_ckr
 from pkcs11_check.testcases.ckr._malformed_attrs import make_bool_attr_overlong
+from pkcs11_check.testcases.ckr._object_policy import _find_all
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
     classify_policy_enforcement,
@@ -58,6 +66,233 @@ from pkcs11_check.testcases.conftest import (
 )
 
 pytestmark = pytest.mark.access
+
+#: Output-handle prefill for refusal probes (Task 18 O1 sentinel shape).
+_HANDLE_SENTINEL = 0x51515151
+#: Fixed sentinel-shaped never-issued handle: distinct from 0 and from any
+#: handle staged here, and below 2**32 so it fits CK_OBJECT_HANDLE on both
+#: LP64 and LLP64 (controller ruling, Task 19 brief §1).
+_NEVER_ISSUED_HANDLE = 0x5EEDF00D
+
+
+def _nonissued_handle(handle_kind: str) -> int:
+    """Map a non-destroyed handle class to its stimulus value."""
+    if handle_kind == "zero":
+        return 0
+    if handle_kind == "never_issued":
+        return _NEVER_ISSUED_HANDLE
+    raise ValueError(f"not a non-issued handle kind: {handle_kind!r}")
+
+
+def _handle_class(handle_after: int, new_handles: list[int]) -> str:
+    if handle_after == _HANDLE_SENTINEL:
+        return "sentinel"
+    if handle_after == 0:
+        return "zero"
+    if handle_after in new_handles:
+        return "new-live"
+    return "dead-nonzero"
+
+
+def _judge_handle_probe(
+    *,
+    rv: int,
+    canonical: int,
+    label: str,
+    operation: str,
+    mechanism: str,
+    new_handles: list[int],
+    proved_new_handles: list[int] | None = None,
+    handle_after: int | None = None,
+    wrapped_len_after: int | None = None,
+) -> None:
+    """Judge one invalid-handle probe (uniform tiers + Task 18 O1 + R1).
+
+    Canonical RV passes; any other clean standard/vendor refusal xfails
+    with the original RV; acceptance and undefined RVs fail. Only a
+    proved-new delta object fails (creator roles prove by output-handle
+    membership in the delta; wrap roles have no output handle, so their
+    delta is always unproved); an unproved delta xfails and is left
+    alive. A dead nonzero output-handle write xfails; sentinel/0 writes
+    are normalized. Callers destroy only the proved delta before judging.
+    """
+    proved = list(proved_new_handles) if proved_new_handles is not None else []
+    unproved = [handle for handle in new_handles if handle not in proved]
+    detail: dict[str, Any] = {
+        "new_handles": list(new_handles),
+        "proved_new_handles": proved,
+        "unproved_new_handles": unproved,
+    }
+    if handle_after is not None:
+        detail["handle_after"] = handle_after
+        detail["handle_class"] = _handle_class(handle_after, new_handles)
+    if wrapped_len_after is not None:
+        detail["wrapped_len_after"] = wrapped_len_after
+    if rv == int(CKR_OK):
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: accepted an invalid handle (expected {ckr_name(canonical)})",
+            detail=detail,
+        )
+    if proved:
+        fail_as(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+            detail=detail,
+        )
+    if unproved and (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=(
+                f"{label}: refusal {ckr_name(rv)} with an unproved "
+                "inventory delta; zero-delta unproved"
+            ),
+            detail={**detail, "disposition": "unproved-effect"},
+        )
+    if handle_after is None:
+        # C_WrapKey has no output handle: judge the RV tiers inline so
+        # every record carries the built detail (M1).
+        if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=operation,
+                mechanism=mechanism,
+                expected=canonical,
+                actual=rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
+                detail=detail,
+            )
+        if rv == canonical:
+            return
+        classify(
+            "nonspec_reject",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            detail=detail,
+        )
+        return
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: rejected with undefined CK_RV {ckr_name(rv)}",
+            detail=detail,
+        )
+    if handle_after not in (_HANDLE_SENTINEL, 0):
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=(
+                f"{label}: refusal {ckr_name(rv)} wrote non-invalid output "
+                f"handle {handle_after}; no object created"
+            ),
+            detail=detail,
+        )
+    if rv == canonical:
+        return
+    classify(
+        "nonspec_reject",
+        kind="lifecycle",
+        label=label,
+        operation=operation,
+        mechanism=mechanism,
+        expected=canonical,
+        actual=rv,
+        spec_ref="PKCS#11 v3.2",
+        detail=detail,
+    )
+
+
+def _inventory_or_unproved(
+    rs: Any,
+    *,
+    label: str,
+    operation: str,
+    mechanism: str,
+    canonical: int,
+    refusal_rv: int | None = None,
+) -> list[int]:
+    """Full inventory, or an unproved-effect verdict on failure (M2).
+
+    A clean inventory RV xfails carrying both RVs and destroys nothing;
+    an undefined inventory RV keeps its metadata failure classification.
+    """
+    try:
+        return _find_all(rs)
+    except CkrAssertionError as exc:
+        detail: dict[str, Any] = {
+            "disposition": "unproved-effect",
+            "inventory_rv": ckr_name(exc.rv),
+        }
+        if refusal_rv is not None:
+            detail["refusal_rv"] = ckr_name(refusal_rv)
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: inventory",
+                operation="C_FindObjects",
+                mechanism=mechanism,
+                expected=canonical,
+                actual=exc.rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=f"{label}: leak inventory returned undefined CK_RV {ckr_name(exc.rv)}",
+                detail=detail,
+            )
+        xfail_as(
+            "honest_deviation",
+            kind="lifecycle",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            expected=canonical,
+            actual=refusal_rv if refusal_rv is not None else exc.rv,
+            spec_ref="PKCS#11 v3.2",
+            summary=f"{label}: leak inventory failed with {ckr_name(exc.rv)}; zero-delta unproved",
+            detail=detail,
+        )
+        raise AssertionError("unreachable: xfail_as always raises") from exc
 
 
 class TestWrapKeyErrors:
@@ -267,6 +502,137 @@ class TestWrapKeyErrors:
                 destroy_quietly(rs.raw, rs.sh, target)
             if not wrap_key_destroyed:
                 destroy_quietly(rs.raw, rs.sh, wrap_key)
+
+    @pytest.mark.parametrize("handle_kind", ["destroyed", "zero", "never_issued"])
+    def test_wrapped_key_handle_invalid(
+        self, p11_raw_session: Any, ckr_strict: bool, handle_kind: str
+    ) -> None:
+        """QC8a role 2: invalid wrapped target -> CKR_KEY_HANDLE_INVALID.
+
+        Spec-table key ``wrap_key_handle_invalid`` (target role). Uniform
+        tiers for every handle class; the wrapping key stays valid.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+        wrap_key = gen_aes_key(rs.raw, rs.sh, 256, attrs={CKA_WRAP: True})
+        target: int | None = None
+        target_destroyed = False
+        try:
+            target_handle = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            target = target_handle
+            if handle_kind == "destroyed":
+                rv = rs.raw.C_DestroyObject(rs.sh, target_handle)
+                if rv != CKR_OK:
+                    raise AssertionError(
+                        f"Could not destroy target for stale-handle test (CKR=0x{rv:08x})"
+                    )
+                target_destroyed = True
+                invalid = target_handle
+            else:
+                invalid = _nonissued_handle(handle_kind)
+            # No object creation between the destroy above and the probe.
+            before = _inventory_or_unproved(
+                rs,
+                label="C_WrapKey:invalid-wrapped-key-handle",
+                operation="C_WrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                canonical=int(CKR_KEY_HANDLE_INVALID),
+            )
+            mech = mech_simple(CKM_AES_KEY_WRAP)
+            wrapped_len = CK_ULONG(256)
+            wrapped_buf = (ctypes.c_ubyte * 256)()
+            C.set_mechanism("CKM_AES_KEY_WRAP", "C_WrapKey", expect_success=False)
+            rv = rs.raw.C_WrapKey(
+                rs.sh, mech.byref(), wrap_key, invalid, wrapped_buf, byref(wrapped_len)
+            )
+            after = _inventory_or_unproved(
+                rs,
+                label="C_WrapKey:invalid-wrapped-key-handle",
+                operation="C_WrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                canonical=int(CKR_KEY_HANDLE_INVALID),
+                refusal_rv=int(rv),
+            )
+            new_handles = sorted(set(after) - set(before))
+            # C_WrapKey creates no output handle: any delta is unproved
+            # and stays alive (R1); the judge xfails it, never destroys.
+            _judge_handle_probe(
+                rv=int(rv),
+                canonical=int(CKR_KEY_HANDLE_INVALID),
+                label="C_WrapKey:invalid-wrapped-key-handle",
+                operation="C_WrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                new_handles=new_handles,
+                proved_new_handles=[],
+                wrapped_len_after=int(wrapped_len.value),
+            )
+        finally:
+            if target is not None and not target_destroyed:
+                destroy_quietly(rs.raw, rs.sh, target)
+            destroy_quietly(rs.raw, rs.sh, wrap_key)
+
+    @pytest.mark.parametrize("handle_kind", ["zero", "never_issued"])
+    def test_wrapping_key_handle_invalid_nonissued(
+        self, p11_raw_session: Any, ckr_strict: bool, handle_kind: str
+    ) -> None:
+        """QC8a role 1 extension: zero/never-issued wrapping key.
+
+        Same singleton tier as the settled destroyed-handle leaf, which
+        keeps its own node id; no wider pass set for handle 0.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+        target = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            128,
+            attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+        )
+        try:
+            invalid = _nonissued_handle(handle_kind)
+            before = _inventory_or_unproved(
+                rs,
+                label="C_WrapKey:nonissued-wrapping-key-handle",
+                operation="C_WrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                canonical=int(CKR_WRAPPING_KEY_HANDLE_INVALID),
+            )
+            mech = mech_simple(CKM_AES_KEY_WRAP)
+            wrapped_len = CK_ULONG(256)
+            wrapped_buf = (ctypes.c_ubyte * 256)()
+            C.set_mechanism("CKM_AES_KEY_WRAP", "C_WrapKey", expect_success=False)
+            rv = rs.raw.C_WrapKey(
+                rs.sh, mech.byref(), invalid, target, wrapped_buf, byref(wrapped_len)
+            )
+            after = _inventory_or_unproved(
+                rs,
+                label="C_WrapKey:nonissued-wrapping-key-handle",
+                operation="C_WrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                canonical=int(CKR_WRAPPING_KEY_HANDLE_INVALID),
+                refusal_rv=int(rv),
+            )
+            new_handles = sorted(set(after) - set(before))
+            # No output handle to correlate: delta stays unproved/alive.
+            _judge_handle_probe(
+                rv=int(rv),
+                canonical=int(CKR_WRAPPING_KEY_HANDLE_INVALID),
+                label="C_WrapKey:nonissued-wrapping-key-handle",
+                operation="C_WrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                new_handles=new_handles,
+                proved_new_handles=[],
+                wrapped_len_after=int(wrapped_len.value),
+            )
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target)
 
     def test_wrapping_key_type_inconsistent(self, p11_raw_session: Any, ckr_strict: bool) -> None:
         """Wrap key of wrong type for mechanism -> CKR_WRAPPING_KEY_TYPE_INCONSISTENT.
@@ -567,3 +933,122 @@ class TestUnwrapKeyErrors:
         finally:
             destroy_quietly(rs.raw, rs.sh, target)
             destroy_quietly(rs.raw, rs.sh, wrapping_key)
+
+    @pytest.mark.parametrize("handle_kind", ["destroyed", "zero", "never_issued"])
+    def test_unwrapping_key_handle_invalid(
+        self, p11_raw_session: Any, ckr_strict: bool, handle_kind: str
+    ) -> None:
+        """QC8a role 3: invalid unwrapping key -> CKR_UNWRAPPING_KEY_HANDLE_INVALID.
+
+        Spec-table key ``unwrap_unwrapping_key_handle_invalid``. A genuine
+        wrapped blob and an otherwise-valid template isolate the handle.
+        Refusal side-effects follow Task 18 O1 via the inventory delta.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("AES_KEY_WRAP not supported")
+        wrapping_key = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={CKA_WRAP: True, CKA_UNWRAP: True},
+        )
+        target: int | None = None
+        wrapping_destroyed = False
+        try:
+            target_handle = gen_aes_key(
+                rs.raw,
+                rs.sh,
+                128,
+                attrs={CKA_EXTRACTABLE: True, CKA_SENSITIVE: False},
+            )
+            target = target_handle
+            mech = mech_simple(CKM_AES_KEY_WRAP)
+            wrapped_len = CK_ULONG(256)
+            wrapped_buf = (ctypes.c_ubyte * 256)()
+            rv = rs.raw.C_WrapKey(
+                rs.sh,
+                mech.byref(),
+                wrapping_key,
+                target_handle,
+                wrapped_buf,
+                byref(wrapped_len),
+            )
+            if rv != CKR_OK:
+                xfail_as(
+                    "not_operational",
+                    label="C_WrapKey:AES-key-wrap",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    actual=rv,
+                    summary=f"CKM_AES_KEY_WRAP wrap not operational: {ckr_name(rv)}",
+                )
+            assert wrapped_len.value > 0, "CKM_AES_KEY_WRAP returned an empty wrapped blob"
+            if handle_kind == "destroyed":
+                rv = rs.raw.C_DestroyObject(rs.sh, wrapping_key)
+                if rv != CKR_OK:
+                    raise AssertionError(
+                        f"Could not destroy unwrapping key for stale test (CKR=0x{rv:08x})"
+                    )
+                wrapping_destroyed = True
+                invalid = wrapping_key
+            else:
+                invalid = _nonissued_handle(handle_kind)
+            # No object creation between the destroy above and the probe.
+            before = _inventory_or_unproved(
+                rs,
+                label="C_UnwrapKey:invalid-unwrapping-key-handle",
+                operation="C_UnwrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                canonical=int(CKR_UNWRAPPING_KEY_HANDLE_INVALID),
+            )
+            tmpl = template(
+                attr_ulong(CKA_CLASS, CKO_SECRET_KEY),
+                attr_ulong(CKA_KEY_TYPE, CKK_AES),
+                attr_ulong(CKA_VALUE_LEN, 16),
+                attr_bool(CKA_TOKEN, False),
+            )
+            new_key = CK_OBJECT_HANDLE(_HANDLE_SENTINEL)
+            C.set_mechanism("CKM_AES_KEY_WRAP", "C_UnwrapKey", expect_success=False)
+            rv = rs.raw.C_UnwrapKey(
+                rs.sh,
+                mech.byref(),
+                invalid,
+                wrapped_buf,
+                wrapped_len.value,
+                tmpl.ptr,
+                tmpl.count,
+                byref(new_key),
+            )
+            handle_after = int(new_key.value)
+            after = _inventory_or_unproved(
+                rs,
+                label="C_UnwrapKey:invalid-unwrapping-key-handle",
+                operation="C_UnwrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                canonical=int(CKR_UNWRAPPING_KEY_HANDLE_INVALID),
+                refusal_rv=int(rv),
+            )
+            new_handles = sorted(set(after) - set(before))
+            # Only an output handle proved new by delta membership (and
+            # not in the baseline) is owned; the rest stays alive (R1).
+            proved_new = (
+                [handle_after] if handle_after in new_handles and handle_after not in before else []
+            )
+            for handle in proved_new:
+                destroy_quietly(rs.raw, rs.sh, handle)
+            _judge_handle_probe(
+                rv=int(rv),
+                canonical=int(CKR_UNWRAPPING_KEY_HANDLE_INVALID),
+                label="C_UnwrapKey:invalid-unwrapping-key-handle",
+                operation="C_UnwrapKey",
+                mechanism="CKM_AES_KEY_WRAP",
+                new_handles=new_handles,
+                proved_new_handles=proved_new,
+                handle_after=handle_after,
+            )
+        finally:
+            if target is not None:
+                destroy_quietly(rs.raw, rs.sh, target)
+            if not wrapping_destroyed:
+                destroy_quietly(rs.raw, rs.sh, wrapping_key)

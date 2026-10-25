@@ -47,7 +47,12 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import classify
+from pkcs11_check.classification import (
+    Classification,
+    classify,
+    get_records,
+    raise_for_record,
+)
 from pkcs11_check.compliance import ComplianceLevel, note
 from pkcs11_check.raw.pack import attr_bool, attr_template, attr_ulong, mech_simple, template
 from pkcs11_check.raw.recipes import (
@@ -57,17 +62,26 @@ from pkcs11_check.raw.recipes import (
     unwrap_key,
     wrap_key,
 )
-from pkcs11_check.raw.rv import CkrAssertionError, expect_rv, is_standard_ckr
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_BBOOL,
     CK_OBJECT_HANDLE,
+    CKA_ALWAYS_SENSITIVE,
     CKA_CLASS,
     CKA_DECRYPT,
     CKA_ENCRYPT,
     CKA_EXTRACTABLE,
     CKA_KEY_TYPE,
+    CKA_NEVER_EXTRACTABLE,
     CKA_SENSITIVE,
+    CKA_TOKEN,
     CKA_UNWRAP,
     CKA_UNWRAP_TEMPLATE,
     CKA_VALUE,
@@ -84,6 +98,7 @@ from pkcs11_check.raw.types_std import (
     CKR_FUNCTION_FAILED,
     CKR_FUNCTION_NOT_SUPPORTED,
     CKR_GENERAL_ERROR,
+    CKR_KEY_UNEXTRACTABLE,
     CKR_MECHANISM_INVALID,
     CKR_OK,
     CKR_TEMPLATE_INCOMPLETE,
@@ -130,6 +145,30 @@ _WRAP_UNWRAP_OP_REJECT_RVS = (
     CKR_TEMPLATE_INCOMPLETE,
     CKR_TEMPLATE_INCONSISTENT,
 )
+
+
+def _operational_wrap(rs: Any, wrap_h: int, target_h: int) -> tuple[str, int]:
+    """Attempt an operational wrap; return (ok|empty|refused, rv)."""
+    try:
+        wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
+    except CkrAssertionError as exc:
+        return "refused", int(exc.rv)
+    return ("ok", int(CKR_OK)) if wrapped else ("empty", int(CKR_OK))
+
+
+def _is_defined_rv(rv: int) -> bool:
+    return is_standard_ckr(rv) or is_vendor_defined_ckr(rv)
+
+
+def _raise_missing_record(labels: list[str]) -> None:
+    """Terminate with the strongest attr_or_record observation (one record)."""
+    records: list[Classification] = [r for r in get_records() if r.label in labels]
+    if not records:
+        return
+    for record in records:
+        if record.outcome == "fail":
+            raise_for_record(record)
+    raise_for_record(records[0])
 
 
 def _readback_repr(raw: Any) -> str:
@@ -655,6 +694,459 @@ class TestUnwrapTemplateBinding:
                             "result cannot be verified"
                         ),
                     )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_h)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target_h)
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+
+
+class TestUnwrapOmittedExtractableDefault:
+    """QC8b (#61.2): omitted unwrap CKA_EXTRACTABLE defaults to CK_TRUE.
+
+    A conformance oracle, distinct from this file's posture/binding
+    classes: the wrapping key carries no CKA_UNWRAP_TEMPLATE, so nothing
+    binds the result except the specified default itself.
+    """
+
+    def test_omitted_extractable_defaults_true_and_wrappable(self, p11_raw_session: Any) -> None:
+        """Minimal-template unwrap: EXTRACTABLE True, histories False, wrappable.
+
+        SENSITIVE is token-specific (either strict bool passes); the
+        histories are judged independently of its outcome.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("CKM_AES_KEY_WRAP not supported by module")
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported by module")
+        wrap_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+            },
+        )
+        target_h = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+            purpose="omitted-extractable default target",
+        )
+        try:
+            try:
+                wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _WRAP_UNWRAP_OP_REJECT_RVS, "CKM_AES_KEY_WRAP wrap not operational"
+                )
+                raise
+            # Minimal template: EXTRACTABLE and SENSITIVE are really omitted.
+            unwrap_template: dict[Any, Any] = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_TOKEN: False,
+            }
+            unwrapped_h: int | None = None
+            try:
+                unwrapped_h = unwrap_key(
+                    rs.raw, rs.sh, wrap_h, wrapped, CKM_AES_KEY_WRAP, unwrap_template
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _WRAP_UNWRAP_OP_REJECT_RVS, "CKM_AES_KEY_WRAP unwrap not operational"
+                )
+                raise
+            try:
+                attrs = read_attributes(
+                    rs.raw,
+                    rs.sh,
+                    unwrapped_h,
+                    [
+                        CKA_EXTRACTABLE,
+                        CKA_ALWAYS_SENSITIVE,
+                        CKA_NEVER_EXTRACTABLE,
+                        CKA_SENSITIVE,
+                    ],
+                )
+                labels = [
+                    "Omitted-extractable unwrap result CKA_EXTRACTABLE readback",
+                    "Omitted-extractable unwrap result CKA_ALWAYS_SENSITIVE readback",
+                    "Omitted-extractable unwrap result CKA_NEVER_EXTRACTABLE readback",
+                    "Omitted-extractable unwrap result CKA_SENSITIVE readback",
+                ]
+                extractable_raw = attr_or_record(
+                    attrs,
+                    CKA_EXTRACTABLE,
+                    label=labels[0],
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                extractable: Any
+                if extractable_raw is MISSING_ATTRIBUTE:
+                    extractable = None
+                else:
+                    extractable = extractable_raw
+                always_raw = attr_or_record(
+                    attrs,
+                    CKA_ALWAYS_SENSITIVE,
+                    label=labels[1],
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                )
+                always: Any
+                if always_raw is MISSING_ATTRIBUTE:
+                    always = None
+                else:
+                    always = always_raw
+                never_raw = attr_or_record(
+                    attrs,
+                    CKA_NEVER_EXTRACTABLE,
+                    label=labels[2],
+                    reason="not_operational",
+                    kind="metadata",
+                    inherit_mechanism=False,
+                )
+                never: Any
+                if never_raw is MISSING_ATTRIBUTE:
+                    never = None
+                else:
+                    never = never_raw
+                sensitive_raw = attr_or_record(
+                    attrs,
+                    CKA_SENSITIVE,
+                    label=labels[3],
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                sensitive: Any
+                if sensitive_raw is MISSING_ATTRIBUTE:
+                    sensitive = None
+                else:
+                    sensitive = sensitive_raw
+                # All four readbacks precede any verdict; the operational
+                # wrap is always attempted, even when a flag is missing.
+                op_outcome, op_rv = _operational_wrap(rs, wrap_h, unwrapped_h)
+                if op_outcome == "refused" and not _is_defined_rv(op_rv):
+                    classify(
+                        "self_contradiction",
+                        kind="metadata",
+                        label="C_WrapKey:omitted-extractable-operational-wrap",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        actual=op_rv,
+                        inherit_mechanism=False,
+                        summary=(
+                            "Operational wrap of the omitted-template unwrap result "
+                            f"refused with undefined CK_RV {ckr_name(op_rv)}"
+                        ),
+                    )
+                if (
+                    extractable is True
+                    and op_outcome == "refused"
+                    and op_rv == int(CKR_KEY_UNEXTRACTABLE)
+                ):
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        label="C_WrapKey:omitted-extractable-claimed-wrappable",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        actual=op_rv,
+                        inherit_mechanism=False,
+                        summary=(
+                            "Unwrap result claims CKA_EXTRACTABLE=True but wrapping it "
+                            "refused with CKR_KEY_UNEXTRACTABLE"
+                        ),
+                    )
+                if extractable is False:
+                    classify(
+                        "wrong_result",
+                        kind="policy",
+                        label="C_UnwrapKey:omitted-extractable-default",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        inherit_mechanism=False,
+                        summary=(
+                            "Omitted CKA_EXTRACTABLE defaulted to False; the specified "
+                            "default is CK_TRUE (operational wrap: "
+                            f"{op_outcome} {ckr_name(op_rv)})"
+                        ),
+                    )
+                if always is True or never is True:
+                    classify(
+                        "wrong_result",
+                        kind="metadata",
+                        label="C_UnwrapKey:omitted-extractable-histories",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        inherit_mechanism=False,
+                        summary=(
+                            "Omitted-template unwrap histories must be false, got "
+                            f"CKA_ALWAYS_SENSITIVE={_readback_repr(always_raw)}, "
+                            f"CKA_NEVER_EXTRACTABLE={_readback_repr(never_raw)} "
+                            "(judged independently of CKA_SENSITIVE="
+                            f"{_readback_repr(sensitive_raw)})"
+                        ),
+                    )
+                malformed: list[str] = []
+                if extractable_raw is not MISSING_ATTRIBUTE and type(extractable) is not bool:
+                    malformed.append(f"CKA_EXTRACTABLE={_readback_repr(extractable_raw)}")
+                if always_raw is not MISSING_ATTRIBUTE and type(always) is not bool:
+                    malformed.append(f"CKA_ALWAYS_SENSITIVE={_readback_repr(always_raw)}")
+                if never_raw is not MISSING_ATTRIBUTE and type(never) is not bool:
+                    malformed.append(f"CKA_NEVER_EXTRACTABLE={_readback_repr(never_raw)}")
+                if sensitive_raw is not MISSING_ATTRIBUTE and type(sensitive) is not bool:
+                    malformed.append(f"CKA_SENSITIVE={_readback_repr(sensitive_raw)}")
+                if malformed:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Omitted-extractable unwrap result readback malformed",
+                        operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
+                        summary=(
+                            "Non-boolean protection/history readbacks: " + ", ".join(malformed)
+                        ),
+                    )
+                if (
+                    extractable_raw is MISSING_ATTRIBUTE
+                    or always_raw is MISSING_ATTRIBUTE
+                    or never_raw is MISSING_ATTRIBUTE
+                    or sensitive_raw is MISSING_ATTRIBUTE
+                ):
+                    _raise_missing_record(labels)
+                if op_outcome == "refused":
+                    classify(
+                        "not_operational",
+                        label="C_WrapKey:omitted-extractable-operational-wrap",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        actual=op_rv,
+                        inherit_mechanism=False,
+                        summary=(
+                            "Operational wrap of the extractable-by-default result "
+                            f"refused cleanly: {ckr_name(op_rv)}"
+                        ),
+                    )
+                if op_outcome == "empty":
+                    classify(
+                        "wrong_result",
+                        kind="metadata",
+                        label="C_WrapKey:omitted-extractable-operational-wrap",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        inherit_mechanism=False,
+                        summary="Operational wrap claimed success with an empty blob",
+                    )
+            finally:
+                destroy_quietly(rs.raw, rs.sh, unwrapped_h)
+        finally:
+            destroy_quietly(rs.raw, rs.sh, target_h)
+            destroy_quietly(rs.raw, rs.sh, wrap_h)
+
+    def test_explicit_false_extractable_is_the_negative_control(self, p11_raw_session: Any) -> None:
+        """Explicit EXTRACTABLE=False must refuse the operational wrap.
+
+        Delta vs the readback-only neighbor in
+        ``security/test_cve_regression.py`` (out of this lease): this node
+        proves the seal operationally, with C_WrapKey itself.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("AES_KEY_WRAP"):
+            pytest.skip("CKM_AES_KEY_WRAP not supported by module")
+        if not rs.has_mechanism("AES_KEY_GEN"):
+            pytest.skip("CKM_AES_KEY_GEN not supported by module")
+        wrap_h = gen_aes_key(
+            rs.raw,
+            rs.sh,
+            256,
+            attrs={
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_SENSITIVE: False,
+                CKA_EXTRACTABLE: True,
+            },
+        )
+        target_h = gen_aes_key_or_xfail(
+            rs,
+            128,
+            attrs={CKA_SENSITIVE: False, CKA_EXTRACTABLE: True},
+            purpose="explicit-false negative-control target",
+        )
+        try:
+            try:
+                wrapped = wrap_key(rs.raw, rs.sh, wrap_h, target_h, CKM_AES_KEY_WRAP)
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _WRAP_UNWRAP_OP_REJECT_RVS, "CKM_AES_KEY_WRAP wrap not operational"
+                )
+                raise
+            caller_template: dict[Any, Any] = {
+                CKA_CLASS: CKO_SECRET_KEY,
+                CKA_KEY_TYPE: CKK_AES,
+                CKA_TOKEN: False,
+                CKA_EXTRACTABLE: False,
+                CKA_SENSITIVE: True,
+            }
+            unwrapped_h: int | None = None
+            try:
+                unwrapped_h = unwrap_key(
+                    rs.raw, rs.sh, wrap_h, wrapped, CKM_AES_KEY_WRAP, caller_template
+                )
+            except AssertionError as exc:
+                xfail_if_known_ckr(
+                    exc, _WRAP_UNWRAP_OP_REJECT_RVS, "CKM_AES_KEY_WRAP unwrap not operational"
+                )
+                raise
+            try:
+                attrs = read_attributes(
+                    rs.raw, rs.sh, unwrapped_h, [CKA_EXTRACTABLE, CKA_SENSITIVE]
+                )
+                labels = [
+                    "Explicit-false unwrap result CKA_EXTRACTABLE readback",
+                    "Explicit-false unwrap result CKA_SENSITIVE readback",
+                ]
+                extractable_raw = attr_or_record(
+                    attrs,
+                    CKA_EXTRACTABLE,
+                    label=labels[0],
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                extractable: Any
+                if extractable_raw is MISSING_ATTRIBUTE:
+                    extractable = None
+                else:
+                    extractable = extractable_raw
+                sensitive_raw = attr_or_record(
+                    attrs,
+                    CKA_SENSITIVE,
+                    label=labels[1],
+                    reason="not_operational",
+                    kind="policy",
+                    inherit_mechanism=False,
+                )
+                sensitive: Any
+                if sensitive_raw is MISSING_ATTRIBUTE:
+                    sensitive = None
+                else:
+                    sensitive = sensitive_raw
+                op_outcome, op_rv = _operational_wrap(rs, wrap_h, unwrapped_h)
+                if op_outcome == "refused" and not _is_defined_rv(op_rv):
+                    classify(
+                        "self_contradiction",
+                        kind="metadata",
+                        label="C_WrapKey:explicit-unextractable-operational-wrap",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        actual=op_rv,
+                        inherit_mechanism=False,
+                        summary=(
+                            "Operational wrap of the explicit-false result refused "
+                            f"with undefined CK_RV {ckr_name(op_rv)}"
+                        ),
+                    )
+                if op_outcome == "empty":
+                    classify(
+                        "wrong_result",
+                        kind="metadata",
+                        label="C_WrapKey:explicit-unextractable-operational-wrap",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        inherit_mechanism=False,
+                        summary="Operational wrap claimed success with an empty blob",
+                    )
+                if op_outcome == "ok":
+                    if extractable is True:
+                        classify(
+                            "wrong_result",
+                            kind="policy",
+                            label="C_UnwrapKey:explicit-false-not-honored",
+                            operation="C_UnwrapKey",
+                            mechanism="CKM_AES_KEY_WRAP",
+                            inherit_mechanism=False,
+                            summary=(
+                                "Explicit CKA_EXTRACTABLE=False was not honored "
+                                "(readback True and the key wrapped successfully)"
+                            ),
+                        )
+                    classify(
+                        "self_contradiction",
+                        kind="policy",
+                        label="C_WrapKey:explicit-unextractable-unwrap-result",
+                        operation="C_WrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        actual=op_rv,
+                        inherit_mechanism=False,
+                        summary=(
+                            "Key unwrapped with explicit CKA_EXTRACTABLE=False "
+                            f"(readback {_readback_repr(extractable)}) was "
+                            "successfully wrapped, exporting its material"
+                        ),
+                    )
+                if extractable is True:
+                    classify(
+                        "wrong_result",
+                        kind="policy",
+                        label="C_UnwrapKey:explicit-false-not-honored",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        inherit_mechanism=False,
+                        summary="Explicit CKA_EXTRACTABLE=False read back True",
+                    )
+                malformed: list[str] = []
+                if extractable_raw is not MISSING_ATTRIBUTE and type(extractable) is not bool:
+                    malformed.append(f"CKA_EXTRACTABLE={_readback_repr(extractable_raw)}")
+                if sensitive_raw is not MISSING_ATTRIBUTE and type(sensitive) is not bool:
+                    malformed.append(f"CKA_SENSITIVE={_readback_repr(sensitive_raw)}")
+                if malformed:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Explicit-false unwrap result readback malformed",
+                        operation="C_GetAttributeValue",
+                        inherit_mechanism=False,
+                        summary=("Non-boolean readbacks: " + ", ".join(malformed)),
+                    )
+                if extractable_raw is MISSING_ATTRIBUTE or sensitive_raw is MISSING_ATTRIBUTE:
+                    _raise_missing_record(labels)
+                if sensitive is not True:
+                    classify(
+                        "honest_deviation",
+                        kind="metadata",
+                        label="Explicit-false unwrap result sensitivity not honored",
+                        operation="C_UnwrapKey",
+                        mechanism="CKM_AES_KEY_WRAP",
+                        inherit_mechanism=False,
+                        summary=(
+                            f"Explicit CKA_SENSITIVE=True read back {_readback_repr(sensitive)}"
+                        ),
+                    )
+                if op_rv == int(CKR_KEY_UNEXTRACTABLE):
+                    return
+                classify(
+                    "nonspec_reject",
+                    kind="policy",
+                    label="C_WrapKey:explicit-unextractable-operational-wrap",
+                    operation="C_WrapKey",
+                    mechanism="CKM_AES_KEY_WRAP",
+                    expected=int(CKR_KEY_UNEXTRACTABLE),
+                    actual=op_rv,
+                    inherit_mechanism=False,
+                    summary=(
+                        "Operational wrap of the explicit-false result refused "
+                        f"with {ckr_name(op_rv)}, expected CKR_KEY_UNEXTRACTABLE"
+                    ),
+                )
             finally:
                 destroy_quietly(rs.raw, rs.sh, unwrapped_h)
         finally:
