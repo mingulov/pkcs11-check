@@ -10,10 +10,11 @@ This is a sentinel-VALUE simulation only. It does not resize any ctypes
 type or struct, does not truncate field assignments, and loads no DLL --
 it is never proof about the real LLP64 ABI, which stays CI-only evidence.
 
-The patch table is census-pinned by ``tests/test_llp64_sim_census.py``: a
-new sentinel consumer in the censused files fails there rather than silently
-leaving this simulation partial. Any binding still holding the uncollapsed
-value at collection time fails loud here.
+The patch table is census-pinned by ``tests/test_llp64_sim_census.py`` over
+the production seam modules plus every file in
+``tests/_llp64_sim_files.txt``: a new sentinel consumer there fails the
+census rather than silently leaving this simulation partial. Any binding
+still holding the uncollapsed value at collection time fails loud here.
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ PATCH_SITES: tuple[tuple[str, str], ...] = (
     ("pkcs11_check.raw.recipes", _SENTINEL_NAME),
     ("pkcs11_check.testcases.test_sensitivity", _SENTINEL_NAME),
     ("pkcs11_check.testcases.test_sensitivity", "_UNAVAILABLE_64"),
+    ("test_byte_kdf_protection_contract", "_U64"),
+    ("test_copy_attribute_contract", "_U64"),
+    ("test_logout_object_lifetime_contract", "_UNAVAILABLE"),
+    ("test_object_policy_effect_contract", "_U64"),
     ("test_protected_component_contract", _SENTINEL_NAME),
     ("test_protected_component_contract", "_U64"),
 )
