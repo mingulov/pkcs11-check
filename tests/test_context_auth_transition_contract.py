@@ -150,6 +150,14 @@ class _CtxAuthRaw:
         self.grant_survives_terminal = False
         self.grant_consumed_by_query = False
         self.grant_consumed_by_bts = False
+        # Fix-round-1 knobs (R14).
+        self.keygen_replay_handles: tuple[int, int] | None = None
+        self.sign_rv_by_session: dict[int, list[int]] = {}
+        self.sign_reported_len: int | None = None
+        self.decrypt_reported_len: int | None = None
+        self.update_bts_retains_op = False
+        self.find_init_script: list[int] = []
+        self._search: list[int] = []
 
     def _alloc(self, entry: dict[str, Any]) -> int:
         self._next_handle += 1
@@ -208,6 +216,11 @@ class _CtxAuthRaw:
             return self.keygen_rv
         priv_attrs = _decode_template(priv_tmpl, int(priv_count))
         assert priv_attrs.get(int(CKA_ALWAYS_AUTHENTICATE)) == b"\x01"
+        if self.keygen_replay_handles is not None:
+            pub, priv = self.keygen_replay_handles
+            _write_handle(pub_out, pub)
+            _write_handle(priv_out, priv)
+            return _OK
         pub = self._alloc({"kind": "pub"})
         priv = self._alloc({"kind": "priv"})
         _write_handle(pub_out, pub)
@@ -286,6 +299,10 @@ class _CtxAuthRaw:
         op = self._op(session)
         if op is None or op["func"] != "sign":
             return _NOT_INITIALIZED
+        forced = self.sign_rv_by_session.get(int(session))
+        if forced:
+            self._terminate(session)
+            return forced.pop(0)
         data = ctypes.string_at(data_ptr, int(data_len))
         query = sig_ptr is None
         self.sign_calls.append({"query": query, "data_len": len(data)})
@@ -312,7 +329,8 @@ class _CtxAuthRaw:
             return rv
         sig = self._real_sign(data)
         ctypes.memmove(sig_ptr, sig, len(sig))
-        _write_ulong(sig_len_ptr, len(sig))
+        reported = self.sign_reported_len if self.sign_reported_len is not None else len(sig)
+        _write_ulong(sig_len_ptr, reported)
         if not self.grant_survives_terminal:
             self._terminate(session)
         return _OK
@@ -326,7 +344,8 @@ class _CtxAuthRaw:
         if self.sign_update_script:
             rv = self.sign_update_script.pop(0)
             if rv != _OK:
-                self._terminate(session)
+                if not (rv == _BTS and self.update_bts_retains_op):
+                    self._terminate(session)
             else:
                 op["data"].append(ctypes.string_at(data_ptr, int(data_len)))
             return rv
@@ -350,7 +369,8 @@ class _CtxAuthRaw:
             return rv
         sig = self._real_sign(b"".join(op["data"]))
         ctypes.memmove(sig_ptr, sig, len(sig))
-        _write_ulong(sig_len_ptr, len(sig))
+        reported = self.sign_reported_len if self.sign_reported_len is not None else len(sig)
+        _write_ulong(sig_len_ptr, reported)
         if not self.grant_survives_terminal:
             self._terminate(session)
         return _OK
@@ -431,9 +451,31 @@ class _CtxAuthRaw:
         if self.decrypt_mode == "corrupt":
             pt = bytes((pt[0] ^ 0xFF,)) + pt[1:] if pt else b"\x00"
         ctypes.memmove(out_ptr, pt, len(pt))
-        _write_ulong(out_len_ptr, len(pt))
+        reported = self.decrypt_reported_len if self.decrypt_reported_len is not None else len(pt)
+        _write_ulong(out_len_ptr, reported)
         if not self.grant_survives_terminal:
             self._terminate(session)
+        return _OK
+
+    # -- search ---------------------------------------------------------------
+    def C_FindObjectsInit(self, _sh: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        if self.find_init_script:
+            scripted = self.find_init_script.pop(0)
+            if scripted != _OK:
+                return scripted
+        assert tmpl is None and int(count) == 0, "context-auth fake supports full inventory only"
+        self._search = sorted(self.objects)
+        return _OK
+
+    def C_FindObjects(self, _sh: int, handles: Any, max_count: int, found_ptr: Any) -> int:  # noqa: N802
+        take = self._search[: int(max_count)]
+        for i, handle in enumerate(take):
+            handles[i] = handle
+        _write_ulong(found_ptr, len(take))
+        self._search = self._search[len(take) :]
+        return _OK
+
+    def C_FindObjectsFinal(self, _sh: int) -> int:  # noqa: N802
         return _OK
 
 
@@ -669,6 +711,7 @@ def test_grant_consumed_by_bts_fails(method: str) -> None:
         "test_context_length_query_preserves_grant",
         "test_context_buffer_too_small_preserves_grant",
         "test_context_multipart_update_preserves_grant",
+        "test_context_multipart_final_consumes_grant",
     ],
 )
 def test_corrupt_signature_fails_wrong_result(method: str) -> None:
@@ -901,6 +944,9 @@ def test_grant_judges_reject_non_grant_functions(function: str, judge: str) -> N
     """The grant judges apply only inside the context-grant model; judging
     a non-grant function is a harness misuse and fails loudly."""
     fn = taa._qc10b_grantless_or_judge if judge == "grantless" else taa._qc10b_preserved_or_judge
+    extra: dict[str, Any] = (
+        {} if judge == "grantless" else {"reported_len": _RSA_BYTES, "capacity": _RSA_BYTES}
+    )
     with pytest.raises(Failed):
         fn(
             _CLEAN_REFUSAL,
@@ -909,6 +955,7 @@ def test_grant_judges_reject_non_grant_functions(function: str, judge: str) -> N
             function=function,
             phase="harness-misuse-probe",
             label="grant-applies guard",
+            **extra,
         )
     _assert_fail_record("self_contradiction", "metadata")
 
@@ -1003,3 +1050,146 @@ def test_update_error_node_undefined_update_rv_fails() -> None:
     _assert_fails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
     rec = _assert_fail_record("self_contradiction", "metadata")
     assert rec.operation == "C_SignUpdate"
+
+
+# --- fix round 1 (R14-01): setup handles need ownership proof ----------------
+
+_QC10B_SETUP_NODES: tuple[str, ...] = _ALL_NODES + (_UPDATE_ERROR_NODE,)
+
+
+@pytest.mark.parametrize("method", _QC10B_SETUP_NODES)
+def test_setup_returning_foreign_handles_xfails_without_touching_them(method: str) -> None:
+    """Keygen returning pre-existing 41/42 is unproved: xfail, never trusted, never destroyed."""
+    fake = _CtxAuthRaw()
+    fake.objects[41] = {"kind": "pub"}
+    fake.objects[42] = {"kind": "priv"}
+    fake.keygen_replay_handles = (41, 42)
+    assert_xfails(_run, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 42 not in fake.destroys
+    assert 41 in fake.objects and 42 in fake.objects
+
+
+def test_setup_before_inventory_refusal_xfails_premise() -> None:
+    fake = _CtxAuthRaw()
+    fake.find_init_script = [_CLEAN_REFUSAL]
+    assert_xfails(_run, "test_context_terminal_sign_consumes_grant", _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+
+
+def test_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """Setup succeeded but ownership is unprovable: premise xfail, handles left alive."""
+    fake = _CtxAuthRaw()
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run, "test_context_terminal_sign_consumes_grant", _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.destroys == []
+
+
+def test_setup_inventory_undefined_rv_fails() -> None:
+    fake = _CtxAuthRaw()
+    fake.find_init_script = [_UNDEFINED_RV]
+    _assert_fails(_run, "test_context_terminal_sign_consumes_grant", _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_FindObjects"
+
+
+# --- fix round 1 (R14-03): granting session judged before cross-session xfail -
+
+_CROSS_SESSION_NODE = "test_context_grant_rejected_across_sessions"
+
+
+def test_cross_session_grant_loss_after_nonspec_misuse_fails() -> None:
+    """Session2 GENERAL_ERROR must not mask session1 losing its live grant."""
+    fake = _CtxAuthRaw()
+    fake.grantless_rv = _CLEAN_REFUSAL
+    fake.sign_rv_by_session = {_FIXTURE_SH: [_NOT_LOGGED_IN]}
+    _assert_fails(_run, _CROSS_SESSION_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "policy")
+    assert rec.detail["phase"] == "granting-session-liveness"
+
+
+def test_cross_session_corrupt_live_output_after_nonspec_misuse_fails() -> None:
+    """Session2 GENERAL_ERROR must not mask a corrupt session1 signature."""
+    fake = _CtxAuthRaw()
+    fake.grantless_rv = _CLEAN_REFUSAL
+    fake.sign_mode = "corrupt"
+    _assert_fails(_run, _CROSS_SESSION_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Sign"
+
+
+def test_cross_session_live_not_initialized_fails() -> None:
+    """A dead granting-session operation is premature termination, never an xfail."""
+    fake = _CtxAuthRaw()
+    fake.sign_rv_by_session = {_FIXTURE_SH: [_NOT_INITIALIZED]}
+    _assert_fails(_run, _CROSS_SESSION_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "policy")
+    assert rec.detail["phase"] == "granting-session-liveness"
+
+
+# --- fix round 1 (R14-04): reported output length is judged, never clamped ---
+
+
+def test_terminal_sign_reported_length_mismatch_fails() -> None:
+    """256-byte signature + CKR_OK + reported 257: the length lie fails loud."""
+    fake = _CtxAuthRaw()
+    fake.sign_reported_len = 257
+    _assert_fails(_run, "test_context_terminal_sign_consumes_grant", _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Sign"
+    assert rec.detail["reported_length"] == 257
+    assert rec.detail["buffer_capacity"] == _RSA_BYTES
+
+
+def test_terminal_decrypt_reported_length_mismatch_fails() -> None:
+    fake = _CtxAuthRaw()
+    fake.decrypt_reported_len = 257
+    _assert_fails(_run, "test_context_terminal_decrypt_consumes_grant", _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Decrypt"
+    assert rec.detail["reported_length"] == 257
+
+
+def test_bts_retry_reported_length_mismatch_fails() -> None:
+    """The preserved-output judge threads the reported length too."""
+    fake = _CtxAuthRaw()
+    fake.sign_reported_len = 257
+    _assert_fails(_run, "test_context_buffer_too_small_preserves_grant", _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.detail["reported_length"] == 257
+
+
+def test_cross_session_live_reported_length_mismatch_fails() -> None:
+    """The cross-session inline judge threads the reported length too."""
+    fake = _CtxAuthRaw()
+    fake.sign_reported_len = 257
+    _assert_fails(_run, _CROSS_SESSION_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.detail["reported_length"] == 257
+
+
+# --- fix round 1 (R14-06): SignUpdate BTS routes through termination judging -
+
+
+def test_sign_update_bts_retained_operation_fails() -> None:
+    """BTS on Update with a live op behind it: the grant was not terminated."""
+    fake = _CtxAuthRaw()
+    fake.sign_update_script = [_BTS]
+    fake.update_bts_retains_op = True
+    _assert_fails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "policy")
+    assert rec.detail["function"] == "sign"
+    assert rec.detail["terminal"] is True
+
+
+def test_sign_update_bts_terminated_operation_passes() -> None:
+    """BTS on Update that really terminated the op passes like any clean error."""
+    fake = _CtxAuthRaw()
+    fake.sign_update_script = [_BTS]
+    _run(_UPDATE_ERROR_NODE, _rs(fake), _config())
+    assert C.get_records() == []

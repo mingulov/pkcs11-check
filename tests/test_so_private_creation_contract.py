@@ -101,6 +101,13 @@ def _fill_ulong(ptr: Any, value: int) -> None:
     ctypes.cast(ptr, ctypes.POINTER(CK_ULONG)).contents.value = value
 
 
+class _OmitPrivateRead:
+    """Sentinel for ``private_read_script``: omit CKA_PRIVATE on that scripted read."""
+
+
+_OMIT_PRIVATE_READ = _OmitPrivateRead()
+
+
 class _SoCreationRaw:
     """Scriptable fake token for the QC10a SO/private-creation production methods."""
 
@@ -122,6 +129,8 @@ class _SoCreationRaw:
         # Knobs.
         self.setup_rv: int = _OK
         self.setup_script: list[int] = []
+        self.setup_replay_handles: list[int] = []
+        self.setup_proved_extra = False
         self.ok_companion: bool = False
         self.hide_ok_companion_from_so: bool = False
         self.hide_attempt_leak_from_so: bool = False
@@ -133,14 +142,15 @@ class _SoCreationRaw:
         self.logout_script: list[int] = []
         self.state_lie: int | None = None
         self.getsessioninfo_rv: int = _OK
+        self.getsessioninfo_script: list[int] = []
         self.token_flags: int = 0
         self.gettokeninfo_rv: int = _OK
         self.find_init_script: list[int] = []
         self.getattr_rv: int | None = None
         self.getattr_omit: set[int] = set()
         self.private_read_blob: bytes | None = None
-        self.private_read_script: list[bytes | None] = []
-        self._pending_private: tuple[bool, bytes | None] = (False, None)
+        self.private_read_script: list[bytes | None | _OmitPrivateRead] = []
+        self._pending_private: tuple[bool, bytes | None | _OmitPrivateRead] = (False, None)
         self.sessioninfo_script: list[int | None] = []
         self.hide_from_so: set[int] = set()
         self.hide_setup_from_so: bool = False
@@ -215,7 +225,11 @@ class _SoCreationRaw:
         return _OK
 
     def C_GetSessionInfo(self, session: int, info_ptr: Any) -> int:  # noqa: N802
-        if self.getsessioninfo_rv != _OK:
+        if self.getsessioninfo_script:
+            scripted = self.getsessioninfo_script.pop(0)
+            if scripted != _OK:
+                return scripted
+        elif self.getsessioninfo_rv != _OK:
             return self.getsessioninfo_rv
         forced: int | None = None
         if self.sessioninfo_script:
@@ -269,6 +283,10 @@ class _SoCreationRaw:
                 else:
                     scripted = self._pending_private[1]
                     self._pending_private = (False, None)
+                if isinstance(scripted, _OmitPrivateRead):
+                    tmpl[i].ulValueLen = _UNAVAILABLE
+                    row_rvs.append(_TYPE_INVALID)
+                    continue
                 blob: bytes | None = scripted if scripted is not None else stored.get(attr)
             elif attr == int(CKA_PRIVATE) and self.private_read_blob is not None:
                 blob = self.private_read_blob
@@ -295,8 +313,13 @@ class _SoCreationRaw:
             rv = self.setup_script.pop(0) if self.setup_script else self.setup_rv
             if rv != _OK:
                 return rv
+            if self.setup_replay_handles:
+                _write_handle(handle_ptr, self.setup_replay_handles.pop(0))
+                return _OK
             handle = self._alloc(attrs)
             self.setup_handles.append(handle)
+            if self.setup_proved_extra:
+                self.leaked.append(self._alloc(dict(attrs)))
             _write_handle(handle_ptr, handle)
             return _OK
         self.attempt_calls.append({"op": op, "attrs": attrs})
@@ -697,8 +720,10 @@ _SO_LEGS_WITH_SOURCE = frozenset(
 
 
 def _neg_after_script(method: str, tail_rv: int) -> list[int]:
-    """Find script: visibility (source legs) + control before/after + negative before OK."""
-    script = [_OK] if method in _SO_LEGS_WITH_SOURCE else []
+    """Find script: setup before/after (copy leg) + visibility (source legs)
+    + control before/after + negative before OK."""
+    script = [_OK, _OK] if method == "test_so_cannot_copy_to_private_object" else []
+    script.extend([_OK] if method in _SO_LEGS_WITH_SOURCE else [])
     script.extend([_OK, _OK, _OK, tail_rv])
     return script
 
@@ -836,11 +861,13 @@ def test_so_leg_entry_state_contradiction_fails() -> None:
 def test_so_leg_entry_state_unreadable_xfails() -> None:
     fake = _SoCreationRaw()
     fake.attempt_script = [_OK, _NOT_LOGGED_IN]
-    fake.getsessioninfo_rv = _CLEAN_REFUSAL
+    fake.getsessioninfo_script = [_CLEAN_REFUSAL]
     assert_xfails(_run_so_leg, _CREATE, _rs(fake), _config())
     rec = _assert_xfail_record("not_operational")
     assert rec.operation == "C_GetSessionInfo"
     assert fake.attempt_calls == []
+    assert fake.login_state == "user"
+    assert "close:10" in fake.ops
 
 
 def test_so_leg_missing_pins_skip() -> None:
@@ -1025,3 +1052,163 @@ def test_so_leg_uses_scoped_credentials_in_order(method: str, _op: str) -> None:
     assert fake.logins[0] == ("so", len("officer-pw"))
     assert ("user", len("user-pw")) in fake.logins
     assert fake.login_state == "user"
+
+
+# --- fix round 1 (R14-01): setup source needs ownership proof ----------------
+
+
+def test_so_copy_leg_setup_returning_foreign_handle_xfails_without_destroy() -> None:
+    """Setup returning pre-existing 41 is unproved: xfail, never trusted, never destroyed."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.setup_replay_handles = [41]
+    assert_xfails(_run_so_leg, "test_so_cannot_copy_to_private_object", _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+
+
+def test_so_copy_leg_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """Setup-after inventory refused: the source is unproved and stays alive."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run_so_leg, "test_so_cannot_copy_to_private_object", _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.setup_handles
+    assert all(handle not in fake.destroys for handle in fake.setup_handles)
+
+
+# --- fix round 1 (R14-02): early scope exits restore login state and close ---
+
+
+def test_so_leg_so_login_refusal_restores_user_and_closes() -> None:
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.so_login_rv = _CLEAN_REFUSAL
+    assert_xfails(_run_so_leg, _CREATE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_Login"
+    assert fake.login_state == "user"
+    assert "close:10" in fake.ops
+
+
+def test_so_leg_entry_state_unreadable_upgrades_when_restoration_unverifiable() -> None:
+    """Stickily unreadable state: the premise xfails, but restoration cannot be
+    verified, so the leg upgrades to fail -- still restored and closed."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.getsessioninfo_rv = _CLEAN_REFUSAL
+    _assert_fails(_run_so_leg, _CREATE, _rs(fake), _config())
+    rec = C.get_records()[0]
+    assert rec.outcome == "fail"
+    assert rec.detail is not None
+    assert rec.detail["restoration_operation"] == "C_GetSessionInfo"
+    assert rec.detail["restoration_rv"] == ckr_name(_CLEAN_REFUSAL)
+    assert fake.login_state == "user"
+    assert "close:10" in fake.ops
+
+
+def test_so_leg_entry_state_contradiction_restores_user_and_closes() -> None:
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.state_lie = int(CKS_RW_USER_FUNCTIONS)
+    _assert_fails(_run_so_leg, _CREATE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "lifecycle")
+    assert rec.operation == "C_GetSessionInfo"
+    assert fake.login_state == "user"
+    assert "close:10" in fake.ops
+
+
+def test_so_leg_wrong_pin_skip_restores_user_and_closes() -> None:
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.so_login_rv = int(CKR_PIN_INCORRECT)
+    assert_skips(_run_so_leg, _CREATE, _rs(fake), _config())
+    assert C.get_records() == []
+    assert fake.login_state == "user"
+    assert "close:10" in fake.ops
+
+
+def test_so_leg_entry_logout_refusal_closes_session() -> None:
+    """Entry logout refused: login was never cleared, but the session must still close."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.logout_script = [_CLEAN_REFUSAL]
+    assert_xfails(_run_so_leg, _CREATE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_Logout"
+    assert fake.login_state == "user"
+    assert "close:10" in fake.ops
+
+
+def test_so_leg_early_exit_restoration_failure_upgrades_to_fail() -> None:
+    """SO login refused and USER restoration refused: loud fail with both outcomes."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.so_login_rv = _CLEAN_REFUSAL
+    fake.user_relogin_rv = _CLEAN_REFUSAL
+    _assert_fails(_run_so_leg, _CREATE, _rs(fake), _config())
+    rec = C.get_records()[0]
+    assert rec.outcome == "fail"
+    assert rec.detail is not None
+    assert rec.detail["restoration_operation"] == "C_Login"
+    assert rec.detail["restoration_rv"] == ckr_name(_CLEAN_REFUSAL)
+    assert rec.detail["primary"] == "leg-did-not-run"
+    assert "close:10" in fake.ops
+
+
+# --- fix round 1 (R14-07): positive judging covers proved extras --------------
+
+
+@pytest.mark.parametrize(("method", "_op"), _USER_LEGS)
+def test_user_leg_proved_extra_companion_fails_and_destroys_all_proved(
+    method: str, _op: str
+) -> None:
+    """OK creating a proved-labeled sibling beside the returned handle: destroy both, fail."""
+    fake = _SoCreationRaw()
+    fake.setup_proved_extra = True
+    _assert_fails(_run_user_leg, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.detail["disposition"] == "created-extra"
+    assert rec.detail["extra_handles"]
+    for handle in rec.detail["proved_new_handles"]:
+        assert handle in fake.destroys
+    attempt_label = fake.setup_creates[-1]["attrs"][int(CKA_LABEL)]
+    remaining = [
+        handle
+        for handle, attrs in fake.objects.items()
+        if attrs.get(int(CKA_LABEL)) == attempt_label
+    ]
+    assert remaining == []
+
+
+# --- fix round 1 (R14-08): record rewrites reset severity and reason ----------
+
+
+@pytest.mark.parametrize(("method", "_op"), _SO_LEGS)
+def test_so_leg_acceptance_with_missing_readback_fails_critical(method: str, _op: str) -> None:
+    """Missing-private acceptance rewritten to policy failure must be CRITICAL, not LOW."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _OK]
+    fake.private_read_script = [None, _OMIT_PRIVATE_READ]
+    _assert_fails(_run_so_leg, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "policy")
+    assert rec.severity == "CRITICAL"
+
+
+def test_so_leg_xfail_primary_with_failed_restoration_drops_xfail_reason() -> None:
+    """Xfail + restoration failure becomes FAIL with a fail reason and FAIL severity."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _CLEAN_REFUSAL]
+    fake.user_relogin_rv = _CLEAN_REFUSAL
+    _assert_fails(_run_so_leg, _CREATE, _rs(fake), _config())
+    rec = C.get_records()[0]
+    assert rec.outcome == "fail"
+    assert rec.reason == "self_contradiction"
+    assert rec.severity == C.derive_verdict("self_contradiction", rec.kind)[1]
+    assert rec.detail is not None
+    assert rec.detail["restoration_rv"] == ckr_name(_CLEAN_REFUSAL)
