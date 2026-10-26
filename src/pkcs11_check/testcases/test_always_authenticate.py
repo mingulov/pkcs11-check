@@ -17,6 +17,7 @@ Source: PKCS#11 v2.40 §11.6, v3.0 §5.5 (CKU_CONTEXT_SPECIFIC semantics).
 from __future__ import annotations
 
 import ctypes
+import uuid
 from ctypes import byref
 from typing import Any
 
@@ -35,6 +36,7 @@ from pkcs11_check.raw.recipes import (
     destroy_quietly,
     find_objects_exhaustive,
     gen_rsa_keypair,
+    partition_proved_new,
     read_attributes,
 )
 from pkcs11_check.raw.rv import (
@@ -48,6 +50,7 @@ from pkcs11_check.raw.types_std import (
     CK_UTF8CHAR,
     CKA_ALWAYS_AUTHENTICATE,
     CKA_DECRYPT,
+    CKA_LABEL,
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKA_SIGN,
@@ -675,12 +678,21 @@ def _qc10b_init_or_judge(
 
 
 def _qc10b_output_length_or_judge(
-    reported: int, capacity: int, *, operation: str, mechanism: str, label: str
+    reported: int,
+    capacity: int,
+    *,
+    operation: str,
+    mechanism: str,
+    label: str,
+    expected_len: int | None = None,
 ) -> None:
     """OK-return output contract (v3.2 §5.2): the reported length must fit the buffer.
 
     A CKR_OK return claims ``reported`` bytes were written into a ``capacity``
     buffer; a larger report is a length violation that callers must not clamp.
+    Where the output size is deterministic (single-shot RSA-2048 PKCS#1 v1.5
+    encrypt/sign/final), ``expected_len`` pins the exact report; variable-length
+    outputs (C_Decrypt plaintext) stay capacity-only.
     """
     if reported < 0 or reported > capacity:
         fail_as(
@@ -695,6 +707,23 @@ def _qc10b_output_length_or_judge(
                 f"{reported} for a {capacity}-byte buffer"
             ),
         )
+    if expected_len is not None and reported != expected_len:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            detail={
+                "reported_length": reported,
+                "buffer_capacity": capacity,
+                "expected_length": expected_len,
+            },
+            summary=(
+                f"{label}: {operation} returned CKR_OK reporting {reported} "
+                f"bytes, expected exactly {expected_len}"
+            ),
+        )
 
 
 def _qc10b_positive_or_judge(
@@ -705,11 +734,17 @@ def _qc10b_positive_or_judge(
     label: str,
     reported_len: int,
     capacity: int,
+    expected_len: int | None = None,
 ) -> None:
     """Positive crypto call: CKR_OK proceeds; clean refusal xfails, never passes."""
     if rv == int(CKR_OK):
         _qc10b_output_length_or_judge(
-            reported_len, capacity, operation=operation, mechanism=mechanism, label=label
+            reported_len,
+            capacity,
+            operation=operation,
+            mechanism=mechanism,
+            label=label,
+            expected_len=expected_len,
         )
         return
     if _qc10b_is_clean(rv):
@@ -842,6 +877,7 @@ def _qc10b_preserved_or_judge(
     label: str,
     reported_len: int,
     capacity: int,
+    expected_len: int | None = None,
 ) -> None:
     """Post-nonterminal call: success proves preservation; auth rejection is loss.
 
@@ -864,7 +900,12 @@ def _qc10b_preserved_or_judge(
         )
     if rv == int(CKR_OK):
         _qc10b_output_length_or_judge(
-            reported_len, capacity, operation=operation, mechanism=mechanism, label=label
+            reported_len,
+            capacity,
+            operation=operation,
+            mechanism=mechanism,
+            label=label,
+            expected_len=expected_len,
         )
         return
     if rv in _QC10B_AUTH_REJECT_RVS or rv == int(CKR_OPERATION_NOT_INITIALIZED):
@@ -961,6 +1002,10 @@ def _qc10b_setup_inventory_or_xfail(rs: Any, *, phase: str, label: str) -> list[
         )
 
 
+def _qc10b_unique_label(prefix: str) -> str:
+    return f"qc10b-{prefix}-{uuid.uuid4().hex[:8]}"
+
+
 def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
     """Generate an RSA-2048 sign+decrypt keypair with CKA_ALWAYS_AUTHENTICATE=True.
 
@@ -973,20 +1018,95 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
 
     Setup handles need ownership proof too: the returned handles must appear
     in the before/after inventory delta, otherwise they are foreign (unproved
-    xfail, never read as ours, never destroyed).
+    xfail, never read as ours, never destroyed). A refused keygen runs the
+    after-inventory as well: a proved-new leftover is destroyed and fails,
+    an unproved delta stays alive, and only a zero delta keeps the premise
+    xfail. Both halves carry a unique setup label as the proof anchor.
     """
     setup_label = "CKA_ALWAYS_AUTHENTICATE setup inventory (QC10b)"
     before = _qc10b_setup_inventory_or_xfail(rs, phase="setup-before", label=setup_label)
+    key_label = _qc10b_unique_label("setup-key")
+    pub_attempt: dict[Any, Any] = {CKA_VERIFY: True, CKA_LABEL: key_label}
+    priv_attempt: dict[Any, Any] = {
+        CKA_SIGN: True,
+        CKA_DECRYPT: True,
+        CKA_ALWAYS_AUTHENTICATE: True,
+        CKA_LABEL: key_label,
+    }
     try:
         pub, priv = gen_rsa_keypair(
             rs.raw,
             rs.sh,
             bits=2048,
-            public_attrs={CKA_VERIFY: True},
-            private_attrs={CKA_SIGN: True, CKA_DECRYPT: True, CKA_ALWAYS_AUTHENTICATE: True},
+            public_attrs=pub_attempt,
+            private_attrs=priv_attempt,
         )
     except CkrAssertionError as exc:
+        # A refused keygen may still have created our key: run the
+        # after-inventory and the refusal-ownership tiers (proved leftovers
+        # are destroyed and fail, unproved deltas stay alive) before judging
+        # the setup premise.
+        after = _qc10b_setup_inventory_or_xfail(rs, phase="setup-after", label=setup_label)
+        proved, unproved = partition_proved_new(
+            rs.raw,
+            rs.sh,
+            before,
+            after,
+            attempt_templates=(dict(pub_attempt), dict(priv_attempt)),
+        )
+        if proved:
+            for leaked in proved:
+                destroy_quietly(rs.raw, rs.sh, leaked)
         if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            if proved:
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label="CKA_ALWAYS_AUTHENTICATE key generation (QC10b)",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=CKR_OK,
+                    actual=exc.rv,
+                    detail={
+                        "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                        "disposition": "refused-but-created",
+                        "new_handles": sorted(
+                            {int(handle) for handle in after} - {int(handle) for handle in before}
+                        ),
+                        "proved_new_handles": sorted(proved),
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "CKM_RSA_PKCS_KEY_PAIR_GEN refused with "
+                        f"{ckr_name(int(exc.rv))} but created {sorted(proved)}"
+                    ),
+                )
+            if unproved:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label="CKA_ALWAYS_AUTHENTICATE key generation (QC10b)",
+                    operation="C_GenerateKeyPair",
+                    mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    expected=CKR_OK,
+                    actual=exc.rv,
+                    detail={
+                        "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                        "disposition": "unproved-effect",
+                        "new_handles": sorted(
+                            {int(handle) for handle in after} - {int(handle) for handle in before}
+                        ),
+                        "unproved_new_handles": sorted(unproved),
+                        "producer_operation": "C_GenerateKeyPair",
+                        "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                    },
+                    summary=(
+                        "CKM_RSA_PKCS_KEY_PAIR_GEN refused with "
+                        f"{ckr_name(int(exc.rv))} with an unproved inventory "
+                        "delta; left alive"
+                    ),
+                )
             xfail_as(
                 "not_operational",
                 kind="metadata",
@@ -1015,6 +1135,11 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             actual=exc.rv,
             detail={
                 "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "new_handles": sorted(
+                    {int(handle) for handle in after} - {int(handle) for handle in before}
+                ),
+                "proved_new_handles": sorted(proved),
+                "unproved_new_handles": sorted(unproved),
                 "producer_operation": "C_GenerateKeyPair",
                 "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
             },
@@ -1024,6 +1149,30 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             ),
         )
 
+    if int(pub) == int(priv):
+        # Aliased outputs are contradictory before any membership check: the
+        # same handle cannot be both halves. Reject without using or
+        # destroying it (either use would corrupt the mate), ahead of the
+        # after-inventory so the known failure survives inventory gaps.
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label="CKA_ALWAYS_AUTHENTICATE setup ownership (QC10b)",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            actual=CKR_OK,
+            detail={
+                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "disposition": "aliased-handles",
+                "returned_handles": [int(pub), int(priv)],
+                "producer_operation": "C_GenerateKeyPair",
+                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            },
+            summary=(
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with the same "
+                "handle for both halves; the handback is contradictory, left alone"
+            ),
+        )
     after = _qc10b_setup_inventory_or_xfail(rs, phase="setup-after", label=setup_label)
     new_handles = sorted({int(handle) for handle in after} - {int(handle) for handle in before})
     if int(pub) not in new_handles or int(priv) not in new_handles:
@@ -1514,6 +1663,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1559,6 +1709,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1651,6 +1802,7 @@ class TestContextAuthTransitions:
                     operation="C_Sign",
                     mechanism="CKM_SHA256_RSA_PKCS",
                     label=label,
+                    expected_len=_QC10B_RSA_BYTES,
                 )
                 _qc10b_verify_rsa_signature(
                     rs,
@@ -1746,6 +1898,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1776,6 +1929,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported3,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1831,6 +1985,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=sig_reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1872,6 +2027,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1913,6 +2069,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -2053,6 +2210,7 @@ class TestContextAuthTransitions:
                 label=label,
                 reported_len=reported,
                 capacity=_QC10B_RSA_BYTES,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -2104,6 +2262,7 @@ class TestContextAuthTransitions:
                 operation="C_Encrypt",
                 mechanism="CKM_RSA_PKCS",
                 label=label,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_decrypt_init(rs, rs.sh, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
@@ -2161,6 +2320,7 @@ class TestContextAuthTransitions:
                 operation="C_Encrypt",
                 mechanism="CKM_RSA_PKCS",
                 label=label,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_decrypt_init(rs, s2, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, s2, pin, label=label)
@@ -2200,6 +2360,7 @@ class TestContextAuthTransitions:
                 operation="C_Encrypt",
                 mechanism="CKM_RSA_PKCS",
                 label=label,
+                expected_len=_QC10B_RSA_BYTES,
             )
             _qc10b_decrypt_init(rs, rs.sh, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)

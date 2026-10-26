@@ -129,6 +129,7 @@ class _SoCreationRaw:
         # Knobs.
         self.setup_rv: int = _OK
         self.setup_script: list[int] = []
+        self.setup_refusal_leak = "none"  # none | proved | foreign
         self.setup_replay_handles: list[int] = []
         self.setup_proved_extra = False
         self.ok_companion: bool = False
@@ -155,6 +156,7 @@ class _SoCreationRaw:
         self.hide_from_so: set[int] = set()
         self.hide_setup_from_so: bool = False
         self.wrap_rv: int = _OK
+        self.wrap_allocate_on_refusal = False
         self.wrapped_blob = b"\xa6" * 24
 
     def _alloc(self, attrs: dict[int, bytes]) -> int:
@@ -312,6 +314,7 @@ class _SoCreationRaw:
             self.setup_creates.append({"op": op, "attrs": attrs})
             rv = self.setup_script.pop(0) if self.setup_script else self.setup_rv
             if rv != _OK:
+                self._apply_setup_refusal_leak(attrs)
                 return rv
             if self.setup_replay_handles:
                 _write_handle(handle_ptr, self.setup_replay_handles.pop(0))
@@ -358,6 +361,14 @@ class _SoCreationRaw:
             if self.hide_attempt_leak_from_so:
                 self.hide_from_so.add(leaked)
 
+    def _apply_setup_refusal_leak(self, attrs: dict[int, bytes]) -> None:
+        if self.setup_refusal_leak == "proved":
+            leak = dict(attrs)
+            leak.setdefault(int(CKA_TOKEN), b"\x00")
+            self.leaked.append(self._alloc(leak))
+        elif self.setup_refusal_leak == "foreign":
+            self.leaked.append(self._alloc({int(CKA_LABEL): b"qc10a-foreign"}))
+
     def C_CreateObject(self, sh: int, tmpl: Any, count: int, handle_ptr: Any) -> int:  # noqa: N802
         return self._record_create("create", sh, _decode_template(tmpl, int(count)), handle_ptr)
 
@@ -394,6 +405,8 @@ class _SoCreationRaw:
         self, _sh: int, _mech: Any, _kek: int, _target: int, out: Any, out_len: Any
     ) -> int:
         if self.wrap_rv != _OK:
+            if self.wrap_allocate_on_refusal:
+                self.leaked.append(self._alloc({int(CKA_LABEL): b"qc10a-wrap-foreign"}))
             return self.wrap_rv
         blob = bytes(self.wrapped_blob)
         if not out:
@@ -724,12 +737,13 @@ _SO_SETUP_FINDS = {
     "test_so_cannot_copy_to_private_object": 2,
     "test_so_cannot_generate_private_key": 0,
     "test_so_cannot_derive_private_key": 2,
-    "test_so_cannot_unwrap_private_key": 4,
+    # KEK before/after + target before/after + wrap-setup before (R15-03).
+    "test_so_cannot_unwrap_private_key": 5,
 }
 
 
 def _neg_after_script(method: str, tail_rv: int) -> list[int]:
-    """Find script: setup before/after per setup handle + visibility (source legs)
+    """Find script: setup finds + visibility (source legs)
     + control before/after + negative before OK."""
     script = [_OK] * _SO_SETUP_FINDS[method]
     script.extend([_OK] if method in _SO_LEGS_WITH_SOURCE else [])
@@ -1473,3 +1487,251 @@ def test_user_unwrap_leg_setup_after_inventory_refusal_xfails_without_destroy() 
     assert fake.setup_handles
     assert all(handle not in fake.destroys for handle in fake.setup_handles)
     assert len(fake.setup_creates) == 1
+
+
+# --- fix round 3 (R15-01): proved extras judged before foreign-handback tiers -
+
+
+class _MixedOwnershipRaw(_SoCreationRaw):
+    """R15-01 contracts: one scripted create hands back foreign 41.
+
+    The armed call allocates the real object plus ``mixed_sibling_count``
+    proved-labeled siblings, but returns the foreign handle instead. With
+    ``mixed_create_real = False`` and zero siblings the armed call creates
+    nothing (pure-unproved replay). USER legs route fixture-session creates
+    through the setup branch, so both call streams are gateable.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.mixed_setup_call_index: int | None = None
+        self.mixed_attempt_call_index: int | None = None
+        self.mixed_foreign_handle = 41
+        self.mixed_sibling_count = 1
+        self.mixed_create_real = True
+
+    def _record_create(
+        self, op: str, session: int, attrs: dict[int, bytes], handle_ptr: Any
+    ) -> int:
+        setup_branch = not self._is_attempt_session(session)
+        if setup_branch:
+            armed = (
+                self.mixed_setup_call_index is not None
+                and len(self.setup_creates) == self.mixed_setup_call_index
+            )
+        else:
+            armed = (
+                self.mixed_attempt_call_index is not None
+                and len(self.attempt_calls) == self.mixed_attempt_call_index
+            )
+        if not armed:
+            return super()._record_create(op, session, attrs, handle_ptr)
+        if setup_branch:
+            self.setup_creates.append({"op": op, "attrs": attrs})
+            rv = self.setup_script.pop(0) if self.setup_script else self.setup_rv
+        else:
+            self.attempt_calls.append({"op": op, "attrs": attrs})
+            assert self.attempt_script, f"attempt script exhausted at {op}"
+            rv = self.attempt_script.pop(0)
+        assert rv == _OK, f"mixed-ownership call must be scripted OK, got {rv}"
+        stored = dict(attrs)
+        if op == "copy":
+            stored.setdefault(int(CKA_TOKEN), b"\x00")
+        if self.mixed_create_real:
+            handle = self._alloc(stored)
+            if setup_branch:
+                self.setup_handles.append(handle)
+        for _ in range(self.mixed_sibling_count):
+            self.leaked.append(self._alloc(dict(stored)))
+        _write_handle(handle_ptr, self.mixed_foreign_handle)
+        return _OK
+
+
+@pytest.mark.parametrize(("method", "op"), _USER_LEGS)
+@pytest.mark.parametrize("siblings", [1, 2])
+def test_user_leg_mixed_ownership_fails_and_destroys_proved(
+    method: str, op: str, siblings: int
+) -> None:
+    """USER OK returning foreign 41 with proved creations: destroy proved, FAIL loud."""
+    fake = _MixedOwnershipRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.mixed_setup_call_index = _USER_SETUP_CALLS[method]
+    fake.mixed_sibling_count = siblings
+    _assert_fails(_run_user_leg, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == op
+    assert rec.detail["disposition"] == "created-extra"
+    assert rec.detail["returned_handle_proved"] is False
+    assert len(rec.detail["extra_handles"]) == 1 + siblings
+    for handle in rec.detail["proved_new_handles"]:
+        assert handle in fake.destroys
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert all(handle not in fake.objects for handle in fake.leaked)
+
+
+@pytest.mark.parametrize(("method", "op"), _SO_LEGS)
+def test_so_leg_mixed_ownership_acceptance_fails_and_destroys_proved(method: str, op: str) -> None:
+    """SO negative OK returning foreign 41 with proved creations: destroy proved, FAIL loud."""
+    fake = _MixedOwnershipRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.attempt_script = [_OK, _OK]
+    fake.mixed_attempt_call_index = 1
+    _assert_fails(_run_so_leg, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == op
+    assert rec.detail["disposition"] == "created-extra"
+    assert rec.detail["returned_handle_proved"] is False
+    assert sorted(rec.detail["extra_handles"]) == sorted(
+        [h for h in rec.detail["proved_new_handles"]]
+    )
+    for handle in rec.detail["proved_new_handles"]:
+        assert handle in fake.destroys
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert all(handle not in fake.objects for handle in fake.leaked)
+    assert fake.login_state == "user"
+
+
+@pytest.mark.parametrize(("method", "_op"), _USER_LEGS)
+def test_user_leg_pure_foreign_handback_still_xfails_unproved(method: str, _op: str) -> None:
+    """Pure case locked: foreign 41 with zero proved creations still xfails unproved."""
+    fake = _MixedOwnershipRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.mixed_setup_call_index = _USER_SETUP_CALLS[method]
+    fake.mixed_sibling_count = 0
+    fake.mixed_create_real = False
+    assert_xfails(_run_user_leg, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+
+
+@pytest.mark.parametrize(("method", "op"), _SO_LEGS)
+def test_so_leg_pure_foreign_handback_still_fails_unclaimed(method: str, op: str) -> None:
+    """Pure case locked: foreign 41 with zero proved creations keeps accepted_invalid."""
+    fake = _MixedOwnershipRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.attempt_script = [_OK, _OK]
+    fake.mixed_attempt_call_index = 1
+    fake.mixed_sibling_count = 0
+    fake.mixed_create_real = False
+    _assert_fails(_run_so_leg, method, _rs(fake), _config())
+    rec = _assert_fail_record("accepted_invalid", None)
+    assert rec.operation == op
+    assert rec.detail["disposition"] == "unproved-handle-alive"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert fake.login_state == "user"
+
+
+# --- fix round 3 (R15-03): setup refusals reach after-inventory judging ------
+
+_QC10A_SETUP_REFUSAL_SITES: tuple[tuple[str, str, str, tuple[int, ...]], ...] = (
+    # (runner, method, operation, setup_script)
+    ("so", "test_so_cannot_copy_to_private_object", "C_CreateObject", (_CLEAN_REFUSAL,)),
+    ("so", "test_so_cannot_derive_private_key", "C_GenerateKey", (_CLEAN_REFUSAL,)),
+    ("so", "test_so_cannot_unwrap_private_key", "C_GenerateKey", (_CLEAN_REFUSAL,)),
+    ("so", "test_so_cannot_unwrap_private_key", "C_GenerateKey", (_OK, _CLEAN_REFUSAL)),
+    ("user", "test_user_can_copy_to_private_object", "C_CreateObject", (_CLEAN_REFUSAL,)),
+    ("user", "test_user_can_derive_private_key", "C_GenerateKey", (_CLEAN_REFUSAL,)),
+    ("user", "test_user_can_unwrap_private_key", "C_GenerateKey", (_CLEAN_REFUSAL,)),
+    ("user", "test_user_can_unwrap_private_key", "C_GenerateKey", (_OK, _CLEAN_REFUSAL)),
+)
+
+_QC10A_SETUP_REFUSAL_IDS: tuple[str, ...] = (
+    "so-copy-source",
+    "so-derive-base",
+    "so-unwrap-kek",
+    "so-unwrap-target",
+    "user-copy-source",
+    "user-derive-base",
+    "user-unwrap-kek",
+    "user-unwrap-target",
+)
+
+
+@pytest.mark.parametrize(
+    ("runner", "method", "op", "setup_script"),
+    _QC10A_SETUP_REFUSAL_SITES,
+    ids=_QC10A_SETUP_REFUSAL_IDS,
+)
+def test_qc10a_setup_refusal_with_proved_leak_fails_and_destroys(
+    runner: str, method: str, op: str, setup_script: tuple[int, ...]
+) -> None:
+    """Setup refusal that created our object: refused-but-created FAIL, leak destroyed."""
+    fake = _SoCreationRaw()
+    if runner == "so":
+        fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.setup_script = list(setup_script)
+    fake.setup_refusal_leak = "proved"
+    run = _run_so_leg if runner == "so" else _run_user_leg
+    _assert_fails(run, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == op
+    assert rec.detail["disposition"] == "refused-but-created"
+    assert fake.leaked
+    assert all(handle in fake.destroys for handle in fake.leaked)
+    assert all(handle not in fake.objects for handle in fake.leaked)
+    assert all(handle in fake.destroys for handle in fake.setup_handles)
+    assert fake.attempt_calls == []
+
+
+@pytest.mark.parametrize(
+    ("runner", "method"),
+    [
+        ("so", "test_so_cannot_copy_to_private_object"),
+        ("user", "test_user_can_copy_to_private_object"),
+    ],
+)
+def test_qc10a_setup_refusal_with_foreign_leak_xfails_alive(runner: str, method: str) -> None:
+    """Setup refusal with an unproved delta: unproved-effect xfail, leak left alive."""
+    fake = _SoCreationRaw()
+    if runner == "so":
+        fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.setup_script = [_CLEAN_REFUSAL]
+    fake.setup_refusal_leak = "foreign"
+    run = _run_so_leg if runner == "so" else _run_user_leg
+    assert_xfails(run, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert all(handle in fake.objects for handle in fake.leaked)
+    assert fake.attempt_calls == []
+
+
+@pytest.mark.parametrize(
+    ("runner", "method"),
+    [
+        ("so", "test_so_cannot_unwrap_private_key"),
+        ("user", "test_user_can_unwrap_private_key"),
+    ],
+)
+def test_qc10a_wrap_setup_refusal_with_delta_xfails_unproved(runner: str, method: str) -> None:
+    """Wrap-setup refusal that gains an inventory delta: unproved-effect xfail, left alive."""
+    fake = _SoCreationRaw()
+    if runner == "so":
+        fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.wrap_rv = _CLEAN_REFUSAL
+    fake.wrap_allocate_on_refusal = True
+    run = _run_so_leg if runner == "so" else _run_user_leg
+    assert_xfails(run, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.operation == "C_WrapKey"
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert all(handle in fake.objects for handle in fake.leaked)
+    assert all(handle in fake.destroys for handle in fake.setup_handles)
+    assert fake.attempt_calls == []
+
+
+def test_user_unwrap_leg_wrap_setup_refusal_xfails() -> None:
+    """USER wrap-setup refusal with zero delta keeps the not_operational xfail."""
+    fake = _SoCreationRaw()
+    fake.wrap_rv = _CLEAN_REFUSAL
+    assert_xfails(_run_user_leg, "test_user_can_unwrap_private_key", _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_WrapKey"

@@ -788,30 +788,50 @@ def _qc10a_unwrap_raw(
     return int(rv), int(out.value)
 
 
-def _qc10a_setup_failed(exc: CkrAssertionError, *, operation: str, purpose: str) -> NoReturn:
-    """Judge a USER-phase setup refusal: clean CK_RV xfails, undefined CK_RV fails."""
+def _qc10a_setup_failed(
+    exc: CkrAssertionError,
+    *,
+    operation: str,
+    purpose: str,
+    rs: Any,
+    sh: int,
+    before: list[int],
+    attempt: Mapping[Any, Any],
+    identities: tuple[tuple[int, int], ...] = (),
+) -> NoReturn:
+    """Judge a setup refusal with after-inventory ownership tiers.
+
+    A refused setup call may still have created our object, so the refusal
+    runs the established refusal-ownership tiers: a proved-new leftover is
+    destroyed and fails, an unproved delta stays alive as honest-deviation
+    xfail, and only a clean zero delta keeps the not_operational setup
+    xfail. Undefined CK_RV fails after proved leftovers are cleaned.
+    """
     rv = int(exc.rv)
-    if _qc10a_is_clean(rv):
-        C.xfail_as(
-            "not_operational",
-            label=purpose,
-            operation=operation,
-            inherit_mechanism=False,
-            expected=CKR_OK,
-            actual=rv,
-            detail={"phase": "setup"},
-            summary=f"{purpose}: USER-phase setup refused with {ckr_name(rv)}",
-        )
-    C.fail_as(
-        "self_contradiction",
-        kind="metadata",
+    after = _qc10a_after_inventory_or_judge(
+        rs, sh, rv=rv, handle=0, label=purpose, operation=operation, leg="setup"
+    )
+    _qc10a_judge_refusal_ownership(
+        rs,
+        sh,
+        rv=rv,
+        handle=0,
+        before=before,
+        after=after,
+        attempt=attempt,
+        identities=identities,
+        label=purpose,
+        operation=operation,
+    )
+    C.xfail_as(
+        "not_operational",
         label=purpose,
         operation=operation,
         inherit_mechanism=False,
         expected=CKR_OK,
         actual=rv,
-        detail={"phase": "setup", "ckr_validity": "undefined"},
-        summary=f"{purpose}: USER-phase setup returned undefined {ckr_name(rv)}",
+        detail={"phase": "setup"},
+        summary=f"{purpose}: USER-phase setup refused with {ckr_name(rv)}",
     )
 
 
@@ -1523,25 +1543,39 @@ def _qc10a_run_positive_leg(
         identities=identities,
         error_handles=(handle,),
     )
-    if handle not in proved:
-        C.xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            operation=operation,
-            inherit_mechanism=False,
-            actual=rv,
-            detail={"disposition": "unproved-handle", "handle_after": handle},
-            summary=f"{label}: {operation} returned CKR_OK but the handle is unproved",
-        )
     extras = sorted(h for h in proved if h != handle)
     if extras:
-        # The call created more than it returned, and the siblings are
-        # proved-new (ours): destroy them all, then fail loud -- a CKR_OK
-        # creation must create exactly the returned object.
+        # Proved side-creations are judged FIRST, even when the returned
+        # handle itself is foreign: a provider that demonstrably created
+        # our objects while handing back a foreign handle is contradictory,
+        # not a premise gap. Proved handles are destroyed; a foreign
+        # returned handle is never touched and stays alive.
         for sibling in extras:
             destroy_quietly(rs.raw, sh, sibling)
-        destroy_quietly(rs.raw, sh, handle)
+        if handle in proved:
+            # The call created more than it returned, and the siblings are
+            # proved-new (ours): destroy them all, then fail loud -- a CKR_OK
+            # creation must create exactly the returned object.
+            destroy_quietly(rs.raw, sh, handle)
+            C.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=rv,
+                detail={
+                    "disposition": "created-extra",
+                    "handle_after": handle,
+                    "new_handles": sorted({int(h) for h in after} - {int(h) for h in before}),
+                    "proved_new_handles": sorted(proved),
+                    "extra_handles": extras,
+                },
+                summary=(
+                    f"{label}: {operation} returned CKR_OK but created extra proved "
+                    f"objects {extras} beside the returned handle"
+                ),
+            )
         C.fail_as(
             "self_contradiction",
             kind="metadata",
@@ -1555,11 +1589,24 @@ def _qc10a_run_positive_leg(
                 "new_handles": sorted({int(h) for h in after} - {int(h) for h in before}),
                 "proved_new_handles": sorted(proved),
                 "extra_handles": extras,
+                "returned_handle_proved": False,
             },
             summary=(
-                f"{label}: {operation} returned CKR_OK but created extra proved "
-                f"objects {extras} beside the returned handle"
+                f"{label}: {operation} returned CKR_OK with an unproved handle "
+                f"but created proved objects {extras}; the returned handle is "
+                "foreign, left alive"
             ),
+        )
+    if handle not in proved:
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            detail={"disposition": "unproved-handle", "handle_after": handle},
+            summary=f"{label}: {operation} returned CKR_OK but the handle is unproved",
         )
     if unproved:
         # The handle is proved, but the delta gained unexpected companions:
@@ -1761,27 +1808,39 @@ def _qc10a_judge_negative_acceptance(
         identities=identities,
         error_handles=(handle,),
     )
-    if handle not in proved:
-        C.classify(
-            "accepted_invalid",
-            label=label,
-            operation=operation,
-            inherit_mechanism=False,
-            actual=CKR_OK,
-            expected=(CKR_USER_NOT_LOGGED_IN,),
-            detail={"disposition": "unproved-handle-alive", "handle_after": handle},
-            summary=(
-                f"{label}: accepted invalid (CKR_OK) -- must reject; handle unproved, left alive"
-            ),
-        )
     extras = sorted(h for h in proved if h != handle)
     if extras:
-        # The acceptance created more than it returned, and the siblings are
-        # proved-new (ours): destroy them all, then fail loud -- the same
-        # created-extra shape as the positive leg.
+        # Proved side-creations are judged FIRST, even when the returned
+        # handle itself is foreign: a provider that demonstrably created
+        # our objects while handing back a foreign handle is contradictory,
+        # not a premise gap. Proved handles are destroyed; a foreign
+        # returned handle is never touched and stays alive.
         for sibling in extras:
             destroy_quietly(rs.raw, sh, sibling)
-        destroy_quietly(rs.raw, sh, handle)
+        if handle in proved:
+            # The acceptance created more than it returned, and the siblings are
+            # proved-new (ours): destroy them all, then fail loud -- the same
+            # created-extra shape as the positive leg.
+            destroy_quietly(rs.raw, sh, handle)
+            C.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=CKR_OK,
+                detail={
+                    "disposition": "created-extra",
+                    "handle_after": handle,
+                    "new_handles": sorted({int(h) for h in after} - {int(h) for h in before}),
+                    "proved_new_handles": sorted(proved),
+                    "extra_handles": extras,
+                },
+                summary=(
+                    f"{label}: {operation} accepted (CKR_OK) on a must-reject leg but "
+                    f"created extra proved objects {extras} beside the returned handle"
+                ),
+            )
         C.fail_as(
             "self_contradiction",
             kind="metadata",
@@ -1795,10 +1854,25 @@ def _qc10a_judge_negative_acceptance(
                 "new_handles": sorted({int(h) for h in after} - {int(h) for h in before}),
                 "proved_new_handles": sorted(proved),
                 "extra_handles": extras,
+                "returned_handle_proved": False,
             },
             summary=(
-                f"{label}: {operation} accepted (CKR_OK) on a must-reject leg but "
-                f"created extra proved objects {extras} beside the returned handle"
+                f"{label}: {operation} accepted (CKR_OK) on a must-reject leg "
+                f"with an unproved handle but created proved objects {extras}; "
+                "the returned handle is foreign, left alive"
+            ),
+        )
+    if handle not in proved:
+        C.classify(
+            "accepted_invalid",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=CKR_OK,
+            expected=(CKR_USER_NOT_LOGGED_IN,),
+            detail={"disposition": "unproved-handle-alive", "handle_after": handle},
+            summary=(
+                f"{label}: accepted invalid (CKR_OK) -- must reject; handle unproved, left alive"
             ),
         )
     status, evidence = _qc10a_read_private_bool(
@@ -1993,21 +2067,24 @@ class TestSOPrivateCreation:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} source setup"
             )
+            source_attempt: dict[Any, Any] = {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: source_label,
+                CKA_VALUE: b"qc10a-copy-source",
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+            }
             try:
-                candidate = create_object(
-                    rs.raw,
-                    rs.sh,
-                    {
-                        CKA_CLASS: CKO_DATA,
-                        CKA_LABEL: source_label,
-                        CKA_VALUE: b"qc10a-copy-source",
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                    },
-                )
+                candidate = create_object(rs.raw, rs.sh, source_attempt)
             except CkrAssertionError as exc:
                 _qc10a_setup_failed(
-                    exc, operation="C_CreateObject", purpose=f"{label} source setup"
+                    exc,
+                    operation="C_CreateObject",
+                    purpose=f"{label} source setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=source_attempt,
                 )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
@@ -2147,21 +2224,25 @@ class TestSOPrivateCreation:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} base setup"
             )
+            base_attempt: dict[Any, Any] = {
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+                CKA_DERIVE: True,
+                CKA_LABEL: source_label,
+                CKA_EXTRACTABLE: True,
+            }
             try:
-                candidate = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    256,
-                    attrs={
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                        CKA_DERIVE: True,
-                        CKA_LABEL: source_label,
-                        CKA_EXTRACTABLE: True,
-                    },
-                )
+                candidate = gen_aes_key(rs.raw, rs.sh, 256, attrs=base_attempt)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} base setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_GenerateKey",
+                    purpose=f"{label} base setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=base_attempt,
+                )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
                 rs.sh,
@@ -2263,22 +2344,26 @@ class TestSOPrivateCreation:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} KEK setup"
             )
+            kek_attempt: dict[Any, Any] = {
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_LABEL: source_label,
+                CKA_EXTRACTABLE: True,
+            }
             try:
-                candidate = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    256,
-                    attrs={
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                        CKA_WRAP: True,
-                        CKA_UNWRAP: True,
-                        CKA_LABEL: source_label,
-                        CKA_EXTRACTABLE: True,
-                    },
-                )
+                candidate = gen_aes_key(rs.raw, rs.sh, 256, attrs=kek_attempt)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} KEK setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_GenerateKey",
+                    purpose=f"{label} KEK setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=kek_attempt,
+                )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
                 rs.sh,
@@ -2313,20 +2398,24 @@ class TestSOPrivateCreation:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} target setup"
             )
+            target_attempt: dict[Any, Any] = {
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_LABEL: _qc10a_unique_label("unwrap-tgt"),
+            }
             try:
-                candidate = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    128,
-                    attrs={
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_LABEL: _qc10a_unique_label("unwrap-tgt"),
-                    },
-                )
+                candidate = gen_aes_key(rs.raw, rs.sh, 128, attrs=target_attempt)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} target setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_GenerateKey",
+                    purpose=f"{label} target setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=target_attempt,
+                )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
                 rs.sh,
@@ -2358,10 +2447,21 @@ class TestSOPrivateCreation:
                     ),
                 )
             target = candidate
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} wrap setup"
+            )
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_WrapKey", purpose=f"{label} wrap setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_WrapKey",
+                    purpose=f"{label} wrap setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt={},
+                )
             identity = (int(CKO_SECRET_KEY), int(CKK_AES))
             control_label = _qc10a_unique_label("unwrap-pub")
             negative_label = _qc10a_unique_label("unwrap-priv")
@@ -2464,21 +2564,24 @@ class TestUserPrivateCreationControls:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} source setup"
             )
+            source_attempt: dict[Any, Any] = {
+                CKA_CLASS: CKO_DATA,
+                CKA_LABEL: _qc10a_unique_label("ucopy-src"),
+                CKA_VALUE: b"qc10a-user-copy-source",
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+            }
             try:
-                candidate = create_object(
-                    rs.raw,
-                    rs.sh,
-                    {
-                        CKA_CLASS: CKO_DATA,
-                        CKA_LABEL: _qc10a_unique_label("ucopy-src"),
-                        CKA_VALUE: b"qc10a-user-copy-source",
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                    },
-                )
+                candidate = create_object(rs.raw, rs.sh, source_attempt)
             except CkrAssertionError as exc:
                 _qc10a_setup_failed(
-                    exc, operation="C_CreateObject", purpose=f"{label} source setup"
+                    exc,
+                    operation="C_CreateObject",
+                    purpose=f"{label} source setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=source_attempt,
                 )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
@@ -2576,21 +2679,25 @@ class TestUserPrivateCreationControls:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} base setup"
             )
+            base_attempt: dict[Any, Any] = {
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+                CKA_DERIVE: True,
+                CKA_LABEL: _qc10a_unique_label("uderive-base"),
+                CKA_EXTRACTABLE: True,
+            }
             try:
-                candidate = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    256,
-                    attrs={
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                        CKA_DERIVE: True,
-                        CKA_LABEL: _qc10a_unique_label("uderive-base"),
-                        CKA_EXTRACTABLE: True,
-                    },
-                )
+                candidate = gen_aes_key(rs.raw, rs.sh, 256, attrs=base_attempt)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} base setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_GenerateKey",
+                    purpose=f"{label} base setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=base_attempt,
+                )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
                 rs.sh,
@@ -2662,22 +2769,26 @@ class TestUserPrivateCreationControls:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} KEK setup"
             )
+            kek_attempt: dict[Any, Any] = {
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+                CKA_WRAP: True,
+                CKA_UNWRAP: True,
+                CKA_LABEL: _qc10a_unique_label("uunwrap-kek"),
+                CKA_EXTRACTABLE: True,
+            }
             try:
-                candidate = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    256,
-                    attrs={
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                        CKA_WRAP: True,
-                        CKA_UNWRAP: True,
-                        CKA_LABEL: _qc10a_unique_label("uunwrap-kek"),
-                        CKA_EXTRACTABLE: True,
-                    },
-                )
+                candidate = gen_aes_key(rs.raw, rs.sh, 256, attrs=kek_attempt)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} KEK setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_GenerateKey",
+                    purpose=f"{label} KEK setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=kek_attempt,
+                )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
                 rs.sh,
@@ -2712,20 +2823,24 @@ class TestUserPrivateCreationControls:
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} target setup"
             )
+            target_attempt: dict[Any, Any] = {
+                CKA_TOKEN: False,
+                CKA_PRIVATE: False,
+                CKA_EXTRACTABLE: True,
+                CKA_LABEL: _qc10a_unique_label("uunwrap-tgt"),
+            }
             try:
-                candidate = gen_aes_key(
-                    rs.raw,
-                    rs.sh,
-                    128,
-                    attrs={
-                        CKA_TOKEN: False,
-                        CKA_PRIVATE: False,
-                        CKA_EXTRACTABLE: True,
-                        CKA_LABEL: _qc10a_unique_label("uunwrap-tgt"),
-                    },
-                )
+                candidate = gen_aes_key(rs.raw, rs.sh, 128, attrs=target_attempt)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} target setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_GenerateKey",
+                    purpose=f"{label} target setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt=target_attempt,
+                )
             setup_after = _qc10a_after_inventory_or_judge(
                 rs,
                 rs.sh,
@@ -2757,10 +2872,21 @@ class TestUserPrivateCreationControls:
                     ),
                 )
             target = candidate
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} wrap setup"
+            )
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_WrapKey", purpose=f"{label} wrap setup")
+                _qc10a_setup_failed(
+                    exc,
+                    operation="C_WrapKey",
+                    purpose=f"{label} wrap setup",
+                    rs=rs,
+                    sh=rs.sh,
+                    before=setup_before,
+                    attempt={},
+                )
             attempt: dict[Any, Any] = {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,
