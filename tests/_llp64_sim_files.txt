@@ -1,6 +1,7 @@
 tests/test_attribute_encoding_contract.py
 tests/test_byte_kdf_protection_contract.py
 tests/test_ccm_ecma_b0_contract.py
+tests/test_context_auth_transition_contract.py
 tests/test_copy_attribute_contract.py
 tests/test_derived_key_format_contract.py
 tests/test_dh_peer_encoding_contract.py
@@ -12,6 +13,7 @@ tests/test_object_identity_contract.py
 tests/test_object_policy_effect_contract.py
 tests/test_protected_component_contract.py
 tests/test_search_lifecycle_contract.py
+tests/test_so_private_creation_contract.py
 tests/test_token_admin_contract.py
 tests/test_wrap_kem_handle_contract.py
 tests/test_wycheproof_gcm_iv_contract.py

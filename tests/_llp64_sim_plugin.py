@@ -49,6 +49,10 @@ PATCH_SITES: tuple[tuple[str, str], ...] = (
     ("test_wrap_kem_handle_contract", "_U64"),
     ("test_dh_peer_encoding_contract", _SENTINEL_NAME),
     ("test_dh_peer_encoding_contract", "_UNAVAILABLE"),
+    ("test_context_auth_transition_contract", _SENTINEL_NAME),
+    ("test_context_auth_transition_contract", "_UNAVAILABLE"),
+    ("test_so_private_creation_contract", _SENTINEL_NAME),
+    ("test_so_private_creation_contract", "_UNAVAILABLE"),
 )
 
 #: Production modules imported eagerly at patch time (before collection, so

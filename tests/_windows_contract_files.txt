@@ -2,6 +2,7 @@ tests/test_attribute_encoding_contract.py
 tests/test_byte_kdf_protection_contract.py
 tests/test_ccm_ecma_b0_contract.py
 tests/test_ckr_ctypes_abi.py
+tests/test_context_auth_transition_contract.py
 tests/test_copy_attribute_contract.py
 tests/test_derived_key_format_contract.py
 tests/test_dh_peer_encoding_contract.py
@@ -20,6 +21,7 @@ tests/test_raw_constants.py
 tests/test_search_lifecycle_contract.py
 tests/test_sentinel_width_invariant.py
 tests/test_signature_width_contract.py
+tests/test_so_private_creation_contract.py
 tests/test_token_admin_contract.py
 tests/test_windows_abi.py
 tests/test_windows_abi_bigvalues.py
