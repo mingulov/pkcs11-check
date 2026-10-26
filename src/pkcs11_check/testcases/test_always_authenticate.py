@@ -1213,14 +1213,14 @@ def _qc10b_decrypt_raw(raw: Any, sh: int, data: bytes, *, capacity: int) -> tupl
     return rv, bytes(out_buf[: min(reported, capacity)]), reported
 
 
-def _qc10b_encrypt_raw(raw: Any, sh: int, data: bytes) -> tuple[int, bytes]:
-    """C_Encrypt (RSA-2048 single shot); returns (rv, ciphertext)."""
+def _qc10b_encrypt_raw(raw: Any, sh: int, data: bytes) -> tuple[int, bytes, int]:
+    """C_Encrypt (RSA-2048 single shot); returns (rv, ciphertext, reported_len)."""
     in_buf = (ctypes.c_ubyte * len(data))(*data)
     out_buf = (ctypes.c_ubyte * _QC10B_RSA_BYTES)()
     out_len = CK_ULONG(_QC10B_RSA_BYTES)
     rv = int(raw.C_Encrypt(sh, in_buf, len(data), out_buf, byref(out_len)))
     reported = int(out_len.value)
-    return rv, bytes(out_buf[: min(reported, _QC10B_RSA_BYTES)])
+    return rv, bytes(out_buf[: min(reported, _QC10B_RSA_BYTES)]), reported
 
 
 def _qc10b_verify_rsa_signature(
@@ -2096,8 +2096,15 @@ class TestContextAuthTransitions:
         msg = b"qc10b-decrypt-plaintext"
         try:
             _qc10b_encrypt_init(rs, rs.sh, pub, label=label)
-            rv_enc, ct = _qc10b_encrypt_raw(rs.raw, rs.sh, msg)
+            rv_enc, ct, reported_enc = _qc10b_encrypt_raw(rs.raw, rs.sh, msg)
             _qc10b_stage_ok(rv_enc, operation="C_Encrypt", label=label)
+            _qc10b_output_length_or_judge(
+                reported_enc,
+                _QC10B_RSA_BYTES,
+                operation="C_Encrypt",
+                mechanism="CKM_RSA_PKCS",
+                label=label,
+            )
             _qc10b_decrypt_init(rs, rs.sh, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
             rv, pt, reported = _qc10b_decrypt_raw(rs.raw, rs.sh, ct, capacity=_QC10B_RSA_BYTES)
@@ -2146,8 +2153,15 @@ class TestContextAuthTransitions:
         garbage = b"\x55" * _QC10B_RSA_BYTES
         try:
             _qc10b_encrypt_init(rs, s2, pub, label=label)
-            rv_enc, ct = _qc10b_encrypt_raw(rs.raw, s2, msg)
+            rv_enc, ct, reported_enc = _qc10b_encrypt_raw(rs.raw, s2, msg)
             _qc10b_stage_ok(rv_enc, operation="C_Encrypt", label=label)
+            _qc10b_output_length_or_judge(
+                reported_enc,
+                _QC10B_RSA_BYTES,
+                operation="C_Encrypt",
+                mechanism="CKM_RSA_PKCS",
+                label=label,
+            )
             _qc10b_decrypt_init(rs, s2, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, s2, pin, label=label)
             rv_bad, _, _ = _qc10b_decrypt_raw(rs.raw, s2, garbage, capacity=_QC10B_RSA_BYTES)
@@ -2178,8 +2192,15 @@ class TestContextAuthTransitions:
         msg = b"qc10b-decrypt-bts"
         try:
             _qc10b_encrypt_init(rs, rs.sh, pub, label=label)
-            rv_enc, ct = _qc10b_encrypt_raw(rs.raw, rs.sh, msg)
+            rv_enc, ct, reported_enc = _qc10b_encrypt_raw(rs.raw, rs.sh, msg)
             _qc10b_stage_ok(rv_enc, operation="C_Encrypt", label=label)
+            _qc10b_output_length_or_judge(
+                reported_enc,
+                _QC10B_RSA_BYTES,
+                operation="C_Encrypt",
+                mechanism="CKM_RSA_PKCS",
+                label=label,
+            )
             _qc10b_decrypt_init(rs, rs.sh, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
             rv_tiny, _, _ = _qc10b_decrypt_raw(rs.raw, rs.sh, ct, capacity=1)
