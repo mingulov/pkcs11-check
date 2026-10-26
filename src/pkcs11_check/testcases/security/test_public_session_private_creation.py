@@ -955,6 +955,42 @@ def _qc10a_judge_setup_success(
         )
 
 
+def _qc10a_judge_wrap_setup_success(
+    *,
+    before: list[int],
+    after: list[int],
+    label: str,
+) -> None:
+    """Judge wrap-setup success: any inventory delta is an unproved effect.
+
+    C_WrapKey returns bytes, not a handle, so no delta handle can be proved
+    owned -- visibility, not ownership (R17-02). A non-empty delta stays
+    alive as an honest-deviation xfail citing the new handles; a zero delta
+    proceeds silently.
+    """
+    new_handles = sorted({int(handle) for handle in after} - {int(handle) for handle in before})
+    if new_handles:
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_WrapKey",
+            inherit_mechanism=False,
+            actual=CKR_OK,
+            detail={
+                "phase": "setup",
+                "disposition": "unproved-effect",
+                "new_handles": new_handles,
+                "proved_new_handles": [],
+            },
+            summary=(
+                f"{label}: C_WrapKey returned CKR_OK with an inventory delta "
+                f"{new_handles}; no output handle exists to prove ownership, "
+                "left alive"
+            ),
+        )
+
+
 def _qc10a_premise_refusal(rv: int, *, operation: str, label: str) -> NoReturn:
     """Judge a login/state premise refusal: clean CK_RV xfails, undefined fails."""
     if _qc10a_is_clean(rv):
@@ -2538,6 +2574,20 @@ class TestSOPrivateCreation:
                     before=setup_before,
                     attempt={},
                 )
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=0,
+                label=f"{label} wrap setup",
+                operation="C_WrapKey",
+                leg="positive",
+            )
+            _qc10a_judge_wrap_setup_success(
+                before=setup_before,
+                after=setup_after,
+                label=f"{label} wrap setup",
+            )
             identity = (int(CKO_SECRET_KEY), int(CKK_AES))
             control_label = _qc10a_unique_label("unwrap-pub")
             negative_label = _qc10a_unique_label("unwrap-priv")
@@ -2919,6 +2969,20 @@ class TestUserPrivateCreationControls:
                     before=setup_before,
                     attempt={},
                 )
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=0,
+                label=f"{label} wrap setup",
+                operation="C_WrapKey",
+                leg="positive",
+            )
+            _qc10a_judge_wrap_setup_success(
+                before=setup_before,
+                after=setup_after,
+                label=f"{label} wrap setup",
+            )
             attempt: dict[Any, Any] = {
                 CKA_CLASS: CKO_SECRET_KEY,
                 CKA_KEY_TYPE: CKK_AES,

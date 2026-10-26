@@ -1891,7 +1891,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 2178, characterization.total),
+        ("total", 2179, characterization.total),
         ("candidate_total", 1805, characterization.candidate_total),
         ("file_total", 257, characterization.file_total),
         (
@@ -1899,7 +1899,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("explicit_mechanism_grouping", 776),
                 ("explicit_mechanism_readback", 61),
-                ("non_readback", 373),
+                ("non_readback", 374),
                 ("safe_mechanism_free_readback", 269),
                 ("unresolved", 699),
             ),
@@ -1907,7 +1907,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "700b916d12c0153d85db4ac46a5e0bc15ca6d3551fef255476ba4e1fe0521ce5",
+            "606839e705d0a973d772e5ec9358d81ca0760a1a3df4817a4cebeb6bcae21efd",
             characterization.digest,
         ),
         (
@@ -1920,7 +1920,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("explicit_mechanism_grouping", 2075),
                 ("explicit_mechanism_readback", 357),
-                ("non_readback", 1291),
+                ("non_readback", 1305),
                 ("safe_mechanism_free_readback", 2183),
                 ("unresolved", 2845),
                 ("unsafe_inherited_readback", 22),
@@ -1939,7 +1939,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("classify", 598),
                 ("fail_as", 411),
                 ("record_as", 408),
-                ("xfail_as", 330),
+                ("xfail_as", 331),
             ),
             characterization.direct_emitter_census,
         ),

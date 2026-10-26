@@ -157,6 +157,7 @@ class _SoCreationRaw:
         self.hide_setup_from_so: bool = False
         self.wrap_rv: int = _OK
         self.wrap_allocate_on_refusal = False
+        self.wrap_allocate_on_success = False
         self.wrapped_blob = b"\xa6" * 24
 
     def _alloc(self, attrs: dict[int, bytes]) -> int:
@@ -410,6 +411,10 @@ class _SoCreationRaw:
             return self.wrap_rv
         blob = bytes(self.wrapped_blob)
         if not out:
+            if self.wrap_allocate_on_success:
+                # One unrelated allocation per wrap (query pass only; the
+                # value-read pass must not allocate a second object).
+                self.leaked.append(self._alloc({int(CKA_LABEL): b"qc10a-wrap-success-foreign"}))
             _fill_ulong(out_len, len(blob))
             return _OK
         ctypes.memmove(out, blob, len(blob))
@@ -737,8 +742,9 @@ _SO_SETUP_FINDS = {
     "test_so_cannot_copy_to_private_object": 2,
     "test_so_cannot_generate_private_key": 0,
     "test_so_cannot_derive_private_key": 2,
-    # KEK before/after + target before/after + wrap-setup before (R15-03).
-    "test_so_cannot_unwrap_private_key": 5,
+    # KEK before/after + target before/after + wrap-setup before/after
+    # (R15-03 refusal inventory, R17-02 success inventory).
+    "test_so_cannot_unwrap_private_key": 6,
 }
 
 
@@ -1855,5 +1861,36 @@ def test_qc10a_setup_success_with_foreign_companion_xfails_and_cleans_owned(
     assert all(handle not in fake.destroys for handle in fake.leaked)
     assert all(handle in fake.objects for handle in fake.leaked)
     assert fake.setup_handles
+    assert all(handle in fake.destroys for handle in fake.setup_handles)
+    assert fake.attempt_calls == []
+
+
+# --- fix round 5 (R17-02): wrap-setup success runs the after-inventory ------
+
+
+@pytest.mark.parametrize(
+    ("runner", "method"),
+    [
+        ("so", "test_so_cannot_unwrap_private_key"),
+        ("user", "test_user_can_unwrap_private_key"),
+    ],
+)
+def test_qc10a_wrap_setup_success_with_delta_xfails_unproved(runner: str, method: str) -> None:
+    """Wrap-setup success that gains an inventory delta: unproved-effect xfail,
+    delta alive and cited; no output handle exists so nothing is proved."""
+    fake = _SoCreationRaw()
+    if runner == "so":
+        fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.wrap_allocate_on_success = True
+    run = _run_so_leg if runner == "so" else _run_user_leg
+    assert_xfails(run, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.operation == "C_WrapKey"
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert rec.detail["phase"] == "setup"
+    assert fake.leaked
+    assert sorted(rec.detail["new_handles"]) == sorted(fake.leaked)
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert all(handle in fake.objects for handle in fake.leaked)
     assert all(handle in fake.destroys for handle in fake.setup_handles)
     assert fake.attempt_calls == []
