@@ -123,6 +123,7 @@ class _SoCreationRaw:
         self.setup_rv: int = _OK
         self.setup_script: list[int] = []
         self.ok_companion: bool = False
+        self.hide_ok_companion_from_so: bool = False
         self.hide_attempt_leak_from_so: bool = False
         self.attempt_script: list[int] = []
         self.attempt_leak = "none"  # none | proved | foreign
@@ -310,7 +311,10 @@ class _SoCreationRaw:
             stored.setdefault(int(CKA_TOKEN), b"\x00")
         handle = self._alloc(stored)
         if self.ok_companion:
-            self.leaked.append(self._alloc({int(CKA_LABEL): b"qc10a-companion"}))
+            companion = self._alloc({int(CKA_LABEL): b"qc10a-companion"})
+            self.leaked.append(companion)
+            if self.hide_ok_companion_from_so:
+                self.hide_from_so.add(companion)
         _write_handle(
             handle_ptr,
             self.attempt_handle_write if self.attempt_handle_write is not None else handle,
@@ -647,6 +651,25 @@ def test_so_leg_so_hidden_refused_leak_swept_after_restore(method: str, op: str)
     assert fake.leaked
     assert all(handle in fake.destroys for handle in fake.leaked)
     assert fake.login_state == "user"
+    assert any(entry.startswith("close:") for entry in fake.ops)
+
+
+@pytest.mark.parametrize(("method", "_op"), _SO_LEGS)
+def test_so_leg_control_with_hidden_companion_swept_after_restore(method: str, _op: str) -> None:
+    """A control-window companion hidden from SO inventories must not pass:
+    the post-restoration full-remainder sweep xfails it alive."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.ok_companion = True
+    fake.hide_ok_companion_from_so = True
+    assert_xfails(_run_so_leg, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert rec.detail["new_handles"] == list(fake.leaked)
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert fake.login_state == "user"
+    assert any(entry.startswith("close:") for entry in fake.ops)
 
 
 @pytest.mark.parametrize(("method", "_op"), _SO_LEGS)

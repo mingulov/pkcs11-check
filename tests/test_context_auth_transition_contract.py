@@ -880,7 +880,7 @@ def test_query_length_mismatch_fails_wrong_result() -> None:
 # --- review fix round: reuse tiers, helper wiring, update termination --------
 
 
-@pytest.mark.parametrize("rv", [_CLEAN_REFUSAL, _OTHER_CLEAN])
+@pytest.mark.parametrize("rv", [_CLEAN_REFUSAL, _OTHER_CLEAN, _VENDOR_REFUSAL])
 def test_reuse_update_noncanonical_refusal_xfails_nonspec_reject(rv: int) -> None:
     """A grantless reuse Update refused with a noncanonical clean code reads as
     an honest alternate rejection (nonspec_reject), like the grantless Final
@@ -940,3 +940,64 @@ def test_sign_update_ok_has_no_error_to_judge_xfails() -> None:
     fake = _CtxAuthRaw()
     assert_xfails(_run, "test_context_sign_update_error_terminates_operation", _rs(fake), _config())
     _assert_xfail_record("not_operational")
+
+
+# --- update-error node staging parity (explicit: its judged call differs) ---
+
+_UPDATE_ERROR_NODE = "test_context_sign_update_error_terminates_operation"
+
+
+@pytest.mark.parametrize("rv", [int(CKR_FUNCTION_NOT_SUPPORTED), _CLEAN_REFUSAL])
+def test_update_error_node_login_refusal_xfails_premise_unmet(rv: int) -> None:
+    fake = _CtxAuthRaw()
+    fake.login_rv = rv
+    assert_xfails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_Login"
+    assert rec.actual_ckr == ckr_name(rv)
+
+
+def test_update_error_node_login_undefined_rv_fails() -> None:
+    fake = _CtxAuthRaw()
+    fake.login_rv = _UNDEFINED_RV
+    _assert_fails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_Login"
+
+
+def test_update_error_node_keygen_refusal_xfails_with_producer_context() -> None:
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _CLEAN_REFUSAL
+    assert_xfails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.actual_ckr == ckr_name(_CLEAN_REFUSAL)
+
+
+def test_update_error_node_keygen_undefined_rv_fails() -> None:
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _UNDEFINED_RV
+    _assert_fails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+
+
+def test_update_error_node_setup_readback_omission_skips() -> None:
+    fake = _CtxAuthRaw()
+    fake.getattr_omit = {int(CKA_ALWAYS_AUTHENTICATE)}
+    assert_skips(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+
+
+def test_update_error_node_missing_pin_skips() -> None:
+    fake = _CtxAuthRaw()
+    assert_skips(_run, _UPDATE_ERROR_NODE, _rs(fake), _config(pin=None))
+    assert C.get_records() == []
+    assert fake.login_calls == []
+
+
+def test_update_error_node_undefined_update_rv_fails() -> None:
+    fake = _CtxAuthRaw()
+    fake.sign_update_script = [_UNDEFINED_RV]
+    _assert_fails(_run, _UPDATE_ERROR_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_SignUpdate"

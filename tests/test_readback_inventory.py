@@ -1892,14 +1892,14 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     """
     pins: list[tuple[str, object, object]] = [
         ("total", 2159, characterization.total),
-        ("candidate_total", 1796, characterization.candidate_total),
+        ("candidate_total", 1795, characterization.candidate_total),
         ("file_total", 257, characterization.file_total),
         (
             "statuses",
             (
-                ("explicit_mechanism_grouping", 767),
+                ("explicit_mechanism_grouping", 766),
                 ("explicit_mechanism_readback", 61),
-                ("non_readback", 363),
+                ("non_readback", 364),
                 ("safe_mechanism_free_readback", 269),
                 ("unresolved", 699),
             ),
@@ -1907,20 +1907,20 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "d84944c97a3ea632a38b60bdb5999beaa8b0508a0bb69c1b090c71a81c6b04d3",
+            "ebb46077c286c5105695c9117c13a563ee22a4dfa04a714aee093e8fd0451965",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "ecf8ac8d15bf8f26542cf955d642d2389941022b9d54bb6174483a30c0b09abf",
+            "d4b7ba7e0017f1287ce25a35de8263b3b3c171a5e2a9245eafb59ac0f23fd9b5",
             characterization.candidate_digest,
         ),
         (
             "state_statuses",
             (
-                ("explicit_mechanism_grouping", 2033),
+                ("explicit_mechanism_grouping", 2032),
                 ("explicit_mechanism_readback", 357),
-                ("non_readback", 1126),
+                ("non_readback", 1130),
                 ("safe_mechanism_free_readback", 2181),
                 ("unresolved", 2843),
                 ("unsafe_inherited_readback", 22),
