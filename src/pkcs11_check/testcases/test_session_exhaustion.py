@@ -457,6 +457,9 @@ def _judge_pin_lengths(trace: token_admin.AdminTrace, *, op: str) -> None:
     except KeyError:
         raise ValueError(f"unknown op {op!r}") from None
     label = f"QC11b {op} lengths"
+    # F3: an undefined bounds read FAILs (same doctrine as R19-04 snapshots);
+    # only defined failures degrade to the untestable skip below.
+    token_admin.fail_on_undefined_snapshots(trace, label=label, detail={"op": op})
     if trace.pin_bounds is None:
         pytest.skip(f"{label}: PIN bounds unreadable; length MUSTs untestable")
     min_pin, max_pin = trace.pin_bounds
