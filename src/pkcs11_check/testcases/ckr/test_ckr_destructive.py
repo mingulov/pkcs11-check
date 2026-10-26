@@ -53,6 +53,7 @@ from pkcs11_check.testcases._shellcmd import shell_invocation
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.test_so_pin import (
     _assess_provision_journey,
+    _qc11c_snapshot_detail,
     _raise_qc11c_fail_grades,
     _raise_strongest_qc11c,
 )
@@ -462,6 +463,14 @@ def _run_qc11c_reset_node(
         reset_raw = token_admin.parse_child_output(rc2, out2, err2, label="QC11c reset")
         if token_admin.trace_skip_reason(reset_raw, no_slots="fail") is not None:
             _raise_qc11c_fail_grades(records_p)
+            # R20-01b: same-trace leg of the prescan — the reset trace's own
+            # undefined snapshots FAIL before the gate skip (raising twin: the
+            # assessor asserts completeness a setup-failed trace lacks).
+            token_admin.fail_on_undefined_snapshots(
+                reset_raw,
+                label="QC11c sacrificial reset",
+                detail=_qc11c_snapshot_detail(reset_raw),
+            )
         reset = token_admin.gate_child_trace(reset_raw, label="QC11c reset", no_slots="fail")
         records_r = _assess_sacrificial_reset(reset)
         _raise_strongest_qc11c(records_p + records_r)

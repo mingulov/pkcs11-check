@@ -761,6 +761,18 @@ def _raise_qc11c_fail_grades(records: list[Classification]) -> None:
         _raise_strongest_qc11c(fails)
 
 
+def _qc11c_snapshot_detail(trace: token_admin.AdminTrace) -> dict[str, Any]:
+    """Steps/inv detail for QC11c same-trace snapshot prescans (R20-01).
+
+    Mirrors the detail the QC11c assessors attach to their snapshot records so
+    the prescan judges the same grades the gate skip would otherwise mask.
+    """
+    return {
+        "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
+        "inv": list(trace.inv_objects),
+    }
+
+
 def _run_qc11c_journey_node(
     cap: throwaway.ThrowawayCapability,
     p11_config: Any,
@@ -770,7 +782,18 @@ def _run_qc11c_journey_node(
 ) -> None:
     with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
         rc1, out1, err1 = _launch(minted, "qc11c_journey", {}, p11_config=p11_config)
-        phase1 = token_admin.check_child_output(rc1, out1, err1, label="QC11c journey")
+        # R20-01a collect-then-judge (same trace): when phase one would skip,
+        # its own undefined-snapshot FAIL grades preempt the skip. The raising
+        # twin is required: the assessor asserts completeness, which a
+        # setup-failed trace cannot satisfy.
+        phase1_raw = token_admin.parse_child_output(rc1, out1, err1, label="QC11c journey")
+        if token_admin.trace_skip_reason(phase1_raw) is not None:
+            token_admin.fail_on_undefined_snapshots(
+                phase1_raw,
+                label="QC11c provisioning journey",
+                detail=_qc11c_snapshot_detail(phase1_raw),
+            )
+        phase1 = token_admin.gate_child_trace(phase1_raw, label="QC11c journey")
         records1, reached = _assess_provision_journey(phase1)
         if not reached:
             assert records1, "QC11c journey: unreached without any record"

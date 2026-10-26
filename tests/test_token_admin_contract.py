@@ -4773,3 +4773,227 @@ def test_f3_pin_lengths_defined_bounds_failure_still_skips(capsys: Any) -> None:
     skipped = assert_skips(tse._judge_pin_lengths, trace, op="set_pin")
     assert "PIN bounds unreadable" in str(skipped)
     assert classification.get_records() == []
+
+
+# --- R20-01: same-trace setup skip must not mask undefined snapshots ---------
+
+_R20_UNDEFINED_RV = 0x7FFFFFFE
+
+
+def _r20_assert_fail_preempts_skip(fn: Any, *args: Any, **kwargs: Any) -> Failed:
+    """Run a QC11c node; a same-trace setup skip masking an undefined snapshot is RED."""
+    try:
+        fn(*args, **kwargs)
+    except XFailed as exc:
+        pytest.fail(f"expected pytest.fail(), got pytest.xfail() instead: {exc}")
+    except Skipped as exc:
+        pytest.fail(f"same-trace setup skip masked an undefined snapshot FAIL: {exc}")
+    except Failed as exc:
+        return exc
+    pytest.fail("expected pytest.fail(), but the node returned normally")
+
+
+def _assert_r20_snapshot_fail_record() -> Any:
+    """The single fail record cites the 0x7FFFFFFE snapshot RV via C_GetTokenInfo."""
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GetTokenInfo"
+    assert rec.actual_ckr == ckr_name(_R20_UNDEFINED_RV)
+    assert "undefined" in rec.summary.lower()
+    return rec
+
+
+def test_r20_01a_journey_own_setup_failure_undefined_snapshot_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_R20_UNDEFINED_RV]
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert [(step.name, step.rv) for step in trace.steps] == [
+        ("init_token", _OK),
+        ("snapshot:after_init_token", _R20_UNDEFINED_RV),
+        ("setup:open", _GENERAL_ERROR),
+    ]
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    _r20_assert_fail_preempts_skip(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_r20_snapshot_fail_record()
+    assert "after_init_token" in rec.label
+
+
+def test_r20_01b_reset_own_setup_failure_undefined_snapshot_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_R20_UNDEFINED_RV]
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_reset", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert [(step.name, step.rv) for step in trace.steps] == [
+        ("reset_init_token", _OK),
+        ("snapshot:after_reset_init_token", _R20_UNDEFINED_RV),
+        ("setup:open", _GENERAL_ERROR),
+    ]
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(out),
+        ]
+    )
+    _r20_assert_fail_preempts_skip(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_r20_snapshot_fail_record()
+    assert "after_reset_init_token" in rec.label
+
+
+def test_r20_01a_journey_defined_snapshot_setup_failure_still_skips(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_GENERAL_ERROR]
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    skipped = assert_skips(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c journey: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert classification.get_records() == []
+
+
+def test_r20_01b_reset_defined_snapshot_setup_failure_still_skips(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_GENERAL_ERROR]
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_reset", fake, {}, capsys)
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(out),
+        ]
+    )
+    skipped = assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c reset: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert classification.get_records() == []
+
+
+def test_r20_01a_journey_setup_failure_without_snapshots_still_skips(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert [step for step in trace.steps if step.name.startswith("snapshot")] == []
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    skipped = assert_skips(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c journey: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert classification.get_records() == []
+
+
+def test_r20_01b_reset_setup_failure_without_snapshots_still_skips(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_reset", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert [step for step in trace.steps if step.name.startswith("snapshot")] == []
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(out),
+        ]
+    )
+    skipped = assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c reset: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert classification.get_records() == []
+
+
+def test_r20_01a_no_double_judge_clean_gating_journey_uses_record_path() -> None:
+    phase1 = _with_snapshot(
+        _reached_trace(old_rejected=_OK), "snapshot:after_so_login", _R20_UNDEFINED_RV
+    )
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(_verify_trace()))]
+    )
+    _assert_fails(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    # Phase two launched: the would-skip-conditional prescan did not raise early.
+    assert len(launch.calls) == 2
+    records = classification.get_records()
+    assert [rec.outcome for rec in records] == ["fail", "fail"]
+    assert {rec.reason for rec in records} == {"self_contradiction", "accepted_invalid"}
+
+
+def test_r20_01b_no_double_judge_clean_gating_reset_uses_record_path() -> None:
+    phase2 = _with_snapshot(
+        _reset_trace(
+            [
+                ("reset_init_token", _OK),
+                ("setup:open", _OK),
+                ("so_login", _OK),
+                ("old_user_after_reset", _OK),
+            ]
+        ),
+        "snapshot:end",
+        _R20_UNDEFINED_RV,
+    )
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(_render_trace(phase2)),
+        ]
+    )
+    _assert_fails(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    # Both assessor records collected: the would-skip-conditional prescan did
+    # not raise early (an early raise would leave exactly one record).
+    records = classification.get_records()
+    assert [rec.outcome for rec in records] == ["fail", "fail"]
+    assert {rec.reason for rec in records} == {"self_contradiction", "accepted_invalid"}
