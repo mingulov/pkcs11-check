@@ -578,11 +578,37 @@ def _run_lockout_judges(
     )
 
 
+def _prescan_lockout_fails(trace: token_admin.AdminTrace, *, role: str) -> None:
+    """FAIL-grade half of the lockout judge; xfail tiers suppressed, never raised."""
+    label = f"QC11a {role} countdown"
+    detail: dict[str, Any] = {"role": role, "attempts": _qc11a_attempt_entries(trace, role)}
+    _run_lockout_judges(trace, role=role, label=label, detail=detail, fails_only=True)
+
+
+def _fail_on_undefined_snapshots(
+    trace: token_admin.AdminTrace, *, label: str, detail: dict[str, Any]
+) -> None:
+    """R19-04: undefined ``snapshot:*`` RVs FAIL; defined snapshot failures stay tolerated."""
+    for step in trace.steps:
+        if step.name == "snapshot" or step.name.startswith("snapshot:"):
+            if not (is_standard_ckr(step.rv) or is_vendor_defined_ckr(step.rv)):
+                fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=f"{label}: {step.name}",
+                    operation="C_GetTokenInfo",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=step.rv,
+                    summary=f"{label}: token snapshot returned undefined CK_RV {ckr_name(step.rv)}",
+                    detail=detail,
+                )
+
+
 def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
     """Judge one burn trace for countdown consistency (acceptance/contradiction fail)."""
     low, final, locked = _qc11a_role_flags(role)
     label = f"QC11a {role} countdown"
-    detail: dict[str, Any] = {"role": role, "attempts": _qc11a_attempt_entries(trace, role)}
     initial = dict(trace.flags).get("initial")
     if initial is not None:
         assert not (initial & (low | final | locked)), (
@@ -590,7 +616,8 @@ def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
         )
     # R14-03: FAIL-grade observations (acceptance, undefined RVs, flag
     # contradictions) preempt earlier xfail tiers — prescan first, then tier.
-    _run_lockout_judges(trace, role=role, label=label, detail=detail, fails_only=True)
+    _prescan_lockout_fails(trace, role=role)
+    detail: dict[str, Any] = {"role": role, "attempts": _qc11a_attempt_entries(trace, role)}
     _run_lockout_judges(trace, role=role, label=label, detail=detail, fails_only=False)
 
 
@@ -761,11 +788,13 @@ def _judge_restart_persistence_fails(
     role: str,
     correct: token_admin.AdminStep,
     last_before: int | None,
+    second: token_admin.AdminTrace,
     second_initial: int | None,
     label: str,
     detail: dict[str, Any],
 ) -> None:
     """FAIL-grade half of restart persistence; runs before first-trace tiers."""
+    _fail_on_undefined_snapshots(second, label=label, detail=detail)
     _, _, locked = _qc11a_role_flags(role)
     if (
         last_before is not None
@@ -850,6 +879,7 @@ def _judge_restart_persistence(
         role=role,
         correct=correct,
         last_before=last_before,
+        second=second,
         second_initial=second_initial,
         label=label,
         detail=detail,
@@ -1010,7 +1040,23 @@ def _run_qc11a_persistence_node(
             {"role": role},
             p11_config=p11_config,
         )
-        second = token_admin.check_child_output(rc2, out2, err2, label=f"QC11a {role} persist/2")
+        # R19-02 collect-then-judge: when phase two would skip, phase-one FAIL
+        # grades (and phase-two undefined snapshots) preempt the skip.
+        second_raw = token_admin.parse_child_output(
+            rc2, out2, err2, label=f"QC11a {role} persist/2"
+        )
+        if token_admin.trace_skip_reason(second_raw) is not None:
+            _prescan_lockout_fails(first, role=role)
+            _fail_on_undefined_snapshots(
+                second_raw,
+                label=f"QC11a {role} restart persistence",
+                detail={
+                    "role": role,
+                    "first_attempts": _qc11a_attempt_entries(first, role),
+                    "second_attempts": _qc11a_attempt_entries(second_raw, role),
+                },
+            )
+        second = token_admin.gate_child_trace(second_raw, label=f"QC11a {role} persist/2")
         _judge_restart_persistence(first, second, role=role)
 
 

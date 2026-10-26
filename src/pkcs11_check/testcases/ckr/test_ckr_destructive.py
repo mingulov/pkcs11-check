@@ -53,6 +53,7 @@ from pkcs11_check.testcases._shellcmd import shell_invocation
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.test_so_pin import (
     _assess_provision_journey,
+    _raise_qc11c_fail_grades,
     _raise_strongest_qc11c,
 )
 
@@ -453,9 +454,12 @@ def _run_qc11c_reset_node(
             _raise_strongest_qc11c(records_p)
             return
         rc2, out2, err2 = _launch(minted, "qc11c_reset", {}, p11_config=p11_config)
-        reset = token_admin.check_child_output(
-            rc2, out2, err2, label="QC11c reset", no_slots="fail"
-        )
+        # R19-02 collect-then-judge: when the reset leg would skip, provision
+        # FAIL grades preempt the skip.
+        reset_raw = token_admin.parse_child_output(rc2, out2, err2, label="QC11c reset")
+        if token_admin.trace_skip_reason(reset_raw, no_slots="fail") is not None:
+            _raise_qc11c_fail_grades(records_p)
+        reset = token_admin.gate_child_trace(reset_raw, label="QC11c reset", no_slots="fail")
         records_r = _assess_sacrificial_reset(reset)
         _raise_strongest_qc11c(records_p + records_r)
 

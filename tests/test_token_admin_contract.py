@@ -4174,3 +4174,361 @@ def test_success_reset_unreadable_post_skips() -> None:
     trace = trace._replace(flags=flags)
     skipped = assert_skips(pin_case._judge_success_reset, trace, role="user")
     assert "untestable" in str(skipped)
+
+
+# --- Part 7: Task 22 fix round 2 (Codex round 19: R19-01..R19-04) ------------
+
+
+def _r19_assert_fail_preempts_skip(fn: Any, *args: Any, **kwargs: Any) -> Failed:
+    """Run a two-phase node; a phase-two skip masking a phase-one FAIL is RED."""
+    try:
+        fn(*args, **kwargs)
+    except XFailed as exc:
+        pytest.fail(f"expected pytest.fail(), got pytest.xfail() instead: {exc}")
+    except Skipped as exc:
+        pytest.fail(f"phase-two setup skip masked an established phase-one FAIL: {exc}")
+    except Failed as exc:
+        return exc
+    pytest.fail("expected pytest.fail(), but the node returned normally")
+
+
+def _r19_assert_gate_fails(out: str, *, label: str) -> Failed:
+    """Run the child gate; an unexercised skip over an undefined RV is RED."""
+    try:
+        token_admin.check_child_output(0, out, "", label=label)
+    except XFailed as exc:
+        pytest.fail(f"expected pytest.fail(), got pytest.xfail() instead: {exc}")
+    except Skipped as exc:
+        pytest.fail(f"undefined provisioning RV skipped as unexercised: {exc}")
+    except Failed as exc:
+        return exc
+    pytest.fail("expected pytest.fail(), but the gate returned a trace")
+
+
+def _r19_ph2_setup_refused(role: str) -> token_admin.AdminTrace:
+    return token_admin.AdminTrace(
+        steps=(token_admin.AdminStep("setup:open", _GENERAL_ERROR),),
+        flags=(("initial", _flags_for(role, 1)),),
+        pin_bounds=(4, 32),
+        inv_objects=(),
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+
+
+def _r19_ph2_snapshot(role: str, snapshot_rv: int, correct_rv: int) -> token_admin.AdminTrace:
+    return token_admin.AdminTrace(
+        steps=(
+            token_admin.AdminStep("snapshot:initial", snapshot_rv),
+            token_admin.AdminStep("setup:open", _OK),
+            token_admin.AdminStep(f"login:{role}:correct", correct_rv),
+            token_admin.AdminStep("snapshot:final", snapshot_rv),
+        ),
+        flags=(("initial", None), ("final", None)),
+        pin_bounds=None,
+        inv_objects=(),
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+
+
+def test_r19_01_so_burn_provisions_user_for_other_role_check(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    out = _run_probe("qc11a_burn", fake, _burn_extra("so", 2, then_other_role_correct=True), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is None
+    assert ("setup:init_pin", _OK) in [(s.name, s.rv) for s in trace.steps]
+    assert ("login:user:correct", _OK) in [(s.name, s.rv) for s in trace.steps]
+
+
+def test_r19_01_so_independence_genuine_measurement(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    out = _run_probe("qc11a_burn", fake, _burn_extra("so", 2, then_other_role_correct=True), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    try:
+        pin_case._judge_independence(trace, burned_role="so")
+    except XFailed as exc:
+        pytest.fail(f"genuine SO independence measurement xfailed: {exc}")
+    assert classification.get_records() == []
+
+
+def test_r19_01_so_burn_init_pin_refusal_is_explicit_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_pin_always = _GENERAL_ERROR
+    out = _run_probe("qc11a_burn", fake, _burn_extra("so", 2, then_other_role_correct=True), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is not None
+    assert "setup_init_pin" in trace.assumption_failed
+    skipped = assert_skips(
+        token_admin.check_child_output, 0, out, "", label="QC11a so independence"
+    )
+    assert "setup_init_pin" in str(skipped)
+
+
+@pytest.mark.parametrize("role", _LOGIN_ROLES)
+def test_r19_02_persistence_phase1_acceptance_preempts_phase2_skip(role: str) -> None:
+    first = _lockout_trace(role, [_GENERAL_ERROR, _OK], correct_rv=None, final_rank=1)
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(first)),
+            _ScriptedChild(_render_trace(_r19_ph2_setup_refused(role))),
+        ]
+    )
+    _r19_assert_fail_preempts_skip(
+        pin_case._run_qc11a_persistence_node,
+        _capability(),
+        _StrictConfig(),
+        role=role,
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_fail_record("accepted_invalid", None)
+    assert "authentication bypass" in rec.summary
+
+
+@pytest.mark.parametrize("role", _LOGIN_ROLES)
+def test_r19_02_persistence_phase1_undefined_preempts_phase2_skip(role: str) -> None:
+    first = _lockout_trace(role, [_GENERAL_ERROR, _UNDEFINED_RV], correct_rv=None, final_rank=1)
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(first)),
+            _ScriptedChild(_render_trace(_r19_ph2_setup_refused(role))),
+        ]
+    )
+    _r19_assert_fail_preempts_skip(
+        pin_case._run_qc11a_persistence_node,
+        _capability(),
+        _StrictConfig(),
+        role=role,
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+
+
+def test_r19_02_journey_phase1_fail_preempts_phase2_skip() -> None:
+    phase1 = _reached_trace(old_rejected=_OK)
+    phase2 = _verify_trace([("setup:open", _GENERAL_ERROR)])
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(phase2))]
+    )
+    _r19_assert_fail_preempts_skip(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_fail_record("accepted_invalid", "lifecycle")
+    assert "old PIN" in rec.summary
+
+
+def test_r19_02_reset_phase1_fail_preempts_phase2_skip() -> None:
+    phase1 = _reached_trace(old_rejected=_OK)
+    phase2 = _reset_trace([("reset_init_token", _OK), ("setup:open", _GENERAL_ERROR)])
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(phase2))]
+    )
+    _r19_assert_fail_preempts_skip(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_fail_record("accepted_invalid", "lifecycle")
+    assert "old PIN" in rec.summary
+
+
+def test_r19_02_persistence_phase1_xfail_still_skips_on_phase2_setup_refusal() -> None:
+    first = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, final_rank=1)
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(first)),
+            _ScriptedChild(_render_trace(_r19_ph2_setup_refused("user"))),
+        ]
+    )
+    assert_skips(
+        pin_case._run_qc11a_persistence_node,
+        _capability(),
+        _StrictConfig(),
+        role="user",
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert classification.get_records() == []
+
+
+def test_r19_02_journey_reached_clean_still_skips_on_phase2_setup_refusal() -> None:
+    phase2 = _verify_trace([("setup:open", _GENERAL_ERROR)])
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(_render_trace(phase2)),
+        ]
+    )
+    assert_skips(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert classification.get_records() == []
+
+
+def test_r19_02_reset_reached_clean_still_skips_on_phase2_setup_refusal() -> None:
+    phase2 = _reset_trace([("reset_init_token", _OK), ("setup:open", _GENERAL_ERROR)])
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(_render_trace(phase2)),
+        ]
+    )
+    assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert classification.get_records() == []
+
+
+def test_r19_03_burn_init_token_undefined_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_token_always = _UNDEFINED_RV
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    _r19_assert_gate_fails(out, label="QC11a user countdown")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert "undefined" in rec.summary.lower()
+
+
+@pytest.mark.parametrize("op", ("init_pin", "set_pin"))
+def test_r19_03_pin_lengths_init_token_undefined_fails(op: str, capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_token_always = _UNDEFINED_RV
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": op}, capsys)
+    _r19_assert_gate_fails(out, label=f"QC11b {op}")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert "undefined" in rec.summary.lower()
+
+
+def test_r19_03_setup_init_pin_undefined_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_pin_always = _UNDEFINED_RV
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    _r19_assert_gate_fails(out, label="QC11a user countdown")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+
+
+def test_r19_03_setup_open_undefined_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.open_script = [_UNDEFINED_RV]
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    _r19_assert_gate_fails(out, label="QC11a user countdown")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+
+
+def test_r19_03_tokeninfo_undefined_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    _r19_assert_gate_fails(out, label="QC11a user countdown")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+
+
+def test_r19_03_vendor_init_token_refusal_still_skips(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_token_always = _VENDOR_RV
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    skipped = assert_skips(token_admin.check_child_output, 0, out, "", label="QC11a user countdown")
+    assert "self_provision" in str(skipped)
+    assert classification.get_records() == []
+
+
+def test_r19_04_read_preserves_undefined_snapshot_rv(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11a_read", fake, {"role": "user"}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    assert ("snapshot:initial", _UNDEFINED_RV) in [(s.name, s.rv) for s in trace.steps]
+    assert ("snapshot:final", _UNDEFINED_RV) in [(s.name, s.rv) for s in trace.steps]
+
+
+def test_r19_04_persistence_undefined_snapshot_fails() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    second = _r19_ph2_snapshot("user", _UNDEFINED_RV, _OK)
+    try:
+        pin_case._judge_restart_persistence(first, second, role="user")
+    except Failed:
+        rec = _assert_fail_record("self_contradiction", "metadata")
+        assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+    else:
+        pytest.fail("undefined phase-two snapshot RV passed with zero records")
+
+
+def test_r19_04_persistence_node_undefined_snapshot_fails() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    second = _r19_ph2_snapshot("user", _UNDEFINED_RV, _OK)
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(first)), _ScriptedChild(_render_trace(second))]
+    )
+    try:
+        pin_case._run_qc11a_persistence_node(
+            _capability(),
+            _StrictConfig(),
+            role="user",
+            _session_factory=_session_factory(),
+            _launch=launch,
+        )
+    except Failed:
+        rec = _assert_fail_record("self_contradiction", "metadata")
+        assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+    else:
+        pytest.fail("undefined phase-two snapshot RV passed with zero records")
+
+
+def test_r19_04_defined_snapshot_failure_still_passes() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    second = _r19_ph2_snapshot("user", _GENERAL_ERROR, _OK)
+    pin_case._judge_restart_persistence(first, second, role="user")
+    assert classification.get_records() == []
+
+
+def test_r19_04_snapshot_undefined_preempts_phase2_setup_skip() -> None:
+    first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
+    second = token_admin.AdminTrace(
+        steps=(
+            token_admin.AdminStep("snapshot:initial", _UNDEFINED_RV),
+            token_admin.AdminStep("setup:open", _GENERAL_ERROR),
+        ),
+        flags=(("initial", None),),
+        pin_bounds=None,
+        inv_objects=(),
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(first)), _ScriptedChild(_render_trace(second))]
+    )
+    _r19_assert_fail_preempts_skip(
+        pin_case._run_qc11a_persistence_node,
+        _capability(),
+        _StrictConfig(),
+        role="user",
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
