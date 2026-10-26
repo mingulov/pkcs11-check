@@ -748,6 +748,13 @@ def _raise_strongest_qc11c(records: list[Classification]) -> None:
     raise_for_record(max(records, key=lambda rec: rank[rec.outcome]))
 
 
+def _raise_qc11c_fail_grades(records: list[Classification]) -> None:
+    """Raise the strongest fail-grade record; xfail grades never preempt a skip."""
+    fails = [rec for rec in records if rec.outcome == "fail"]
+    if fails:
+        _raise_strongest_qc11c(fails)
+
+
 def _run_qc11c_journey_node(
     cap: throwaway.ThrowawayCapability,
     p11_config: Any,
@@ -764,9 +771,12 @@ def _run_qc11c_journey_node(
             _raise_strongest_qc11c(records1)
             return
         rc2, out2, err2 = _launch(minted, "qc11c_verify", {}, p11_config=p11_config)
-        phase2 = token_admin.check_child_output(
-            rc2, out2, err2, label="QC11c verify", no_slots="fail"
-        )
+        # R19-02 collect-then-judge: when phase two would skip, phase-one FAIL
+        # grades preempt the skip.
+        phase2_raw = token_admin.parse_child_output(rc2, out2, err2, label="QC11c verify")
+        if token_admin.trace_skip_reason(phase2_raw, no_slots="fail") is not None:
+            _raise_qc11c_fail_grades(records1)
+        phase2 = token_admin.gate_child_trace(phase2_raw, label="QC11c verify", no_slots="fail")
         records2 = _assess_provision_persistence(
             phase2, canary_established=_canary_established(phase1)
         )

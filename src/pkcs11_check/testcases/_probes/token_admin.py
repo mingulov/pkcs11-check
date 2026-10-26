@@ -43,7 +43,7 @@ from typing import Any, NamedTuple
 import pytest
 
 from pkcs11_check import classification
-from pkcs11_check.raw.rv import ckr_name
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_ATTRIBUTE,
     CK_NOTIFY,
@@ -205,16 +205,103 @@ def setup_failure(trace: AdminTrace) -> AdminStep | None:
     return None
 
 
-def check_child_output(
-    rc: int, out: str, err: str, *, label: str, no_slots: str = "skip"
-) -> AdminTrace:
-    """Gate one child result: crash/incomplete fail, no-slot/assumption/setup skip.
+_PROVISIONING_STEP_OPERATIONS = {
+    "init_token": "C_InitToken",
+    "setup:open": "C_OpenSession",
+    "setup:so_login": "C_Login",
+    "setup:login": "C_Login",
+    "setup:init_pin": "C_InitPIN",
+}
 
-    ``no_slots="fail"`` turns a vanished token into a lifecycle failure (for
-    later phases whose token was already proven present, e.g. after restart).
-    """
+_ASSUMPTION_OPERATIONS = {
+    "self_provision": "C_InitToken",
+    "tokeninfo": "C_GetTokenInfo",
+    "setup_login": "C_Login",
+    "setup_init_pin": "C_InitPIN",
+}
+
+
+def _assumption_rv(reason: str) -> tuple[str, int | None]:
+    """Split an ASSUMPTION_FAILED reason into (head, trailing raw RV or None)."""
+    head, sep, tail = reason.rpartition(":")
+    if not sep:
+        return reason, None
+    text = tail.strip()
+    digits = text[2:] if text.lower().startswith("0x") else None
+    if digits is None or not digits or any(c not in "0123456789abcdefABCDEF" for c in digits):
+        return reason, None
+    return head, int(digits, 16)
+
+
+def _fail_on_undefined_provisioning(trace: AdminTrace, *, label: str) -> None:
+    """R19-03: undefined self-provisioning RVs FAIL; clean refusals stay skips."""
+    for step in trace.steps:
+        if step.name == "init_token" or step.name == "setup" or step.name.startswith("setup:"):
+            if not (is_standard_ckr(step.rv) or is_vendor_defined_ckr(step.rv)):
+                classification.fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=f"{label}: {step.name}",
+                    operation=_PROVISIONING_STEP_OPERATIONS.get(step.name),
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=step.rv,
+                    summary=(
+                        f"{label}: self-provisioning {step.name} returned "
+                        f"undefined CK_RV {ckr_name(step.rv)}"
+                    ),
+                )
+    if trace.assumption_failed is not None:
+        head, rv = _assumption_rv(trace.assumption_failed)
+        if rv is not None and not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            classification.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: {trace.assumption_failed}",
+                operation=_ASSUMPTION_OPERATIONS.get(head),
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=(
+                    f"{label}: self-provisioning {head} returned undefined CK_RV {ckr_name(rv)}"
+                ),
+            )
+
+
+def parse_child_output(rc: int, out: str, err: str, *, label: str) -> AdminTrace:
+    """Parse one child result; crashes and incomplete output fail loud, never skip."""
     assert rc == 0, f"{label}: child failed (rc={rc}): {err[-300:]}"
     trace = parse_admin_trace(out)
+    if not trace.no_slots:
+        assert "OK" in out, f"{label}: child incomplete (no OK marker): {out[-300:]!r}"
+    return trace
+
+
+def trace_skip_reason(trace: AdminTrace, *, no_slots: str = "skip") -> str | None:
+    """Return the gate skip reason for a parsed trace, or None when it gates clean.
+
+    ``no_slots="fail"`` reports None for a vanished token (the gate fails loud
+    there); undefined provisioning RVs likewise report None (the gate fails
+    loud). Callers use this for R19-02 collect-then-judge: a non-None reason
+    means the gate would skip, so phase-one FAIL grades must be judged first.
+    """
+    if trace.no_slots:
+        if no_slots == "fail":
+            return None
+        return "no present slot on the sacrificial token"
+    if trace.assumption_failed is not None:
+        return f"sacrificial-token assumption failed: {trace.assumption_failed}"
+    failed = setup_failure(trace)
+    if failed is not None:
+        return (
+            f"sacrificial setup failed: {failed.name}={ckr_name(failed.rv)}; "
+            "destructive legs untestable"
+        )
+    return None
+
+
+def gate_child_trace(trace: AdminTrace, *, label: str, no_slots: str = "skip") -> AdminTrace:
+    """Apply the skip/fail gate to a parsed trace; returns the trace when clean."""
     if trace.no_slots:
         if no_slots == "fail":
             classification.fail_as(
@@ -227,7 +314,7 @@ def check_child_output(
                 summary=f"{label}: provisioned token absent after restart",
             )
         pytest.skip(f"{label}: no present slot on the sacrificial token")
-    assert "OK" in out, f"{label}: child incomplete (no OK marker): {out[-300:]!r}"
+    _fail_on_undefined_provisioning(trace, label=label)
     if trace.assumption_failed is not None:
         pytest.skip(f"{label}: sacrificial-token assumption failed: {trace.assumption_failed}")
     failed = setup_failure(trace)
@@ -237,6 +324,21 @@ def check_child_output(
             "destructive legs untestable"
         )
     return trace
+
+
+def check_child_output(
+    rc: int, out: str, err: str, *, label: str, no_slots: str = "skip"
+) -> AdminTrace:
+    """Gate one child result: crash/incomplete fail, no-slot/assumption/setup skip.
+
+    ``no_slots="fail"`` turns a vanished token into a lifecycle failure (for
+    later phases whose token was already proven present, e.g. after restart).
+    Undefined self-provisioning RVs fail (R19-03); multi-launch nodes split
+    this into ``parse_child_output`` + ``gate_child_trace`` for collect-then-
+    judge (R19-02).
+    """
+    trace = parse_child_output(rc, out, err, label=label)
+    return gate_child_trace(trace, label=label, no_slots=no_slots)
 
 
 def _buf(data: bytes) -> Any:
@@ -367,9 +469,11 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if open_rv != int(CKR_OK):
         print("OK")
         return
-    if role == "user":
-        # InitToken establishes only the SO PIN; provision the user PIN the
-        # burn is about to exercise.
+    if role == "user" or then_other:
+        # InitToken establishes only the SO PIN; provision the user PIN
+        # whenever this child exercises USER (as the burn target or as the
+        # other-role check), so an SO burn measures genuine independence
+        # instead of USER_PIN_NOT_INITIALIZED.
         sorv = _login(ctx, sh, "so", TEST_SO_PIN)
         _step("setup:so_login", sorv)
         if sorv != int(CKR_OK):
@@ -424,7 +528,9 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
     Runs on the phase-1-burned token, so it takes NO pristine gate (unlike
     ``_qc11a_burn``) and performs NO provisioning (an InitToken here would wipe
-    the burned counters under test).
+    the burned counters under test). Failed snapshots keep their raw RV as a
+    ``snapshot:*`` step (like ``inv_read``), so undefined token-info RVs stay
+    judgable instead of dissolving into ``unknown``.
     """
     role = str(extra["role"])
     if role not in ("user", "so"):
@@ -435,6 +541,7 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         return
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
+        _step("snapshot:initial", info_rv)
         print("PINBOUNDS:unknown")
         print("FLAGS:initial:unknown")
     else:
@@ -453,6 +560,8 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
         print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
     _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    if _info_rv != int(CKR_OK):
+        _step("snapshot:final", _info_rv)
     _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
     _quiet_close(ctx, sh)
     print("OK")
