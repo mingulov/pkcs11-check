@@ -122,6 +122,7 @@ class _Token:
         self.stage_len_zero: bool = False
         self.stage_creates_on_refusal: bool = False
         self.stage_created_handle: int | None = None
+        self.stage_write_on_refusal: bool = True
         self.unwrap_success_mode: str = "created"  # created|foreign|zero
         self.unwrap_rv: int = _OK
         self.unwrap_creates_on_refusal: bool = False
@@ -287,13 +288,17 @@ class _Token:
             if self.stage_creates_on_refusal:
                 created = self._issue("kem-secret")
                 self.stage_created_handle = created
-                _fill(secret, created, CK_OBJECT_HANDLE)
+                if self.stage_write_on_refusal:
+                    _fill(secret, created, CK_OBJECT_HANDLE)
             return self.stage_rv
         if ct_buf is not None:
             ctypes.memmove(ct_buf, _CT_PATTERN, len(_CT_PATTERN))
         _fill(ct_len, 0 if self.stage_len_zero else len(_CT_PATTERN))
         if self.stage_secret_mode == "foreign":
             _fill(secret, int(pub), CK_OBJECT_HANDLE)
+            return _OK
+        if self.stage_secret_mode == "zero":
+            _fill(secret, 0, CK_OBJECT_HANDLE)
             return _OK
         handle = self._issue("kem-secret")
         _fill(secret, handle, CK_OBJECT_HANDLE)
@@ -1062,4 +1067,74 @@ def test_decap_staging_refusal_creating_object_fails_r10(
     created = fake.stage_created_handle
     assert created is not None
     assert fake.destroyed.count(created) == 1
+    _assert_cleaned(fake)
+
+
+# --- Self-review followups: refusal-inventory-evidence, unproved delta, zero -
+
+
+@pytest.mark.parametrize("creates", [False, True])
+def test_decap_staging_refusal_inventory_failure_xfails_unproved_r10b(
+    monkeypatch: pytest.MonkeyPatch, creates: bool
+) -> None:
+    fake = _Token()
+    fake.stage_rv = int(CKR_FUNCTION_FAILED)
+    fake.stage_creates_on_refusal = creates
+    fake.fail_find_from_call = 2
+    _patch_kem(monkeypatch, fake)
+    rec = _must_xfail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "honest_deviation"
+    assert rec.detail["inventory_rv"] == "CKR_GENERAL_ERROR"
+    assert rec.detail["refusal_rv"] == "CKR_FUNCTION_FAILED"
+    if creates:
+        created = fake.stage_created_handle
+        assert created is not None
+        _assert_cleaned_except(fake, [created])
+    else:
+        _assert_cleaned(fake)
+
+
+def test_decap_staging_refusal_unproved_delta_xfails_alive_r10b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.stage_rv = int(CKR_FUNCTION_FAILED)
+    fake.stage_creates_on_refusal = True
+    fake.stage_write_on_refusal = False
+    _patch_kem(monkeypatch, fake)
+    rec = _must_xfail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "honest_deviation"
+    created = fake.stage_created_handle
+    assert created is not None
+    assert rec.detail["new_handles"] == [created]
+    assert rec.detail["proved_new_handles"] == []
+    _assert_cleaned_except(fake, [created])
+
+
+def test_decap_staging_zero_secret_fails_without_inventory_r10b(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.probe_rv = int(CKR_UNWRAPPING_KEY_HANDLE_INVALID)
+    fake.stage_secret_mode = "zero"
+    _patch_kem(monkeypatch, fake)
+    rec = _must_fail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "lifecycle"
+    assert fake.find_calls == 1
     _assert_cleaned(fake)

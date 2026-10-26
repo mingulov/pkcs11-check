@@ -296,12 +296,13 @@ def _staging_inventory(rs: Any) -> list[int]:
 
 def _staging_partition(
     rs: Any, before: list[int], handle_after: int
-) -> tuple[list[int], list[int] | None]:
+) -> tuple[list[int], list[int] | None, int | None]:
     """Partition a staging output against a best-effort post inventory.
 
-    Used on early-exit paths (R10-02): returns the proved-new handles
-    and the new-handle list, or ``None`` for the latter when the
-    inventory itself failed cleanly and nothing is provable. An
+    Used on early-exit paths (R10-02): returns the proved-new handles,
+    the new-handle list, and the inventory RV. The new-handle list is
+    ``None`` when the inventory itself failed cleanly and nothing is
+    provable; the RV is then the evidence for the unproved verdict. An
     undefined inventory RV keeps its metadata failure.
     """
     try:
@@ -321,9 +322,9 @@ def _staging_partition(
                     f"{ckr_name(exc.rv)}; staged-secret ownership unprovable"
                 ),
             )
-        return [], None
+        return [], None, exc.rv
     new_handles = sorted(set(after) - set(before))
-    return _proved_new(handle_after, before, new_handles), new_handles
+    return _proved_new(handle_after, before, new_handles), new_handles, None
 
 
 def _proved_new(handle_after: int, before: list[int], new_handles: list[int]) -> list[int]:
@@ -663,7 +664,7 @@ class TestDecapsulateKeyErrors:
             if rv != CKR_OK:
                 # Early-exit cleanup (R10-02): a staging refusal may still
                 # have created the secret, which must not leak alive.
-                proved, new_handles = _staging_partition(rs, stage_before, stage_handle)
+                proved, new_handles, inv_rv = _staging_partition(rs, stage_before, stage_handle)
                 _probe_cleanup(rs, proved_new_handles=proved)
                 if not (is_standard_ckr(int(rv)) or is_vendor_defined_ckr(int(rv))):
                     fail_as(
@@ -699,6 +700,31 @@ class TestDecapsulateKeyErrors:
                             "proved_new_handles": proved,
                         },
                     )
+                if new_handles is None:
+                    # The partition inventory failed cleanly: nothing is
+                    # provable, so the refusal cannot read as a clean
+                    # zero-delta refusal (self-review followup).
+                    inv_name = ckr_name(inv_rv) if inv_rv is not None else "unknown"
+                    xfail_as(
+                        "honest_deviation",
+                        kind="lifecycle",
+                        label="C_EncapsulateKey:ML-KEM staging",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        actual=int(rv),
+                        spec_ref="PKCS#11 v3.2",
+                        summary=(
+                            "Staging encapsulate refused but the cleanup "
+                            f"inventory failed with {inv_name}; "
+                            "zero-delta unproved"
+                        ),
+                        detail={
+                            "disposition": "unproved-effect",
+                            "handle_after": stage_handle,
+                            "inventory_rv": inv_name,
+                            "refusal_rv": ckr_name(int(rv)),
+                        },
+                    )
                 if new_handles:
                     xfail_as(
                         "honest_deviation",
@@ -725,6 +751,11 @@ class TestDecapsulateKeyErrors:
                     mechanism="CKM_ML_KEM",
                     actual=rv,
                     summary=f"ML-KEM encapsulate staging not operational: {ckr_name(rv)}",
+                    detail={
+                        "handle_after": stage_handle,
+                        "new_handles": new_handles,
+                        "proved_new_handles": proved,
+                    },
                 )
             # A success returning a zero or already-known handle is a
             # knowable contradiction; no after inventory can rescue it
@@ -750,7 +781,9 @@ class TestDecapsulateKeyErrors:
                     detail={"handle_after": stage_handle},
                 )
             if not (0 < int(stage_len.value) <= _CT_LEN):
-                proved, new_handles = _staging_partition(rs, stage_before, stage_handle)
+                proved, new_handles, part_inv_rv = _staging_partition(
+                    rs, stage_before, stage_handle
+                )
                 _probe_cleanup(rs, proved_new_handles=proved)
                 fail_as(
                     "wrong_result",
@@ -764,6 +797,9 @@ class TestDecapsulateKeyErrors:
                         "handle_after": stage_handle,
                         "new_handles": new_handles,
                         "proved_new_handles": proved,
+                        "inventory_rv": (
+                            ckr_name(part_inv_rv) if part_inv_rv is not None else None
+                        ),
                     },
                 )
             # The staging output handle is owned only when the exhaustive
@@ -771,7 +807,7 @@ class TestDecapsulateKeyErrors:
             # the staged secret is never destroyed here (R9-01).
             stage_after = _staging_inventory(rs)
             stage_new = sorted(set(stage_after) - set(stage_before))
-            stage_proved = _proved_new(int(stage_secret.value), stage_before, stage_new)
+            stage_proved = _proved_new(stage_handle, stage_before, stage_new)
             if not stage_proved:
                 fail_as(
                     "self_contradiction",
@@ -783,11 +819,11 @@ class TestDecapsulateKeyErrors:
                     spec_ref="PKCS#11 v3.2",
                     summary=(
                         "Staging encapsulate reported success but its secret "
-                        f"handle {int(stage_secret.value)} is not a proved-new "
+                        f"handle {stage_handle} is not a proved-new "
                         "object in the exhaustive inventory delta"
                     ),
                     detail={
-                        "handle_after": int(stage_secret.value),
+                        "handle_after": stage_handle,
                         "new_handles": stage_new,
                         "proved_new_handles": stage_proved,
                     },
