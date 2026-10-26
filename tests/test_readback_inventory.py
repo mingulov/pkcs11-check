@@ -1891,8 +1891,8 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     matches the ("name", "<64-hex>") digest tuples below, so keep that shape.
     """
     pins: list[tuple[str, object, object]] = [
-        ("total", 2278, characterization.total),
-        ("candidate_total", 1838, characterization.candidate_total),
+        ("total", 2280, characterization.total),
+        ("candidate_total", 1840, characterization.candidate_total),
         ("file_total", 261, characterization.file_total),
         (
             "statuses",
@@ -1901,18 +1901,18 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_readback", 61),
                 ("non_readback", 440),
                 ("safe_mechanism_free_readback", 269),
-                ("unresolved", 732),
+                ("unresolved", 734),
             ),
             characterization.statuses,
         ),
         (
             "digest",
-            "9bbaaad5efd3d00e1358477c3303df712c5a9c0f6a7d79c3880fcf728e67ceff",
+            "9c736aa584ccd0d8263712837b4a8fd12323f70b52ea17237b9f26e70c4c65e7",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "2e59b73ab80965493a26b4b2951723d4d392895ebbb0165798bbbd898b9d27d5",
+            "196a6cce8793fe8e2ae85b7129e5dffbfbefb15f44ae7f07573fd250e43f5855",
             characterization.candidate_digest,
         ),
         (
@@ -1922,7 +1922,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("explicit_mechanism_readback", 357),
                 ("non_readback", 1389),
                 ("safe_mechanism_free_readback", 2183),
-                ("unresolved", 2880),
+                ("unresolved", 2882),
                 ("unsafe_inherited_readback", 22),
             ),
             characterization.state_statuses,
@@ -1938,7 +1938,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
                 ("assert_correct", 287),
                 ("classify", 598),
                 ("fail_as", 431),
-                ("record_as", 450),
+                ("record_as", 451),
                 ("xfail_as", 343),
             ),
             characterization.direct_emitter_census,

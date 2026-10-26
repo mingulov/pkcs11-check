@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from _pytest.outcomes import Failed, XFailed
+from _pytest.outcomes import Failed, Skipped, XFailed
 
 from pkcs11_check import classification
 from pkcs11_check.raw.rv import CkrAssertionError, ckr_name
@@ -594,6 +594,7 @@ class _FakeAdminRaw:
         self.login_script: dict[str, list[int]] = {"user": [], "so": []}
         self.init_token_script: list[int] = []
         self.init_token_always: int | None = None
+        self.init_token_keep_flags: bool = False
         self.init_pin_script: list[int] = []
         self.init_pin_always: int | None = None
         self.set_pin_script: list[int] = []
@@ -733,7 +734,8 @@ class _FakeAdminRaw:
         self.logged_in = None
         self.objects.clear()
         self.remaining = dict(self.threshold)
-        self.flags = int(CKF_TOKEN_INITIALIZED)
+        if not self.init_token_keep_flags:
+            self.flags = int(CKF_TOKEN_INITIALIZED)
         return _OK
 
     def C_InitPIN(self, _sh: int, pin_ptr: Any, pin_len: int) -> int:  # noqa: N802
@@ -1381,13 +1383,16 @@ def test_burn_happy_path(role: str, capsys: Any) -> None:
     trace = token_admin.parse_admin_trace(out)
     assert trace.ok is True
     assert trace.assumption_failed is None
-    assert [(step.name, step.rv) for step in trace.steps] == [
-        ("setup:open", _OK),
+    expected = [("init_token", _OK), ("setup:open", _OK)]
+    if role == "user":
+        expected += [("setup:so_login", _OK), ("setup:init_pin", _OK)]
+    expected += [
         (f"login:{role}:wrong:1", _PIN_INCORRECT),
         (f"login:{role}:wrong:2", _PIN_INCORRECT),
         (f"login:{role}:wrong:3", _PIN_INCORRECT),
         (f"login:{role}:correct", _OK),
     ]
+    assert [(step.name, step.rv) for step in trace.steps] == expected
     assert [tag for tag, _ in trace.flags] == [
         "initial",
         "attempt-1",
@@ -1398,7 +1403,10 @@ def test_burn_happy_path(role: str, capsys: Any) -> None:
     assert trace.pin_bounds == (4, 32)
     wrong_pin = token_admin.WRONG_SO_PIN if role == "so" else token_admin.WRONG_USER_PIN
     right_pin = token_admin.TEST_SO_PIN if role == "so" else token_admin.TEST_USER_PIN
-    assert [pin for _, pin in fake.logins] == [wrong_pin] * 3 + [right_pin]
+    expected_logins = [wrong_pin] * 3 + [right_pin]
+    if role == "user":
+        expected_logins = [bytes(token_admin.TEST_SO_PIN)] + expected_logins
+    assert [pin for _, pin in fake.logins] == expected_logins
 
 
 def test_burn_stops_after_lockout(capsys: Any) -> None:
@@ -1408,12 +1416,15 @@ def test_burn_stops_after_lockout(capsys: Any) -> None:
     out = _run_probe("qc11a_burn", fake, _burn_extra("user", 5), capsys)
     trace = token_admin.parse_admin_trace(out)
     assert [(step.name, step.rv) for step in trace.steps] == [
+        ("init_token", _OK),
         ("setup:open", _OK),
+        ("setup:so_login", _OK),
+        ("setup:init_pin", _OK),
         ("login:user:wrong:1", _PIN_INCORRECT),
         ("login:user:wrong:2", _PIN_LOCKED),
         ("login:user:correct", _PIN_LOCKED),
     ]
-    assert len(fake.logins) == 3
+    assert len(fake.logins) == 4
 
 
 @pytest.mark.parametrize("role", _LOGIN_ROLES)
@@ -1422,11 +1433,14 @@ def test_burn_refuses_non_pristine_counter(role: str, capsys: Any) -> None:
     fake.flags_manual = True
     low, _, _ = _ROLE_FLAGS[role]
     fake.flags |= low
+    # The gate reads the provisioned state: only counters surviving InitToken
+    # refuse the burn (a clean provision resets arrival wear).
+    fake.init_token_keep_flags = True
     out = _run_probe("qc11a_burn", fake, _burn_extra(role), capsys)
     trace = token_admin.parse_admin_trace(out)
     assert trace.assumption_failed == "not_pristine"
     assert trace.ok is True
-    assert trace.steps == ()
+    assert [(step.name, step.rv) for step in trace.steps] == [("init_token", _OK)]
     assert fake.logins == []
 
 
@@ -1436,6 +1450,67 @@ def test_burn_no_slots(capsys: Any) -> None:
     out = _run_probe("qc11a_burn", fake, _burn_extra(), capsys)
     trace = token_admin.parse_admin_trace(out)
     assert trace.no_slots is True
+    assert fake.logins == []
+
+
+def test_burn_self_provisions_raw_token(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.so_pin = None
+    fake.user_pin = None
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is None
+    assert trace.ok is True
+    by_name = [(step.name, step.rv) for step in trace.steps]
+    assert ("init_token", _OK) in by_name
+    assert ("login:user:wrong:1", _PIN_INCORRECT) in by_name
+    assert ("login:user:correct", _OK) in by_name
+    pin_case._judge_lockout_trace(trace, role="user")
+    assert classification.get_records() == []
+
+
+def test_burn_init_token_refusal_is_explicit_unexercised_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_token_always = _GENERAL_ERROR
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is not None
+    assert "self_provision" in trace.assumption_failed
+    skipped = assert_skips(token_admin.check_child_output, 0, out, "", label="QC11a user countdown")
+    assert "self_provision" in str(skipped)
+
+
+def test_burn_foreign_so_pin_is_explicit_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.so_pin = b"mint-used-another-so-pin"
+    out = _run_probe("qc11a_burn", fake, _burn_extra("so", 2), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is not None
+    assert "self_provision" in trace.assumption_failed
+    assert trace.ok is True
+
+
+def test_burn_user_init_pin_refusal_is_explicit_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_pin_always = _GENERAL_ERROR
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is not None
+    assert "setup_init_pin" in trace.assumption_failed
+    assert trace.ok is True
+    assert [s for s in trace.steps if ":wrong:" in s.name] == []
+
+
+def test_burn_refuses_counters_surviving_provision(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.flags_manual = True
+    low, _, _ = _ROLE_FLAGS["user"]
+    fake.flags |= low
+    fake.init_token_keep_flags = True
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user"), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed == "not_pristine"
+    assert trace.ok is True
     assert fake.logins == []
 
 
@@ -1479,16 +1554,45 @@ def test_burn_post_success_wrongs_observe_no_reset(capsys: Any) -> None:
     assert post[0] & int(CKF_USER_PIN_LOCKED)
 
 
-def test_read_prints_flags_and_bounds_without_login(capsys: Any) -> None:
+def test_read_snapshots_flags_and_checks_correct_login(capsys: Any) -> None:
     fake = _FakeAdminRaw()
     fake.min_pin = 6
     fake.max_pin = 16
-    out = _run_probe("qc11a_read", fake, {}, capsys)
+    out = _run_probe("qc11a_read", fake, {"role": "user"}, capsys)
     trace = token_admin.parse_admin_trace(out)
     assert trace.ok is True
     assert trace.pin_bounds == (6, 16)
-    assert [tag for tag, _ in trace.flags] == ["read"]
+    assert [tag for tag, _ in trace.flags] == ["initial", "final"]
+    assert [(step.name, step.rv) for step in trace.steps] == [
+        ("setup:open", _OK),
+        ("login:user:correct", _OK),
+    ]
+    assert fake.logins == [("user", bytes(token_admin.TEST_USER_PIN))]
+
+
+def test_read_unknown_role_rejected(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    with pytest.raises(ValueError, match="role"):
+        _run_probe("qc11a_read", fake, {"role": "admin"}, capsys)
+
+
+def test_read_no_slots(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.slots = []
+    out = _run_probe("qc11a_read", fake, {"role": "user"}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.no_slots is True
     assert fake.logins == []
+
+
+def test_read_survives_unreadable_tokeninfo(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _GENERAL_ERROR
+    out = _run_probe("qc11a_read", fake, {"role": "user"}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    assert trace.pin_bounds is None
+    assert ("login:user:correct", _OK) in [(s.name, s.rv) for s in trace.steps]
 
 
 @pytest.mark.parametrize("op", ("init_pin", "set_pin"))
@@ -1527,7 +1631,7 @@ def test_pin_lengths_set_pin_tracks_current_pin(capsys: Any) -> None:
 
 def test_pin_lengths_setup_login_failure_is_assumption(capsys: Any) -> None:
     fake = _FakeAdminRaw()
-    fake.so_pin = b"mint-used-another-so-pin"
+    fake.login_script["so"] = [_PIN_INCORRECT]
     out = _run_probe("qc11b_pin_lengths", fake, {"op": "init_pin"}, capsys)
     trace = token_admin.parse_admin_trace(out)
     assert trace.assumption_failed is not None
@@ -1543,7 +1647,43 @@ def test_pin_lengths_unreadable_bounds_skip_leg(capsys: Any) -> None:
     trace = token_admin.parse_admin_trace(out)
     assert trace.pin_bounds is None
     assert trace.ok is True
-    assert trace.steps == ()
+    assert [(step.name, step.rv) for step in trace.steps] == [("init_token", _OK)]
+    assert [s for s in trace.steps if s.name.startswith("setlen:")] == []
+
+
+@pytest.mark.parametrize("op", ("init_pin", "set_pin"))
+def test_pin_lengths_self_provisions_raw_token(op: str, capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.so_pin = None
+    fake.user_pin = None
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": op}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is None
+    assert trace.ok is True
+    assert ("init_token", _OK) in [(step.name, step.rv) for step in trace.steps]
+    assert [s for s in trace.steps if s.name.startswith("setlen:")] != []
+
+
+def test_pin_lengths_set_pin_init_pin_refusal_is_explicit_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_pin_always = _GENERAL_ERROR
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": "set_pin"}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is not None
+    assert "setup_init_pin" in trace.assumption_failed
+    assert trace.ok is True
+    assert [s for s in trace.steps if s.name.startswith("setlen:")] == []
+
+
+def test_pin_lengths_init_token_refusal_is_explicit_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.init_token_always = _GENERAL_ERROR
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": "set_pin"}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.assumption_failed is not None
+    assert "self_provision" in trace.assumption_failed
+    skipped = assert_skips(token_admin.check_child_output, 0, out, "", label="QC11b set_pin")
+    assert "self_provision" in str(skipped)
 
 
 def test_pin_lengths_unknown_op_rejected(capsys: Any) -> None:
@@ -1667,7 +1807,7 @@ def test_child_pins_are_hardcoded_test_fixtures_only(capsys: Any) -> None:
     runs: list[tuple[str, dict[str, Any]]] = [
         ("qc11a_burn", _burn_extra("user", 2, then_other_role_correct=True)),
         ("qc11a_burn", _burn_extra("so", 2)),
-        ("qc11a_read", {}),
+        ("qc11a_read", {"role": "user"}),
         ("qc11b_pin_lengths", {"op": "init_pin"}),
         ("qc11b_pin_lengths", {"op": "set_pin"}),
         ("qc11c_journey", {}),
@@ -1820,6 +1960,36 @@ def test_countdown_final_and_locked_together_fail() -> None:
     trace = trace._replace(flags=flags)
     _assert_fails(pin_case._judge_lockout_trace, trace, role="user")
     _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_countdown_later_wrong_acceptance_preempts_earlier_xfail() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR, _OK], correct_rv=None)
+    _assert_fails(pin_case._judge_lockout_trace, trace, role="user")
+    rec = _assert_fail_record("accepted_invalid", None)
+    assert rec.operation == "C_Login"
+    assert "login:user:wrong:2" in rec.label
+
+
+def test_countdown_later_undefined_rv_preempts_earlier_xfail() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR, _UNDEFINED_RV], correct_rv=None)
+    _assert_fails(pin_case._judge_lockout_trace, trace, role="user")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "login:user:wrong:2" in rec.label
+
+
+def test_countdown_later_flag_contradiction_preempts_earlier_xfail() -> None:
+    both = _BASE_FLAGS | int(CKF_USER_PIN_FINAL_TRY) | int(CKF_USER_PIN_LOCKED)
+    trace = _lockout_trace("user", [_PIN_INCORRECT], correct_rv=_GENERAL_ERROR, final_rank=0)
+    flags = tuple((tag, both if tag == "final" else value) for tag, value in trace.flags)
+    trace = trace._replace(flags=flags)
+    _assert_fails(pin_case._judge_lockout_trace, trace, role="user")
+    _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_independence_inherits_fail_prescan() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR, _OK], correct_rv=None, other_rv=_OK)
+    _assert_fails(pin_case._judge_independence, trace, burned_role="user")
+    _assert_fail_record("accepted_invalid", None)
 
 
 def test_countdown_correct_refused_xfails_when_no_lockout() -> None:
@@ -2013,6 +2183,37 @@ def test_persistence_no_metadata_hard_lockout_plausible() -> None:
     second = _phase2_trace("user", _PIN_LOCKED, initial_rank=0)
     pin_case._judge_restart_persistence(first, second, role="user")
     assert classification.get_records() == []
+
+
+def test_persistence_escalation_preempts_first_trace_xfail() -> None:
+    first = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, final_rank=1)
+    second = _phase2_trace("user", _OK, initial_rank=2)
+    _assert_fails(pin_case._judge_restart_persistence, first, second, role="user")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "escalated across restart" in rec.summary
+
+
+def test_persistence_bypass_preempts_first_trace_xfail() -> None:
+    first = _lockout_trace("user", [_GENERAL_ERROR], wrong_ranks=[0], correct_rv=None, final_rank=3)
+    second = _phase2_trace("user", _OK, initial_rank=3)
+    _assert_fails(pin_case._judge_restart_persistence, first, second, role="user")
+    rec = _assert_fail_record("accepted_invalid", None)
+    assert "despite LOCKED flags after restart" in rec.summary
+
+
+def test_persistence_denies_lockout_preempts_first_trace_xfail() -> None:
+    first = _lockout_trace("user", [_GENERAL_ERROR], wrong_ranks=[0], correct_rv=None, final_rank=3)
+    second = _phase2_trace("user", _PIN_INCORRECT, initial_rank=3)
+    _assert_fails(pin_case._judge_restart_persistence, first, second, role="user")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "denies declared lockout" in rec.summary
+
+
+def test_persistence_undefined_second_rv_preempts_first_trace_xfail() -> None:
+    first = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, final_rank=1)
+    second = _phase2_trace("user", _UNDEFINED_RV, initial_rank=1)
+    _assert_fails(pin_case._judge_restart_persistence, first, second, role="user")
+    _assert_fail_record("self_contradiction", "metadata")
 
 
 def _render_trace(trace: token_admin.AdminTrace) -> str:
@@ -2220,12 +2421,39 @@ def test_persistence_node_runs_two_phases_on_one_session() -> None:
         _launch=launch,
     )
     assert sessions == [_MINTED]
-    assert [probe for _, probe, _, _ in launch.calls] == ["qc11a_burn", "qc11a_burn"]
+    assert [probe for _, probe, _, _ in launch.calls] == ["qc11a_burn", "qc11a_read"]
     assert launch.calls[0][2]["attempts"] == 2
     assert launch.calls[0][2]["then_correct"] is False
-    assert launch.calls[1][2]["attempts"] == 0
-    assert launch.calls[1][2]["then_correct"] is True
+    assert launch.calls[1][2] == {"role": "user"}
     assert launch.calls[0][0] is launch.calls[1][0] is _MINTED
+
+
+def test_persistence_two_phase_real_child_measures_countdown(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    out1 = _run_probe("qc11a_burn", fake, _burn_extra("user", 2, then_correct=False), capsys)
+    first = token_admin.parse_admin_trace(out1)
+    assert any((v or 0) & int(CKF_USER_PIN_COUNT_LOW) for _, v in first.flags)
+    out2 = _run_probe("qc11a_read", fake, {"role": "user"}, capsys)
+    second = token_admin.parse_admin_trace(out2)
+    assert second.assumption_failed is None
+    assert ("login:user:correct", _OK) in [(s.name, s.rv) for s in second.steps]
+    pin_case._judge_restart_persistence(first, second, role="user")
+    assert classification.get_records() == []
+
+
+def test_read_measures_burned_token_without_pristine_gate(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.threshold["user"] = 1
+    fake.remaining["user"] = 1
+    out1 = _run_probe("qc11a_burn", fake, _burn_extra("user", 1, then_correct=False), capsys)
+    first = token_admin.parse_admin_trace(out1)
+    assert any((v or 0) & int(CKF_USER_PIN_LOCKED) for _, v in first.flags)
+    out2 = _run_probe("qc11a_read", fake, {"role": "user"}, capsys)
+    second = token_admin.parse_admin_trace(out2)
+    assert second.assumption_failed is None
+    assert ("login:user:correct", _PIN_LOCKED) in [(s.name, s.rv) for s in second.steps]
+    pin_case._judge_restart_persistence(first, second, role="user")
+    assert classification.get_records() == []
 
 
 def test_persistence_phase1_skip_blocks_phase2() -> None:
@@ -2328,7 +2556,8 @@ def test_burn_stop_at_final_stops_before_lockout(capsys: Any) -> None:
     wrongs = [s for s in trace.steps if ":wrong:" in s.name]
     assert len(wrongs) == 4
     assert all(s.rv == _PIN_INCORRECT for s in wrongs)
-    assert trace.flags[-2] == ("attempt-4", _flags_for("user", 2))
+    provisioned = _flags_for("user", 2) | int(CKF_USER_PIN_INITIALIZED)
+    assert trace.flags[-2] == ("attempt-4", provisioned)
 
 
 def test_burn_default_stop_locks_when_threshold_reached(capsys: Any) -> None:
@@ -2481,14 +2710,51 @@ def test_session_undeclared_maxima_refusal_xfails_never_passes() -> None:
     _assert_xfail_record("honest_deviation")
 
 
-def test_session_mixed_undeclared_dimension_xfails_as_unprovable() -> None:
-    assert_xfails(
+def test_session_mixed_finite_dimension_early_refusal_fails() -> None:
+    _assert_fails(
         tse._judge_session_exhaustion,
         policy=_session_policy(100, None),
         own_opens=5,
         refused_rv=_SESSION_COUNT,
         total_now=6,
         rw_now=6,
+    )
+    _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_session_single_finite_total_early_refusal_fails() -> None:
+    _assert_fails(
+        tse._judge_session_exhaustion,
+        policy=_session_policy(50, None),
+        own_opens=5,
+        refused_rv=_SESSION_COUNT,
+        total_now=6,
+        rw_now=6,
+    )
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "earlier than advertised" in rec.summary
+
+
+def test_session_single_finite_rw_early_refusal_fails() -> None:
+    _assert_fails(
+        tse._judge_session_exhaustion,
+        policy=_session_policy(None, 50),
+        own_opens=5,
+        refused_rv=_SESSION_COUNT,
+        total_now=6,
+        rw_now=6,
+    )
+    _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_session_single_finite_dimension_unknown_count_xfails() -> None:
+    assert_xfails(
+        tse._judge_session_exhaustion,
+        policy=_session_policy(50, None),
+        own_opens=5,
+        refused_rv=_SESSION_COUNT,
+        total_now=None,
+        rw_now=None,
     )
     _assert_xfail_record("honest_deviation")
 
@@ -2758,6 +3024,44 @@ def test_pin_lengths_strongest_wins_over_early_xfail() -> None:
     _assert_fails(tse._judge_pin_lengths, trace, op="set_pin")
     fails = [rec for rec in classification.get_records() if rec.outcome == "fail"]
     assert [(rec.reason, rec.kind) for rec in fails] == [("accepted_invalid", None)]
+
+
+def test_pin_length_legs_cap_absurd_bounds() -> None:
+    legs = token_admin._pin_length_legs(4, 2**32 - 1)
+    assert legs
+    assert max(legs) <= 4096
+
+
+def test_pin_length_legs_cover_normal_bounds() -> None:
+    assert token_admin._pin_length_legs(4, 32) == [1, 3, 4, 18, 32, 33, 256]
+
+
+def test_pin_length_legs_boundary_at_cap() -> None:
+    assert 4096 in token_admin._pin_length_legs(4, 4095)
+    assert 4097 not in token_admin._pin_length_legs(4, 4096)
+    assert token_admin.pin_sweep_capped(4, 4095) is False
+    assert token_admin.pin_sweep_capped(4, 4096) is True
+    assert token_admin.pin_sweep_capped(4, 32) is False
+
+
+def test_pin_lengths_absurd_bounds_capped_and_recorded() -> None:
+    lengths = token_admin._pin_length_legs(4, 2**32 - 1)
+    trace = _lengths_trace(
+        (4, 2**32 - 1),
+        [(length, _OK if length >= 4 else _PIN_LEN_RANGE) for length in lengths],
+    )
+    assert_xfails(tse._judge_pin_lengths, trace, op="init_pin")
+    rec = _assert_xfail_record("not_operational")
+    assert "sweep cap" in rec.summary
+
+
+def test_pin_lengths_absurd_min_recorded() -> None:
+    trace = _lengths_trace(
+        (5000, 9000), [(1, _PIN_LEN_RANGE), (4, _PIN_LEN_RANGE), (256, _PIN_LEN_RANGE)]
+    )
+    assert_xfails(tse._judge_pin_lengths, trace, op="set_pin")
+    rec = _assert_xfail_record("not_operational")
+    assert "sweep cap" in rec.summary
 
 
 def test_pin_lengths_one_byte_positive_leg_when_min_is_one() -> None:
@@ -3198,13 +3502,14 @@ def test_journey_missing_old_when_reached_is_harness_bug() -> None:
 
 
 def test_persistence_happy_assesses_clean() -> None:
-    assert sopin_case._assess_provision_persistence(_verify_trace()) == []
+    assert sopin_case._assess_provision_persistence(_verify_trace(), canary_established=True) == []
     assert classification.get_records() == []
 
 
 def test_persistence_old_accepted_fails() -> None:
     records = sopin_case._assess_provision_persistence(
-        _verify_trace([("setup:open", _OK), ("old_rejected", _OK), ("new_accepted", _OK)])
+        _verify_trace([("setup:open", _OK), ("old_rejected", _OK), ("new_accepted", _OK)]),
+        canary_established=True,
     )
     assert [(rec.reason, rec.kind) for rec in records] == [("accepted_invalid", "lifecycle")]
 
@@ -3213,7 +3518,8 @@ def test_persistence_old_other_clean_xfails() -> None:
     records = sopin_case._assess_provision_persistence(
         _verify_trace(
             [("setup:open", _OK), ("old_rejected", _GENERAL_ERROR), ("new_accepted", _OK)]
-        )
+        ),
+        canary_established=True,
     )
     assert [(rec.reason, rec.outcome) for rec in records] == [("nonspec_reject", "xfail")]
 
@@ -3226,19 +3532,38 @@ def test_persistence_new_refused_xfails() -> None:
                 ("old_rejected", _PIN_INCORRECT),
                 ("new_accepted", _GENERAL_ERROR),
             ]
-        )
+        ),
+        canary_established=True,
     )
     assert [(rec.reason, rec.outcome) for rec in records] == [("not_operational", "xfail")]
 
 
 def test_persistence_lost_canary_fails() -> None:
-    records = sopin_case._assess_provision_persistence(_verify_trace(inv=(0,)))
+    records = sopin_case._assess_provision_persistence(
+        _verify_trace(inv=(0,)), canary_established=True
+    )
     assert [(rec.reason, rec.kind) for rec in records] == [("self_contradiction", "lifecycle")]
 
 
 def test_persistence_unreadable_inventory_xfails() -> None:
-    records = sopin_case._assess_provision_persistence(_verify_trace(inv=()))
+    records = sopin_case._assess_provision_persistence(
+        _verify_trace(inv=()), canary_established=True
+    )
     assert [(rec.reason, rec.outcome) for rec in records] == [("not_operational", "xfail")]
+
+
+def test_persistence_unestablished_canary_suppresses_loss_fail() -> None:
+    records = sopin_case._assess_provision_persistence(
+        _verify_trace(inv=(0,)), canary_established=False
+    )
+    assert records == []
+
+
+def test_persistence_unestablished_canary_suppresses_unreadable() -> None:
+    records = sopin_case._assess_provision_persistence(
+        _verify_trace(inv=()), canary_established=False
+    )
+    assert records == []
 
 
 def test_reset_happy_assesses_clean() -> None:
@@ -3369,7 +3694,8 @@ def test_raise_strongest_keeps_first_maximal_on_tie() -> None:
                 ("old_rejected", _PIN_INCORRECT),
                 ("new_accepted", _GENERAL_ERROR),
             ]
-        )
+        ),
+        canary_established=True,
     )
     assert [rec.outcome for rec in first + second] == ["xfail", "xfail"]
     first_label = first[0].label
@@ -3460,6 +3786,57 @@ def test_journey_node_phase_two_no_slots_fails() -> None:
         _launch=launch,
     )
     _assert_fail_record("self_contradiction", "lifecycle")
+
+
+def test_journey_node_refused_canary_never_fails_as_lost() -> None:
+    phase1 = _reached_trace(create_canary=_GENERAL_ERROR)._replace(inv_objects=(0,))
+    phase2 = _verify_trace(inv=(0,))
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(phase2))]
+    )
+    factory = _session_factory()
+    assert_xfails(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=factory,
+        _launch=launch,
+    )
+    _assert_xfail_record("not_operational")
+
+
+def test_journey_node_unreadable_phase1_inventory_never_fails_as_lost() -> None:
+    phase1 = _reached_trace()._replace(inv_objects=())
+    phase2 = _verify_trace(inv=(0,))
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(phase2))]
+    )
+    factory = _session_factory()
+    assert_xfails(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=factory,
+        _launch=launch,
+    )
+    _assert_xfail_record("not_operational")
+
+
+def test_journey_node_established_then_lost_canary_still_fails() -> None:
+    phase2 = _verify_trace(inv=(0,))
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(_journey_trace())), _ScriptedChild(_render_trace(phase2))]
+    )
+    factory = _session_factory()
+    _assert_fails(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=factory,
+        _launch=launch,
+    )
+    rec = _assert_fail_record("self_contradiction", "lifecycle")
+    assert "canary lost" in rec.summary
 
 
 def test_reset_node_happy_runs_provision_then_reset() -> None:
@@ -3646,6 +4023,70 @@ def test_independence_dirty_other_initial_skips() -> None:
     trace = trace._replace(flags=flags)
     skipped = assert_skips(pin_case._judge_independence, trace, burned_role="user")
     assert "untestable" in str(skipped)
+
+
+def test_independence_own_flag_fail_preempts_trace_xfail() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, other_rv=_OK)
+    both_worn = _BASE_FLAGS | int(CKF_USER_PIN_COUNT_LOW) | int(CKF_SO_PIN_COUNT_LOW)
+    flags = trace.flags + (("final", both_worn),)
+    trace = trace._replace(flags=flags)
+    _assert_fails(pin_case._judge_independence, trace, burned_role="user")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "consumed the so retry counter" in rec.summary
+
+
+def test_independence_own_locked_fail_preempts_trace_xfail() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, other_rv=_PIN_LOCKED)
+    _assert_fails(pin_case._judge_independence, trace, burned_role="user")
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert "locked by" in rec.summary
+
+
+def test_independence_undefined_other_rv_preempts_trace_xfail() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, other_rv=_UNDEFINED_RV)
+    _assert_fails(pin_case._judge_independence, trace, burned_role="user")
+    _assert_fail_record("self_contradiction", "metadata")
+
+
+def test_independence_dirty_initial_skips_despite_moved_flags() -> None:
+    trace = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, other_rv=_OK)
+    dirty = _BASE_FLAGS | int(CKF_SO_PIN_COUNT_LOW)
+    flags = (("initial", dirty),) + tuple(
+        (tag, value) for tag, value in trace.flags if tag != "initial"
+    )
+    flags = flags + (("final", dirty | int(CKF_USER_PIN_COUNT_LOW)),)
+    trace = trace._replace(flags=flags)
+    skipped = assert_skips(pin_case._judge_independence, trace, burned_role="user")
+    assert "untestable" in str(skipped)
+
+
+def test_independence_trace_xfail_preserved_when_premise_broken() -> None:
+    trace = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, other_rv=_OK)
+    dirty = _BASE_FLAGS | int(CKF_SO_PIN_COUNT_LOW)
+    flags = (("initial", dirty),) + tuple(
+        (tag, value) for tag, value in trace.flags if tag != "initial"
+    )
+    trace = trace._replace(flags=flags)
+    assert_xfails(pin_case._judge_independence, trace, burned_role="user")
+    _assert_xfail_record("nonspec_reject")
+
+
+def test_independence_undefined_other_rv_fails_despite_dirty_initial() -> None:
+    trace = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, other_rv=_UNDEFINED_RV)
+    dirty = _BASE_FLAGS | int(CKF_SO_PIN_COUNT_LOW)
+    flags = (("initial", dirty),) + tuple(
+        (tag, value) for tag, value in trace.flags if tag != "initial"
+    )
+    trace = trace._replace(flags=flags)
+    try:
+        pin_case._judge_independence(trace, burned_role="user")
+    except Failed:
+        pass
+    except Skipped as exc:
+        pytest.fail(f"premise skip must not mask premise-free undefined-RV FAIL: {exc}")
+    else:
+        pytest.fail("expected pytest.fail() for undefined other-role RV")
+    _assert_fail_record("self_contradiction", "metadata")
 
 
 def test_success_reset_observed_passes() -> None:

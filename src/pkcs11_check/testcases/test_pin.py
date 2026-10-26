@@ -311,7 +311,9 @@ def _qc11a_judge_wrong_step(
     role: str,
     label: str,
     detail: dict[str, Any],
+    fails_only: bool = False,
 ) -> None:
+    """Judge one wrong-PIN step; with ``fails_only`` xfail tiers are skipped, not raised."""
     rv = step.rv
     if rv == int(CKR_OK):
         fail_as(
@@ -339,17 +341,20 @@ def _qc11a_judge_wrong_step(
             detail=detail,
         )
     if rv not in _QC11A_CANONICAL_WRONG + _QC11A_CANONICAL_LOCKED:
-        xfail_as(
-            "nonspec_reject",
-            label=f"{label}: {step.name}",
-            operation="C_Login",
-            mechanism=None,
-            inherit_mechanism=False,
-            expected=_QC11A_CANONICAL_WRONG + _QC11A_CANONICAL_LOCKED,
-            actual=rv,
-            summary=f"{label}: wrong-PIN login refused with {ckr_name(rv)}",
-            detail=detail,
-        )
+        # Prescan falls through: a non-canonical refusal beside LOCKED metadata
+        # is still a flag contradiction worth a FAIL.
+        if not fails_only:
+            xfail_as(
+                "nonspec_reject",
+                label=f"{label}: {step.name}",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11A_CANONICAL_WRONG + _QC11A_CANONICAL_LOCKED,
+                actual=rv,
+                summary=f"{label}: wrong-PIN login refused with {ckr_name(rv)}",
+                detail=detail,
+            )
     if paired_flags is not None:
         _, _, locked = _qc11a_role_flags(role)
         if paired_flags & locked and rv != int(CKR_PIN_LOCKED):
@@ -366,17 +371,18 @@ def _qc11a_judge_wrong_step(
                 detail=detail,
             )
         if rv == int(CKR_PIN_LOCKED) and not (paired_flags & locked):
-            xfail_as(
-                "honest_deviation",
-                kind="metadata",
-                label=f"{label}: {step.name}",
-                operation="C_Login",
-                mechanism=None,
-                inherit_mechanism=False,
-                actual=rv,
-                summary=f"{label}: LOCKED refusal without LOCKED counter metadata",
-                detail=detail,
-            )
+            if not fails_only:
+                xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label}: {step.name}",
+                    operation="C_Login",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=rv,
+                    summary=f"{label}: LOCKED refusal without LOCKED counter metadata",
+                    detail=detail,
+                )
 
 
 def _qc11a_judge_correct_step(
@@ -388,7 +394,9 @@ def _qc11a_judge_correct_step(
     evidence: bool,
     final_flags: int | None,
     post_explains_lockout: bool,
+    fails_only: bool = False,
 ) -> None:
+    """Judge one correct-PIN step; with ``fails_only`` xfail tiers are skipped, not raised."""
     rv = step.rv
     if rv == int(CKR_OK):
         if evidence:
@@ -432,17 +440,19 @@ def _qc11a_judge_correct_step(
     if rv == int(CKR_PIN_LOCKED):
         if evidence:
             return
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=f"{label}: {step.name}",
-            operation="C_Login",
-            mechanism=None,
-            inherit_mechanism=False,
-            actual=rv,
-            summary=f"{label}: correct PIN locked without lockout evidence",
-            detail=detail,
-        )
+        if not fails_only:
+            xfail_as(
+                "honest_deviation",
+                kind="metadata",
+                label=f"{label}: {step.name}",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=rv,
+                summary=f"{label}: correct PIN locked without lockout evidence",
+                detail=detail,
+            )
+        return
     if evidence:
         fail_as(
             "self_contradiction",
@@ -456,16 +466,17 @@ def _qc11a_judge_correct_step(
             summary=f"{label}: correct-PIN outcome denies declared lockout",
             detail=detail,
         )
-    xfail_as(
-        "not_operational",
-        label=f"{label}: {step.name}",
-        operation="C_Login",
-        mechanism=None,
-        inherit_mechanism=False,
-        actual=rv,
-        summary=f"{label}: correct PIN refused on an unlocked token",
-        detail=detail,
-    )
+    if not fails_only:
+        xfail_as(
+            "not_operational",
+            label=f"{label}: {step.name}",
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=rv,
+            summary=f"{label}: correct PIN refused on an unlocked token",
+            detail=detail,
+        )
 
 
 def _qc11a_judge_flag_sequences(
@@ -519,26 +530,29 @@ def _qc11a_judge_flag_sequences(
         _check_non_decreasing(pre + post + finals, "up to final")
 
 
-def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
-    """Judge one burn trace for countdown consistency (acceptance/contradiction fail)."""
-    low, final, locked = _qc11a_role_flags(role)
-    label = f"QC11a {role} countdown"
-    detail: dict[str, Any] = {"role": role, "attempts": _qc11a_attempt_entries(trace, role)}
-    by_tag = dict(trace.flags)
-    initial = by_tag.get("initial")
-    if initial is not None:
-        assert not (initial & (low | final | locked)), (
-            f"{label}: burn premise broken: initial flags not pristine ({initial:#x})"
-        )
+def _run_lockout_judges(
+    trace: token_admin.AdminTrace,
+    *,
+    role: str,
+    label: str,
+    detail: dict[str, Any],
+    fails_only: bool,
+) -> None:
+    """Run the per-step and flag-sequence judges once in trace order."""
+    _, _, locked = _qc11a_role_flags(role)
     wrongs, posts = _qc11a_wrong_steps(trace, role)
     attempt_flags = [v for tag, v in trace.flags if tag.startswith("attempt-")]
     post_flags = [v for tag, v in trace.flags if tag.startswith("post-")]
     for i, step in enumerate(wrongs):
         paired = attempt_flags[i] if i < len(attempt_flags) else None
-        _qc11a_judge_wrong_step(step, paired, role=role, label=label, detail=detail)
+        _qc11a_judge_wrong_step(
+            step, paired, role=role, label=label, detail=detail, fails_only=fails_only
+        )
     for j, step in enumerate(posts):
         paired = post_flags[j] if j < len(post_flags) else None
-        _qc11a_judge_wrong_step(step, paired, role=role, label=label, detail=detail)
+        _qc11a_judge_wrong_step(
+            step, paired, role=role, label=label, detail=detail, fails_only=fails_only
+        )
     correct = next((s for s in trace.steps if s.name == f"login:{role}:correct"), None)
     evidence = _qc11a_pre_lockout_evidence(trace, role)
     post_explains = any(s.rv == int(CKR_PIN_LOCKED) for s in posts) or any(
@@ -551,8 +565,9 @@ def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
             label=label,
             detail=detail,
             evidence=evidence,
-            final_flags=by_tag.get("final"),
+            final_flags=dict(trace.flags).get("final"),
             post_explains_lockout=post_explains,
+            fails_only=fails_only,
         )
     _qc11a_judge_flag_sequences(
         trace,
@@ -561,6 +576,22 @@ def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
         detail=detail,
         success=(correct is not None and correct.rv == int(CKR_OK)),
     )
+
+
+def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
+    """Judge one burn trace for countdown consistency (acceptance/contradiction fail)."""
+    low, final, locked = _qc11a_role_flags(role)
+    label = f"QC11a {role} countdown"
+    detail: dict[str, Any] = {"role": role, "attempts": _qc11a_attempt_entries(trace, role)}
+    initial = dict(trace.flags).get("initial")
+    if initial is not None:
+        assert not (initial & (low | final | locked)), (
+            f"{label}: burn premise broken: initial flags not pristine ({initial:#x})"
+        )
+    # R14-03: FAIL-grade observations (acceptance, undefined RVs, flag
+    # contradictions) preempt earlier xfail tiers — prescan first, then tier.
+    _run_lockout_judges(trace, role=role, label=label, detail=detail, fails_only=True)
+    _run_lockout_judges(trace, role=role, label=label, detail=detail, fails_only=False)
 
 
 def _judge_lockout_enforced(trace: token_admin.AdminTrace, *, role: str) -> None:
@@ -576,24 +607,18 @@ def _judge_lockout_enforced(trace: token_admin.AdminTrace, *, role: str) -> None
     )
 
 
-def _judge_independence(trace: token_admin.AdminTrace, *, burned_role: str) -> None:
-    """Burned-role failures must not consume the other role's retry counter."""
-    _judge_lockout_trace(trace, role=burned_role)
-    other = "so" if burned_role == "user" else "user"
-    label = f"QC11a {burned_role}/{other} independence"
-    detail: dict[str, Any] = {
-        "burned_role": burned_role,
-        "attempts": _qc11a_attempt_entries(trace, burned_role),
-    }
-    other_step = next((s for s in trace.steps if s.name == f"login:{other}:correct"), None)
-    assert other_step is not None, f"{label}: missing other-role check step"
-    by_tag = dict(trace.flags)
-    initial = by_tag.get("initial")
-    other_bits = 0
-    for bit in _qc11a_role_flags(other):
-        other_bits |= bit
-    if initial is not None and (initial & other_bits):
-        pytest.skip(f"{label}: other-role counter not pristine at start; independence untestable")
+def _judge_independence_fails(
+    trace: token_admin.AdminTrace,
+    *,
+    other_step: token_admin.AdminStep,
+    initial: int | None,
+    other_bits: int,
+    burned_role: str,
+    other: str,
+    label: str,
+    detail: dict[str, Any],
+) -> None:
+    """FAIL-grade half of independence: premise-guarded, runs before trace tiers."""
     for tag, value in trace.flags:
         if tag == "initial" or value is None:
             continue
@@ -624,19 +649,58 @@ def _judge_independence(trace: token_admin.AdminTrace, *, burned_role: str) -> N
             summary=f"{label}: other-role login returned undefined CK_RV {ckr_name(rv)}",
             detail=detail,
         )
+    if rv == int(CKR_PIN_LOCKED) and initial is not None and not (initial & other_bits):
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{label}: {other_step.name}",
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=rv,
+            summary=f"{label}: {other} locked by {burned_role} failures alone",
+            detail=detail,
+        )
+
+
+def _judge_independence(trace: token_admin.AdminTrace, *, burned_role: str) -> None:
+    """Burned-role failures must not consume the other role's retry counter."""
+    other = "so" if burned_role == "user" else "user"
+    label = f"QC11a {burned_role}/{other} independence"
+    detail: dict[str, Any] = {
+        "burned_role": burned_role,
+        "attempts": _qc11a_attempt_entries(trace, burned_role),
+    }
+    other_step = next((s for s in trace.steps if s.name == f"login:{other}:correct"), None)
+    assert other_step is not None, f"{label}: missing other-role check step"
+    by_tag = dict(trace.flags)
+    initial = by_tag.get("initial")
+    other_bits = 0
+    for bit in _qc11a_role_flags(other):
+        other_bits |= bit
+    # R1-remainder: own FAIL grades preempt lockout-trace xfail tiers. The
+    # premise-needing checks stay guarded (a broken premise keeps them silent,
+    # so the skip below still wins over them); the premise-free undefined-RV
+    # check fails loud regardless of the premise.
+    _judge_independence_fails(
+        trace,
+        other_step=other_step,
+        initial=initial,
+        other_bits=other_bits,
+        burned_role=burned_role,
+        other=other,
+        label=label,
+        detail=detail,
+    )
+    _judge_lockout_trace(trace, role=burned_role)
+    if initial is not None and (initial & other_bits):
+        pytest.skip(f"{label}: other-role counter not pristine at start; independence untestable")
+    rv = other_step.rv
+    if rv == int(CKR_OK):
+        return
     if rv == int(CKR_PIN_LOCKED):
-        if initial is not None and not (initial & other_bits):
-            fail_as(
-                "self_contradiction",
-                kind="metadata",
-                label=f"{label}: {other_step.name}",
-                operation="C_Login",
-                mechanism=None,
-                inherit_mechanism=False,
-                actual=rv,
-                summary=f"{label}: {other} locked by {burned_role} failures alone",
-                detail=detail,
-            )
+        # Pristine-initial LOCKED already failed above; only an unreadable
+        # initial reaches this tier.
         xfail_as(
             "honest_deviation",
             kind="metadata",
@@ -692,21 +756,17 @@ def _judge_success_reset(trace: token_admin.AdminTrace, *, role: str) -> None:
     pytest.skip(f"{label}: equal rank {pre}; buckets too coarse, reset unproven; untestable")
 
 
-def _judge_restart_persistence(
-    first: token_admin.AdminTrace, second: token_admin.AdminTrace, *, role: str
+def _judge_restart_persistence_fails(
+    *,
+    role: str,
+    correct: token_admin.AdminStep,
+    last_before: int | None,
+    second_initial: int | None,
+    label: str,
+    detail: dict[str, Any],
 ) -> None:
-    """Restart must not contradict counter state; persistence itself is not a MUST."""
-    _judge_lockout_trace(first, role=role)
-    label = f"QC11a {role} restart persistence"
-    detail: dict[str, Any] = {
-        "role": role,
-        "first_attempts": _qc11a_attempt_entries(first, role),
-        "second_attempts": _qc11a_attempt_entries(second, role),
-    }
+    """FAIL-grade half of restart persistence; runs before first-trace tiers."""
     _, _, locked = _qc11a_role_flags(role)
-    first_known = [v for _, v in first.flags if v is not None]
-    last_before = first_known[-1] if first_known else None
-    second_initial = dict(second.flags).get("initial")
     if (
         last_before is not None
         and second_initial is not None
@@ -722,8 +782,6 @@ def _judge_restart_persistence(
             summary=f"{label}: counter escalated across restart with no intervening attempts",
             detail=detail,
         )
-    correct = next((s for s in second.steps if s.name == f"login:{role}:correct"), None)
-    assert correct is not None, f"{label}: phase-2 probe contract broken (no correct step)"
     before_locked = last_before is not None and bool(last_before & locked)
     now_locked = second_initial is not None and bool(second_initial & locked)
     rv = correct.rv
@@ -754,6 +812,56 @@ def _judge_restart_persistence(
             detail=detail,
         )
     if rv == int(CKR_PIN_LOCKED):
+        # LOCKED tiers are judged after the first-trace pass.
+        return
+    if before_locked or now_locked:
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{label}: {correct.name}",
+            operation="C_Login",
+            mechanism=None,
+            inherit_mechanism=False,
+            expected=_QC11A_CANONICAL_LOCKED,
+            actual=rv,
+            summary=f"{label}: correct-PIN outcome denies declared lockout",
+            detail=detail,
+        )
+
+
+def _judge_restart_persistence(
+    first: token_admin.AdminTrace, second: token_admin.AdminTrace, *, role: str
+) -> None:
+    """Restart must not contradict counter state; persistence itself is not a MUST."""
+    label = f"QC11a {role} restart persistence"
+    detail: dict[str, Any] = {
+        "role": role,
+        "first_attempts": _qc11a_attempt_entries(first, role),
+        "second_attempts": _qc11a_attempt_entries(second, role),
+    }
+    _, _, locked = _qc11a_role_flags(role)
+    first_known = [v for _, v in first.flags if v is not None]
+    last_before = first_known[-1] if first_known else None
+    second_initial = dict(second.flags).get("initial")
+    correct = next((s for s in second.steps if s.name == f"login:{role}:correct"), None)
+    assert correct is not None, f"{label}: phase-2 probe contract broken (no correct step)"
+    # R1-remainder: own FAIL grades preempt first-trace xfail tiers.
+    _judge_restart_persistence_fails(
+        role=role,
+        correct=correct,
+        last_before=last_before,
+        second_initial=second_initial,
+        label=label,
+        detail=detail,
+    )
+    _judge_lockout_trace(first, role=role)
+    before_locked = last_before is not None and bool(last_before & locked)
+    now_locked = second_initial is not None and bool(second_initial & locked)
+    rv = correct.rv
+    if rv == int(CKR_OK):
+        # Accepted-despite-LOCKED already failed above.
+        return
+    if rv == int(CKR_PIN_LOCKED):
         if before_locked or now_locked:
             return
         visible = any(
@@ -773,19 +881,7 @@ def _judge_restart_persistence(
                 detail=detail,
             )
         return
-    if before_locked or now_locked:
-        fail_as(
-            "self_contradiction",
-            kind="metadata",
-            label=f"{label}: {correct.name}",
-            operation="C_Login",
-            mechanism=None,
-            inherit_mechanism=False,
-            expected=_QC11A_CANONICAL_LOCKED,
-            actual=rv,
-            summary=f"{label}: correct-PIN outcome denies declared lockout",
-            detail=detail,
-        )
+    # Undefined RVs and locked-evidence denials already failed above.
     xfail_as(
         "not_operational",
         label=f"{label}: {correct.name}",
@@ -910,14 +1006,8 @@ def _run_qc11a_persistence_node(
         first = token_admin.check_child_output(rc1, out1, err1, label=f"QC11a {role} persist/1")
         rc2, out2, err2 = _launch(
             minted,
-            "qc11a_burn",
-            {
-                "role": role,
-                "attempts": 0,
-                "then_correct": True,
-                "then_other_role_correct": False,
-                "post_success_wrongs": 0,
-            },
+            "qc11a_read",
+            {"role": role},
             p11_config=p11_config,
         )
         second = token_admin.check_child_output(rc2, out2, err2, label=f"QC11a {role} persist/2")

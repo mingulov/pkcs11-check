@@ -613,7 +613,16 @@ def _assess_journey_refusal_fallout(
         )
 
 
-def _assess_provision_persistence(trace: token_admin.AdminTrace) -> list[Classification]:
+def _canary_established(phase1: token_admin.AdminTrace) -> bool:
+    """True when phase 1 proved a live canary (created OK and inventoried present)."""
+    if _qc11c_step_map(phase1).get("create_canary") != int(CKR_OK):
+        return False
+    return bool(phase1.inv_objects) and phase1.inv_objects[-1] > 0
+
+
+def _assess_provision_persistence(
+    trace: token_admin.AdminTrace, *, canary_established: bool
+) -> list[Classification]:
     """Assess the restart re-verification trace (new PIN works, old rejected, canary kept)."""
     by_name = _qc11c_step_map(trace)
     records: list[Classification] = []
@@ -698,6 +707,11 @@ def _assess_provision_persistence(trace: token_admin.AdminTrace) -> list[Classif
                 detail=detail,
             )
         )
+    # Without phase-1 establishment the canary leg is unexercised (the phase-1
+    # setup-failure records carry the verdict); only an established-then-lost
+    # canary proves a persistence failure.
+    if not canary_established:
+        return records
     if not trace.inv_objects:
         records.append(
             record_as(
@@ -753,7 +767,9 @@ def _run_qc11c_journey_node(
         phase2 = token_admin.check_child_output(
             rc2, out2, err2, label="QC11c verify", no_slots="fail"
         )
-        records2 = _assess_provision_persistence(phase2)
+        records2 = _assess_provision_persistence(
+            phase2, canary_established=_canary_established(phase1)
+        )
         _raise_strongest_qc11c(records1 + records2)
 
 

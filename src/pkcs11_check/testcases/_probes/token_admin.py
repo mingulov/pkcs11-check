@@ -7,6 +7,11 @@ config file at the child via the ``PKCS11_CHECK_TOKEN_CONF_ENV``-named env var
 ``Level.INIT``; each probe body performs its own slot discovery and session
 management.
 
+Burn and PIN-length children self-provision with ``C_InitToken`` first
+(pristine-by-construction, same containment as the journey probe): the mint is
+NOT required to establish any PIN. An InitToken refusal ends the probe with an
+explicit ``ASSUMPTION_FAILED:self_provision`` skip, never a silent pass.
+
 Invariant I3: probe bodies authenticate with HARDCODED TEST PINs only (the
 ``TEST_*``/``WRONG_*`` fixtures below); the configured module PIN is never
 read, embedded, or forwarded. Length-sweep PINs come from ``candidate_pin``.
@@ -338,6 +343,12 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if slot is None:
         print("NO_SLOTS")
         return
+    itrv = _init_token(ctx, slot, TEST_SO_PIN)
+    _step("init_token", itrv)
+    if itrv != int(CKR_OK):
+        print(f"ASSUMPTION_FAILED:self_provision:{itrv:#x}")
+        print("OK")
+        return
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         print("PINBOUNDS:unknown")
@@ -356,6 +367,25 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if open_rv != int(CKR_OK):
         print("OK")
         return
+    if role == "user":
+        # InitToken establishes only the SO PIN; provision the user PIN the
+        # burn is about to exercise.
+        sorv = _login(ctx, sh, "so", TEST_SO_PIN)
+        _step("setup:so_login", sorv)
+        if sorv != int(CKR_OK):
+            print(f"ASSUMPTION_FAILED:setup_login:{sorv:#x}")
+            print("OK")
+            return
+        iprv = int(ctx.raw.C_InitPIN(sh, _buf(TEST_USER_PIN), len(TEST_USER_PIN)))
+        _step("setup:init_pin", iprv)
+        if iprv != int(CKR_OK):
+            print(f"ASSUMPTION_FAILED:setup_init_pin:{iprv:#x}")
+            print("OK")
+            return
+        try:
+            ctx.raw.C_Logout(sh)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
+            print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
     wrong = WRONG_SO_PIN if role == "so" else WRONG_USER_PIN
     right = TEST_SO_PIN if role == "so" else TEST_USER_PIN
     for i in range(1, attempts + 1):
@@ -390,7 +420,15 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
 
 
 def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    del extra
+    """Phase-2 persistence reader: snapshot flags, then check the correct PIN.
+
+    Runs on the phase-1-burned token, so it takes NO pristine gate (unlike
+    ``_qc11a_burn``) and performs NO provisioning (an InitToken here would wipe
+    the burned counters under test).
+    """
+    role = str(extra["role"])
+    if role not in ("user", "so"):
+        raise ValueError(f"unknown role {role!r}")
     slot = _discover_slot(ctx)
     if slot is None:
         print("NO_SLOTS")
@@ -398,17 +436,46 @@ def _qc11a_read(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
         print("PINBOUNDS:unknown")
-        print("FLAGS:read:unknown")
+        print("FLAGS:initial:unknown")
     else:
         print(f"PINBOUNDS:{min_pin}:{max_pin}")
-        print(f"FLAGS:read:0x{flags:08x}")
+        print(f"FLAGS:initial:0x{flags:08x}")
+    open_rv, sh = _open_rw(ctx, slot)
+    _step("setup:open", open_rv)
+    if open_rv != int(CKR_OK):
+        print("OK")
+        return
+    right = TEST_SO_PIN if role == "so" else TEST_USER_PIN
+    crv = _login(ctx, sh, role, right)
+    _step(f"login:{role}:correct", crv)
+    try:
+        ctx.raw.C_Logout(sh)
+    except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
+        print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
+    _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
+    _quiet_close(ctx, sh)
     print("OK")
+
+
+# Longest PIN the length sweep will ever build: absurd declared bounds (up to
+# 2**32 - 1) must cap the sweep, never attempt GB allocations in the child.
+PIN_SWEEP_CAP = 4096
+
+
+def pin_sweep_capped(min_pin: int, max_pin: int) -> bool:
+    """True when the sweep cap drops coverable legs for these declared bounds."""
+    return min_pin > PIN_SWEEP_CAP or max_pin >= PIN_SWEEP_CAP
 
 
 def _pin_length_legs(min_pin: int, max_pin: int) -> list[int]:
     mid = (min_pin + max_pin) // 2 if max_pin > min_pin else min_pin
     return sorted(
-        {n for n in (1, 4, min_pin - 1, min_pin, mid, max_pin, max_pin + 1, 256) if n >= 1}
+        {
+            n
+            for n in (1, 4, min_pin - 1, min_pin, mid, max_pin, max_pin + 1, 256)
+            if 1 <= n <= PIN_SWEEP_CAP
+        }
     )
 
 
@@ -419,6 +486,12 @@ def _qc11b_pin_lengths(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     slot = _discover_slot(ctx)
     if slot is None:
         print("NO_SLOTS")
+        return
+    itrv = _init_token(ctx, slot, TEST_SO_PIN)
+    _step("init_token", itrv)
+    if itrv != int(CKR_OK):
+        print(f"ASSUMPTION_FAILED:self_provision:{itrv:#x}")
+        print("OK")
         return
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
@@ -432,6 +505,25 @@ def _qc11b_pin_lengths(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if open_rv != int(CKR_OK):
         print("OK")
         return
+    if op == "set_pin":
+        # InitToken establishes only the SO PIN; the SetPIN legs need a known
+        # user PIN as their chaining start.
+        sorv = _login(ctx, sh, "so", TEST_SO_PIN)
+        _step("setup:so_login", sorv)
+        if sorv != int(CKR_OK):
+            print(f"ASSUMPTION_FAILED:setup_login:{sorv:#x}")
+            print("OK")
+            return
+        iprv = int(ctx.raw.C_InitPIN(sh, _buf(TEST_USER_PIN), len(TEST_USER_PIN)))
+        _step("setup:init_pin", iprv)
+        if iprv != int(CKR_OK):
+            print(f"ASSUMPTION_FAILED:setup_init_pin:{iprv:#x}")
+            print("OK")
+            return
+        try:
+            ctx.raw.C_Logout(sh)
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup, reported not swallowed
+            print(f"CLEANUP_IGNORED:C_Logout:{type(exc).__name__}")
     if op == "init_pin":
         setup_rv = _login(ctx, sh, "so", TEST_SO_PIN)
     else:
