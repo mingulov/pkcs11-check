@@ -775,6 +775,28 @@ def _qc8b_unwrap(
     )
     handle_after = int(handle.value)
     detail: dict[str, Any] = {"handle_after": handle_after}
+    # A success returning a zero or already-known handle is a knowable
+    # contradiction; no after inventory can rescue it (R10-01), so it is
+    # judged before any further inventory. Nothing is destroyed here.
+    if rv == int(CKR_OK) and (handle_after == 0 or handle_after in before):
+        classify(
+            "self_contradiction",
+            kind="lifecycle",
+            label=label,
+            operation="C_UnwrapKey",
+            mechanism="CKM_AES_KEY_WRAP",
+            actual=rv,
+            inherit_mechanism=False,
+            summary=(
+                f"{label}: unwrap reported success but handle {handle_after} is "
+                + (
+                    "zero"
+                    if handle_after == 0
+                    else "a pre-existing object from the before inventory"
+                )
+            ),
+            detail=detail,
+        )
     try:
         after = _inventory()
     except CkrAssertionError as exc:

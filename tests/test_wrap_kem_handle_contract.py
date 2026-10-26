@@ -119,6 +119,10 @@ class _Token:
         self.find_fail_rv: int = int(CKR_GENERAL_ERROR)
         self.stage_rv: int | None = None
         self.stage_secret_mode: str = "created"  # created|foreign
+        self.stage_len_zero: bool = False
+        self.stage_creates_on_refusal: bool = False
+        self.stage_created_handle: int | None = None
+        self.unwrap_success_mode: str = "created"  # created|foreign|zero
         self.unwrap_rv: int = _OK
         self.unwrap_creates_on_refusal: bool = False
         self.unwrap_created_handle: int | None = None
@@ -253,6 +257,12 @@ class _Token:
                 self.unwrap_created_handle = created
                 _fill(out, created, CK_OBJECT_HANDLE)
             return self.unwrap_rv
+        if self.unwrap_success_mode == "foreign":
+            _fill(out, int(unwrapping), CK_OBJECT_HANDLE)
+            return _OK
+        if self.unwrap_success_mode == "zero":
+            _fill(out, 0, CK_OBJECT_HANDLE)
+            return _OK
         handle = self._issue("unwrapped")
         self.objects[handle].attrs = dict(self.unwrapped_attrs)
         _fill(out, handle, CK_OBJECT_HANDLE)
@@ -274,10 +284,14 @@ class _Token:
         if not self._live(int(pub)):
             return self._probe_out(secret)
         if self.stage_rv is not None:
+            if self.stage_creates_on_refusal:
+                created = self._issue("kem-secret")
+                self.stage_created_handle = created
+                _fill(secret, created, CK_OBJECT_HANDLE)
             return self.stage_rv
         if ct_buf is not None:
             ctypes.memmove(ct_buf, _CT_PATTERN, len(_CT_PATTERN))
-        _fill(ct_len, len(_CT_PATTERN))
+        _fill(ct_len, 0 if self.stage_len_zero else len(_CT_PATTERN))
         if self.stage_secret_mode == "foreign":
             _fill(secret, int(pub), CK_OBJECT_HANDLE)
             return _OK
@@ -966,6 +980,86 @@ def test_explicit_false_unwrap_refusal_creating_object_fails_r9(
     rec = _must_fail(_run_explicit_false, monkeypatch, fake)
     assert rec.reason == "self_contradiction"
     created = fake.unwrap_created_handle
+    assert created is not None
+    assert fake.destroyed.count(created) == 1
+    _assert_cleaned(fake)
+
+
+# --- Re-review round 10: knowable contradictions and staging early exits ----
+
+
+def test_decap_staging_foreign_secret_with_inventory_failure_fails_r10(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.probe_rv = int(CKR_UNWRAPPING_KEY_HANDLE_INVALID)
+    fake.stage_secret_mode = "foreign"
+    fake.fail_find_from_call = 2
+    _patch_kem(monkeypatch, fake)
+    rec = _must_fail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "lifecycle"
+    pub = fake.created[0]
+    assert fake.destroyed.count(pub) == 1
+    _assert_cleaned(fake)
+
+
+@pytest.mark.parametrize("node", ["omitted", "explicit_false"])
+@pytest.mark.parametrize("mode", ["foreign", "zero"])
+def test_qc8b_success_bad_handle_with_inventory_failure_fails_r10(
+    monkeypatch: pytest.MonkeyPatch, node: str, mode: str
+) -> None:
+    fake = _Token()
+    fake.unwrap_success_mode = mode
+    fake.fail_find_from_call = 2
+    runner = _run_omitted if node == "omitted" else _run_explicit_false
+    rec = _must_fail(runner, monkeypatch, fake)
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "lifecycle"
+    _assert_cleaned(fake)
+
+
+def test_decap_staging_bad_length_destroys_proved_secret_r10(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.probe_rv = int(CKR_UNWRAPPING_KEY_HANDLE_INVALID)
+    fake.stage_len_zero = True
+    _patch_kem(monkeypatch, fake)
+    rec = _must_fail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "wrong_result"
+    assert rec.kind == "metadata"
+    secret = fake.created[-1]
+    assert fake.destroyed.count(secret) == 1
+    _assert_cleaned(fake)
+
+
+def test_decap_staging_refusal_creating_object_fails_r10(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _Token()
+    fake.stage_rv = int(CKR_FUNCTION_FAILED)
+    fake.stage_creates_on_refusal = True
+    _patch_kem(monkeypatch, fake)
+    rec = _must_fail(
+        tkem.TestDecapsulateKeyErrors().test_decapsulation_key_handle_invalid,
+        fake.session,
+        False,
+        handle_kind="never_issued",
+    )
+    assert rec.reason == "self_contradiction"
+    assert rec.kind == "lifecycle"
+    created = fake.stage_created_handle
     assert created is not None
     assert fake.destroyed.count(created) == 1
     _assert_cleaned(fake)

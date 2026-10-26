@@ -294,6 +294,38 @@ def _staging_inventory(rs: Any) -> list[int]:
         raise AssertionError("unreachable: xfail_as always raises") from exc
 
 
+def _staging_partition(
+    rs: Any, before: list[int], handle_after: int
+) -> tuple[list[int], list[int] | None]:
+    """Partition a staging output against a best-effort post inventory.
+
+    Used on early-exit paths (R10-02): returns the proved-new handles
+    and the new-handle list, or ``None`` for the latter when the
+    inventory itself failed cleanly and nothing is provable. An
+    undefined inventory RV keeps its metadata failure.
+    """
+    try:
+        after = _qc4._find_all(rs)
+    except CkrAssertionError as exc:
+        if not (is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv)):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label="C_EncapsulateKey:ML-KEM staging inventory",
+                operation="C_FindObjects",
+                mechanism="CKM_ML_KEM",
+                actual=exc.rv,
+                spec_ref="PKCS#11 v3.2",
+                summary=(
+                    "Staging inventory returned undefined CK_RV "
+                    f"{ckr_name(exc.rv)}; staged-secret ownership unprovable"
+                ),
+            )
+        return [], None
+    new_handles = sorted(set(after) - set(before))
+    return _proved_new(handle_after, before, new_handles), new_handles
+
+
 def _proved_new(handle_after: int, before: list[int], new_handles: list[int]) -> list[int]:
     """Delta membership of the output handle is the only ownership proof."""
     if handle_after in new_handles and handle_after not in before:
@@ -627,7 +659,12 @@ class TestDecapsulateKeyErrors:
                 byref(stage_len),
                 byref(stage_secret),
             )
+            stage_handle = int(stage_secret.value)
             if rv != CKR_OK:
+                # Early-exit cleanup (R10-02): a staging refusal may still
+                # have created the secret, which must not leak alive.
+                proved, new_handles = _staging_partition(rs, stage_before, stage_handle)
+                _probe_cleanup(rs, proved_new_handles=proved)
                 if not (is_standard_ckr(int(rv)) or is_vendor_defined_ckr(int(rv))):
                     fail_as(
                         "self_contradiction",
@@ -642,6 +679,45 @@ class TestDecapsulateKeyErrors:
                             f"CK_RV {ckr_name(int(rv))}"
                         ),
                     )
+                if proved:
+                    fail_as(
+                        "self_contradiction",
+                        kind="lifecycle",
+                        label="C_EncapsulateKey:ML-KEM staging",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        actual=int(rv),
+                        spec_ref="PKCS#11 v3.2",
+                        summary=(
+                            "Staging encapsulate refused with "
+                            f"{ckr_name(int(rv))} but created secret "
+                            f"{proved[0]}"
+                        ),
+                        detail={
+                            "handle_after": stage_handle,
+                            "new_handles": new_handles,
+                            "proved_new_handles": proved,
+                        },
+                    )
+                if new_handles:
+                    xfail_as(
+                        "honest_deviation",
+                        kind="lifecycle",
+                        label="C_EncapsulateKey:ML-KEM staging",
+                        operation="C_EncapsulateKey",
+                        mechanism="CKM_ML_KEM",
+                        actual=int(rv),
+                        spec_ref="PKCS#11 v3.2",
+                        summary=(
+                            "Staging encapsulate refused but the inventory "
+                            f"gained unproved objects {new_handles}"
+                        ),
+                        detail={
+                            "handle_after": stage_handle,
+                            "new_handles": new_handles,
+                            "proved_new_handles": proved,
+                        },
+                    )
                 xfail_as(
                     "not_operational",
                     label="C_EncapsulateKey:ML-KEM staging",
@@ -650,7 +726,32 @@ class TestDecapsulateKeyErrors:
                     actual=rv,
                     summary=f"ML-KEM encapsulate staging not operational: {ckr_name(rv)}",
                 )
+            # A success returning a zero or already-known handle is a
+            # knowable contradiction; no after inventory can rescue it
+            # (R10-01), so it is judged before any further inventory.
+            if stage_handle == 0 or stage_handle in stage_before:
+                fail_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label="C_EncapsulateKey:ML-KEM staging",
+                    operation="C_EncapsulateKey",
+                    mechanism="CKM_ML_KEM",
+                    actual=int(rv),
+                    spec_ref="PKCS#11 v3.2",
+                    summary=(
+                        "Staging encapsulate reported success but its secret "
+                        f"handle {stage_handle} is "
+                        + (
+                            "zero"
+                            if stage_handle == 0
+                            else "a pre-existing object from the before inventory"
+                        )
+                    ),
+                    detail={"handle_after": stage_handle},
+                )
             if not (0 < int(stage_len.value) <= _CT_LEN):
+                proved, new_handles = _staging_partition(rs, stage_before, stage_handle)
+                _probe_cleanup(rs, proved_new_handles=proved)
                 fail_as(
                     "wrong_result",
                     kind="metadata",
@@ -659,6 +760,11 @@ class TestDecapsulateKeyErrors:
                     mechanism="CKM_ML_KEM",
                     actual=int(stage_len.value),
                     summary="Staging encapsulate reported an implausible ciphertext length",
+                    detail={
+                        "handle_after": stage_handle,
+                        "new_handles": new_handles,
+                        "proved_new_handles": proved,
+                    },
                 )
             # The staging output handle is owned only when the exhaustive
             # delta proves it new; a pre-existing handle handed back as
