@@ -773,6 +773,29 @@ def _qc11c_snapshot_detail(trace: token_admin.AdminTrace) -> dict[str, Any]:
     }
 
 
+def _gate_journey_phase_trace(
+    rc: int, out: str, err: str, *, gate_label: str
+) -> token_admin.AdminTrace:
+    """Parse + would-skip-conditional snapshot prescan + gate for a journey leg.
+
+    Shared R20-01a/R21-01 gate for the two ``qc11c_journey`` legs (journey-node
+    phase 1, reset provision): when the leg would skip, its own
+    undefined-snapshot FAIL grades preempt the skip via the raising twin (the
+    assessor asserts completeness a setup-failed trace lacks). The prescan
+    label mirrors the assessor's (``QC11c provisioning journey``) so it judges
+    the same grades the gate skip would otherwise mask; the gate/parse label
+    stays the caller's (``QC11c journey`` / ``QC11c reset/provision``).
+    """
+    raw = token_admin.parse_child_output(rc, out, err, label=gate_label)
+    if token_admin.trace_skip_reason(raw) is not None:
+        token_admin.fail_on_undefined_snapshots(
+            raw,
+            label="QC11c provisioning journey",
+            detail=_qc11c_snapshot_detail(raw),
+        )
+    return token_admin.gate_child_trace(raw, label=gate_label)
+
+
 def _run_qc11c_journey_node(
     cap: throwaway.ThrowawayCapability,
     p11_config: Any,
@@ -783,17 +806,9 @@ def _run_qc11c_journey_node(
     with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
         rc1, out1, err1 = _launch(minted, "qc11c_journey", {}, p11_config=p11_config)
         # R20-01a collect-then-judge (same trace): when phase one would skip,
-        # its own undefined-snapshot FAIL grades preempt the skip. The raising
-        # twin is required: the assessor asserts completeness, which a
-        # setup-failed trace cannot satisfy.
-        phase1_raw = token_admin.parse_child_output(rc1, out1, err1, label="QC11c journey")
-        if token_admin.trace_skip_reason(phase1_raw) is not None:
-            token_admin.fail_on_undefined_snapshots(
-                phase1_raw,
-                label="QC11c provisioning journey",
-                detail=_qc11c_snapshot_detail(phase1_raw),
-            )
-        phase1 = token_admin.gate_child_trace(phase1_raw, label="QC11c journey")
+        # its own undefined-snapshot FAIL grades preempt the skip (shared
+        # journey-leg gate).
+        phase1 = _gate_journey_phase_trace(rc1, out1, err1, gate_label="QC11c journey")
         records1, reached = _assess_provision_journey(phase1)
         if not reached:
             assert records1, "QC11c journey: unreached without any record"

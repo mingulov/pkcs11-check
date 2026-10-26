@@ -4997,3 +4997,141 @@ def test_r20_01b_no_double_judge_clean_gating_reset_uses_record_path() -> None:
     records = classification.get_records()
     assert [rec.outcome for rec in records] == ["fail", "fail"]
     assert {rec.reason for rec in records} == {"self_contradiction", "accepted_invalid"}
+
+
+# --- Part 9: Task 22 fix round 5 (R21-01/F-R20-01c reset-provision prescan) ---
+
+
+def test_r21_01_reset_provision_own_setup_failure_undefined_snapshot_fails(
+    capsys: Any,
+) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_R20_UNDEFINED_RV]
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert [(step.name, step.rv) for step in trace.steps] == [
+        ("init_token", _OK),
+        ("snapshot:after_init_token", _R20_UNDEFINED_RV),
+        ("setup:open", _GENERAL_ERROR),
+    ]
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    _r20_assert_fail_preempts_skip(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    rec = _assert_r20_snapshot_fail_record()
+    assert "after_init_token" in rec.label
+
+
+def test_r21_01_reset_provision_defined_snapshot_setup_failure_still_skips(
+    capsys: Any,
+) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_GENERAL_ERROR]
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    skipped = assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c reset/provision: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert classification.get_records() == []
+
+
+def test_r21_01_reset_provision_setup_failure_without_snapshots_still_skips(
+    capsys: Any,
+) -> None:
+    fake = _FakeAdminRaw()
+    fake.open_script = [_GENERAL_ERROR]
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert [step for step in trace.steps if step.name.startswith("snapshot")] == []
+    launch = _FakeLaunch([_ScriptedChild(out)])
+    skipped = assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c reset/provision: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert classification.get_records() == []
+
+
+def test_r21_01_reset_provision_no_slots_still_skips() -> None:
+    launch = _FakeLaunch([_ScriptedChild("NO_SLOTS\n")])
+    skipped = assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == "QC11c reset/provision: no present slot on the sacrificial token"
+    assert classification.get_records() == []
+
+
+def test_r21_01_reset_provision_healthy_reaches_reset_leg(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.open_script = [_GENERAL_ERROR]
+    reset_out = _run_probe("qc11c_reset", fake, {}, capsys)
+    reset_trace = token_admin.parse_admin_trace(reset_out)
+    assert [step for step in reset_trace.steps if step.name.startswith("snapshot")] == []
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(_journey_trace())),
+            _ScriptedChild(reset_out),
+        ]
+    )
+    skipped = assert_skips(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    assert str(skipped) == (
+        "QC11c reset: sacrificial setup failed: "
+        "setup:open=CKR_GENERAL_ERROR; destructive legs untestable"
+    )
+    assert len(launch.calls) == 2
+    assert classification.get_records() == []
+
+
+def test_r21_01_no_double_judge_clean_gating_provision_uses_record_path() -> None:
+    provision = _with_snapshot(
+        _reached_trace(old_rejected=_OK), "snapshot:after_so_login", _R20_UNDEFINED_RV
+    )
+    launch = _FakeLaunch(
+        [
+            _ScriptedChild(_render_trace(provision)),
+            _ScriptedChild(_render_trace(_reset_trace())),
+        ]
+    )
+    _assert_fails(
+        ckr_case._run_qc11c_reset_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    # The reset leg launched: the would-skip-conditional prescan did not raise
+    # early on a clean-gating provision trace.
+    assert len(launch.calls) == 2
+    records = classification.get_records()
+    assert [rec.outcome for rec in records] == ["fail", "fail"]
+    assert {rec.reason for rec in records} == {"self_contradiction", "accepted_invalid"}
