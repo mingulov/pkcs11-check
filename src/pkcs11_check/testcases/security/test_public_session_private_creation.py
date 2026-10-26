@@ -997,10 +997,13 @@ def _qc10a_so_login_scope(
     }
     flags = CKF_SERIAL_SESSION | CKF_RW_SESSION
     so_sh = _open_access_session_or_skip(rs, flags)
+    cleared = False
+    so_reached = False
     try:
         rv = int(rs.raw.C_Logout(so_sh))
         if rv not in _QC10A_LOGGED_OUT_RVS:
             _qc10a_premise_refusal(rv, operation="C_Logout", label=f"{label}: clear login")
+        cleared = True
         pin_buf = (CK_UTF8CHAR * len(so_pin))(*so_pin)
         rv = int(rs.raw.C_Login(so_sh, CKU_SO, pin_buf, len(so_pin)))
         skip_if_so_pin_rejected(rv, explicit=explicit_so)
@@ -1008,6 +1011,7 @@ def _qc10a_so_login_scope(
             pytest.skip("Another user already logged in on this token")
         if rv != int(CKR_OK):
             _qc10a_premise_refusal(rv, operation="C_Login", label=f"{label}: SO login")
+        so_reached = True
         srv, state = _qc10a_session_state(rs.raw, so_sh)
         if srv != int(CKR_OK):
             _qc10a_premise_refusal(
@@ -1030,11 +1034,15 @@ def _qc10a_so_login_scope(
         scope["transitioned"] = True
         yield so_sh, scope
     finally:
-        if scope["transitioned"]:
-            # Capture before the try: inside the handler below, sys.exc_info()
-            # reports the restoration signal, not the propagating primary.
-            in_flight = sys.exc_info()[1]
-            try:
+        # Every exit path closes the scope session; every path that cleared
+        # the entry login also restores verified USER state (early exits
+        # included: a refused SO login must not strand the token logged out,
+        # an unverified SO login must not strand it SO-logged-in).
+        # Capture before the try: inside the handler below, sys.exc_info()
+        # reports the restoration signal, not the propagating primary.
+        in_flight = sys.exc_info()[1]
+        try:
+            if scope["transitioned"]:
                 try:
                     _qc10a_restore_user(rs, so_sh, user_pin)
                 except _Qc10aRestorationError as rest:
@@ -1049,10 +1057,15 @@ def _qc10a_so_login_scope(
                             before=scope.get("sweep_before", []),
                             label=label,
                         )
-            finally:
-                # The session closes even when restoration reporting or the
-                # sweep raises: a sweep verdict must not leak the session.
-                close_session_quietly(rs.raw, so_sh)
+            elif so_reached or cleared:
+                try:
+                    _qc10a_restore_user(rs, so_sh, user_pin)
+                except _Qc10aRestorationError as rest:
+                    _qc10a_report_restoration_failure(scope, rest, label, in_flight)
+        finally:
+            # The session closes even when restoration reporting or the
+            # sweep raises: a sweep verdict must not leak the session.
+            close_session_quietly(rs.raw, so_sh)
 
 
 def _qc10a_restore_user(rs: Any, so_sh: int, user_pin: bytes) -> None:
@@ -1110,9 +1123,13 @@ def _qc10a_report_restoration_failure(
         )
     if records and isinstance(in_flight, XFailed):
         # XFailed subclasses Failed: check it first, then upgrade to fail.
+        # The upgrade drops the xfail reason and re-derives FAIL severity so
+        # the rewritten record stays consistent with the verdict model.
         last = records[-1]
         last.detail = {**(last.detail or {}), **restoration_detail}
+        last.reason = "self_contradiction"
         last.outcome = "fail"
+        last.severity = C.derive_verdict(last.reason, last.kind)[1]
         last.summary = f"{last.summary} (restoration also failed: {rest.detail})"
         C.raise_for_record(last)
     if records and isinstance(in_flight, Failed):
@@ -1517,6 +1534,33 @@ def _qc10a_run_positive_leg(
             detail={"disposition": "unproved-handle", "handle_after": handle},
             summary=f"{label}: {operation} returned CKR_OK but the handle is unproved",
         )
+    extras = sorted(h for h in proved if h != handle)
+    if extras:
+        # The call created more than it returned, and the siblings are
+        # proved-new (ours): destroy them all, then fail loud -- a CKR_OK
+        # creation must create exactly the returned object.
+        for sibling in extras:
+            destroy_quietly(rs.raw, sh, sibling)
+        destroy_quietly(rs.raw, sh, handle)
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=rv,
+            detail={
+                "disposition": "created-extra",
+                "handle_after": handle,
+                "new_handles": sorted({int(h) for h in after} - {int(h) for h in before}),
+                "proved_new_handles": sorted(proved),
+                "extra_handles": extras,
+            },
+            summary=(
+                f"{label}: {operation} returned CKR_OK but created extra proved "
+                f"objects {extras} beside the returned handle"
+            ),
+        )
     if unproved:
         # The handle is proved, but the delta gained unexpected companions:
         # not a clean pass. The owned handle is cleaned; the companions are
@@ -1779,6 +1823,7 @@ def _qc10a_judge_negative_acceptance(
         evidence.reason = "self_contradiction"
         evidence.kind = "policy"
         evidence.outcome = "fail"
+        evidence.severity = C.derive_verdict(evidence.reason, evidence.kind)[1]
         evidence.operation = operation
         evidence.label = label
         evidence.expected_ckr = [ckr_name(int(CKR_USER_NOT_LOGGED_IN))]
@@ -1918,8 +1963,11 @@ class TestSOPrivateCreation:
         source_label = _qc10a_unique_label("copy-src")
         source = 0
         try:
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} source setup"
+            )
             try:
-                source = create_object(
+                candidate = create_object(
                     rs.raw,
                     rs.sh,
                     {
@@ -1934,6 +1982,37 @@ class TestSOPrivateCreation:
                 _qc10a_setup_failed(
                     exc, operation="C_CreateObject", purpose=f"{label} source setup"
                 )
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} source setup",
+                operation="C_CreateObject",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} source setup",
+                    operation="C_CreateObject",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} source setup: C_CreateObject returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            source = candidate
             control_label = _qc10a_unique_label("copy-pub")
             negative_label = _qc10a_unique_label("copy-priv")
             with _qc10a_so_login_scope(rs, user_pin, so_pin, explicit_so=explicit, label=label) as (

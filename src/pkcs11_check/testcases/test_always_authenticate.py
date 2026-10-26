@@ -33,6 +33,7 @@ from pkcs11_check.raw.bootstrap import (
 from pkcs11_check.raw.pack import mech_simple
 from pkcs11_check.raw.recipes import (
     destroy_quietly,
+    find_objects_exhaustive,
     gen_rsa_keypair,
     read_attributes,
 )
@@ -673,9 +674,43 @@ def _qc10b_init_or_judge(
     )
 
 
-def _qc10b_positive_or_judge(rv: int, *, operation: str, mechanism: str, label: str) -> None:
+def _qc10b_output_length_or_judge(
+    reported: int, capacity: int, *, operation: str, mechanism: str, label: str
+) -> None:
+    """OK-return output contract (v3.2 §5.2): the reported length must fit the buffer.
+
+    A CKR_OK return claims ``reported`` bytes were written into a ``capacity``
+    buffer; a larger report is a length violation that callers must not clamp.
+    """
+    if reported < 0 or reported > capacity:
+        fail_as(
+            "wrong_result",
+            kind="crypto",
+            label=label,
+            operation=operation,
+            mechanism=mechanism,
+            detail={"reported_length": reported, "buffer_capacity": capacity},
+            summary=(
+                f"{label}: {operation} returned CKR_OK with reported length "
+                f"{reported} for a {capacity}-byte buffer"
+            ),
+        )
+
+
+def _qc10b_positive_or_judge(
+    rv: int,
+    *,
+    operation: str,
+    mechanism: str,
+    label: str,
+    reported_len: int,
+    capacity: int,
+) -> None:
     """Positive crypto call: CKR_OK proceeds; clean refusal xfails, never passes."""
     if rv == int(CKR_OK):
+        _qc10b_output_length_or_judge(
+            reported_len, capacity, operation=operation, mechanism=mechanism, label=label
+        )
         return
     if _qc10b_is_clean(rv):
         xfail_as(
@@ -798,7 +833,15 @@ def _qc10b_reuse_update_or_judge(rv: int, *, mechanism: str, label: str) -> None
 
 
 def _qc10b_preserved_or_judge(
-    rv: int, *, operation: str, mechanism: str, function: str, phase: str, label: str
+    rv: int,
+    *,
+    operation: str,
+    mechanism: str,
+    function: str,
+    phase: str,
+    label: str,
+    reported_len: int,
+    capacity: int,
 ) -> None:
     """Post-nonterminal call: success proves preservation; auth rejection is loss.
 
@@ -820,6 +863,9 @@ def _qc10b_preserved_or_judge(
             ),
         )
     if rv == int(CKR_OK):
+        _qc10b_output_length_or_judge(
+            reported_len, capacity, operation=operation, mechanism=mechanism, label=label
+        )
         return
     if rv in _QC10B_AUTH_REJECT_RVS or rv == int(CKR_OPERATION_NOT_INITIALIZED):
         fail_as(
@@ -883,6 +929,38 @@ def _qc10b_open_session_or_skip(rs: Any) -> int:
         raise
 
 
+def _qc10b_setup_inventory_or_xfail(rs: Any, *, phase: str, label: str) -> list[int]:
+    """Setup inventory: clean refusal xfails the premise, undefined fails.
+
+    Only CkrAssertionError is routed (this file is masking-guarded); a Find
+    protocol violation propagates as a loud plugin-gate failure, never masked.
+    """
+    try:
+        return find_objects_exhaustive(rs.raw, rs.sh)
+    except CkrAssertionError as exc:
+        rv = int(exc.rv)
+        if not _qc10b_is_clean(rv):
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_FindObjects",
+                inherit_mechanism=False,
+                actual=rv,
+                detail={"phase": phase, "rv": ckr_name(rv)},
+                summary=f"{label}: {phase} inventory returned undefined {ckr_name(rv)}",
+            )
+        xfail_as(
+            "not_operational",
+            label=f"{label}: object inventory not operational",
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            actual=rv,
+            detail={"phase": phase, "rv": ckr_name(rv)},
+            summary=f"{label}: {phase} inventory refused with {ckr_name(rv)}",
+        )
+
+
 def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
     """Generate an RSA-2048 sign+decrypt keypair with CKA_ALWAYS_AUTHENTICATE=True.
 
@@ -892,7 +970,13 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
     added so the same key serves the sign and decrypt transition legs.
     Returns (pub, priv) on success, or None when the module cleanly refuses
     the advertised setup/readback.
+
+    Setup handles need ownership proof too: the returned handles must appear
+    in the before/after inventory delta, otherwise they are foreign (unproved
+    xfail, never read as ours, never destroyed).
     """
+    setup_label = "CKA_ALWAYS_AUTHENTICATE setup inventory (QC10b)"
+    before = _qc10b_setup_inventory_or_xfail(rs, phase="setup-before", label=setup_label)
     try:
         pub, priv = gen_rsa_keypair(
             rs.raw,
@@ -937,6 +1021,30 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             summary=(
                 "CKM_RSA_PKCS_KEY_PAIR_GEN returned an undefined CK_RV while "
                 "creating a CKA_ALWAYS_AUTHENTICATE=True key"
+            ),
+        )
+
+    after = _qc10b_setup_inventory_or_xfail(rs, phase="setup-after", label=setup_label)
+    new_handles = sorted({int(handle) for handle in after} - {int(handle) for handle in before})
+    if int(pub) not in new_handles or int(priv) not in new_handles:
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label="CKA_ALWAYS_AUTHENTICATE setup ownership (QC10b)",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            actual=CKR_OK,
+            detail={
+                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "disposition": "unproved-handle",
+                "returned_handles": [int(pub), int(priv)],
+                "new_handles": new_handles,
+                "producer_operation": "C_GenerateKeyPair",
+                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            },
+            summary=(
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK but the handles are "
+                "not in the setup inventory delta; they are foreign, left alive"
             ),
         )
 
@@ -1398,9 +1506,14 @@ class TestContextAuthTransitions:
         try:
             _qc10b_sign_init(rs, rs.sh, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
-            rv, sig, _ = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
+            rv, sig, reported = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
             _qc10b_positive_or_judge(
-                rv, operation="C_Sign", mechanism="CKM_SHA256_RSA_PKCS", label=label
+                rv,
+                operation="C_Sign",
+                mechanism="CKM_SHA256_RSA_PKCS",
+                label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1438,9 +1551,14 @@ class TestContextAuthTransitions:
         try:
             _qc10b_sign_init(rs, rs.sh, priv1, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
-            rv, sig, _ = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
+            rv, sig, reported = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
             _qc10b_positive_or_judge(
-                rv, operation="C_Sign", mechanism="CKM_SHA256_RSA_PKCS", label=label
+                rv,
+                operation="C_Sign",
+                mechanism="CKM_SHA256_RSA_PKCS",
+                label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1482,7 +1600,9 @@ class TestContextAuthTransitions:
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
             _qc10b_sign_init(rs, s2, priv, after_terminal=False, label=label)
             rv_misuse, _, _ = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
-            rv_live, sig, _ = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
+            rv_live, sig, live_reported = _qc10b_sign_raw(
+                rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES
+            )
             if not _qc10b_is_clean(rv_misuse) and rv_misuse != int(CKR_OK):
                 fail_as(
                     "self_contradiction",
@@ -1520,21 +1640,18 @@ class TestContextAuthTransitions:
                         "grant -- the grant is not session-bound"
                     ),
                 )
-            if rv_misuse not in _QC10B_AUTH_REJECT_RVS:
-                classify(
-                    "nonspec_reject",
-                    label=label,
+            # The granting session is judged FIRST: a non-canonical misuse
+            # rejection must never mask an independently-judgeable session-1
+            # failure (liveness, output, or termination). The cross-session
+            # xfail below fires only for a healthy session 1.
+            if rv_live == int(CKR_OK):
+                _qc10b_output_length_or_judge(
+                    live_reported,
+                    _QC10B_RSA_BYTES,
                     operation="C_Sign",
                     mechanism="CKM_SHA256_RSA_PKCS",
-                    actual=rv_misuse,
-                    expected=(CKR_USER_NOT_LOGGED_IN,),
-                    detail={"function": "sign", "phase": "cross-session-misuse"},
-                    summary=(
-                        f"{label}: cross-session use rejected with {ckr_name(rv_misuse)}; "
-                        f"spec requires {ckr_name(int(CKR_USER_NOT_LOGGED_IN))}"
-                    ),
+                    label=label,
                 )
-            if rv_live == int(CKR_OK):
                 _qc10b_verify_rsa_signature(
                     rs,
                     pub,
@@ -1544,6 +1661,20 @@ class TestContextAuthTransitions:
                     operation="C_Sign",
                     mechanism="CKM_SHA256_RSA_PKCS",
                 )
+                if rv_misuse not in _QC10B_AUTH_REJECT_RVS:
+                    classify(
+                        "nonspec_reject",
+                        label=label,
+                        operation="C_Sign",
+                        mechanism="CKM_SHA256_RSA_PKCS",
+                        actual=rv_misuse,
+                        expected=(CKR_USER_NOT_LOGGED_IN,),
+                        detail={"function": "sign", "phase": "cross-session-misuse"},
+                        summary=(
+                            f"{label}: cross-session use rejected with {ckr_name(rv_misuse)}; "
+                            f"spec requires {ckr_name(int(CKR_USER_NOT_LOGGED_IN))}"
+                        ),
+                    )
                 return
             if rv_live in _QC10B_AUTH_REJECT_RVS:
                 fail_as(
@@ -1558,6 +1689,21 @@ class TestContextAuthTransitions:
                     summary=(
                         f"{label}: the granting session lost its live grant without "
                         "any terminal call"
+                    ),
+                )
+            if rv_live == int(CKR_OPERATION_NOT_INITIALIZED):
+                fail_as(
+                    "self_contradiction",
+                    kind="policy",
+                    label=label,
+                    operation="C_Sign",
+                    mechanism="CKM_SHA256_RSA_PKCS",
+                    expected=CKR_OK,
+                    actual=rv_live,
+                    detail={"function": "sign", "phase": "granting-session-liveness"},
+                    summary=(
+                        f"{label}: the granting-session operation terminated "
+                        "prematurely without any terminal call"
                     ),
                 )
             xfail_as(
@@ -1592,9 +1738,14 @@ class TestContextAuthTransitions:
         try:
             _qc10b_sign_init(rs, s2, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, s2, pin, label=label)
-            rv, sig, _ = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
+            rv, sig, reported = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
             _qc10b_positive_or_judge(
-                rv, operation="C_Sign", mechanism="CKM_SHA256_RSA_PKCS", label=label
+                rv,
+                operation="C_Sign",
+                mechanism="CKM_SHA256_RSA_PKCS",
+                label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1617,9 +1768,14 @@ class TestContextAuthTransitions:
             )
             _qc10b_sign_init(rs, s2, priv, after_terminal=True, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, s2, pin, label=label)
-            rv3, sig3, _ = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
+            rv3, sig3, reported3 = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
             _qc10b_positive_or_judge(
-                rv3, operation="C_Sign", mechanism="CKM_SHA256_RSA_PKCS", label=label
+                rv3,
+                operation="C_Sign",
+                mechanism="CKM_SHA256_RSA_PKCS",
+                label=label,
+                reported_len=reported3,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1665,7 +1821,7 @@ class TestContextAuthTransitions:
                         f"{label}: length query reported {reported}, expected {_QC10B_RSA_BYTES}"
                     ),
                 )
-            rv, sig, _ = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
+            rv, sig, sig_reported = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
             _qc10b_preserved_or_judge(
                 rv,
                 operation="C_Sign",
@@ -1673,6 +1829,8 @@ class TestContextAuthTransitions:
                 function="sign",
                 phase="length-query-preservation",
                 label=label,
+                reported_len=sig_reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1704,7 +1862,7 @@ class TestContextAuthTransitions:
             _qc10b_bts_stage_or_judge(
                 rv_tiny, operation="C_Sign", mechanism="CKM_SHA256_RSA_PKCS", label=label
             )
-            rv, sig, _ = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
+            rv, sig, reported = _qc10b_sign_raw(rs.raw, rs.sh, msg, capacity=_QC10B_RSA_BYTES)
             _qc10b_preserved_or_judge(
                 rv,
                 operation="C_Sign",
@@ -1712,6 +1870,8 @@ class TestContextAuthTransitions:
                 function="sign",
                 phase="too-small-retry-preservation",
                 label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1743,7 +1903,7 @@ class TestContextAuthTransitions:
             _qc10b_stage_ok(rv_u1, operation="C_SignUpdate", label=label)
             rv_u2 = _qc10b_sign_update_raw(rs.raw, rs.sh, part2)
             _qc10b_stage_ok(rv_u2, operation="C_SignUpdate", label=label)
-            rv, sig, _ = _qc10b_sign_final_raw(rs.raw, rs.sh, capacity=_QC10B_RSA_BYTES)
+            rv, sig, reported = _qc10b_sign_final_raw(rs.raw, rs.sh, capacity=_QC10B_RSA_BYTES)
             _qc10b_preserved_or_judge(
                 rv,
                 operation="C_SignFinal",
@@ -1751,6 +1911,8 @@ class TestContextAuthTransitions:
                 function="sign",
                 phase="multipart-update-preservation",
                 label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             _qc10b_verify_rsa_signature(
                 rs,
@@ -1789,20 +1951,9 @@ class TestContextAuthTransitions:
                         f"{label}: Update returned CKR_OK; no update error to judge termination on"
                     ),
                 )
-            if rv_u == int(CKR_BUFFER_TOO_SMALL):
-                # Defensive premise: Update takes no output buffer, so BTS is
-                # impossible here; the dedicated BTS node owns that behavior.
-                xfail_as(
-                    "not_operational",
-                    label=label,
-                    operation="C_SignUpdate",
-                    mechanism="CKM_SHA256_RSA_PKCS",
-                    actual=rv_u,
-                    summary=(
-                        f"{label}: Update returned CKR_BUFFER_TOO_SMALL; "
-                        "no update error to judge termination on"
-                    ),
-                )
+            # No BTS exception: v3.2 §5.13.3 gives SignUpdate errors no
+            # BUFFER_TOO_SMALL carve-out, so BTS routes through the termination
+            # table below like any other clean Update error.
             if not _qc10b_is_clean(rv_u):
                 fail_as(
                     "self_contradiction",
@@ -1815,8 +1966,8 @@ class TestContextAuthTransitions:
                     summary=f"{label}: Update returned undefined {ckr_name(rv_u)}",
                 )
             # The termination table is the single source for the dead-op
-            # premise (provably True here: a clean non-OK non-BTS sign
-            # Update); its answer rides in the evidence below.
+            # premise (provably True here: a clean non-OK sign Update, BTS
+            # included); its answer rides in the evidence below.
             terminal = _qc10b_is_terminal(function="sign", call="update", rv=rv_u)
             rv_f, _, _ = _qc10b_sign_final_raw(rs.raw, rs.sh, capacity=_QC10B_RSA_BYTES)
             if rv_f == int(CKR_OPERATION_NOT_INITIALIZED):
@@ -1894,9 +2045,23 @@ class TestContextAuthTransitions:
             _qc10b_ctx_login_or_xfail(rs.raw, s2, pin, label=label)
             rv_u = _qc10b_sign_update_raw(rs.raw, s2, part)
             _qc10b_stage_ok(rv_u, operation="C_SignUpdate", label=label)
-            rv, _, _ = _qc10b_sign_final_raw(rs.raw, s2, capacity=_QC10B_RSA_BYTES)
+            rv, sig, reported = _qc10b_sign_final_raw(rs.raw, s2, capacity=_QC10B_RSA_BYTES)
             _qc10b_positive_or_judge(
-                rv, operation="C_SignFinal", mechanism="CKM_SHA256_RSA_PKCS", label=label
+                rv,
+                operation="C_SignFinal",
+                mechanism="CKM_SHA256_RSA_PKCS",
+                label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
+            )
+            _qc10b_verify_rsa_signature(
+                rs,
+                pub,
+                part,
+                sig,
+                label=label,
+                operation="C_SignFinal",
+                mechanism="CKM_SHA256_RSA_PKCS",
             )
             _qc10b_sign_init(rs, s2, priv, after_terminal=True, label=label)
             rv_u2 = _qc10b_sign_update_raw(rs.raw, s2, part)
@@ -1935,9 +2100,14 @@ class TestContextAuthTransitions:
             _qc10b_stage_ok(rv_enc, operation="C_Encrypt", label=label)
             _qc10b_decrypt_init(rs, rs.sh, priv, after_terminal=False, label=label)
             _qc10b_ctx_login_or_xfail(rs.raw, rs.sh, pin, label=label)
-            rv, pt, _ = _qc10b_decrypt_raw(rs.raw, rs.sh, ct, capacity=_QC10B_RSA_BYTES)
+            rv, pt, reported = _qc10b_decrypt_raw(rs.raw, rs.sh, ct, capacity=_QC10B_RSA_BYTES)
             _qc10b_positive_or_judge(
-                rv, operation="C_Decrypt", mechanism="CKM_RSA_PKCS", label=label
+                rv,
+                operation="C_Decrypt",
+                mechanism="CKM_RSA_PKCS",
+                label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             if pt != msg:
                 fail_as(
@@ -2016,7 +2186,7 @@ class TestContextAuthTransitions:
             _qc10b_bts_stage_or_judge(
                 rv_tiny, operation="C_Decrypt", mechanism="CKM_RSA_PKCS", label=label
             )
-            rv, pt, _ = _qc10b_decrypt_raw(rs.raw, rs.sh, ct, capacity=_QC10B_RSA_BYTES)
+            rv, pt, reported = _qc10b_decrypt_raw(rs.raw, rs.sh, ct, capacity=_QC10B_RSA_BYTES)
             _qc10b_preserved_or_judge(
                 rv,
                 operation="C_Decrypt",
@@ -2024,6 +2194,8 @@ class TestContextAuthTransitions:
                 function="decrypt",
                 phase="too-small-retry-preservation",
                 label=label,
+                reported_len=reported,
+                capacity=_QC10B_RSA_BYTES,
             )
             if pt != msg:
                 fail_as(
