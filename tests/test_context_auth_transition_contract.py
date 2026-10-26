@@ -154,6 +154,7 @@ class _CtxAuthRaw:
         # Fix-round-1 knobs (R14).
         self.keygen_alias_outputs = False
         self.keygen_refusal_leak = "none"  # none | proved | foreign
+        self.keygen_success_extra = "none"  # none | proved | foreign (R16-02)
         self.leaked: list[int] = []
         self.reads: list[int] = []
         self.keygen_replay_handles: tuple[int, int] | None = None
@@ -241,6 +242,13 @@ class _CtxAuthRaw:
             return _OK
         pub = self._alloc({"kind": "pub", "label": pub_attrs.get(int(CKA_LABEL))})
         priv = self._alloc({"kind": "priv", "label": priv_attrs.get(int(CKA_LABEL))})
+        if self.keygen_success_extra != "none":
+            extra_entry: dict[str, Any] = {"kind": "success-extra"}
+            if self.keygen_success_extra == "proved":
+                extra_entry["label"] = priv_attrs.get(int(CKA_LABEL))
+            else:
+                extra_entry["label"] = b"qc10b-foreign-success-extra"
+            self.leaked.append(self._alloc(extra_entry))
         _write_handle(pub_out, pub)
         _write_handle(priv_out, priv)
         return _OK
@@ -924,7 +932,7 @@ def test_unreadable_modulus_xfails_unproved() -> None:
 
 
 def test_query_length_mismatch_fails_wrong_result() -> None:
-    """A length query reporting anything but 256 for RSA-2048 misleads the caller."""
+    """A length query reporting below 256 for RSA-2048 misleads the caller."""
     fake = _CtxAuthRaw()
     real_sign = _CtxAuthRaw.C_Sign
 
@@ -1337,3 +1345,142 @@ def test_sign_nodes_short_report_fails_exact_length(method: str, op: str, report
     assert rec.operation == op
     assert rec.detail["reported_length"] == reported
     assert rec.detail["expected_length"] == _RSA_BYTES
+
+
+# --- fix round 4 (R16-01): undefined keygen RV survives failed after-inventory --
+
+
+@pytest.mark.parametrize("inv_rv", [_CLEAN_REFUSAL, _VENDOR_REFUSAL])
+def test_keygen_undefined_with_failed_after_inventory_fails_with_both_rvs(inv_rv: int) -> None:
+    """Undefined keygen + refused after-inventory: FAIL loud with both RVs, never xfail."""
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _UNDEFINED_RV
+    fake.find_init_script = [_OK, inv_rv]
+    _assert_fails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert rec.detail["operation_rv"] == ckr_name(_UNDEFINED_RV)
+    assert rec.detail["inventory_rv"] == ckr_name(inv_rv)
+
+
+def test_keygen_clean_refusal_with_failed_after_inventory_still_xfails() -> None:
+    """Clean keygen refusal + refused after-inventory keeps the unproved xfail."""
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _CLEAN_REFUSAL
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+
+
+# --- fix round 4 (R16-02): setup success judges proved extras -----------------
+
+
+def test_keygen_success_with_proved_extra_fails_and_destroys() -> None:
+    """Keygen OK creating returned pair + identically labeled extra: FAIL + destroy all."""
+    fake = _CtxAuthRaw()
+    fake.keygen_success_extra = "proved"
+    _assert_fails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "created-extra"
+    assert fake.leaked
+    assert sorted(rec.detail["extra_handles"]) == sorted(fake.leaked)
+    for handle in rec.detail["proved_new_handles"]:
+        assert handle in fake.destroys
+    assert all(handle not in fake.objects for handle in fake.leaked)
+
+
+def test_keygen_success_with_foreign_companion_xfails_and_cleans_owned() -> None:
+    """Keygen OK + foreign companion: owned pair cleaned, companion alive, xfail unproved."""
+    fake = _CtxAuthRaw()
+    fake.keygen_success_extra = "foreign"
+    assert_xfails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert all(handle in fake.objects for handle in fake.leaked)
+
+
+# --- fix round 4 (R16-03): length-query overestimates are legal ---------------
+
+
+def _run_length_query_with_reported(fake: _CtxAuthRaw, reported: int) -> None:
+    """Run the length-query node with the NULL-buffer query reporting ``reported``."""
+    real_sign = _CtxAuthRaw.C_Sign
+
+    def _scripted_query(
+        self: _CtxAuthRaw,
+        session: int,
+        data_ptr: Any,
+        data_len: int,
+        sig_ptr: Any,
+        sig_len_ptr: Any,
+    ) -> int:
+        if sig_ptr is None:
+            _write_ulong(sig_len_ptr, reported)
+            return _OK
+        return real_sign(self, session, data_ptr, data_len, sig_ptr, sig_len_ptr)
+
+    fake.C_Sign = _scripted_query.__get__(fake, _CtxAuthRaw)  # type: ignore[method-assign]
+    _run("test_context_length_query_preserves_grant", _rs(fake), _config())
+
+
+def test_length_query_overestimate_passes() -> None:
+    """Query 257 + valid verified 256 followup: a healthy provider, must PASS."""
+    fake = _CtxAuthRaw()
+    _run_length_query_with_reported(fake, 257)
+    assert C.get_records() == []
+
+
+@pytest.mark.parametrize("reported", [100, 0])
+def test_length_query_underestimate_fails(reported: int) -> None:
+    """Query below 256 would overrun a real buffer: FAIL wrong_result."""
+    fake = _CtxAuthRaw()
+    real_sign = _CtxAuthRaw.C_Sign
+
+    def _scripted_query(
+        self: _CtxAuthRaw,
+        session: int,
+        data_ptr: Any,
+        data_len: int,
+        sig_ptr: Any,
+        sig_len_ptr: Any,
+    ) -> int:
+        if sig_ptr is None:
+            _write_ulong(sig_len_ptr, reported)
+            return _OK
+        return real_sign(self, session, data_ptr, data_len, sig_ptr, sig_len_ptr)
+
+    fake.C_Sign = _scripted_query.__get__(fake, _CtxAuthRaw)  # type: ignore[method-assign]
+    _assert_fails(_run, "test_context_length_query_preserves_grant", _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Sign"
+    assert rec.detail["actual_length"] == reported
+
+
+def test_length_query_negative_fails() -> None:
+    """A negative query report is an under-estimate: FAIL wrong_result.
+
+    CK_ULONG is unsigned so the raw layer cannot produce it; the node's
+    ``< 256`` judge covers it defensively via a direct helper patch.
+    """
+    fake = _CtxAuthRaw()
+    real_query = taa._qc10b_sign_query_raw
+
+    def _negative_query(raw: Any, sh: int, msg: bytes) -> tuple[int, int]:
+        assert raw is fake
+        assert sh is not None and msg is not None
+        return (_OK, -1)
+
+    taa._qc10b_sign_query_raw = _negative_query
+    try:
+        _assert_fails(_run, "test_context_length_query_preserves_grant", _rs(fake), _config())
+    finally:
+        taa._qc10b_sign_query_raw = real_query
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Sign"
+    assert rec.detail["actual_length"] == -1

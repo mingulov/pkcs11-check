@@ -835,6 +835,126 @@ def _qc10a_setup_failed(
     )
 
 
+def _qc10a_judge_setup_success(
+    rs: Any,
+    sh: int,
+    candidate: int,
+    *,
+    before: list[int],
+    after: list[int],
+    attempt: Mapping[Any, Any],
+    identities: tuple[tuple[int, int], ...] = (),
+    label: str,
+    operation: str,
+) -> None:
+    """Judge setup success: returned handle must be proved, extras fail, companions xfail.
+
+    Mirrors the positive-leg created-extra doctrine (R16-02): proved extras
+    beside the returned handle are destroyed and fail; an unproved returned
+    handle xfails without being touched; proved handle plus unproved
+    companions cleans the owned handle and xfails. Returns on clean (candidate
+    proved, zero unexpected delta).
+    """
+    proved, unproved = partition_proved_new(
+        rs.raw,
+        sh,
+        before,
+        after,
+        attempt_templates=(dict(attempt),),
+        identities=identities,
+        error_handles=(candidate,),
+    )
+    new_handles = sorted({int(handle) for handle in after} - {int(handle) for handle in before})
+    extras = sorted(handle for handle in proved if handle != int(candidate))
+    if extras:
+        for sibling in extras:
+            destroy_quietly(rs.raw, sh, sibling)
+        if int(candidate) in proved:
+            destroy_quietly(rs.raw, sh, int(candidate))
+            C.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                actual=CKR_OK,
+                detail={
+                    "phase": "setup",
+                    "disposition": "created-extra",
+                    "returned_handle": int(candidate),
+                    "new_handles": new_handles,
+                    "proved_new_handles": sorted(proved),
+                    "extra_handles": extras,
+                },
+                summary=(
+                    f"{label}: {operation} returned CKR_OK but created extra proved "
+                    f"objects {extras} beside the returned handle"
+                ),
+            )
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=CKR_OK,
+            detail={
+                "phase": "setup",
+                "disposition": "created-extra",
+                "returned_handle": int(candidate),
+                "new_handles": new_handles,
+                "proved_new_handles": sorted(proved),
+                "extra_handles": extras,
+                "returned_handle_proved": False,
+            },
+            summary=(
+                f"{label}: {operation} returned CKR_OK with an unproved handle "
+                f"but created proved objects {extras}; the returned handle is "
+                "foreign, left alive"
+            ),
+        )
+    if int(candidate) not in proved:
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=CKR_OK,
+            detail={
+                "phase": "setup",
+                "disposition": "unproved-handle",
+                "returned_handle": int(candidate),
+                "new_handles": new_handles,
+            },
+            summary=(
+                f"{label}: {operation} returned CKR_OK but handle {int(candidate)} "
+                "is not proved in the setup inventory delta; it is foreign, left alive"
+            ),
+        )
+    if unproved:
+        destroy_quietly(rs.raw, sh, int(candidate))
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=CKR_OK,
+            detail={
+                "phase": "setup",
+                "disposition": "unproved-effect",
+                "returned_handle": int(candidate),
+                "new_handles": sorted(unproved),
+                "proved_new_handles": [int(candidate)],
+            },
+            summary=(
+                f"{label}: {operation} returned CKR_OK with unexpected delta "
+                f"companions {sorted(unproved)}"
+            ),
+        )
+
+
 def _qc10a_premise_refusal(rv: int, *, operation: str, label: str) -> NoReturn:
     """Judge a login/state premise refusal: clean CK_RV xfails, undefined fails."""
     if _qc10a_is_clean(rv):
@@ -2095,27 +2215,16 @@ class TestSOPrivateCreation:
                 operation="C_CreateObject",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} source setup",
-                    operation="C_CreateObject",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} source setup: C_CreateObject returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=source_attempt,
+                label=f"{label} source setup",
+                operation="C_CreateObject",
+            )
             source = candidate
             control_label = _qc10a_unique_label("copy-pub")
             negative_label = _qc10a_unique_label("copy-priv")
@@ -2252,27 +2361,16 @@ class TestSOPrivateCreation:
                 operation="C_GenerateKey",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} base setup",
-                    operation="C_GenerateKey",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} base setup: C_GenerateKey returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=base_attempt,
+                label=f"{label} base setup",
+                operation="C_GenerateKey",
+            )
             base = candidate
             identity = (int(CKO_SECRET_KEY), int(CKK_GENERIC_SECRET))
             hkdf = mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256)
@@ -2373,27 +2471,16 @@ class TestSOPrivateCreation:
                 operation="C_GenerateKey",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} KEK setup",
-                    operation="C_GenerateKey",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} KEK setup: C_GenerateKey returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=kek_attempt,
+                label=f"{label} KEK setup",
+                operation="C_GenerateKey",
+            )
             kek = candidate
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} target setup"
@@ -2425,27 +2512,16 @@ class TestSOPrivateCreation:
                 operation="C_GenerateKey",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} target setup",
-                    operation="C_GenerateKey",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} target setup: C_GenerateKey returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=target_attempt,
+                label=f"{label} target setup",
+                operation="C_GenerateKey",
+            )
             target = candidate
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} wrap setup"
@@ -2592,27 +2668,16 @@ class TestUserPrivateCreationControls:
                 operation="C_CreateObject",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} source setup",
-                    operation="C_CreateObject",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} source setup: C_CreateObject returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=source_attempt,
+                label=f"{label} source setup",
+                operation="C_CreateObject",
+            )
             source = candidate
             attempt: dict[Any, Any] = {
                 CKA_PRIVATE: True,
@@ -2707,27 +2772,16 @@ class TestUserPrivateCreationControls:
                 operation="C_GenerateKey",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} base setup",
-                    operation="C_GenerateKey",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} base setup: C_GenerateKey returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=base_attempt,
+                label=f"{label} base setup",
+                operation="C_GenerateKey",
+            )
             base = candidate
             hkdf = mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256)
             attempt: dict[Any, Any] = {
@@ -2798,27 +2852,16 @@ class TestUserPrivateCreationControls:
                 operation="C_GenerateKey",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} KEK setup",
-                    operation="C_GenerateKey",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} KEK setup: C_GenerateKey returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=kek_attempt,
+                label=f"{label} KEK setup",
+                operation="C_GenerateKey",
+            )
             kek = candidate
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} target setup"
@@ -2850,27 +2893,16 @@ class TestUserPrivateCreationControls:
                 operation="C_GenerateKey",
                 leg="positive",
             )
-            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
-            if int(candidate) not in setup_new:
-                C.xfail_as(
-                    "honest_deviation",
-                    kind="metadata",
-                    label=f"{label} target setup",
-                    operation="C_GenerateKey",
-                    inherit_mechanism=False,
-                    actual=CKR_OK,
-                    detail={
-                        "phase": "setup",
-                        "disposition": "unproved-handle",
-                        "returned_handle": int(candidate),
-                        "new_handles": setup_new,
-                    },
-                    summary=(
-                        f"{label} target setup: C_GenerateKey returned CKR_OK but "
-                        f"handle {int(candidate)} is not in the setup inventory "
-                        "delta; it is foreign, left alive"
-                    ),
-                )
+            _qc10a_judge_setup_success(
+                rs,
+                rs.sh,
+                candidate,
+                before=setup_before,
+                after=setup_after,
+                attempt=target_attempt,
+                label=f"{label} target setup",
+                operation="C_GenerateKey",
+            )
             target = candidate
             setup_before = _qc10a_inventory_or_classify(
                 rs, rs.sh, phase="setup-before", label=f"{label} wrap setup"
