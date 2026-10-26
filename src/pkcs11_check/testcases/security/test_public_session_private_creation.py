@@ -1774,6 +1774,33 @@ def _qc10a_judge_negative_acceptance(
                 f"{label}: accepted invalid (CKR_OK) -- must reject; handle unproved, left alive"
             ),
         )
+    extras = sorted(h for h in proved if h != handle)
+    if extras:
+        # The acceptance created more than it returned, and the siblings are
+        # proved-new (ours): destroy them all, then fail loud -- the same
+        # created-extra shape as the positive leg.
+        for sibling in extras:
+            destroy_quietly(rs.raw, sh, sibling)
+        destroy_quietly(rs.raw, sh, handle)
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation=operation,
+            inherit_mechanism=False,
+            actual=CKR_OK,
+            detail={
+                "disposition": "created-extra",
+                "handle_after": handle,
+                "new_handles": sorted({int(h) for h in after} - {int(h) for h in before}),
+                "proved_new_handles": sorted(proved),
+                "extra_handles": extras,
+            },
+            summary=(
+                f"{label}: {operation} accepted (CKR_OK) on a must-reject leg but "
+                f"created extra proved objects {extras} beside the returned handle"
+            ),
+        )
     status, evidence = _qc10a_read_private_bool(
         rs, sh, handle, label=f"{label} CKA_PRIVATE readback"
     )
@@ -2117,8 +2144,11 @@ class TestSOPrivateCreation:
         source_label = _qc10a_unique_label("derive-base")
         base = 0
         try:
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} base setup"
+            )
             try:
-                base = gen_aes_key(
+                candidate = gen_aes_key(
                     rs.raw,
                     rs.sh,
                     256,
@@ -2132,6 +2162,37 @@ class TestSOPrivateCreation:
                 )
             except CkrAssertionError as exc:
                 _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} base setup")
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} base setup",
+                operation="C_GenerateKey",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} base setup",
+                    operation="C_GenerateKey",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} base setup: C_GenerateKey returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            base = candidate
             identity = (int(CKO_SECRET_KEY), int(CKK_GENERIC_SECRET))
             hkdf = mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256)
             control_label = _qc10a_unique_label("derive-pub")
@@ -2199,8 +2260,11 @@ class TestSOPrivateCreation:
         target = 0
         wrapped = b""
         try:
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} KEK setup"
+            )
             try:
-                kek = gen_aes_key(
+                candidate = gen_aes_key(
                     rs.raw,
                     rs.sh,
                     256,
@@ -2213,7 +2277,44 @@ class TestSOPrivateCreation:
                         CKA_EXTRACTABLE: True,
                     },
                 )
-                target = gen_aes_key(
+            except CkrAssertionError as exc:
+                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} KEK setup")
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} KEK setup",
+                operation="C_GenerateKey",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} KEK setup",
+                    operation="C_GenerateKey",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} KEK setup: C_GenerateKey returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            kek = candidate
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} target setup"
+            )
+            try:
+                candidate = gen_aes_key(
                     rs.raw,
                     rs.sh,
                     128,
@@ -2225,7 +2326,38 @@ class TestSOPrivateCreation:
                     },
                 )
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} KEK setup")
+                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} target setup")
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} target setup",
+                operation="C_GenerateKey",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} target setup",
+                    operation="C_GenerateKey",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} target setup: C_GenerateKey returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            target = candidate
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
             except CkrAssertionError as exc:
@@ -2329,8 +2461,11 @@ class TestUserPrivateCreationControls:
         _qc10a_login_user_verified(rs, rs.sh, pin, label=label)
         source = 0
         try:
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} source setup"
+            )
             try:
-                source = create_object(
+                candidate = create_object(
                     rs.raw,
                     rs.sh,
                     {
@@ -2345,6 +2480,37 @@ class TestUserPrivateCreationControls:
                 _qc10a_setup_failed(
                     exc, operation="C_CreateObject", purpose=f"{label} source setup"
                 )
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} source setup",
+                operation="C_CreateObject",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} source setup",
+                    operation="C_CreateObject",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} source setup: C_CreateObject returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            source = candidate
             attempt: dict[Any, Any] = {
                 CKA_PRIVATE: True,
                 CKA_LABEL: _qc10a_unique_label("ucopy-priv"),
@@ -2407,8 +2573,11 @@ class TestUserPrivateCreationControls:
         _qc10a_login_user_verified(rs, rs.sh, pin, label=label)
         base = 0
         try:
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} base setup"
+            )
             try:
-                base = gen_aes_key(
+                candidate = gen_aes_key(
                     rs.raw,
                     rs.sh,
                     256,
@@ -2422,6 +2591,37 @@ class TestUserPrivateCreationControls:
                 )
             except CkrAssertionError as exc:
                 _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} base setup")
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} base setup",
+                operation="C_GenerateKey",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} base setup",
+                    operation="C_GenerateKey",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} base setup: C_GenerateKey returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            base = candidate
             hkdf = mech_hkdf(CKM_HKDF_DERIVE, hash_mech=CKM_SHA256)
             attempt: dict[Any, Any] = {
                 CKA_CLASS: CKO_SECRET_KEY,
@@ -2459,8 +2659,11 @@ class TestUserPrivateCreationControls:
         kek = 0
         target = 0
         try:
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} KEK setup"
+            )
             try:
-                kek = gen_aes_key(
+                candidate = gen_aes_key(
                     rs.raw,
                     rs.sh,
                     256,
@@ -2473,7 +2676,44 @@ class TestUserPrivateCreationControls:
                         CKA_EXTRACTABLE: True,
                     },
                 )
-                target = gen_aes_key(
+            except CkrAssertionError as exc:
+                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} KEK setup")
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} KEK setup",
+                operation="C_GenerateKey",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} KEK setup",
+                    operation="C_GenerateKey",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} KEK setup: C_GenerateKey returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            kek = candidate
+            setup_before = _qc10a_inventory_or_classify(
+                rs, rs.sh, phase="setup-before", label=f"{label} target setup"
+            )
+            try:
+                candidate = gen_aes_key(
                     rs.raw,
                     rs.sh,
                     128,
@@ -2485,7 +2725,38 @@ class TestUserPrivateCreationControls:
                     },
                 )
             except CkrAssertionError as exc:
-                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} KEK setup")
+                _qc10a_setup_failed(exc, operation="C_GenerateKey", purpose=f"{label} target setup")
+            setup_after = _qc10a_after_inventory_or_judge(
+                rs,
+                rs.sh,
+                rv=int(CKR_OK),
+                handle=candidate,
+                label=f"{label} target setup",
+                operation="C_GenerateKey",
+                leg="positive",
+            )
+            setup_new = sorted({int(h) for h in setup_after} - {int(h) for h in setup_before})
+            if int(candidate) not in setup_new:
+                C.xfail_as(
+                    "honest_deviation",
+                    kind="metadata",
+                    label=f"{label} target setup",
+                    operation="C_GenerateKey",
+                    inherit_mechanism=False,
+                    actual=CKR_OK,
+                    detail={
+                        "phase": "setup",
+                        "disposition": "unproved-handle",
+                        "returned_handle": int(candidate),
+                        "new_handles": setup_new,
+                    },
+                    summary=(
+                        f"{label} target setup: C_GenerateKey returned CKR_OK but "
+                        f"handle {int(candidate)} is not in the setup inventory "
+                        "delta; it is foreign, left alive"
+                    ),
+                )
+            target = candidate
             try:
                 wrapped = wrap_key(rs.raw, rs.sh, kek, target, CKM_AES_KEY_WRAP)
             except CkrAssertionError as exc:

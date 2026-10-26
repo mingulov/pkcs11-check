@@ -719,10 +719,19 @@ _SO_LEGS_WITH_SOURCE = frozenset(
 )
 
 
+_SO_SETUP_FINDS = {
+    "test_so_cannot_create_private_object": 0,
+    "test_so_cannot_copy_to_private_object": 2,
+    "test_so_cannot_generate_private_key": 0,
+    "test_so_cannot_derive_private_key": 2,
+    "test_so_cannot_unwrap_private_key": 4,
+}
+
+
 def _neg_after_script(method: str, tail_rv: int) -> list[int]:
-    """Find script: setup before/after (copy leg) + visibility (source legs)
+    """Find script: setup before/after per setup handle + visibility (source legs)
     + control before/after + negative before OK."""
-    script = [_OK, _OK] if method == "test_so_cannot_copy_to_private_object" else []
+    script = [_OK] * _SO_SETUP_FINDS[method]
     script.extend([_OK] if method in _SO_LEGS_WITH_SOURCE else [])
     script.extend([_OK, _OK, _OK, tail_rv])
     return script
@@ -1212,3 +1221,255 @@ def test_so_leg_xfail_primary_with_failed_restoration_drops_xfail_reason() -> No
     assert rec.severity == C.derive_verdict("self_contradiction", rec.kind)[1]
     assert rec.detail is not None
     assert rec.detail["restoration_rv"] == ckr_name(_CLEAN_REFUSAL)
+
+
+# --- fix round 2 (F1): negative acceptance must destroy proved extras --------
+
+
+class _NegAcceptExtraRaw(_SoCreationRaw):
+    """Attempt-session OK on the negative leg gains a proved-labeled sibling."""
+
+    proved_extra_on_attempt_ok = False
+
+    def _record_create(
+        self, op: str, session: int, attrs: dict[int, bytes], handle_ptr: Any
+    ) -> int:
+        if (
+            self.proved_extra_on_attempt_ok
+            and self._is_attempt_session(session)
+            and len(self.attempt_calls) == 1
+        ):
+            assert self.attempt_script and self.attempt_script[0] == _OK
+            rv = super()._record_create(op, session, attrs, handle_ptr)
+            assert rv == _OK
+            stored = dict(attrs)
+            stored.setdefault(int(CKA_TOKEN), b"\x00")
+            self.leaked.append(self._alloc(stored))
+            return rv
+        return super()._record_create(op, session, attrs, handle_ptr)
+
+
+@pytest.mark.parametrize(("method", "op"), _SO_LEGS)
+def test_so_leg_negative_acceptance_with_proved_extra_destroys_and_cites(
+    method: str, op: str
+) -> None:
+    """SO negative acceptance with a proved sibling: destroy every proved handle, cite extras."""
+    fake = _NegAcceptExtraRaw()
+    fake.attempt_script = [_OK, _OK]
+    fake.proved_extra_on_attempt_ok = True
+    _assert_fails(_run_so_leg, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == op
+    assert rec.detail["disposition"] == "created-extra"
+    assert rec.detail["extra_handles"]
+    assert sorted(rec.detail["extra_handles"]) == sorted(fake.leaked)
+    for handle in rec.detail["proved_new_handles"]:
+        assert handle in fake.destroys
+    assert all(handle not in fake.objects for handle in fake.leaked)
+    assert fake.login_state == "user"
+
+
+# --- fix round 2 (F2): every QC10a setup site proves handle ownership ---------
+
+
+class _F2SetupRaw(_SoCreationRaw):
+    """F2 contracts: attribute-read spy + optional second-setup-create replay."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[int] = []
+        self.replay_second_setup_handle: int | None = None
+
+    def C_GetAttributeValue(self, sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
+        self.reads.append(int(handle))
+        return super().C_GetAttributeValue(sh, handle, tmpl, count)
+
+    def _record_create(
+        self, op: str, session: int, attrs: dict[int, bytes], handle_ptr: Any
+    ) -> int:
+        if (
+            not self._is_attempt_session(session)
+            and self.replay_second_setup_handle is not None
+            and len(self.setup_creates) == 1
+        ):
+            self.setup_replay_handles.insert(0, self.replay_second_setup_handle)
+            self.replay_second_setup_handle = None
+        return super()._record_create(op, session, attrs, handle_ptr)
+
+
+_SO_DERIVE = "test_so_cannot_derive_private_key"
+_SO_UNWRAP = "test_so_cannot_unwrap_private_key"
+_USER_COPY = "test_user_can_copy_to_private_object"
+_USER_DERIVE = "test_user_can_derive_private_key"
+_USER_UNWRAP = "test_user_can_unwrap_private_key"
+
+
+def test_so_derive_leg_setup_returning_foreign_handle_xfails_without_destroy() -> None:
+    """SO derive base returning pre-existing 41: unproved xfail, never read, never destroyed."""
+    fake = _F2SetupRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.setup_replay_handles = [41]
+    assert_xfails(_run_so_leg, _SO_DERIVE, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads
+    assert ("so", len("so-pin")) not in fake.logins
+    assert fake.attempt_calls == []
+
+
+def test_so_derive_leg_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """SO derive setup-after inventory refused: the base is unproved and stays alive."""
+    fake = _F2SetupRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run_so_leg, _SO_DERIVE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.setup_handles
+    assert all(handle not in fake.destroys for handle in fake.setup_handles)
+    assert fake.attempt_calls == []
+
+
+def test_so_unwrap_leg_setup_returning_foreign_kek_xfails_before_target_setup() -> None:
+    """SO unwrap KEK returning pre-existing 41: unproved xfail before the target is made."""
+    fake = _F2SetupRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.objects[41] = {int(CKA_LABEL): b"victim-kek"}
+    fake.setup_replay_handles = [41]
+    assert_xfails(_run_so_leg, _SO_UNWRAP, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads
+    assert len(fake.setup_creates) == 1
+    assert ("so", len("so-pin")) not in fake.logins
+    assert fake.attempt_calls == []
+
+
+def test_so_unwrap_leg_setup_returning_foreign_target_xfails_after_proved_kek() -> None:
+    """Proved KEK + foreign target 42: unproved xfail; the proved KEK is cleaned, 42 lives."""
+    fake = _F2SetupRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.objects[42] = {int(CKA_LABEL): b"victim-target"}
+    fake.replay_second_setup_handle = 42
+    assert_xfails(_run_so_leg, _SO_UNWRAP, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert fake.setup_handles
+    assert all(handle in fake.destroys for handle in fake.setup_handles)
+    assert 42 not in fake.destroys
+    assert 42 in fake.objects
+    assert 42 not in fake.reads
+    assert ("so", len("so-pin")) not in fake.logins
+    assert fake.attempt_calls == []
+
+
+def test_so_unwrap_leg_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """SO unwrap KEK setup-after inventory refused: the KEK is unproved and stays alive."""
+    fake = _F2SetupRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run_so_leg, _SO_UNWRAP, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.setup_handles
+    assert all(handle not in fake.destroys for handle in fake.setup_handles)
+    assert len(fake.setup_creates) == 1
+    assert fake.attempt_calls == []
+
+
+def test_user_copy_leg_setup_returning_foreign_handle_xfails_without_destroy() -> None:
+    """USER copy source returning pre-existing 41: unproved xfail, never read, never destroyed."""
+    fake = _F2SetupRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"someone-elses-object"}
+    fake.setup_replay_handles = [41]
+    assert_xfails(_run_user_leg, _USER_COPY, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads
+    assert len(fake.setup_creates) == 1
+
+
+def test_user_copy_leg_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """USER copy setup-after inventory refused: the source is unproved and stays alive."""
+    fake = _F2SetupRaw()
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run_user_leg, _USER_COPY, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.setup_handles
+    assert all(handle not in fake.destroys for handle in fake.setup_handles)
+    assert len(fake.setup_creates) == 1
+
+
+def test_user_derive_leg_setup_returning_foreign_handle_xfails_without_destroy() -> None:
+    """USER derive base returning pre-existing 41: unproved xfail, never read, never destroyed."""
+    fake = _F2SetupRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"victim-base"}
+    fake.setup_replay_handles = [41]
+    assert_xfails(_run_user_leg, _USER_DERIVE, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads
+    assert len(fake.setup_creates) == 1
+
+
+def test_user_derive_leg_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """USER derive setup-after inventory refused: the base is unproved and stays alive."""
+    fake = _F2SetupRaw()
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run_user_leg, _USER_DERIVE, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.setup_handles
+    assert all(handle not in fake.destroys for handle in fake.setup_handles)
+    assert len(fake.setup_creates) == 1
+
+
+def test_user_unwrap_leg_setup_returning_foreign_kek_xfails_before_target_setup() -> None:
+    """USER unwrap KEK returning pre-existing 41: unproved xfail before the target is made."""
+    fake = _F2SetupRaw()
+    fake.objects[41] = {int(CKA_LABEL): b"victim-kek"}
+    fake.setup_replay_handles = [41]
+    assert_xfails(_run_user_leg, _USER_UNWRAP, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads
+    assert len(fake.setup_creates) == 1
+
+
+def test_user_unwrap_leg_setup_returning_foreign_target_xfails_after_proved_kek() -> None:
+    """Proved KEK + foreign target 42: unproved xfail; the proved KEK is cleaned, 42 lives."""
+    fake = _F2SetupRaw()
+    fake.objects[42] = {int(CKA_LABEL): b"victim-target"}
+    fake.replay_second_setup_handle = 42
+    assert_xfails(_run_user_leg, _USER_UNWRAP, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert fake.setup_handles
+    assert all(handle in fake.destroys for handle in fake.setup_handles)
+    assert 42 not in fake.destroys
+    assert 42 in fake.objects
+    assert 42 not in fake.reads
+
+
+def test_user_unwrap_leg_setup_after_inventory_refusal_xfails_without_destroy() -> None:
+    """USER unwrap KEK setup-after inventory refused: the KEK is unproved and stays alive."""
+    fake = _F2SetupRaw()
+    fake.find_init_script = [_OK, _CLEAN_REFUSAL]
+    assert_xfails(_run_user_leg, _USER_UNWRAP, _rs(fake), _config())
+    rec = _assert_xfail_record("not_operational")
+    assert rec.operation == "C_FindObjects"
+    assert fake.setup_handles
+    assert all(handle not in fake.destroys for handle in fake.setup_handles)
+    assert len(fake.setup_creates) == 1

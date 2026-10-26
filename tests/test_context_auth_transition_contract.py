@@ -155,6 +155,7 @@ class _CtxAuthRaw:
         self.sign_rv_by_session: dict[int, list[int]] = {}
         self.sign_reported_len: int | None = None
         self.decrypt_reported_len: int | None = None
+        self.encrypt_reported_len: int | None = None
         self.update_bts_retains_op = False
         self.find_init_script: list[int] = []
         self._search: list[int] = []
@@ -391,7 +392,8 @@ class _CtxAuthRaw:
             return _OK
         ct = self.key.public_key().encrypt(data, padding.PKCS1v15())
         ctypes.memmove(out_ptr, ct, len(ct))
-        _write_ulong(out_len_ptr, len(ct))
+        reported = self.encrypt_reported_len if self.encrypt_reported_len is not None else len(ct)
+        _write_ulong(out_len_ptr, reported)
         self._terminate(session)
         return _OK
 
@@ -1193,3 +1195,19 @@ def test_sign_update_bts_terminated_operation_passes() -> None:
     fake.sign_update_script = [_BTS]
     _run(_UPDATE_ERROR_NODE, _rs(fake), _config())
     assert C.get_records() == []
+
+
+# --- fix round 2 (F3): staging encrypt output length is judged, never clamped -
+
+
+@pytest.mark.parametrize("method", _DECRYPT)
+def test_staging_encrypt_reported_length_mismatch_fails(method: str) -> None:
+    """Staging C_Encrypt OK + reported 257 for a 256-byte buffer: length lie fails loud."""
+    fake = _CtxAuthRaw()
+    fake.encrypt_reported_len = 257
+    _assert_fails(_run, method, _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Encrypt"
+    assert rec.mechanism == "CKM_RSA_PKCS"
+    assert rec.detail["reported_length"] == 257
+    assert rec.detail["buffer_capacity"] == _RSA_BYTES
