@@ -47,6 +47,8 @@ PATCH_SITES: tuple[tuple[str, str], ...] = (
     ("test_protected_component_contract", "_U64"),
     ("test_wrap_kem_handle_contract", _SENTINEL_NAME),
     ("test_wrap_kem_handle_contract", "_U64"),
+    ("test_dh_peer_encoding_contract", _SENTINEL_NAME),
+    ("test_dh_peer_encoding_contract", "_UNAVAILABLE"),
 )
 
 #: Production modules imported eagerly at patch time (before collection, so
