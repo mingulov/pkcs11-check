@@ -6,6 +6,12 @@ Marked @destructive - these modify token PIN state.
 Note: These tests require --p11-destructive flag AND knowledge of the
 SO PIN. Many modules use a default SO PIN equal to the user PIN at init time.
 Tests skip if SO login fails.
+
+QC11c (below) adds a sacrificial-token provisioning journey: InitToken ->
+SO -> InitPIN -> USER -> SetPIN -> old rejected/new accepted -> restart ->
+verify, ALL on throwaway tokens behind the explicit capability, judged
+against declared behavior (genuinely unsupported steps become an explicit
+unexercised-lifecycle outcome, never a green journey).
 """
 
 from __future__ import annotations
@@ -15,7 +21,12 @@ from typing import Any
 
 import pytest
 
-from pkcs11_check.classification import fail_as
+from pkcs11_check.classification import (
+    Classification,
+    fail_as,
+    raise_for_record,
+    record_as,
+)
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
     login_user,
@@ -28,6 +39,7 @@ from pkcs11_check.raw.recipes import (
     gen_aes_key,
     set_pin,
 )
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
     CK_TOKEN_INFO,
     CK_UTF8CHAR,
@@ -54,6 +66,8 @@ from pkcs11_check.raw.types_std import (
     CKU_SO,
     CKU_USER,
 )
+from pkcs11_check.testcases import _throwaway_token as throwaway
+from pkcs11_check.testcases._probes import token_admin
 from pkcs11_check.testcases._so_login import guard_so_lockout, resolve_so_pin
 from pkcs11_check.testcases.conftest import (
     classify_negative_rv,
@@ -247,3 +261,505 @@ class TestSetPIN:
                 pass  # audit-ok: best-effort PIN restore in cleanup, not the assertion under test
             rs.raw.C_Logout(s2)
             close_session_quietly(rs.raw, s2)
+
+
+# --- QC11c: sacrificial provisioning journey (#52.8) ----------------------------
+
+_QC11C_JOURNEY_POSITIVE_STEPS = ("init_token", "so_login", "init_pin", "user_login", "set_pin")
+_QC11C_STEP_OPERATIONS = {
+    "init_token": "C_InitToken",
+    "so_login": "C_Login",
+    "init_pin": "C_InitPIN",
+    "user_login": "C_Login",
+    "set_pin": "C_SetPIN",
+    "old_rejected": "C_Login",
+    "new_accepted": "C_Login",
+    "create_canary": "C_CreateObject",
+}
+_QC11C_CANONICAL_OLD_REJECTED = (int(CKR_PIN_INCORRECT),)
+
+
+def _qc11c_step_map(trace: token_admin.AdminTrace) -> dict[str, int]:
+    by_name: dict[str, int] = {}
+    for step in trace.steps:
+        by_name.setdefault(step.name, step.rv)
+    return by_name
+
+
+def _assess_provision_journey(
+    trace: token_admin.AdminTrace,
+) -> tuple[list[Classification], bool]:
+    """Assess one journey trace; returns (records, reached-provisioned-state)."""
+    by_name = _qc11c_step_map(trace)
+    by_flag = dict(trace.flags)
+    records: list[Classification] = []
+    label = "QC11c provisioning journey"
+    detail: dict[str, Any] = {
+        "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
+        "inv": list(trace.inv_objects),
+    }
+    reached = True
+    refused_name: str | None = None
+    for name in _QC11C_JOURNEY_POSITIVE_STEPS:
+        rv = by_name.get(name)
+        assert rv is not None, f"{label}: journey trace incomplete at {name}"
+        if rv == int(CKR_OK):
+            continue
+        reached = False
+        refused_name = name
+        operation = _QC11C_STEP_OPERATIONS[name]
+        if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=f"{label}: {name}",
+                    operation=operation,
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=rv,
+                    summary=f"{label}: {name} returned undefined CK_RV",
+                    detail=detail,
+                )
+            )
+        else:
+            records.append(
+                record_as(
+                    "not_operational",
+                    label=f"{label}: {name}",
+                    operation=operation,
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=rv,
+                    summary=f"{label}: unexercised lifecycle: {name} refused with {ckr_name(rv)}",
+                    detail=detail,
+                )
+            )
+        break
+    if not reached:
+        assert refused_name is not None
+        _assess_journey_refusal_fallout(trace, by_name, by_flag, refused_name, records, detail)
+        return records, False
+    old = by_name.get("old_rejected")
+    assert old is not None, f"{label}: missing old_rejected step"
+    if old == int(CKR_OK):
+        records.append(
+            record_as(
+                "accepted_invalid",
+                kind="lifecycle",
+                label=f"{label}: old_rejected",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_REJECTED,
+                actual=old,
+                summary=f"{label}: old PIN still accepted after SetPIN",
+                detail=detail,
+            )
+        )
+    elif not (is_standard_ckr(old) or is_vendor_defined_ckr(old)):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: old_rejected",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=old,
+                summary=f"{label}: old-PIN probe returned undefined CK_RV",
+                detail=detail,
+            )
+        )
+    elif old != int(CKR_PIN_INCORRECT):
+        records.append(
+            record_as(
+                "nonspec_reject",
+                label=f"{label}: old_rejected",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_REJECTED,
+                actual=old,
+                summary=f"{label}: old PIN rejected with {ckr_name(old)}",
+                detail=detail,
+            )
+        )
+    new = by_name.get("new_accepted")
+    assert new is not None, f"{label}: missing new_accepted step"
+    if new == int(CKR_OK):
+        pass
+    elif not (is_standard_ckr(new) or is_vendor_defined_ckr(new)):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: new_accepted",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=new,
+                summary=f"{label}: new-PIN probe returned undefined CK_RV",
+                detail=detail,
+            )
+        )
+    else:
+        records.append(
+            record_as(
+                "not_operational",
+                label=f"{label}: new_accepted",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=new,
+                summary=f"{label}: new PIN refused with {ckr_name(new)}",
+                detail=detail,
+            )
+        )
+    canary = by_name.get("create_canary")
+    assert canary is not None, f"{label}: missing create_canary step"
+    canary_ok = canary == int(CKR_OK)
+    if not canary_ok:
+        if not (is_standard_ckr(canary) or is_vendor_defined_ckr(canary)):
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=f"{label}: create_canary",
+                    operation="C_CreateObject",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=canary,
+                    summary=f"{label}: canary create returned undefined CK_RV",
+                    detail=detail,
+                )
+            )
+        else:
+            records.append(
+                record_as(
+                    "not_operational",
+                    label=f"{label}: create_canary",
+                    operation="C_CreateObject",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=canary,
+                    summary=f"{label}: canary create refused with {ckr_name(canary)}",
+                    detail=detail,
+                )
+            )
+    if canary_ok:
+        if not trace.inv_objects:
+            records.append(
+                record_as(
+                    "not_operational",
+                    label=f"{label}: inventory",
+                    operation="C_FindObjects",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    summary=f"{label}: canary inventory unreadable",
+                    detail=detail,
+                )
+            )
+        elif trace.inv_objects[-1] == 0:
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=f"{label}: inventory",
+                    operation="C_FindObjects",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    summary=f"{label}: canary created-then-gone",
+                    detail=detail,
+                )
+            )
+    after_init = by_flag.get("after_init_token")
+    if after_init is not None and not (after_init & int(CKF_TOKEN_INITIALIZED)):
+        records.append(
+            record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=f"{label}: after_init_token",
+                operation="C_GetTokenInfo",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: TOKEN_INITIALIZED unset after successful InitToken",
+                detail=detail,
+            )
+        )
+    after_ip = by_flag.get("after_init_pin")
+    if after_ip is not None and not (after_ip & int(CKF_USER_PIN_INITIALIZED)):
+        records.append(
+            record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=f"{label}: after_init_pin",
+                operation="C_GetTokenInfo",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: USER_PIN_INITIALIZED unset after successful InitPIN",
+                detail=detail,
+            )
+        )
+    return records, True
+
+
+def _assess_journey_refusal_fallout(
+    trace: token_admin.AdminTrace,
+    by_name: dict[str, int],
+    by_flag: dict[str, int | None],
+    refused_name: str,
+    records: list[Classification],
+    detail: dict[str, Any],
+) -> None:
+    """No-mutation checks for the refused provisioning step (refused ops stay inert)."""
+    label = "QC11c provisioning journey"
+    if refused_name == "init_pin":
+        after = by_flag.get("after_init_pin")
+        if after is not None and (after & int(CKF_USER_PIN_INITIALIZED)):
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=f"{label}: after_init_pin",
+                    operation="C_GetTokenInfo",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    summary=f"{label}: refused InitPIN left USER_PIN_INITIALIZED set",
+                    detail=detail,
+                )
+            )
+        return
+    if refused_name != "set_pin":
+        return
+    old_probe = by_name.get("verify:old_after_refused_setpin")
+    new_probe = by_name.get("verify:new_after_refused_setpin")
+    assert old_probe is not None and new_probe is not None, (
+        f"{label}: missing verify steps after refused SetPIN"
+    )
+    if new_probe == int(CKR_OK):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{label}: verify:new_after_refused_setpin",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=new_probe,
+                summary=f"{label}: SetPIN refused yet new PIN works",
+                detail=detail,
+            )
+        )
+    elif not (is_standard_ckr(new_probe) or is_vendor_defined_ckr(new_probe)) or not (
+        is_standard_ckr(old_probe) or is_vendor_defined_ckr(old_probe)
+    ):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: verify",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: no-mutation probes returned undefined CK_RV",
+                detail=detail,
+            )
+        )
+    elif old_probe == int(CKR_OK) and new_probe == int(CKR_PIN_INCORRECT):
+        pass
+    elif old_probe == int(CKR_OK):
+        records.append(
+            record_as(
+                "nonspec_reject",
+                label=f"{label}: verify:new_after_refused_setpin",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_REJECTED,
+                actual=new_probe,
+                summary=(
+                    f"{label}: new PIN rejected with {ckr_name(new_probe)} after refused SetPIN"
+                ),
+                detail=detail,
+            )
+        )
+    else:
+        records.append(
+            record_as(
+                "not_operational",
+                label=f"{label}: verify:old_after_refused_setpin",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=old_probe,
+                summary=f"{label}: old-PIN login refused after refused SetPIN (state unreadable)",
+                detail=detail,
+            )
+        )
+    after_refused = by_flag.get("after_refused_setpin")
+    if after_refused is not None and not (after_refused & int(CKF_USER_PIN_INITIALIZED)):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{label}: after_refused_setpin",
+                operation="C_GetTokenInfo",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: refused SetPIN cleared USER_PIN_INITIALIZED",
+                detail=detail,
+            )
+        )
+
+
+def _assess_provision_persistence(trace: token_admin.AdminTrace) -> list[Classification]:
+    """Assess the restart re-verification trace (new PIN works, old rejected, canary kept)."""
+    by_name = _qc11c_step_map(trace)
+    records: list[Classification] = []
+    label = "QC11c provisioning persistence"
+    detail: dict[str, Any] = {
+        "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
+        "inv": list(trace.inv_objects),
+    }
+    old = by_name.get("old_rejected")
+    assert old is not None, f"{label}: missing old_rejected step"
+    if old == int(CKR_OK):
+        records.append(
+            record_as(
+                "accepted_invalid",
+                kind="lifecycle",
+                label=f"{label}: old_rejected",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_REJECTED,
+                actual=old,
+                summary=f"{label}: old PIN accepted after restart",
+                detail=detail,
+            )
+        )
+    elif not (is_standard_ckr(old) or is_vendor_defined_ckr(old)):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: old_rejected",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=old,
+                summary=f"{label}: old-PIN probe returned undefined CK_RV",
+                detail=detail,
+            )
+        )
+    elif old != int(CKR_PIN_INCORRECT):
+        records.append(
+            record_as(
+                "nonspec_reject",
+                label=f"{label}: old_rejected",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_REJECTED,
+                actual=old,
+                summary=f"{label}: old PIN rejected with {ckr_name(old)}",
+                detail=detail,
+            )
+        )
+    new = by_name.get("new_accepted")
+    assert new is not None, f"{label}: missing new_accepted step"
+    if new == int(CKR_OK):
+        pass
+    elif not (is_standard_ckr(new) or is_vendor_defined_ckr(new)):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: new_accepted",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=new,
+                summary=f"{label}: new-PIN probe returned undefined CK_RV",
+                detail=detail,
+            )
+        )
+    else:
+        records.append(
+            record_as(
+                "not_operational",
+                label=f"{label}: new_accepted",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=new,
+                summary=f"{label}: new PIN refused after restart with {ckr_name(new)}",
+                detail=detail,
+            )
+        )
+    if not trace.inv_objects:
+        records.append(
+            record_as(
+                "not_operational",
+                label=f"{label}: inventory",
+                operation="C_FindObjects",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: canary inventory unreadable after restart",
+                detail=detail,
+            )
+        )
+    elif trace.inv_objects[-1] == 0:
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="lifecycle",
+                label=f"{label}: inventory",
+                operation="C_FindObjects",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: canary lost across restart",
+                detail=detail,
+            )
+        )
+    return records
+
+
+def _raise_strongest_qc11c(records: list[Classification]) -> None:
+    """Raise the strongest collected record (fail beats xfail; ties keep first)."""
+    if not records:
+        return
+    rank = {"pass": 0, "xfail": 1, "fail": 2}
+    raise_for_record(max(records, key=lambda rec: rank[rec.outcome]))
+
+
+def _run_qc11c_journey_node(
+    cap: throwaway.ThrowawayCapability,
+    p11_config: Any,
+    *,
+    _session_factory: throwaway.SessionFactory = throwaway.admin_session,
+    _launch: throwaway.LaunchProbe = throwaway.launch_admin_probe,
+) -> None:
+    with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
+        rc1, out1, err1 = _launch(minted, "qc11c_journey", {}, p11_config=p11_config)
+        phase1 = token_admin.check_child_output(rc1, out1, err1, label="QC11c journey")
+        records1, reached = _assess_provision_journey(phase1)
+        if not reached:
+            assert records1, "QC11c journey: unreached without any record"
+            _raise_strongest_qc11c(records1)
+            return
+        rc2, out2, err2 = _launch(minted, "qc11c_verify", {}, p11_config=p11_config)
+        phase2 = token_admin.check_child_output(
+            rc2, out2, err2, label="QC11c verify", no_slots="fail"
+        )
+        records2 = _assess_provision_persistence(phase2)
+        _raise_strongest_qc11c(records1 + records2)
+
+
+class TestSacrificialProvisioningJourney:
+    """Full provisioning journey with restart re-verification (QC11c)."""
+
+    def test_sacrificial_provisioning_journey(self, p11_config: Any) -> None:
+        cap = throwaway.require_throwaway_capability()
+        _run_qc11c_journey_node(cap, p11_config)
