@@ -24,6 +24,7 @@ from pkcs11_check.raw.pack import (
     mech_bytes,
     mech_simple,
     template,
+    template_from_dict,
 )
 from pkcs11_check.raw.recipes import (
     create_object,
@@ -31,9 +32,17 @@ from pkcs11_check.raw.recipes import (
     derive_key,
     destroy_quietly,
     encrypt_single,
+    find_objects_exhaustive,
+    partition_proved_new,
     read_attributes,
 )
-from pkcs11_check.raw.rv import expect_rv
+from pkcs11_check.raw.rv import (
+    CkrAssertionError,
+    ckr_name,
+    expect_rv,
+    is_standard_ckr,
+    is_vendor_defined_ckr,
+)
 from pkcs11_check.raw.types_std import (
     CK_OBJECT_HANDLE,
     CKA_BASE,
@@ -1594,3 +1603,696 @@ class TestDHParameterGeneration:
                     destroy_quietly(rs.raw, rs.sh, priv_b)
         finally:
             destroy_quietly(rs.raw, rs.sh, dp_handle.value)
+
+
+# --- QC9a: DH peer-encoding matrix (#52.1) ------------------------------------
+#
+# Fixed private exponent (the RFC 3526 Group 14 Alice value) plus an independent
+# pow() oracle. Three allowed-encoding legs -- ordinary, leading-zero-equivalent,
+# full-width-distinct-from-suffix -- and a separate malformed (overlong/empty)
+# slice. Every derived handle is owned only when the exhaustive before/after
+# inventory delta proves it new; a refused derive that leaves a proved-new object
+# behind fails, an unproved delta stays alive as honest-deviation xfail, and
+# clean zero-delta refusals keep the per-leg tiers below. No blind destroy of
+# output handles anywhere in these nodes.
+#
+# Peers are g^e mod p for deterministic SHA-256-labeled fixed exponents
+# (qc9a-a-3, qc9a-b-311, qc9a-c-1). All lie in [2, p-2], all four oracles are
+# pairwise distinct, and the padded leading-zero form denotes the same integer
+# as its minimal form (all pinned by the QC9a contract tests).
+
+_QC9A_VALUE_LEN = len(DH_PRIME_2048)
+
+_QC9A_PEER_ORDINARY = bytes.fromhex(
+    "f9966b455fa5f2814cab70512e24af27ee8ec5011113d2d5"
+    "bd6922ae6520f08b2373a6c0b07defcb77470039e73c573a"
+    "2abb4d0feff9bb0a3e8ba828dea098702ea67436bb79a784"
+    "2637365a0c39596861b2c83a7df644bc47a6267d66597dc4"
+    "a429a57f308fbd28e7f39de8a2615e89f6cd35b8261ad2a2"
+    "70273a21253891a2b7db7766a3b9a66f09c6c4d455e2a2b6"
+    "8af80140f23ed2c1956ee64c4765bd9edab2a2c796427114"
+    "96a4d17f97ae0a4049e41260c6bec5742b860a91767d1e27"
+    "44498b75755bc85734a25aa5b7ff826641c6ef0fea9ee5aa"
+    "4c58fbeb47277dac04522ca4d4eb2b7bb29d690a86556250"
+    "19d3c50e28cca21c9b74c70e080cd0f8"
+)
+
+_QC9A_PEER_LZ_MINIMAL = bytes.fromhex(
+    "aa206303caf19e430eb9ecb78f01e090f961c083b17bd4ca"
+    "dc311961efe70df16a288e05bffa95c12ab578631028d115"
+    "91591d0ff47478d06816652e722dbbf044b0b1ad742942e9"
+    "a8c1ae874b3a4c9066a292bc7a2aad223802aa842a0f389e"
+    "c8fd01a7c59247ed6caabc098a905993cc0db454f499a1f9"
+    "545fd0cb1e9e41a6549665713d31946d0dcb41aec3396842"
+    "a4b0507fef88a76279febc48dce7227fa19b05772522a5c0"
+    "70247af7b9298943d0325205377033eb33346c41a0d3ec56"
+    "fc93f1995bd37669e6ac656b607e28ed9f258c31043b27cc"
+    "ecf86017050141a06e1b77f5af3e1265fc4555e706f1a918"
+    "93db814665d39d040c894c87081019"
+)
+_QC9A_PEER_LZ_PADDED = b"\x00" + _QC9A_PEER_LZ_MINIMAL
+
+_QC9A_PEER_FULL = bytes.fromhex(
+    "d45b5da2c6f9990c5d850cac55ac50dbeaf7283566c1c578"
+    "d07443baf8c0dd48c97743af1cc33b8a6a90db6a5fedb616"
+    "4efcd5a03e29d72fd5b3ced560e75a00617b285d3983d59f"
+    "04d9a0abe23d61a9deb09c3f87e5e77f60d66ef6c2b6b964"
+    "b9a16df6c3711a7864ecf8f99f2fc3ec03df38e2a1dabe78"
+    "458a2345a6b3cdfef2fe4eb9b4ea2500b6c2a11b072f275c"
+    "4cba07c4104177a3657495dc8ebb1406c11043a32fe50b0f"
+    "b6257b8238e88731b301d7ca401635cefc9601f57d7d90a0"
+    "46c9b4104a992664f69ba3a36a83938955275ef2572c149c"
+    "6c2d0f21faaf74dc55d451e0bea94a57af4757bdb3dbf39a"
+    "8575ce60a88c0765acbb66594c5b469e"
+)
+_QC9A_PEER_SUFFIX = _QC9A_PEER_FULL[1:]
+# Out-of-range peer value p + 1 (257 bytes): a leading-zero-padded
+# same-integer encoding would be a VALID integer encoding (R12-03), so the
+# malformed leg must exceed the modulus itself, not just its width.
+_QC9A_OVERLONG = (int.from_bytes(DH_PRIME_2048, "big") + 1).to_bytes(257, "big")
+_QC9A_EMPTY = b""
+
+_QC9A_MALFORMED_CANONICAL_RVS = (CKR_MECHANISM_PARAM_INVALID,)
+_QC9A_DERIVED_IDENTITY = (CKO_SECRET_KEY, CKK_GENERIC_SECRET)
+
+
+def _qc9a_oracle(peer_int: int) -> bytes:
+    """Independent DH shared-secret oracle: pow(peer, x, p), zero-padded to prime length."""
+    prime = int.from_bytes(DH_PRIME_2048, "big")
+    exponent = int.from_bytes(_DH_RFC3526_GROUP14_ALICE_PRIVATE, "big")
+    return pow(peer_int, exponent, prime).to_bytes(len(DH_PRIME_2048), "big")
+
+
+def _qc9a_derive_template(label: str) -> dict[Any, Any]:
+    """Derive template for one QC9a leg; the unique label anchors proved-new correlation."""
+    return {
+        CKA_CLASS: CKO_SECRET_KEY,
+        CKA_KEY_TYPE: CKK_GENERIC_SECRET,
+        CKA_VALUE_LEN: _QC9A_VALUE_LEN,
+        CKA_SENSITIVE: False,
+        CKA_EXTRACTABLE: True,
+        CKA_TOKEN: False,
+        CKA_LABEL: label,
+    }
+
+
+def _qc9a_inventory_or_classify(rs: Any, *, label: str, phase: str) -> list[int]:
+    """Exhaustive inventory, judging inventory RVs instead of propagating them.
+
+    A clean inventory refusal leaves ownership unprovable (xfail, never pass);
+    an undefined inventory RV or a Find-protocol violation fails.
+    """
+    try:
+        return find_objects_exhaustive(rs.raw, rs.sh)
+    except CkrAssertionError as exc:
+        if is_standard_ckr(exc.rv) or is_vendor_defined_ckr(exc.rv):
+            C.xfail_as(
+                "not_operational",
+                label=f"{label}: object inventory not operational",
+                operation="C_FindObjects",
+                inherit_mechanism=False,
+                actual=exc.rv,
+                detail={"phase": phase, "rv": ckr_name(exc.rv)},
+                summary=f"{label}: {phase} inventory refused with {ckr_name(exc.rv)}",
+            )
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            actual=exc.rv,
+            detail={"phase": phase, "rv": ckr_name(exc.rv)},
+            summary=f"{label}: {phase} inventory returned undefined {ckr_name(exc.rv)}",
+        )
+    except AssertionError as exc:
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            detail={"phase": phase, "error": str(exc)},
+            summary=f"{label}: {phase} inventory violated the Find protocol",
+        )
+
+
+def _qc9a_after_inventory_or_judge(
+    rs: Any,
+    *,
+    rv: int,
+    handle: int,
+    label: str,
+    leg: str,
+    peer_length: int,
+    malformed: bool,
+) -> list[int]:
+    """After-inventory that preserves already-known derive failures (R12-01).
+
+    An undefined derive RV and a malformed-leg acceptance are known failures
+    that a failed after-inventory must not downgrade: the output handle stays
+    alive (unproved), but the verdict stays FAIL with both RVs in evidence.
+    A defined refusal with a failed inventory is an unproved-effect xfail;
+    CKR_OK on an allowed leg keeps the historical not-operational xfail.
+    """
+    try:
+        return find_objects_exhaustive(rs.raw, rs.sh)
+    except CkrAssertionError as exc:
+        inv_rv = int(exc.rv)
+        detail: dict[str, Any] = {
+            "phase": "after",
+            "leg": leg,
+            "peer_length": peer_length,
+            "handle_after": handle,
+            "derive_rv": ckr_name(rv),
+            "inventory_rv": ckr_name(inv_rv),
+        }
+        if rv != int(CKR_OK) and not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+            C.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=_DH_DERIVE_MECHANISM_NAME,
+                actual=rv,
+                detail=detail,
+                summary=(
+                    f"{label}: refused with undefined {ckr_name(rv)}; "
+                    f"after-inventory failed with {ckr_name(inv_rv)}"
+                ),
+            )
+        if not (is_standard_ckr(inv_rv) or is_vendor_defined_ckr(inv_rv)):
+            C.fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=label,
+                operation="C_FindObjects",
+                inherit_mechanism=False,
+                actual=inv_rv,
+                detail=detail,
+                summary=f"{label}: after inventory returned undefined {ckr_name(inv_rv)}",
+            )
+        if rv == int(CKR_OK) and malformed:
+            C.classify(
+                "accepted_invalid",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=_DH_DERIVE_MECHANISM_NAME,
+                actual=rv,
+                expected=tuple(_QC9A_MALFORMED_CANONICAL_RVS),
+                detail={**detail, "disposition": "unproved-handle-alive"},
+                summary=(
+                    f"{label}: accepted invalid (CKR_OK) -- must reject; "
+                    f"after-inventory failed with {ckr_name(inv_rv)}, "
+                    "handle left alive"
+                ),
+            )
+        if rv == int(CKR_OK):
+            C.xfail_as(
+                "not_operational",
+                label=f"{label}: object inventory not operational",
+                operation="C_FindObjects",
+                inherit_mechanism=False,
+                actual=inv_rv,
+                detail={"phase": "after", "rv": ckr_name(inv_rv)},
+                summary=f"{label}: after inventory refused with {ckr_name(inv_rv)}",
+            )
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=_DH_DERIVE_MECHANISM_NAME,
+            actual=rv,
+            detail={**detail, "disposition": "unproved-effect"},
+            summary=(
+                f"{label}: refusal {ckr_name(rv)} with a failed after-inventory "
+                f"({ckr_name(inv_rv)}); zero-delta unproved"
+            ),
+        )
+    except AssertionError as exc:
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_FindObjects",
+            inherit_mechanism=False,
+            detail={
+                "phase": "after",
+                "leg": leg,
+                "peer_length": peer_length,
+                "handle_after": handle,
+                "derive_rv": ckr_name(rv),
+                "error": str(exc),
+            },
+            summary=f"{label}: after inventory violated the Find protocol",
+        )
+    raise AssertionError("unreachable: every inventory-failure branch terminates")
+
+
+def _qc9a_derive_raw(
+    rs: Any, private_key: int, peer: bytes, attempt: Mapping[Any, Any]
+) -> tuple[int, int]:
+    """Raw C_DeriveKey returning (rv, output handle) so refusals keep their evidence."""
+    mech = mech_bytes(CKM_DH_PKCS_DERIVE, peer)
+    tmpl = template_from_dict(dict(attempt))
+    out = CK_OBJECT_HANDLE(0)
+    rv = rs.raw.C_DeriveKey(rs.sh, mech.byref(), private_key, tmpl.ptr, tmpl.count, byref(out))
+    return int(rv), int(out.value)
+
+
+def _qc9a_handle_class(handle: int, *, before: set[int], after: set[int]) -> str:
+    """Evidence-only classification of a derive output handle against a delta."""
+    if handle == 0:
+        return "zero"
+    if handle in before:
+        return "pre-existing"
+    if handle in after:
+        return "new-live"
+    return "dead-nonzero"
+
+
+def _qc9a_judge_refusal_ownership(
+    rs: Any,
+    *,
+    rv: int,
+    handle: int,
+    before: list[int],
+    after: list[int],
+    attempt: Mapping[Any, Any],
+    label: str,
+    leg: str,
+) -> None:
+    """Ownership-first refusal judge shared by the allowed and malformed legs.
+
+    A proved-new leftover is destroyed and fails; an unproved delta stays alive
+    as honest-deviation xfail; a clean zero-delta refusal returns so the caller
+    can apply its own RV tiers. Never touches unproved handles. An undefined
+    operation RV is always a metadata failure, even with an unproved delta
+    (R12-02): the partition runs first so proved leftovers are still cleaned.
+    """
+    proved, unproved = partition_proved_new(
+        rs.raw,
+        rs.sh,
+        before,
+        after,
+        attempt_templates=(attempt,),
+        identities=(_QC9A_DERIVED_IDENTITY,),
+        error_handles=(handle,),
+    )
+    before_set = set(before)
+    after_set = set(after)
+    detail: dict[str, Any] = {
+        "leg": leg,
+        "handle_after": handle,
+        "handle_class": _qc9a_handle_class(handle, before=before_set, after=after_set),
+        "new_handles": sorted(after_set - before_set),
+        "proved_new_handles": proved,
+        "unproved_new_handles": unproved,
+    }
+    if proved:
+        for leaked in proved:
+            destroy_quietly(rs.raw, rs.sh, leaked)
+    if not (is_standard_ckr(rv) or is_vendor_defined_ckr(rv)):
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=_DH_DERIVE_MECHANISM_NAME,
+            actual=rv,
+            detail=detail,
+            summary=f"{label}: refused with undefined {ckr_name(rv)}",
+        )
+    if proved:
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=_DH_DERIVE_MECHANISM_NAME,
+            actual=rv,
+            detail=detail,
+            summary=f"{label}: refusal {ckr_name(rv)} left an object behind",
+        )
+    if unproved:
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=_DH_DERIVE_MECHANISM_NAME,
+            actual=rv,
+            detail={"disposition": "unproved-effect", **detail},
+            summary=(
+                f"{label}: refusal {ckr_name(rv)} with an unproved inventory delta; left alive"
+            ),
+        )
+
+
+def _qc9a_run_allowed_leg(
+    rs: Any,
+    private_key: int,
+    *,
+    peer: bytes,
+    leg: str,
+    label: str,
+    suffix: bytes | None = None,
+) -> None:
+    """One allowed-encoding leg: derive with a valid peer, judge against the oracle.
+
+    CKR_OK with oracle-correct material passes; CKR_OK with wrong material fails;
+    CKR_OK with a missing/unreadable value or an unproved handle is unproved
+    xfail, never pass. Any clean refusal of these valid inputs is xfail with the
+    original RV (no refusal of valid input is a conformant pass); undefined RVs
+    fail. When ``suffix`` is given, the value must additionally NOT match the
+    suffix oracle (the truncation detector).
+    """
+    attempt = _qc9a_derive_template(f"qc9a-{leg}-{uuid.uuid4().hex[:8]}")
+    before = _qc9a_inventory_or_classify(rs, label=label, phase="before")
+    rv, handle = _qc9a_derive_raw(rs, private_key, peer, attempt)
+    after = _qc9a_after_inventory_or_judge(
+        rs,
+        rv=rv,
+        handle=handle,
+        label=label,
+        leg=leg,
+        peer_length=len(peer),
+        malformed=False,
+    )
+    if rv != int(CKR_OK):
+        _qc9a_judge_refusal_ownership(
+            rs,
+            rv=rv,
+            handle=handle,
+            before=before,
+            after=after,
+            attempt=attempt,
+            label=label,
+            leg=leg,
+        )
+        if is_standard_ckr(rv) or is_vendor_defined_ckr(rv):
+            C.xfail_as(
+                "not_operational",
+                label=f"{label}: DH derive advertised but not operational",
+                operation="C_DeriveKey",
+                mechanism=_DH_DERIVE_MECHANISM_NAME,
+                actual=rv,
+                detail={
+                    "leg": leg,
+                    "peer_length": len(peer),
+                    "handle_after": handle,
+                    "handle_class": _qc9a_handle_class(
+                        handle, before=set(before), after=set(after)
+                    ),
+                },
+                summary=f"{label}: refused with {ckr_name(rv)}",
+            )
+        C.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=_DH_DERIVE_MECHANISM_NAME,
+            actual=rv,
+            detail={"leg": leg, "peer_length": len(peer), "handle_after": handle},
+            summary=f"{label}: refused with undefined {ckr_name(rv)}",
+        )
+    owned = handle != 0 and handle in set(after) - set(before)
+    if not owned:
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_DeriveKey",
+            mechanism=_DH_DERIVE_MECHANISM_NAME,
+            actual=rv,
+            detail={
+                "disposition": "unproved-handle",
+                "leg": leg,
+                "peer_length": len(peer),
+                "handle_after": handle,
+                "handle_class": _qc9a_handle_class(handle, before=set(before), after=set(after)),
+                "new_handles": sorted(set(after) - set(before)),
+            },
+            summary=f"{label}: CKR_OK with an unproved output handle; unproved, never pass",
+        )
+    try:
+        try:
+            value_attrs = read_attributes(rs.raw, rs.sh, handle, [CKA_VALUE])
+        except CkrAssertionError as exc:
+            read_rv = exc.rv
+            if not (is_standard_ckr(read_rv) or is_vendor_defined_ckr(read_rv)):
+                C.fail_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=label,
+                    operation="C_DeriveKey",
+                    mechanism=_DH_DERIVE_MECHANISM_NAME,
+                    actual=read_rv,
+                    detail={"leg": leg, "handle_after": handle, "read_rv": ckr_name(read_rv)},
+                    summary=f"{label}: derived-value read returned undefined {ckr_name(read_rv)}",
+                )
+            C.xfail_as(
+                "honest_deviation",
+                kind="metadata",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=_DH_DERIVE_MECHANISM_NAME,
+                actual=read_rv,
+                detail={
+                    "disposition": "unreadable-value",
+                    "leg": leg,
+                    "peer_length": len(peer),
+                    "expected_length": _QC9A_VALUE_LEN,
+                    "handle_after": handle,
+                    "read_rv": ckr_name(read_rv),
+                },
+                summary=f"{label}: derived value unreadable; unproved, never pass",
+            )
+        before_records = len(C.get_records())
+        value = attr_or_record(
+            value_attrs,
+            CKA_VALUE,
+            label=label,
+            reason="honest_deviation",
+            kind="metadata",
+            inherit_mechanism=False,
+        )
+        if value is MISSING_ATTRIBUTE:
+            new_records = C.get_records()[before_records:]
+            if not new_records:
+                raise AssertionError(f"{label}: missing attribute did not produce evidence")
+            record = new_records[-1]
+            if record.detail is None:
+                record.detail = {}
+            record.detail.update(
+                {
+                    "leg": leg,
+                    "peer_length": len(peer),
+                    "expected_length": _QC9A_VALUE_LEN,
+                    "handle_after": handle,
+                    "producer_operation": "C_DeriveKey",
+                    "producer_mechanism": _DH_DERIVE_MECHANISM_NAME,
+                }
+            )
+            if record.reason == "honest_deviation":
+                record.detail["disposition"] = "unreadable-value"
+            C.raise_for_record(record)
+        else:
+            oracle_full = _qc9a_oracle(int.from_bytes(peer, "big"))
+            match_full = value == oracle_full
+            match_suffix = suffix is not None and value == _qc9a_oracle(
+                int.from_bytes(suffix, "big")
+            )
+            if match_full and not match_suffix:
+                return
+            mismatch: dict[str, Any] = {
+                "leg": leg,
+                "peer_length": len(peer),
+                "expected_length": len(oracle_full),
+                "actual_length": len(value),
+                "matches_full_oracle": match_full,
+            }
+            if suffix is not None:
+                mismatch["matches_suffix_oracle"] = match_suffix
+            C.fail_as(
+                "wrong_result",
+                kind="crypto",
+                label=label,
+                operation="C_DeriveKey",
+                mechanism=_DH_DERIVE_MECHANISM_NAME,
+                source="RFC 3526 Group 14",
+                detail=mismatch,
+                summary=f"{label}: derived value does not match the independent oracle",
+            )
+    finally:
+        destroy_quietly(rs.raw, rs.sh, handle)
+
+
+def _qc9a_run_malformed_leg(
+    rs: Any,
+    private_key: int,
+    *,
+    peer: bytes,
+    leg: str,
+    label: str,
+) -> None:
+    """One malformed-encoding leg: overlong/empty peers must be refused.
+
+    Canonical CKR_MECHANISM_PARAM_INVALID passes; other clean refusals xfail
+    with the original RV; acceptance or an undefined RV fails. Ownership-first:
+    a proved-new leftover is destroyed and fails even on a canonical refusal,
+    and an unproved delta stays alive as honest-deviation xfail.
+    """
+    attempt = _qc9a_derive_template(f"qc9a-{leg}-{uuid.uuid4().hex[:8]}")
+    before = _qc9a_inventory_or_classify(rs, label=label, phase="before")
+    rv, handle = _qc9a_derive_raw(rs, private_key, peer, attempt)
+    after = _qc9a_after_inventory_or_judge(
+        rs,
+        rv=rv,
+        handle=handle,
+        label=label,
+        leg=leg,
+        peer_length=len(peer),
+        malformed=True,
+    )
+    if rv != int(CKR_OK):
+        _qc9a_judge_refusal_ownership(
+            rs,
+            rv=rv,
+            handle=handle,
+            before=before,
+            after=after,
+            attempt=attempt,
+            label=label,
+            leg=leg,
+        )
+    elif handle != 0 and handle in set(after) - set(before):
+        destroy_quietly(rs.raw, rs.sh, handle)
+    classify_negative_rv(rv, _QC9A_MALFORMED_CANONICAL_RVS, label=label)
+
+
+class TestDHPeerEncoding:
+    """QC9a: DH peer-encoding matrix with a fixed private exponent (#52.1)."""
+
+    def test_dh_peer_encoding_ordinary(self, p11_raw_session: Any) -> None:
+        """CKM_DH_PKCS_DERIVE with an ordinary full-width peer matches the pow() oracle."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+        priv = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(rs.raw, rs.sh, _DH_RFC3526_GROUP14_ALICE_PRIVATE),
+                "QC9a ordinary peer-encoding leg",
+            )
+            _qc9a_run_allowed_leg(
+                rs,
+                priv,
+                peer=_QC9A_PEER_ORDINARY,
+                leg="ordinary",
+                label="CKM_DH_PKCS_DERIVE:ordinary peer encoding (QC9a)",
+            )
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_dh_peer_encoding_leading_zero(self, p11_raw_session: Any) -> None:
+        """CKM_DH_PKCS_DERIVE with a leading-zero peer encoding matches the same-integer oracle.
+
+        The padded encoding denotes the same integer as its minimal form, so an
+        accepting provider must produce that integer's oracle value; a clean
+        refusal of this allowed encoding is xfail with the original RV, never pass.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+        priv = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(rs.raw, rs.sh, _DH_RFC3526_GROUP14_ALICE_PRIVATE),
+                "QC9a leading-zero peer-encoding leg",
+            )
+            _qc9a_run_allowed_leg(
+                rs,
+                priv,
+                peer=_QC9A_PEER_LZ_PADDED,
+                leg="leading-zero",
+                label="CKM_DH_PKCS_DERIVE:leading-zero peer encoding (QC9a)",
+            )
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_dh_peer_encoding_full_width_suffix_detector(self, p11_raw_session: Any) -> None:
+        """CKM_DH_PKCS_DERIVE with a full-width peer must not derive from its suffix.
+
+        The peer is full-width and numerically distinct from its wrongly truncated
+        suffix, and the two oracles differ, so a provider deriving from the suffix
+        instead of the full value fails loudly on material mismatch.
+        """
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+        priv = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(rs.raw, rs.sh, _DH_RFC3526_GROUP14_ALICE_PRIVATE),
+                "QC9a full-width peer truncation-detector leg",
+            )
+            _qc9a_run_allowed_leg(
+                rs,
+                priv,
+                peer=_QC9A_PEER_FULL,
+                leg="full-width",
+                label="CKM_DH_PKCS_DERIVE:full-width peer truncation detector (QC9a)",
+                suffix=_QC9A_PEER_SUFFIX,
+            )
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_dh_peer_encoding_rejects_overlong(self, p11_raw_session: Any) -> None:
+        """CKM_DH_PKCS_DERIVE must refuse an out-of-range peer value (p + 1)."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+        priv = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(rs.raw, rs.sh, _DH_RFC3526_GROUP14_ALICE_PRIVATE),
+                "QC9a overlong peer-encoding leg",
+            )
+            _qc9a_run_malformed_leg(
+                rs,
+                priv,
+                peer=_QC9A_OVERLONG,
+                leg="overlong",
+                label="CKM_DH_PKCS_DERIVE:overlong peer encoding refusal (QC9a)",
+            )
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)
+
+    def test_dh_peer_encoding_rejects_empty(self, p11_raw_session: Any) -> None:
+        """CKM_DH_PKCS_DERIVE must refuse an empty peer encoding."""
+        rs = p11_raw_session
+        if not rs.has_mechanism("DH_PKCS_DERIVE"):
+            pytest.skip("CKM_DH_PKCS_DERIVE not supported")
+        priv = 0
+        try:
+            priv = _dh_setup_or_xfail(
+                lambda: _import_dh_private_key(rs.raw, rs.sh, _DH_RFC3526_GROUP14_ALICE_PRIVATE),
+                "QC9a empty peer-encoding leg",
+            )
+            _qc9a_run_malformed_leg(
+                rs,
+                priv,
+                peer=_QC9A_EMPTY,
+                leg="empty",
+                label="CKM_DH_PKCS_DERIVE:empty peer encoding refusal (QC9a)",
+            )
+        finally:
+            if priv:
+                destroy_quietly(rs.raw, rs.sh, priv)

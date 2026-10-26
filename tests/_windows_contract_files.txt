@@ -4,6 +4,7 @@ tests/test_ccm_ecma_b0_contract.py
 tests/test_ckr_ctypes_abi.py
 tests/test_copy_attribute_contract.py
 tests/test_derived_key_format_contract.py
+tests/test_dh_peer_encoding_contract.py
 tests/test_dss_signature_shape_contract.py
 tests/test_hash_pqc_input_contract.py
 tests/test_honest_region_contract.py
