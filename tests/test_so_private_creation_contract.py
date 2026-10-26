@@ -1735,3 +1735,125 @@ def test_user_unwrap_leg_wrap_setup_refusal_xfails() -> None:
     assert_xfails(_run_user_leg, "test_user_can_unwrap_private_key", _rs(fake), _config())
     rec = _assert_xfail_record("not_operational")
     assert rec.operation == "C_WrapKey"
+
+
+# --- fix round 4 (R16-02): setup success judges proved extras -----------------
+
+
+class _R1602SetupExtraRaw(_SoCreationRaw):
+    """R16-02 contracts: one setup call gains a proved or foreign sibling.
+
+    ``extra_on_setup_call`` is the 0-based fixture-session create index to arm
+    (SO legs count setups only; USER legs count setups + the fixture-session
+    attempt). The armed call allocates the real object plus one sibling: proved
+    (same attrs/label) or foreign (unrelated label). Unarmed calls behave.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.extra_on_setup_call: int | None = None
+        self.extra_kind = "proved"  # proved | foreign
+
+    def _record_create(
+        self, op: str, session: int, attrs: dict[int, bytes], handle_ptr: Any
+    ) -> int:
+        if not self._is_attempt_session(session) and (
+            self.extra_on_setup_call is not None
+            and len(self.setup_creates) == self.extra_on_setup_call
+        ):
+            self.setup_creates.append({"op": op, "attrs": attrs})
+            rv = self.setup_script.pop(0) if self.setup_script else self.setup_rv
+            assert rv == _OK, f"armed setup call must be scripted OK, got {rv}"
+            handle = self._alloc(dict(attrs))
+            self.setup_handles.append(handle)
+            if self.extra_kind == "proved":
+                leak = dict(attrs)
+                leak.setdefault(int(CKA_TOKEN), b"\x00")
+                self.leaked.append(self._alloc(leak))
+            else:
+                self.leaked.append(self._alloc({int(CKA_LABEL): b"qc10a-foreign-setup-extra"}))
+            _write_handle(handle_ptr, handle)
+            return _OK
+        return super()._record_create(op, session, attrs, handle_ptr)
+
+
+_R1602_SETUP_SUCCESS_SITES: tuple[tuple[str, str, str, int], ...] = (
+    # (runner, method, operation, armed setup-call index)
+    ("so", "test_so_cannot_copy_to_private_object", "C_CreateObject", 0),
+    ("so", "test_so_cannot_derive_private_key", "C_GenerateKey", 0),
+    ("so", "test_so_cannot_unwrap_private_key", "C_GenerateKey", 0),
+    ("so", "test_so_cannot_unwrap_private_key", "C_GenerateKey", 1),
+    ("user", "test_user_can_copy_to_private_object", "C_CreateObject", 0),
+    ("user", "test_user_can_derive_private_key", "C_GenerateKey", 0),
+    ("user", "test_user_can_unwrap_private_key", "C_GenerateKey", 0),
+    ("user", "test_user_can_unwrap_private_key", "C_GenerateKey", 1),
+)
+
+_R1602_SETUP_SUCCESS_IDS: tuple[str, ...] = (
+    "so-copy-source",
+    "so-derive-base",
+    "so-unwrap-kek",
+    "so-unwrap-target",
+    "user-copy-source",
+    "user-derive-base",
+    "user-unwrap-kek",
+    "user-unwrap-target",
+)
+
+
+@pytest.mark.parametrize(
+    ("runner", "method", "op", "setup_index"),
+    _R1602_SETUP_SUCCESS_SITES,
+    ids=_R1602_SETUP_SUCCESS_IDS,
+)
+def test_qc10a_setup_success_with_proved_extra_fails_and_destroys(
+    runner: str, method: str, op: str, setup_index: int
+) -> None:
+    """Setup OK creating returned + identically labeled extra: FAIL + destroy all proved."""
+    fake = _R1602SetupExtraRaw()
+    if runner == "so":
+        fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.extra_on_setup_call = setup_index
+    fake.extra_kind = "proved"
+    run = _run_so_leg if runner == "so" else _run_user_leg
+    _assert_fails(run, method, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == op
+    assert rec.detail["disposition"] == "created-extra"
+    assert rec.detail["phase"] == "setup"
+    assert fake.leaked
+    assert sorted(rec.detail["extra_handles"]) == sorted(fake.leaked)
+    for handle in rec.detail["proved_new_handles"]:
+        assert handle in fake.destroys
+    assert all(handle not in fake.objects for handle in fake.leaked)
+    assert fake.attempt_calls == []
+
+
+@pytest.mark.parametrize(
+    ("runner", "method", "setup_index"),
+    [
+        ("so", "test_so_cannot_copy_to_private_object", 0),
+        ("user", "test_user_can_copy_to_private_object", 0),
+    ],
+    ids=["so-copy-source", "user-copy-source"],
+)
+def test_qc10a_setup_success_with_foreign_companion_xfails_and_cleans_owned(
+    runner: str, method: str, setup_index: int
+) -> None:
+    """Setup OK + foreign companion: owned setup cleaned, companion alive, xfail unproved."""
+    fake = _R1602SetupExtraRaw()
+    if runner == "so":
+        fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.extra_on_setup_call = setup_index
+    fake.extra_kind = "foreign"
+    run = _run_so_leg if runner == "so" else _run_user_leg
+    assert_xfails(run, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert rec.detail["phase"] == "setup"
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert all(handle in fake.objects for handle in fake.leaked)
+    assert fake.setup_handles
+    assert all(handle in fake.destroys for handle in fake.setup_handles)
+    assert fake.attempt_calls == []

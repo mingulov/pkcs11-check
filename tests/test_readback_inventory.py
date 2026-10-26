@@ -1892,14 +1892,14 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
     """
     pins: list[tuple[str, object, object]] = [
         ("total", 2178, characterization.total),
-        ("candidate_total", 1801, characterization.candidate_total),
+        ("candidate_total", 1805, characterization.candidate_total),
         ("file_total", 257, characterization.file_total),
         (
             "statuses",
             (
-                ("explicit_mechanism_grouping", 772),
+                ("explicit_mechanism_grouping", 776),
                 ("explicit_mechanism_readback", 61),
-                ("non_readback", 377),
+                ("non_readback", 373),
                 ("safe_mechanism_free_readback", 269),
                 ("unresolved", 699),
             ),
@@ -1907,20 +1907,20 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "7348286854e4bf24ddf57340642874180bcaf4875c5ce075f3c1b7a95c362cba",
+            "700b916d12c0153d85db4ac46a5e0bc15ca6d3551fef255476ba4e1fe0521ce5",
             characterization.digest,
         ),
         (
             "candidate_digest",
-            "b75fbe8789af2509c8abc6983fb42d05f303be164148f4a7d113f473e6291863",
+            "a20d97a02db5b00435f0220cc259a85067533810cc2e04b363461be52346980f",
             characterization.candidate_digest,
         ),
         (
             "state_statuses",
             (
-                ("explicit_mechanism_grouping", 2069),
+                ("explicit_mechanism_grouping", 2075),
                 ("explicit_mechanism_readback", 357),
-                ("non_readback", 1267),
+                ("non_readback", 1291),
                 ("safe_mechanism_free_readback", 2183),
                 ("unresolved", 2845),
                 ("unsafe_inherited_readback", 22),
@@ -1937,9 +1937,9 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
             (
                 ("assert_correct", 287),
                 ("classify", 598),
-                ("fail_as", 406),
+                ("fail_as", 411),
                 ("record_as", 408),
-                ("xfail_as", 335),
+                ("xfail_as", 330),
             ),
             characterization.direct_emitter_census,
         ),

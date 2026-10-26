@@ -970,8 +970,20 @@ def _qc10b_open_session_or_skip(rs: Any) -> int:
         raise
 
 
-def _qc10b_setup_inventory_or_xfail(rs: Any, *, phase: str, label: str) -> list[int]:
+def _qc10b_setup_inventory_or_xfail(
+    rs: Any,
+    *,
+    phase: str,
+    label: str,
+    pending_op_rv: int | None = None,
+    pending_operation: str = "C_GenerateKeyPair",
+    pending_label: str | None = None,
+) -> list[int]:
     """Setup inventory: clean refusal xfails the premise, undefined fails.
+
+    When ``pending_op_rv`` is an undefined operation RV, a failed inventory
+    must not mask it (R16-01): FAIL loud with both RVs, mirroring
+    ``_qc10a_after_inventory_or_judge``'s undefined-preservation branch.
 
     Only CkrAssertionError is routed (this file is masking-guarded); a Find
     protocol violation propagates as a loud plugin-gate failure, never masked.
@@ -980,6 +992,29 @@ def _qc10b_setup_inventory_or_xfail(rs: Any, *, phase: str, label: str) -> list[
         return find_objects_exhaustive(rs.raw, rs.sh)
     except CkrAssertionError as exc:
         rv = int(exc.rv)
+        if pending_op_rv is not None and not _qc10b_is_clean(pending_op_rv):
+            op_label = pending_label if pending_label is not None else label
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label=op_label,
+                operation=pending_operation,
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                expected=CKR_OK,
+                actual=pending_op_rv,
+                detail={
+                    "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                    "phase": phase,
+                    "operation_rv": ckr_name(pending_op_rv),
+                    "inventory_rv": ckr_name(rv),
+                    "producer_operation": pending_operation,
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary=(
+                    f"{pending_operation} returned undefined {ckr_name(pending_op_rv)}; "
+                    f"{phase} inventory failed with {ckr_name(rv)}"
+                ),
+            )
         if not _qc10b_is_clean(rv):
             fail_as(
                 "self_contradiction",
@@ -1045,8 +1080,16 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
         # A refused keygen may still have created our key: run the
         # after-inventory and the refusal-ownership tiers (proved leftovers
         # are destroyed and fail, unproved deltas stay alive) before judging
-        # the setup premise.
-        after = _qc10b_setup_inventory_or_xfail(rs, phase="setup-after", label=setup_label)
+        # the setup premise. The pending op RV rides along so an undefined
+        # keygen survives a failed after-inventory (R16-01).
+        after = _qc10b_setup_inventory_or_xfail(
+            rs,
+            phase="setup-after",
+            label=setup_label,
+            pending_op_rv=int(exc.rv),
+            pending_operation="C_GenerateKeyPair",
+            pending_label="CKA_ALWAYS_AUTHENTICATE key generation (QC10b)",
+        )
         proved, unproved = partition_proved_new(
             rs.raw,
             rs.sh,
@@ -1174,8 +1217,70 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             ),
         )
     after = _qc10b_setup_inventory_or_xfail(rs, phase="setup-after", label=setup_label)
+    proved, unproved = partition_proved_new(
+        rs.raw,
+        rs.sh,
+        before,
+        after,
+        attempt_templates=(dict(pub_attempt), dict(priv_attempt)),
+    )
     new_handles = sorted({int(handle) for handle in after} - {int(handle) for handle in before})
-    if int(pub) not in new_handles or int(priv) not in new_handles:
+    extras = sorted(handle for handle in proved if handle != int(pub) and handle != int(priv))
+    if extras:
+        for leaked in extras:
+            destroy_quietly(rs.raw, rs.sh, leaked)
+        if int(pub) in proved and int(priv) in proved:
+            destroy_quietly(rs.raw, rs.sh, int(pub))
+            destroy_quietly(rs.raw, rs.sh, int(priv))
+            fail_as(
+                "self_contradiction",
+                kind="metadata",
+                label="CKA_ALWAYS_AUTHENTICATE setup ownership (QC10b)",
+                operation="C_GenerateKeyPair",
+                mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+                actual=CKR_OK,
+                detail={
+                    "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                    "phase": "setup",
+                    "disposition": "created-extra",
+                    "returned_handles": [int(pub), int(priv)],
+                    "new_handles": new_handles,
+                    "proved_new_handles": sorted(proved),
+                    "extra_handles": extras,
+                    "producer_operation": "C_GenerateKeyPair",
+                    "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+                },
+                summary=(
+                    "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK but created extra "
+                    f"proved objects {extras} beside the returned pair"
+                ),
+            )
+        fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label="CKA_ALWAYS_AUTHENTICATE setup ownership (QC10b)",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            actual=CKR_OK,
+            detail={
+                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "phase": "setup",
+                "disposition": "created-extra",
+                "returned_handles": [int(pub), int(priv)],
+                "new_handles": new_handles,
+                "proved_new_handles": sorted(proved),
+                "extra_handles": extras,
+                "returned_handles_proved": False,
+                "producer_operation": "C_GenerateKeyPair",
+                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            },
+            summary=(
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with unproved handles "
+                f"but created proved objects {extras}; the returned handles are "
+                "foreign, left alive"
+            ),
+        )
+    if int(pub) not in proved or int(priv) not in proved:
         xfail_as(
             "honest_deviation",
             kind="metadata",
@@ -1185,6 +1290,7 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             actual=CKR_OK,
             detail={
                 "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "phase": "setup",
                 "disposition": "unproved-handle",
                 "returned_handles": [int(pub), int(priv)],
                 "new_handles": new_handles,
@@ -1193,7 +1299,32 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             },
             summary=(
                 "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK but the handles are "
-                "not in the setup inventory delta; they are foreign, left alive"
+                "not proved in the setup inventory delta; they are foreign, left alive"
+            ),
+        )
+    if unproved:
+        destroy_quietly(rs.raw, rs.sh, int(pub))
+        destroy_quietly(rs.raw, rs.sh, int(priv))
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label="CKA_ALWAYS_AUTHENTICATE setup ownership (QC10b)",
+            operation="C_GenerateKeyPair",
+            mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
+            actual=CKR_OK,
+            detail={
+                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+                "phase": "setup",
+                "disposition": "unproved-effect",
+                "returned_handles": [int(pub), int(priv)],
+                "new_handles": sorted(unproved),
+                "proved_new_handles": [int(pub), int(priv)],
+                "producer_operation": "C_GenerateKeyPair",
+                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+            },
+            summary=(
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with unexpected delta "
+                f"companions {sorted(unproved)}"
             ),
         )
 
@@ -1960,7 +2091,11 @@ class TestContextAuthTransitions:
             _qc10b_ctx_login_or_xfail(rs.raw, s2, pin, label=label)
             rv_query, reported = _qc10b_sign_query_raw(rs.raw, s2, msg)
             _qc10b_stage_ok(rv_query, operation="C_Sign", label=f"{label} query")
-            if reported != _QC10B_RSA_BYTES:
+            # v3.2 §5.2 permits a NULL-buffer query to overestimate: only an
+            # under-estimate (below the 256-byte RSA-2048 size) misleads the
+            # caller and would overrun a real buffer. Overestimates proceed to
+            # the exactly-judged + independently verified followup below.
+            if reported < _QC10B_RSA_BYTES:
                 fail_as(
                     "wrong_result",
                     kind="crypto",
@@ -1972,7 +2107,8 @@ class TestContextAuthTransitions:
                         "actual_length": reported,
                     },
                     summary=(
-                        f"{label}: length query reported {reported}, expected {_QC10B_RSA_BYTES}"
+                        f"{label}: length query reported {reported}, "
+                        f"below the {_QC10B_RSA_BYTES}-byte minimum"
                     ),
                 )
             rv, sig, sig_reported = _qc10b_sign_raw(rs.raw, s2, msg, capacity=_QC10B_RSA_BYTES)
