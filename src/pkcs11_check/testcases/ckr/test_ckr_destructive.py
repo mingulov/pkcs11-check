@@ -53,6 +53,7 @@ from pkcs11_check.testcases._shellcmd import shell_invocation
 from pkcs11_check.testcases.conftest import classify_negative_rv
 from pkcs11_check.testcases.test_so_pin import (
     _assess_provision_journey,
+    _gate_journey_phase_trace,
     _qc11c_snapshot_detail,
     _raise_qc11c_fail_grades,
     _raise_strongest_qc11c,
@@ -451,7 +452,9 @@ def _run_qc11c_reset_node(
 ) -> None:
     with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
         rc1, out1, err1 = _launch(minted, "qc11c_journey", {}, p11_config=p11_config)
-        provision = token_admin.check_child_output(rc1, out1, err1, label="QC11c reset/provision")
+        # R21-01: shared journey-leg gate — a setup-failed provision with
+        # undefined snapshots FAILs instead of skipping (R20-01a twin site).
+        provision = _gate_journey_phase_trace(rc1, out1, err1, gate_label="QC11c reset/provision")
         records_p, reached = _assess_provision_journey(provision)
         if not reached:
             assert records_p, "QC11c reset: unreached provision without any record"
