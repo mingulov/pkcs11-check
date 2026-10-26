@@ -158,6 +158,8 @@ class _CtxAuthRaw:
         self.leaked: list[int] = []
         self.reads: list[int] = []
         self.keygen_replay_handles: tuple[int, int] | None = None
+        self.keygen_partial_foreign: int | None = None
+        self.keygen_partial_slot = "priv"  # priv | pub: which half returns foreign
         self.sign_rv_by_session: dict[int, list[int]] = {}
         self.sign_reported_len: int | None = None
         self.decrypt_reported_len: int | None = None
@@ -240,18 +242,44 @@ class _CtxAuthRaw:
             _write_handle(pub_out, single)
             _write_handle(priv_out, single)
             return _OK
+        if self.keygen_partial_foreign is not None:
+            # Partial ownership (R17-01): one proved-new half plus a
+            # pre-existing foreign handle. Only the proved half is allocated;
+            # the foreign handle must already exist in the object table.
+            foreign = int(self.keygen_partial_foreign)
+            assert foreign in self.objects, f"partial foreign handle {foreign} must pre-exist"
+            proved_is_pub = self.keygen_partial_slot != "pub"
+            proved_label = (
+                pub_attrs.get(int(CKA_LABEL)) if proved_is_pub else priv_attrs.get(int(CKA_LABEL))
+            )
+            proved = self._alloc(
+                {"kind": "pub" if proved_is_pub else "priv", "label": proved_label}
+            )
+            if self.keygen_success_extra != "none":
+                self._alloc_keygen_extra(priv_attrs)
+            if self.keygen_partial_slot == "pub":
+                _write_handle(pub_out, foreign)
+                _write_handle(priv_out, proved)
+            else:
+                _write_handle(pub_out, proved)
+                _write_handle(priv_out, foreign)
+            return _OK
         pub = self._alloc({"kind": "pub", "label": pub_attrs.get(int(CKA_LABEL))})
         priv = self._alloc({"kind": "priv", "label": priv_attrs.get(int(CKA_LABEL))})
         if self.keygen_success_extra != "none":
-            extra_entry: dict[str, Any] = {"kind": "success-extra"}
-            if self.keygen_success_extra == "proved":
-                extra_entry["label"] = priv_attrs.get(int(CKA_LABEL))
-            else:
-                extra_entry["label"] = b"qc10b-foreign-success-extra"
-            self.leaked.append(self._alloc(extra_entry))
+            self._alloc_keygen_extra(priv_attrs)
         _write_handle(pub_out, pub)
         _write_handle(priv_out, priv)
         return _OK
+
+    def _alloc_keygen_extra(self, priv_attrs: dict[int, bytes]) -> None:
+        """Allocate one keygen side-creation (proved label match or foreign)."""
+        extra_entry: dict[str, Any] = {"kind": "success-extra"}
+        if self.keygen_success_extra == "proved":
+            extra_entry["label"] = priv_attrs.get(int(CKA_LABEL))
+        else:
+            extra_entry["label"] = b"qc10b-foreign-success-extra"
+        self.leaked.append(self._alloc(extra_entry))
 
     def C_GetAttributeValue(self, _sh: int, handle: int, tmpl: Any, count: int) -> int:  # noqa: N802
         if self.getattr_rv is not None:
@@ -1484,3 +1512,51 @@ def test_length_query_negative_fails() -> None:
     rec = _assert_fail_record("wrong_result", "crypto")
     assert rec.operation == "C_Sign"
     assert rec.detail["actual_length"] == -1
+
+
+# --- fix round 5 (R17-01): partial keypair ownership cleans each proved half --
+
+
+@pytest.mark.parametrize("slot", ["priv", "pub"])
+def test_keygen_partial_ownership_destroys_proved_half(slot: str) -> None:
+    """Keygen returning proved-new 501 + pre-existing foreign 41: xfail, 501
+    destroyed, 41 alive and never touched (either half may be the foreign one)."""
+    fake = _CtxAuthRaw()
+    fake.objects[41] = {"kind": "foreign"}
+    fake.keygen_partial_foreign = 41
+    fake.keygen_partial_slot = slot
+    proved = fake._next_handle + 1
+    assert_xfails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "unproved-handle"
+    assert proved in fake.destroys
+    assert proved not in fake.objects
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads
+
+
+@pytest.mark.parametrize("slot", ["priv", "pub"])
+def test_keygen_partial_ownership_with_extra_destroys_all_proved(slot: str) -> None:
+    """Keygen returning proved-new 501 + foreign 41 + proved extra 502: FAIL,
+    both 501 and 502 destroyed, 41 alive and never touched."""
+    fake = _CtxAuthRaw()
+    fake.objects[41] = {"kind": "foreign"}
+    fake.keygen_partial_foreign = 41
+    fake.keygen_partial_slot = slot
+    fake.keygen_success_extra = "proved"
+    proved = fake._next_handle + 1
+    extra = fake._next_handle + 2
+    _assert_fails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "created-extra"
+    assert sorted(rec.detail["extra_handles"]) == [extra]
+    assert proved in fake.destroys
+    assert extra in fake.destroys
+    assert proved not in fake.objects
+    assert extra not in fake.objects
+    assert 41 not in fake.destroys
+    assert 41 in fake.objects
+    assert 41 not in fake.reads

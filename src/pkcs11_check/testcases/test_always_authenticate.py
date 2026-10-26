@@ -1051,9 +1051,11 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
     Returns (pub, priv) on success, or None when the module cleanly refuses
     the advertised setup/readback.
 
-    Setup handles need ownership proof too: the returned handles must appear
-    in the before/after inventory delta, otherwise they are foreign (unproved
-    xfail, never read as ours, never destroyed). A refused keygen runs the
+    Setup handles need ownership proof too: each returned handle is proved
+    independently against the before/after inventory delta. Proved returned
+    handles are destroyed on the unproved/mixed exits; foreign handles are
+    never read as ours, never destroyed (unproved xfail, left alive).
+    A refused keygen runs the
     after-inventory as well: a proved-new leftover is destroyed and fails,
     an unproved delta stays alive, and only a zero delta keeps the premise
     xfail. Both halves carry a unique setup label as the proof anchor.
@@ -1255,6 +1257,38 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
                     f"proved objects {extras} beside the returned pair"
                 ),
             )
+        # Mixed ownership (R17-01): each proved returned handle is
+        # destroyed independently; foreign handles are never touched.
+        proved_returned = [handle for handle in (int(pub), int(priv)) if handle in proved]
+        for handle in proved_returned:
+            destroy_quietly(rs.raw, rs.sh, handle)
+        mixed_detail: dict[str, Any] = {
+            "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+            "phase": "setup",
+            "disposition": "created-extra",
+            "returned_handles": [int(pub), int(priv)],
+            "new_handles": new_handles,
+            "proved_new_handles": sorted(proved),
+            "extra_handles": extras,
+            "returned_handles_proved": False,
+            "producer_operation": "C_GenerateKeyPair",
+            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+        }
+        if proved_returned:
+            foreign_returned = [handle for handle in (int(pub), int(priv)) if handle not in proved]
+            mixed_detail["destroyed_returned_handles"] = proved_returned
+            mixed_summary = (
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with partially "
+                f"proved handles but created proved objects {extras}; proved "
+                f"returned {proved_returned} destroyed, foreign "
+                f"{foreign_returned} left alive"
+            )
+        else:
+            mixed_summary = (
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with unproved handles "
+                f"but created proved objects {extras}; the returned handles are "
+                "foreign, left alive"
+            )
         fail_as(
             "self_contradiction",
             kind="metadata",
@@ -1262,25 +1296,38 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             operation="C_GenerateKeyPair",
             mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
             actual=CKR_OK,
-            detail={
-                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                "phase": "setup",
-                "disposition": "created-extra",
-                "returned_handles": [int(pub), int(priv)],
-                "new_handles": new_handles,
-                "proved_new_handles": sorted(proved),
-                "extra_handles": extras,
-                "returned_handles_proved": False,
-                "producer_operation": "C_GenerateKeyPair",
-                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-            },
-            summary=(
-                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with unproved handles "
-                f"but created proved objects {extras}; the returned handles are "
-                "foreign, left alive"
-            ),
+            detail=mixed_detail,
+            summary=mixed_summary,
         )
     if int(pub) not in proved or int(priv) not in proved:
+        # Partial ownership (R17-01): each proved returned handle is
+        # destroyed independently; foreign handles are never touched.
+        proved_returned = [handle for handle in (int(pub), int(priv)) if handle in proved]
+        for handle in proved_returned:
+            destroy_quietly(rs.raw, rs.sh, handle)
+        unproved_detail: dict[str, Any] = {
+            "attribute": int(CKA_ALWAYS_AUTHENTICATE),
+            "phase": "setup",
+            "disposition": "unproved-handle",
+            "returned_handles": [int(pub), int(priv)],
+            "new_handles": new_handles,
+            "producer_operation": "C_GenerateKeyPair",
+            "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
+        }
+        if proved_returned:
+            foreign_returned = [handle for handle in (int(pub), int(priv)) if handle not in proved]
+            unproved_detail["proved_new_handles"] = sorted(proved)
+            unproved_detail["destroyed_returned_handles"] = proved_returned
+            unproved_summary = (
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK with partially "
+                f"proved handles; proved {proved_returned} destroyed, foreign "
+                f"{foreign_returned} left alive"
+            )
+        else:
+            unproved_summary = (
+                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK but the handles are "
+                "not proved in the setup inventory delta; they are foreign, left alive"
+            )
         xfail_as(
             "honest_deviation",
             kind="metadata",
@@ -1288,19 +1335,8 @@ def _qc10b_gen_always_auth_keypair(rs: Any) -> tuple[int, int] | None:
             operation="C_GenerateKeyPair",
             mechanism="CKM_RSA_PKCS_KEY_PAIR_GEN",
             actual=CKR_OK,
-            detail={
-                "attribute": int(CKA_ALWAYS_AUTHENTICATE),
-                "phase": "setup",
-                "disposition": "unproved-handle",
-                "returned_handles": [int(pub), int(priv)],
-                "new_handles": new_handles,
-                "producer_operation": "C_GenerateKeyPair",
-                "producer_mechanism": "CKM_RSA_PKCS_KEY_PAIR_GEN",
-            },
-            summary=(
-                "CKM_RSA_PKCS_KEY_PAIR_GEN returned CKR_OK but the handles are "
-                "not proved in the setup inventory delta; they are foreign, left alive"
-            ),
+            detail=unproved_detail,
+            summary=unproved_summary,
         )
     if unproved:
         destroy_quietly(rs.raw, rs.sh, int(pub))
