@@ -13,6 +13,10 @@ mints a disposable token, points the module config at the child via the
 here (never inside the child) via ``_classify_destructive_ckr``.  These probes provision and
 log into their OWN throwaway token with hardcoded test SO/user PINs; the configured
 ``p11_config`` PIN is never read, embedded, or forwarded (Invariant I3).
+
+QC11c (below) adds sacrificial reset semantics: after provisioning, a fresh
+InitToken must destroy exactly the resettable data (user PIN, canary objects)
+while the token stays functional.
 """
 
 from __future__ import annotations
@@ -27,18 +31,30 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check.classification import Classification, record_as
+from pkcs11_check.raw.rv import ckr_name, is_standard_ckr, is_vendor_defined_ckr
 from pkcs11_check.raw.types_std import (
+    CKF_TOKEN_INITIALIZED,
+    CKF_USER_PIN_INITIALIZED,
     CKR_ARGUMENTS_BAD,
+    CKR_OK,
     CKR_PIN_INCORRECT,
     CKR_PIN_LEN_RANGE,
     CKR_PIN_TOO_WEAK,
     CKR_SESSION_EXISTS,
     CKR_TOKEN_NOT_INITIALIZED,
     CKR_USER_NOT_LOGGED_IN,
+    CKR_USER_PIN_NOT_INITIALIZED,
 )
+from pkcs11_check.testcases import _throwaway_token as throwaway
+from pkcs11_check.testcases._probes import token_admin
 from pkcs11_check.testcases._probes.runner import run_probe
 from pkcs11_check.testcases._shellcmd import shell_invocation
 from pkcs11_check.testcases.conftest import classify_negative_rv
+from pkcs11_check.testcases.test_so_pin import (
+    _assess_provision_journey,
+    _raise_strongest_qc11c,
+)
 
 pytestmark = [pytest.mark.access, pytest.mark.subprocess, pytest.mark.destructive]
 
@@ -236,3 +252,217 @@ class TestInitPINErrors:
             (CKR_TOKEN_NOT_INITIALIZED, CKR_USER_NOT_LOGGED_IN),
             label="C_InitPIN on an uninitialized token",
         )
+
+
+# --- QC11c: sacrificial reset semantics (#52.8) ---------------------------------
+
+_QC11C_CANONICAL_OLD_USER_AFTER_RESET = (
+    int(CKR_USER_PIN_NOT_INITIALIZED),
+    int(CKR_PIN_INCORRECT),
+)
+
+
+def _assess_sacrificial_reset(trace: token_admin.AdminTrace) -> list[Classification]:
+    """Assess one reset trace: reset destroys exactly the resettable data."""
+    by_name: dict[str, int] = {}
+    for step in trace.steps:
+        by_name.setdefault(step.name, step.rv)
+    by_flag = dict(trace.flags)
+    records: list[Classification] = []
+    label = "QC11c sacrificial reset"
+    detail: dict[str, Any] = {
+        "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
+        "inv": list(trace.inv_objects),
+    }
+    reset_rv = by_name.get("reset_init_token")
+    assert reset_rv is not None, f"{label}: missing reset_init_token step"
+    if reset_rv != int(CKR_OK):
+        if not (is_standard_ckr(reset_rv) or is_vendor_defined_ckr(reset_rv)):
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=f"{label}: reset_init_token",
+                    operation="C_InitToken",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=reset_rv,
+                    summary=f"{label}: reset returned undefined CK_RV",
+                    detail=detail,
+                )
+            )
+        else:
+            records.append(
+                record_as(
+                    "not_operational",
+                    label=f"{label}: reset_init_token",
+                    operation="C_InitToken",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=reset_rv,
+                    summary=f"{label}: unexercised reset: refused with {ckr_name(reset_rv)}",
+                    detail=detail,
+                )
+            )
+        return records
+    so_rv = by_name.get("so_login")
+    assert so_rv is not None, f"{label}: missing so_login step"
+    so_ok = so_rv == int(CKR_OK)
+    if not so_ok:
+        if not (is_standard_ckr(so_rv) or is_vendor_defined_ckr(so_rv)):
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="metadata",
+                    label=f"{label}: so_login",
+                    operation="C_Login",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=so_rv,
+                    summary=f"{label}: SO login returned undefined CK_RV",
+                    detail=detail,
+                )
+            )
+        else:
+            records.append(
+                record_as(
+                    "not_operational",
+                    label=f"{label}: so_login",
+                    operation="C_Login",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    actual=so_rv,
+                    summary=f"{label}: SO login refused after reset with {ckr_name(so_rv)}",
+                    detail=detail,
+                )
+            )
+    old = by_name.get("old_user_after_reset")
+    assert old is not None, f"{label}: missing old_user_after_reset step"
+    if old == int(CKR_OK):
+        records.append(
+            record_as(
+                "accepted_invalid",
+                kind="lifecycle",
+                label=f"{label}: old_user_after_reset",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_USER_AFTER_RESET,
+                actual=old,
+                summary=f"{label}: user PIN survived reset",
+                detail=detail,
+            )
+        )
+    elif not (is_standard_ckr(old) or is_vendor_defined_ckr(old)):
+        records.append(
+            record_as(
+                "self_contradiction",
+                kind="metadata",
+                label=f"{label}: old_user_after_reset",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                actual=old,
+                summary=f"{label}: old-user probe returned undefined CK_RV",
+                detail=detail,
+            )
+        )
+    elif old not in _QC11C_CANONICAL_OLD_USER_AFTER_RESET:
+        records.append(
+            record_as(
+                "nonspec_reject",
+                label=f"{label}: old_user_after_reset",
+                operation="C_Login",
+                mechanism=None,
+                inherit_mechanism=False,
+                expected=_QC11C_CANONICAL_OLD_USER_AFTER_RESET,
+                actual=old,
+                summary=f"{label}: old user PIN rejected with {ckr_name(old)}",
+                detail=detail,
+            )
+        )
+    if so_ok:
+        if not trace.inv_objects:
+            records.append(
+                record_as(
+                    "not_operational",
+                    label=f"{label}: inventory",
+                    operation="C_FindObjects",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    summary=f"{label}: canary inventory unreadable after reset",
+                    detail=detail,
+                )
+            )
+        elif trace.inv_objects[-1] > 0:
+            records.append(
+                record_as(
+                    "self_contradiction",
+                    kind="lifecycle",
+                    label=f"{label}: inventory",
+                    operation="C_FindObjects",
+                    mechanism=None,
+                    inherit_mechanism=False,
+                    summary=f"{label}: canary survived reset",
+                    detail=detail,
+                )
+            )
+    after_reset = by_flag.get("after_reset_init_token")
+    if after_reset is not None and not (after_reset & int(CKF_TOKEN_INITIALIZED)):
+        records.append(
+            record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=f"{label}: after_reset_init_token",
+                operation="C_GetTokenInfo",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: TOKEN_INITIALIZED unset after successful reset",
+                detail=detail,
+            )
+        )
+    if after_reset is not None and (after_reset & int(CKF_USER_PIN_INITIALIZED)):
+        records.append(
+            record_as(
+                "honest_deviation",
+                kind="metadata",
+                label=f"{label}: after_reset_init_token",
+                operation="C_GetTokenInfo",
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=f"{label}: USER_PIN_INITIALIZED still set after reset",
+                detail=detail,
+            )
+        )
+    return records
+
+
+def _run_qc11c_reset_node(
+    cap: throwaway.ThrowawayCapability,
+    p11_config: Any,
+    *,
+    _session_factory: throwaway.SessionFactory = throwaway.admin_session,
+    _launch: throwaway.LaunchProbe = throwaway.launch_admin_probe,
+) -> None:
+    with _session_factory(cap, prefix="pkcs11_check_qc11c_") as minted:
+        rc1, out1, err1 = _launch(minted, "qc11c_journey", {}, p11_config=p11_config)
+        provision = token_admin.check_child_output(rc1, out1, err1, label="QC11c reset/provision")
+        records_p, reached = _assess_provision_journey(provision)
+        if not reached:
+            assert records_p, "QC11c reset: unreached provision without any record"
+            _raise_strongest_qc11c(records_p)
+            return
+        rc2, out2, err2 = _launch(minted, "qc11c_reset", {}, p11_config=p11_config)
+        reset = token_admin.check_child_output(
+            rc2, out2, err2, label="QC11c reset", no_slots="fail"
+        )
+        records_r = _assess_sacrificial_reset(reset)
+        _raise_strongest_qc11c(records_p + records_r)
+
+
+class TestSacrificialResetSemantics:
+    """Reset destroys exactly the resettable data (QC11c)."""
+
+    def test_reset_destroys_only_resettable_data(self, p11_config: Any) -> None:
+        cap = throwaway.require_throwaway_capability()
+        _run_qc11c_reset_node(cap, p11_config)
