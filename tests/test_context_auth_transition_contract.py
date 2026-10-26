@@ -45,6 +45,7 @@ from pkcs11_check.raw.types_std import (
     CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
     CKA_ALWAYS_AUTHENTICATE,
+    CKA_LABEL,
     CKA_MODULUS,
     CKA_PUBLIC_EXPONENT,
     CKR_ARGUMENTS_BAD,
@@ -151,6 +152,10 @@ class _CtxAuthRaw:
         self.grant_consumed_by_query = False
         self.grant_consumed_by_bts = False
         # Fix-round-1 knobs (R14).
+        self.keygen_alias_outputs = False
+        self.keygen_refusal_leak = "none"  # none | proved | foreign
+        self.leaked: list[int] = []
+        self.reads: list[int] = []
         self.keygen_replay_handles: tuple[int, int] | None = None
         self.sign_rv_by_session: dict[int, list[int]] = {}
         self.sign_reported_len: int | None = None
@@ -206,15 +211,22 @@ class _CtxAuthRaw:
         self,
         _sh: int,
         _mech: Any,
-        _pub_tmpl: Any,
-        _pub_count: int,
+        pub_tmpl: Any,
+        pub_count: int,
         priv_tmpl: Any,
         priv_count: int,
         pub_out: Any,
         priv_out: Any,
     ) -> int:
         if self.keygen_rv != _OK:
+            if self.keygen_refusal_leak != "none":
+                label = _decode_template(priv_tmpl, int(priv_count)).get(int(CKA_LABEL))
+                entry: dict[str, Any] = {"kind": "refused-leak"}
+                if self.keygen_refusal_leak == "proved" and label is not None:
+                    entry["label"] = label
+                self.leaked.append(self._alloc(entry))
             return self.keygen_rv
+        pub_attrs = _decode_template(pub_tmpl, int(pub_count))
         priv_attrs = _decode_template(priv_tmpl, int(priv_count))
         assert priv_attrs.get(int(CKA_ALWAYS_AUTHENTICATE)) == b"\x01"
         if self.keygen_replay_handles is not None:
@@ -222,8 +234,13 @@ class _CtxAuthRaw:
             _write_handle(pub_out, pub)
             _write_handle(priv_out, priv)
             return _OK
-        pub = self._alloc({"kind": "pub"})
-        priv = self._alloc({"kind": "priv"})
+        if self.keygen_alias_outputs:
+            single = self._alloc({"kind": "aliased"})
+            _write_handle(pub_out, single)
+            _write_handle(priv_out, single)
+            return _OK
+        pub = self._alloc({"kind": "pub", "label": pub_attrs.get(int(CKA_LABEL))})
+        priv = self._alloc({"kind": "priv", "label": priv_attrs.get(int(CKA_LABEL))})
         _write_handle(pub_out, pub)
         _write_handle(priv_out, priv)
         return _OK
@@ -233,6 +250,7 @@ class _CtxAuthRaw:
             return self.getattr_rv
         entry = self.objects.get(int(handle))
         assert entry is not None, f"read from unknown handle {handle}"
+        self.reads.append(int(handle))
         row_rvs: list[int] = []
         for i in range(count):
             attr = int(tmpl[i].type)
@@ -246,6 +264,9 @@ class _CtxAuthRaw:
                 blob: bytes | None = self.getattr_malformed[attr]
             elif attr == int(CKA_ALWAYS_AUTHENTICATE):
                 blob = b"\x01"
+            elif attr == int(CKA_LABEL):
+                label_blob: Any = entry.get("label")
+                blob = bytes(label_blob) if isinstance(label_blob, (bytes, bytearray)) else None
             elif attr == int(CKA_MODULUS):
                 blob = bytes(self.modulus)
             elif attr == int(CKA_PUBLIC_EXPONENT):
@@ -725,11 +746,13 @@ def test_corrupt_signature_fails_wrong_result(method: str) -> None:
 
 
 def test_short_signature_fails_wrong_result() -> None:
+    # R15-04: the exact-length judge owns short reports (fires before verify).
     fake = _CtxAuthRaw()
     fake.sign_mode = "short"
     _assert_fails(_run, "test_context_terminal_sign_consumes_grant", _rs(fake), _config())
     rec = _assert_fail_record("wrong_result", "crypto")
-    assert rec.detail["actual_length"] == 128
+    assert rec.operation == "C_Sign"
+    assert rec.detail["reported_length"] == 128
     assert rec.detail["expected_length"] == 256
 
 
@@ -1211,3 +1234,106 @@ def test_staging_encrypt_reported_length_mismatch_fails(method: str) -> None:
     assert rec.mechanism == "CKM_RSA_PKCS"
     assert rec.detail["reported_length"] == 257
     assert rec.detail["buffer_capacity"] == _RSA_BYTES
+
+
+# --- fix round 3 (R15-02): aliased keypair outputs are rejected, never used --
+
+_TERMINAL_SIGN_NODE = "test_context_terminal_sign_consumes_grant"
+
+
+def test_keygen_aliased_handles_fails_without_touching_them() -> None:
+    """Keygen returning the same handle for both halves: FAIL, no use, no destroy."""
+    fake = _CtxAuthRaw()
+    fake.keygen_alias_outputs = True
+    expected = fake._next_handle + 1
+    _assert_fails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "aliased-handles"
+    assert rec.detail["returned_handles"] == [expected, expected]
+    assert fake.destroys == []
+    assert expected in fake.objects
+    assert expected not in fake.reads
+
+
+# --- fix round 3 (R15-03): keygen refusals reach after-inventory judging ----
+
+
+def test_keygen_refusal_with_proved_leak_fails_and_destroys() -> None:
+    """Keygen refusal that created our labeled key: refused-but-created FAIL, destroyed."""
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _CLEAN_REFUSAL
+    fake.keygen_refusal_leak = "proved"
+    _assert_fails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "refused-but-created"
+    assert fake.leaked
+    assert all(handle in fake.destroys for handle in fake.leaked)
+    assert all(handle not in fake.objects for handle in fake.leaked)
+
+
+def test_keygen_refusal_with_foreign_leak_xfails_alive() -> None:
+    """Keygen refusal with an unproved delta: unproved-effect xfail, left alive."""
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _CLEAN_REFUSAL
+    fake.keygen_refusal_leak = "foreign"
+    assert_xfails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+    assert all(handle in fake.objects for handle in fake.leaked)
+
+
+def test_keygen_undefined_refusal_with_proved_leak_fails_and_cites() -> None:
+    """Undefined keygen RV + proved leftover: FAIL cites the destroyed handles."""
+    fake = _CtxAuthRaw()
+    fake.keygen_rv = _UNDEFINED_RV
+    fake.keygen_refusal_leak = "proved"
+    _assert_fails(_run, _TERMINAL_SIGN_NODE, _rs(fake), _config())
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GenerateKeyPair"
+    assert fake.leaked
+    assert all(handle in fake.destroys for handle in fake.leaked)
+    assert sorted(rec.detail["proved_new_handles"]) == sorted(fake.leaked)
+
+
+# --- fix round 3 (R15-04): deterministic output lengths are judged exactly --
+
+
+@pytest.mark.parametrize("method", _DECRYPT)
+@pytest.mark.parametrize("reported", [0, 255])
+def test_decrypt_nodes_short_encrypt_report_fails(method: str, reported: int) -> None:
+    """Staging C_Encrypt OK reporting short of 256 fails exact-length judging."""
+    fake = _CtxAuthRaw()
+    fake.encrypt_reported_len = reported
+    _assert_fails(_run, method, _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == "C_Encrypt"
+    assert rec.mechanism == "CKM_RSA_PKCS"
+    assert rec.detail["reported_length"] == reported
+    assert rec.detail["expected_length"] == _RSA_BYTES
+
+
+_R15_04_SIGN_SITES: tuple[tuple[str, str], ...] = (
+    ("test_context_terminal_sign_consumes_grant", "C_Sign"),
+    ("test_context_grant_rejected_across_sessions", "C_Sign"),
+    ("test_context_buffer_too_small_preserves_grant", "C_Sign"),
+    ("test_context_multipart_update_preserves_grant", "C_SignFinal"),
+    ("test_context_multipart_final_consumes_grant", "C_SignFinal"),
+)
+
+
+@pytest.mark.parametrize(("method", "op"), _R15_04_SIGN_SITES)
+@pytest.mark.parametrize("reported", [0, 255])
+def test_sign_nodes_short_report_fails_exact_length(method: str, op: str, reported: int) -> None:
+    """Single-shot/final RSA-2048 sign OK reporting short of 256 fails the length judge."""
+    fake = _CtxAuthRaw()
+    fake.sign_reported_len = reported
+    _assert_fails(_run, method, _rs(fake), _config())
+    rec = _assert_fail_record("wrong_result", "crypto")
+    assert rec.operation == op
+    assert rec.detail["reported_length"] == reported
+    assert rec.detail["expected_length"] == _RSA_BYTES
