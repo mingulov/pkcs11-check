@@ -859,18 +859,10 @@ class _Qc10aRestorationError(Exception):
         self.detail = detail
 
 
-def _qc10a_sweep_restored_user(rs: Any, sh: int, sweep: dict[str, str], *, label: str) -> None:
-    """USER-side sweep for an SO-invisible refused-but-created object.
-
-    Runs after verified USER restoration, before the session closes: the
-    attempt label is unique, so any object found under it is attributable to
-    the refused attempt. Found objects are destroyed and fail; a failed sweep
-    inventory upgrades the pass (clean: unproved xfail, undefined: fail).
-    """
-    attempt_label = sweep["label"]
-    operation = sweep["operation"]
+def _qc10a_sweep_find(rs: Any, sh: int, tmpl: Any, *, label: str, what: str) -> list[int]:
+    """One sweep inventory: a failed find upgrades the pass, never passes silently."""
     try:
-        found = find_objects_exhaustive(rs.raw, sh, _label_template(attempt_label))
+        return find_objects_exhaustive(rs.raw, sh, tmpl)
     except CkrAssertionError as exc:
         inv_rv = int(exc.rv)
         if not _qc10a_is_clean(inv_rv):
@@ -881,7 +873,7 @@ def _qc10a_sweep_restored_user(rs: Any, sh: int, sweep: dict[str, str], *, label
                 operation="C_FindObjects",
                 inherit_mechanism=False,
                 actual=inv_rv,
-                detail={"attempt_label": attempt_label},
+                detail={"sweep": what},
                 summary=(f"{label}: post-restoration sweep returned undefined {ckr_name(inv_rv)}"),
             )
         C.xfail_as(
@@ -893,7 +885,7 @@ def _qc10a_sweep_restored_user(rs: Any, sh: int, sweep: dict[str, str], *, label
             actual=inv_rv,
             detail={
                 "disposition": "unproved-effect",
-                "attempt_label": attempt_label,
+                "sweep": what,
                 "inventory_rv": ckr_name(inv_rv),
             },
             summary=(
@@ -908,28 +900,72 @@ def _qc10a_sweep_restored_user(rs: Any, sh: int, sweep: dict[str, str], *, label
             label=f"{label}: post-restoration sweep",
             operation="C_FindObjects",
             inherit_mechanism=False,
-            detail={"attempt_label": attempt_label, "error": str(exc)},
+            detail={"sweep": what, "error": str(exc)},
             summary=f"{label}: post-restoration sweep violated the Find protocol",
         )
-    if found:
-        for leaked in found:
-            destroy_quietly(rs.raw, sh, leaked)
-        C.fail_as(
-            "self_contradiction",
-            kind="policy",
-            label=label,
-            operation=operation,
+    raise AssertionError("unreachable: every sweep-find branch terminates")
+
+
+def _qc10a_sweep_restored_user(
+    rs: Any,
+    sh: int,
+    sweeps: list[dict[str, str]],
+    *,
+    before: list[int],
+    label: str,
+) -> None:
+    """USER-side sweep for SO-invisible window creations.
+
+    Runs after verified USER restoration, before the session closes. Armed
+    attempt labels are unique, so a label hit is attributable to its leg:
+    found objects are destroyed and fail. Anything else the USER session sees
+    that the SO-side baseline never contained is an unattributable remainder
+    and stays alive as an unproved-effect xfail.
+    """
+    for sweep in sweeps:
+        attempt_label = sweep["label"]
+        operation = sweep["operation"]
+        found = _qc10a_sweep_find(
+            rs, sh, _label_template(attempt_label), label=label, what="armed-label"
+        )
+        if found:
+            for leaked in found:
+                destroy_quietly(rs.raw, sh, leaked)
+            C.fail_as(
+                "self_contradiction",
+                kind="policy",
+                label=label,
+                operation=operation,
+                inherit_mechanism=False,
+                detail={
+                    "disposition": "refused-but-created",
+                    "attempt_label": attempt_label,
+                    "new_handles": sorted(int(handle) for handle in found),
+                    "proved_new_handles": sorted(int(handle) for handle in found),
+                },
+                summary=(
+                    f"{label}: canonically refused {operation} created "
+                    f"{sorted(int(handle) for handle in found)} invisible to the "
+                    "SO session (found by the post-restoration sweep)"
+                ),
+            )
+    full = _qc10a_sweep_find(rs, sh, None, label=label, what="full-remainder")
+    remainder = sorted(set(full) - {int(handle) for handle in before})
+    if remainder:
+        C.xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=f"{label}: post-restoration sweep",
+            operation="C_FindObjects",
             inherit_mechanism=False,
             detail={
-                "disposition": "refused-but-created",
-                "attempt_label": attempt_label,
-                "new_handles": sorted(int(handle) for handle in found),
-                "proved_new_handles": sorted(int(handle) for handle in found),
+                "disposition": "unproved-effect",
+                "new_handles": remainder,
+                "proved_new_handles": [],
             },
             summary=(
-                f"{label}: canonically refused {operation} created "
-                f"{sorted(int(handle) for handle in found)} invisible to the "
-                "SO session (found by the post-restoration sweep)"
+                f"{label}: USER-side sweep found {remainder} never visible to "
+                "the SO session; unattributable, left alive"
             ),
         )
 
@@ -999,14 +1035,24 @@ def _qc10a_so_login_scope(
             # reports the restoration signal, not the propagating primary.
             in_flight = sys.exc_info()[1]
             try:
-                _qc10a_restore_user(rs, so_sh, user_pin)
-            except _Qc10aRestorationError as rest:
-                _qc10a_report_restoration_failure(scope, rest, label, in_flight)
-            else:
-                sweep = scope.get("sweep")
-                if in_flight is None and isinstance(sweep, dict):
-                    _qc10a_sweep_restored_user(rs, so_sh, sweep, label=label)
-        close_session_quietly(rs.raw, so_sh)
+                try:
+                    _qc10a_restore_user(rs, so_sh, user_pin)
+                except _Qc10aRestorationError as rest:
+                    _qc10a_report_restoration_failure(scope, rest, label, in_flight)
+                else:
+                    sweeps = scope.get("sweep_labels")
+                    if in_flight is None and sweeps:
+                        _qc10a_sweep_restored_user(
+                            rs,
+                            so_sh,
+                            sweeps,
+                            before=scope.get("sweep_before", []),
+                            label=label,
+                        )
+            finally:
+                # The session closes even when restoration reporting or the
+                # sweep raises: a sweep verdict must not leak the session.
+                close_session_quietly(rs.raw, so_sh)
 
 
 def _qc10a_restore_user(rs: Any, so_sh: int, user_pin: bytes) -> None:
@@ -1500,6 +1546,16 @@ def _qc10a_run_positive_leg(
     destroy_quietly(rs.raw, sh, handle)
     if status == "value" and evidence is expected_private:
         _qc10a_note_primary(scope, f"{operation} created and verified", rv)
+        # Arm the post-restoration sweep for the control label too: an
+        # SO-hidden creation during the control window must not pass
+        # silently. USER legs (scope None) need no sweep: their inventories
+        # already see everything.
+        if scope is not None:
+            sweep_label = attempt.get(CKA_LABEL)
+            if isinstance(sweep_label, str):
+                scope.setdefault("sweep_labels", []).append(
+                    {"label": sweep_label, "operation": operation}
+                )
         return
     if status == "value":
         if expected_private:
@@ -1620,7 +1676,10 @@ def _qc10a_run_negative_leg(
         if scope is not None:
             sweep_label = attempt.get(CKA_LABEL)
             if isinstance(sweep_label, str):
-                scope["sweep"] = {"label": sweep_label, "operation": operation}
+                scope.setdefault("sweep_labels", []).append(
+                    {"label": sweep_label, "operation": operation}
+                )
+                scope["sweep_before"] = before
         return
     C.classify(
         "nonspec_reject",

@@ -1790,6 +1790,8 @@ class TestContextAuthTransitions:
                     ),
                 )
             if rv_u == int(CKR_BUFFER_TOO_SMALL):
+                # Defensive premise: Update takes no output buffer, so BTS is
+                # impossible here; the dedicated BTS node owns that behavior.
                 xfail_as(
                     "not_operational",
                     label=label,
@@ -1797,8 +1799,8 @@ class TestContextAuthTransitions:
                     mechanism="CKM_SHA256_RSA_PKCS",
                     actual=rv_u,
                     summary=(
-                        f"{label}: Update returned CKR_BUFFER_TOO_SMALL, which "
-                        "is nonterminal by design (see the BTS node)"
+                        f"{label}: Update returned CKR_BUFFER_TOO_SMALL; "
+                        "no update error to judge termination on"
                     ),
                 )
             if not _qc10b_is_clean(rv_u):
@@ -1812,21 +1814,11 @@ class TestContextAuthTransitions:
                     detail={"function": "sign", "phase": "update-error"},
                     summary=f"{label}: Update returned undefined {ckr_name(rv_u)}",
                 )
+            # The termination table is the single source for the dead-op
+            # premise (provably True here: a clean non-OK non-BTS sign
+            # Update); its answer rides in the evidence below.
             terminal = _qc10b_is_terminal(function="sign", call="update", rv=rv_u)
             rv_f, _, _ = _qc10b_sign_final_raw(rs.raw, rs.sh, capacity=_QC10B_RSA_BYTES)
-            if not terminal:
-                xfail_as(
-                    "not_operational",
-                    label=label,
-                    operation="C_SignFinal",
-                    mechanism="CKM_SHA256_RSA_PKCS",
-                    actual=rv_f,
-                    detail={"function": "sign", "update_rv": ckr_name(rv_u)},
-                    summary=(
-                        f"{label}: Update error {ckr_name(rv_u)} is nonterminal "
-                        "per the termination table; no dead-operation assertion applies"
-                    ),
-                )
             if rv_f == int(CKR_OPERATION_NOT_INITIALIZED):
                 return
             if rv_f == int(CKR_OK):
@@ -1842,6 +1834,7 @@ class TestContextAuthTransitions:
                         "function": "sign",
                         "phase": "final-after-error-terminated-update",
                         "update_rv": ckr_name(rv_u),
+                        "terminal": terminal,
                     },
                     summary=(
                         f"{label}: Final succeeded after an error-terminated "
@@ -1860,6 +1853,7 @@ class TestContextAuthTransitions:
                         "function": "sign",
                         "phase": "final-after-error-terminated-update",
                         "update_rv": ckr_name(rv_u),
+                        "terminal": terminal,
                     },
                     summary=(
                         f"{label}: Final reported {ckr_name(rv_f)} after an "
