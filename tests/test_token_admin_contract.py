@@ -1647,7 +1647,12 @@ def test_pin_lengths_unreadable_bounds_skip_leg(capsys: Any) -> None:
     trace = token_admin.parse_admin_trace(out)
     assert trace.pin_bounds is None
     assert trace.ok is True
-    assert [(step.name, step.rv) for step in trace.steps] == [("init_token", _OK)]
+    # F3: the failed bounds read keeps its raw RV as a snapshot step (defined
+    # here, so the judge still skips the leg as untestable).
+    assert [(step.name, step.rv) for step in trace.steps] == [
+        ("init_token", _OK),
+        ("snapshot:pinbounds", _GENERAL_ERROR),
+    ]
     assert [s for s in trace.steps if s.name.startswith("setlen:")] == []
 
 
@@ -4532,3 +4537,239 @@ def test_r19_04_snapshot_undefined_preempts_phase2_setup_skip() -> None:
     )
     rec = _assert_fail_record("self_contradiction", "metadata")
     assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+
+
+# --- Part 8: Task 22 fix round 3 (F1-F3 undefined-RV preservation) ----------
+
+
+def _with_snapshot(trace: token_admin.AdminTrace, name: str, rv: int) -> token_admin.AdminTrace:
+    """Return a copy of a scripted trace with one extra raw-RV snapshot step."""
+    return trace._replace(steps=(*trace.steps, token_admin.AdminStep(name, rv)))
+
+
+def _assert_snapshot_fail_record() -> Any:
+    """The single fail record cites the undefined snapshot RV via C_GetTokenInfo."""
+    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert rec.operation == "C_GetTokenInfo"
+    assert rec.actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert "undefined" in rec.summary.lower()
+    return rec
+
+
+def test_f1_journey_child_preserves_undefined_snapshot_rvs(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11c_journey", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    by_name = [(s.name, s.rv) for s in trace.steps]
+    for tag in (
+        "after_init_token",
+        "after_so_login",
+        "after_init_pin",
+        "after_user_login",
+        "after_set_pin",
+        "end",
+    ):
+        assert (f"snapshot:{tag}", _UNDEFINED_RV) in by_name
+    assert ("snapshot:pinbounds", _UNDEFINED_RV) in by_name
+    assert trace.pin_bounds is None
+    assert [value for _, value in trace.flags] == [None] * len(trace.flags)
+
+
+def test_f1_journey_undefined_snapshot_fails() -> None:
+    trace = _with_snapshot(_journey_trace(), "snapshot:after_so_login", _UNDEFINED_RV)
+    records, reached = sopin_case._assess_provision_journey(trace)
+    assert reached is True
+    assert [(rec.reason, rec.kind) for rec in records] == [("self_contradiction", "metadata")]
+    assert records[0].operation == "C_GetTokenInfo"
+    assert records[0].actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert "undefined" in records[0].summary.lower()
+
+
+def test_f1_journey_node_undefined_snapshot_fails() -> None:
+    phase1 = _with_snapshot(_journey_trace(), "snapshot:after_so_login", _UNDEFINED_RV)
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(_verify_trace()))]
+    )
+    _r19_assert_fail_preempts_skip(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    _assert_snapshot_fail_record()
+
+
+def test_f1_verify_child_preserves_undefined_snapshot_rv(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    _run_probe("qc11c_journey", fake, {}, capsys)
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11c_verify", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    assert ("snapshot:verify", _UNDEFINED_RV) in [(s.name, s.rv) for s in trace.steps]
+
+
+def test_f1_verify_undefined_snapshot_fails() -> None:
+    trace = _with_snapshot(_verify_trace(), "snapshot:verify", _UNDEFINED_RV)
+    records = sopin_case._assess_provision_persistence(trace, canary_established=True)
+    assert [(rec.reason, rec.kind) for rec in records] == [("self_contradiction", "metadata")]
+    assert records[0].operation == "C_GetTokenInfo"
+    assert records[0].actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert "undefined" in records[0].summary.lower()
+
+
+def test_f1_reset_child_preserves_undefined_snapshot_rvs(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    _run_probe("qc11c_journey", fake, {}, capsys)
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11c_reset", fake, {}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    by_name = [(s.name, s.rv) for s in trace.steps]
+    assert ("snapshot:after_reset_init_token", _UNDEFINED_RV) in by_name
+    assert ("snapshot:end", _UNDEFINED_RV) in by_name
+
+
+def test_f1_reset_undefined_snapshot_fails() -> None:
+    trace = _with_snapshot(_reset_trace(), "snapshot:end", _UNDEFINED_RV)
+    records = ckr_case._assess_sacrificial_reset(trace)
+    assert [(rec.reason, rec.kind) for rec in records] == [("self_contradiction", "metadata")]
+    assert records[0].operation == "C_GetTokenInfo"
+    assert records[0].actual_ckr == ckr_name(_UNDEFINED_RV)
+    assert "undefined" in records[0].summary.lower()
+
+
+def test_f1_journey_snapshot_fail_preempts_phase2_skip() -> None:
+    phase1 = _with_snapshot(_journey_trace(), "snapshot:after_so_login", _UNDEFINED_RV)
+    phase2 = _verify_trace([("setup:open", _GENERAL_ERROR)])
+    launch = _FakeLaunch(
+        [_ScriptedChild(_render_trace(phase1)), _ScriptedChild(_render_trace(phase2))]
+    )
+    _r19_assert_fail_preempts_skip(
+        sopin_case._run_qc11c_journey_node,
+        _capability(),
+        _StrictConfig(),
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    _assert_snapshot_fail_record()
+
+
+def test_f1_defined_snapshot_failures_tolerated() -> None:
+    journey = _with_snapshot(_journey_trace(), "snapshot:after_so_login", _GENERAL_ERROR)
+    records, reached = sopin_case._assess_provision_journey(journey)
+    assert reached is True
+    assert records == []
+    verify = _with_snapshot(_verify_trace(), "snapshot:verify", _GENERAL_ERROR)
+    assert sopin_case._assess_provision_persistence(verify, canary_established=True) == []
+    reset = _with_snapshot(_reset_trace(), "snapshot:end", _GENERAL_ERROR)
+    assert ckr_case._assess_sacrificial_reset(reset) == []
+    assert classification.get_records() == []
+
+
+def test_f2_trace_skip_reason_reports_setup_failure_regardless_of_definedness() -> None:
+    failed = token_admin.AdminTrace(
+        steps=(token_admin.AdminStep("setup:open", _UNDEFINED_RV),),
+        flags=(),
+        pin_bounds=None,
+        inv_objects=(),
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+    reason = token_admin.trace_skip_reason(failed)
+    assert reason is not None
+    assert "setup:open" in reason
+    clean = token_admin.AdminTrace(
+        steps=(),
+        flags=(),
+        pin_bounds=None,
+        inv_objects=(),
+        ok=True,
+        no_slots=False,
+        assumption_failed=None,
+    )
+    assert token_admin.trace_skip_reason(clean) is None
+
+
+def test_f3_burn_child_preserves_midrun_undefined_tokeninfo(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    # Call 1 (initial read) succeeds with a zeroed struct so the pristine gate
+    # holds; call 2 (attempt-1 read) goes undefined mid-run; later reads are
+    # normal again. PINBOUNDS:0:0 here is a script artifact, not wire behavior.
+    fake.gettokeninfo_script = [_OK, _UNDEFINED_RV]
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    assert ("snapshot:attempt-1", _UNDEFINED_RV) in [(s.name, s.rv) for s in trace.steps]
+    assert dict(trace.flags).get("attempt-1") is None
+
+
+def test_f3_burn_midrun_undefined_tokeninfo_fails(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_OK, _UNDEFINED_RV]
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2), capsys)
+    trace = token_admin.check_child_output(0, out, "", label="QC11a user countdown")
+    _assert_fails(pin_case._judge_lockout_trace, trace, role="user")
+    _assert_snapshot_fail_record()
+
+
+def test_f3_burn_undefined_snapshot_preempts_phase2_setup_skip(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_script = [_OK, _UNDEFINED_RV]
+    out = _run_probe("qc11a_burn", fake, _burn_extra("user", 2, then_correct=False), capsys)
+    launch = _FakeLaunch(
+        [_ScriptedChild(out), _ScriptedChild(_render_trace(_r19_ph2_setup_refused("user")))]
+    )
+    _r19_assert_fail_preempts_skip(
+        pin_case._run_qc11a_persistence_node,
+        _capability(),
+        _StrictConfig(),
+        role="user",
+        _session_factory=_session_factory(),
+        _launch=launch,
+    )
+    _assert_snapshot_fail_record()
+
+
+def test_f3_burn_defined_snapshot_failure_tolerated() -> None:
+    trace = _with_snapshot(
+        _lockout_trace("user", [_PIN_INCORRECT] * 3, final_rank=0),
+        "snapshot:attempt-1",
+        _GENERAL_ERROR,
+    )
+    pin_case._judge_lockout_trace(trace, role="user")
+    assert classification.get_records() == []
+
+
+def test_f3_pin_lengths_child_preserves_undefined_bounds_rv(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": "init_pin"}, capsys)
+    trace = token_admin.parse_admin_trace(out)
+    assert trace.ok is True
+    assert ("snapshot:pinbounds", _UNDEFINED_RV) in [(s.name, s.rv) for s in trace.steps]
+    assert trace.pin_bounds is None
+
+
+@pytest.mark.parametrize("op", ("init_pin", "set_pin"))
+def test_f3_pin_lengths_undefined_bounds_fails(op: str, capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _UNDEFINED_RV
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": op}, capsys)
+    trace = token_admin.check_child_output(0, out, "", label=f"QC11b {op} lengths")
+    _r19_assert_fail_preempts_skip(tse._judge_pin_lengths, trace, op=op)
+    _assert_snapshot_fail_record()
+
+
+def test_f3_pin_lengths_defined_bounds_failure_still_skips(capsys: Any) -> None:
+    fake = _FakeAdminRaw()
+    fake.gettokeninfo_rv = _GENERAL_ERROR
+    out = _run_probe("qc11b_pin_lengths", fake, {"op": "set_pin"}, capsys)
+    trace = token_admin.check_child_output(0, out, "", label="QC11b set_pin lengths")
+    skipped = assert_skips(tse._judge_pin_lengths, trace, op="set_pin")
+    assert "PIN bounds unreadable" in str(skipped)
+    assert classification.get_records() == []

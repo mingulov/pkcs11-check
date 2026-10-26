@@ -582,27 +582,10 @@ def _prescan_lockout_fails(trace: token_admin.AdminTrace, *, role: str) -> None:
     """FAIL-grade half of the lockout judge; xfail tiers suppressed, never raised."""
     label = f"QC11a {role} countdown"
     detail: dict[str, Any] = {"role": role, "attempts": _qc11a_attempt_entries(trace, role)}
+    # F3: mid-run token-info reads that went undefined FAIL, even when the
+    # functional legs passed (same doctrine as R19-04 phase-two snapshots).
+    token_admin.fail_on_undefined_snapshots(trace, label=label, detail=detail)
     _run_lockout_judges(trace, role=role, label=label, detail=detail, fails_only=True)
-
-
-def _fail_on_undefined_snapshots(
-    trace: token_admin.AdminTrace, *, label: str, detail: dict[str, Any]
-) -> None:
-    """R19-04: undefined ``snapshot:*`` RVs FAIL; defined snapshot failures stay tolerated."""
-    for step in trace.steps:
-        if step.name == "snapshot" or step.name.startswith("snapshot:"):
-            if not (is_standard_ckr(step.rv) or is_vendor_defined_ckr(step.rv)):
-                fail_as(
-                    "self_contradiction",
-                    kind="metadata",
-                    label=f"{label}: {step.name}",
-                    operation="C_GetTokenInfo",
-                    mechanism=None,
-                    inherit_mechanism=False,
-                    actual=step.rv,
-                    summary=f"{label}: token snapshot returned undefined CK_RV {ckr_name(step.rv)}",
-                    detail=detail,
-                )
 
 
 def _judge_lockout_trace(trace: token_admin.AdminTrace, *, role: str) -> None:
@@ -794,7 +777,7 @@ def _judge_restart_persistence_fails(
     detail: dict[str, Any],
 ) -> None:
     """FAIL-grade half of restart persistence; runs before first-trace tiers."""
-    _fail_on_undefined_snapshots(second, label=label, detail=detail)
+    token_admin.fail_on_undefined_snapshots(second, label=label, detail=detail)
     _, _, locked = _qc11a_role_flags(role)
     if (
         last_before is not None
@@ -1047,7 +1030,7 @@ def _run_qc11a_persistence_node(
         )
         if token_admin.trace_skip_reason(second_raw) is not None:
             _prescan_lockout_fails(first, role=role)
-            _fail_on_undefined_snapshots(
+            token_admin.fail_on_undefined_snapshots(
                 second_raw,
                 label=f"QC11a {role} restart persistence",
                 detail={

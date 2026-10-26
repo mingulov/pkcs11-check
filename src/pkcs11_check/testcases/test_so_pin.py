@@ -298,6 +298,9 @@ def _assess_provision_journey(
         "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
         "inv": list(trace.inv_objects),
     }
+    # F1: token-info reads that went undefined FAIL, even when the functional
+    # legs passed (same doctrine as R19-04 phase-two snapshots).
+    records.extend(token_admin.undefined_snapshot_records(trace, label=label, detail=detail))
     reached = True
     refused_name: str | None = None
     for name in _QC11C_JOURNEY_POSITIVE_STEPS:
@@ -631,6 +634,9 @@ def _assess_provision_persistence(
         "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
         "inv": list(trace.inv_objects),
     }
+    # F1: token-info reads that went undefined FAIL, even when the functional
+    # legs passed (same doctrine as R19-04 phase-two snapshots).
+    records.extend(token_admin.undefined_snapshot_records(trace, label=label, detail=detail))
     old = by_name.get("old_rejected")
     assert old is not None, f"{label}: missing old_rejected step"
     if old == int(CKR_OK):

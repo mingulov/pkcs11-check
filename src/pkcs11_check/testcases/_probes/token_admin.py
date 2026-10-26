@@ -23,6 +23,7 @@ skips, positive-leg refusals as xfails, and contradictions as failures.
 
 Output protocol (parsed parent-side by ``parse_admin_trace``):
   ``STEP:{name}:CKR:0x{rv:08x}`` -- one admin/login/setup op result
+  ``STEP:snapshot:{tag}:CKR:0x{rv:08x}`` -- failed token-info read (raw RV kept)
   ``FLAGS:{tag}:0x{flags:08x}`` (or ``FLAGS:{tag}:unknown``) -- token snapshot
   ``PINBOUNDS:{min}:{max}`` (or ``PINBOUNDS:unknown``) -- declared PIN bounds
   ``INV:objects={n}``            -- label-filtered canary inventory count
@@ -268,6 +269,52 @@ def _fail_on_undefined_provisioning(trace: AdminTrace, *, label: str) -> None:
             )
 
 
+def _undefined_snapshot_steps(trace: AdminTrace) -> list[AdminStep]:
+    """Snapshot steps carrying undefined RVs; defined failures stay tolerated."""
+    return [
+        step
+        for step in trace.steps
+        if (step.name == "snapshot" or step.name.startswith("snapshot:"))
+        and not (is_standard_ckr(step.rv) or is_vendor_defined_ckr(step.rv))
+    ]
+
+
+def fail_on_undefined_snapshots(trace: AdminTrace, *, label: str, detail: dict[str, Any]) -> None:
+    """R19-04/F1/F3: undefined ``snapshot:*`` RVs FAIL; defined failures stay tolerated."""
+    for step in _undefined_snapshot_steps(trace):
+        classification.fail_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{label}: {step.name}",
+            operation="C_GetTokenInfo",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=step.rv,
+            summary=f"{label}: token snapshot returned undefined CK_RV {ckr_name(step.rv)}",
+            detail=detail,
+        )
+
+
+def undefined_snapshot_records(
+    trace: AdminTrace, *, label: str, detail: dict[str, Any]
+) -> list[classification.Classification]:
+    """Record-collecting twin of ``fail_on_undefined_snapshots`` for QC11c assessors."""
+    return [
+        classification.record_as(
+            "self_contradiction",
+            kind="metadata",
+            label=f"{label}: {step.name}",
+            operation="C_GetTokenInfo",
+            mechanism=None,
+            inherit_mechanism=False,
+            actual=step.rv,
+            summary=f"{label}: token snapshot returned undefined CK_RV {ckr_name(step.rv)}",
+            detail=detail,
+        )
+        for step in _undefined_snapshot_steps(trace)
+    ]
+
+
 def parse_child_output(rc: int, out: str, err: str, *, label: str) -> AdminTrace:
     """Parse one child result; crashes and incomplete output fail loud, never skip."""
     assert rc == 0, f"{label}: child failed (rc={rc}): {err[-300:]}"
@@ -281,9 +328,11 @@ def trace_skip_reason(trace: AdminTrace, *, no_slots: str = "skip") -> str | Non
     """Return the gate skip reason for a parsed trace, or None when it gates clean.
 
     ``no_slots="fail"`` reports None for a vanished token (the gate fails loud
-    there); undefined provisioning RVs likewise report None (the gate fails
-    loud). Callers use this for R19-02 collect-then-judge: a non-None reason
-    means the gate would skip, so phase-one FAIL grades must be judged first.
+    there); otherwise a reason is reported whenever the gate would skip,
+    whatever the RV definedness (undefined RVs FAIL inside ``gate_child_trace``
+    before the skip is taken). Callers use this for R19-02 collect-then-judge:
+    a non-None reason means the gate would skip, so phase-one FAIL grades must
+    be judged first.
     """
     if trace.no_slots:
         if no_slots == "fail":
@@ -496,6 +545,8 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         lrv = _login(ctx, sh, role, wrong)
         _step(f"login:{role}:wrong:{i}", lrv)
         _info_rv, flags_now, _, _ = _token_info(ctx, slot)
+        if _info_rv != int(CKR_OK):
+            _step(f"snapshot:attempt-{i}", _info_rv)
         _flags(f"attempt-{i}", flags_now if _info_rv == int(CKR_OK) else None)
         if lrv == int(CKR_PIN_LOCKED):
             break
@@ -512,12 +563,16 @@ def _qc11a_burn(ctx: ProbeContext, extra: dict[str, Any]) -> None:
             prv = _login(ctx, sh, role, wrong)
             _step(f"login:{role}:post:{j}", prv)
             _info_rv, flags_now, _, _ = _token_info(ctx, slot)
+            if _info_rv != int(CKR_OK):
+                _step(f"snapshot:post-{j}", _info_rv)
             _flags(f"post-{j}", flags_now if _info_rv == int(CKR_OK) else None)
     if then_other:
         other = "so" if role == "user" else "user"
         orv = _login(ctx, sh, other, TEST_SO_PIN if other == "so" else TEST_USER_PIN)
         _step(f"login:{other}:correct", orv)
     _info_rv, flags_end, _, _ = _token_info(ctx, slot)
+    if _info_rv != int(CKR_OK):
+        _step("snapshot:final", _info_rv)
     _flags("final", flags_end if _info_rv == int(CKR_OK) else None)
     _quiet_close(ctx, sh)
     print("OK")
@@ -604,6 +659,9 @@ def _qc11b_pin_lengths(ctx: ProbeContext, extra: dict[str, Any]) -> None:
         return
     info_rv, flags, min_pin, max_pin = _token_info(ctx, slot)
     if info_rv != int(CKR_OK):
+        # F3: keep the raw bounds-read RV as a snapshot step so the judge can
+        # FAIL undefined RVs instead of dissolving them into the skip below.
+        _step("snapshot:pinbounds", info_rv)
         print("PINBOUNDS:unknown")
         print("OK")
         return
@@ -664,7 +722,15 @@ def _init_token(ctx: ProbeContext, slot: int, so_pin: bytes) -> int:
 
 
 def _snapshot(ctx: ProbeContext, slot: int, tag: str) -> None:
+    """Emit a token-flags snapshot; failed reads keep their raw RV as a step.
+
+    Like ``_qc11a_read`` (R19-04): dissolving the RV into ``unknown`` would
+    hide undefined CK_RVs from the judges, so every failed read also emits a
+    ``snapshot:{tag}`` step carrying the raw RV.
+    """
     info_rv, flags, _, _ = _token_info(ctx, slot)
+    if info_rv != int(CKR_OK):
+        _step(f"snapshot:{tag}", info_rv)
     _flags(tag, flags if info_rv == int(CKR_OK) else None)
 
 
@@ -711,8 +777,14 @@ def _qc11c_journey(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     if open_rv != int(CKR_OK):
         print("OK")
         return
-    _, _, min_pin, max_pin = _token_info(ctx, slot)
-    print(f"PINBOUNDS:{min_pin}:{max_pin}")
+    bounds_rv, _, min_pin, max_pin = _token_info(ctx, slot)
+    if bounds_rv != int(CKR_OK):
+        # F1: never fabricate bounds from a failed read; keep the raw RV as a
+        # snapshot step and report the bounds as unknown.
+        _step("snapshot:pinbounds", bounds_rv)
+        print("PINBOUNDS:unknown")
+    else:
+        print(f"PINBOUNDS:{min_pin}:{max_pin}")
     sorv = _login(ctx, sh, "so", TEST_SO_PIN)
     _step("so_login", sorv)
     _snapshot(ctx, slot, "after_so_login")

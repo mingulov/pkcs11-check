@@ -275,6 +275,9 @@ def _assess_sacrificial_reset(trace: token_admin.AdminTrace) -> list[Classificat
         "steps": {step.name: ckr_name(step.rv) for step in trace.steps},
         "inv": list(trace.inv_objects),
     }
+    # F1: token-info reads that went undefined FAIL, even when the functional
+    # legs passed (same doctrine as R19-04 phase-two snapshots).
+    records.extend(token_admin.undefined_snapshot_records(trace, label=label, detail=detail))
     reset_rv = by_name.get("reset_init_token")
     assert reset_rv is not None, f"{label}: missing reset_init_token step"
     if reset_rv != int(CKR_OK):
