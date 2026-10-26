@@ -395,14 +395,16 @@ def _judge_session_exhaustion(
             summary=f"{label}: token admitted more sessions than advertised (benign over-delivery)",
             detail=detail,
         )
-    early = (
-        policy.max_total is not None
-        and policy.max_rw is not None
-        and total_now is not None
-        and rw_now is not None
-        and total_now < policy.max_total
-        and rw_now < policy.max_rw
-    )
+    # Each finite dimension is judged independently: an undeclared (None = no
+    # enforced limit) dimension can never explain a refusal, so every finite
+    # dimension observed below its maximum proves an early refusal. A finite
+    # dimension with an unknown count may still explain it (fail-safe: no FAIL).
+    finite_dims = [
+        (mx, now)
+        for mx, now in ((policy.max_total, total_now), (policy.max_rw, rw_now))
+        if mx is not None
+    ]
+    early = bool(finite_dims) and all(now is not None and now < mx for mx, now in finite_dims)
     if early:
         classification.fail_as(
             "self_contradiction",
@@ -558,6 +560,22 @@ def _judge_pin_lengths(trace: token_admin.AdminTrace, *, op: str) -> None:
                     detail=detail,
                 )
             )
+    if token_admin.pin_sweep_capped(min_pin, max_pin):
+        records.append(
+            classification.record_as(
+                "not_operational",
+                label=label,
+                operation=operation,
+                mechanism=None,
+                inherit_mechanism=False,
+                summary=(
+                    f"{label}: declared PIN bounds (min {min_pin}, max {max_pin}) exceed "
+                    f"the length-sweep cap {token_admin.PIN_SWEEP_CAP}; "
+                    "over-cap legs untestable, never a pass"
+                ),
+                detail=detail,
+            )
+        )
     if records:
         classification.raise_for_record(_strongest_deferred(records))
 
