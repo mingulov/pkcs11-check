@@ -273,7 +273,9 @@ class _CtxAuthRaw:
     def _real_sign(self, data: bytes) -> bytes:
         sig: bytes = self.key.sign(data, padding.PKCS1v15(), hashes.SHA256())
         if self.sign_mode == "corrupt":
-            return b"\x00" + sig[1:]
+            # XOR, not a fixed byte: setting byte 0 to 0x00 is a no-op (and a
+            # flaky pass) whenever the genuine signature already starts there.
+            return bytes((sig[0] ^ 0xFF,)) + sig[1:]
         if self.sign_mode == "short":
             return sig[:128]
         return sig
@@ -427,7 +429,7 @@ class _CtxAuthRaw:
             self._terminate(session)
             return int(CKR_ENCRYPTED_DATA_INVALID)
         if self.decrypt_mode == "corrupt":
-            pt = b"\x00" + pt[1:] if pt else b"\x00"
+            pt = bytes((pt[0] ^ 0xFF,)) + pt[1:] if pt else b"\x00"
         ctypes.memmove(out_ptr, pt, len(pt))
         _write_ulong(out_len_ptr, len(pt))
         if not self.grant_survives_terminal:
