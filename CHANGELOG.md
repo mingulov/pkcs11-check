@@ -1,23 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-
-- **Streaming semantic-ledger exporter (schema v1).** `core/evidence`
-  plus the `evidence-export` CLI command.
-- **Admission predicates with obligation inventory.** The
-  `evidence-admit` CLI command gates ledgers before comparison.
-- **Ledger comparator with mutation-pinned strictness.** The
-  `evidence-compare` CLI command diffs ledgers (admission stays a caller
-  precondition -- compare never admits).
-- **Round receipt verifier + provider-round lock file.**
-  `scripts/verify_round_receipt.py` checks receipts against
-  `.github/provider-round.lock.json`.
-
-The p11lab round caller (E5) is pending; round pins are PENDING-P11LAB
-until it lands.
-
 ## [0.2.3] - 2026-10-05
 
 Nine reported issues addressed across async, OTP, message-mode crypto, and
