@@ -43,7 +43,9 @@ shapes below were inspected in ``core/report_log.py``,
   ``"timeout"`` for each ``TeardownFinalize`` lifecycle row (see below).
   ``crash_limited`` and ``missing`` have no report-record producer and only
   ever appear as zero counters / accepted load vocabulary.
-- ``duration_ms``: ``record["duration"]`` seconds x 1000, else ``0``.
+- ``duration_ms``: ``record["duration"]`` seconds x 1000, else ``0``
+  (``0`` = unknown/unrepresentable: non-numeric, negative, non-finite, or
+  magnitudes outside float range -- diagnostic-only, the row is preserved).
 - Facets from the TERMINATING ``pkcs11_classification`` user-property
   entry (``classification.serialize`` shape: reason/outcome/severity/kind/
   label/summary/operation/mechanism/expected_ckr/actual_ckr/spec_ref/
@@ -142,7 +144,8 @@ Header identity (``lane``, ``lane_os``, ``lane_arch``, ``framework_sha``,
 ``p11lab_sha``, ``image_digest``, ``corpus_hash``, ``disabled_hash``,
 ``planned_collection_hash``, ``raw_stream_sha256``, ``created_by``) echoes
 ``identity`` verbatim, ``""`` when absent (``created_by`` defaults to
-``"pkcs11-check"``); ``planned_count``/``raw_stream_bytes`` parse as int
+``"pkcs11-check"`` only when absent/non-string -- an explicit ``""``
+echoes ``""``); ``planned_count``/``raw_stream_bytes`` parse as int
 (``0`` when absent/unparseable). The exporter consumes parsed records, so
 the orchestrator -- which sees the raw JSONL bytes -- measures
 ``raw_stream_bytes``/``raw_stream_sha256`` and passes them via
@@ -250,11 +253,33 @@ def _flags(value: Any) -> list[str]:
 
 
 def _duration_ms(value: Any) -> int:
+    """Convert a duration in seconds to integer ms; 0 = unknown/unrepresentable.
+
+    Total function (R34): never raises on parsed input. Diagnostic-only
+    field, so unrepresentable inputs (non-numeric, negative, non-finite
+    float, or magnitudes outside float range such as 1e308 seconds or a
+    10**400 int) yield 0 and the row is preserved -- malforming the row
+    would destroy occurrence evidence.
+    """
     if isinstance(value, bool):
         return 0
-    if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
+    if isinstance(value, int):
+        if value < 0:
+            return 0
+        try:
+            float(value * 1000)
+        except OverflowError:
+            return 0
+        return value * 1000
+    if not isinstance(value, float):
+        return 0
+    if not math.isfinite(value) or value < 0:
+        return 0
+    try:
         return int(round(value * 1000))
-    return 0
+    except (OverflowError, ValueError):
+        # value * 1000 is inf (e.g. 1e308 s): unrepresentable, not an error.
+        return 0
 
 
 def _identity_str(identity: Mapping[str, str], key: str) -> str:
@@ -617,7 +642,11 @@ def export_ledger(
             raw_stream_sha256=_identity_str(identity, "raw_stream_sha256"),
             malformed_lines=malformed,
             counters=counters,
-            created_by=_identity_str(identity, "created_by") or _CREATED_BY_DEFAULT,
+            created_by=(
+                identity["created_by"]
+                if isinstance(identity.get("created_by"), str)
+                else _CREATED_BY_DEFAULT
+            ),
         )
 
         entries.sort(key=lambda entry: entry[0])

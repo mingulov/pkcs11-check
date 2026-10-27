@@ -219,7 +219,9 @@ def test_predicate_provenance_present() -> None:
 
 def test_obligation_unselected_surfaces() -> None:
     header, rows, roster, _ = _clean_lane()
-    inventory = compile_obligations({"a": {}, "b": {}}, {"cases": ["a"]})
+    # R32: the selected member must be a present row node_id (it is); "b"
+    # stays catalog-only so it surfaces as an unselected_obligation warning.
+    inventory = compile_obligations({"tests/a.py::t1": {}, "b": {}}, {"cases": ["tests/a.py::t1"]})
     verdict = admit_lane(header, rows, roster, inventory)
     assert verdict.admitted
     assert any("unselected_obligation" in w and "b" in w for w in verdict.warnings)
@@ -348,3 +350,26 @@ def test_occurrence_preserved_off_by_one_attempts() -> None:
     verdict = admit_lane(_header(rows), rows, _roster(rows), obligations)
     assert not verdict.admitted
     assert _failed_with(verdict.failures, "occurrence_preserved")
+
+
+# --- final fix round F2: FF2 obligations_executed (8th predicate, R32) -----------
+
+
+def test_obligations_executed_absent_member_fails_naming_case() -> None:
+    """R32: a profile-selected case with no rows fails admission (fail closed)."""
+    header, rows, roster, _ = _clean_lane()
+    present = [row.node_id for row in rows]
+    inventory = ObligationInventory(members=frozenset([*present, "tests/new.py::ghost"]))
+    verdict = admit_lane(header, rows, roster, inventory)
+    assert not verdict.admitted
+    assert (
+        "obligations_executed: selected case 'tests/new.py::ghost' has no rows" in verdict.failures
+    )
+
+
+def test_obligations_executed_all_present_passes() -> None:
+    """R32 control: every selected case present as a row node_id admits."""
+    header, rows, roster, _ = _clean_lane()
+    inventory = ObligationInventory(members=frozenset(row.node_id for row in rows))
+    verdict = admit_lane(header, rows, roster, inventory)
+    assert verdict.admitted

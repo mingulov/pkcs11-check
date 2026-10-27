@@ -1,4 +1,4 @@
-"""Evidence admission: 7 predicates gating lane ledgers for round comparison.
+"""Evidence admission: 8 predicates gating lane ledgers for round comparison.
 
 Row-blob canonicalization (PINNED -- E3 and P11Lab reuse verbatim):
 
@@ -121,7 +121,7 @@ def admit_lane(
     roster: PredeclaredRoster,
     obligations: ObligationInventory,
 ) -> AdmissionVerdict:
-    """Admit a lane ledger: ALL 7 predicates must pass for ``admitted=True``.
+    """Admit a lane ledger: ALL 8 predicates must pass for ``admitted=True``.
 
     Pure function: no I/O. ``roster.lane`` is informational -- no predicate
     compares it to ``header.lane``; provenance checks required-identity
@@ -137,6 +137,7 @@ def admit_lane(
     failures.extend(_check_occurrence_preserved(mappings))
     failures.extend(_check_observability_complete(header))
     failures.extend(_check_provenance_present(header, roster))
+    failures.extend(_check_obligations_executed(mappings, obligations))
     warnings = [f"unselected_obligation: {case_id}" for case_id in sorted(obligations.unselected)]
     return AdmissionVerdict(admitted=not failures, failures=failures, warnings=warnings)
 
@@ -294,3 +295,23 @@ def _check_provenance_present(header: LedgerHeader, roster: PredeclaredRoster) -
     if not missing:
         return []
     return [f"provenance_present: header identity field(s) empty or missing: {missing!r}"]
+
+
+def _check_obligations_executed(
+    mappings: list[dict[str, Any]], obligations: ObligationInventory
+) -> list[str]:
+    """Every profile-selected obligation member appears as a row node_id.
+
+    Namespace assumption (R32): catalog/profile authors use ledger node-id
+    strings as case IDs, so the match is EXACT string equality against
+    ``node_id`` -- any mismatch fails closed (FAIL, never warn), since a
+    silently dropped obligation is dropped coverage evidence. Single-lane
+    drops still surface downstream at compare as removed-regressions; this
+    predicate closes the both-lanes-absent hole compare cannot see.
+    """
+    present = {mapping.get("node_id") for mapping in mappings}
+    return [
+        f"obligations_executed: selected case {case_id!r} has no rows"
+        for case_id in sorted(obligations.members)
+        if case_id not in present
+    ]

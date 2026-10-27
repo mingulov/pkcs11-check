@@ -940,3 +940,38 @@ def test_export_streams_constant_memory() -> None:
     header2 = export_ledger(stream, {"lane": "soft"}, sink2)
     assert sink2.lines == 1
     assert header2.counters["passed"] == 0
+
+
+# --- final fix round F2: FF4 numeric totality + M9 verbatim created_by -----------
+
+
+@pytest.mark.parametrize("duration", [1e308, 10**400])
+def test_duration_unrepresentable_yields_zero_row_preserved(duration: Any) -> None:
+    """FF4/R34 reviewer probes: overflow durations export duration_ms 0, row kept."""
+    sink = io.StringIO()
+    header = export_ledger([_report("tests/a.py::t", duration=duration)], {"lane": "soft"}, sink)
+    assert header.counters["passed"] == 1
+    assert header.malformed_lines == 0
+    row = json.loads(sink.getvalue().splitlines()[1])
+    assert row["duration_ms"] == 0
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("nan")])
+def test_loader_rejects_nonfinite_int_field(tmp_path: Path, bad: float) -> None:
+    """FF4/R34 pin: inf/nan ledger ints are malformed evidence (ValueError)."""
+    from pkcs11_check.core.evidence import load_ledger
+
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        _header_line() + "\n" + _row_line("tests/a.py::t", duration_ms=bad) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="not an int"):
+        load_ledger(ledger)
+
+
+def test_created_by_explicit_empty_echoes_verbatim() -> None:
+    """M9: explicit created_by="" echoes "" (verbatim rule), not the default."""
+    sink = io.StringIO()
+    header = export_ledger([_report("tests/a.py::t")], {"lane": "soft", "created_by": ""}, sink)
+    assert header.created_by == ""

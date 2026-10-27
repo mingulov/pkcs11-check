@@ -48,6 +48,14 @@ over the concatenation, sorted by lane name, of
 ``b""`` by construction, but an empty lanes object never reaches
 recomputation: it fails the non-empty-closure check (rule 5) first.
 
+Evidence-digest producer contract (PINNED cross-repo; p11lab implements
+the producer side): each lane's ``evidence_digest`` is DEFINED AS the
+sha256 hex of the EXACT ``ledger.jsonl`` artifact bytes as uploaded --
+byte-for-byte, no canonicalization, no re-serialization. Recomputation
+enforcement (download the ledger, hash it, compare) is E5 release-job
+wiring; this verifier stays artifact-I/O-free by design (it checks the
+digest SHAPE and bundle binding, never the ledger bytes).
+
 Lock schema (PINNED; this file lives at
 ``.github/provider-round.lock.json``)::
 

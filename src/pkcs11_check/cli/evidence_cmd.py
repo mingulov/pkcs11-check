@@ -126,7 +126,19 @@ def _load_json_doc(path: Path, output: str) -> Any:
         _die(output, 2, "Error", f"{path} unreadable ({exc})")
     try:
         return json.loads(text)
-    except json.JSONDecodeError as exc:
+    except RecursionError:
+        # Mirror of E4's parser hardening (verify_round_receipt): the handler
+        # stays trivial and RecursionError-safe -- static message only, never
+        # str(exc)/repr of attacker-controlled input.
+        _die(
+            output,
+            2,
+            "Error",
+            f"invalid JSON in {path}: RecursionError (input nesting exceeds parser limits)",
+        )
+    except ValueError as exc:
+        # JSONDecodeError subclasses ValueError; this also covers parser
+        # failures beyond it (e.g. the 4300-digit int conversion limit).
         _die(output, 2, "Error", f"invalid JSON in {path}: {exc}")
 
 
@@ -418,7 +430,8 @@ def _admit_failure_lines(
                 lines.append(f"    bucket {bucket!r}: {len(implicated)} row(s) with that outcome")
                 lines.extend(_capped_row_lines(lane, implicated, prefix))
     else:
-        # zero_malformed, observability_complete, provenance_present, and any
+        # zero_malformed, observability_complete, provenance_present,
+        # obligations_executed (the case has no rows by definition), and any
         # future header-level predicate: no rows to implicate.
         lines.append("    note: no implicated rows (header-level predicate)")
         lines.append(f"    {_header_facts(header, len(rows))}")

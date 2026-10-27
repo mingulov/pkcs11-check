@@ -12,6 +12,9 @@ failed=3, xpassed=3, error=4, crashed=5, crash_limited=5, timeout=6.
 ``missing`` never appears as a row outcome; hand-built input carrying it
 ranks 7 (worst, fail closed).
 
+New-test surfacing lives here via the added-ID rule (candidate-only keys);
+E2's ``obligations_executed`` covers only the both-lanes-absent hole.
+
 Rename boundary (R22): a removal delta and an addition delta whose
 fingerprints DIFFER are independent covered operations, never a rename;
 rename-hood is claimed ONLY by equal-fingerprint pairing (validated
