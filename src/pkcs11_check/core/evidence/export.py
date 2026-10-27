@@ -40,7 +40,7 @@ shapes below were inspected in ``core/report_log.py``,
 - ``outcome``: ``map_report_record_outcome(record)`` for ``TestReport``
   (passed/failed/skipped/xfailed/xpassed/crashed); ``"error"`` for failed
   ``CollectReport`` and ``HarnessError`` records; ``"error"``/``"crashed``/
-  ``"timeout"`` for the folded ``TeardownFinalize`` row (see below).
+  ``"timeout"`` for each ``TeardownFinalize`` lifecycle row (see below).
   ``crash_limited`` and ``missing`` have no report-record producer and only
   ever appear as zero counters / accepted load vocabulary.
 - ``duration_ms``: ``record["duration"]`` seconds x 1000, else ``0``.
@@ -189,7 +189,7 @@ from pkcs11_check.core.report_log import (
 _TEST_PHASES = ("setup", "call", "teardown")
 _TEST_OUTCOMES = ("passed", "failed", "skipped")
 
-#: Node id of the folded TeardownFinalize lifecycle row (the same
+#: Node id of each TeardownFinalize lifecycle row (the same
 #: ``"C_Finalize::teardown"`` nodeid the canonical consumer attributes).
 _LIFECYCLE_NODE_ID = "C_Finalize::teardown"
 
@@ -360,7 +360,7 @@ def _finalize_outcome(record: Mapping[str, Any]) -> str | None:
 def _finalize_row(
     record: Mapping[str, Any], ledger_attempt: int, shard_id: str, outcome: str
 ) -> dict[str, Any]:
-    """Build the folded lifecycle row (facets per ``report/extract.py``)."""
+    """Build one lifecycle row (facets per ``report/extract.py``)."""
     return {
         "node_id": _LIFECYCLE_NODE_ID,
         "phase": "teardown",
