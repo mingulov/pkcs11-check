@@ -347,6 +347,30 @@ def test_export_reader_invalid_count_forms() -> None:
         )
 
 
+def test_export_none_reader_invalid_counts_parsed_malformed_only() -> None:
+    """R16: None (the default) means no reader in the loop.
+
+    A 3-arg call over pre-parsed records counts parsed-level malformed only;
+    an explicit None is byte-identical. Production callers consuming raw
+    streams MUST pass the reader callback instead (see the exporter's
+    docstring contract).
+    """
+    records: list[Any] = [
+        _report("tests/a.py::test_one"),
+        "not-a-mapping",
+        {"$report_type": "TestReport", "when": "call", "outcome": "passed"},
+        _report("tests/a.py::test_two", outcome="failed"),
+    ]
+    default_sink, explicit_sink = io.StringIO(), io.StringIO()
+    default_header = export_ledger(list(records), {"lane": "soft"}, default_sink)
+    explicit_header = export_ledger(
+        list(records), {"lane": "soft"}, explicit_sink, reader_invalid_lines=None
+    )
+    assert default_header.malformed_lines == 2
+    assert explicit_header.malformed_lines == 2
+    assert default_sink.getvalue() == explicit_sink.getvalue()
+
+
 def test_export_identity_echo() -> None:
     identity = {
         "lane": "optee-qemu",
@@ -591,7 +615,10 @@ def test_export_preserves_failed_teardown_finalize(
     assert row["ckr_actual"] == expected_ckr_actual
 
 
-def test_export_skips_ok_teardown_finalize_and_folds_to_max_priority() -> None:
+def test_export_skips_ok_teardown_finalize_and_orders_finalizers_canonically() -> None:
+    """R17: every unsuccessful finalizer keeps its row; effective-outcome
+    collapsing is E3's job, not the exporter's. Rank order (error < crashed <
+    timeout) and input-order independence are unchanged from the old fold."""
     sink = io.StringIO()
     header = export_ledger(
         _finalize_stream({"$report_type": "TeardownFinalize", "outcome": "ok"}),
@@ -601,27 +628,53 @@ def test_export_skips_ok_teardown_finalize_and_folds_to_max_priority() -> None:
     assert header.counters["passed"] == 1
     assert _lifecycle_rows(sink.getvalue().splitlines()) == []
 
-    # The consumer folds several finalize events to the single max-priority
-    # outcome (error < crashed < timeout); the exporter does the same so the
-    # folded lifecycle row can never collide with itself.
-    both_orders = [
-        [
-            {"$report_type": "TeardownFinalize", "outcome": "error", "rv_name": "X"},
-            {"$report_type": "TeardownFinalize", "outcome": "timeout"},
-        ],
-        [
-            {"$report_type": "TeardownFinalize", "outcome": "timeout"},
-            {"$report_type": "TeardownFinalize", "outcome": "error", "rv_name": "X"},
-        ],
-    ]
-    for pair in both_orders:
-        sink = io.StringIO()
-        header = export_ledger(_finalize_stream(*pair), {"lane": "soft"}, sink)
-        assert header.counters["timeout"] == 1
-        assert header.counters["error"] == 0
-        life = _lifecycle_rows(sink.getvalue().splitlines())
-        assert len(life) == 1
-        assert life[0]["outcome"] == "timeout"
+    # Different priorities: no occurrence is dropped, and both input orders
+    # produce identical bytes in canonical rank order.
+    error = {"$report_type": "TeardownFinalize", "outcome": "error", "rv_name": "X"}
+    timeout = {"$report_type": "TeardownFinalize", "outcome": "timeout"}
+    forward = _export_lines(_finalize_stream(error, timeout), {"lane": "soft"})
+    backward = _export_lines(_finalize_stream(timeout, error), {"lane": "soft"})
+    assert forward == backward
+    life = _lifecycle_rows(forward)
+    assert [row["outcome"] for row in life] == ["error", "timeout"]
+    assert [row["attempt"] for row in life] == [1, 2]
+    assert [row["attempts_total"] for row in life] == [2, 2]
+    header = export_ledger(_finalize_stream(error, timeout), {"lane": "soft"}, io.StringIO())
+    assert header.counters["error"] == 1
+    assert header.counters["timeout"] == 1
+
+
+def test_export_preserves_same_priority_finalizer_ties() -> None:
+    """R17: same-priority finalizers are ALL preserved, byte-identical in both
+    input orders. Lifecycle rows are totally ordered by (priority rank,
+    outcome, canonical JSON of salient fields); attempt is the 1-based
+    position in that canonical order."""
+    first: dict[str, Any] = {
+        "$report_type": "TeardownFinalize",
+        "outcome": "error",
+        "rv_name": "CKR_A",
+        "shard_id": "shard-a",
+    }
+    second: dict[str, Any] = {
+        "$report_type": "TeardownFinalize",
+        "outcome": "error",
+        "rv_name": "CKR_B",
+        "shard_id": "shard-b",
+    }
+    forward = _export_lines(_finalize_stream(first, second), {"lane": "soft"})
+    backward = _export_lines(_finalize_stream(second, first), {"lane": "soft"})
+    assert forward == backward
+    life = _lifecycle_rows(forward)
+    assert len(life) == 2
+    assert {(row["ckr_actual"], row["shard_id"]) for row in life} == {
+        ("CKR_A", "shard-a"),
+        ("CKR_B", "shard-b"),
+    }
+    assert [row["attempt"] for row in life] == [1, 2]
+    assert [row["attempts_total"] for row in life] == [2, 2]
+    header = export_ledger(_finalize_stream(first, second), {"lane": "soft"}, io.StringIO())
+    assert header.counters["error"] == 2
+    assert header.malformed_lines == 0
 
 
 def test_export_marks_unfinished_session_incomplete() -> None:

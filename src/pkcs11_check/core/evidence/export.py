@@ -19,7 +19,7 @@ shapes below were inspected in ``core/report_log.py``,
 - ``node_id``: ``normalize_nodeid(record["nodeid"])`` (forward slashes).
 - ``phase``: ``record["when"]``; ``"collect"`` for failed ``CollectReport``
   records; ``"harness"`` for ``HarnessError`` markers; ``"teardown"`` for
-  the folded ``TeardownFinalize`` lifecycle row.
+  ``TeardownFinalize`` lifecycle rows.
 - ``attempt``: ledger attempts are 1-based while source markers are
   0-based, so a row's attempt is the source marker + 1. This matches the
   merge layer's ``raw_attempt + 1`` (``core/_report_records.py``). A
@@ -67,21 +67,27 @@ shapes below were inspected in ``core/report_log.py``,
   ``detail`` mapping's same-named sub-keys (declared detail flags come
   first, then any ``extra:<reason>`` markers); always ``""``/``[]`` on
   current producers, which never emit them.
-- ``TeardownFinalize`` records fold to ONE lifecycle row (node_id
-  ``"C_Finalize::teardown"``, phase ``"teardown"``, stream-position
-  attempt/shard): outcome detection mirrors ``finalize_outcome`` in
-  ``core/_report_records.py`` (a Windows access-violation -- via
+- Every UNSUCCESSFUL ``TeardownFinalize`` record keeps its OWN lifecycle
+  row (node_id ``"C_Finalize::teardown"``, phase ``"teardown"``,
+  stream-position shard): outcome detection mirrors ``finalize_outcome``
+  in ``core/_report_records.py`` (a Windows access-violation -- via
   ``windows_status`` or a ctypes traceback in ``error`` -- forces
   ``"crashed"``; ``"ok"`` (case-insensitive, and only ``"ok"``) is
   skipped; ``"crashed"``/``"timeout"`` pass through; anything else,
-  including a missing outcome, is ``"error"``). Several events fold to the
-  single max-priority outcome (error < crashed < timeout, first-maximal
-  wins -- the same ``max()`` rule the consumer uses), so folded lifecycle
-  rows can never collide with themselves. Facets mirror
+  including a missing outcome, is ``"error"``). Rows are totally ordered
+  by (priority rank, outcome, canonical JSON of salient fields) -- rank
+  error < crashed < timeout uses the same values as the consumer's
+  ``max()`` rule, while ties order by emitted content, so every input
+  order yields byte-identical output and no occurrence is dropped.
+  ``attempt`` is the 1-based position in that canonical order (lifecycle
+  rows carry no case identity, so marker provenance does not apply), hence
+  rows never collide with each other. Facets mirror
   ``_classification_from_teardown_finalize`` in ``report/extract.py``:
   ``reason`` ``"crash"``/``"self_contradiction"``, ``class_reason``
   ``"fail"``, ``category`` ``"lifecycle"``, ``ckr_expected`` ``"CKR_OK"``,
-  ``ckr_actual`` <- ``rv_name``.
+  ``ckr_actual`` <- ``rv_name``. Deciding the EFFECTIVE outcome of several
+  finalizers (which one governs the lane) is E3's job, NOT the exporter's:
+  the exporter preserves every unsuccessful finalizer; E3 collapses.
 - Session completion: every mapping record is observed by
   ``SessionCompletionTracker`` (``core/report_log.py``).
   ``counters["incomplete"]`` is 0 only for a fully verified complete
@@ -116,11 +122,16 @@ shapes below were inspected in ``core/report_log.py``,
   only loader-consistent behavior. The first duplicate in sort order is
   named, making the failure deterministic under any input order.
 
-``reader_invalid_lines`` threads the reader's error channel through the
-fixed ``export_ledger(records, ...)`` interface: pass an int when the
-caller materialized the stream and counted already, or a zero-argument
-thunk returning the count (evaluated once, after ``records`` is consumed)
-for streaming callers::
+``reader_invalid_lines`` is CONTRACT, not an opt-in extension: the reader
+skips invalid lines (invalid JSON/UTF-8, non-object JSON) before they ever
+become records, so the count can only arrive through this channel.
+``None`` (the default) declares NO reader in the loop -- the correct 0 for
+pre-parsed or otherwise reader-less inputs, which then count parsed-level
+malformed only. Production callers consuming raw report-log streams MUST
+pass the reader's invalid count: a zero-argument thunk returning the count
+(evaluated once, after ``records`` is consumed; the E3 CLI wires
+``report_log.on_invalid``), or an int when the caller materialized the
+stream and counted already::
 
     invalid = 0
     def count() -> None: ...
@@ -182,9 +193,30 @@ _TEST_OUTCOMES = ("passed", "failed", "skipped")
 #: ``"C_Finalize::teardown"`` nodeid the canonical consumer attributes).
 _LIFECYCLE_NODE_ID = "C_Finalize::teardown"
 
-#: Max-priority fold for several TeardownFinalize events (same values and
-#: first-maximal ``max()`` rule as ``core/_report_records.py``).
-_FINALIZE_PRIORITY: dict[str | None, int] = {None: 0, "error": 1, "crashed": 2, "timeout": 3}
+#: Canonical rank for lifecycle-row ordering (same values as the
+#: consumer's ``max()`` rule in ``core/_report_records.py``; the exporter
+#: keeps every row in rank order while the consumer folds to one).
+_FINALIZE_PRIORITY: dict[str, int] = {"error": 1, "crashed": 2, "timeout": 3}
+
+#: Emitted row fields that distinguish finalizer occurrences. The canonical
+#: JSON of these fields is the tie-break element of the lifecycle total
+#: order (after priority rank and outcome).
+_FINALIZE_SALIENT_FIELDS: tuple[str, ...] = (
+    "shard_id",
+    "reason",
+    "class_reason",
+    "category",
+    "ckr_expected",
+    "ckr_actual",
+    "mechanism",
+    "stimulus_rev",
+    "oracle_rev",
+    "reach",
+    "effect",
+    "cleanup",
+    "termination",
+    "flags",
+)
 
 _DUMPS_KWARGS: dict[str, Any] = {"sort_keys": True}
 
@@ -352,12 +384,29 @@ def _finalize_row(
     }
 
 
-def _resolve_reader_invalid_lines(value: int | Callable[[], int]) -> int:
-    """Evaluate and validate the threaded reader-invalid count."""
+def _finalize_sort_key(row: Mapping[str, Any]) -> tuple[int, str, str]:
+    """Total-order key for one lifecycle row: rank, outcome, salient JSON."""
+    outcome = str(row["outcome"])
+    salient = {field: row[field] for field in _FINALIZE_SALIENT_FIELDS}
+    return (
+        _FINALIZE_PRIORITY[outcome],
+        outcome,
+        json.dumps(salient, **_DUMPS_KWARGS),
+    )
+
+
+def _resolve_reader_invalid_lines(value: int | Callable[[], int] | None) -> int:
+    """Evaluate and validate the threaded reader-invalid count.
+
+    ``None`` declares no reader in the loop (correct 0 for pre-parsed
+    inputs); anything else must be an int or a thunk returning one.
+    """
+    if value is None:
+        return 0
     candidate: Any = value() if callable(value) else value
     if isinstance(candidate, bool) or not isinstance(candidate, int):
         raise TypeError(
-            "export_ledger: reader_invalid_lines must be an int "
+            "export_ledger: reader_invalid_lines must be None, an int, "
             f"or a thunk returning one, got {candidate!r}"
         )
     if candidate < 0:
@@ -468,16 +517,19 @@ def export_ledger(
     identity: Mapping[str, str],
     sink: TextIO,
     *,
-    reader_invalid_lines: int | Callable[[], int] = 0,
+    reader_invalid_lines: int | Callable[[], int] | None = None,
 ) -> LedgerHeader:
     """Export report-log records to a stable ledger written to ``sink``.
 
-    ``reader_invalid_lines`` threads the reader's error channel through:
-    an int when the caller materialized the stream and counted already, or
-    a zero-argument thunk returning the count (evaluated once, after
-    ``records`` is consumed) for streaming callers wiring
-    ``iter_report_log_records(..., on_invalid=...)``. The count lands in
-    ``header.malformed_lines`` and invalidates session completion.
+    ``reader_invalid_lines`` is CONTRACT: ``None`` (the default) declares
+    no reader in the loop -- the correct 0 for pre-parsed inputs, which
+    then count parsed-level malformed only. Production callers consuming
+    raw streams MUST pass the reader's invalid count: a zero-argument
+    thunk returning the count (evaluated once, after ``records`` is
+    consumed; wire ``iter_report_log_records(..., on_invalid=...)``), or
+    an int when the caller materialized the stream and counted already.
+    The count lands in ``header.malformed_lines`` and invalidates session
+    completion.
 
     Raises ``ValueError`` (before writing anything) when two rows share
     one (node_id, phase, attempt) occurrence key.
@@ -490,7 +542,7 @@ def export_ledger(
     fallback_shard = _identity_str(identity, "shard_id")
     completion = SessionCompletionTracker()
     saw_diagnostic = False
-    finalize_events: list[tuple[Mapping[str, Any], int, str]] = []
+    finalize_events: list[tuple[Mapping[str, Any], str]] = []
 
     with tempfile.TemporaryFile("w+b") as spilled:
         for item in records:
@@ -517,7 +569,7 @@ def export_ledger(
             ledger_attempt = raw_attempt + 1 if raw_attempt is not None else 1
             if report_type == "TeardownFinalize":
                 shard_id = _facet_str(item.get("shard_id")) or fallback_shard
-                finalize_events.append((item, ledger_attempt, shard_id))
+                finalize_events.append((item, shard_id))
                 continue
             disposition, row = _disposition(item, report_type, ledger_attempt, fallback_shard)
             if disposition == "malformed":
@@ -534,15 +586,20 @@ def export_ledger(
         if reader_invalid:
             completion.invalidate()
         if finalize_events:
-            best = max(
-                finalize_events,
-                key=lambda event: _FINALIZE_PRIORITY[_finalize_outcome(event[0])],
-            )
-            outcome = _finalize_outcome(best[0])
-            if outcome is not None:
-                _spill_row(
-                    spilled, entries, counters, _finalize_row(best[0], best[1], best[2], outcome)
-                )
+            # ONE lifecycle row per unsuccessful finalizer, totally ordered
+            # so every input order yields byte-identical output; attempt is
+            # the 1-based canonical position (no case identity, no marker
+            # provenance). Effective-outcome collapsing is E3's job.
+            pending: list[dict[str, Any]] = []
+            for event_record, event_shard in finalize_events:
+                event_outcome = _finalize_outcome(event_record)
+                if event_outcome is None:
+                    continue
+                pending.append(_finalize_row(event_record, 0, event_shard, event_outcome))
+            pending.sort(key=_finalize_sort_key)
+            for position, pending_row in enumerate(pending, start=1):
+                pending_row["attempt"] = position
+                _spill_row(spilled, entries, counters, pending_row)
         counters["incomplete"] = 0 if (completion.complete and not saw_diagnostic) else 1
         header = LedgerHeader(
             schema_v=LEDGER_SCHEMA_VERSION,
