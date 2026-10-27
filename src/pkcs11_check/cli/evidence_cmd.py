@@ -95,13 +95,17 @@ def _die(output: str, code: int, kind: str, detail: object) -> NoReturn:
 
 
 def _load_ledger(path: Path, output: str) -> tuple[LedgerHeader, list[LedgerRow]]:
-    """Load a ledger: unreadable file is usage (2), malformed evidence is red (1).
+    """Load a ledger: unreadable/unparseable file is usage (2), bad content is red (1).
 
     Classification is by failure SITE, never message content: the open-probe
-    maps pre-load I/O loss to exit 2, and every ``load_ledger`` ValueError
-    maps to exit 1. TOCTOU residue: a ledger that vanishes between the probe
-    and the load fails closed as gate-red (``load_ledger`` surfaces mid-run
-    I/O loss as ValueError), never as infra.
+    maps pre-load I/O loss to exit 2, unparseable bytes (non-UTF-8 text,
+    ``RecursionError`` from the JSON parser) map to exit 2, and every
+    ``load_ledger`` ValueError maps to exit 1. TOCTOU residue: a ledger that
+    vanishes between the probe and the load fails closed as gate-red
+    (``load_ledger`` surfaces mid-run I/O loss as ValueError), never as infra.
+
+    Residual (R36): the 4300-digit int-limit ValueError from ``json.loads`` is
+    indistinguishable from content errors, so it stays exit 1 (fail closed).
     """
     try:
         with path.open("rb"):
@@ -110,6 +114,14 @@ def _load_ledger(path: Path, output: str) -> tuple[LedgerHeader, list[LedgerRow]
         _die(output, 2, "Error", f"{path} not found or unreadable ({exc})")
     try:
         return load_ledger(path)
+    except RecursionError:
+        # Mirror of the _load_json_doc hardening: static message only, never
+        # str(exc)/repr of attacker-controlled input (RecursionError-safe).
+        _die(output, 2, "Error", f"ledger {path}: RecursionError (input too deeply nested)")
+    except UnicodeDecodeError as exc:
+        # Must precede ValueError: UnicodeDecodeError subclasses it, but
+        # undecodable bytes are unparseable input (usage), not evidence.
+        _die(output, 2, "Error", f"invalid UTF-8 in {path}: {exc}")
     except ValueError as exc:
         _die(output, 1, "Evidence failure", str(exc))
 
