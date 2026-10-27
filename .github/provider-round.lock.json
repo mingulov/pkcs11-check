@@ -1,0 +1,47 @@
+{
+  "receipt_contract_v": 1,
+  "p11lab_ref": "PENDING-P11LAB",
+  "evaluator_fw_ref": "PENDING-P11LAB",
+  "baseline_fw_sha": "PENDING-P11LAB",
+  "tiers": {
+    "pr-smoke": {
+      "lanes": [
+        "softhsm2"
+      ],
+      "quorum": {
+        "note": "TBD-E5"
+      },
+      "budgets": {
+        "note": "TBD-E5"
+      }
+    },
+    "nightly": {
+      "lanes": [
+        "softhsm2",
+        "kryoptic",
+        "nss"
+      ],
+      "quorum": {
+        "note": "TBD-E5"
+      },
+      "budgets": {
+        "note": "TBD-E5"
+      }
+    },
+    "release": {
+      "lanes": [
+        "softhsm2",
+        "kryoptic",
+        "nss",
+        "tpm2",
+        "opencryptoki"
+      ],
+      "quorum": {
+        "note": "TBD-E5"
+      },
+      "budgets": {
+        "note": "TBD-E5"
+      }
+    }
+  }
+}
