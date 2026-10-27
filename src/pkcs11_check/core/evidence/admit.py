@@ -29,7 +29,10 @@ from typing import Any
 from pkcs11_check.core.evidence.obligations import ObligationInventory
 from pkcs11_check.core.evidence.schema import LedgerHeader, LedgerRow, Outcome
 
-#: sha256 of ``b""`` -- the pinned digest of an empty (zero-record) shard.
+#: sha256 of ``b""`` -- the pinned digest of an empty input to
+#: ``shard_digest``. Direct ``shard_digest([])`` use only: zero-record roster
+#: shards are rejected at construction, so this digest is unreachable via
+#: ``admit_lane`` (an absent shard always fails ``roster_complete``).
 EMPTY_SHARD_SHA256 = hashlib.sha256(b"").hexdigest()
 
 
@@ -39,6 +42,15 @@ class ShardExpectation:
 
     records: int
     sha256: str
+
+    def __post_init__(self) -> None:
+        """Reject zero-record shards: every roster shard must carry rows."""
+        if self.records < 1:
+            raise ValueError(
+                "ShardExpectation records must be >= 1 "
+                f"(got {self.records}); absent shards fail roster_complete, "
+                "they are never predeclared empty"
+            )
 
 
 @dataclass(frozen=True)
@@ -139,17 +151,9 @@ def _check_roster_complete(mappings: list[dict[str, Any]], roster: PredeclaredRo
     problems: list[str] = []
     for shard_id, expected in roster.shards.items():
         if shard_id not in groups:
-            if expected.records == 0:
-                if EMPTY_SHARD_SHA256 != expected.sha256:
-                    problems.append(
-                        f"roster_complete: empty shard {shard_id!r} digest mismatch: "
-                        f"rows hash {EMPTY_SHARD_SHA256}, roster expects {expected.sha256}"
-                    )
-            else:
-                problems.append(
-                    f"roster_complete: roster shard {shard_id!r} missing from rows "
-                    "-- no partial credit"
-                )
+            problems.append(
+                f"roster_complete: roster shard {shard_id!r} missing from rows -- no partial credit"
+            )
             continue
         present = groups[shard_id]
         if len(present) != expected.records:

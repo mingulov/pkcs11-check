@@ -117,11 +117,19 @@ class LedgerHeader:
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any], *, line_number: int) -> LedgerHeader:
-        """Build a header from a parsed ledger line, failing loud on bad types."""
+        """Build a header from a parsed ledger line.
+
+        Fails loud on bad types and on missing known counter keys (absent
+        counters are malformed evidence, never zero-filled); unknown extra
+        keys stay ignored for forward compatibility.
+        """
         label = f"ledger line {line_number}"
         counters = record.get("counters")
         if not isinstance(counters, Mapping):
             raise ValueError(f"{label}: header counters is not an object")
+        missing = [key for key in COUNTER_KEYS if key not in counters]
+        if missing:
+            raise ValueError(f"{label}: header counters missing keys {missing!r}")
         merged = zero_counters()
         for key, value in counters.items():
             if not isinstance(key, str) or type(value) is not int:
