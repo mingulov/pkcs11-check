@@ -1,0 +1,22 @@
+name: CI round (PR smoke)
+
+# Thin PR caller for the workspace reusable round workflow. Passes ONLY the
+# event-derived candidate SHA plus the tier name; every other run parameter
+# is derived inside the pinned reusable workflow from its own policy
+# manifest, and smuggled overrides are rejected before any provider
+# execution (A-1). Same-repo PRs only; fork-PR handling is a follow-up (R3).
+# The `uses:` pin is a full ws SHA — it must equal the ws commit that
+# contains .github/workflows/ci-round.yml.
+
+on:
+  pull_request:
+
+jobs:
+  ci-round:
+    uses: mingulov/pkcs11-check-ws/.github/workflows/ci-round.yml@153bc2242ca01d03f2a7ce7e816ca5c2086aa2f5
+    with:
+      framework_sha: ${{ github.event.pull_request.head.sha }}
+      tier: pr-smoke
+    permissions:
+      contents: read
+    timeout-minutes: 120
