@@ -56,7 +56,7 @@ Lock schema (PINNED; this file lives at
      "tiers": {"pr-smoke": {"lanes": [...], "quorum": {...}, "budgets": {...}},
                "nightly": {...}, "release": {...}}}
 
-Tier objects carry a non-empty ``lanes`` list of non-empty strings plus
+Tier objects carry a non-empty ``lanes`` list of non-empty UTF-8-encodable strings plus
 ``quorum``/``budgets`` objects (presence-checked only — shapes and
 thresholds are TBD-E5). Staged
 Windows/macOS lanes (``win-softhsm2``, ``win-bouncyhsm``,
@@ -176,6 +176,12 @@ def _validate_lock_tier(tier: object, spec: Any) -> list[str]:
         or any(not isinstance(name, str) or not name for name in lanes)
     ):
         errors.append(f"{prefix}.lanes: must be a non-empty list of non-empty strings")
+    elif not _is_utf8_encodable("".join(lanes)):
+        # R30: an unencodable lock lane matching an unencodable receipt
+        # lane would pass the roster (rule 5) and lane entries (rule 6)
+        # while the bundle check (rule 7) skips -> exit 0 on a bogus
+        # bundle. Reject it here as malformed lock schema (exit 2).
+        errors.append(f"{prefix}.lanes: lane names must be UTF-8-encodable")
     for field in ("quorum", "budgets"):
         shape = spec.get(field)
         if shape is None:
