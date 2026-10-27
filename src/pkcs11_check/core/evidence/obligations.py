@@ -11,8 +11,10 @@ from typing import Any
 class ObligationInventory:
     """Profile-selected obligations plus the catalog remainder.
 
-    ``members``: the profile-selected case IDs — the admission obligations.
-    ``unselected``: catalog IDs the profile did NOT select. Admission
+    ``members``: the profile-selected case IDs — the admission obligations,
+    consumed by ``admit_lane``'s ``obligations_executed`` predicate (every
+    member must appear as a row node_id, else admission FAILs naming the
+    case). ``unselected``: catalog IDs the profile did NOT select. Admission
     surfaces these as ``unselected_obligation`` warnings (warn, never fail),
     so dropped coverage stays visible instead of silently absent.
     """

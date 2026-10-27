@@ -258,6 +258,12 @@ def _require_str(record: Mapping[str, Any], key: str, label: str) -> str:
 
 
 def _require_int(record: Mapping[str, Any], key: str, label: str) -> int:
+    """Return the field's exact-int value; inf/nan/float/bool fail loud (R34).
+
+    Pure type check -- no conversion, so nothing here can overflow: any
+    non-``int`` (including JSON ``Infinity``/``NaN`` floats) raises
+    ``ValueError`` as malformed evidence.
+    """
     value = record.get(key)
     if type(value) is not int:
         raise ValueError(f"{label}: field {key!r} is not an int")

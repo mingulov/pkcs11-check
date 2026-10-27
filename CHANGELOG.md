@@ -9,7 +9,8 @@
 - **Admission predicates with obligation inventory.** The
   `evidence-admit` CLI command gates ledgers before comparison.
 - **Ledger comparator with mutation-pinned strictness.** The
-  `evidence-compare` CLI command diffs admitted ledgers.
+  `evidence-compare` CLI command diffs ledgers (admission stays a caller
+  precondition -- compare never admits).
 - **Round receipt verifier + provider-round lock file.**
   `scripts/verify_round_receipt.py` checks receipts against
   `.github/provider-round.lock.json`.

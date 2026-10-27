@@ -1196,3 +1196,74 @@ def test_compare_missing_file_long_path_wrap_independent(
     assert result.exit_code == 2, result.output
     assert "not found or unreadable" in _normalized_text(result)
     assert "Usage:" not in result.output
+
+
+# --- final fix round F2: FF1 parser hardening + FF4 CLI export --------------------
+
+
+def _invoke_admit_json(ledger: Path, roster: Path, obligations: Path) -> Any:
+    return runner.invoke(
+        app,
+        [
+            "evidence-admit",
+            str(ledger),
+            "--roster",
+            str(roster),
+            "--obligations",
+            str(obligations),
+            "--output",
+            "json",
+        ],
+    )
+
+
+def test_admit_roster_huge_int_json_envelope_exit_2(tmp_path: Path) -> None:
+    """FF1: roster with a 5000-digit int -> exit 2 + R25 envelope, no traceback."""
+    ledger, roster, obligations = _admit_files(tmp_path)
+    roster.write_text(
+        '{"lane": "soft", "shards": {"s0": {"records": ' + "9" * 5000 + ', "sha256": "x"}}}',
+        encoding="utf-8",
+    )
+    result = _invoke_admit_json(ledger, roster, obligations)
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+
+
+def test_admit_roster_deep_nesting_json_envelope_exit_2(tmp_path: Path) -> None:
+    """FF1: roster with 20000-nested arrays -> exit 2 + R25 envelope, no traceback."""
+    ledger, roster, obligations = _admit_files(tmp_path)
+    roster.write_text("[" * 20000 + "]" * 20000, encoding="utf-8")
+    result = _invoke_admit_json(ledger, roster, obligations)
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+
+
+def test_admit_obligations_non_utf8_json_envelope_exit_2(tmp_path: Path) -> None:
+    """FF1 pin: 0xff-bytes obligations sidecar -> exit 2 + R25 envelope."""
+    ledger, roster, obligations = _admit_files(tmp_path)
+    obligations.write_bytes(b'{"catalog": {}, "profile": {"cases": []}}\xff')
+    result = _invoke_admit_json(ledger, roster, obligations)
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+
+
+def test_export_overflow_durations_cli_exit_0_rows_preserved(tmp_path: Path) -> None:
+    """FF4/R34: reviewer probes through the full CLI path -- exit 0, rows kept."""
+    report = _write_report(
+        tmp_path / "report.jsonl",
+        _framed(
+            _report(NODE_A, duration=1e308),
+            _report(NODE_B, duration=10**400),
+        ),
+    )
+    ledger = tmp_path / "ledger.jsonl"
+    result = runner.invoke(app, ["evidence-export", str(report), str(ledger), "--lane", "soft"])
+    assert result.exit_code == 0, result.output
+    _, rows = load_ledger(ledger)
+    assert [row.duration_ms for row in rows] == [0, 0]
