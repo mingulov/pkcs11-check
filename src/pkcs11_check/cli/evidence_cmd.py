@@ -44,11 +44,30 @@ _ADMIT_ROW_CAP = 5
 _ADMIT_FAILURE_CAP = 20
 _ADMIT_WARNING_CAP = 20
 
+#: One Python string-literal token, as E2's ``{value!r}`` shapes emit (either
+#: quote style, with backslash escapes when the value mixes quote kinds).
+_REPR_TOKEN = r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'"
 #: E2's TESTED reference shapes (see admit.py; pinned by E3's F4 tests).
-_SHARD_REF_RE = re.compile(r"shard '([^']*)'")
-_BUCKET_REF_RE = re.compile(r"bucket '([^']*)'")
+_SHARD_REF_RE = re.compile(rf"shard ({_REPR_TOKEN})")
+_BUCKET_REF_RE = re.compile(rf"bucket ({_REPR_TOKEN})")
 _ROW_INDEX_RE = re.compile(r"row (\d+)")
 _OCCURRENCE_GROUP_RE = re.compile(r"group \((.*)\) (?:has|disagrees)")
+
+
+def _parse_repr_token(match: re.Match[str] | None) -> str | None:
+    """Evaluate one ``{value!r}`` token to its string (None when unparseable).
+
+    Defensive fallback: anything ``ast.literal_eval`` rejects (or that does
+    not evaluate to a ``str``) yields None so callers keep their raw-message
+    note instead of raising on a future E2 message change.
+    """
+    if match is None:
+        return None
+    try:
+        value = ast.literal_eval(match.group(1))
+    except (SyntaxError, ValueError):
+        return None
+    return value if isinstance(value, str) else None
 
 
 def _check_output(output: str) -> None:
@@ -172,8 +191,12 @@ def _split_unstable_entry(entry: str) -> tuple[str, str, str] | None:
 
 
 def evidence_export_command(
-    report: Path = typer.Argument(..., help="Input report.jsonl (raw report-log stream)"),
-    ledger: Path = typer.Argument(..., help="Output ledger.jsonl path"),
+    # R27/F6r: no Typer-level readability validation -- every path failure
+    # routes through the command's JSON-aware preflight below.
+    report: Path = typer.Argument(
+        ..., readable=False, help="Input report.jsonl (raw report-log stream)"
+    ),
+    ledger: Path = typer.Argument(..., readable=False, help="Output ledger.jsonl path"),
     lane: str = typer.Option("", "--lane", help="Lane name echoed into the header"),
     lane_os: str = typer.Option("", "--lane-os", help="Lane OS echoed into the header"),
     lane_arch: str = typer.Option("", "--lane-arch", help="Lane arch echoed into the header"),
@@ -345,8 +368,7 @@ def _admit_failure_lines(
     lines = [f"  {failure}"]
     predicate = failure.split(":", 1)[0]
     if predicate == "roster_complete":
-        match = _SHARD_REF_RE.search(failure)
-        shard = match.group(1) if match else None
+        shard = _parse_repr_token(_SHARD_REF_RE.search(failure))
         if shard is None:
             lines.append("    note: shard unparseable; raw message above")
         elif "missing from rows" in failure:
@@ -385,8 +407,7 @@ def _admit_failure_lines(
             lines.append("    note: no implicated rows (header-level sum check)")
             lines.append(f"    {_header_facts(header, len(rows))}")
         else:
-            match = _BUCKET_REF_RE.search(failure)
-            bucket = match.group(1) if match else None
+            bucket = _parse_repr_token(_BUCKET_REF_RE.search(failure))
             if bucket is None:
                 lines.append("    note: bucket unparseable; raw message above")
             elif "counter is not an int" in failure:
@@ -405,9 +426,13 @@ def _admit_failure_lines(
 
 
 def evidence_admit_command(
-    ledger: Path = typer.Argument(..., help="Ledger.jsonl to admit"),
-    roster: Path = typer.Option(..., "--roster", help="Predeclared roster JSON"),
-    obligations: Path = typer.Option(..., "--obligations", help="Catalog/profile JSON"),
+    # R27/F6r: no Typer-level readability validation -- every path failure
+    # routes through the command's JSON-aware preflight below.
+    ledger: Path = typer.Argument(..., readable=False, help="Ledger.jsonl to admit"),
+    roster: Path = typer.Option(..., "--roster", readable=False, help="Predeclared roster JSON"),
+    obligations: Path = typer.Option(
+        ..., "--obligations", readable=False, help="Catalog/profile JSON"
+    ),
     output: str = typer.Option("summary", "--output", "-o", help="Output: summary|json"),
 ) -> None:
     """Admit a lane ledger against its roster and obligation inventory."""
@@ -619,9 +644,13 @@ def _print_compare_summary(
 
 
 def evidence_compare_command(
-    baseline: Path = typer.Argument(..., help="Baseline ledger.jsonl"),
-    candidate: Path = typer.Argument(..., help="Candidate ledger.jsonl"),
-    deltas: Path | None = typer.Option(None, "--deltas", help="Rotation deltas JSON"),
+    # R27/F6r: no Typer-level readability validation -- every path failure
+    # routes through the command's JSON-aware preflight below.
+    baseline: Path = typer.Argument(..., readable=False, help="Baseline ledger.jsonl"),
+    candidate: Path = typer.Argument(..., readable=False, help="Candidate ledger.jsonl"),
+    deltas: Path | None = typer.Option(
+        None, "--deltas", readable=False, help="Rotation deltas JSON"
+    ),
     quorum_min_repeats: int = typer.Option(3, "--quorum-min-repeats", help="Quorum repeats"),
     quorum_frac: float = typer.Option(2 / 3, "--quorum-frac", help="Quorum fraction"),
     output: str = typer.Option("summary", "--output", "-o", help="Output: summary|json"),
