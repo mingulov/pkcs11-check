@@ -343,6 +343,22 @@ def _key_unstable_entry(
     return None
 
 
+def _one_sided_unstable_entry(node_id: str, phase: str, present_findings: list[str]) -> str | None:
+    """Return the rule-5 instability entry for one covered one-sided key, if any.
+
+    Mirrors :func:`_key_unstable_entry` with the absent side contributing no
+    findings: a present-side ``first_attempt`` pattern yields the
+    ``first_attempt`` axis (the exactly-one-side flip), any other present-side
+    finding yields ``attempts``. Coverage excuses the add/remove transition
+    only, never within-key attempt disagreement (F1r/R26).
+    """
+    if "first_attempt" in present_findings:
+        return f"{node_id}::{phase}:first_attempt"
+    if present_findings:
+        return f"{node_id}::{phase}:attempts"
+    return None
+
+
 def _key_disposition_verdict(
     node_id: str,
     phase: str,
@@ -511,6 +527,15 @@ def compare_lanes(
             if improvement is not None:
                 improvements.append(improvement)
         elif key in covered and key not in compare_on_top:
+            # F1r/R26: the present side's within-key findings judge stability
+            # BEFORE the covered add/remove transition is excused.
+            if key in base_combined:
+                _, present_findings, _ = base_combined[key]
+            else:
+                _, present_findings, _ = cand_combined[key]
+            one_sided = _one_sided_unstable_entry(node_id, phase, present_findings)
+            if one_sided is not None:
+                unstable.append(one_sided)
             continue
         elif key in base_combined:
             base_fp, _, _ = base_combined[key]

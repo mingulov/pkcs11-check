@@ -1235,3 +1235,87 @@ def test_validate_deltas_rejects_non_unit_ttl_strictly(ttl: Any) -> None:
     errors = validate_deltas(RotationDeltas(version=FP_VERSION, entries=(Delta(**kwargs),)))
     assert errors
     assert "ttl" in "\n".join(errors)
+
+
+# --- fix round 2: covered one-sided keys still judge present-side findings (F1r) -
+
+
+def _one_sided_delta(
+    case_id: str, old_fp: tuple[str, ...] | str, new_fp: tuple[str, ...] | str
+) -> RotationDeltas:
+    """Build the matching addition/removal delta covering one one-sided key."""
+    return RotationDeltas(
+        version=FP_VERSION,
+        entries=(
+            Delta(
+                lane="soft",
+                case_id=case_id,
+                phase="call",
+                old_fp=old_fp,
+                new_fp=new_fp,
+                reason="rotation covers the add/remove transition only",
+                ttl=1,
+            ),
+        ),
+    )
+
+
+def _disagreeing_triplet(node_id: str) -> list[LedgerRow]:
+    """Three attempts whose earliest differs from a unanimous later steady state."""
+    return [
+        _hb_row(node_id, Outcome.FAILED, attempt=1, attempts_total=3, reason="wrong_result"),
+        _hb_row(node_id, Outcome.PASSED, attempt=2, attempts_total=3),
+        _hb_row(node_id, Outcome.PASSED, attempt=3, attempts_total=3),
+    ]
+
+
+def test_covered_added_key_with_attempt_disagreement_is_unstable() -> None:
+    """F1r probe: covered added [fail,pass,pass] -> unstable + gate-red."""
+    cand_a = _disagreeing_triplet(NODE_A)
+    combined, findings = combine_attempts(cand_a, QuorumPolicy())
+    assert findings  # the present side genuinely disagrees within the key
+    base_rows = [_hb_row(NODE_B, Outcome.PASSED)]
+    cand_rows = [*cand_a, _hb_row(NODE_B, Outcome.PASSED)]
+    deltas = _one_sided_delta(NODE_A, "absent", combined)
+    assert validate_deltas(deltas) == []
+    verdict = _compare(
+        (_hb_header(base_rows), base_rows), (_hb_header(cand_rows), cand_rows), deltas
+    )
+    assert verdict.counts["deltas_applied"] == 1
+    assert verdict.unstable == [f"{NODE_A}::call:first_attempt"]
+    assert _negative(verdict)
+
+
+def test_covered_removed_key_with_attempt_disagreement_is_unstable() -> None:
+    """F1r probe: covered removed [fail,pass,pass] -> unstable + gate-red."""
+    base_a = _disagreeing_triplet(NODE_A)
+    combined, findings = combine_attempts(base_a, QuorumPolicy())
+    assert findings  # the present side genuinely disagrees within the key
+    base_rows = [*base_a, _hb_row(NODE_B, Outcome.PASSED)]
+    cand_rows = [_hb_row(NODE_B, Outcome.PASSED)]
+    deltas = _one_sided_delta(NODE_A, combined, "absent")
+    assert validate_deltas(deltas) == []
+    verdict = _compare(
+        (_hb_header(base_rows), base_rows), (_hb_header(cand_rows), cand_rows), deltas
+    )
+    assert verdict.counts["deltas_applied"] == 1
+    assert verdict.unstable == [f"{NODE_A}::call:first_attempt"]
+    assert _negative(verdict)
+
+
+def test_covered_added_stable_key_stays_green() -> None:
+    """F1r control: covered added [pass,pass,pass] -> green (no false unstable)."""
+    cand_a = [_hb_row(NODE_A, Outcome.PASSED, attempt=n, attempts_total=3) for n in (1, 2, 3)]
+    combined, findings = combine_attempts(cand_a, QuorumPolicy())
+    assert findings == []
+    base_rows = [_hb_row(NODE_B, Outcome.PASSED)]
+    cand_rows = [*cand_a, _hb_row(NODE_B, Outcome.PASSED)]
+    deltas = _one_sided_delta(NODE_A, "absent", combined)
+    assert validate_deltas(deltas) == []
+    verdict = _compare(
+        (_hb_header(base_rows), base_rows), (_hb_header(cand_rows), cand_rows), deltas
+    )
+    assert verdict.counts["deltas_applied"] == 1
+    assert verdict.regressions == []
+    assert verdict.unstable == []
+    assert not _negative(verdict)

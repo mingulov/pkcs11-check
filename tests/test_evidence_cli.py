@@ -1002,3 +1002,149 @@ def test_compare_non_unit_ttl_rejected_as_bad_paperwork(tmp_path: Path, ttl: Any
     )
     result = runner.invoke(app, ["evidence-compare", str(base), str(cand), "--deltas", str(deltas)])
     assert result.exit_code == 1, result.output
+
+
+# --- fix round 2: repr-quote shard/bucket parsing (F4r) -------------------------
+
+
+def test_admit_double_quoted_shard_renders_implicated_rows(tmp_path: Path) -> None:
+    """F4r: shard ID s'0 (E2 double-quoted repr) still renders rows + locators."""
+    rows = [
+        _hb_row(
+            NODE_A,
+            Outcome.FAILED,
+            shard_id="s'0",
+            reason="wrong_result",
+            ckr_expected="CKR_OK",
+            ckr_actual="CKR_DATA_INVALID",
+            termination="clean",
+        ),
+        _hb_row(NODE_B, Outcome.PASSED, shard_id="s'0"),
+    ]
+    header = _hb_header(rows)
+    ledger, roster, obligations = _write_admit_files(tmp_path, header, rows)
+    doc = json.loads(roster.read_text(encoding="utf-8"))
+    doc["shards"]["s'0"]["sha256"] = "0" * 64
+    roster.write_text(json.dumps(doc), encoding="utf-8")
+    result = _invoke_admit(ledger, roster, obligations)
+    assert result.exit_code == 1, result.output
+    assert 'shard "s\'0" digest mismatch' in result.output
+    assert "unparseable" not in result.output
+    assert "wrong_result" in result.output
+    assert f"soft/s'0/{NODE_A}::call@1 raw:" in result.output
+
+
+def test_admit_double_quoted_bucket_parses() -> None:
+    """F4r audit: a double-quoted bucket repr parses (no 'unparseable' note).
+
+    Pinned at the parser level: a quoted bucket cannot survive ledger load
+    (``from_record`` drops unknown counter keys), so the genuine E2 message
+    is produced in-memory and fed to ``_admit_failure_lines`` directly.
+    """
+    header, rows = _clean_hb_lane()
+    quoted = replace(header, counters={**header.counters, "b'x": 1})
+    verdict = admit_lane(quoted, rows, _roster_for(rows), _inventory_for(rows))
+    assert not verdict.admitted
+    (failure,) = [item for item in verdict.failures if item.startswith("session_framing: bucket")]
+    assert failure == 'session_framing: bucket "b\'x" header says 1, rows have 0'
+    lines = evidence_cmd._admit_failure_lines(failure, header, rows)
+    joined = "\n".join(lines)
+    assert "unparseable" not in joined
+    assert "b'x" in joined
+
+
+def test_admit_occurrence_group_with_quote_renders_rows(tmp_path: Path) -> None:
+    """F4r audit control: occurrence already literal_evals, quoted IDs render."""
+    node = "tests/q.py::test_q'n"
+    rows = [
+        _hb_row(node, Outcome.PASSED, attempt=1, attempts_total=3),
+        _hb_row(node, Outcome.PASSED, attempt=2, attempts_total=3),
+    ]
+    header = _hb_header(rows)
+    ledger, roster, obligations = _write_admit_files(tmp_path, header, rows)
+    result = _invoke_admit(ledger, roster, obligations)
+    assert result.exit_code == 1, result.output
+    assert "occurrence_preserved" in result.output
+    assert f"soft/s0/{node}::call@1 raw:" in result.output
+    assert f"soft/s0/{node}::call@2 raw:" in result.output
+
+
+# --- fix round 2: path failures reach the JSON-aware preflight (F6r) ------------
+
+
+def _assert_error_envelope(result: Any) -> None:
+    """Assert an R25 error envelope on stdout (parseable, non-empty errors)."""
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert isinstance(payload["errors"], list) and payload["errors"]
+
+
+def _chmod_locked(path: Path) -> bool:
+    """chmod-000 `path`; True unless still readable (e.g. running as root)."""
+    path.chmod(0o000)
+    try:
+        with path.open("rb"):
+            pass
+    except OSError:
+        return True
+    return False
+
+
+def test_compare_unreadable_candidate_json_envelope_exit_2(tmp_path: Path) -> None:
+    """F6r: chmod-000 candidate + --output json -> R25 envelope, exit 2."""
+    base, _ = _compare_ledgers(tmp_path)
+    locked = tmp_path / "locked.jsonl"
+    locked.write_bytes(base.read_bytes())
+    try:
+        if not _chmod_locked(locked):
+            pytest.skip("file readable despite chmod 000 (running as root?)")
+        result = runner.invoke(
+            app, ["evidence-compare", str(base), str(locked), "--output", "json"]
+        )
+        assert result.exit_code == 2, result.output
+        _assert_error_envelope(result)
+    finally:
+        locked.chmod(0o644)
+
+
+def test_compare_missing_file_json_envelope_exit_2(tmp_path: Path) -> None:
+    """F6r control: missing candidate + --output json -> R25 envelope, exit 2."""
+    base, _ = _compare_ledgers(tmp_path)
+    result = runner.invoke(
+        app, ["evidence-compare", str(base), str(tmp_path / "absent.jsonl"), "--output", "json"]
+    )
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+
+
+def test_compare_directory_ledger_json_envelope_exit_2(tmp_path: Path) -> None:
+    """F6r audit: a directory ledger also reaches the preflight envelope."""
+    base, _ = _compare_ledgers(tmp_path)
+    result = runner.invoke(app, ["evidence-compare", str(base), str(tmp_path), "--output", "json"])
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+
+
+def test_compare_unreadable_candidate_summary_prose_exit_2(tmp_path: Path) -> None:
+    """F6r: chmod-000 candidate in summary mode -> preflight prose, exit 2."""
+    base, _ = _compare_ledgers(tmp_path)
+    locked = tmp_path / "locked.jsonl"
+    locked.write_bytes(base.read_bytes())
+    try:
+        if not _chmod_locked(locked):
+            pytest.skip("file readable despite chmod 000 (running as root?)")
+        result = runner.invoke(app, ["evidence-compare", str(base), str(locked)])
+        assert result.exit_code == 2, result.output
+        assert "not found or unreadable" in result.output
+        assert "Usage:" not in result.output
+    finally:
+        locked.chmod(0o644)
+
+
+def test_compare_missing_file_summary_prose_exit_2(tmp_path: Path) -> None:
+    """F6r control: missing candidate in summary mode -> preflight prose, exit 2."""
+    base, _ = _compare_ledgers(tmp_path)
+    result = runner.invoke(app, ["evidence-compare", str(base), str(tmp_path / "absent.jsonl")])
+    assert result.exit_code == 2, result.output
+    assert "not found or unreadable" in result.output
+    assert "Usage:" not in result.output
