@@ -8,53 +8,124 @@ collapsed.
 
 Mapping table (report-record key -> row field, ``""`` default). All source
 shapes below were inspected in ``core/report_log.py``,
-``core/_report_records.py``, ``core/file_runner.py`` and
-``classification.py``:
+``core/_report_records.py``, ``core/file_runner.py``,
+``classification.py``, ``_plugin_report_attach.py`` and
+``report/extract.py``:
 
 - ``TestReport`` records (``nodeid``/``when``/``outcome``/``duration``/
   ``user_properties``) are the main row source. Only ``when`` in
-  ``{"setup", "call", "teardown"}`` yields a row.
+  ``{"setup", "call", "teardown"}`` with ``outcome`` in
+  ``{"passed", "failed", "skipped"}`` yields a row.
 - ``node_id``: ``normalize_nodeid(record["nodeid"])`` (forward slashes).
 - ``phase``: ``record["when"]``; ``"collect"`` for failed ``CollectReport``
-  records; ``"harness"`` for ``HarnessError`` markers.
-- ``attempt``: the ``attempt`` of the most recent well-formed
-  ``IsolatedUnitReport`` marker (``target`` non-empty str, ``attempt`` int
-  >= 1), reset by ``SessionStart``; ``1`` when unattributed. Attribution
-  follows marker order, so byte-stability holds for reorderings within a
-  marker scope -- moving records across markers is a different stream.
+  records; ``"harness"`` for ``HarnessError`` markers; ``"teardown"`` for
+  the folded ``TeardownFinalize`` lifecycle row.
+- ``attempt``: ledger attempts are 1-based while source markers are
+  0-based, so a row's attempt is the source marker + 1. This matches the
+  merge layer's ``raw_attempt + 1`` (``core/_report_records.py``). A
+  well-formed marker (``IsolatedUnitReport`` with a non-empty str
+  ``target`` and a non-bool int ``attempt`` >= 0 -- every emission site
+  starts at 0 and increments, and static-skip markers use 0) establishes
+  provenance for subsequent records; a later well-formed marker supersedes
+  earlier provenance (escalation, e.g. a file-level target refined to a
+  per-test target); ``SessionStart`` resets provenance to unattributed. A
+  malformed marker (bad ``target``, non-int or negative ``attempt``)
+  counts one malformed line and resets provenance to unattributed
+  (recovery); unattributed rows export attempt 1. Attribution follows
+  marker order, so byte-stability holds for reorderings within a marker
+  scope -- moving records across markers is a different stream.
 - ``attempts_total``: the count of exported rows sharing (node_id, phase).
 - ``shard_id``: ``record["shard_id"]`` (orchestrator-injected per-record
   shard tag), else ``identity["shard_id"]``, else ``""``.
 - ``outcome``: ``map_report_record_outcome(record)`` for ``TestReport``
   (passed/failed/skipped/xfailed/xpassed/crashed); ``"error"`` for failed
-  ``CollectReport`` and ``HarnessError`` records. ``timeout``,
+  ``CollectReport`` and ``HarnessError`` records; ``"error"``/``"crashed``/
+  ``"timeout"`` for the folded ``TeardownFinalize`` row (see below).
   ``crash_limited`` and ``missing`` have no report-record producer and only
   ever appear as zero counters / accepted load vocabulary.
 - ``duration_ms``: ``record["duration"]`` seconds x 1000, else ``0``.
-- Facets from the FIRST ``pkcs11_classification`` user-property entry
-  (``classification.serialize`` shape: reason/outcome/severity/kind/label/
-  summary/operation/mechanism/expected_ckr/actual_ckr/spec_ref/source/
-  vector_id/params/detail/schema): ``reason`` <- ``reason``,
-  ``class_reason`` <- ``outcome`` (the classification's declared outcome),
-  ``category`` <- ``kind``, ``ckr_expected`` <- ``","``-joined
-  ``expected_ckr``, ``ckr_actual`` <- ``actual_ckr``, ``mechanism`` <-
-  ``mechanism``. ``reason`` is ``"harness_error"``/``"collect_error"`` for
-  those derived rows.
+- Facets from the TERMINATING ``pkcs11_classification`` user-property
+  entry (``classification.serialize`` shape: reason/outcome/severity/kind/
+  label/summary/operation/mechanism/expected_ckr/actual_ckr/spec_ref/
+  source/vector_id/params/detail/schema): the first entry whose
+  ``outcome`` is ``"fail"``, else the first ``"xfail"`` entry, else the
+  first entry. This mirrors ``_apply_recorded_outcome`` in
+  ``_plugin_report_attach.py``, which drives the report outcome from the
+  same priority (the exception-linked terminating record does not survive
+  serialization, so list order + outcome priority is the reproducible
+  approximation). ``reason`` <- ``reason``, ``class_reason`` <-
+  ``outcome`` (the classification's declared outcome), ``category`` <-
+  ``kind``, ``ckr_expected`` <- ``","``-joined ``expected_ckr``,
+  ``ckr_actual`` <- ``actual_ckr``, ``mechanism`` <- ``mechanism``.
+  ``reason`` is ``"harness_error"``/``"collect_error"`` for those derived
+  rows. Each ADDITIONAL entry contributes an ``extra:<reason>`` flag (in
+  stream order), so no semantic observation is silently discarded and the
+  locked schema is untouched. A non-list property value carries no facets
+  (the row survives), matching ``iter_classification_occurrences``.
 - ``stimulus_rev/oracle_rev/reach/effect/cleanup/termination`` and
-  ``flags``: forward-compat facets read from the classification ``detail``
-  mapping's same-named sub-keys; always ``""``/``[]`` on current
-  producers, which never emit them.
-- Skipped silently (framing, matching the canonical consumer in
-  ``core/_report_records.py``): ``SessionStart``/``SessionFinish``,
-  passed/skipped ``CollectReport``, ``ProcessReport``,
+  ``flags``: forward-compat facets read from the selected classification's
+  ``detail`` mapping's same-named sub-keys (declared detail flags come
+  first, then any ``extra:<reason>`` markers); always ``""``/``[]`` on
+  current producers, which never emit them.
+- ``TeardownFinalize`` records fold to ONE lifecycle row (node_id
+  ``"C_Finalize::teardown"``, phase ``"teardown"``, stream-position
+  attempt/shard): outcome detection mirrors ``finalize_outcome`` in
+  ``core/_report_records.py`` (a Windows access-violation -- via
+  ``windows_status`` or a ctypes traceback in ``error`` -- forces
+  ``"crashed"``; ``"ok"`` (case-insensitive, and only ``"ok"``) is
+  skipped; ``"crashed"``/``"timeout"`` pass through; anything else,
+  including a missing outcome, is ``"error"``). Several events fold to the
+  single max-priority outcome (error < crashed < timeout, first-maximal
+  wins -- the same ``max()`` rule the consumer uses), so folded lifecycle
+  rows can never collide with themselves. Facets mirror
+  ``_classification_from_teardown_finalize`` in ``report/extract.py``:
+  ``reason`` ``"crash"``/``"self_contradiction"``, ``class_reason``
+  ``"fail"``, ``category`` ``"lifecycle"``, ``ckr_expected`` ``"CKR_OK"``,
+  ``ckr_actual`` <- ``rv_name``.
+- Session completion: every mapping record is observed by
+  ``SessionCompletionTracker`` (``core/report_log.py``).
+  ``counters["incomplete"]`` is 0 only for a fully verified complete
+  session, else 1: unbalanced/missing bookends, malformed input, or
+  collection/harness failure evidence (the canonical consumer also marks
+  the session incomplete on collect/harness errors). Unframed legacy
+  streams (no ``SessionStart`` at all) always export ``incomplete=1``:
+  absent bookends are unverifiable, never clean. Reader-invalid lines (see
+  below) and non-mapping items invalidate completion, mirroring the
+  ``on_invalid=completion.invalidate`` wiring in ``core/_jsonl_extract.py``.
+- Skipped silently (framing): ``SessionStart``/``SessionFinish``,
+  passed/skipped ``CollectReport``, ``ProcessReport``, ``"ok"``
   ``TeardownFinalize``, unknown ``$report_type`` values.
 - Counted into ``header.malformed_lines`` (never silently dropped):
-  non-mapping items; ``TestReport`` records with a missing/invalid
-  ``nodeid``/``when``/``outcome`` (a missing ``outcome`` is malformed --
-  the shared mapper's ``"passed"`` default is NOT inherited);
-  ``HarnessError``/failed-``CollectReport`` records with a non-str
-  ``nodeid``; ``IsolatedUnitReport`` markers with a missing/empty
-  ``target`` or a non-int/``< 1`` ``attempt`` (provenance resets).
+  non-mapping items; records with a missing/empty/non-str ``$report_type``;
+  ``TestReport`` records with a missing/invalid ``nodeid``/``when``/
+  ``outcome`` (a missing ``outcome`` is malformed -- the shared mapper's
+  ``"passed"`` default is NOT inherited) or a mistyped
+  ``user_properties`` container; ``HarnessError``/failed-``CollectReport``
+  records with a non-str ``nodeid``; ``CollectReport`` records with a
+  missing/invalid ``outcome``; ``IsolatedUnitReport`` markers with a
+  missing/empty ``target`` or a non-int/negative ``attempt`` (provenance
+  resets); plus the ``reader_invalid_lines`` count (lines the reader
+  skipped before parsing, e.g. invalid JSON/UTF-8 or non-object JSON).
+  Every row-producing shape flows through ONE disposition function
+  (row/skip/malformed), so row and malformed accounting cannot drift.
+- Duplicate occurrence keys: ``export_ledger`` raises ``ValueError``
+  (before writing anything) when two rows share (node_id, phase, attempt)
+  -- e.g. equal keys with conflicting outcomes, or overlapping shards.
+  The loader rejects such ledgers, and occurrence preservation forbids
+  silently dropping or merging either row, so failing explicitly is the
+  only loader-consistent behavior. The first duplicate in sort order is
+  named, making the failure deterministic under any input order.
+
+``reader_invalid_lines`` threads the reader's error channel through the
+fixed ``export_ledger(records, ...)`` interface: pass an int when the
+caller materialized the stream and counted already, or a zero-argument
+thunk returning the count (evaluated once, after ``records`` is consumed)
+for streaming callers::
+
+    invalid = 0
+    def count() -> None: ...
+    records = iter_report_log_records(path, on_invalid=count)
+    export_ledger(records, identity, sink, reader_invalid_lines=lambda: invalid)
 
 Header identity (``lane``, ``lane_os``, ``lane_arch``, ``framework_sha``,
 ``p11lab_sha``, ``image_digest``, ``corpus_hash``, ``disabled_hash``,
@@ -64,16 +135,18 @@ Header identity (``lane``, ``lane_os``, ``lane_arch``, ``framework_sha``,
 (``0`` when absent/unparseable). The exporter consumes parsed records, so
 the orchestrator -- which sees the raw JSONL bytes -- measures
 ``raw_stream_bytes``/``raw_stream_sha256`` and passes them via
-``identity``. ``missing``/``child_crash``/``child_timeout``/``incomplete``
-counters are always ``0`` from this exporter: child crash/timeout needs
-merge-layer unit association, missing/incomplete are admission/comparison
-concepts (E2/E3).
+``identity``. ``missing``/``child_crash``/``child_timeout`` counters are
+always ``0`` from this exporter: child crash/timeout needs merge-layer
+unit association, missing is an admission/comparison concept (E2/E3);
+``incomplete`` is observed here (see above) since E2 cannot reconstruct
+discarded session bookends.
 
 Memory: row lines spill to an on-disk temp file while only (key, file-offset)
 pairs sort in memory, so peak heap is O(rows) keys -- an in-memory line
 buffer provably exceeds the 64 MB @ 200k-rows budget (~370 bytes/row).
 ``attempts_total`` is fixed at output time from sorted (node_id, phase)
-runs (single-row groups stream through untouched).
+runs (single-row groups stream through untouched), and duplicate keys are
+detected by an adjacent scan after sorting (no extra memory).
 """
 
 from __future__ import annotations
@@ -81,10 +154,14 @@ from __future__ import annotations
 import json
 import math
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any, TextIO
+from typing import IO, Any, Literal, TextIO
 
+from pkcs11_check.core.crash_codes import (
+    CTYPES_ACCESS_VIOLATION,
+    ctypes_access_violation_from_stderr,
+)
 from pkcs11_check.core.evidence.schema import (
     LEDGER_SCHEMA_VERSION,
     LedgerHeader,
@@ -92,13 +169,28 @@ from pkcs11_check.core.evidence.schema import (
     zero_counters,
 )
 from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.report_log import map_report_record_outcome, user_property
+from pkcs11_check.core.report_log import (
+    SessionCompletionTracker,
+    map_report_record_outcome,
+    user_property,
+)
 
 _TEST_PHASES = ("setup", "call", "teardown")
+_TEST_OUTCOMES = ("passed", "failed", "skipped")
+
+#: Node id of the folded TeardownFinalize lifecycle row (the same
+#: ``"C_Finalize::teardown"`` nodeid the canonical consumer attributes).
+_LIFECYCLE_NODE_ID = "C_Finalize::teardown"
+
+#: Max-priority fold for several TeardownFinalize events (same values and
+#: first-maximal ``max()`` rule as ``core/_report_records.py``).
+_FINALIZE_PRIORITY: dict[str | None, int] = {None: 0, "error": 1, "crashed": 2, "timeout": 3}
 
 _DUMPS_KWARGS: dict[str, Any] = {"sort_keys": True}
 
 _CREATED_BY_DEFAULT = "pkcs11-check"
+
+_Disposition = Literal["row", "skip", "malformed"]
 
 
 def _facet_str(value: Any) -> str:
@@ -165,62 +257,293 @@ def _classification_facets(record: Mapping[str, Any]) -> dict[str, Any]:
         "flags": [],
     }
     classifications = user_property(dict(record), "pkcs11_classification")
-    entry: Any = None
-    if isinstance(classifications, list) and classifications:
-        entry = classifications[0]
-    if not isinstance(entry, Mapping):
-        return facets
-    detail = entry.get("detail")
+    entries = (
+        [entry for entry in classifications if isinstance(entry, Mapping)]
+        if isinstance(classifications, list)
+        else []
+    )
+    selected = next((entry for entry in entries if entry.get("outcome") == "fail"), None)
+    if selected is None:
+        selected = next((entry for entry in entries if entry.get("outcome") == "xfail"), None)
+    if selected is None:
+        if not entries:
+            return facets
+        selected = entries[0]
+    detail = selected.get("detail")
     detail_map = detail if isinstance(detail, Mapping) else {}
+    flags = _flags(detail_map.get("flags"))
+    for entry in entries:
+        if entry is selected:
+            continue
+        reason = entry.get("reason")
+        if isinstance(reason, str) and reason:
+            flags.append(f"extra:{reason}")
     facets.update(
-        reason=_facet_str(entry.get("reason")),
-        class_reason=_facet_str(entry.get("outcome")),
-        category=_facet_str(entry.get("kind")),
-        ckr_expected=_ckr_expected(entry.get("expected_ckr")),
-        ckr_actual=_facet_str(entry.get("actual_ckr")),
-        mechanism=_facet_str(entry.get("mechanism")),
+        reason=_facet_str(selected.get("reason")),
+        class_reason=_facet_str(selected.get("outcome")),
+        category=_facet_str(selected.get("kind")),
+        ckr_expected=_ckr_expected(selected.get("expected_ckr")),
+        ckr_actual=_facet_str(selected.get("actual_ckr")),
+        mechanism=_facet_str(selected.get("mechanism")),
         stimulus_rev=_facet_str(detail_map.get("stimulus_rev")),
         oracle_rev=_facet_str(detail_map.get("oracle_rev")),
         reach=_facet_str(detail_map.get("reach")),
         effect=_facet_str(detail_map.get("effect")),
         cleanup=_facet_str(detail_map.get("cleanup")),
         termination=_facet_str(detail_map.get("termination")),
-        flags=_flags(detail_map.get("flags")),
+        flags=flags,
     )
     return facets
+
+
+def _user_properties_usable(value: Any) -> bool:
+    """Whether a ``user_properties`` container is safe to traverse."""
+    return value is None or isinstance(value, (list, tuple))
+
+
+def _marker_raw_attempt(item: Mapping[str, Any]) -> int | None:
+    """Return a marker's source 0-based attempt, or None when malformed."""
+    target = item.get("target")
+    attempt = item.get("attempt")
+    if isinstance(target, str) and target and type(attempt) is int and attempt >= 0:
+        return attempt
+    return None
+
+
+def _finalize_outcome(record: Mapping[str, Any]) -> str | None:
+    """Mirror ``core/_report_records.py`` ``finalize_outcome`` exactly."""
+    error = record.get("error")
+    if record.get("windows_status") == CTYPES_ACCESS_VIOLATION or (
+        ctypes_access_violation_from_stderr(str(error)) is not None
+    ):
+        return "crashed"
+    outcome = str(record.get("outcome", "")).casefold()
+    if outcome == "ok":
+        return None
+    if outcome in {"crashed", "timeout"}:
+        return outcome
+    return "error"
+
+
+def _finalize_row(
+    record: Mapping[str, Any], ledger_attempt: int, shard_id: str, outcome: str
+) -> dict[str, Any]:
+    """Build the folded lifecycle row (facets per ``report/extract.py``)."""
+    return {
+        "node_id": _LIFECYCLE_NODE_ID,
+        "phase": "teardown",
+        "attempt": ledger_attempt,
+        "shard_id": shard_id,
+        "outcome": outcome,
+        "duration_ms": 0,
+        "reason": "crash" if outcome == "crashed" else "self_contradiction",
+        "class_reason": "fail",
+        "category": "lifecycle",
+        "ckr_expected": "CKR_OK",
+        "ckr_actual": _facet_str(record.get("rv_name")),
+        "mechanism": "",
+        "stimulus_rev": "",
+        "oracle_rev": "",
+        "reach": "",
+        "effect": "",
+        "cleanup": "",
+        "termination": "",
+        "flags": [],
+    }
+
+
+def _resolve_reader_invalid_lines(value: int | Callable[[], int]) -> int:
+    """Evaluate and validate the threaded reader-invalid count."""
+    candidate: Any = value() if callable(value) else value
+    if isinstance(candidate, bool) or not isinstance(candidate, int):
+        raise TypeError(
+            "export_ledger: reader_invalid_lines must be an int "
+            f"or a thunk returning one, got {candidate!r}"
+        )
+    if candidate < 0:
+        raise ValueError(f"export_ledger: reader_invalid_lines must be >= 0, got {candidate}")
+    return candidate
+
+
+def _disposition(
+    item: Mapping[str, Any],
+    report_type: str,
+    ledger_attempt: int,
+    fallback_shard: str,
+) -> tuple[_Disposition, dict[str, Any] | None]:
+    """Return the single row/skip/malformed disposition for one record.
+
+    This is the ONLY row-vs-malformed decision path: callers must not
+    re-derive validity elsewhere.
+    """
+    shard_id = _facet_str(item.get("shard_id")) or fallback_shard
+    if report_type == "TestReport":
+        nodeid = item.get("nodeid")
+        when = item.get("when")
+        outcome = item.get("outcome")
+        if (
+            not isinstance(nodeid, str)
+            or not nodeid
+            or not isinstance(when, str)
+            or when not in _TEST_PHASES
+            or not isinstance(outcome, str)
+            or outcome not in _TEST_OUTCOMES
+            or not _user_properties_usable(item.get("user_properties"))
+        ):
+            return "malformed", None
+        row = _classification_facets(item)
+        row.update(
+            node_id=normalize_nodeid(nodeid),
+            phase=when,
+            attempt=ledger_attempt,
+            shard_id=shard_id,
+            outcome=map_report_record_outcome(item),
+            duration_ms=_duration_ms(item.get("duration")),
+        )
+        return "row", row
+    if report_type == "HarnessError":
+        nodeid = item.get("nodeid")
+        if (
+            not isinstance(nodeid, str)
+            or not nodeid
+            or not _user_properties_usable(item.get("user_properties"))
+        ):
+            return "malformed", None
+        row = _classification_facets(item)
+        row.update(
+            node_id=normalize_nodeid(nodeid),
+            phase="harness",
+            attempt=ledger_attempt,
+            shard_id=shard_id,
+            outcome="error",
+            duration_ms=0,
+            reason="harness_error",
+        )
+        return "row", row
+    if report_type == "CollectReport":
+        outcome = item.get("outcome")
+        if outcome == "failed":
+            nodeid = item.get("nodeid")
+            if (
+                not isinstance(nodeid, str)
+                or not nodeid
+                or not _user_properties_usable(item.get("user_properties"))
+            ):
+                return "malformed", None
+            row = _classification_facets(item)
+            row.update(
+                node_id=normalize_nodeid(nodeid),
+                phase="collect",
+                attempt=ledger_attempt,
+                shard_id=shard_id,
+                outcome="error",
+                duration_ms=0,
+                reason="collect_error",
+            )
+            return "row", row
+        if isinstance(outcome, str) and outcome in {"passed", "skipped"}:
+            return "skip", None
+        return "malformed", None
+    return "skip", None
+
+
+def _spill_row(
+    spilled: IO[bytes],
+    entries: list[tuple[tuple[str, str, int], int]],
+    counters: dict[str, int],
+    row: dict[str, Any],
+) -> None:
+    key = (row["node_id"], row["phase"], row["attempt"])
+    counters[row["outcome"]] += 1
+    offset = spilled.tell()
+    # attempts_total ships as 1 and is fixed at output time from the
+    # sorted (node_id, phase) runs; single-row groups stream through.
+    line = json.dumps({"record": "case", **row, "attempts_total": 1}, **_DUMPS_KWARGS)
+    spilled.write(line.encode("ascii") + b"\n")
+    entries.append((key, offset))
 
 
 def export_ledger(
     records: Iterable[Mapping[str, Any]],
     identity: Mapping[str, str],
     sink: TextIO,
+    *,
+    reader_invalid_lines: int | Callable[[], int] = 0,
 ) -> LedgerHeader:
-    """Export report-log records to a stable ledger written to ``sink``."""
+    """Export report-log records to a stable ledger written to ``sink``.
+
+    ``reader_invalid_lines`` threads the reader's error channel through:
+    an int when the caller materialized the stream and counted already, or
+    a zero-argument thunk returning the count (evaluated once, after
+    ``records`` is consumed) for streaming callers wiring
+    ``iter_report_log_records(..., on_invalid=...)``. The count lands in
+    ``header.malformed_lines`` and invalidates session completion.
+
+    Raises ``ValueError`` (before writing anything) when two rows share
+    one (node_id, phase, attempt) occurrence key.
+    """
     counters = zero_counters()
     malformed = 0
-    current_attempt: int | None = None
+    raw_attempt: int | None = None  # source 0-based marker provenance
     # (sort key, byte offset of the spilled line); the only O(rows) memory.
     entries: list[tuple[tuple[str, str, int], int]] = []
     fallback_shard = _identity_str(identity, "shard_id")
+    completion = SessionCompletionTracker()
+    saw_diagnostic = False
+    finalize_events: list[tuple[Mapping[str, Any], int, str]] = []
 
     with tempfile.TemporaryFile("w+b") as spilled:
         for item in records:
-            row = _row_for_record(item, current_attempt, fallback_shard)
-            if row is None:
-                if _is_malformed(item):
-                    malformed += 1
-                current_attempt = _next_attempt(item, current_attempt)
+            if not isinstance(item, Mapping):
+                malformed += 1
+                completion.invalidate()
                 continue
-            current_attempt = _next_attempt(item, current_attempt)
-            key = (row["node_id"], row["phase"], row["attempt"])
-            counters[row["outcome"]] += 1
-            offset = spilled.tell()
-            # attempts_total ships as 1 and is fixed at output time from the
-            # sorted (node_id, phase) runs; single-row groups stream through.
-            line = json.dumps({"record": "case", **row, "attempts_total": 1}, **_DUMPS_KWARGS)
-            spilled.write(line.encode("ascii") + b"\n")
-            entries.append((key, offset))
+            completion.observe(item)
+            report_type = item.get("$report_type", "TestReport")
+            if not isinstance(report_type, str) or not report_type:
+                malformed += 1
+                continue
+            if report_type == "SessionStart":
+                raw_attempt = None
+                continue
+            if report_type == "IsolatedUnitReport":
+                marker = _marker_raw_attempt(item)
+                if marker is None:
+                    malformed += 1
+                    raw_attempt = None
+                else:
+                    raw_attempt = marker
+                continue
+            ledger_attempt = raw_attempt + 1 if raw_attempt is not None else 1
+            if report_type == "TeardownFinalize":
+                shard_id = _facet_str(item.get("shard_id")) or fallback_shard
+                finalize_events.append((item, ledger_attempt, shard_id))
+                continue
+            disposition, row = _disposition(item, report_type, ledger_attempt, fallback_shard)
+            if disposition == "malformed":
+                malformed += 1
+                continue
+            if row is None:
+                continue
+            if report_type in {"CollectReport", "HarnessError"}:
+                saw_diagnostic = True
+            _spill_row(spilled, entries, counters, row)
 
+        reader_invalid = _resolve_reader_invalid_lines(reader_invalid_lines)
+        malformed += reader_invalid
+        if reader_invalid:
+            completion.invalidate()
+        if finalize_events:
+            best = max(
+                finalize_events,
+                key=lambda event: _FINALIZE_PRIORITY[_finalize_outcome(event[0])],
+            )
+            outcome = _finalize_outcome(best[0])
+            if outcome is not None:
+                _spill_row(
+                    spilled, entries, counters, _finalize_row(best[0], best[1], best[2], outcome)
+                )
+        counters["incomplete"] = 0 if (completion.complete and not saw_diagnostic) else 1
         header = LedgerHeader(
             schema_v=LEDGER_SCHEMA_VERSION,
             lane=_identity_str(identity, "lane"),
@@ -239,9 +562,17 @@ def export_ledger(
             counters=counters,
             created_by=_identity_str(identity, "created_by") or _CREATED_BY_DEFAULT,
         )
-        sink.write(json.dumps(header.to_record(), **_DUMPS_KWARGS) + "\n")
 
         entries.sort(key=lambda entry: entry[0])
+        for previous, current in zip(entries, entries[1:]):
+            if current[0] == previous[0]:
+                raise ValueError(
+                    "export_ledger: duplicate occurrence key "
+                    f"(node_id, phase, attempt) {current[0]!r}: two rows claim one "
+                    "occurrence (equal keys or overlapping shards)"
+                )
+        sink.write(json.dumps(header.to_record(), **_DUMPS_KWARGS) + "\n")
+
         index = 0
         while index < len(entries):
             group = (entries[index][0][0], entries[index][0][1])
@@ -260,110 +591,6 @@ def export_ledger(
                     sink.write(json.dumps(fixed, **_DUMPS_KWARGS) + "\n")
             index = end
     return header
-
-
-def _next_attempt(item: Any, current: int | None) -> int | None:
-    if not isinstance(item, Mapping):
-        return current
-    report_type = item.get("$report_type", "TestReport")
-    if report_type == "SessionStart":
-        return None
-    if report_type == "IsolatedUnitReport":
-        target = item.get("target")
-        attempt = item.get("attempt")
-        if isinstance(target, str) and target and type(attempt) is int and attempt >= 1:
-            return attempt
-        return None
-    return current
-
-
-def _is_malformed(item: Any) -> bool:
-    if not isinstance(item, Mapping):
-        return True
-    report_type = item.get("$report_type", "TestReport")
-    if not isinstance(report_type, str) or not report_type:
-        return True
-    if report_type == "IsolatedUnitReport":
-        target = item.get("target")
-        attempt = item.get("attempt")
-        return not (isinstance(target, str) and target and type(attempt) is int and attempt >= 1)
-    if report_type == "TestReport":
-        return not (
-            isinstance(item.get("nodeid"), str)
-            and item.get("nodeid")
-            and item.get("when") in _TEST_PHASES
-            and item.get("outcome") in {"passed", "failed", "skipped"}
-        )
-    if report_type in {"HarnessError", "CollectReport"}:
-        if report_type == "CollectReport" and item.get("outcome") != "failed":
-            return False
-        nodeid = item.get("nodeid")
-        return not (isinstance(nodeid, str) and nodeid)
-    return False
-
-
-def _row_for_record(
-    item: Any, current_attempt: int | None, fallback_shard: str
-) -> dict[str, Any] | None:
-    if not isinstance(item, Mapping):
-        return None
-    report_type = item.get("$report_type", "TestReport")
-    attempt = current_attempt if current_attempt is not None else 1
-    shard_id = _facet_str(item.get("shard_id")) or fallback_shard
-    if report_type == "TestReport":
-        nodeid = item.get("nodeid")
-        when = item.get("when")
-        outcome = item.get("outcome")
-        if (
-            not isinstance(nodeid, str)
-            or not nodeid
-            or when not in _TEST_PHASES
-            or outcome not in {"passed", "failed", "skipped"}
-        ):
-            return None
-        row = _classification_facets(item)
-        row.update(
-            node_id=normalize_nodeid(nodeid),
-            phase=str(when),
-            attempt=attempt,
-            shard_id=shard_id,
-            outcome=map_report_record_outcome(item),
-            duration_ms=_duration_ms(item.get("duration")),
-        )
-        return row
-    if report_type == "HarnessError":
-        nodeid = item.get("nodeid")
-        if not isinstance(nodeid, str) or not nodeid:
-            return None
-        row = _classification_facets(item)
-        row.update(
-            node_id=normalize_nodeid(nodeid),
-            phase="harness",
-            attempt=attempt,
-            shard_id=shard_id,
-            outcome="error",
-            duration_ms=0,
-            reason="harness_error",
-        )
-        return row
-    if report_type == "CollectReport":
-        if item.get("outcome") != "failed":
-            return None
-        nodeid = item.get("nodeid")
-        if not isinstance(nodeid, str) or not nodeid:
-            return None
-        row = _classification_facets(item)
-        row.update(
-            node_id=normalize_nodeid(nodeid),
-            phase="collect",
-            attempt=attempt,
-            shard_id=shard_id,
-            outcome="error",
-            duration_ms=0,
-            reason="collect_error",
-        )
-        return row
-    return None
 
 
 def load_ledger(path: Path) -> tuple[LedgerHeader, list[LedgerRow]]:
