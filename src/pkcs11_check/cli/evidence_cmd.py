@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from pkcs11_check.core.evidence.admit import (
     PredeclaredRoster,
@@ -33,44 +37,78 @@ console = Console()
 
 _DELTA_VERSION = "ComparisonAdmissionV1"
 
+#: Max implicated rows rendered per row-predicate admission failure.
+_ADMIT_ROW_CAP = 5
+
+#: Max admission failures / warnings rendered before a "+N more" bound line.
+_ADMIT_FAILURE_CAP = 20
+_ADMIT_WARNING_CAP = 20
+
+#: E2's TESTED reference shapes (see admit.py; pinned by E3's F4 tests).
+_SHARD_REF_RE = re.compile(r"shard '([^']*)'")
+_BUCKET_REF_RE = re.compile(r"bucket '([^']*)'")
+_ROW_INDEX_RE = re.compile(r"row (\d+)")
+_OCCURRENCE_GROUP_RE = re.compile(r"group \((.*)\) (?:has|disagrees)")
+
 
 def _check_output(output: str) -> None:
     """Reject unknown output formats as a usage error (exit 2)."""
     if output not in {"summary", "json"}:
-        console.print(f"[red]Error:[/red] Unknown output format: {output!r}")
+        console.print(f"[red]Error:[/red] Unknown output format: {escape(repr(output))}")
         raise typer.Exit(code=2)
 
 
-def _load_ledger(path: Path) -> tuple[LedgerHeader, list[LedgerRow]]:
-    """Load a ledger: missing file is usage (2), malformed evidence is red (1)."""
-    if not path.exists():
-        console.print(f"[red]Error:[/red] {path} not found")
-        raise typer.Exit(code=2)
+def _die(output: str, code: int, kind: str, detail: object) -> NoReturn:
+    """Emit one fatal error honoring --output json, then exit with `code`.
+
+    Machine output is always the error envelope
+    ``{"status": "error", "errors": [...]}``; human output keeps the
+    ``Kind: detail`` shape with evidence-derived detail Rich-escaped.
+    Verdict-carrying paths (export/admit/compare results) keep their
+    verdict JSON instead of this envelope.
+    """
+    text = str(detail)
+    if output == "json":
+        typer.echo(json.dumps({"status": "error", "errors": [text]}, indent=2))
+    else:
+        console.print(f"[red]{kind}:[/red] {escape(text)}")
+    raise typer.Exit(code=code)
+
+
+def _load_ledger(path: Path, output: str) -> tuple[LedgerHeader, list[LedgerRow]]:
+    """Load a ledger: unreadable file is usage (2), malformed evidence is red (1).
+
+    Classification is by failure SITE, never message content: the open-probe
+    maps pre-load I/O loss to exit 2, and every ``load_ledger`` ValueError
+    maps to exit 1. TOCTOU residue: a ledger that vanishes between the probe
+    and the load fails closed as gate-red (``load_ledger`` surfaces mid-run
+    I/O loss as ValueError), never as infra.
+    """
+    try:
+        with path.open("rb"):
+            pass
+    except OSError as exc:
+        _die(output, 2, "Error", f"{path} not found or unreadable ({exc})")
     try:
         return load_ledger(path)
     except ValueError as exc:
-        if "unreadable" in str(exc):
-            console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(code=2) from exc
-        console.print(f"[red]Evidence failure:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
+        _die(output, 1, "Evidence failure", str(exc))
 
 
-def _load_json_doc(path: Path) -> Any:
+def _load_json_doc(path: Path, output: str) -> Any:
     """Load a JSON sidecar: missing/unreadable/unparseable is usage (2)."""
     if not path.exists():
-        console.print(f"[red]Error:[/red] {path} not found")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", f"{path} not found")
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        _die(output, 2, "Error", f"invalid UTF-8 in {path}: {exc}")
     except OSError as exc:
-        console.print(f"[red]Error:[/red] {path} unreadable ({exc})")
-        raise typer.Exit(code=2) from exc
+        _die(output, 2, "Error", f"{path} unreadable ({exc})")
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        console.print(f"[red]Error:[/red] invalid JSON in {path}: {exc}")
-        raise typer.Exit(code=2) from exc
+        _die(output, 2, "Error", f"invalid JSON in {path}: {exc}")
 
 
 def _fp_to_json(fp: tuple[str, ...] | str) -> list[str] | str:
@@ -151,8 +189,7 @@ def evidence_export_command(
     try:
         raw = report.read_bytes()
     except OSError:
-        console.print(f"[red]Error:[/red] {report} not found or unreadable")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", f"{report} not found or unreadable")
     # THE R16 OBLIGATION: reader-invalid lines are counted here and threaded
     # into the exporter, landing in header.malformed_lines.
     invalid = 0
@@ -180,14 +217,12 @@ def evidence_export_command(
     try:
         sink = ledger.open("w", encoding="utf-8")
     except OSError as exc:
-        console.print(f"[red]Error:[/red] {ledger} not writable ({exc})")
-        raise typer.Exit(code=2) from exc
+        _die(output, 2, "Error", f"{ledger} not writable ({exc})")
     with sink:
         try:
             header = export_ledger(records, identity, sink, reader_invalid_lines=lambda: invalid)
         except ValueError as exc:
-            console.print(f"[red]Evidence failure:[/red] {exc}")
-            raise typer.Exit(code=1) from exc
+            _die(output, 1, "Evidence failure", str(exc))
     # Every row increments exactly one outcome counter; incomplete is the only
     # other counter this exporter can set (missing/child_* stay 0).
     rows = sum(header.counters.values()) - header.counters.get("incomplete", 0)
@@ -196,7 +231,9 @@ def evidence_export_command(
     if output == "json":
         typer.echo(json.dumps({"header": header.to_record(), "rows": rows}, indent=2))
     else:
-        console.print(f"evidence export: lane {lane!r} -> {ledger} ({rows} rows)")
+        console.print(
+            f"evidence export: lane {escape(repr(lane))} -> {escape(str(ledger))} ({rows} rows)"
+        )
         console.print(
             f"  malformed_lines: {header.malformed_lines}  "
             f"incomplete: {header.counters.get('incomplete', 0)}"
@@ -210,46 +247,161 @@ def evidence_export_command(
         raise typer.Exit(code=1)
 
 
-def _build_roster(doc: Any) -> PredeclaredRoster:
+def _build_roster(doc: Any, output: str) -> PredeclaredRoster:
     """Build a predeclared roster from parsed JSON (config errors exit 2)."""
     if not isinstance(doc, dict):
-        console.print("[red]Error:[/red] roster JSON is not an object")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", "roster JSON is not an object")
     lane = doc.get("lane")
     shards = doc.get("shards")
     if not isinstance(lane, str):
-        console.print("[red]Error:[/red] roster JSON lacks a string 'lane'")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", "roster JSON lacks a string 'lane'")
     if not isinstance(shards, dict):
-        console.print("[red]Error:[/red] roster JSON lacks an object 'shards'")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", "roster JSON lacks an object 'shards'")
     expectations: dict[str, ShardExpectation] = {}
     for shard_id, spec in shards.items():
         if not isinstance(shard_id, str) or not isinstance(spec, dict):
-            console.print(f"[red]Error:[/red] roster shard {shard_id!r} is malformed")
-            raise typer.Exit(code=2)
+            _die(output, 2, "Error", f"roster shard {shard_id!r} is malformed")
         records = spec.get("records")
         sha256 = spec.get("sha256")
         if type(records) is not int or not isinstance(sha256, str):
-            console.print(
-                f"[red]Error:[/red] roster shard {shard_id!r} needs "
-                "int 'records' and string 'sha256'"
+            _die(
+                output,
+                2,
+                "Error",
+                f"roster shard {shard_id!r} needs int 'records' and string 'sha256'",
             )
-            raise typer.Exit(code=2)
         try:
             expectations[shard_id] = ShardExpectation(records=records, sha256=sha256)
         except ValueError as exc:
-            console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(code=2) from exc
+            _die(output, 2, "Error", str(exc))
     required = doc.get("required_identity", ("lane", "framework_sha"))
     if isinstance(required, tuple):
         required_identity = required
     elif isinstance(required, list) and all(isinstance(name, str) for name in required):
         required_identity = tuple(required)
     else:
-        console.print("[red]Error:[/red] roster 'required_identity' is not a string list")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", "roster 'required_identity' is not a string list")
     return PredeclaredRoster(lane=lane, shards=expectations, required_identity=required_identity)
+
+
+def _admit_row_lines(lane: str, row: LedgerRow, prefix: str) -> list[str]:
+    """Render one implicated row: facet line plus artifact locator line."""
+    facet = (
+        f"{row.outcome.value} reason={row.reason or '-'} "
+        f"ckr={row.ckr_expected or '-'}/{row.ckr_actual or '-'} "
+        f"term={row.termination or '-'} shard={row.shard_id}"
+    )
+    return [f"    {facet}", f"    {_locator(lane, row, prefix)}"]
+
+
+def _header_facts(header: LedgerHeader, row_count: int) -> str:
+    """Render the header facts line for header-level admission failures."""
+    return (
+        f"header: lane={header.lane!r} rows={row_count} "
+        f"incomplete={header.counters.get('incomplete')} "
+        f"malformed_lines={header.malformed_lines}"
+    )
+
+
+def _capped_row_lines(lane: str, implicated: list[LedgerRow], prefix: str) -> list[str]:
+    """Render implicated rows bounded by _ADMIT_ROW_CAP with a '+N more' line."""
+    lines: list[str] = []
+    for row in implicated[:_ADMIT_ROW_CAP]:
+        lines.extend(_admit_row_lines(lane, row, prefix))
+    if len(implicated) > _ADMIT_ROW_CAP:
+        lines.append(f"    +{len(implicated) - _ADMIT_ROW_CAP} more rows")
+    return lines
+
+
+def _parse_occurrence_group(failure: str) -> tuple[str, str] | None:
+    """Parse E2's ``group ('node_id', 'phase')`` shape, defensively (None if not)."""
+    match = _OCCURRENCE_GROUP_RE.search(failure)
+    if match is None:
+        return None
+    try:
+        parsed = ast.literal_eval(f"({match.group(1)})")
+    except (SyntaxError, ValueError):
+        return None
+    if isinstance(parsed, tuple) and len(parsed) == 2 and all(isinstance(p, str) for p in parsed):
+        first, second = parsed
+        return (first, second)
+    return None
+
+
+def _admit_failure_lines(
+    failure: str, header: LedgerHeader, rows: Sequence[LedgerRow]
+) -> list[str]:
+    """Render one admission failure plus its implicated rows (A-16/C14 triage).
+
+    Parses E2's TESTED message shapes (see admit.py; E2 message changes break
+    E3's pinned F4 tests loudly by design -- no E2 file changes here).
+    Row-predicate failures render up to _ADMIT_ROW_CAP implicated rows with
+    facets + locators; header-level predicates render a no-rows note plus
+    header facts. Every list is bounded with a "+N more" line. Returned lines
+    are unescaped; call sites escape before printing.
+    """
+    lane = header.lane
+    prefix = _sha_prefix(header)
+    lines = [f"  {failure}"]
+    predicate = failure.split(":", 1)[0]
+    if predicate == "roster_complete":
+        match = _SHARD_REF_RE.search(failure)
+        shard = match.group(1) if match else None
+        if shard is None:
+            lines.append("    note: shard unparseable; raw message above")
+        elif "missing from rows" in failure:
+            lines.append(f"    shard {shard!r}: 0 rows present (missing from rows)")
+        else:
+            implicated = [row for row in rows if row.shard_id == shard]
+            if not implicated:
+                lines.append(f"    shard {shard!r}: 0 rows present")
+            else:
+                lines.append(f"    shard {shard!r}: {len(implicated)} row(s) implicated")
+                lines.extend(_capped_row_lines(lane, implicated, prefix))
+    elif predicate == "typed_fields":
+        indexes = [int(text) for text in _ROW_INDEX_RE.findall(failure)]
+        in_range = [index for index in indexes if 0 <= index < len(rows)]
+        if not in_range:
+            lines.append("    note: implicated row indexes out of range; raw message above")
+        else:
+            lines.append(f"    {len(indexes)} row(s) implicated")
+            lines.extend(_capped_row_lines(lane, [rows[i] for i in in_range], prefix))
+            skipped = len(indexes) - len(in_range)
+            if skipped:
+                lines.append(f"    +{skipped} more rows (index out of range)")
+    elif predicate == "occurrence_preserved":
+        key = _parse_occurrence_group(failure)
+        if key is None:
+            lines.append("    note: group unparseable; raw message above")
+        else:
+            implicated = [row for row in rows if (row.node_id, row.phase) == key]
+            if not implicated:
+                lines.append(f"    group {key!r}: 0 rows present")
+            else:
+                lines.append(f"    group {key!r}: {len(implicated)} row(s) implicated")
+                lines.extend(_capped_row_lines(lane, implicated, prefix))
+    elif predicate == "session_framing":
+        if "header counters sum to" in failure:
+            lines.append("    note: no implicated rows (header-level sum check)")
+            lines.append(f"    {_header_facts(header, len(rows))}")
+        else:
+            match = _BUCKET_REF_RE.search(failure)
+            bucket = match.group(1) if match else None
+            if bucket is None:
+                lines.append("    note: bucket unparseable; raw message above")
+            elif "counter is not an int" in failure:
+                lines.append("    note: no implicated rows (header counter mistyped)")
+                lines.append(f"    {_header_facts(header, len(rows))}")
+            else:
+                implicated = [row for row in rows if row.outcome.value == bucket]
+                lines.append(f"    bucket {bucket!r}: {len(implicated)} row(s) with that outcome")
+                lines.extend(_capped_row_lines(lane, implicated, prefix))
+    else:
+        # zero_malformed, observability_complete, provenance_present, and any
+        # future header-level predicate: no rows to implicate.
+        lines.append("    note: no implicated rows (header-level predicate)")
+        lines.append(f"    {_header_facts(header, len(rows))}")
+    return lines
 
 
 def evidence_admit_command(
@@ -260,21 +412,19 @@ def evidence_admit_command(
 ) -> None:
     """Admit a lane ledger against its roster and obligation inventory."""
     _check_output(output)
-    header, rows = _load_ledger(ledger)
-    roster_obj = _build_roster(_load_json_doc(roster))
-    obligations_doc = _load_json_doc(obligations)
+    header, rows = _load_ledger(ledger, output)
+    roster_obj = _build_roster(_load_json_doc(roster, output), output)
+    obligations_doc = _load_json_doc(obligations, output)
     if (
         not isinstance(obligations_doc, dict)
         or not isinstance(obligations_doc.get("catalog"), dict)
         or not isinstance(obligations_doc.get("profile"), dict)
     ):
-        console.print("[red]Error:[/red] obligations JSON needs 'catalog' and 'profile'")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", "obligations JSON needs 'catalog' and 'profile'")
     try:
         inventory = compile_obligations(obligations_doc["catalog"], obligations_doc["profile"])
     except ValueError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(code=2) from exc
+        _die(output, 2, "Error", str(exc))
 
     verdict = admit_lane(header, rows, roster_obj, inventory)
 
@@ -291,18 +441,25 @@ def evidence_admit_command(
         )
     elif verdict.admitted:
         console.print(
-            f"[green]admitted:[/green] lane {header.lane!r} "
+            f"[green]admitted:[/green] lane {escape(repr(header.lane))} "
             f"({len(rows)} rows, {len(verdict.warnings)} warnings)"
         )
-        for warning in verdict.warnings:
-            console.print(f"  warning: {warning}")
+        for warning in verdict.warnings[:_ADMIT_WARNING_CAP]:
+            console.print(f"  warning: {escape(warning)}")
+        if len(verdict.warnings) > _ADMIT_WARNING_CAP:
+            console.print(f"  +{len(verdict.warnings) - _ADMIT_WARNING_CAP} more warnings")
     else:
-        console.print(f"[red]evidence failure:[/red] lane {header.lane!r} not admitted")
-        for failure in verdict.failures:
-            console.print(f"  {failure}")
-        for warning in verdict.warnings:
-            console.print(f"  warning: {warning}")
-        console.print(f"  {header.lane} raw:{_sha_prefix(header)}")
+        console.print(f"[red]evidence failure:[/red] lane {escape(repr(header.lane))} not admitted")
+        for failure in verdict.failures[:_ADMIT_FAILURE_CAP]:
+            for line in _admit_failure_lines(failure, header, rows):
+                console.print(escape(line))
+        if len(verdict.failures) > _ADMIT_FAILURE_CAP:
+            console.print(f"  +{len(verdict.failures) - _ADMIT_FAILURE_CAP} more failures")
+        for warning in verdict.warnings[:_ADMIT_WARNING_CAP]:
+            console.print(f"  warning: {escape(warning)}")
+        if len(verdict.warnings) > _ADMIT_WARNING_CAP:
+            console.print(f"  +{len(verdict.warnings) - _ADMIT_WARNING_CAP} more warnings")
+        console.print(f"  {escape(header.lane)} raw:{escape(_sha_prefix(header))}")
 
     if not verdict.admitted:
         raise typer.Exit(code=1)
@@ -318,24 +475,24 @@ def _coerce_delta_fp(value: Any) -> tuple[str, ...] | str:
     return str(value)
 
 
-def _build_deltas(doc: Any) -> RotationDeltas:
+def _build_deltas(doc: Any, output: str) -> RotationDeltas:
     """Build a rotation bundle from parsed JSON (bad paperwork exits 1)."""
     if not isinstance(doc, dict) or not isinstance(doc.get("entries"), list):
-        console.print("[red]Evidence failure:[/red] deltas JSON needs 'entries'")
-        raise typer.Exit(code=1)
+        _die(output, 1, "Evidence failure", "deltas JSON needs 'entries'")
     entries: list[Delta] = []
     for index, item in enumerate(doc["entries"]):
         if not isinstance(item, dict):
-            console.print(f"[red]Evidence failure:[/red] deltas entry {index} is not an object")
-            raise typer.Exit(code=1)
+            _die(output, 1, "Evidence failure", f"deltas entry {index} is not an object")
         missing = [
             key
             for key in ("lane", "case_id", "phase", "old_fp", "new_fp", "reason", "ttl")
             if key not in item
         ]
         if missing:
-            console.print(f"[red]Evidence failure:[/red] deltas entry {index} lacks {missing!r}")
-            raise typer.Exit(code=1)
+            _die(output, 1, "Evidence failure", f"deltas entry {index} lacks {missing!r}")
+        ttl = item["ttl"]
+        if type(ttl) is not int or ttl != 1:
+            _die(output, 1, "Evidence failure", f"deltas entry {index} has ttl {ttl!r}, must be 1")
         entries.append(
             Delta(
                 lane=item["lane"],
@@ -361,7 +518,11 @@ def _print_compare_summary(
 ) -> None:
     """Print the per-red-item triage summary (first triage without raw streams)."""
     lane = base_header.lane
-    prefix = _sha_prefix(cand_header, base_header)
+    base_prefix = _sha_prefix(base_header)
+    cand_prefix = _sha_prefix(cand_header)
+    # Header-level (keyless) regressions are lane-level, not row-sourced: the
+    # candidate-first chain applies to those lines only.
+    lane_prefix = _sha_prefix(cand_header, base_header)
     base_groups: dict[tuple[str, str], list[LedgerRow]] = {}
     for row in base_rows:
         base_groups.setdefault((row.node_id, row.phase), []).append(row)
@@ -372,38 +533,47 @@ def _print_compare_summary(
     for regression in verdict.regressions:
         if not regression.node_id:
             console.print(
-                f"[red]regression[/red] load/admission failure: axis={regression.axis} "
-                f"lane={lane} raw:{prefix}"
+                f"[red]regression[/red] load/admission failure: "
+                f"axis={escape(regression.axis)} lane={escape(lane)} raw:{escape(lane_prefix)}"
             )
             continue
+        key = (regression.node_id, regression.phase)
+        # F3: the locator names the artifact holding the row -- candidate SHA
+        # when the key exists there (matched/added), else baseline SHA (removed).
+        prefix = cand_prefix if key in cand_groups else base_prefix
         members = cand_groups.get(
-            (regression.node_id, regression.phase),
-            base_groups.get((regression.node_id, regression.phase), []),
+            key,
+            base_groups.get(key, []),
         )
         attempts = ",".join(str(row.attempt) for row in sorted(members, key=lambda r: r.attempt))
         old_disp = _summarize_fp(regression.old).split(" ")[0]
         new_disp = _summarize_fp(regression.new).split(" ")[0]
         console.print(
-            f"[red]regression[/red] {regression.node_id} "
-            f"phase={regression.phase} attempts={attempts}"
+            f"[red]regression[/red] {escape(regression.node_id)} "
+            f"phase={escape(regression.phase)} attempts={escape(attempts)}"
         )
-        console.print(f"  {old_disp} -> {new_disp} (axis: {regression.axis})")
+        console.print(
+            f"  {escape(old_disp)} -> {escape(new_disp)} (axis: {escape(regression.axis)})"
+        )
         if regression.axis == "stale_delta":
             console.print("  delta failure: rotation paperwork does not match reality")
-        console.print(f"  old: {_summarize_fp(regression.old)}")
-        console.print(f"  new: {_summarize_fp(regression.new)}")
+        console.print(f"  old: {escape(_summarize_fp(regression.old))}")
+        console.print(f"  new: {escape(_summarize_fp(regression.new))}")
         if members:
             first = min(members, key=lambda row: row.attempt)
-            console.print(f"  {_locator(lane, first, prefix)}")
+            console.print(f"  {escape(_locator(lane, first, prefix))}")
 
     for entry in verdict.unstable:
         parsed = _split_unstable_entry(entry)
         if parsed is None:
-            console.print(f"[red]unstable[/red] {entry}")
+            console.print(f"[red]unstable[/red] {escape(entry)}")
             continue
         node_id, phase, axis = parsed
         key = (node_id, phase)
-        console.print(f"[red]unstable[/red] {node_id} phase={phase} (axis: {axis})")
+        prefix = cand_prefix if key in cand_groups else base_prefix
+        console.print(
+            f"[red]unstable[/red] {escape(node_id)} phase={escape(phase)} (axis: {escape(axis)})"
+        )
         for side, groups in (("base", base_groups), ("cand", cand_groups)):
             members = groups.get(key, [])
             if not members:
@@ -414,22 +584,29 @@ def _print_compare_summary(
                 str(row.attempt) for row in sorted(members, key=lambda r: r.attempt)
             )
             console.print(
-                f"  {side}: attempts={attempts} findings={findings or 'none'} "
-                f"{_summarize_fp(combined)}"
+                f"  {side}: attempts={escape(attempts)} "
+                f"findings={escape(repr(findings or 'none'))} "
+                f"{escape(_summarize_fp(combined))}"
             )
         members = cand_groups.get(key, base_groups.get(key, []))
         if members:
             first = min(members, key=lambda row: row.attempt)
-            console.print(f"  {_locator(lane, first, prefix)}")
+            console.print(f"  {escape(_locator(lane, first, prefix))}")
 
     for improvement in verdict.improvements:
         old_disp = _summarize_fp(improvement.old).split(" ")[0]
         new_disp = _summarize_fp(improvement.new).split(" ")[0]
         console.print(
-            f"[green]improvement[/green] {improvement.node_id} "
-            f"phase={improvement.phase}: {old_disp} -> {new_disp} "
-            f"(axis: {improvement.axis})"
+            f"[green]improvement[/green] {escape(improvement.node_id)} "
+            f"phase={escape(improvement.phase)}: {escape(old_disp)} -> {escape(new_disp)} "
+            f"(axis: {escape(improvement.axis)})"
         )
+        key = (improvement.node_id, improvement.phase)
+        members = cand_groups.get(key, base_groups.get(key, []))
+        if members:
+            first = min(members, key=lambda row: row.attempt)
+            prefix = cand_prefix if key in cand_groups else base_prefix
+            console.print(f"  {escape(_locator(lane, first, prefix))}")
 
     counts = verdict.counts
     console.print(
@@ -452,17 +629,15 @@ def evidence_compare_command(
     """Compare baseline vs candidate ledgers for one lane under rotation deltas."""
     _check_output(output)
     if quorum_min_repeats < 1:
-        console.print("[red]Error:[/red] --quorum-min-repeats must be >= 1")
-        raise typer.Exit(code=2)
+        _die(output, 2, "Error", "--quorum-min-repeats must be >= 1")
     if not 0.0 < quorum_frac <= 1.0:
-        console.print("[red]Error:[/red] --quorum-frac must be in (0, 1]")
-        raise typer.Exit(code=2)
-    base_header, base_rows = _load_ledger(baseline)
-    cand_header, cand_rows = _load_ledger(candidate)
+        _die(output, 2, "Error", "--quorum-frac must be in (0, 1]")
+    base_header, base_rows = _load_ledger(baseline, output)
+    cand_header, cand_rows = _load_ledger(candidate, output)
     rotation = (
         RotationDeltas(version=_DELTA_VERSION, entries=())
         if deltas is None
-        else _build_deltas(_load_json_doc(deltas))
+        else _build_deltas(_load_json_doc(deltas, output), output)
     )
     quorum = QuorumPolicy(
         min_repeats=quorum_min_repeats,
@@ -474,8 +649,7 @@ def evidence_compare_command(
             (base_header, base_rows), (cand_header, cand_rows), rotation, quorum
         )
     except ValueError as exc:
-        console.print(f"[red]Evidence failure:[/red] {exc}")
-        raise typer.Exit(code=1) from exc
+        _die(output, 1, "Evidence failure", str(exc))
 
     if output == "json":
         typer.echo(

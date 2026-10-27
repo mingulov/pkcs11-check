@@ -1085,3 +1085,153 @@ def test_validate_deltas_rejects_malformed(field: str, bad: Any, tag: str) -> No
     errors = validate_deltas(RotationDeltas(version=FP_VERSION, entries=(Delta(**kwargs),)))
     assert errors
     assert tag in "\n".join(errors)
+
+
+# --- fix round 1: coverage excuses disposition, never instability (F1) --------
+
+
+def _reason_only_delta(old_fp: tuple[str, ...], new_fp: tuple[str, ...]) -> RotationDeltas:
+    """Build the matching single-axis (reason-only) change-delta for NODE_A."""
+    assert sum(1 for old, new in zip(old_fp, new_fp) if old != new) == 1
+    return RotationDeltas(
+        version=FP_VERSION,
+        entries=(
+            Delta(
+                lane="soft",
+                case_id=NODE_A,
+                phase="call",
+                old_fp=old_fp,
+                new_fp=new_fp,
+                reason="oracle fix rotates the failure reason",
+                ttl=1,
+            ),
+        ),
+    )
+
+
+def test_delta_covered_key_still_flags_attempt_instability() -> None:
+    """F1 probe (a): [fail x3] vs [pass,pass,fail] + matching delta -> unstable."""
+    base_rows = [
+        _hb_row(NODE_A, Outcome.FAILED, attempt=n, attempts_total=3, reason="wrong_result")
+        for n in (1, 2, 3)
+    ]
+    cand_rows = [
+        _hb_row(NODE_A, Outcome.PASSED, attempt=1, attempts_total=3),
+        _hb_row(NODE_A, Outcome.PASSED, attempt=2, attempts_total=3),
+        _hb_row(NODE_A, Outcome.FAILED, attempt=3, attempts_total=3, reason="bad_signature"),
+    ]
+    base = (_hb_header(base_rows), base_rows)
+    cand = (_hb_header(cand_rows), cand_rows)
+    deltas = _reason_only_delta(fingerprint(base_rows[0]), fingerprint(cand_rows[2]))
+    assert validate_deltas(deltas) == []
+    verdict = _compare(base, cand, deltas)
+    assert verdict.counts["deltas_applied"] == 1
+    assert verdict.unstable == [f"{NODE_A}::call:attempts"]
+    assert _negative(verdict)
+
+
+def test_delta_covered_first_attempt_flip_still_unstable() -> None:
+    """F1 probe (b): a first-attempt flip under a matching delta still gates red."""
+    base_rows = [
+        _hb_row(NODE_A, Outcome.FAILED, attempt=n, attempts_total=3, reason="wrong_result")
+        for n in (1, 2, 3)
+    ]
+    cand_rows = [
+        _hb_row(NODE_A, Outcome.FAILED, attempt=1, attempts_total=3, reason="bad_signature"),
+        _hb_row(NODE_A, Outcome.PASSED, attempt=2, attempts_total=3),
+        _hb_row(NODE_A, Outcome.PASSED, attempt=3, attempts_total=3),
+    ]
+    base = (_hb_header(base_rows), base_rows)
+    cand = (_hb_header(cand_rows), cand_rows)
+    deltas = _reason_only_delta(fingerprint(base_rows[0]), fingerprint(cand_rows[0]))
+    assert validate_deltas(deltas) == []
+    verdict = _compare(base, cand, deltas)
+    assert verdict.counts["deltas_applied"] == 1
+    assert verdict.unstable == [f"{NODE_A}::call:first_attempt"]
+    assert _negative(verdict)
+
+
+def test_delta_covered_attempt_count_change_still_unstable() -> None:
+    """F1 probe (c): a 1->3 attempt-count change under a matching delta is unstable."""
+    base_rows = [_hb_row(NODE_A, Outcome.FAILED, reason="wrong_result")]
+    cand_rows = [
+        _hb_row(NODE_A, Outcome.FAILED, attempt=n, attempts_total=3, reason="bad_signature")
+        for n in (1, 2, 3)
+    ]
+    base = (_hb_header(base_rows), base_rows)
+    cand = (_hb_header(cand_rows), cand_rows)
+    deltas = _reason_only_delta(fingerprint(base_rows[0]), fingerprint(cand_rows[0]))
+    assert validate_deltas(deltas) == []
+    verdict = _compare(base, cand, deltas)
+    assert verdict.counts["deltas_applied"] == 1
+    assert verdict.unstable == [f"{NODE_A}::call:attempts"]
+    assert _negative(verdict)
+
+
+# --- fix round 1: R22 rename boundary + quorum-boundary + TTL pins ------------
+
+
+def test_split_delete_add_pair_is_independent_not_rename() -> None:
+    """R22 pin: delete+add with DIFFERING fps are independent covered ops (green)."""
+    base_rows = [_hb_row(NODE_A, Outcome.FAILED, reason="wrong_result")]
+    cand_rows = [_hb_row(NODE_B, Outcome.FAILED, reason="bad_signature")]
+    old_fp = fingerprint(base_rows[0])
+    new_fp = fingerprint(cand_rows[0])
+    assert old_fp != new_fp
+    deltas = RotationDeltas(
+        version=FP_VERSION,
+        entries=(
+            Delta(
+                lane="soft",
+                case_id=NODE_A,
+                phase="call",
+                old_fp=old_fp,
+                new_fp="absent",
+                reason="old case deleted",
+                ttl=1,
+            ),
+            Delta(
+                lane="soft",
+                case_id=NODE_B,
+                phase="call",
+                old_fp="absent",
+                new_fp=new_fp,
+                reason="new case added",
+                ttl=1,
+            ),
+        ),
+    )
+    assert validate_deltas(deltas) == []
+    verdict = _compare(
+        (_hb_header(base_rows), base_rows), (_hb_header(cand_rows), cand_rows), deltas
+    )
+    assert verdict.regressions == []
+    assert verdict.unstable == []
+    assert verdict.counts["deltas_applied"] == 2
+    assert not _negative(verdict)
+
+
+def test_quorum_exact_two_thirds_boundary_satisfied() -> None:
+    """Quorum pin: top fraction exactly 2/3 meets a 2/3 quorum (bare disagree)."""
+    rows = [
+        _hb_row(NODE_A, Outcome.FAILED, attempt=1, attempts_total=3, reason="r"),
+        _hb_row(NODE_A, Outcome.FAILED, attempt=2, attempts_total=3, reason="r"),
+        _hb_row(NODE_A, Outcome.PASSED, attempt=3, attempts_total=3),
+    ]
+    policy = QuorumPolicy(min_repeats=3, quorum_frac=2 / 3, disagree_is_unstable=False)
+    _, findings = combine_attempts(rows, policy)
+    assert findings == ["disagree"]
+    # The same split just below the boundary is unstable, not merely disagreeing.
+    strict = QuorumPolicy(min_repeats=3, quorum_frac=0.67, disagree_is_unstable=False)
+    _, strict_findings = combine_attempts(rows, strict)
+    assert strict_findings == ["unstable"]
+
+
+@pytest.mark.parametrize("ttl", [True, 1.0, 2])
+def test_validate_deltas_rejects_non_unit_ttl_strictly(ttl: Any) -> None:
+    """Nit pin (validate layer): ttl must be the int 1 -- bool/float/2 rejected."""
+    kwargs = _valid_change_kwargs()
+    kwargs["ttl"] = ttl
+    errors = validate_deltas(RotationDeltas(version=FP_VERSION, entries=(Delta(**kwargs),)))
+    assert errors
+    assert "ttl" in "\n".join(errors)

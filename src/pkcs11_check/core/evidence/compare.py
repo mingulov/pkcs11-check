@@ -12,6 +12,13 @@ failed=3, xpassed=3, error=4, crashed=5, crash_limited=5, timeout=6.
 ``missing`` never appears as a row outcome; hand-built input carrying it
 ranks 7 (worst, fail closed).
 
+Rename boundary (R22): a removal delta and an addition delta whose
+fingerprints DIFFER are independent covered operations, never a rename;
+rename-hood is claimed ONLY by equal-fingerprint pairing (validated
+exclusively 1:1). The gate enforces paperwork validity plus reality
+match, never cross-key semantic equivalence -- fuzzy rename detection
+would false-red on genuinely independent delete+add pairs.
+
 OUT OF SCOPE (explicitly not implemented here): baseline
 freshness/replay (receipt/E4 domain); settle-N identical ledgers
 (orchestration, p11lab side); traceback-excerpt CONTENT (raw-stream
@@ -233,7 +240,7 @@ def validate_deltas(deltas: RotationDeltas) -> list[str]:
                 errors.append(f"duplicate: {tag} repeats an earlier (lane, case_id, phase)")
             else:
                 seen.add(key)
-        if entry.ttl != 1:
+        if type(entry.ttl) is not int or entry.ttl != 1:
             errors.append(f"ttl: {tag} has ttl {entry.ttl!r}, must be 1")
         if not isinstance(entry.reason, str) or not entry.reason:
             errors.append(f"reason: {tag} has empty/non-string reason")
@@ -312,48 +319,55 @@ def _precheck_verdict(axis: str) -> ComparisonVerdict:
     )
 
 
-def _key_verdict(
+def _key_unstable_entry(
+    node_id: str,
+    phase: str,
+    base_findings: list[str],
+    base_count: int,
+    cand_findings: list[str],
+    cand_count: int,
+) -> str | None:
+    """Return the rule-5 instability entry for one matched key, if any.
+
+    Any finding on either side, a first-attempt finding on exactly one
+    side (compared separately per A-9), or an attempt-count change yields
+    an unstable entry (axis ``first_attempt`` for the exactly-one-side
+    flip, else ``attempts``). These checks run for EVERY matched key --
+    delta coverage excuses the disposition/fingerprint verdict only, never
+    instability (F1).
+    """
+    if ("first_attempt" in base_findings) != ("first_attempt" in cand_findings):
+        return f"{node_id}::{phase}:first_attempt"
+    if base_findings or cand_findings or base_count != cand_count:
+        return f"{node_id}::{phase}:attempts"
+    return None
+
+
+def _key_disposition_verdict(
     node_id: str,
     phase: str,
     base_fp: tuple[str, ...],
-    base_findings: list[str],
-    base_count: int,
     cand_fp: tuple[str, ...],
-    cand_findings: list[str],
-    cand_count: int,
-) -> tuple[Regression | None, Regression | None, str | None]:
-    """Return the (regression, improvement, unstable-entry) triple for one key.
-
-    Both sides are present. Any finding on either side, a first-attempt
-    finding on exactly one side, or an attempt-count change yields an
-    unstable entry (axis ``first_attempt`` for the exactly-one-side flip,
-    else ``attempts``). Otherwise disposition/fingerprint rules decide.
-    """
-    if ("first_attempt" in base_findings) != ("first_attempt" in cand_findings):
-        return None, None, f"{node_id}::{phase}:first_attempt"
-    if base_findings or cand_findings or base_count != cand_count:
-        return None, None, f"{node_id}::{phase}:attempts"
+) -> tuple[Regression | None, Regression | None]:
+    """Return the (regression, improvement) pair for one instability-free key."""
     old_outcome = base_fp[0]
     new_outcome = cand_fp[0]
     if base_fp == cand_fp:
-        return None, None, None
+        return None, None
     if old_outcome != new_outcome and old_outcome in RED_OUTCOMES and new_outcome in RED_OUTCOMES:
         return (
             Regression(node_id, phase, base_fp, cand_fp, "outcome"),
-            None,
             None,
         )
     if _rank(new_outcome) > _rank(old_outcome):
         return (
             Regression(node_id, phase, base_fp, cand_fp, "outcome"),
             None,
-            None,
         )
     if _rank(new_outcome) < _rank(old_outcome):
         return (
             None,
             Regression(node_id, phase, base_fp, cand_fp, "outcome"),
-            None,
         )
     if old_outcome != new_outcome:
         # Unreachable: same-rank pairs (failed/xpassed, crashed/crash_limited)
@@ -361,11 +375,9 @@ def _key_verdict(
         return (
             Regression(node_id, phase, base_fp, cand_fp, "outcome"),
             None,
-            None,
         )
     return (
         Regression(node_id, phase, base_fp, cand_fp, "fingerprint"),
-        None,
         None,
     )
 
@@ -473,27 +485,33 @@ def compare_lanes(
 
     for key in sorted(set(base_combined) | set(cand_combined)):
         node_id, phase = key
-        if key in covered and key not in compare_on_top:
-            continue
         if key in base_combined and key in cand_combined:
             base_fp, base_findings, base_count = base_combined[key]
             cand_fp, cand_findings, cand_count = cand_combined[key]
-            regression, improvement, unstable_entry = _key_verdict(
+            unstable_entry = _key_unstable_entry(
                 node_id,
                 phase,
-                base_fp,
                 base_findings,
                 base_count,
-                cand_fp,
                 cand_findings,
                 cand_count,
             )
+            if unstable_entry is not None:
+                unstable.append(unstable_entry)
+                # Rule 5 ELSE: disposition/fingerprint rules apply only to
+                # stable keys; an unstable key carries no disposition verdict.
+                continue
+            if key in covered and key not in compare_on_top:
+                # F1: coverage excuses the disposition/fingerprint verdict
+                # only; the instability checks above always run.
+                continue
+            regression, improvement = _key_disposition_verdict(node_id, phase, base_fp, cand_fp)
             if regression is not None:
                 regressions.append(regression)
             if improvement is not None:
                 improvements.append(improvement)
-            if unstable_entry is not None:
-                unstable.append(unstable_entry)
+        elif key in covered and key not in compare_on_top:
+            continue
         elif key in base_combined:
             base_fp, _, _ = base_combined[key]
             regressions.append(Regression(node_id, phase, base_fp, "absent", "removed"))
