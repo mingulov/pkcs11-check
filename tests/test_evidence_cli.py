@@ -1267,3 +1267,41 @@ def test_export_overflow_durations_cli_exit_0_rows_preserved(tmp_path: Path) -> 
     assert result.exit_code == 0, result.output
     _, rows = load_ledger(ledger)
     assert [row.duration_ms for row in rows] == [0, 0]
+
+
+def test_compare_ledger_deep_nesting_json_envelope_exit_2(tmp_path: Path) -> None:
+    """R36: deeply-nested ledger line -> exit 2 + R25 envelope, no traceback."""
+    base, _ = _compare_ledgers(tmp_path)
+    header_line = base.read_text(encoding="utf-8").splitlines()[0]
+    nested = tmp_path / "nested.jsonl"
+    nested.write_text(header_line + "\n" + "[" * 20000 + "]" * 20000 + "\n", encoding="utf-8")
+    result = runner.invoke(app, ["evidence-compare", str(base), str(nested), "--output", "json"])
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+
+
+def test_compare_ledger_non_utf8_json_envelope_exit_2(tmp_path: Path) -> None:
+    """R36: 0xff-bytes ledger file -> exit 2 + R25 envelope, no traceback."""
+    base, _ = _compare_ledgers(tmp_path)
+    bad = tmp_path / "bad.jsonl"
+    bad.write_bytes(base.read_bytes() + b"\xff")
+    result = runner.invoke(app, ["evidence-compare", str(base), str(bad), "--output", "json"])
+    assert result.exit_code == 2, result.output
+    _assert_error_envelope(result)
+    assert "Traceback" not in result.output
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+
+
+def test_compare_ledger_malformed_content_json_envelope_exit_1(tmp_path: Path) -> None:
+    """R36 control: bad-schema valid-JSON ledger stays exit 1 (content, not parse)."""
+    base, _ = _compare_ledgers(tmp_path)
+    lines = base.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[1])
+    row["outcome"] = "bogus-outcome"
+    bad = tmp_path / "bad-content.jsonl"
+    bad.write_text(lines[0] + "\n" + json.dumps(row) + "\n", encoding="utf-8")
+    result = runner.invoke(app, ["evidence-compare", str(base), str(bad), "--output", "json"])
+    assert result.exit_code == 1, result.output
+    _assert_error_envelope(result)
