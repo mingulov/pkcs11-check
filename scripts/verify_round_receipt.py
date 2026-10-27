@@ -38,13 +38,15 @@ SHA fields are exact-match strings (no hex validation — opaque pins,
 ``"PENDING-P11LAB"``-style values are legal during bring-up; equality is
 what matters). ``*_hash`` + ``evidence_digest`` + ``bundle_identity`` +
 wheel values MUST match ``^[0-9a-f]{64}$``. ``attempt`` is int >= 1.
-``job_ids`` must be an object (contents opaque).
+``job_ids`` must be an object (contents opaque). ``lanes`` must be a
+non-empty object (rule 5).
 
 Bundle binding (PINNED): ``bundle_identity`` MUST equal the sha256 hex
 over the concatenation, sorted by lane name, of
 ``lane + "\\0" + evidence_digest + "\\0"`` (UTF-8) for every lane in
-``receipt.lanes``. An empty lanes object hashes ``b""`` (but empty lanes
-fails the tier-closure check first anyway).
+``receipt.lanes``. ``compute_bundle_identity({})`` is the sha256 of
+``b""`` by construction, but an empty lanes object never reaches
+recomputation: it fails the non-empty-closure check (rule 5) first.
 
 Lock schema (PINNED; this file lives at
 ``.github/provider-round.lock.json``)::
@@ -54,8 +56,9 @@ Lock schema (PINNED; this file lives at
      "tiers": {"pr-smoke": {"lanes": [...], "quorum": {...}, "budgets": {...}},
                "nightly": {...}, "release": {...}}}
 
-Tier objects carry a ``lanes`` list plus ``quorum``/``budgets`` objects
-(presence-checked only — shapes and thresholds are TBD-E5). Staged
+Tier objects carry a non-empty ``lanes`` list of non-empty strings plus
+``quorum``/``budgets`` objects (presence-checked only — shapes and
+thresholds are TBD-E5). Staged
 Windows/macOS lanes (``win-softhsm2``, ``win-bouncyhsm``,
 ``mac-softhsm2``) are NOT in the initial lock; they land as staged
 additions in E5.
@@ -66,16 +69,19 @@ Verification rules (normative):
 3. ``p11lab_sha`` == lock ``p11lab_ref``; ``evaluator_sha`` == lock
    ``evaluator_fw_ref``; ``baseline_fw_sha`` == lock ``baseline_fw_sha``
    ("stale baseline" = rule 3c).
-4. ``tier`` is one of the lock tiers; the tier object has a ``lanes``
-   list plus ``quorum``/``budgets`` objects. The lock is OUR file, so a
-   malformed lock (bad JSON or bad schema) is a config error -> exit 2.
-5. Closed lane roster: receipt lane keys == tier lanes EXACTLY — a
-   missing lane fails AND an unexpected lane fails (never
-   generated-from-found).
+4. ``tier`` is one of the lock tiers; the tier object has a non-empty
+   ``lanes`` list of non-empty strings plus ``quorum``/``budgets``
+   objects. The lock is OUR file, so a malformed lock (bad JSON or bad
+   schema) is a config error -> exit 2.
+5. Closed lane roster: receipt ``lanes`` is a non-empty object whose keys
+   == tier lanes EXACTLY — a missing lane fails AND an unexpected lane
+   fails (never generated-from-found).
 6. Per lane: ``verdict`` in {pass, fail}; ``admitted`` is a bool;
    ``evidence_digest`` is 64-hex; ``verdict == "pass"`` with
    ``admitted == false`` fails (unadmitted lane marked pass).
-7. Bundle recomputation matches ``bundle_identity``.
+7. Bundle recomputation matches ``bundle_identity`` (skipped without
+   cascading noise when any lane name is UTF-8-unencodable or any
+   digest is not 64-hex — rules 5/6 already report those).
 8. Well-formedness: all ``*_hash`` 64-hex; identities non-empty;
    ``wheel_hashes`` a non-empty object of 64-hex values;
    ``run_id``/``attempt``/``job_ids`` typed as above.
@@ -164,10 +170,12 @@ def _validate_lock_tier(tier: object, spec: Any) -> list[str]:
     lanes = spec.get("lanes")
     if lanes is None:
         errors.append(_missing(f"{prefix}.lanes"))
-    elif not isinstance(lanes, list) or any(
-        not isinstance(name, str) or not name for name in lanes
+    elif (
+        not isinstance(lanes, list)
+        or not lanes
+        or any(not isinstance(name, str) or not name for name in lanes)
     ):
-        errors.append(f"{prefix}.lanes: must be a list of non-empty strings")
+        errors.append(f"{prefix}.lanes: must be a non-empty list of non-empty strings")
     for field in ("quorum", "budgets"):
         shape = spec.get(field)
         if shape is None:
@@ -192,8 +200,8 @@ def validate_receipt(receipt: Any, lock: dict[str, Any], expect_fw: str) -> list
     lanes = receipt.get("lanes")
     if lanes is None:
         failures.append(_missing("lanes"))
-    elif not isinstance(lanes, dict):
-        failures.append("lanes: must be an object")
+    elif not isinstance(lanes, dict) or not lanes:
+        failures.append("lanes: must be a non-empty object")
     elif tier.name is not None:
         failures.extend(_check_roster(tier.name, lanes, lock))
         failures.extend(_check_lane_entries(lanes))
@@ -285,6 +293,14 @@ def _check_lane_entries(lanes: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _is_utf8_encodable(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _check_bundle(receipt: dict[str, Any], lanes: dict[str, Any]) -> list[str]:
     bundle = receipt.get("bundle_identity")
     if not isinstance(bundle, str):
@@ -294,6 +310,15 @@ def _check_bundle(receipt: dict[str, Any], lanes: dict[str, Any]) -> list[str]:
         if not isinstance(entry, dict) or not isinstance(entry.get("evidence_digest"), str):
             return []
         digests[name] = entry["evidence_digest"]
+    # No-cascade rule (R29): recomputation is only meaningful over fully
+    # valid inputs. Rules 5/6 already emit diagnostics for unexpected lanes
+    # and non-hex digests, so skip here when any lane name is
+    # UTF-8-unencodable (e.g. a lone surrogate) or any digest is not 64-hex
+    # (a 64-hex digest is ASCII by construction, hence encodable) — instead
+    # of crashing on .encode("utf-8") or piling on a spurious mismatch.
+    for name, digest in digests.items():
+        if not _is_utf8_encodable(name) or not _is_hex64(digest):
+            return []
     if bundle != compute_bundle_identity(digests):
         return ["bundle_identity: does not match recomputed lane binding"]
     return []
@@ -354,11 +379,22 @@ def _check_wheel_hashes(wheels: Any) -> list[str]:
 def _read_json_file(path: Path, kind: str) -> tuple[Any, str | None]:
     try:
         text = path.read_text(encoding="utf-8")
+        return json.loads(text), None
     except OSError as exc:
         return None, f"cannot read {kind} file {path}: {exc.strerror or exc}"
-    try:
-        return json.loads(text), None
-    except json.JSONDecodeError as exc:
+    except RecursionError:
+        # Parser blew the call stack on hostile nesting: keep the handler
+        # trivial and RecursionError-safe — static message plus the class
+        # name only, never str(exc)/repr of attacker-controlled input.
+        return None, (
+            f"{kind} file {path} is not valid JSON: "
+            "RecursionError (input nesting exceeds parser limits)"
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
+        # UnicodeDecodeError: file is not valid UTF-8. ValueError: parser
+        # failures beyond JSONDecodeError, e.g. the 4300-digit int string
+        # conversion limit (JSONDecodeError subclasses ValueError, so it is
+        # covered here too).
         return None, f"{kind} file {path} is not valid JSON: {exc}"
 
 
