@@ -480,3 +480,38 @@ def test_unknown_top_level_keys_ignored(tmp_path: Path) -> None:
     _write(receipt, payload)
     result = _run(receipt, lock)
     assert result.returncode == EXIT_VALID, result.stderr
+
+
+# --- Fix round 2 (R30): lock lane names must be UTF-8-encodable.
+#
+# Without this, an unencodable lock lane matching an unencodable receipt
+# lane passes the roster (rule 5) and lane entries (rule 6) while the
+# bundle check (rule 7) skips -> exit 0 with a bogus bundle.
+
+
+def test_unencodable_lock_lane_name_rejects_lock(tmp_path: Path) -> None:
+    lane = f"{chr(0xD800)}lane"
+    bad_lock = make_lock()
+    bad_lock["tiers"]["pr-smoke"]["lanes"] = [lane]
+    lock = _write(tmp_path / "lock.json", bad_lock)
+    payload = make_receipt()
+    payload["lanes"] = {lane: {"verdict": "pass", "admitted": True, "evidence_digest": _hex64("e")}}
+    payload["bundle_identity"] = "0" * 64
+    receipt = _write(tmp_path / "receipt.json", payload)
+    result = _run(receipt, lock)
+    assert result.returncode == EXIT_USAGE, result.stderr
+    assert "tiers.pr-smoke.lanes" in result.stderr
+
+
+def test_checked_in_lock_accepts_valid_receipt(tmp_path: Path) -> None:
+    # Control: the committed initial lock plus a matching valid receipt
+    # still verifies (guards R30 false-positives on normal lane names).
+    lock = REPO_ROOT / ".github" / "provider-round.lock.json"
+    lock_payload = json.loads(lock.read_text(encoding="utf-8"))
+    payload = make_receipt()
+    payload["p11lab_sha"] = lock_payload["p11lab_ref"]
+    payload["evaluator_sha"] = lock_payload["evaluator_fw_ref"]
+    payload["baseline_fw_sha"] = lock_payload["baseline_fw_sha"]
+    receipt = _write(tmp_path / "receipt.json", payload)
+    result = _run(receipt, lock)
+    assert result.returncode == EXIT_VALID, result.stderr
