@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from pkcs11_check.core.evidence.admit import (
+    EMPTY_SHARD_SHA256,
     PredeclaredRoster,
     ShardExpectation,
     admit_lane,
@@ -232,3 +235,116 @@ def test_obligation_membership() -> None:
         compile_obligations({"a": {}}, {"cases": ["a", "zzz"]})
     with pytest.raises(ValueError):
         compile_obligations({"a": {}}, {})
+
+
+def test_roster_rejects_zero_records_at_construction() -> None:
+    """R19: a roster shard declaring records=0 is rejected when built."""
+    with pytest.raises(ValueError):
+        ShardExpectation(records=0, sha256=EMPTY_SHARD_SHA256)
+    with pytest.raises(ValueError):
+        ShardExpectation(records=-1, sha256=EMPTY_SHARD_SHA256)
+    # Control: records >= 1 still builds.
+    ShardExpectation(records=1, sha256=EMPTY_SHARD_SHA256)
+
+
+def test_roster_complete_absent_shard_always_fails() -> None:
+    """R19: every roster shard must be present in rows -- no unless-clause."""
+    obligations = ObligationInventory(members=frozenset())
+    roster = PredeclaredRoster(
+        lane="soft",
+        shards={"never_arrived": ShardExpectation(records=1, sha256="0" * 64)},
+    )
+    # Reviewer probe shape: empty rows + absent shard must fail, not admit.
+    verdict = admit_lane(_header([]), [], roster, obligations)
+    assert not verdict.admitted
+    assert _failed_with(verdict.failures, "roster_complete")
+
+    # Absent shard alongside otherwise-clean rows must also fail.
+    header, rows, clean_roster, _ = _clean_lane()
+    shards = dict(clean_roster.shards)
+    shards["ghost"] = ShardExpectation(records=2, sha256="1" * 64)
+    verdict = admit_lane(header, rows, replace(clean_roster, shards=shards), obligations)
+    assert not verdict.admitted
+    assert _failed_with(verdict.failures, "roster_complete")
+
+
+def test_loader_missing_incomplete_key_fails_closed(tmp_path: Path) -> None:
+    """R20: end-to-end -- header counters without `incomplete` fail at load."""
+    from pkcs11_check.core.evidence import load_ledger
+
+    header, rows, _, _ = _clean_lane()
+    ledger = tmp_path / "ledger.jsonl"
+    header_record = header.to_record()
+    del header_record["counters"]["incomplete"]
+    ledger.write_text(
+        "\n".join(
+            [
+                json.dumps(header_record, sort_keys=True),
+                *(json.dumps(row.to_record(), sort_keys=True) for row in rows),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        load_ledger(ledger)
+
+
+def test_loader_full_header_loads_and_admits(tmp_path: Path) -> None:
+    """R20 control: a complete header loads and the lane admits."""
+    from pkcs11_check.core.evidence import load_ledger
+
+    header, rows, _, obligations = _clean_lane()
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        "\n".join(
+            [
+                json.dumps(header.to_record(), sort_keys=True),
+                *(json.dumps(row.to_record(), sort_keys=True) for row in rows),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded_header, loaded_rows = load_ledger(ledger)
+    verdict = admit_lane(loaded_header, loaded_rows, _roster(loaded_rows), obligations)
+    assert verdict.admitted
+    assert verdict.failures == []
+
+
+def test_shard_digest_golden_fixture() -> None:
+    """Independent golden pin of the P11Lab-reused canonicalization.
+
+    Canonical bytes are handwritten below; the digest literal was computed
+    with shell ``sha256sum`` over those exact bytes (no trailing newline),
+    independently of ``shard_digest``.
+    """
+    blob_low = b'{"attempt":1,"outcome":"passed"}'
+    blob_high = b'{"attempt":2,"outcome":"failed"}'
+    row_low = {"outcome": "passed", "attempt": 1}
+    row_high = {"outcome": "failed", "attempt": 2}
+    assert row_blob(row_low) == blob_low
+    assert row_blob(row_high) == blob_high
+    # Rows passed in reverse byte order: sorting + b"\\n" join are pinned too.
+    assert (
+        shard_digest([row_high, row_low])
+        == "7fe9e7768bcd63c10328e3d9daf94a351bd4de8cc3566e65609a3e3f40f5edf5"
+    )
+
+
+def test_occurrence_preserved_duplicate_attempts() -> None:
+    """Attempts [1, 1, 2] with attempts_total=3 fail occurrence_preserved."""
+    rows = [_row("tests/a.py::t", attempt=attempt, attempts_total=3) for attempt in (1, 1, 2)]
+    obligations = ObligationInventory(members=frozenset())
+    verdict = admit_lane(_header(rows), rows, _roster(rows), obligations)
+    assert not verdict.admitted
+    assert _failed_with(verdict.failures, "occurrence_preserved")
+
+
+def test_occurrence_preserved_off_by_one_attempts() -> None:
+    """Attempts [2, 3, 4] with attempts_total=3 fail occurrence_preserved."""
+    rows = [_row("tests/a.py::t", attempt=attempt, attempts_total=3) for attempt in (2, 3, 4)]
+    obligations = ObligationInventory(members=frozenset())
+    verdict = admit_lane(_header(rows), rows, _roster(rows), obligations)
+    assert not verdict.admitted
+    assert _failed_with(verdict.failures, "occurrence_preserved")

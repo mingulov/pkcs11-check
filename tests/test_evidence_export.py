@@ -14,6 +14,7 @@ import pytest
 
 from pkcs11_check.core.crash_codes import CTYPES_ACCESS_VIOLATION
 from pkcs11_check.core.evidence import export_ledger
+from pkcs11_check.core.evidence.schema import zero_counters
 from pkcs11_check.core.report_log import iter_report_log_records
 
 TRACEMALLOC_LIMIT_BYTES = 64 * 1024 * 1024
@@ -438,11 +439,18 @@ def _header_line(schema_v: Any = 1) -> str:
             "raw_stream_bytes": 0,
             "raw_stream_sha256": "",
             "malformed_lines": 0,
-            "counters": {},
+            "counters": zero_counters(),
             "created_by": "pkcs11-check",
         },
         sort_keys=True,
     )
+
+
+def _header_line_missing_counter() -> str:
+    """R20 pin: a header with one counter key removed is malformed evidence."""
+    header = json.loads(_header_line())
+    del header["counters"]["incomplete"]
+    return json.dumps(header, sort_keys=True)
 
 
 def _row_line(node_id: str, phase: str = "call", attempt: int = 1, **overrides: Any) -> str:
@@ -491,6 +499,7 @@ def _row_line(node_id: str, phase: str = "call", attempt: int = 1, **overrides: 
             "duplicate",
         ),
         ([_header_line(), _row_line("tests/a.py::t", outcome="bogus")], "outcome"),
+        ([_header_line_missing_counter()], "missing keys"),
     ],
 )
 def test_load_rejects(tmp_path: Path, lines: list[str], match: str) -> None:
