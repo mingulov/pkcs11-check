@@ -1090,6 +1090,18 @@ def _chmod_locked(path: Path) -> bool:
     return False
 
 
+def _normalized_text(result: Any) -> str:
+    """Captured output with every whitespace run collapsed to one space.
+
+    Rich word-wraps summary lines at the console width (80 under CliRunner):
+    a multi-word phrase on an unbounded-length line -- e.g. the preflight
+    ``{path} not found or unreadable ...`` line -- may be split across output
+    lines depending on width and path length. Assertions on such lines must
+    use this form so they hold at any width and any tmp-path length.
+    """
+    return " ".join(result.output.split())
+
+
 def test_compare_unreadable_candidate_json_envelope_exit_2(tmp_path: Path) -> None:
     """F6r: chmod-000 candidate + --output json -> R25 envelope, exit 2."""
     base, _ = _compare_ledgers(tmp_path)
@@ -1135,7 +1147,7 @@ def test_compare_unreadable_candidate_summary_prose_exit_2(tmp_path: Path) -> No
             pytest.skip("file readable despite chmod 000 (running as root?)")
         result = runner.invoke(app, ["evidence-compare", str(base), str(locked)])
         assert result.exit_code == 2, result.output
-        assert "not found or unreadable" in result.output
+        assert "not found or unreadable" in _normalized_text(result)
         assert "Usage:" not in result.output
     finally:
         locked.chmod(0o644)
@@ -1146,5 +1158,41 @@ def test_compare_missing_file_summary_prose_exit_2(tmp_path: Path) -> None:
     base, _ = _compare_ledgers(tmp_path)
     result = runner.invoke(app, ["evidence-compare", str(base), str(tmp_path / "absent.jsonl")])
     assert result.exit_code == 2, result.output
-    assert "not found or unreadable" in result.output
+    assert "not found or unreadable" in _normalized_text(result)
+    assert "Usage:" not in result.output
+
+
+# Tuned total length of str(missing) in the wrap-forcing test below: raw
+# contiguity of "not found or unreadable" fails at width 80 for totals
+# 137..156 (swept 1..160); 146 sits mid-band. See the test docstring.
+_WRAP_TARGET = 146
+
+
+def test_compare_missing_file_long_path_wrap_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R28: the preflight phrase asserts green on a Rich-wrapped long-path line.
+
+    The missing path is padded so ``str(missing)`` is exactly
+    ``_WRAP_TARGET`` chars; at width 80 that puts the wrap split inside
+    ``not found or unreadable`` (tuned: raw contiguity fails for total path
+    lengths 137..156, target 146 sits mid-band with -9/+10 margin). Width is
+    pinned via ``COLUMNS`` (Rich re-reads it per print even under CliRunner,
+    verified empirically), and the padded total makes the wrap point identical
+    on every machine -- CliRunner is never a tty, so nothing else moves it.
+    The test asserts the NORMALIZED form: it passes at any width, and goes
+    red if the assertion ever regresses to raw contiguity. (A tmp_path
+    containing spaces or exotic OSError text only costs the wrap bite, never
+    the pass: normalization holds regardless.)
+    """
+    monkeypatch.setenv("COLUMNS", "80")
+    base, _ = _compare_ledgers(tmp_path)
+    padding = _WRAP_TARGET - len(str(tmp_path)) - 2 - len("absent.jsonl")
+    if padding < 1:
+        pytest.skip("tmp_path too long to pad to the tuned wrap length")
+    missing = tmp_path / ("d" * padding) / "absent.jsonl"
+    assert len(str(missing)) == _WRAP_TARGET
+    result = runner.invoke(app, ["evidence-compare", str(base), str(missing)])
+    assert result.exit_code == 2, result.output
+    assert "not found or unreadable" in _normalized_text(result)
     assert "Usage:" not in result.output
