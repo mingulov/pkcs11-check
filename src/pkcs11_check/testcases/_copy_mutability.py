@@ -848,9 +848,9 @@ def check_material_preserved(
             # Flag-first (deliberate I13 exception): the mutation is proved by
             # the accepted encrypt output, independent of the decrypt RV, so a
             # proved mutation fails here even for vendor/undefined refusal RVs.
-            # The metadata RV violation is subsumed under the proved-mutation
-            # FAIL with the RV preserved in use_rv; unproved refusals still
-            # take the validity arms below.
+            # Any RV-validity verdict below is subsumed under the proved-mutation
+            # FAIL with the RV preserved in use_rv; unproved refusals are
+            # unaffected and still take the validity arms below.
             classify_ignored_or_mutated(
                 mutated=True,
                 label=label,
