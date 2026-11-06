@@ -1999,6 +1999,41 @@ def test_qc3a_material_decrypt_refused_is_unproved() -> None:
     assert record.actual_ckr == "CKR_OK", record.actual_ckr
 
 
+def test_qc3a_material_decrypt_refused_after_proved_mutation_fails() -> None:
+    """G2: proved injected behavior fails even when the follow-up decrypt refuses."""
+    fake = _CopyFake(copy_mode="apply", decrypt_rv={("copy", _ECB): _DEVICE_ERROR})
+    _run_must_fail(_qc3a_material, _rs(fake))
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert (record.detail or {}).get("disposition") == "forbidden-mutation", record.detail
+    assert (record.detail or {}).get("use_rv") == "CKR_DEVICE_ERROR", record.detail
+    assert (record.detail or {}).get("behaves_as_injected") is True, record.detail
+    for key in (
+        "readback_matches_original",
+        "readback_matches_injected",
+        "readback_len",
+        "behaves_as_original",
+        "behaves_as_injected",
+    ):
+        assert key in (record.detail or {}), record.detail
+
+
+def test_qc3a_material_decrypt_vendor_refusal_after_proved_mutation_fails() -> None:
+    """G2 flag-first: a vendor-RV decrypt refusal does not hide a proved mutation."""
+    fake = _CopyFake(copy_mode="apply", decrypt_rv={("copy", _ECB): _VENDOR_RV})
+    _run_must_fail(_qc3a_material, _rs(fake))
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert (record.detail or {}).get("disposition") == "forbidden-mutation", record.detail
+    assert (record.detail or {}).get("behaves_as_injected") is True, record.detail
+    assert "use_rv" in (record.detail or {}), record.detail
+
+
+def test_qc3a_material_decrypt_vendor_refusal_unproved_without_mutation() -> None:
+    """G2 characterization: vendor-RV decrypt refusal without mutation stays I13 xfail."""
+    fake = _CopyFake(copy_mode="ignore", decrypt_rv={("copy", _ECB): _VENDOR_RV})
+    assert_xfails(_qc3a_material, _rs(fake))
+    _assert_xfail_record("nonspec_reject")
+
+
 def test_qc3a_material_use_vendor_refusal_xfails_nonspec() -> None:
     """I13: a vendor-RV use refusal on the copy is a visible alternate xfail."""
     fake = _CopyFake(copy_mode="ignore", encrypt_rv={("copy", _ECB): _VENDOR_RV})
