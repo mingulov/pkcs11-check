@@ -562,17 +562,15 @@ def _raise_for_fresh_fail(record_count: int) -> None:
 def read_peer_claim(rs: Any, handle: int, *, label: str) -> list[str] | None:
     """Observe the peer/target key's allow-list without judging its content.
 
-    Pure observation (F1): absence, refusal, and malformed shapes all yield
-    None with a neutral compliance note; NO classification record is emitted,
-    so the leg's terminal verdict decides the reported outcome. The leg
+    Pure observation (F1), except absence is visible (B4): a missing
+    CKA_ALLOWED_MECHANISMS read records a ``not_operational`` xfail, since
+    Table 26 carries no optionality footnote for that row. Refusal and
+    malformed shapes yield None with a neutral compliance note. The leg
     carries the observation in its own evidence/detail
     (``peer_allowed_mechanisms``). Only mechanism names ride into evidence,
     never secret bytes. RV validity still applies (F13): an undefined RV on
     this auxiliary read is a metadata FAIL and a vendor RV a visible
-    alternate xfail; standard refusals stay neutral. ``CKA_ALLOWED_MECHANISMS``
-    is spec-optional (Table 26 row carries no MUST-specify markers -- the
-    approved CKA_CHECK_VALUE precedent), so absence takes the
-    guard-approved optional-absence hatch (silent MISSING). A proved module
+    alternate xfail; standard refusals stay neutral. A proved module
     self-contradiction on this read (refusal-with-data) is RECORDED and
     fails loud (F9 fail-fast) -- never noted-and-passed.
     """
@@ -601,7 +599,7 @@ def read_peer_claim(rs: Any, handle: int, *, label: str) -> list[str] | None:
         inherit_mechanism=False,
     )
     if claimed is MISSING_ATTRIBUTE:
-        # Refusal-with-data takes the hatch's contradiction arm: a proved
+        # Refusal-with-data takes attr_or_record's contradiction arm: a proved
         # module self-contradiction fails loud per framework doctrine (F9
         # fail-fast); it is never noted-and-passed. Fresh xfail records
         # stay streamed for the report hook (see _raise_for_fresh_fail).
