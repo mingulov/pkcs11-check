@@ -1907,7 +1907,7 @@ def _assert_characterization_pins(characterization: InventoryCharacterization, r
         ),
         (
             "digest",
-            "25d2a06981f615ea812064055289f9e324f24b67f6996fda38b1e7bb85799865",
+            "b32228a053ee5137fe9ba4be7fcd515eced3351e06856e8c52c539e66deec2e5",
             characterization.digest,
         ),
         (
