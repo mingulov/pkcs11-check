@@ -41,9 +41,13 @@ from pkcs11_check.raw.types_std import (
     CK_TOKEN_INFO,
     CK_ULONG,
     CK_UNAVAILABLE_INFORMATION,
+    CKA_CLASS,
+    CKA_KEY_TYPE,
     CKA_LABEL,
     CKA_PRIVATE,
     CKA_TOKEN,
+    CKK_AES,
+    CKO_SECRET_KEY,
     CKR_ARGUMENTS_BAD,
     CKR_ATTRIBUTE_TYPE_INVALID,
     CKR_GENERAL_ERROR,
@@ -136,7 +140,8 @@ class _SoCreationRaw:
         self.hide_ok_companion_from_so: bool = False
         self.hide_attempt_leak_from_so: bool = False
         self.attempt_script: list[int] = []
-        self.attempt_leak = "none"  # none | proved | foreign
+        self.attempt_leak = "none"  # none | proved | foreign | identity-foreign
+        self.attempt_leak_identity: tuple[int, int] | None = None
         self.attempt_handle_write: int | None = None
         self.so_login_rv: int = _OK
         self.user_relogin_rv: int = _OK
@@ -359,6 +364,19 @@ class _SoCreationRaw:
         elif self.attempt_leak == "foreign":
             leaked = self._alloc({int(CKA_LABEL): b"qc10a-foreign"})
             self.leaked.append(leaked)
+            if self.hide_attempt_leak_from_so:
+                self.hide_from_so.add(leaked)
+        elif self.attempt_leak == "identity-foreign":
+            leak = {int(CKA_LABEL): b"qc10a-foreign", int(CKA_TOKEN): b"\x00"}
+            if self.attempt_leak_identity is not None:
+                cls, typ = self.attempt_leak_identity
+                leak[int(CKA_CLASS)] = _ulong_bytes(cls)
+                leak[int(CKA_KEY_TYPE)] = _ulong_bytes(typ)
+            leaked = self._alloc(leak)
+            self.leaked.append(leaked)
+            # The refusing provider writes the foreign handle to the output
+            # slot, creating error-output membership for a non-owned object.
+            self.attempt_handle_write = leaked
             if self.hide_attempt_leak_from_so:
                 self.hide_from_so.add(leaked)
 
@@ -671,6 +689,19 @@ def test_so_leg_refusal_with_foreign_leak_xfails_and_stays_alive(method: str, _o
     fake.attempt_script = [_OK, _NOT_LOGGED_IN]
     fake.attempt_leak = "foreign"
     assert_xfails(_run_so_leg, method, _rs(fake), _config())
+    rec = _assert_xfail_record("honest_deviation")
+    assert rec.detail["disposition"] == "unproved-effect"
+    assert fake.leaked
+    assert all(handle not in fake.destroys for handle in fake.leaked)
+
+
+def test_so_generate_refusal_with_identity_foreign_leak_xfails_and_stays_alive() -> None:
+    """G3: identity-matching foreign leak with readable label stays unproved, never destroyed."""
+    fake = _SoCreationRaw()
+    fake.attempt_script = [_OK, _NOT_LOGGED_IN]
+    fake.attempt_leak = "identity-foreign"
+    fake.attempt_leak_identity = (int(CKO_SECRET_KEY), int(CKK_AES))
+    assert_xfails(_run_so_leg, "test_so_cannot_generate_private_key", _rs(fake), _config())
     rec = _assert_xfail_record("honest_deviation")
     assert rec.detail["disposition"] == "unproved-effect"
     assert fake.leaked

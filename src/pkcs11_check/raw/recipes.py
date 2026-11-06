@@ -1575,7 +1575,8 @@ def partition_proved_new(
     attempt-specific link must hold -- the exact attempt label, a
     matching strong material value (modulus, EC point, or secret value;
     common selectors such as an exponent or parameter set never prove
-    alone), error-output membership combined with a matching identity,
+    alone), error-output membership combined with a matching identity
+    (vetoed by a readable label contradicting the attempt),
     or completion of a complementary public/private pair anchored by an
     independently proved half and sharing strong material with it
     (CKA_ID equality is not pairing evidence: PKCS#11 does not enforce
@@ -1685,6 +1686,13 @@ def partition_proved_new(
                 return True
             if strong_hits:
                 return True
+            if spec_label is not None and label is not None and label != spec_label:
+                # G3: a readable label contradicting the attempt vetoes the
+                # weak error-output+identity path below (a foreign object can
+                # share the identity and land in the output slot). An
+                # unreadable label (None) is not a contradiction: the fallback
+                # still covers refused creations that cannot be read back.
+                return False
             identity_ok = actual_identity is not None and (
                 actual_identity == spec_identity or actual_identity in identity_set
             )
