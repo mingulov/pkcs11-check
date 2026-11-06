@@ -879,8 +879,8 @@ def _judge_restart_persistence(
         # risks false accusations; revisit with provider data. Emission is
         # deferred past both traces' hard-failure checks above, so a
         # co-occurring hard finding (bypass, undefined RV, lockout denial,
-        # phase-one acceptance) still fails loud; it preempts only the
-        # first-trace xfail tiers below.
+        # phase-one acceptance) still fails loud; below, it preempts only
+        # xfail/return grades (first-trace tiers and LOCKED tiers).
         xfail_as(
             "honest_deviation",
             kind="metadata",
