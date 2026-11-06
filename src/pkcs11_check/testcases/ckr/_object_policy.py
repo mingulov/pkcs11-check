@@ -599,12 +599,6 @@ def read_peer_claim(rs: Any, handle: int, *, label: str) -> list[str] | None:
         reason="not_operational",
         kind="policy",
         inherit_mechanism=False,
-        # Guard-approved hatch pair (R1): CKA_ALLOWED_MECHANISMS is
-        # spec-optional (Table 26, no MUST-specify markers; KCV precedent),
-        # so a conformant absence stays silent (F1: no record, the leg
-        # terminal decides). A refusal-with-data still takes the
-        # contradiction arm and fails loud below.
-        optional_if_absent=True,
     )
     if claimed is MISSING_ATTRIBUTE:
         # Refusal-with-data takes the hatch's contradiction arm: a proved

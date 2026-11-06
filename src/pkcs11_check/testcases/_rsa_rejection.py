@@ -328,7 +328,13 @@ def _accepted_attempts_complete(observations: tuple[V15SampleObservation, ...]) 
 
 
 def _accepted_outputs_nonzero(observations: tuple[V15SampleObservation, ...]) -> bool:
-    """No accepted output is empty or all-zero (explicitly non-proving)."""
+    """No accepted output is empty or all-zero (explicitly non-proving).
+
+    Residual risk (F-01): a blind-strip-zero provider (constant-zero invalid
+    outputs) yields no hard finding — the garbage node records
+    honest_deviation/kind crypto with detail assessment=unresolved, and the
+    structured leg posts an unresolved xfail.
+    """
     for obs in observations:
         for attempt in (obs.first, obs.repeated):
             if attempt is None or not attempt.accepted or attempt.output is None:
