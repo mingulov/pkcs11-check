@@ -1541,6 +1541,21 @@ def _assert_terminal_pass() -> Any:
     return terminal
 
 
+def _assert_terminal_xfail_not_operational() -> Any:
+    """B4: absent peer claim records not_operational; the leg evidence still completes.
+
+    The complete stream carries exactly one leading not_operational xfail
+    followed by the passing terminal record (F1: whole-stream assertion).
+    """
+    records = C.get_records()
+    assert [(rec.reason, rec.outcome) for rec in records] == [
+        ("not_operational", "xfail"),
+        ("sanctioned_refusal", "pass"),
+    ], [(rec.reason, rec.outcome) for rec in records]
+    assert _reported_outcome() == "xfail"
+    return records[-1]
+
+
 def _assert_peer_note() -> None:
     """A peer observation left neutral evidence on the compliance channel."""
     notes = [note for note in get_notes() if "peer claim" in note.description]
@@ -2074,11 +2089,11 @@ def test_qc4a_derive_message_use_refused_is_unproved() -> None:
 
 
 @pytest.mark.parametrize("use", ["classic", "message"])
-def test_qc4a_wrap_included_success_passes(use: str) -> None:
-    """Included wrap completes; the blob re-unwraps and the key round-trips."""
+def test_qc4a_wrap_included_success_xfails_on_absent_peer_list(use: str) -> None:
+    """B4: included wrap evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake()
     _qc4a_wrap(_rs(fake), "included", use)
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert (record.detail or {}).get("oracle_match") is True, record.detail
@@ -2098,11 +2113,11 @@ def test_qc4a_wrap_peer_list_is_observed_not_failed_on() -> None:
     assert (record.detail or {}).get("peer_allowed_mechanisms") == ["CKM_AES_KEY_WRAP"]
 
 
-def test_qc4a_wrap_absent_peer_list_reports_terminal_pass() -> None:
-    """F1: healthy wrap + absent peer list → terminal PASS via the real hook."""
+def test_qc4a_wrap_absent_peer_list_xfails_not_operational() -> None:
+    """B4: wrap + absent peer list → terminal XFAIL (not_operational record)."""
     fake = _PolicyFake()
     _qc4a_wrap(_rs(fake), "included", "classic")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert (record.detail or {}).get("peer_allowed_mechanisms") is None, record.detail
     _assert_peer_note()
@@ -2147,37 +2162,38 @@ def test_qc4a_wrap_undefined_peer_read_fails_metadata() -> None:
     _assert_no_secret_bytes()
 
 
-def test_qc4a_unwrap_absent_peer_list_reports_terminal_pass() -> None:
-    """F1: healthy unwrap + absent peer list → terminal PASS via the real hook."""
+def test_qc4a_unwrap_absent_peer_list_xfails_not_operational() -> None:
+    """B4: unwrap + absent peer list → terminal XFAIL (not_operational record)."""
     fake = _PolicyFake()
     _qc4a_unwrap(_rs(fake), "included", "classic")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     _assert_peer_note()
 
 
-def test_qc4a_encaps_absent_peer_list_reports_terminal_pass() -> None:
-    """F1: healthy encapsulate + absent peer list → terminal PASS via the real hook."""
+def test_qc4a_encaps_absent_peer_list_xfails_not_operational() -> None:
+    """B4: encapsulate + absent peer list → terminal XFAIL (not_operational record)."""
     fake = _PolicyFake()
     _qc4a_encaps(_rs(fake), "included")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     _assert_peer_note()
 
 
-def test_qc4a_decaps_absent_peer_list_reports_terminal_pass() -> None:
-    """F1: healthy decapsulate + absent peer list → terminal PASS via the real hook."""
+def test_qc4a_decaps_absent_peer_list_xfails_not_operational() -> None:
+    """B4: decapsulate + absent peer list → terminal XFAIL (not_operational record)."""
     fake = _PolicyFake()
     _qc4a_decaps(_rs(fake), "included")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     _assert_peer_note()
 
 
-def test_read_peer_claim_absence_leaves_no_record(monkeypatch: pytest.MonkeyPatch) -> None:
-    """F1: peer absence leaves NO classification record (neutral note only)."""
+def test_read_peer_claim_absence_records_not_operational(monkeypatch: pytest.MonkeyPatch) -> None:
+    """B4: peer absence records a not_operational xfail (neutral note still emitted)."""
     mod = _policy_module()
     monkeypatch.setattr(mod, "read_attributes", lambda *args: {})
     assert mod.read_peer_claim(SimpleNamespace(raw=object(), sh=1), 1, label="probe") is None
-    assert C.get_records() == [], "absence must not record"
-    assert _reported_outcome() == "pass"
+    records = C.get_records()
+    assert [(rec.reason, rec.outcome) for rec in records] == [("not_operational", "xfail")]
+    assert _reported_outcome() == "xfail"
     _assert_peer_note()
 
 
@@ -2297,10 +2313,11 @@ def test_qc4a_wrap_included_round_trip_break_fails() -> None:
     _assert_cleaned_up(fake)
 
 
-def test_qc4a_wrap_excluded_policy_refusal_passes() -> None:
+def test_qc4a_wrap_excluded_policy_refusal_xfails_on_absent_peer_list() -> None:
+    """B4: excluded refusal evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake(wrap_script=[None, None, _KEY_NOT_PERMITTED])
     _qc4a_wrap(_rs(fake), "excluded", "classic")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert record.actual_ckr == ckr_name(_KEY_NOT_PERMITTED), record.summary
@@ -2396,11 +2413,11 @@ def test_qc4a_wrap_message_unsupported_skips() -> None:
 
 
 @pytest.mark.parametrize("use", ["classic", "message"])
-def test_qc4a_unwrap_included_success_passes(use: str) -> None:
-    """Included unwrap completes; the unwrapped key is oracle-verified + round-trips."""
+def test_qc4a_unwrap_included_success_xfails_on_absent_peer_list(use: str) -> None:
+    """B4: included unwrap evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake()
     _qc4a_unwrap(_rs(fake), "included", use)
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert (record.detail or {}).get("oracle_match") is True, record.detail
@@ -2459,10 +2476,11 @@ def test_qc4a_unwrap_included_use_refused_is_unproved() -> None:
     _assert_cleaned_up(fake)
 
 
-def test_qc4a_unwrap_excluded_policy_refusal_passes() -> None:
+def test_qc4a_unwrap_excluded_policy_refusal_xfails_on_absent_peer_list() -> None:
+    """B4: excluded refusal evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake(unwrap_script=[None, _KEY_NOT_PERMITTED])
     _qc4a_unwrap(_rs(fake), "excluded", "classic")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert record.actual_ckr == ckr_name(_KEY_NOT_PERMITTED), record.summary
@@ -2566,11 +2584,11 @@ def test_qc4a_unwrap_message_round_trip_break_fails() -> None:
 # -- QC4a encapsulate -----------------------------------------------------------------
 
 
-def test_qc4a_encaps_included_success_passes() -> None:
-    """Included encaps completes; both sides yield the identical 32-byte secret."""
+def test_qc4a_encaps_included_success_xfails_on_absent_peer_list() -> None:
+    """B4: included encaps evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake()
     _qc4a_encaps(_rs(fake), "included")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert (record.detail or {}).get("secrets_match") is True, record.detail
@@ -2666,10 +2684,11 @@ def test_qc4a_encaps_included_secret_unreadable_is_unproved() -> None:
     _assert_cleaned_up(fake)
 
 
-def test_qc4a_encaps_excluded_policy_refusal_passes() -> None:
+def test_qc4a_encaps_excluded_policy_refusal_xfails_on_absent_peer_list() -> None:
+    """B4: excluded refusal evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake(encaps_script=[None, None, _KEY_NOT_PERMITTED])
     _qc4a_encaps(_rs(fake), "excluded")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert record.actual_ckr == ckr_name(_KEY_NOT_PERMITTED), record.summary
@@ -2757,11 +2776,11 @@ def test_qc4a_encaps_missing_keygen_skips() -> None:
 # -- QC4a decapsulate -----------------------------------------------------------------
 
 
-def test_qc4a_decaps_included_success_passes() -> None:
-    """Included decaps completes; the secret equals the encaps side byte-wise."""
+def test_qc4a_decaps_included_success_xfails_on_absent_peer_list() -> None:
+    """B4: included decaps evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake()
     _qc4a_decaps(_rs(fake), "included")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert (record.detail or {}).get("secrets_match") is True, record.detail
@@ -2819,10 +2838,11 @@ def test_qc4a_decaps_included_secret_unreadable_is_unproved() -> None:
     _assert_cleaned_up(fake)
 
 
-def test_qc4a_decaps_excluded_policy_refusal_passes() -> None:
+def test_qc4a_decaps_excluded_policy_refusal_xfails_on_absent_peer_list() -> None:
+    """B4: excluded refusal evidence intact; absent peer list xfails not_operational."""
     fake = _PolicyFake(decaps_script=[None, _KEY_NOT_PERMITTED])
     _qc4a_decaps(_rs(fake), "excluded")
-    _assert_terminal_pass()
+    _assert_terminal_xfail_not_operational()
     record = _terminal_record()
     assert record.reason == "sanctioned_refusal", record.summary
     assert record.actual_ckr == ckr_name(_KEY_NOT_PERMITTED), record.summary
