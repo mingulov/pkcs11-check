@@ -739,6 +739,130 @@ class TestExhaustiveInventoryPartition:
         assert proved == []
         assert unproved == [2]
 
+    def test_partition_reusable_value_with_foreign_label_unproved(self) -> None:
+        """G3-codex: shared CKA_VALUE + contradicting label proves nothing."""
+        from pkcs11_check.raw.recipes import partition_proved_new
+        from pkcs11_check.raw.types_std import (
+            CKA_CLASS,
+            CKA_LABEL,
+            CKA_TOKEN,
+            CKA_VALUE,
+            CKO_DATA,
+        )
+
+        value = b"qc7c-override"
+        raw: Any = _InventoryRaw(
+            {
+                1: {},
+                2: {
+                    int(CKA_LABEL): b"foreign",
+                    int(CKA_TOKEN): b"\x00",
+                    int(CKA_CLASS): _ulong_blob(int(CKO_DATA)),
+                    int(CKA_VALUE): value,
+                },
+            }
+        )
+        proved, unproved = partition_proved_new(
+            raw,
+            7,
+            [1],
+            [1, 2],
+            attempt_templates=(
+                {
+                    CKA_LABEL: "attempt",
+                    CKA_TOKEN: False,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_VALUE: value,
+                },
+            ),
+        )
+        assert proved == []
+        assert unproved == [2]
+
+    def test_partition_reusable_value_with_matching_label_proved(self) -> None:
+        """G3-codex neighbor: shared CKA_VALUE + attempt label still proves."""
+        from pkcs11_check.raw.recipes import partition_proved_new
+        from pkcs11_check.raw.types_std import (
+            CKA_CLASS,
+            CKA_LABEL,
+            CKA_TOKEN,
+            CKA_VALUE,
+            CKO_DATA,
+        )
+
+        value = b"qc7c-override"
+        raw: Any = _InventoryRaw(
+            {
+                1: {},
+                2: {
+                    int(CKA_LABEL): b"attempt",
+                    int(CKA_TOKEN): b"\x00",
+                    int(CKA_CLASS): _ulong_blob(int(CKO_DATA)),
+                    int(CKA_VALUE): value,
+                },
+            }
+        )
+        proved, unproved = partition_proved_new(
+            raw,
+            7,
+            [1],
+            [1, 2],
+            attempt_templates=(
+                {
+                    CKA_LABEL: "attempt",
+                    CKA_TOKEN: False,
+                    CKA_CLASS: CKO_DATA,
+                    CKA_VALUE: value,
+                },
+            ),
+        )
+        assert proved == [2]
+        assert unproved == []
+
+    def test_partition_crypto_material_with_foreign_label_proved(self) -> None:
+        """G3-codex neighbor: modulus proof ignores a foreign label."""
+        from pkcs11_check.raw.recipes import partition_proved_new
+        from pkcs11_check.raw.types_std import (
+            CKA_CLASS,
+            CKA_KEY_TYPE,
+            CKA_LABEL,
+            CKA_MODULUS,
+            CKA_TOKEN,
+            CKK_RSA,
+            CKO_PUBLIC_KEY,
+        )
+
+        modulus = b"\x80known-modulus"
+        raw: Any = _InventoryRaw(
+            {
+                1: {},
+                2: {
+                    int(CKA_LABEL): b"foreign",
+                    int(CKA_TOKEN): b"\x00",
+                    int(CKA_CLASS): _ulong_blob(int(CKO_PUBLIC_KEY)),
+                    int(CKA_KEY_TYPE): _ulong_blob(int(CKK_RSA)),
+                    int(CKA_MODULUS): modulus,
+                },
+            }
+        )
+        proved, unproved = partition_proved_new(
+            raw,
+            7,
+            [1],
+            [1, 2],
+            attempt_templates=(
+                {
+                    CKA_LABEL: "attempt",
+                    CKA_TOKEN: False,
+                    CKA_CLASS: CKO_PUBLIC_KEY,
+                    CKA_KEY_TYPE: CKK_RSA,
+                    CKA_MODULUS: modulus,
+                },
+            ),
+        )
+        assert proved == [2]
+        assert unproved == []
+
     def test_partition_identity_and_common_exponent_alone_unproved(self) -> None:
         from pkcs11_check.raw.recipes import partition_proved_new
         from pkcs11_check.raw.types_std import (

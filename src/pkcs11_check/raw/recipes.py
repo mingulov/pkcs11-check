@@ -1458,6 +1458,16 @@ _PROOF_STRONG_MATERIAL_ATTRS = (
 )
 
 
+# Cryptographically identifying strong material: a fresh modulus/EC point
+# cannot collide, so it proves without label agreement. CKA_VALUE is
+# excluded: data objects (and fixture constants) reuse public values, so a
+# value-only match proves only when the label does not contradict (G3-codex).
+_PROOF_CRYPTO_STRONG_MATERIAL_ATTRS = (
+    int(CKA_MODULUS),
+    int(CKA_EC_POINT),
+)
+
+
 def find_objects_exhaustive(
     raw: RawPKCS11,
     session: int,
@@ -1573,10 +1583,13 @@ def partition_proved_new(
     readable token object), no readable attempted material attribute
     may be contradicted by any attempt template, and at least one
     attempt-specific link must hold -- the exact attempt label, a
-    matching strong material value (modulus, EC point, or secret value;
-    common selectors such as an exponent or parameter set never prove
-    alone), error-output membership combined with a matching identity
-    (vetoed by a readable label contradicting the attempt),
+    matching cryptographic material value (modulus or EC point, which
+    cannot collide), a matching CKA_VALUE when the label does not
+    contradict the attempt (reusable data/fixture values are not
+    identifying on their own; common selectors such as an exponent
+    or parameter set never prove alone), error-output membership
+    combined with a matching identity (vetoed by a readable label
+    contradicting the attempt),
     or completion of a complementary public/private pair anchored by an
     independently proved half and sharing strong material with it
     (CKA_ID equality is not pairing evidence: PKCS#11 does not enforce
@@ -1673,6 +1686,7 @@ def partition_proved_new(
             elif token != spec_token:
                 return False
             strong_hits = 0
+            crypto_strong = False
             for attr, expected_values in spec_material.items():
                 if attr not in attrs:
                     continue
@@ -1682,17 +1696,24 @@ def partition_proved_new(
                     return False  # Readable attempted material contradicted.
                 if attr in _PROOF_STRONG_MATERIAL_ATTRS and _proof_nonempty_material(attrs[attr]):
                     strong_hits += 1
+                    if attr in _PROOF_CRYPTO_STRONG_MATERIAL_ATTRS:
+                        crypto_strong = True
             if spec_label is not None and label == spec_label:
                 return True
-            if strong_hits:
+            if crypto_strong:
                 return True
             if spec_label is not None and label is not None and label != spec_label:
                 # G3: a readable label contradicting the attempt vetoes the
                 # weak error-output+identity path below (a foreign object can
-                # share the identity and land in the output slot). An
-                # unreadable label (None) is not a contradiction: the fallback
-                # still covers refused creations that cannot be read back.
+                # share the identity and land in the output slot), and likewise
+                # a reusable-value (CKA_VALUE) strong match (G3-codex: data
+                # objects and fixture constants reuse public values, so the
+                # value alone is not identifying). An unreadable label (None)
+                # is not a contradiction: the fallback still covers refused
+                # creations that cannot be read back.
                 return False
+            if strong_hits:
+                return True
             identity_ok = actual_identity is not None and (
                 actual_identity == spec_identity or actual_identity in identity_set
             )
