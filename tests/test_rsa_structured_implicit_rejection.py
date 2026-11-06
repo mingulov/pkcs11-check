@@ -1032,6 +1032,80 @@ def test_assess_oracle_requires_repeated_category_correlation() -> None:
     assert run(mid, [edi] * 50).oracle.status == "persistent"
 
 
+def test_assess_oracle_correlated_post_window_beats_full_set_equality() -> None:
+    """G1: post-window-exclusive evidence stays persistent when full sets coincide."""
+    from pkcs11_check.testcases._rsa_rejection import assess_v15_samples
+
+    vuln = int(CKR_ENCRYPTED_DATA_INVALID)
+    odd = int(CKR_DEVICE_ERROR)
+
+    def run(cat1_rvs: list[int], cat2_rvs: list[int]) -> Any:
+        obs = [
+            _obs_for(f"cat1-{i:02d}", "cat1", bytes([i]) * 256, _attempt_for(rv), seq=2 * i)
+            for i, rv in enumerate(cat1_rvs)
+        ]
+        obs += [
+            _obs_for(
+                f"cat2-{i:02d}",
+                "cat2",
+                bytes([100 + i]) * 256,
+                _attempt_for(rv),
+                seq=2 * i + 1,
+            )
+            for i, rv in enumerate(cat2_rvs)
+        ]
+        return assess_v15_samples(obs, None, modulus_len=256)
+
+    # Swapped startup transients (window W=2), then exclusive: full sets are
+    # both {vuln, odd}, but post-window evidence is category-exclusive.
+    cat1 = [odd, odd] + [vuln] * 48
+    cat2 = [vuln, vuln] + [odd] * 48
+    assert run(cat1, cat2).oracle.status == "persistent"
+
+
+def test_structured_node_flags_swapped_startup_persistent_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G1 driver: swapped-startup trace fails loud with the oracle CRITICAL note."""
+    from pkcs11_check.compliance import ComplianceLevel
+
+    vuln = int(CKR_ENCRYPTED_DATA_INVALID)
+    odd = int(CKR_DEVICE_ERROR)
+    cat1_cts = {_ct(_spec_cat1(i)) for i in range(50)}
+    cat2_cts = {_ct(_spec_cat2(i)) for i in range(50)}
+    seen1: set[bytes] = set()
+    seen2: set[bytes] = set()
+
+    def _behavior(ct: bytes, _qi: int) -> _Behavior:
+        if ct == _CONTROL_CT:
+            return _output(_CONTROL_MESSAGE)
+        if ct == _WITNESS_CT:
+            return _reject("output", vuln)
+        if ct in cat1_cts:
+            first_seen = ct not in seen1
+            transient = first_seen and len(seen1) < 2
+            seen1.add(ct)
+            return _reject("output", odd if transient else vuln)
+        if ct in cat2_cts:
+            first_seen = ct not in seen2
+            transient = first_seen and len(seen2) < 2
+            seen2.add(ct)
+            return _reject("output", vuln if transient else odd)
+        raise AssertionError(f"unscripted ciphertext {ct.hex()[:32]}...")
+
+    # Per-index sequences mirror the assess-level trace: cat1 = B,B + 48xA,
+    # cat2 = A,A + 48xB, with the first two distinct-ct first-queries transient.
+    raw = _V15FakeRaw(_behavior)
+    with pytest.raises(Failed):
+        _run_structured(monkeypatch, raw)
+    assert raw.init_count == 103
+    notes = compliance.get_notes()
+    assert any(
+        note.level == ComplianceLevel.CRITICAL and "category-distinguishable" in note.description
+        for note in notes
+    )
+
+
 # --- Fix round 1: zero-output / completeness guards (finding 2) ---
 
 
