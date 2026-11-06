@@ -2999,6 +2999,9 @@ def outer(raw, session, handle):
     assert _kinds(source) == ["unsafe_subscript"]
 
 
+# Whole-tree AST analysis (~24s on Linux, 2-3x on Windows runners):
+# keep the repo-default timeout, not CI's 60s fail-fast cliff.
+@pytest.mark.timeout(300)
 def test_all_testcase_sources_are_analyzable() -> None:
     testcase_root = Path(__file__).parents[1] / "src" / "pkcs11_check" / "testcases"
     source_files = sorted(testcase_root.rglob("*.py"))
@@ -3010,6 +3013,7 @@ def test_all_testcase_sources_are_analyzable() -> None:
     assert all(violation.path in {str(path) for path in source_files} for violation in violations)
 
 
+@pytest.mark.timeout(300)
 def test_all_testcase_sources_have_zero_attribute_access_violations() -> None:
     """Release gate: F7 routed every provider-attribute read through the presence helper.
 
@@ -3037,6 +3041,7 @@ def test_all_testcase_sources_have_zero_attribute_access_violations() -> None:
         )
 
 
+@pytest.mark.timeout(300)
 def test_all_testcase_sources_are_fully_covered_by_analysis() -> None:
     """Canary for the zero-violation gate above: it must fail *because there are no
     violations*, not because a regression scoped to real-file discovery/analysis --

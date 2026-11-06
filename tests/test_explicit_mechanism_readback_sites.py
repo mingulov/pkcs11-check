@@ -1044,6 +1044,9 @@ def _x942_inventory_findings() -> Any:
     return [finding for finding in scan_tree(root) if finding.path == "test_x942_dh.py"]
 
 
+# Whole-tree scan (~17s on Linux, 2-3x on Windows runners):
+# keep the repo-default timeout, not CI's 60s fail-fast cliff.
+@pytest.mark.timeout(300)
 def test_x942_no_explicit_mechanism_readback_remains() -> None:
     """Every x942 readback-shaped emitter now carries a producer operation, so no
     ``explicit_mechanism_readback`` finding may remain in this file."""

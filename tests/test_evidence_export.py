@@ -877,6 +877,9 @@ class _CountingSink(io.TextIOBase):
         return len(text)
 
 
+# Large export workload (~16s on Linux, 2-3x on Windows runners):
+# keep the repo-default timeout, not CI's 60s fail-fast cliff.
+@pytest.mark.timeout(300)
 def test_export_streams_constant_memory() -> None:
     """Finding 8: the 200k streaming bound is proven by accounting, not vibes.
 

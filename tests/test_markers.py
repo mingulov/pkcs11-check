@@ -7,12 +7,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from pkcs11_check.markers import MARKER_DEFINITIONS
 
 _BUILTIN_MARKERS = {"parametrize", "skip", "skipif", "usefixtures", "xfail", "filterwarnings"}
 _MARKER_PATTERN = re.compile(r"pytest\.mark\.([A-Za-z_][A-Za-z0-9_]*)")
 
 
+# Probe-enumerating workload (~13s on Linux, 2-3x on Windows runners):
+# keep the repo-default timeout, not CI's 60s fail-fast cliff.
+@pytest.mark.timeout(300)
 def test_allocation_amplifying_marker_selects_exact_probes() -> None:
     expected = [
         "src/pkcs11_check/testcases/security/test_random_length_truncation.py"
