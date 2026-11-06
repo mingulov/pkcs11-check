@@ -2027,6 +2027,16 @@ def test_qc3a_material_decrypt_vendor_refusal_after_proved_mutation_fails() -> N
     assert "use_rv" in (record.detail or {}), record.detail
 
 
+def test_qc3a_material_decrypt_undefined_refusal_after_proved_mutation_fails() -> None:
+    """G2 flag-first: an undefined-RV decrypt refusal does not hide a proved mutation."""
+    fake = _CopyFake(copy_mode="apply", decrypt_rv={("copy", _ECB): _UNDEFINED_RV})
+    _run_must_fail(_qc3a_material, _rs(fake))
+    record = _assert_fail_record("self_contradiction", "policy")
+    assert (record.detail or {}).get("disposition") == "forbidden-mutation", record.detail
+    assert (record.detail or {}).get("behaves_as_injected") is True, record.detail
+    assert "use_rv" in (record.detail or {}), record.detail
+
+
 def test_qc3a_material_decrypt_vendor_refusal_unproved_without_mutation() -> None:
     """G2 characterization: vendor-RV decrypt refusal without mutation stays I13 xfail."""
     fake = _CopyFake(copy_mode="ignore", decrypt_rv={("copy", _ECB): _VENDOR_RV})
