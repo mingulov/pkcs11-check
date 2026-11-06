@@ -2665,6 +2665,17 @@ def _run_protection_case(
                     summary=f"{label}: CKR_OK derive returned a zero handle",
                 )
             child = handle
+            # Normative (B2): per PKCS#11 v3.2 §§6.43.3–6.43.7 ("set either
+            # from the supplied template or from a default value";
+            # spec-text lines 18710/18746/18782/18816/18861) and §6.62.3
+            # ("attributes in the template ... can both be specified ... If
+            # omitted, these attributes each take on some default value";
+            # spec-text lines 22054-22056), exactness here asserts each
+            # mechanism's specified output for the supplied template; no
+            # strengthened leg exists to distinguish honoring from defaulting.
+            # Only explicit-request legs run exact: the HKDF leg below and
+            # the matching-mode byte leg; omitted-template strengthening
+            # stays permitted.
             if hkdf:
                 if mode == "omitted":
                     child_expected = None

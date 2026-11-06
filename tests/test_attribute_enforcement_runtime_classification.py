@@ -774,9 +774,7 @@ def test_missing_token_readback_does_not_claim_promotion_effect(
 def test_optional_absence_escape_hatch_is_scoped_to_kcv() -> None:
     testcase_root = Path(__file__).parents[1] / "src" / "pkcs11_check" / "testcases"
     approved_source = testcase_root / "test_attribute_enforcement.py"
-    peer_source = testcase_root / "ckr" / "_object_policy.py"
     guarded_calls: list[ast.Call] = []
-    peer_guarded_calls: list[ast.Call] = []
     for source in testcase_root.rglob("*.py"):
         tree = ast.parse(source.read_text(encoding="utf-8"))
         parents: dict[ast.AST, ast.AST] = {
@@ -808,20 +806,13 @@ def test_optional_absence_escape_hatch_is_scoped_to_kcv() -> None:
                 assert ancestor.name == "TestCheckValue"
                 guarded_calls.append(call)
                 continue
-            # R1 adjudicated pair (ckr/_object_policy.py, CKA_ALLOWED_MECHANISMS):
-            # the peer allow-list attribute is spec-optional -- its spec table
-            # row carries NO MUST-specify footnote markers, verified identical
-            # to the approved CKA_CHECK_VALUE precedent (which likewise
-            # carries none), so absence is conformant and the hatch docstring
-            # ("reserved for attributes the specification explicitly makes
-            # optional") covers Task 16 peer-allow-list observation exactly.
-            # Key components stay hatch-free (R2: required, never optional).
-            # PKCS#11 v3.2 Table 26 (CKA_ALLOWED_MECHANISMS row).
-            assert source == peer_source
-            assert attr_name == "CKA_ALLOWED_MECHANISMS"
-            peer_guarded_calls.append(call)
+            # B4: the CKA_ALLOWED_MECHANISMS hatch is reverted — Table 26
+            # carries no optionality footnote for that row, and absence of
+            # MUST-specify markers governs creation templates, not readback.
+            # Only the approved KCV source may use the hatch; anything else
+            # fails here.
+            assert source == approved_source
     assert guarded_calls
-    assert len(peer_guarded_calls) == 1
 
 
 def test_attribute_enforcement_access_slice_is_analyzer_clean() -> None:

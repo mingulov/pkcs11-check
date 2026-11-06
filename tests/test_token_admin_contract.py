@@ -2117,11 +2117,12 @@ def test_persistence_stable_unlocked_passes() -> None:
     assert classification.get_records() == []
 
 
-def test_persistence_spontaneous_lockout_fails() -> None:
+def test_persistence_spontaneous_lockout_xfails() -> None:
+    """B3: spontaneous lockout across restart is suspicious-but-unproved."""
     first = _lockout_trace("user", [_PIN_INCORRECT] * 2, correct_rv=None, final_rank=1)
     second = _phase2_trace("user", _OK, initial_rank=3)
-    _assert_fails(pin_case._judge_restart_persistence, first, second, role="user")
-    _assert_fail_record("self_contradiction", "metadata")
+    assert_xfails(pin_case._judge_restart_persistence, first, second, role="user")
+    _assert_xfail_record("honest_deviation")
 
 
 def test_persistence_lockout_persists_passes() -> None:
@@ -2193,8 +2194,8 @@ def test_persistence_no_metadata_hard_lockout_plausible() -> None:
 def test_persistence_escalation_preempts_first_trace_xfail() -> None:
     first = _lockout_trace("user", [_GENERAL_ERROR], correct_rv=None, final_rank=1)
     second = _phase2_trace("user", _OK, initial_rank=2)
-    _assert_fails(pin_case._judge_restart_persistence, first, second, role="user")
-    rec = _assert_fail_record("self_contradiction", "metadata")
+    assert_xfails(pin_case._judge_restart_persistence, first, second, role="user")
+    rec = _assert_xfail_record("honest_deviation")
     assert "escalated across restart" in rec.summary
 
 

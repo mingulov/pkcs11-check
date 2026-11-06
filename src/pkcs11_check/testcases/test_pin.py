@@ -784,8 +784,14 @@ def _judge_restart_persistence_fails(
         and second_initial is not None
         and _qc11a_flag_rank(second_initial, role) > _qc11a_flag_rank(last_before, role)
     ):
-        fail_as(
-            "self_contradiction",
+        # B3 (deliberately xfail, not fail): an escalation across restart with
+        # no intervening attempts is suspicious, but the spec does not pin
+        # when a token must recompute countdown flags, and a lazily-evaluated
+        # provider could surface pre-restart attempts only after the restart.
+        # Without matrix evidence ruling lazy evaluation out, failing here
+        # risks false accusations; revisit with provider data.
+        xfail_as(
+            "honest_deviation",
             kind="metadata",
             label=label,
             operation="C_GetTokenInfo",
