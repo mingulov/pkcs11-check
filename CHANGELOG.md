@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.0] - 2026-11-06
+
+Verdict-accuracy release: oracle precedence, decrypt-refusal handling, and
+ownership proofs corrected; restart-persistence and peer-claim verdicts
+adjudicated; CI round-gating evidence core added. Not yet validated by a
+full provider round (see Known limitations).
+
+### Added
+
+- **CI round gating: ledger export, admission predicates, ledger compare,
+  and receipt verification with lock.**
+
+### Fixed
+
+- **Structured v1.5 oracle tests correlated evidence before set
+  equality.**
+- **Proved copy-mutations fail even when follow-up decrypt refuses.**
+- **Ownership proofs require label agreement (weak path and CKA_VALUE).**
+- **Restart-escalation xfail no longer masks hard findings.**
+- **Absent peer allow-lists report xfail instead of passing silently.**
+
+### Known limitations
+
+- No full provider-matrix round has validated this release; the verdict
+  changes above are proved against scripted fakes and SoftHSM only.
+- Unreadable or provider-mangled labels degrade ownership proofs to
+  unproved (safe direction: never destroyed, never falsely accused).
+- KDF-exactness and Table-26 readings await maintainer spec
+  confirmation; pair-completion keeps its pre-existing label-agnostic
+  rule pending a full round.
+
 ## [0.2.3] - 2026-10-05
 
 Nine reported issues addressed across async, OTP, message-mode crypto, and
