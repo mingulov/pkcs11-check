@@ -776,30 +776,13 @@ def _judge_restart_persistence_fails(
     label: str,
     detail: dict[str, Any],
 ) -> None:
-    """FAIL-grade half of restart persistence; runs before first-trace tiers."""
+    """FAIL-grade half of restart persistence; runs before first-trace tiers.
+
+    The B3 escalation observation is detected by the caller but emitted only
+    after both traces' hard-failure checks, so it can never mask them.
+    """
     token_admin.fail_on_undefined_snapshots(second, label=label, detail=detail)
     _, _, locked = _qc11a_role_flags(role)
-    if (
-        last_before is not None
-        and second_initial is not None
-        and _qc11a_flag_rank(second_initial, role) > _qc11a_flag_rank(last_before, role)
-    ):
-        # B3 (deliberately xfail, not fail): an escalation across restart with
-        # no intervening attempts is suspicious, but the spec does not pin
-        # when a token must recompute countdown flags, and a lazily-evaluated
-        # provider could surface pre-restart attempts only after the restart.
-        # Without matrix evidence ruling lazy evaluation out, failing here
-        # risks false accusations; revisit with provider data.
-        xfail_as(
-            "honest_deviation",
-            kind="metadata",
-            label=label,
-            operation="C_GetTokenInfo",
-            mechanism=None,
-            inherit_mechanism=False,
-            summary=f"{label}: counter escalated across restart with no intervening attempts",
-            detail=detail,
-        )
     before_locked = last_before is not None and bool(last_before & locked)
     now_locked = second_initial is not None and bool(second_initial & locked)
     rv = correct.rv
@@ -857,12 +840,17 @@ def _judge_restart_persistence(
         "first_attempts": _qc11a_attempt_entries(first, role),
         "second_attempts": _qc11a_attempt_entries(second, role),
     }
-    _, _, locked = _qc11a_role_flags(role)
+    low, final, locked = _qc11a_role_flags(role)
     first_known = [v for _, v in first.flags if v is not None]
     last_before = first_known[-1] if first_known else None
     second_initial = dict(second.flags).get("initial")
     correct = next((s for s in second.steps if s.name == f"login:{role}:correct"), None)
     assert correct is not None, f"{label}: phase-2 probe contract broken (no correct step)"
+    escalated = (
+        last_before is not None
+        and second_initial is not None
+        and _qc11a_flag_rank(second_initial, role) > _qc11a_flag_rank(last_before, role)
+    )
     # R1-remainder: own FAIL grades preempt first-trace xfail tiers.
     _judge_restart_persistence_fails(
         role=role,
@@ -873,7 +861,43 @@ def _judge_restart_persistence(
         label=label,
         detail=detail,
     )
-    _judge_lockout_trace(first, role=role)
+    # First-trace judging, split around the B3 emission (same pieces as
+    # _judge_lockout_trace: burn-premise assert, FAIL prescan, xfail tiers).
+    first_initial = dict(first.flags).get("initial")
+    if first_initial is not None:
+        assert not (first_initial & (low | final | locked)), (
+            f"QC11a {role} countdown: burn premise broken: "
+            f"initial flags not pristine ({first_initial:#x})"
+        )
+    _prescan_lockout_fails(first, role=role)
+    if escalated:
+        # B3 (deliberately xfail, not fail): an escalation across restart with
+        # no intervening attempts is suspicious, but the spec does not pin
+        # when a token must recompute countdown flags, and a lazily-evaluated
+        # provider could surface pre-restart attempts only after the restart.
+        # Without matrix evidence ruling lazy evaluation out, failing here
+        # risks false accusations; revisit with provider data. Emission is
+        # deferred past both traces' hard-failure checks above, so a
+        # co-occurring hard finding (bypass, undefined RV, lockout denial,
+        # phase-one acceptance) still fails loud; it preempts only the
+        # first-trace xfail tiers below.
+        xfail_as(
+            "honest_deviation",
+            kind="metadata",
+            label=label,
+            operation="C_GetTokenInfo",
+            mechanism=None,
+            inherit_mechanism=False,
+            summary=f"{label}: counter escalated across restart with no intervening attempts",
+            detail=detail,
+        )
+    _run_lockout_judges(
+        first,
+        role=role,
+        label=f"QC11a {role} countdown",
+        detail={"role": role, "attempts": _qc11a_attempt_entries(first, role)},
+        fails_only=False,
+    )
     before_locked = last_before is not None and bool(last_before & locked)
     now_locked = second_initial is not None and bool(second_initial & locked)
     rv = correct.rv
