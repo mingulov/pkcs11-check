@@ -2,34 +2,55 @@
 
 ## [0.3.0] - 2026-11-06
 
-Verdict-accuracy release: oracle precedence, decrypt-refusal handling, and
-ownership proofs corrected; restart-persistence and peer-claim verdicts
-adjudicated; CI round-gating evidence core added. Not yet validated by a
-full provider round (see Known limitations).
+Coverage and verdict-accuracy release: six new conformance areas,
+provider-compatibility probes, 64-bit Windows platform guards, and a
+round-gating evidence toolkit; oracle precedence, refusal handling,
+and ownership proofs corrected. Not yet validated by a full provider
+round (see Known limitations).
 
 ### Added
 
-- **CI round gating: ledger export, admission predicates, ledger compare,
-  and receipt verification with lock.**
+- **New conformance areas: allowed-mechanism policy effects,
+  malformed object-template detection, key-staging and refused-unwrap
+  ownership, Diffie-Hellman peer-key coverage, Security Officer
+  private-object creation, and PIN retry/lockout plus token
+  provisioning journeys.**
+- **Ownership-before-destroy inventory proofs: refused creations are
+  only cleaned up after proof.**
+- **Round-gating evidence toolkit: result-ledger export, admission
+  checks, ledger comparison, and receipt verification.**
+- **64-bit Windows platform guards: integer-width simulation and
+  literal census.**
+- **Post-quantum crypto: prehashed-parameter supply and conditional
+  wrong-length verification.**
 
 ### Fixed
 
-- **Structured v1.5 oracle tests correlated evidence before set
-  equality.**
-- **Proved copy-mutations fail even when follow-up decrypt refuses.**
-- **Ownership proofs require label agreement (weak path and CKA_VALUE).**
-- **Restart-escalation xfail no longer masks hard findings.**
-- **Absent peer allow-lists report xfail instead of passing silently.**
+- **Provider-compatibility probes: async operation selectors,
+  NULL-callback spelling, library init/finalize, date-attribute
+  encoding.**
+- **Structured PKCS#1 v1.5 oracle tests correlated evidence before
+  set equality.**
+- **Proved mutations from object copy fail even when a follow-up
+  decrypt refuses.**
+- **Ownership proofs require label agreement.**
+- **Restart counter-escalation reports no longer mask hard findings.**
+- **Absent peer allow-lists report instead of passing silently.**
+- **Attribute setup refusals report a dedicated setup-refused
+  verdict; undefined setup return codes fail as metadata.**
+- **New and corrected verdicts for copy behavior, signatures, key
+  derivation, key sensitivity, sessions, and object search.**
 
 ### Known limitations
 
-- No full provider-matrix round has validated this release; the verdict
-  changes above are proved against scripted fakes and SoftHSM only.
+- No full provider-matrix round has validated this release; the
+  verdict changes above are proved against scripted fakes and
+  SoftHSM only.
 - Unreadable or provider-mangled labels degrade ownership proofs to
   unproved (safe direction: never destroyed, never falsely accused).
-- KDF-exactness and Table-26 readings await maintainer spec
-  confirmation; pair-completion keeps its pre-existing label-agnostic
-  rule pending a full round.
+- Key-derivation exactness and attribute-table readings await
+  maintainer spec confirmation; complementary key-pair matching
+  keeps its pre-existing rule pending a full round.
 
 ## [0.2.3] - 2026-10-05
 
