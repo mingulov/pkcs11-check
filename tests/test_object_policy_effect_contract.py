@@ -347,6 +347,7 @@ class _PolicyFake:
         leak_labeled: bytes | None = None,
         leak_unlabeled: bytes | None = None,
         foreign_delta_for_label: bytes | None = None,
+        foreign_delta_value: bytes | None = None,
         refusal_out_handle: int | None = None,
         extra_for_label: bytes | None = None,
         extra_attrs: dict[int, Any] | None = None,
@@ -405,6 +406,7 @@ class _PolicyFake:
         self._leak_labeled = leak_labeled
         self._leak_unlabeled = leak_unlabeled
         self._foreign_delta_for_label = foreign_delta_for_label
+        self._foreign_delta_value = foreign_delta_value
         self.foreign_delta_handle: int | None = None
         self._refusal_out_handle = refusal_out_handle
         self._extra_for_label = extra_for_label
@@ -615,6 +617,12 @@ class _PolicyFake:
             int(CKA_CLASS): int(CKO_PRIVATE_KEY),
             int(CKA_KEY_TYPE): int(CKK_AES),
         }
+        if self._foreign_delta_value is not None:
+            # Value-carrying foreign delta (G3-codex): session-planted so it
+            # reaches the value-correlation path (a token object is gated
+            # before any material check).
+            foreign[int(CKA_TOKEN)] = False
+            foreign[int(CKA_VALUE)] = self._foreign_delta_value
         self.foreign_delta_handle = self._store(foreign, role="foreign")
 
     def _apply_extra(self, attrs: dict[int, Any]) -> None:
@@ -5266,6 +5274,25 @@ def test_qc4b_create_refusal_foreign_delta_xfails_unproved_alive_r1() -> None:
     label = _attempt_label("create", "rsa", "missing_modulus")
     fake = _PolicyFake(create_script=[None, _TEMPLATE_INCONSISTENT], foreign_delta_for_label=label)
     assert_xfails(_qc4b_create, _rs(fake), "rsa", "missing_modulus")
+    record = _assert_xfail_record("honest_deviation")
+    foreign = fake.foreign_delta_handle
+    assert foreign is not None
+    assert (record.detail or {}).get("disposition") == "unproved-effect", record.detail
+    assert (record.detail or {}).get("unproved_new_handles") == [foreign], record.detail
+    assert foreign not in fake.destroyed, fake.destroyed
+    assert fake.objects[foreign].destroyed is False
+
+
+def test_qc4b_create_refusal_shared_value_foreign_delta_xfails_alive() -> None:
+    """G3-codex caller: shared CKA_VALUE + foreign label proves nothing."""
+    mod = _policy_module()
+    label = _attempt_label("create", "rsa", "swap_secret_class_asym_type")
+    fake = _PolicyFake(
+        create_script=[None, _TEMPLATE_INCONSISTENT],
+        foreign_delta_for_label=label,
+        foreign_delta_value=mod.QC4_AES_PEER,
+    )
+    assert_xfails(_qc4b_create, _rs(fake), "rsa", "swap_secret_class_asym_type")
     record = _assert_xfail_record("honest_deviation")
     foreign = fake.foreign_delta_handle
     assert foreign is not None
