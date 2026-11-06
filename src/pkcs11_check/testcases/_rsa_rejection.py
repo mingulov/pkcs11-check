@@ -223,10 +223,11 @@ class V15ValidControl:
 class V15Oracle:
     """Category-status assessment over first-attempt RVs.
 
-    ``status`` is ``"none"`` (equal first-attempt sets), ``"persistent"``
-    (bounded repeated category-correlated status evidence), or
-    ``"transient"`` (sets differ only within the startup window or through
-    unrepeated statuses: visible unresolved evidence, not a proved oracle).
+    ``status`` is ``"persistent"`` (bounded repeated category-correlated
+    status evidence, assessed first), ``"none"`` (equal first-attempt sets
+    with no correlated post-window evidence), or ``"transient"`` (sets differ
+    only within the startup window or through unrepeated statuses: visible
+    unresolved evidence, not a proved oracle).
     """
 
     status: str
@@ -281,10 +282,10 @@ def _assess_oracle(cat1: list[V15SampleObservation], cat2: list[V15SampleObserva
             correlated.append((ckr_name(int(rv)), "cat1"))
         if in_cat2 >= 2 and in_cat1 == 0:
             correlated.append((ckr_name(int(rv)), "cat2"))
-    if set(full1) == set(full2):
-        status = "none"
-    elif correlated:
+    if correlated:
         status = "persistent"
+    elif set(full1) == set(full2):
+        status = "none"
     else:
         status = "transient"
     return V15Oracle(
