@@ -2452,6 +2452,9 @@ def test_git_head_tree_sources_reads_head_python_files() -> None:
     assert all(path.endswith(".py") and not path.startswith("/") for path in sources)
 
 
+# Whole-tree scans (~16-19s on Linux, 2-3x on Windows runners):
+# keep the repo-default timeout, not CI's 60s fail-fast cliff.
+@pytest.mark.timeout(300)
 def test_tree_scans_share_the_corpus_digest_cached_analyzer() -> None:
     root = Path(__file__).resolve().parents[1] / "src/pkcs11_check/testcases"
     first = scan_tree(root)
@@ -2645,6 +2648,7 @@ def test_format_inventory_diff_caps_long_path_lists() -> None:
     assert "  + file_59.py" not in paths_block
 
 
+@pytest.mark.timeout(300)
 @requires_git_tracked_files
 @pytest.mark.parametrize("kind", ["none", "scalar", "raising"])
 def test_head_inventory_diff_never_raises_on_unformattable_input(kind: str) -> None:
