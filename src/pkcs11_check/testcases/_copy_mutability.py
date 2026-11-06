@@ -822,9 +822,53 @@ def check_material_preserved(
                 "expected_len": 16,
             },
         )
+    # G2: the encrypt proof (observed_ct + readback, both pre-decrypt) is
+    # evaluated BEFORE the decrypt attempt, so a later decrypt refusal cannot
+    # hide an already-established effect. All names below depend only on the
+    # encrypt evidence; the post-decrypt record arms reuse them unchanged.
+    behaves_original = observed_ct == baseline_ct
+    behaves_injected = observed_ct == aes_ecb_encrypt(injected_value, plaintext)
+    readback_original = readback is not MISSING_ATTRIBUTE and readback == original_value
+    readback_changed = readback is not MISSING_ATTRIBUTE and readback == injected_value
+    if readback is MISSING_ATTRIBUTE:
+        readback_len: int | None = None
+    else:
+        readback_len = len(readback)
+    evidence: dict[str, Any] = {
+        "readback_matches_original": readback_original,
+        "readback_matches_injected": readback_changed,
+        "readback_len": readback_len,
+        "behaves_as_original": behaves_original,
+        "behaves_as_injected": behaves_injected,
+    }
     try:
         round_trip = decrypt_single(rs.raw, rs.sh, handle, CKM_AES_ECB, observed_ct)
     except CkrAssertionError as exc:
+        if behaves_injected:
+            # Flag-first (deliberate I13 exception): the mutation is proved by
+            # the accepted encrypt output, independent of the decrypt RV, so a
+            # proved mutation fails here even for vendor/undefined refusal RVs.
+            # The metadata RV violation is subsumed under the proved-mutation
+            # FAIL with the RV preserved in use_rv; unproved refusals still
+            # take the validity arms below.
+            classify_ignored_or_mutated(
+                mutated=True,
+                label=label,
+                operation=operation,
+                spec_ref=spec_ref,
+                ignored_summary="",
+                mutated_summary=(
+                    f"{label}: accepted and applied the different value "
+                    f"(behaves_as_injected=True, readback_changed={readback_changed}, "
+                    f"behaves_as_original={behaves_original}); follow-up decrypt "
+                    f"refused with {ckr_name(exc.rv)}"
+                ),
+                detail={
+                    "disposition": "forbidden-mutation",
+                    "use_rv": ckr_name(exc.rv),
+                    **evidence,
+                },
+            )
         classify_rv_validity_or_none(
             exc.rv, label=label, operation="C_Decrypt", mechanism="CKM_AES_ECB", kind="policy"
         )
@@ -886,21 +930,6 @@ def check_material_preserved(
                 "round_trip_matches": False,
             },
         )
-    behaves_original = observed_ct == baseline_ct
-    behaves_injected = observed_ct == aes_ecb_encrypt(injected_value, plaintext)
-    readback_original = readback is not MISSING_ATTRIBUTE and readback == original_value
-    readback_changed = readback is not MISSING_ATTRIBUTE and readback == injected_value
-    if readback is MISSING_ATTRIBUTE:
-        readback_len: int | None = None
-    else:
-        readback_len = len(readback)
-    evidence: dict[str, Any] = {
-        "readback_matches_original": readback_original,
-        "readback_matches_injected": readback_changed,
-        "readback_len": readback_len,
-        "behaves_as_original": behaves_original,
-        "behaves_as_injected": behaves_injected,
-    }
     if behaves_injected:
         # Independent functional evidence governs: the target exhibits the
         # injected material's behavior. A readback claiming otherwise is a
