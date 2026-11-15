@@ -10,6 +10,7 @@ from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
+from pkcs11_check.core.call_counters import record_call, record_direct_call, record_return
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 
 from . import metadata_std
@@ -523,6 +524,7 @@ class RawPKCS11:
             version_ptr = byref(requested_version)
 
         rv = int(get_interface(None, version_ptr, byref(interface_ptr), 0))
+        record_direct_call("C_GetInterface", rv)
         requested_interface = self._version_string(version) if version is not None else "auto"
         if rv != int(CKR_OK):
             if strict:
@@ -617,6 +619,7 @@ class RawPKCS11:
         # but same logical role. Use a fresh local to keep mypy happy.
         fn_list_ptr = CK_FUNCTION_LIST_PTR()
         rv = get_function_list(byref(fn_list_ptr))
+        record_direct_call("C_GetFunctionList", int(rv))
         if rv != CKR_OK:
             raise RuntimeError(f"C_GetFunctionList failed: 0x{rv:08x}")
         if not bool(fn_list_ptr):
@@ -721,6 +724,7 @@ class RawPKCS11:
 
     def _call(self, name: str, *args: Any) -> CKR:
         self._call_log[name] += 1
+        record_call(name)
         tracing = self._rv_trace is not None or self._journal is not None
         mech_id: int | None = None
         mech_params: dict[str, int] | None = None
@@ -747,6 +751,7 @@ class RawPKCS11:
             else None
         )
         result = int(func(*args))
+        record_return(name, result)
         if result == int(CKR_OK):
             self._call_log_ok[name] += 1
         if mech_id is not None:

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core.call_counters import counted_bucket
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import get_slot_ids, resolve_slot_id
@@ -202,17 +203,18 @@ class P11Module:
         "initialized" belief so ``C_Initialize`` reconnects); ``C_Initialize``
         must then succeed (``CKR_OK`` or ``CKR_CRYPTOKI_ALREADY_INITIALIZED``).
         """
-        try:
-            self._raw.C_Finalize(None)
-        except OSError as exc:
-            if ctypes_access_violation_code(exc) is not None:
-                raise
-        except AttributeError:
-            pass
-        rv = int(self._raw.C_Initialize(None))
-        if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
-            raise RuntimeError(f"re-C_Initialize failed: 0x{rv:08x}")
-        self.reinit_count += 1
+        with counted_bucket("module_init"):
+            try:
+                self._raw.C_Finalize(None)
+            except OSError as exc:
+                if ctypes_access_violation_code(exc) is not None:
+                    raise
+            except AttributeError:
+                pass
+            rv = int(self._raw.C_Initialize(None))
+            if rv not in (CKR_OK, CKR_CRYPTOKI_ALREADY_INITIALIZED):
+                raise RuntimeError(f"re-C_Initialize failed: 0x{rv:08x}")
+            self.reinit_count += 1
 
     @property
     def interface_version(self) -> str:
@@ -313,22 +315,23 @@ def load_module(
     :raises ValueError: If ``interface`` is not a recognised value.
     :raises RuntimeError: If the module cannot be loaded.
     """
-    if not path.exists():
-        msg = f"Module not found: {path}"
-        raise FileNotFoundError(msg)
+    with counted_bucket("module_init"):
+        if not path.exists():
+            msg = f"Module not found: {path}"
+            raise FileNotFoundError(msg)
 
-    if interface not in SUPPORTED_INTERFACES:
-        msg = f"Unknown interface {interface!r}; must be one of {SUPPORTED_INTERFACES}"
-        raise ValueError(msg)
+        if interface not in SUPPORTED_INTERFACES:
+            msg = f"Unknown interface {interface!r}; must be one of {SUPPORTED_INTERFACES}"
+            raise ValueError(msg)
 
-    raw = RawPKCS11.from_lib(str(path), interface=interface)
+        raw = RawPKCS11.from_lib(str(path), interface=interface)
 
-    # Initialize the cryptoki library. C_Initialize may return
-    # CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) if another part of the
-    # process already initialized it -- that is acceptable.
-    rv = raw.C_Initialize(None)
-    _ckr_already_initialized = 0x00000191
-    if rv not in (CKR_OK, _ckr_already_initialized):
-        raise RuntimeError(f"C_Initialize failed: 0x{rv:08x}")
+        # Initialize the cryptoki library. C_Initialize may return
+        # CKR_CRYPTOKI_ALREADY_INITIALIZED (0x00000191) if another part of the
+        # process already initialized it -- that is acceptable.
+        rv = raw.C_Initialize(None)
+        _ckr_already_initialized = 0x00000191
+        if rv not in (CKR_OK, _ckr_already_initialized):
+            raise RuntimeError(f"C_Initialize failed: 0x{rv:08x}")
 
-    return P11Module(path=path, _raw=raw)
+        return P11Module(path=path, _raw=raw)
