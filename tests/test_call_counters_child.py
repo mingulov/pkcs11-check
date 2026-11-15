@@ -1371,3 +1371,55 @@ def test_child_coverage_decoder_poison_is_unusable(
     assert reader(str(cov)) is False
     assert call_counters.probes_lost() == 0
     assert call_counters.serialize_current()["total_calls"] == 0
+
+
+def test_run_probe_deep_coverage_json_is_lost_not_abrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Critical R3: deep-JSON coverage must not bypass loss accounting via
+    # RecursionError in _finalizer_ran, nor misattribute as an abrupt exit.
+    from pkcs11_check.core.process_observation import SUBPROCESS_ABRUPT_EXIT_MARKER
+
+    drain_process_observations()
+    poison = _nested_poison_json()
+
+    def _fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        cov_path = str(kwargs["env"]["_P11CHECK_SUBPROCESS_COVERAGE"])
+        Path(cov_path).write_text(poison, encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    result = run_probe("_echo", {"module_path": "/x.so"})
+    assert result.returncode == 0
+    assert SUBPROCESS_ABRUPT_EXIT_MARKER not in result.stderr
+    assert call_counters.probes_lost() == 1
+    assert call_counters.serialize_current()["total_calls"] == 0
+    assert result.observation is not None
+    assert result.observation["termination"]["kind"] == "exit"
+
+
+def test_run_probe_empty_coverage_without_traceback_stays_abrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Pin: empty coverage + silent rc 0 is still module termination (abrupt),
+    # and the missing counters still count as lost.
+    from pkcs11_check.core.process_observation import SUBPROCESS_ABRUPT_EXIT_MARKER
+
+    drain_process_observations()
+    monkeypatch.setattr(
+        "pkcs11_check.testcases._probes.runner.subprocess.run",
+        lambda *a, **k: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    result = run_probe("_echo", {"module_path": "/x.so"})
+    assert result.returncode == 0
+    assert SUBPROCESS_ABRUPT_EXIT_MARKER in result.stderr
+    assert call_counters.probes_lost() == 1
+    assert call_counters.serialize_current()["total_calls"] == 0
+
+
+def test_workload_counters_deep_marker_json_is_lost() -> None:
+    # Critical R3: deep marker JSON must not escape before loss accounting.
+    deep = "[" * 100_000 + "]" * 100_000
+    test_threading._ingest_workload_counters(_workload_stdout(deep))
+    assert call_counters.probes_lost() == 1
+    assert call_counters.serialize_current()["total_calls"] == 0

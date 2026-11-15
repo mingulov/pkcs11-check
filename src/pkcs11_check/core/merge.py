@@ -553,23 +553,43 @@ def _collected_row_sort_key(item: tuple[str, str, dict[str, Any]]) -> tuple[str,
 
 
 def _call_counter_shard_labels(shard_dirs: list[Path]) -> list[str]:
-    """Return one merge label per shard dir (conditional @sha8 disambiguation).
+    """Return one merge label per shard dir (deterministic, order-independent).
 
     Unique basenames keep the plain ``"{basename}"`` label; colliding
     basenames (legit layouts such as ``hostA/shard`` + ``hostB/shard`` are
-    never rejected) gain ``"@{sha8(resolved-absolute-path)}"`` so distinct
-    shards never share a namespace. The suffix derives from the path alone,
-    so labels are deterministic and merge-order independent.
+    never rejected) gain ``"@{sha8(resolved-absolute-path)}"``. Final-label
+    collisions between a generated label and a literal basename (e.g. a
+    generated ``shard@h`` vs a literal ``shard@h`` dir) resolve with a
+    ``@2``/``@3``/... counter suffix, assigned in sorted-by-resolved-path
+    order so numbering never depends on CLI arg order. Identical resolved
+    dirs share one label (same dir passed twice still fuses).
     """
     counts = Counter(d.name for d in shard_dirs)
-    labels: list[str] = []
+    base: list[str] = []
     for shard_dir in shard_dirs:
         if counts[shard_dir.name] == 1:
-            labels.append(shard_dir.name)
+            base.append(shard_dir.name)
             continue
         digest = hashlib.sha256(str(shard_dir.resolve()).encode("utf-8")).hexdigest()[:8]
-        labels.append(f"{shard_dir.name}@{digest}")
-    return labels
+        base.append(f"{shard_dir.name}@{digest}")
+    resolved = [str(shard_dir.resolve()) for shard_dir in shard_dirs]
+    order = sorted(range(len(shard_dirs)), key=lambda i: resolved[i])
+    final: list[str] = [""] * len(shard_dirs)
+    used: set[str] = set()
+    seen_path: dict[str, str] = {}
+    for i in order:
+        if resolved[i] in seen_path:
+            final[i] = seen_path[resolved[i]]
+            continue
+        candidate = base[i]
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base[i]}@{suffix}"
+            suffix += 1
+        final[i] = candidate
+        used.add(candidate)
+        seen_path[resolved[i]] = candidate
+    return final
 
 
 def _merge_call_counter_blocks(

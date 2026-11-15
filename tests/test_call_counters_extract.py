@@ -1076,3 +1076,116 @@ def test_report_log_iterator_counts_decoder_poison_as_invalid(tmp_path: Path) ->
     records = list(iter_report_log_records(jsonl, on_invalid=_count))
     assert [r["$report_type"] for r in records] == ["SessionStart", "SessionFinish"]
     assert invalid == 2
+
+
+def test_extract_framing_marker_before_session_start_belongs_to_new_scope(
+    tmp_path: Path,
+) -> None:
+    # Important R3: a marker immediately followed by SessionStart belongs to
+    # the NEW scope, not the current one (merged-writer framing).
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _session_record(100, 10),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is True
+    assert payload["total_calls"] == 10
+    assert payload["probes_lost"] == 0
+
+
+def test_extract_marker_at_eof_stays_in_current_scope(tmp_path: Path) -> None:
+    # Lookahead pin: marker+EOF keeps current-scope behavior (C2b still fires).
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
+
+
+def test_extract_marker_before_test_report_stays_in_current_scope(
+    tmp_path: Path,
+) -> None:
+    # Lookahead pin: marker+TestReport keeps current-scope behavior (C2 fires).
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _test_report("a.py::t1", "call", None),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
+
+
+def test_merged_writer_framing_marker_creates_no_fictitious_group(
+    tmp_path: Path,
+) -> None:
+    # Important R3 through the actual writer + extractor: interrupted unit A
+    # (authoritative loss-free counters, no SessionFinish) + complete unit B
+    # must not gain a fictitious startup-loss group from B's framing marker.
+    from pkcs11_check.core._report_records import (
+        _write_report_jsonl_from_record_sources,
+        _write_unit_report_record_cache,
+    )
+
+    state_file = tmp_path / "state.json"
+    output_path = tmp_path / "report.jsonl"
+    run_id = _R1
+    _write_unit_report_record_cache(
+        state_file,
+        "a.py",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, run_id),
+        ],
+    )
+    _write_unit_report_record_cache(
+        state_file,
+        "b.py",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _round_session(200, 5, run_id),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    assert _write_report_jsonl_from_record_sources(
+        state_file,
+        units=["a.py", "b.py"],
+        inline_records_by_unit={},
+        output_path=output_path,
+    )
+    records = [
+        json.loads(line)
+        for line in output_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    # Framing shape: [A-mark, Start, A-mark, counters, B-mark, Start, ...].
+    assert len(records) == 9
+    assert records[4].get("$report_type") == "IsolatedUnitReport"
+    assert records[4].get("target") == "b.py"
+    assert records[5].get("$report_type") == "SessionStart"
+    payload = extract_call_counters_from_jsonl(output_path)
+    assert payload is not None
+    assert payload["complete"] is True
+    assert payload["total_calls"] == 15
+    assert sorted(payload["by_round"]) == [run_id]
+    assert payload["by_round"][run_id]["complete"] is True

@@ -101,6 +101,12 @@ def _finalizer_ran(cov_path: str) -> bool:
     try:
         with open(cov_path, encoding="utf-8") as fh:
             return isinstance(json.load(fh), dict)
+    except RecursionError:
+        # Deep-JSON hostile nesting proves the child finalized (it wrote a
+        # non-empty file); a C-exit leaves empty/torn files (ValueError).
+        # True here avoids abrupt misattribution; ingest still returns False
+        # so the launcher accounts exactly one lost probe.
+        return True
     except (OSError, ValueError):
         return False
 

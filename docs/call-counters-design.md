@@ -73,6 +73,11 @@ per-shard JSONL extracts (fresh provenance per shard).
   RV, so a call that never returns counts with no RV row.
 - Invariant: `total_calls` equals the sum of the per-bucket `calls`.
 
+RV name conflicts resolve deterministically in `merge_serialized`: on a
+leaf-name conflict prefer the non-`0x` (symbolic) name, ties to the
+lexicographically smallest. Observed names are kept (no rewriting), so both
+merge orders yield the identical leaf including the name.
+
 ### `results.json` block
 
 ```json
@@ -179,6 +184,12 @@ round attribution the merged totals could not be split back per invocation.
   the GLOBAL roll-up with rows sorted by (shard, round, pid), and bucket,
   function, and RV maps are recursively canonicalized so `json.dumps`
   output is byte-identical across merge orders.
+
+Final-label collisions between a generated label and a literal basename
+(e.g. a generated `shard@h` vs a literal `shard@h` dir) resolve with a
+`@2`/`@3`/... counter suffix, assigned in sorted-by-resolved-path order so
+numbering never depends on CLI arg order. Identical resolved dirs share one
+label (same dir passed twice still fuses).
 - Fingerprint ignoring: the run id matches the `PKCS11_` fingerprint prefix
   but is plumbing, not configuration, so it joins the isolation key in both
   ignored sets - resume across run ids (the normal case: every invocation
@@ -349,6 +360,13 @@ Small seams, each following an existing pattern.
   fail-closed: known buckets only, decimal RV keys, exact bucket and entry
   totals, `sum(by_rv) <= calls`; a violating record is skipped whole, and a
   malformed `user_properties` container is ignored without raising.
+
+A one-record marker lookahead keeps merged-writer framing from creating a
+fictitious startup-loss group: a marker immediately followed by
+`SessionStart` belongs to the NEW scope (applied after the bookend),
+otherwise to the current scope. Marker+EOF and marker+`TestReport` keep
+current-scope behavior, so `C2`/`C2b` still fire for genuinely counterless
+segments.
 - `write_isolated_json_report(..., call_counters=None)` sets
   `payload["call_counters"]` when truthy; the isolated path extracts per
   unit JSONL and passes it in.

@@ -99,7 +99,7 @@ def _ingest_workload_counters(stdout: str) -> None:
             continue
         try:
             flat = json.loads(line.removeprefix(_CALL_COUNTERS_MARKER))
-        except ValueError:
+        except (RecursionError, ValueError):
             break
         if not isinstance(flat, (list, tuple)):
             break
