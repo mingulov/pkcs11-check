@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pkcs11_check import _plugin_counters
 from pkcs11_check._plugin_finalize import (
     _TEARDOWN_FINALIZE_TIMEOUT_S as _TEARDOWN_FINALIZE_TIMEOUT_S,
 )
@@ -582,6 +583,10 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register pkcs11-check custom markers and inject --report-log for non-isolated runs."""
     for marker in MARKER_DEFINITIONS:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
+    # Phase-attribution wrappers live in their own pluggy plugin, registered
+    # unconditionally: every hook self-guards on --p11-module + testcase items,
+    # so meta-test runs pass through untouched.
+    config.pluginmanager.register(_plugin_counters, "pkcs11-call-counters")
     # Vendor mechanism code points must register before the first session builds
     # its (cached) mechanism set, so this runs unconditionally at configure time.
     specs = config.getoption("p11_vendor_mechanism", default=None)
@@ -1068,6 +1073,9 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
     raw = config.stash.get(_RAW_INSTANCE, None)
     if raw is None:
+        # No testcase ever populated the raw instance, but loader-level traffic
+        # may still have counted: emit the session record before returning.
+        _plugin_counters.emit_session_record(config)
         return
 
     from pkcs11_check.fixtures import _build_ckm_alias_map
@@ -1211,6 +1219,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     # coverage read. A lifecycle finding is additive, but the process must still
     # be non-green so isolated and non-isolated callers cannot accept it.
     finalize_outcome = _finalize_on_teardown(config, raw)
+    # After finalize: the teardown C_Finalize call itself lands in module_init.
+    _plugin_counters.emit_session_record(config)
     if (
         finalize_outcome not in {None, "ok"}
         and getattr(session, "exitstatus", exitstatus) == pytest.ExitCode.OK

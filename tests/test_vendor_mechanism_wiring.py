@@ -70,6 +70,7 @@ def _fake_config(**options: Any) -> SimpleNamespace:
     return SimpleNamespace(
         getoption=_getoption,
         addinivalue_line=lambda *a: None,
+        pluginmanager=SimpleNamespace(register=lambda _plugin, _name=None: None),
         stash={},
         option=SimpleNamespace(),
     )
