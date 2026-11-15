@@ -194,11 +194,31 @@ def test_merge_shard_dirs_recomputes_call_counters_exactly(tmp_path: Path) -> No
     )
     out = tmp_path / "merged"
     merged = merge_shard_dirs([s0, s1], out)
-    expected = extract_call_counters_from_jsonl(out / "report.jsonl")
-    assert expected is not None
-    assert merged["call_counters"] == expected
-    assert merged["call_counters"]["total_calls"] == 15
-    assert merged["call_counters"]["complete"] is True
+    # C3b: merged from the per-shard extracts (fresh provenance per shard),
+    # never from the concatenated stream -- so by_process rows carry the
+    # shard they came from and the block is NOT extract(merged_report).
+    block = merged["call_counters"]
+    assert block["total_calls"] == 15
+    assert block["complete"] is True
+    assert block["probes_lost"] == 0
+    assert block["by_process"] == [
+        {
+            "pid": 100,
+            "isolation": "none",
+            "total_calls": 10,
+            "complete": True,
+            "shard": "shard0",
+        },
+        {
+            "pid": 200,
+            "isolation": "none",
+            "total_calls": 5,
+            "complete": True,
+            "shard": "shard1",
+        },
+    ]
+    assert block["by_bucket"]["total_calls"] == 15
+    assert block["by_bucket"]["buckets"]["test"]["calls"] == 15
 
 
 def test_merge_shard_dirs_omits_key_without_counters_data(tmp_path: Path) -> None:
@@ -443,3 +463,95 @@ def test_promotion_written_with_seeded_isolation_loads_without_it(tmp_path: Path
     _promote_crashing_unit(policy_file, [], runner_env, "a.py", "file", "crashed", Console())
     reader_env = {k: v for k, v in os.environ.items() if k != ISOLATION_ENV}
     assert normalize_policy_file_key("a.py") in load_promoted_files(policy_file, [], reader_env)
+
+
+# --- Codex R1 fix round (C3): per-shard merge commutativity ---
+
+
+def _entry_report(nodeid: str, pid: int, total: int) -> dict[str, Any]:
+    """One teardown TestReport carrying a per-test counters entry."""
+    return {
+        "$report_type": "TestReport",
+        "nodeid": nodeid,
+        "when": "teardown",
+        "outcome": "passed",
+        "duration": 0.1,
+        "user_properties": [
+            [
+                "pkcs11_call_counters",
+                {
+                    "pid": pid,
+                    "total_calls": total,
+                    "buckets": {
+                        "test": {
+                            "calls": total,
+                            "by_fn": {
+                                "C_Sign": {
+                                    "calls": total,
+                                    "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                                }
+                            },
+                        }
+                    },
+                },
+            ]
+        ],
+    }
+
+
+def test_merge_shard_order_reversed_with_pid_collision_and_truncation(
+    tmp_path: Path,
+) -> None:
+    # C3 (codex counterexample): shard A ends under marker (a.py, 0) with pid
+    # 100's session total of 10; head-truncated shard B holds only an
+    # UNMARKED pid-100 delta of 5 (its marker was cut off with the head).
+    # Concatenated extraction leaks A's marker into B (order-dependent loss);
+    # per-shard extraction reconciles each shard in fresh state, so both
+    # merge orders yield the identical block.
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    _write_shard(
+        shard_a,
+        units=[{"target": "a.py", "status": "passed"}],
+        summary={"passed": 1, "failed": 0},
+        records=[
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _session_record(100, 10),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _write_shard(
+        shard_b,
+        units=[{"target": "b.py", "status": "passed"}],
+        summary={"passed": 1, "failed": 0},
+        records=[_entry_report("b.py::t1", 100, 5)],
+    )
+    block_a = extract_call_counters_from_jsonl(shard_a / "report.jsonl")
+    block_b = extract_call_counters_from_jsonl(shard_b / "report.jsonl")
+    assert block_a is not None and block_a["total_calls"] == 10
+    assert block_a["complete"] is True
+    assert block_b is not None and block_b["total_calls"] == 5
+    assert block_b["complete"] is False
+    merged_ab = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged_ab")
+    merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
+    assert merged_ab["call_counters"] == merged_ba["call_counters"]
+    block = merged_ab["call_counters"]
+    assert block["total_calls"] == 15
+    assert block["complete"] is False
+    assert block["by_process"] == [
+        {
+            "pid": 100,
+            "isolation": "none",
+            "total_calls": 10,
+            "complete": True,
+            "shard": "shardA",
+        },
+        {
+            "pid": 100,
+            "isolation": "unknown",
+            "total_calls": 5,
+            "complete": False,
+            "shard": "shardB",
+        },
+    ]

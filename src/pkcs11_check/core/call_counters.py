@@ -4,6 +4,15 @@ Every ``C_*`` call through the loaded module is counted here: entry increments
 the call count, exit records the ``CK_RV``. A call that crashes the process
 inside the module therefore counts with no RV (``sum(by_rv) <= calls``).
 
+Attribution is two-level: a process-global PHASE (set by the pytest
+setup/call/teardown hooks, which are sequential, so phases never nest) plus a
+thread-local REGION stack (``counted_bucket``). The active bucket is the
+calling thread's innermost region, else the phase -- so overlapping regions in
+other threads never misattribute this thread's calls, while worker threads
+still inherit the phase. Entry/exit pairs additionally bind the exit to the
+bucket captured at entry, so a mid-call bucket switch cannot split one call
+across two buckets.
+
 This module is the ONLY owner of counter state. It must import nothing from
 ``pkcs11_check.raw.api`` (that module imports this one at the ``_call`` choke
 point); ``ckr_name`` is imported lazily inside the serializer.
@@ -14,7 +23,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
-from threading import RLock
+from threading import RLock, local
 from typing import Any
 
 BUCKETS: tuple[str, ...] = ("test", "setup_teardown", "session_provisioning", "module_init")
@@ -24,50 +33,107 @@ CALL_COUNTERS_REPORT_TYPE = "CallCountersReport"
 CALL_COUNTERS_PROPERTY = "pkcs11_call_counters"
 ISOLATION_ENV = "PKCS11_CHECK_ISOLATION"
 
+
+class _ThreadState(local):
+    """Per-thread counter attribution state (a region stack per thread)."""
+
+    def __init__(self) -> None:
+        self.regions: list[str] = []
+
+
 _lock = RLock()
+_state = _ThreadState()
 _entry_counts: Counter[tuple[str, str]] = Counter()
 _exit_counts: Counter[tuple[str, str, int]] = Counter()
-_bucket_stack: list[str] = []
+_phase_name: str = DEFAULT_BUCKET
 _probes_lost = 0
 
 
 def current_bucket() -> str:
-    """Return the innermost pushed bucket, or the default when the stack is empty."""
+    """Return the calling thread's innermost region, else the global phase."""
+    if _state.regions:
+        return _state.regions[-1]
     with _lock:
-        return _bucket_stack[-1] if _bucket_stack else DEFAULT_BUCKET
+        return _phase_name
 
 
 @contextmanager
-def counted_bucket(name: str) -> Iterator[None]:
-    """Attribute calls in the body to ``name``; restore the previous bucket on exit."""
+def _phase(name: str) -> Iterator[None]:
+    """Set the process-global phase bucket, restoring the previous on exit.
+
+    Internal: the pytest phase hooks attribute through this. Phases never
+    nest (hooks are sequential), so a single global with save/restore
+    suffices; worker threads inherit the phase, while a thread-local
+    ``counted_bucket`` region still wins within its own thread.
+    """
     if name not in BUCKETS:
         raise ValueError(f"unknown call-counter bucket: {name!r}")
+    global _phase_name
     with _lock:
-        _bucket_stack.append(name)
+        previous = _phase_name
+        _phase_name = name
     try:
         yield
     finally:
         with _lock:
-            _bucket_stack.pop()
+            _phase_name = previous
 
 
-def record_call(fn: str) -> None:
-    """Count one entry into the PKCS#11 function ``fn`` under the active bucket."""
+@contextmanager
+def counted_bucket(name: str) -> Iterator[None]:
+    """Attribute this thread's calls in the body to ``name`` (a region).
+
+    Regions nest per thread, restore on exit (even on exception), and win
+    over the process-global phase within their own thread only; overlapping
+    regions in other threads are isolated and cannot pop each other's frames.
+    """
+    if name not in BUCKETS:
+        raise ValueError(f"unknown call-counter bucket: {name!r}")
+    _state.regions.append(name)
+    try:
+        yield
+    finally:
+        _state.regions.pop()
+
+
+def _resolve_bucket(bucket: str | None) -> str:
+    """Return the explicit bucket (validated) or the currently active one."""
+    if bucket is not None:
+        if bucket not in BUCKETS:
+            raise ValueError(f"unknown call-counter bucket: {bucket!r}")
+        return bucket
+    return current_bucket()
+
+
+def record_call(fn: str, *, bucket: str | None = None) -> None:
+    """Count one entry into the PKCS#11 function ``fn``.
+
+    Attributed to ``bucket`` when given (validated like ``counted_bucket``),
+    else to the calling thread's active bucket.
+    """
+    target = _resolve_bucket(bucket)
     with _lock:
-        _entry_counts[(current_bucket(), fn)] += 1
+        _entry_counts[(target, fn)] += 1
 
 
-def record_return(fn: str, rv: int) -> None:
-    """Count one return from ``fn`` with ``rv`` under the active bucket."""
+def record_return(fn: str, rv: int, *, bucket: str | None = None) -> None:
+    """Count one return from ``fn`` with ``rv`` (same bucket rule as entry).
+
+    Call sites that pair with :func:`record_call` must capture the bucket
+    once at entry and pass it to both halves, so a mid-call bucket switch
+    cannot land the entry and the RV in different buckets.
+    """
+    target = _resolve_bucket(bucket)
     with _lock:
-        _exit_counts[(current_bucket(), fn, rv)] += 1
+        _exit_counts[(target, fn, rv)] += 1
 
 
-def record_direct_call(fn: str, rv: int) -> None:
+def record_direct_call(fn: str, rv: int, *, bucket: str | None = None) -> None:
     """Count a call made outside the ``_call`` choke point (entry + exit together)."""
+    target = _resolve_bucket(bucket)
     with _lock:
-        _entry_counts[(current_bucket(), fn)] += 1
-        _exit_counts[(current_bucket(), fn, rv)] += 1
+        _entry_counts[(target, fn)] += 1
+        _exit_counts[(target, fn, rv)] += 1
 
 
 def _serialize(
@@ -248,13 +314,14 @@ def probes_lost() -> int:
 
 
 def reset_for_tests() -> None:
-    """Clear all counters, the bucket stack, and the lost-probe count."""
-    global _probes_lost
+    """Clear counters, the phase, the calling thread's regions, and lost probes."""
+    global _probes_lost, _phase_name
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
-        _bucket_stack.clear()
+        _phase_name = DEFAULT_BUCKET
         _probes_lost = 0
+    _state.regions.clear()
 
 
 __all__ = [

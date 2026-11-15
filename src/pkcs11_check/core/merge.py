@@ -10,8 +10,9 @@ single full run would have produced:
   enrichment that copies teardown-only RV traces onto failed/xfail reports from
   older shard artifacts.
 - ``results.json``  : summary counters summed, ``units`` lists concatenated,
-  ``call_counters`` recomputed from the concatenated JSONL (same source as
-  ``coverage.json``), so the merge is exact for counters too.
+  ``call_counters`` merged from the per-shard JSONL extracts (fresh marker/pid
+  provenance per shard, then summed/ANDed/concatenated with shard tags), so the
+  merge is exact and order-independent for counters too.
 - ``coverage.json`` : recomputed from the concatenated JSONL via the existing
   :func:`extract_coverage_from_jsonl`, which unions names and sums counts and
   is order-independent — so the merge is exact (a split→merge round-trip
@@ -36,6 +37,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core.call_counters import merge_serialized
 from pkcs11_check.core.file_runner import (
     extract_call_counters_from_jsonl,
     extract_coverage_from_jsonl,
@@ -514,6 +516,44 @@ def _merged_shard_provenance(
     )
 
 
+def _merge_call_counter_blocks(
+    blocks: list[tuple[str, dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """Merge per-shard call-counter extracts into one block (C3b).
+
+    Each ``(shard_name, block)`` pair was extracted from its own shard JSONL
+    in fresh state (own marker/pid provenance, so a numeric pid can never
+    collide across shards and a truncated shard cannot inherit a marker).
+    Totals, buckets, and probes_lost are summed, ``complete`` is ANDed, and
+    ``by_process`` rows are concatenated with the shard dir name attached and
+    sorted by (shard, pid) so both merge orders yield the identical block.
+    Single-run rows carry no ``shard`` key; only merged rows do.
+    """
+    if not blocks:
+        return None
+    by_bucket: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    probes_lost = 0
+    complete = True
+    by_process: list[dict[str, Any]] = []
+    for shard_name, block in blocks:
+        merge_serialized(by_bucket, block["by_bucket"])
+        probes_lost += int(block["probes_lost"])
+        if not block["complete"]:
+            complete = False
+        for row in block["by_process"]:
+            tagged = dict(row)
+            tagged["shard"] = shard_name
+            by_process.append(tagged)
+    by_process.sort(key=lambda row: (str(row["shard"]), int(row["pid"])))
+    return {
+        "complete": complete,
+        "total_calls": by_bucket["total_calls"],
+        "by_bucket": by_bucket,
+        "probes_lost": probes_lost,
+        "by_process": by_process,
+    }
+
+
 def merge_results_payloads(
     payloads: list[dict[str, Any]],
     *,
@@ -526,7 +566,7 @@ def merge_results_payloads(
 ) -> dict[str, Any]:
     """Combine N ``results.json`` payloads (summary summed, units concatenated).
 
-    ``call_counters`` (recomputed from the concatenated JSONL by the caller)
+    ``call_counters`` (merged from the per-shard JSONL extracts by the caller)
     is attached when provided.
     """
     _validate_selection_payloads(payloads, testcases_root=testcases_root, shard_dirs=shard_dirs)
@@ -858,9 +898,17 @@ def merge_shard_dirs(
     _promote_rv_traces_to_outcome_reports(merged_report)
 
     coverage = extract_coverage_from_jsonl(merged_report) if merged_report.exists() else None
-    call_counters = (
-        extract_call_counters_from_jsonl(merged_report) if merged_report.exists() else None
-    )
+    # Counters extract PER SHARD (fresh marker/pid provenance per source, like
+    # the quality-evidence read above), never from the concatenated stream: a
+    # truncated shard must not inherit its neighbour's marker, and a numeric
+    # pid must not collide across shards (C3). Shards without counters data
+    # (old artifacts) contribute nothing.
+    shard_blocks: list[tuple[str, dict[str, Any]]] = []
+    for shard_dir in shard_dirs:
+        block = extract_call_counters_from_jsonl(shard_dir / "report.jsonl")
+        if block is not None:
+            shard_blocks.append((shard_dir.name, block))
+    call_counters = _merge_call_counter_blocks(shard_blocks)
     if coverage:
         (output_dir / "coverage.json").write_text(
             json.dumps(coverage, indent=2) + "\n", encoding="utf-8"
