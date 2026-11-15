@@ -22,6 +22,7 @@ import os
 from collections import Counter, defaultdict
 from typing import Any
 
+from pkcs11_check.core.call_counters import ingest_child_counts
 from pkcs11_check.testcases._subprocess_coverage import (
     normalize_mechanism_counts,
     normalize_mechanism_rv_counts,
@@ -56,27 +57,38 @@ def pin_from_config(p11_config: Any) -> str | None:
     return value
 
 
-def ingest_subprocess_coverage(path: str) -> None:
+def ingest_subprocess_coverage(path: str) -> bool:
     """Read a child coverage JSON file into the preamble-path accumulators (I6).
 
     No-op when ``path`` is empty or the file does not exist (e.g. the child
     crashed before writing it).  All I/O and parse errors are silently swallowed
     so a missing or corrupt coverage file never aborts the parent.
+
+    Returns True when usable ``call_counters`` were merged into the process-global
+    fw#73 counters (under the active bucket), False otherwise.  A present but
+    empty list reports True: the child reported zero calls, so nothing was lost.
     """
     if not path or not os.path.exists(path):
-        return
+        return False
     try:
         # UTF-8 to match the child's write side (_probes/_emit.write_coverage); an
         # unpinned read would decode as the platform codepage (cp1252 on Windows).
         with open(path, encoding="utf-8") as fh:
             data: Any = json.load(fh)
     except (OSError, ValueError):
-        return
+        return False
+    if not isinstance(data, dict):
+        return False
     _subprocess_call_counts.update(data.get("call_log", {}))
     _subprocess_mechanism_counts.update(normalize_mechanism_counts(data.get("mechanism_counts")))
     _subprocess_call_ok_counts.update(data.get("call_log_ok", {}))
     for mechanism, counts in normalize_mechanism_rv_counts(data.get("mechanism_rv_counts")).items():
         _subprocess_mechanism_rv_counts[mechanism].update(counts)
+    counters = data.get("call_counters")
+    if not isinstance(counters, (list, tuple)):
+        return False
+    ingest_child_counts(list(counters))
+    return True
 
 
 def get_preamble_subprocess_coverage() -> tuple[

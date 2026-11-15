@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from pkcs11_check.core.call_counters import flatten_current
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
@@ -94,6 +95,8 @@ def _write_coverage(raw: RawPKCS11) -> None:
     """Write function/mechanism counts and RV state to subprocess coverage (I6).
 
     Integer mechanism and return-value keys are converted to strings for JSON compatibility.
+    The flattened fw#73 counters ride along under ``call_counters`` so the parent can
+    fold this child's C_* traffic into its own globals.
     """
     write_coverage(
         raw.call_log,
@@ -103,6 +106,7 @@ def _write_coverage(raw: RawPKCS11) -> None:
             str(mechanism): {str(rv): count for rv, count in counts.items()}
             for mechanism, counts in raw.mechanism_rv_counts.items()
         },
+        call_counters=flatten_current(),
     )
 
 

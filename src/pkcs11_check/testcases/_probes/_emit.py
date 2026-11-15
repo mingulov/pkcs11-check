@@ -6,7 +6,12 @@ ONE implementation of each protocol.
 
 Coverage shape (I6):
     {"call_log": dict[str, int], "mechanism_counts": dict[str, int],
-     "call_log_ok": dict[str, int], "mechanism_rv_counts": dict[str, dict[str, int]]}
+     "call_log_ok": dict[str, int], "mechanism_rv_counts": dict[str, dict[str, int]],
+     "call_counters": list[[fn, rv_or_None, count]]}  # fw#73; only when provided
+
+The ``call_counters`` key is present only when the child passed flattened
+counters: its absence means "no counters reported" (pre-channel payload), which
+the parent's ingest readers report as a lost child.
 
 RV-trace shape (I7):
     "P11_RV_TRACE_JSON:" + json.dumps(list[dict])
@@ -210,11 +215,15 @@ def write_coverage(
     mechanism_counts: dict[str, int],
     call_log_ok: dict[str, int] | None = None,
     mechanism_rv_counts: dict[str, dict[str, int]] | None = None,
+    call_counters: list[list[str | int | None]] | None = None,
 ) -> None:
     """Write function/mechanism counts and their successful/return-value subsets (I6).
 
     The parent's subprocess coverage readers consume exactly this shape. ``call_log_ok`` feeds
     the hollow-pass oracle; ``mechanism_rv_counts`` feeds accepted/rejected mechanism state.
+    ``call_counters`` carries the child's flattened fw#73 counters (fn names + RV ints +
+    counts only -- never PINs or key material); the key is omitted when None so the
+    parent can tell "no counters reported" apart from "zero calls".
     No-op when the environment variable is absent.
     """
     path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
@@ -227,6 +236,8 @@ def write_coverage(
             "call_log_ok": call_log_ok or {},
             "mechanism_rv_counts": mechanism_rv_counts or {},
         }
+        if call_counters is not None:
+            payload["call_counters"] = call_counters
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     except (OSError, TypeError, ValueError):

@@ -21,10 +21,11 @@ I4  — a clean C_GetFunctionList setup refusal prints SETUP_XFAIL:<reason> to s
       and returns 0.  A non-SEH CDLL-load OSError emits HARNESS_ERROR instead; an
       access violation propagates for crash attribution.  The child never calls
       classify/fail_as/xfail_as.
-I6  — atexit writes {"call_log": {}, "mechanism_counts": {}} to
+I6  — atexit writes {"call_log": {}, "mechanism_counts": {}, ...} to
       _P11CHECK_SUBPROCESS_COVERAGE.  The raw CDLL path has no RawPKCS11 wrapper so
       call_log is always empty; the parent's get_raw_subprocess_coverage() still
       accumulates the correct shape (an empty dict is a valid, zero-count log).
+      The fw#73 counters ride along under "call_counters".
 I7  — atexit emits P11_RV_TRACE_JSON:[] when PKCS11_CHECK_RV_TRACE is set.  The raw
       CDLL path has no automatic RV interceptor; the trace is always empty unless a
       probe explicitly records calls via its own mechanism outside this entry point.
@@ -45,8 +46,14 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
+from pkcs11_check.core.call_counters import (
+    flatten_current,
+    record_call,
+    record_direct_call,
+    record_return,
+)
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw._platform import windows_dll_directory
 from pkcs11_check.raw.rv import ckr_name
@@ -65,7 +72,12 @@ class RawCtypesContext:
     """State delivered to the run_fn in a probe_main_raw child.
 
     Attributes:
-        lib:       The loaded ctypes.CDLL (raw module handle).
+        lib:       The loaded ctypes.CDLL (raw module handle), wrapped in the
+                   counting proxy so every ``C_*`` call is recorded. The proxy
+                   is duck-type compatible: attribute access, ``restype`` /
+                   ``argtypes`` / ``errcheck`` configuration, calls, and
+                   AttributeError for missing symbols all behave exactly as on
+                   the raw library.
         func_list: Opaque c_void_p pointing at CK_FUNCTION_LIST, as returned by
                    C_GetFunctionList.  Probes that need individual function pointers
                    can index into this with pointer arithmetic (see ckr/_ctypes_raw.py
@@ -111,9 +123,81 @@ def _get_function_list(lib: ctypes.CDLL) -> tuple[ctypes.c_void_p | None, int]:
     get_fn_list.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
     funclist_ptr = ctypes.c_void_p()
     rv = get_fn_list(ctypes.byref(funclist_ptr))
+    # This runs on the raw CDLL before ctx.lib is wrapped, so the call is recorded
+    # explicitly (mirrors the C_GetFunctionList site in raw/api.py).
+    record_direct_call("C_GetFunctionList", int(rv))
     if rv != 0:  # CKR_OK = 0
         return None, int(rv)
     return funclist_ptr, int(rv)
+
+
+def _write_raw_coverage() -> None:
+    """Write the raw-path coverage file: empty call_log plus flattened counters (I6).
+
+    The raw CDLL path has no RawPKCS11 wrapper, so ``call_log`` is always empty;
+    the fw#73 counters (fed by the counting CDLL proxy, ``call_func``, and the
+    explicit ``C_GetFunctionList`` record above) ride along under ``call_counters``.
+    """
+    write_coverage({}, {}, call_counters=flatten_current())
+
+
+class _CountingFuncPtr:
+    """One wrapped ``C_*`` symbol: counts entry+exit, forwards everything else.
+
+    Attribute reads and writes (notably ``restype``/``argtypes``/``errcheck``)
+    go straight to the real ctypes function object, so probes configure the
+    wrapped symbol exactly as they would the raw one. The call's return value
+    passes through unchanged; only the counters observe the call.
+    """
+
+    _name: str
+    _func: Any
+
+    def __init__(self, name: str, func: Any) -> None:
+        # object.__setattr__: __setattr__ below forwards EVERYTHING to the real
+        # func, so the wrapper's own state must bypass it.
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_func", func)
+
+    def __call__(self, *args: Any) -> Any:
+        record_call(self._name)
+        result = self._func(*args)
+        try:
+            rv = int(result)
+        except (TypeError, ValueError):
+            # An exotic restype (e.g. c_void_p answering None) has no integer
+            # RV: the value still passes through and only the entry is counted,
+            # exactly as if the call had not returned.
+            return result
+        record_return(self._name, rv)
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(object.__getattribute__(self, "_func"), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(object.__getattribute__(self, "_func"), name, value)
+
+
+class _CountingCDLL:
+    """Transparent ``ctypes.CDLL`` proxy that counts every ``C_*`` call (fw#73).
+
+    ``C_*`` attribute access returns a counting wrapper (cached per symbol,
+    mirroring CDLL's own caching); anything else passes through to the real
+    library untouched. A missing symbol raises the real library's AttributeError
+    unchanged, so probes keep their absent-export handling (e.g. CKR:NO_METHOD).
+    """
+
+    def __init__(self, lib: ctypes.CDLL) -> None:
+        self._lib = lib
+
+    def __getattr__(self, name: str) -> Any:
+        func = getattr(self._lib, name)
+        if not name.startswith("C_"):
+            return func
+        wrapper = _CountingFuncPtr(name, func)
+        setattr(self, name, wrapper)
+        return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -173,15 +257,19 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
             return
         _done[0] = True
         # Raw CDLL path: no RawPKCS11 to query, so call_log is always empty (I6).
-        write_coverage({}, {})
+        _write_raw_coverage()
         if rv_trace_enabled():
             # No automatic RV interceptor for ctypes calls; emit empty trace (I7).
             emit_rv_trace([])
 
     atexit.register(_cleanup)
 
+    # Wrap the raw library AFTER _get_function_list (recorded explicitly there):
+    # every C_* attribute access through ctx.lib now counts entry+exit. The cast
+    # keeps the declared type (and all downstream probe signatures) as CDLL; the
+    # proxy is duck-type compatible.
     ctx = RawCtypesContext(
-        lib=lib,
+        lib=cast(ctypes.CDLL, _CountingCDLL(lib)),
         func_list=func_list,
         cleanup=_cleanup,
         interface=params.interface or "auto",
