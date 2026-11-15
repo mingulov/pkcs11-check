@@ -32,6 +32,7 @@ DEFAULT_BUCKET = "session_provisioning"
 CALL_COUNTERS_REPORT_TYPE = "CallCountersReport"
 CALL_COUNTERS_PROPERTY = "pkcs11_call_counters"
 ISOLATION_ENV = "PKCS11_CHECK_ISOLATION"
+RUN_ID_ENV = "PKCS11_CHECK_RUN_ID"
 
 
 class _ThreadState(local):
@@ -330,6 +331,7 @@ __all__ = [
     "CALL_COUNTERS_REPORT_TYPE",
     "DEFAULT_BUCKET",
     "ISOLATION_ENV",
+    "RUN_ID_ENV",
     "Snapshot",
     "add_lost_probes",
     "counted_bucket",

@@ -439,23 +439,41 @@ def _buckets_calls_total(buckets: dict[str, Any]) -> int:
     return sum(block["calls"] for block in buckets.values())
 
 
+def _parse_round(record: dict[str, Any]) -> str | None:
+    """Return the record's round key: implicit ``""`` when absent, None when malformed.
+
+    Fail-closed (mirror I2): a ``run_id`` that is present but not a non-empty
+    string (wrong type, empty string, explicit null) skips the whole record.
+    An absent key is the pre-round / direct-pytest shape and folds into the
+    implicit ``""`` round.
+    """
+    if "run_id" not in record:
+        return ""
+    run_id = record["run_id"]
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    return run_id
+
+
 def _parse_session_counters(
     record: dict[str, Any],
-) -> tuple[int, int, dict[str, Any], int, str] | None:
-    """Validate a CallCountersReport record into (pid, total, buckets, lost, isolation).
+) -> tuple[int, int, dict[str, Any], int, str, str] | None:
+    """Validate a CallCountersReport record into (pid, total, buckets, lost, isolation, run).
 
     Returns None for any malformed shape. ``probes_lost`` is load-bearing for
     the ``complete`` flag, so a record without a usable value is garbage;
     ``isolation`` is informational and defaults to ``"unknown"`` (the T3
     read-default) when absent or mistyped. ``total_calls`` must equal the sum
     of the buckets exactly (I2); a mismatch means a corrupt or hand-edited
-    record and the whole record is skipped.
+    record and the whole record is skipped. ``run`` is the round key from
+    :func:`_parse_round` (implicit ``""`` when the key is absent).
     """
     pid = _as_nonneg_int(record.get("pid"))
     total = _as_nonneg_int(record.get("total_calls"))
     probes_lost = _as_nonneg_int(record.get("probes_lost"))
     buckets: Any = record.get("buckets")
-    if pid is None or total is None or probes_lost is None:
+    run = _parse_round(record)
+    if pid is None or total is None or probes_lost is None or run is None:
         return None
     if not _counters_buckets_valid(buckets):
         return None
@@ -464,25 +482,27 @@ def _parse_session_counters(
     isolation = record.get("isolation")
     if not isinstance(isolation, str):
         isolation = "unknown"
-    return (pid, total, buckets, probes_lost, isolation)
+    return (pid, total, buckets, probes_lost, isolation, run)
 
 
-def _parse_test_counters(entry: Any) -> tuple[int, int, dict[str, Any]] | None:
-    """Validate a per-test counter entry into (pid, total, buckets) or None.
+def _parse_test_counters(entry: Any) -> tuple[int, int, dict[str, Any], str] | None:
+    """Validate a per-test counter entry into (pid, total, buckets, run) or None.
 
     Same fail-closed contract as session records (I2): shape, bucket
-    membership, exact totals, and the RV upper bound, or the entry is skipped.
+    membership, exact totals, the RV upper bound, and a well-formed round
+    key, or the entry is skipped.
     """
     if not isinstance(entry, dict):
         return None
     pid = _as_nonneg_int(entry.get("pid"))
     total = _as_nonneg_int(entry.get("total_calls"))
     buckets: Any = entry.get("buckets")
-    if pid is None or total is None or not _counters_buckets_valid(buckets):
+    run = _parse_round(entry)
+    if pid is None or total is None or run is None or not _counters_buckets_valid(buckets):
         return None
     if total != _buckets_calls_total(buckets):
         return None
-    return (pid, total, buckets)
+    return (pid, total, buckets, run)
 
 
 @dataclass
@@ -513,6 +533,26 @@ class _CountersPid:
     isolation: str = "unknown"
 
 
+def _counters_group_complete(group: _CountersGroup) -> bool:
+    """Whether a group is complete: session present, no fallback, no lost probes."""
+    return group.has_session and not group.fallback_used and group.session_probes_lost == 0
+
+
+def _counters_pid_complete(state: _CountersPid) -> bool:
+    """Whether a pid's contribution is complete (same rule as a group)."""
+    return state.has_session and not state.fallback_used and state.sessions_probes_lost == 0
+
+
+def _counters_process_row(pid: int, state: _CountersPid) -> dict[str, Any]:
+    """Render one by_process row (no round/shard keys; the caller tags those)."""
+    return {
+        "pid": pid,
+        "isolation": state.isolation,
+        "total_calls": state.sessions_total + state.fallback_total,
+        "complete": _counters_pid_complete(state),
+    }
+
+
 def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     """Aggregate call-counter records from a JSONL artifact into one payload.
 
@@ -523,7 +563,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     :func:`report_log.iter_classification_occurrences` (reset at SessionStart;
     a malformed marker resets to unattributed; never raises). Groups are
     additionally namespaced by SessionStart scope (C3a), so a repeated marker
-    or pid in a later session never reconciles against an earlier one.
+    or pid in a later session never reconciles against an earlier one, and by
+    round (the record's ``run_id``) ABOVE the session scope, so each CLI
+    invocation's calls stay attributable after resume appends new rounds.
 
     Reconciliation per group: every session record is summed (retries count
     twice — both runs made real calls); a buffered per-test entry folds only
@@ -537,21 +579,38 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     with zero counters predates the feature (old artifact): no group, and
     None is returned when no group exists anywhere. Malformed records are
     ignored, never raised.
+
+    Rounds: records without ``run_id`` (pre-round artifacts, direct-pytest
+    runs) fold into the implicit ``""`` round, as do C2 empty groups (a
+    counterless TestReport names no round, so ``""`` also means "round
+    unknown"). Each round gets its own block under ``by_round`` with the exact
+    top-level shape; the top level stays the GLOBAL roll-up. Top-level
+    ``by_process`` rows carry ``"round"`` iff more than one distinct round
+    appears among them (single-round output is identical to before on every
+    existing key); per-round rows never carry it. Keys and rows are sorted
+    for determinism.
     """
-    groups: dict[tuple[int, str | None, int | None], _CountersGroup] = {}
-    pids: dict[int, _CountersPid] = {}
+    groups: dict[tuple[str, int, str | None, int | None], _CountersGroup] = {}
+    pids: dict[tuple[str, int], _CountersPid] = {}
     merged: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    merged_by_round: dict[str, dict[str, Any]] = {}
     scope = 0
     current: tuple[int, str | None, int | None] = (0, None, None)
     opened: set[int] = set()
     finished: set[int] = set()
     reported: set[tuple[int, str | None, int | None]] = set()
 
-    def _group(key: tuple[int, str | None, int | None]) -> _CountersGroup:
+    def _group(key: tuple[str, int, str | None, int | None]) -> _CountersGroup:
         return groups.setdefault(key, _CountersGroup())
 
-    def _pid_state(pid: int) -> _CountersPid:
-        return pids.setdefault(pid, _CountersPid())
+    def _pid_state(key: tuple[str, int]) -> _CountersPid:
+        return pids.setdefault(key, _CountersPid())
+
+    def _fold(run: str, total: int, buckets: dict[str, Any]) -> None:
+        block = {"total_calls": total, "buckets": buckets}
+        merge_serialized(merged, block)
+        round_merged = merged_by_round.setdefault(run, {"total_calls": 0, "buckets": {}})
+        merge_serialized(round_merged, block)
 
     # Streamed via the shared binary-decode iterator (report_log.iter_report_log_records)
     # like the coverage/provisioning extractors above: one bad byte drops one line.
@@ -582,13 +641,13 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             parsed = _parse_session_counters(rec)
             if parsed is None:
                 continue
-            pid, total, buckets, probes_lost, isolation = parsed
-            merge_serialized(merged, {"total_calls": total, "buckets": buckets})
-            group = _group(current)
+            pid, total, buckets, probes_lost, isolation, run = parsed
+            _fold(run, total, buckets)
+            group = _group((run, *current))
             group.has_session = True
             group.session_pids.add(pid)
             group.session_probes_lost += probes_lost
-            pid_state = _pid_state(pid)
+            pid_state = _pid_state((run, pid))
             if not pid_state.has_session:
                 pid_state.isolation = isolation
             pid_state.has_session = True
@@ -604,55 +663,68 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         # (the report still counts as execution evidence above).
         if not isinstance(rec.get("user_properties"), (list, tuple)):
             continue
-        entry = _parse_test_counters(_user_property(rec, CALL_COUNTERS_PROPERTY))
-        if entry is None:
+        parsed_entry = _parse_test_counters(_user_property(rec, CALL_COUNTERS_PROPERTY))
+        if parsed_entry is None:
             continue
-        _group(current).pending.append(entry)
+        entry_pid, entry_total, entry_buckets, entry_run = parsed_entry
+        _group((entry_run, *current)).pending.append((entry_pid, entry_total, entry_buckets))
 
     # Session records sort after the test reports they supersede, so fallback
     # folds only now that every group's session-pid set is final.
-    for group in groups.values():
+    for group_key, group in groups.items():
         for pid, total, buckets in group.pending:
             if pid in group.session_pids:
                 continue
-            merge_serialized(merged, {"total_calls": total, "buckets": buckets})
+            _fold(group_key[0], total, buckets)
             group.fallback_used = True
-            pid_state = _pid_state(pid)
+            pid_state = _pid_state((group_key[0], pid))
             pid_state.fallback_total += total
             pid_state.fallback_used = True
 
     # C2: executed-but-counterless segments (reports, zero counters, opened
     # scope, no finish) emit an empty group so the run reads incomplete. A
     # finished scope with zero counters is an old artifact (no group); a
-    # marker with zero reports is a static skip (no group).
+    # marker with zero reports is a static skip (no group). The empty group
+    # lands in "" — a counterless report names no round, so "" doubles as
+    # "round unknown" next to its old-artifact meaning.
+    grouped_segments = {key[1:] for key in groups}
     for key in reported:
-        if key not in groups and key[0] in opened and key[0] not in finished:
-            groups[key] = _CountersGroup()
+        if key not in grouped_segments and key[0] in opened and key[0] not in finished:
+            groups[("", *key)] = _CountersGroup()
 
     if not groups:
         return None
-    complete = all(
-        group.has_session and not group.fallback_used and group.session_probes_lost == 0
-        for group in groups.values()
-    )
-    by_process = [
-        {
-            "pid": pid,
-            "isolation": state.isolation,
-            "total_calls": state.sessions_total + state.fallback_total,
-            "complete": (
-                state.has_session and not state.fallback_used and state.sessions_probes_lost == 0
-            ),
+    complete = all(_counters_group_complete(group) for group in groups.values())
+    rounds = sorted({key[0] for key in groups})
+    round_rows: dict[str, list[dict[str, Any]]] = {run: [] for run in rounds}
+    for (run, pid), state in sorted(pids.items()):
+        if state.has_session or state.fallback_used:
+            round_rows[run].append(_counters_process_row(pid, state))
+    show_round = len({run for run, rows in round_rows.items() if rows}) > 1
+    by_process: list[dict[str, Any]] = []
+    by_round: dict[str, Any] = {}
+    for run in rounds:
+        round_merged = merged_by_round.get(run, {"total_calls": 0, "buckets": {}})
+        round_groups = [group for key, group in groups.items() if key[0] == run]
+        by_round[run] = {
+            "complete": all(_counters_group_complete(group) for group in round_groups),
+            "total_calls": round_merged["total_calls"],
+            "by_bucket": round_merged,
+            "probes_lost": sum(group.session_probes_lost for group in round_groups),
+            "by_process": round_rows[run],
         }
-        for pid, state in sorted(pids.items())
-        if state.has_session or state.fallback_used
-    ]
+        for row in round_rows[run]:
+            tagged = dict(row)
+            if show_round:
+                tagged["round"] = run
+            by_process.append(tagged)
     return {
         "complete": complete,
         "total_calls": merged["total_calls"],
         "by_bucket": merged,
         "probes_lost": sum(group.session_probes_lost for group in groups.values()),
         "by_process": by_process,
+        "by_round": by_round,
     }
 
 

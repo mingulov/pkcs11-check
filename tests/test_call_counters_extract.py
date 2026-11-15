@@ -641,3 +641,246 @@ def test_extract_skips_violating_test_entry(tmp_path: Path) -> None:
     assert payload["total_calls"] == 7
     assert payload["complete"] is True
     assert [entry_row["pid"] for entry_row in payload["by_process"]] == [200]
+
+
+# --- Per-round (run_id) dimension ---
+
+_R1 = "20261115T120000000000Z-p100"
+_R2 = "20261115T130000000000Z-p200"
+
+
+def _round_session(pid: int, total: int, run_id: str) -> dict[str, Any]:
+    record = _session_record(pid, total)
+    record["run_id"] = run_id
+    return record
+
+
+def _round_entry(pid: int, total: int, run_id: str) -> dict[str, Any]:
+    entry = _test_entry(pid, total)
+    entry["run_id"] = run_id
+    return entry
+
+
+def test_extract_splits_rounds_and_keeps_global_rollup(tmp_path: Path) -> None:
+    # Two CLI invocations (resume): each round keeps its own block while the
+    # top level stays the GLOBAL roll-up with round-tagged process rows.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, _R1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _round_session(200, 5, _R2),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 15
+    assert payload["complete"] is True
+    assert payload["probes_lost"] == 0
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True, "round": _R1},
+        {"pid": 200, "isolation": "file", "total_calls": 5, "complete": True, "round": _R2},
+    ]
+    assert sorted(payload["by_round"]) == [_R1, _R2]
+    round_1 = payload["by_round"][_R1]
+    assert round_1["total_calls"] == 10
+    assert round_1["complete"] is True
+    assert round_1["probes_lost"] == 0
+    assert round_1["by_bucket"]["total_calls"] == 10
+    assert round_1["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True}
+    ]
+    assert payload["by_round"][_R2]["total_calls"] == 5
+    assert payload["by_round"][_R2]["by_process"] == [
+        {"pid": 200, "isolation": "file", "total_calls": 5, "complete": True}
+    ]
+
+
+def test_extract_single_round_rows_carry_no_round_key(tmp_path: Path) -> None:
+    # Single-round output is identical to today on every existing key; only
+    # the additive by_round map is new.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, _R1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True}
+    ]
+    assert list(payload["by_round"]) == [_R1]
+    assert payload["by_round"][_R1]["total_calls"] == 10
+
+
+def test_extract_old_records_fold_into_implicit_round(tmp_path: Path) -> None:
+    # Backward compat: records without run_id (pre-round artifacts,
+    # direct-pytest runs) form one implicit "" round; totals are unchanged.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _session_record(100, 10),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 10
+    assert payload["complete"] is True
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True}
+    ]
+    assert list(payload["by_round"]) == [""]
+    implicit = payload["by_round"][""]
+    assert implicit["total_calls"] == payload["total_calls"]
+    assert implicit["complete"] == payload["complete"]
+    assert implicit["probes_lost"] == payload["probes_lost"]
+    assert implicit["by_bucket"] == payload["by_bucket"]
+    assert implicit["by_process"] == payload["by_process"]
+
+
+def test_extract_same_pid_across_rounds_never_fuses(tmp_path: Path) -> None:
+    # Pid reuse across CLI invocations is real; (round, pid) rows stay split.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, _R1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _round_session(100, 5, _R2),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 15
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True, "round": _R1},
+        {"pid": 100, "isolation": "file", "total_calls": 5, "complete": True, "round": _R2},
+    ]
+
+
+def test_extract_round_completeness_is_independent(tmp_path: Path) -> None:
+    # R1 clean, R2 crash-fallback: per-round flags differ, global is false.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, _R1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _test_report("b.py::t1", "teardown", _round_entry(200, 5, _R2)),
+            _test_report("b.py::t1", "teardown", _round_entry(200, 3, _R2)),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 18
+    assert payload["by_round"][_R1]["complete"] is True
+    assert payload["by_round"][_R2]["complete"] is False
+    assert payload["by_round"][_R2]["total_calls"] == 8
+
+
+def test_extract_pid_reconciliation_is_run_scoped(tmp_path: Path) -> None:
+    # Same pid, same marker shape, different rounds: the R1 entry is NOT
+    # superseded by the R2 session record (different processes).
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _test_report("a.py::t1", "teardown", _round_entry(100, 5, _R1)),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, _R2),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 15
+    assert payload["by_round"][_R1]["complete"] is False  # fallback folded
+    assert payload["by_round"][_R1]["total_calls"] == 5
+    assert payload["by_round"][_R2]["complete"] is True
+
+
+def test_extract_counterless_segment_is_unattributable_round(tmp_path: Path) -> None:
+    # C2 with rounds: a counterless TestReport in an unfinished scope names no
+    # round, so the empty group lands in "" (round unknown) and flips global
+    # complete while leaving the attributed round complete.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _round_session(100, 10, _R1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _test_report("b.py::t1", "call", None),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 10
+    assert sorted(payload["by_round"]) == ["", _R1]
+    assert payload["by_round"][_R1]["complete"] is True
+    assert payload["by_round"][""]["complete"] is False
+    assert payload["by_round"][""]["total_calls"] == 0
+    assert payload["by_round"][""]["by_process"] == []
+    # Untagged-rows contract: the conditional tag counts distinct rounds among
+    # ROWS, so the pid-less C2-only "" round leaves R1's rows untagged (the
+    # merge must attribute them to R1, not to "").
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True}
+    ]
+
+
+@pytest.mark.parametrize("bad_run_id", ["", 0, None, {"r": 1}, ["r"], True])
+def test_extract_malformed_run_id_skips_session_record(tmp_path: Path, bad_run_id: Any) -> None:
+    # Fail-closed (mirror I2): present-but-not-nonempty-string run_id skips
+    # the whole record; the valid record still folds.
+    bad = _session_record(100, 10)
+    bad["run_id"] = bad_run_id
+    jsonl = _write_jsonl(tmp_path / "report.jsonl", [bad, _round_session(200, 7, _R1)])
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 7
+    assert payload["complete"] is True
+    assert [row["pid"] for row in payload["by_process"]] == [200]
+
+
+@pytest.mark.parametrize("bad_run_id", ["", 0, None, {"r": 1}, ["r"], True])
+def test_extract_malformed_run_id_skips_test_entry(tmp_path: Path, bad_run_id: Any) -> None:
+    entry = _test_entry(300, 5)
+    entry["run_id"] = bad_run_id
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            _test_report("a.py::t1", "teardown", entry),
+            _round_session(200, 7, _R1),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 7
+    assert [row["pid"] for row in payload["by_process"]] == [200]
