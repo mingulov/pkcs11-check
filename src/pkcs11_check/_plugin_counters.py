@@ -31,6 +31,7 @@ from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_PROPERTY,
     CALL_COUNTERS_REPORT_TYPE,
     ISOLATION_ENV,
+    RUN_ID_ENV,
     Snapshot,
     _phase,
     diff_snapshots,
@@ -99,6 +100,9 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
         baseline = item.stash.get(_BASELINE_KEY, None)
         if baseline is not None:
             entry: dict[str, Any] = {"pid": os.getpid()}
+            run_id = os.environ.get(RUN_ID_ENV)
+            if run_id is not None:
+                entry["run_id"] = run_id
             entry.update(diff_snapshots(baseline, take_snapshot()))
             item.stash[_ENTRY_KEY] = entry
 
@@ -146,6 +150,12 @@ def build_session_record() -> dict[str, Any]:
         "isolation": os.environ.get(ISOLATION_ENV, "unknown"),
         "probes_lost": probes_lost(),
     }
+    # Per-round attribution: the CLI seeds one run_id per invocation; direct
+    # pytest runs have no seed, so the key is omitted (never null) and the
+    # extractor folds such records into the implicit "" round.
+    run_id = os.environ.get(RUN_ID_ENV)
+    if run_id is not None:
+        record["run_id"] = run_id
     record.update(serialize_current())
     return record
 

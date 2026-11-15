@@ -94,10 +94,16 @@ per-shard JSONL extracts (fresh provenance per shard).
   group, which flips the run to `complete: false` instead of vanishing. A
   finished scope with zero counters predates the feature and contributes
   nothing, as does a marker with zero reports (static skip).
-- `by_process` carries one row per pid that contributed a session record or
-  fallback deltas; `isolation` is the `PKCS11_CHECK_ISOLATION` value that
-  process saw. Merged rows additionally carry the `shard` dir name;
-  single-run rows omit the key.
+- `by_process` carries one row per (round, pid) that contributed a session
+  record or fallback deltas; `isolation` is the `PKCS11_CHECK_ISOLATION`
+  value that process saw. Rows carry `round` (the raw run id) iff more than
+  one distinct round appears among the block's rows, and `shard` (merged
+  output only) iff more than one distinct shard appears; single-round
+  single-shard output reads exactly like a single extract on every key.
+- `by_round` maps each round's run id to its own block with the exact
+  top-level shape (`complete`, `total_calls`, `by_bucket`, `probes_lost`,
+  `by_process`); the top level stays the GLOBAL roll-up across rounds.
+  Merged `by_round` keys are shard-namespaced (`"<shard>/<run id>"`).
 - The block is absent (not empty) when the JSONL carries no counters data
   and no executed-but-counterless segment, so old artifacts stay clean.
 
@@ -106,14 +112,16 @@ per-shard JSONL extracts (fresh provenance per shard).
 One JSONL record per process, emitted at session finish (including the
 early-return branch, and after the teardown `C_Finalize` so that call is
 included): `$report_type`, `pid`, `isolation` (env value, default
-`"unknown"`), `probes_lost` (there is no `probes_completed` field), plus the
-serialized counters of everything that process recorded.
+`"unknown"`), `probes_lost` (there is no `probes_completed` field), `run_id`
+(the invocation's id, omitted - never null - when the env seed is absent),
+plus the serialized counters of everything that process recorded.
 
 ### Per-test entry (`pkcs11_call_counters`)
 
 A `user_properties` entry on the teardown report: `pid` plus the serialized
 baseline-to-now window diff (setup-phase calls in `setup_teardown`, body
-calls in `test`). Setup/call reports predate the computation and always carry
+calls in `test`), plus `run_id` under the same omit-when-absent rule as the
+session record. Setup/call reports predate the computation and always carry
 nothing. No entry is attached when the window holds no calls. A skip in setup
 still yields a setup-only entry.
 
@@ -124,6 +132,44 @@ function name, then RV ascending with the unreturned row last per function.
 Bucket attribution is dropped - the ingesting parent applies its own active
 bucket. `rv null` marks calls that never returned. Garbage rows are ignored
 without raising.
+
+## Rounds
+
+Each `pkcs11-check test` invocation is one round. Resume appends new rounds
+to the same `report.jsonl` while overwriting `results.json`, so without
+round attribution the merged totals could not be split back per invocation.
+
+- Generation: `test_cmd` mints exactly one run id per invocation -
+  `<UTC-timestamp-microseconds>Z-p<pid>` (e.g.
+  `20261115T120345123456Z-p12345`), sortable and unique, timestamp+pid only
+  (no secrets, no machine identity) - and seeds `PKCS11_CHECK_RUN_ID` late,
+  immediately before `run_isolated_pytest_units` (isolated path) or the
+  in-process `pytest.main` (none path), with the same save/restore
+  bookkeeping as the isolation key. A stale caller-provided value is dropped
+  before preflight/collection run, so those subprocesses never inherit it.
+- Forwarding: the runner threads the seed into each unit child's plugin env
+  under the same guarded rule as the isolation key (explicit value wins, a
+  preset is preserved, absent stays absent); confirmation and escalation
+  children inherit it from the base env. The session record and per-test
+  entries read it at build time.
+- Grouping: the run scope sits ABOVE the session scope - groups are keyed
+  (run, scope, target, attempt) and pid reconciliation is run-scoped, so a
+  pid reused across invocations never fuses and a same-pid entry from
+  another round is never superseded.
+- Implicit round: records without `run_id` (pre-round artifacts,
+  direct-pytest runs) fold into the `""` round, which also owns C2 empty
+  groups (a counterless report names no round, so `""` doubles as "round
+  unknown"). Old artifacts therefore yield exactly one `""` round with
+  byte-compatible totals. A record whose `run_id` is present but not a
+  non-empty string is malformed and skipped whole (fail-closed, like I2).
+- Merge namespacing: `by_round` maps merge under `"<shard>/<run id>"` flat
+  keys, so identical run ids on two shards (a CI-matrix same-second
+  same-pid collision) never fuse; the merged top level stays the GLOBAL
+  roll-up with rows sorted by (shard, round, pid).
+- Fingerprint ignoring: the run id matches the `PKCS11_` fingerprint prefix
+  but is plumbing, not configuration, so it joins the isolation key in both
+  ignored sets - resume across run ids (the normal case: every invocation
+  seeds a fresh one) never invalidates state or policy.
 
 ## Buckets
 
@@ -200,10 +246,11 @@ To compare the counters of two runs (no tool is shipped; the consumer diffs):
    - `by_process` rows differ legitimately across isolation modes (one pid in
      `none`, one per unit otherwise); compare `total_calls`, not row counts.
    - Merged counters come from the per-shard JSONL extracts (fresh
-     provenance per shard), then summed/ANDed/concatenated with `shard`
-     tags on the `by_process` rows - it is never a sum of shard
-     `results.json` blocks, and both merge orders yield the identical
-     block.
+     provenance per shard), then summed/ANDed/concatenated with
+     conditional `round`/`shard` tags on the `by_process` rows, plus the
+     per-round blocks under shard-namespaced `by_round` keys - it is never
+     a sum of shard `results.json` blocks, and both merge orders yield the
+     identical block.
    - The crashed/timed-out fallback (per-test deltas folded without a
      session record) is a lower bound: calls outside any test window are
      missing.
@@ -295,11 +342,15 @@ Small seams, each following an existing pattern.
 - `PKCS11_CHECK_ISOLATION` carries the mode to the session record: the
   runner sets the `--isolation` flag value for unit children, `test_cmd`
   sets `"none"` for the in-process path (restored afterwards with the other
-  run-scoped keys).
+  run-scoped keys). `PKCS11_CHECK_RUN_ID` rides the same bridge with one
+  fresh id per invocation (a stale caller value is dropped before
+  preflight/collection); both keys are ignored by the state and policy
+  fingerprints, so seeding never invalidates resume.
 - The none path embeds counters where it embeds coverage; `merge.py`
   extracts each shard JSONL in fresh state, then sums totals/buckets/losses,
-  ANDs `complete`, and concatenates the `by_process` rows with `shard`
-  tags (sorted for order independence).
+  ANDs `complete`, merges the `by_round` maps under shard-namespaced keys,
+  and concatenates the `by_process` rows with conditional round/shard tags
+  (sorted for order independence).
 
 ## File-change map
 
@@ -318,12 +369,14 @@ Small seams, each following an existing pattern.
 | `testcases/_probes/runner.py` | `note_lost_probe()` when ingest reports unusable. |
 | `core/_jsonl_extract.py` | `extract_call_counters_from_jsonl`; none-path embedding. |
 | `core/_report_writers.py` | `write_isolated_json_report(..., call_counters=None)` payload key. |
-| `core/file_runner.py`, `cli/test_cmd.py` | Per-unit extraction + pass-through; `PKCS11_CHECK_ISOLATION` env on both paths. |
-| `core/merge.py` | Merged `call_counters` from per-shard extracts (summed/ANDed, `shard`-tagged `by_process`). |
+| `core/file_runner.py`, `cli/test_cmd.py` | Per-unit extraction + pass-through; `PKCS11_CHECK_ISOLATION` env on both paths; per-invocation `PKCS11_CHECK_RUN_ID` seed, forwarding, and fingerprint ignores. |
+| `core/merge.py` | Merged `call_counters` from per-shard extracts (summed/ANDed, conditional round/shard tags, namespaced `by_round`). |
 
 ## Enabling
 
 There is none: the counters are always on. `PKCS11_CHECK_ISOLATION` is set by
 the runner itself (the `--isolation` flag value for unit children, `"none"`
 for the in-process path) and read back by the session record; it is plumbing,
-not configuration.
+not configuration. `PKCS11_CHECK_RUN_ID` is likewise minted by the CLI (one
+fresh id per invocation) and read back by the session record and per-test
+entries for round attribution.

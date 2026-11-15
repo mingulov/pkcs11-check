@@ -24,6 +24,7 @@ from pkcs11_check.core import call_counters
 from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_PROPERTY,
     ISOLATION_ENV,
+    RUN_ID_ENV,
 )
 
 pytest_plugins = ["pytester"]
@@ -526,3 +527,42 @@ def test_phase_buckets_end_to_end(
     assert session_records[0]["total_calls"] == 6
     assert session_records[0]["isolation"] == "e2e-probe"
     assert session_records[0]["probes_lost"] == 0
+
+
+# --------------------------------------------------------------------------
+# Per-round run_id attribution (fw#73 round dimension)
+# --------------------------------------------------------------------------
+
+
+def test_session_record_run_id_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(RUN_ID_ENV, "20261115T120000000000Z-p1234")
+    assert plugin_counters.build_session_record()["run_id"] == "20261115T120000000000Z-p1234"
+
+
+def test_session_record_omits_run_id_when_env_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Direct-pytest runs (no CLI seed) carry no run_id; the extractor folds
+    # such records into the implicit "" round.
+    monkeypatch.delenv(RUN_ID_ENV, raising=False)
+    assert "run_id" not in plugin_counters.build_session_record()
+
+
+def test_teardown_entry_run_id_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(RUN_ID_ENV, "20261115T120000000000Z-p1234")
+    item = _testcase_item()
+    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
+    _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
+    entry = item.stash[plugin_counters._ENTRY_KEY]
+    assert entry["run_id"] == "20261115T120000000000Z-p1234"
+
+
+def test_teardown_entry_omits_run_id_when_env_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(RUN_ID_ENV, raising=False)
+    item = _testcase_item()
+    _drive_phase(plugin_counters.pytest_runtest_setup, item, calls=("C_SetupCall",))
+    _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
+    entry = item.stash[plugin_counters._ENTRY_KEY]
+    assert "run_id" not in entry

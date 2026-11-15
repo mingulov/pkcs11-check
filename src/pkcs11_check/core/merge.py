@@ -11,8 +11,10 @@ single full run would have produced:
   older shard artifacts.
 - ``results.json``  : summary counters summed, ``units`` lists concatenated,
   ``call_counters`` merged from the per-shard JSONL extracts (fresh marker/pid
-  provenance per shard, then summed/ANDed/concatenated with shard tags), so the
-  merge is exact and order-independent for counters too.
+  provenance per shard, then summed/ANDed/concatenated with conditional
+  round/shard tags, plus the per-round blocks under shard-namespaced
+  ``by_round`` keys), so the merge is exact and order-independent for
+  counters too.
 - ``coverage.json`` : recomputed from the concatenated JSONL via the existing
   :func:`extract_coverage_from_jsonl`, which unions names and sums counts and
   is order-independent — so the merge is exact (a split→merge round-trip
@@ -516,6 +518,35 @@ def _merged_shard_provenance(
     )
 
 
+def _copy_round_block(block: dict[str, Any]) -> dict[str, Any]:
+    """Detach a per-round block (fresh buckets + rows; never aliases the shard block)."""
+    by_bucket: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    merge_serialized(by_bucket, block["by_bucket"])
+    return {
+        "complete": block["complete"],
+        "total_calls": by_bucket["total_calls"],
+        "by_bucket": by_bucket,
+        "probes_lost": int(block["probes_lost"]),
+        "by_process": [dict(row) for row in block["by_process"]],
+    }
+
+
+def _process_row_sort_key(row: dict[str, Any]) -> tuple[str, str, int, str]:
+    """Deterministic order for process rows: pid ties break on the full row bytes."""
+    return (
+        row.get("shard") or "",
+        row.get("round") or "",
+        int(row["pid"]),
+        json.dumps(row, sort_keys=True),
+    )
+
+
+def _collected_row_sort_key(item: tuple[str, str, dict[str, Any]]) -> tuple[str, str, int, str]:
+    """Deterministic order for merged rows: (shard, round, pid) ties break on bytes."""
+    shard, run, base = item
+    return (shard or "", run or "", int(base["pid"]), json.dumps(base, sort_keys=True))
+
+
 def _merge_call_counter_blocks(
     blocks: list[tuple[str, dict[str, Any]]],
 ) -> dict[str, Any] | None:
@@ -524,33 +555,76 @@ def _merge_call_counter_blocks(
     Each ``(shard_name, block)`` pair was extracted from its own shard JSONL
     in fresh state (own marker/pid provenance, so a numeric pid can never
     collide across shards and a truncated shard cannot inherit a marker).
-    Totals, buckets, and probes_lost are summed, ``complete`` is ANDed, and
-    ``by_process`` rows are concatenated with the shard dir name attached and
-    sorted by (shard, pid) so both merge orders yield the identical block.
-    Single-run rows carry no ``shard`` key; only merged rows do.
+    Totals, buckets, and probes_lost are summed, ``complete`` is ANDed,
+    ``by_round`` maps merge under shard-namespaced flat keys
+    (``"{shard_dir_name}/{run_id}"``, so a CI-matrix same-second same-pid
+    run_id collision across machines never fuses), and ``by_process`` rows
+    are concatenated with no fusion of distinct processes, sorted by
+    (shard, round, pid) with pid ties broken on the full row bytes, so both
+    merge orders yield the identical block.
+    ``"round"``/``"shard"`` keys are present on a block's rows iff more than
+    one distinct value appears among them (single-round single-shard output
+    reads exactly like a single extract); the row ``"round"`` is the raw
+    run_id (the ``"shard"`` tag beside it keeps it attributable). Untagged
+    rows are attributed to the unique round WITH rows (a pid-less C2-only
+    ``""`` round beside one attributed round must not steal them).
     """
     if not blocks:
         return None
     by_bucket: dict[str, Any] = {"total_calls": 0, "buckets": {}}
     probes_lost = 0
     complete = True
-    by_process: list[dict[str, Any]] = []
+    collected: list[tuple[str, str, dict[str, Any]]] = []
+    by_round: dict[str, dict[str, Any]] = {}
     for shard_name, block in blocks:
         merge_serialized(by_bucket, block["by_bucket"])
         probes_lost += int(block["probes_lost"])
         if not block["complete"]:
             complete = False
+        shard_rounds: dict[str, Any] = block["by_round"]
+        shard_round_keys = sorted(shard_rounds)
+        for run in shard_round_keys:
+            namespaced = f"{shard_name}/{run}"
+            incoming = shard_rounds[run]
+            existing = by_round.get(namespaced)
+            if existing is None:
+                by_round[namespaced] = _copy_round_block(incoming)
+            else:
+                # Duplicate shard dir names: fuse losslessly, never overwrite.
+                merge_serialized(existing["by_bucket"], incoming["by_bucket"])
+                existing["total_calls"] = existing["by_bucket"]["total_calls"]
+                existing["probes_lost"] += int(incoming["probes_lost"])
+                existing["complete"] = existing["complete"] and incoming["complete"]
+                existing["by_process"].extend(dict(row) for row in incoming["by_process"])
+                existing["by_process"].sort(key=_process_row_sort_key)
+        rounds_with_rows = [r for r in shard_round_keys if shard_rounds[r].get("by_process")]
         for row in block["by_process"]:
-            tagged = dict(row)
+            base = {key: value for key, value in row.items() if key != "round"}
+            run = row.get("round")
+            if run is None:
+                # Untagged rows (extract tags iff >1 round WITH rows) belong
+                # to the unique round with rows; a pid-less C2-only "" round
+                # beside one attributed round must not steal them.
+                run = rounds_with_rows[0] if len(rounds_with_rows) == 1 else ""
+            collected.append((shard_name, str(run), base))
+    show_shard = len({shard for shard, _, _ in collected}) > 1
+    show_round = len({run for _, run, _ in collected}) > 1
+    collected.sort(key=_collected_row_sort_key)
+    by_process: list[dict[str, Any]] = []
+    for shard_name, run, base in collected:
+        tagged = dict(base)
+        if show_round:
+            tagged["round"] = run
+        if show_shard:
             tagged["shard"] = shard_name
-            by_process.append(tagged)
-    by_process.sort(key=lambda row: (str(row["shard"]), int(row["pid"])))
+        by_process.append(tagged)
     return {
         "complete": complete,
         "total_calls": by_bucket["total_calls"],
         "by_bucket": by_bucket,
         "probes_lost": probes_lost,
         "by_process": by_process,
+        "by_round": {key: by_round[key] for key in sorted(by_round)},
     }
 
 

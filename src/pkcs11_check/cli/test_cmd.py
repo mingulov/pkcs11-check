@@ -10,6 +10,7 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, suppress
 from dataclasses import replace as _dataclass_replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -34,7 +35,7 @@ from pkcs11_check.core._report_records import (
     _write_report_jsonl_from_record_sources,
 )
 from pkcs11_check.core._run_guard import RunArtifactsLockedError, run_artifact_guard
-from pkcs11_check.core.call_counters import ISOLATION_ENV
+from pkcs11_check.core.call_counters import ISOLATION_ENV, RUN_ID_ENV
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
@@ -152,6 +153,16 @@ def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
             "report will show build info absent[/dim]"
         )
         return {}
+
+
+def _new_run_id() -> str:
+    """Return a fresh per-invocation run id (UTC microsecond timestamp + pid).
+
+    Sortable (zero-padded fixed width, so lexicographic order matches
+    creation order) and unique per CLI invocation; timestamp+pid only, so no
+    secret or machine-identifying material ever lands in the id.
+    """
+    return f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-p{os.getpid()}"
 
 
 def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:
@@ -812,6 +823,8 @@ def test_command(
     had_selection_manifest = "PKCS11_CHECK_SELECTION_MANIFEST" in os.environ
     original_isolation = os.environ.get(ISOLATION_ENV)
     had_original_isolation = ISOLATION_ENV in os.environ
+    original_run_id = os.environ.get(RUN_ID_ENV)
+    had_original_run_id = RUN_ID_ENV in os.environ
     manifest_path: Path | None = None
     manifest_fd: int | None = None
     jsonl_path: Path | None = None
@@ -854,6 +867,10 @@ def test_command(
             os.environ[ISOLATION_ENV] = original_isolation or ""
         else:
             os.environ.pop(ISOLATION_ENV, None)
+        if had_original_run_id:
+            os.environ[RUN_ID_ENV] = original_run_id or ""
+        else:
+            os.environ.pop(RUN_ID_ENV, None)
 
     def close_manifest_fd() -> None:
         nonlocal manifest_fd
@@ -898,6 +915,11 @@ def test_command(
             artifact_guard_stack.close()
 
     try:
+        # A stale caller-provided run id must not leak into preflight or
+        # collection subprocesses (or, worse, be mistaken for this run's):
+        # drop it now (saved above for restore) and seed one fresh id late,
+        # next to the isolation seed on each path.
+        os.environ.pop(RUN_ID_ENV, None)
         manifest_fd, manifest_raw_path = tempfile.mkstemp(
             prefix="pkcs11-check-manifest-",
             suffix=".json",
@@ -1222,7 +1244,10 @@ def test_command(
                 # here (run_isolated_pytest_units copies os.environ); seeded late
                 # so preflight/collection subprocesses do not inherit it. Restored
                 # with the other run-scoped keys in restore_caller_environment.
+                # The run id rides the same bridge: one fresh id per CLI
+                # invocation, so resume rounds stay attributable.
                 os.environ[ISOLATION_ENV] = isolation
+                os.environ[RUN_ID_ENV] = _new_run_id()
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
@@ -1296,6 +1321,7 @@ def test_command(
         # In-process none path (fw#73): the session record reads this directly.
         # Restored with the other run-scoped keys in restore_caller_environment.
         os.environ[ISOLATION_ENV] = "none"
+        os.environ[RUN_ID_ENV] = _new_run_id()
         if disabled_nodeids:
             deselect_path = write_deselect_file(disabled_nodeids)
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
