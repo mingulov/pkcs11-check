@@ -1318,8 +1318,10 @@ def test_command(
         jsonl_fd = None
         # Explicit --report-log CLI arg (same two-arg spelling as the isolated
         # path): pytest-reportlog reads config.option.report_log eagerly in its
-        # own pytest_configure, which runs before ours, so a late injection
-        # would never activate the writer. Orthogonal to junit/rich modes.
+        # own pytest_configure, which on the observed/default installation runs
+        # before ours (entry-point discovery order + pluggy LIFO hook
+        # execution), so a late injection would miss the writer there.
+        # Orthogonal to junit/rich modes.
         args.extend(["--report-log", str(jsonl_path)])
         # In-process none path (fw#73): the session record reads this directly.
         # Restored with the other run-scoped keys in restore_caller_environment.
