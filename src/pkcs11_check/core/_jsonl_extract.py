@@ -528,13 +528,23 @@ def _is_framing_marker(rec: dict[str, Any], following: dict[str, Any] | None) ->
         return False
     target = rec.get("target")
     attempt = rec.get("attempt")
+    following_target = following.get("target")
+    following_attempt = following.get("attempt")
+    # Both identities are validated with the same non-bool-int checks as
+    # _apply_marker BEFORE comparison: `0 == False` and `0 == 0.0` in
+    # Python, so comparing the following attempt by equality alone would let
+    # a malformed marker establish framing and erase an unfinished attempt.
     return (
         isinstance(target, str)
         and bool(target)
         and isinstance(attempt, int)
         and not isinstance(attempt, bool)
-        and target == following.get("target")
-        and attempt == following.get("attempt")
+        and isinstance(following_target, str)
+        and bool(following_target)
+        and isinstance(following_attempt, int)
+        and not isinstance(following_attempt, bool)
+        and target == following_target
+        and attempt == following_attempt
     )
 
 

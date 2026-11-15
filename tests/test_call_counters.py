@@ -201,6 +201,8 @@ def test_ingest_ignores_garbage_without_raising() -> None:
         [None, 0, 1],
         [123, 0, 1],
         ["C_Login", True, 1],
+        ["C_Login", -1, 1],
+        ("C_Login", -1, 1),
         ("C_Login", 0, 1),
     ]
     call_counters.ingest_child_counts(garbage)

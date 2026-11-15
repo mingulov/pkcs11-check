@@ -1262,3 +1262,51 @@ def test_static_skip_marker_before_session_start_never_moves(tmp_path: Path) -> 
     assert payload is not None
     assert payload["complete"] is False
     assert payload["total_calls"] == 0
+
+
+def test_bool_following_attempt_does_not_establish_framing(tmp_path: Path) -> None:
+    # Important R5: `0 == False` in Python, so the following marker's
+    # identity must be validated (non-bool int) before comparison, not
+    # merely compared. A malformed following marker must not drag the first
+    # marker into the finished scope: attempt 0 stays home (C2b empty group
+    # -> run incomplete) while the session traffic still folds.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": False},
+            _session_record(100, 5),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 5
+    assert payload["complete"] is False
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 5, "complete": True}
+    ]
+
+
+def test_float_following_attempt_does_not_establish_framing(tmp_path: Path) -> None:
+    # Important R5: `0 == 0.0` in Python (same hole as the bool case above).
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0.0},
+            _session_record(100, 5),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 5
+    assert payload["complete"] is False
+    assert payload["by_process"] == [
+        {"pid": 100, "isolation": "file", "total_calls": 5, "complete": True}
+    ]

@@ -226,10 +226,13 @@ def flatten_current() -> list[list[str | int | None]]:
 def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
     """Merge child wire-format rows into the globals under ``bucket`` (or active).
 
-    Only ``[fn, rv_or_None, count]`` rows with a non-empty str fn, an
-    int-or-None rv, and a positive int count are applied; every other shape
-    (including a non-list/tuple payload) is ignored without raising. An
-    explicitly unknown ``bucket`` raises ValueError like ``counted_bucket``.
+    Only ``[fn, rv_or_None, count]`` rows with a non-empty str fn, a
+    None-or-non-negative-int rv (bools rejected), and a positive int count
+    are applied; every other shape (including a non-list/tuple payload) is
+    ignored without raising. A negative rv is garbage per-row, never
+    folded: serializing one would emit a ``"-1"`` RV key the extractor
+    rejects whole-record, discarding valid traffic. An explicitly unknown
+    ``bucket`` raises ValueError like ``counted_bucket``.
     """
     target = bucket if bucket is not None else current_bucket()
     if target not in BUCKETS:
@@ -245,7 +248,7 @@ def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
         count: Any = row[2]
         if not isinstance(fn, str) or not fn:
             continue
-        if rv is not None and (not isinstance(rv, int) or isinstance(rv, bool)):
+        if rv is not None and (not isinstance(rv, int) or isinstance(rv, bool) or rv < 0):
             continue
         if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
             continue
