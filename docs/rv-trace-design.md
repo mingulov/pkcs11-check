@@ -187,12 +187,11 @@ output-producing function cannot silently miss `out_len`.
     `--p11-rv-trace-compact` (`type=int, default=None` - an explicit window size
     `N`; **no** `nargs="?"`, which would let argparse swallow a following test
     path as the int and crash). Enabling compact implies tracing.
-  - `test_cmd.py` typer flag `--rv-trace` (and `--rv-trace-compact N`) sets the
-    pytest option (always emitting `--p11-rv-trace-compact=N` with the `=` form)
-    **and** exports `PKCS11_CHECK_RV_TRACE=1`
-    (`PKCS11_CHECK_RV_TRACE_COMPACT=N`) - with a `try/finally` `os.environ.pop`
-    cleanup - so it propagates into isolated/subprocess runs
-    (children inherit `os.environ`).
+  - `test_cmd.py` typer flag `--rv-trace` (and `--rv-trace-compact N`) passes
+    the pytest option only (always `--p11-rv-trace-compact=N` with the `=`
+    form) via `pytest_args`, reaching in-process and isolated runs alike. The
+    `PKCS11_CHECK_RV_TRACE[_COMPACT]` env vars are caller-provided input the
+    fixture accepts separately; the CLI exports none.
   - `p11_config` fixture resolves `rv_trace_compact: int | None` and
     `rv_trace: bool` from *either* the options or the env vars, and **compact
     implies enabled**: `rv_trace = opt_rv_trace or (rv_trace_compact is not

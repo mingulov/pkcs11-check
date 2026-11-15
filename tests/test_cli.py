@@ -174,11 +174,14 @@ def test_test_none_passes_report_log_cli_arg_and_sets_no_env(
     """None path passes --report-log explicitly, like the isolated path.
 
     Regression: pytest-reportlog reads config.option.report_log eagerly in its
-    own pytest_configure, which runs before ours, so the late env injection in
-    plugin.py never activated the writer and every none+JSON run ended in a
-    HarnessError. The fix passes a real --report-log CLI arg (the isolated
-    path's exact spelling) and sets no PKCS11_CHECK_REPORT_LOG.
+    own pytest_configure, which on the observed/default installation runs
+    before ours (entry-point discovery order + pluggy LIFO hook execution),
+    so the late env injection in plugin.py never activated the writer and
+    every none+JSON run ended in a HarnessError. The fix passes a real
+    --report-log CLI arg (the isolated path's exact spelling) and sets no
+    PKCS11_CHECK_REPORT_LOG.
     """
+    monkeypatch.delenv("PKCS11_CHECK_REPORT_LOG", raising=False)
     module = tmp_path / "dummy.so"
     module.write_text("", encoding="utf-8")
     results_path = tmp_path / "nested" / "results.json"
