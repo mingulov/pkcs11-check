@@ -1482,3 +1482,22 @@ def test_extract_subprocess_rv_trace_poison_only_is_empty(poison: str) -> None:
     from pkcs11_check.core.subprocess_trace import RV_TRACE_MARKER, extract_subprocess_rv_trace
 
     assert extract_subprocess_rv_trace(f"{RV_TRACE_MARKER}{poison}\n") == []
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_drops_negative_rv_rows_but_keeps_channel(ingest: _IngestFn, tmp_path: Path) -> None:
+    # Important R5: a negative-RV child row is skipped per-row like other
+    # garbage, never folded: serializing it would emit a "-1" RV key the
+    # extractor rejects whole-record, discarding valid parent traffic. The
+    # channel itself stays usable (True) and valid rows still fold.
+    payload = _child_payload()
+    payload["call_counters"] = [["C_Login", -1, 2], ["C_Sign", 0, 3]]
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    with call_counters.counted_bucket("test"):
+        assert ingest(cov) is True
+    snap = call_counters.serialize_current()
+    assert snap["total_calls"] == 3
+    assert set(snap["buckets"]["test"]["by_fn"]) == {"C_Sign"}
+    sign = snap["buckets"]["test"]["by_fn"]["C_Sign"]
+    assert sign["calls"] == 3
+    assert sign["by_rv"]["0"]["count"] == 3
