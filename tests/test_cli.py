@@ -88,8 +88,7 @@ def test_test_none_json_uses_output_directory_for_report_log(
         return real_mkstemp(*args, **kwargs)
 
     def fake_main(args: list[str]) -> int:
-        del args
-        Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+        Path(args[args.index("--report-log") + 1]).write_text(
             "\n".join(
                 [
                     json.dumps({"$report_type": "SessionStart"}),
@@ -140,8 +139,7 @@ def test_test_none_non_json_detail_building_streams_report_log(
     module.write_text("", encoding="utf-8")
 
     def fake_main(args: list[str]) -> int:
-        del args
-        Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+        Path(args[args.index("--report-log") + 1]).write_text(
             "\n".join(
                 [
                     '{"$report_type":"SessionStart"}',
@@ -167,6 +165,133 @@ def test_test_none_non_json_detail_building_streams_report_log(
     )
 
     assert result.exit_code == 0
+
+
+@pytest.mark.parametrize("output", ["json", "junit", "rich"])
+def test_test_none_passes_report_log_cli_arg_and_sets_no_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: str
+) -> None:
+    """None path passes --report-log explicitly, like the isolated path.
+
+    Regression: pytest-reportlog reads config.option.report_log eagerly in its
+    own pytest_configure, which runs before ours, so the late env injection in
+    plugin.py never activated the writer and every none+JSON run ended in a
+    HarnessError. The fix passes a real --report-log CLI arg (the isolated
+    path's exact spelling) and sets no PKCS11_CHECK_REPORT_LOG.
+    """
+    module = tmp_path / "dummy.so"
+    module.write_text("", encoding="utf-8")
+    results_path = tmp_path / "nested" / "results.json"
+    captured_args: dict[str, list[str]] = {}
+    captured_env: dict[str, bool] = {}
+    captured_report: dict[str, Path] = {}
+
+    def fake_main(args: list[str]) -> int:
+        captured_args["args"] = list(args)
+        captured_env["report_log_set"] = "PKCS11_CHECK_REPORT_LOG" in os.environ
+        if "--report-log" in args:
+            report_path = Path(args[args.index("--report-log") + 1])
+        else:  # pre-fix fallback so the test reaches its assertions
+            report_path = Path(os.environ["PKCS11_CHECK_REPORT_LOG"])
+        captured_report["path"] = report_path
+        report_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"$report_type": "SessionStart"}),
+                    json.dumps(
+                        {
+                            "$report_type": "TestReport",
+                            "nodeid": "test_demo.py::test_ok",
+                            "when": "call",
+                            "outcome": "passed",
+                        }
+                    ),
+                    json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    monkeypatch.setattr("pkcs11_check.cli.test_cmd.pytest.main", fake_main)
+    monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+
+    cli_args = [
+        "test",
+        "--module",
+        str(module),
+        "--output",
+        output,
+        "--isolation",
+        "none",
+    ]
+    if output in {"json", "junit"}:
+        cli_args.extend(["--output-file", str(results_path)])
+    result = runner.invoke(app, cli_args)
+
+    assert result.exit_code == 0
+    seen_args = captured_args["args"]
+    assert "--report-log" in seen_args
+    log_index = seen_args.index("--report-log")
+    assert Path(seen_args[log_index + 1]) == captured_report["path"]
+    assert captured_report["path"].name.startswith("pkcs11-check-jsonl-")
+    assert captured_env["report_log_set"] is False
+    assert "PKCS11_CHECK_REPORT_LOG" not in os.environ
+
+
+def test_test_none_json_real_pytest_main_produces_report_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2E: none+JSON with a real in-process pytest.main writes report records.
+
+    The stub test touches no fixtures, so no PKCS#11 module is needed beyond
+    the existing dummy.so path. Pre-fix this ends in HarnessError (the report
+    log stays empty); post-fix the SessionStart/TestReport/SessionFinish
+    records flow and results.json assembles.
+
+    In-process (not a subprocess) by design: the production none path calls
+    pytest.main in-process, so only an in-process run exercises the real
+    plugin-ordering interaction. Hermeticity holds because the stub lives in
+    tmp_path (its own rootdir: no repo conftest/ini apply) and the none path
+    already passes -p no:cacheprovider.
+    """
+    module = tmp_path / "dummy.so"
+    module.write_text("", encoding="utf-8")
+    stub = tmp_path / "test_stub_ok.py"
+    stub.write_text("def test_ok() -> None:\n    assert True\n", encoding="utf-8")
+    results_path = tmp_path / "artifacts" / "results.json"
+
+    monkeypatch.setattr(test_cmd, "run_preflight_subprocess", _ok_preflight)
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "test",
+            "--module",
+            str(module),
+            "--output",
+            "json",
+            "--output-file",
+            str(results_path),
+            "--isolation",
+            "none",
+            "--ignore-disabled-tests",
+            str(stub),
+        ],
+    )
+
+    assert result.exit_code == 0
+    report_path = results_path.parent / "report.jsonl"
+    records = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
+    types = [record.get("$report_type") for record in records]
+    assert "SessionStart" in types
+    assert "TestReport" in types
+    assert "SessionFinish" in types
+    assert "HarnessError" not in types
+    payload = json.loads(results_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["failed"] == 0
 
 
 class TestCompareCoverageCommand:
@@ -1489,8 +1614,7 @@ class TestTestCommand:
         results_path = tmp_path / "artifacts" / "results.json"
 
         def fake_main(args: list[str]) -> int:
-            del args
-            report_log = os.environ["PKCS11_CHECK_REPORT_LOG"]
+            report_log = args[args.index("--report-log") + 1]
             Path(report_log).write_text(
                 "\n".join(
                     [
@@ -1605,8 +1729,7 @@ class TestTestCommand:
         diagnostic = "SyntaxError: invalid syntax"
 
         def fake_main(args: list[str]) -> int:
-            del args
-            report_log = os.environ["PKCS11_CHECK_REPORT_LOG"]
+            report_log = args[args.index("--report-log") + 1]
             Path(report_log).write_text(
                 "\n".join(
                     [
@@ -1669,8 +1792,7 @@ class TestTestCommand:
             (results_path.parent / name).write_text("stale", encoding="utf-8")
 
         def fake_main(args: list[str]) -> int:
-            del args
-            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text("", encoding="utf-8")
+            Path(args[args.index("--report-log") + 1]).write_text("", encoding="utf-8")
             return 2
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
@@ -1716,8 +1838,7 @@ class TestTestCommand:
         results_path = tmp_path / "nested" / "results.json"
 
         def fake_main(args: list[str]) -> int:
-            del args
-            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+            Path(args[args.index("--report-log") + 1]).write_text(
                 "\n".join(
                     [
                         json.dumps({"$report_type": "SessionStart"}),
@@ -1771,8 +1892,7 @@ class TestTestCommand:
         results_path = tmp_path / "nested" / "results.json"
 
         def fake_main(args: list[str]) -> int:
-            del args
-            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+            Path(args[args.index("--report-log") + 1]).write_text(
                 "\n".join(
                     [
                         json.dumps({"$report_type": "SessionStart"}),
@@ -1847,7 +1967,7 @@ class TestTestCommand:
         results_path = tmp_path / "nested" / "results.json"
 
         def fake_main(args: list[str]) -> int:
-            del args
+            report_path = Path(args[args.index("--report-log") + 1])
             records = [json.dumps({"$report_type": "SessionStart"})]
             if returncode != 5:
                 records.append(
@@ -1862,9 +1982,7 @@ class TestTestCommand:
                 )
             if finish is not None:
                 records.append(json.dumps({"$report_type": "SessionFinish", "exitstatus": finish}))
-            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
-                "\n".join(records) + "\n", encoding="utf-8"
-            )
+            report_path.write_text("\n".join(records) + "\n", encoding="utf-8")
             return returncode
 
         monkeypatch.setattr(test_cmd.pytest, "main", fake_main)
@@ -1929,8 +2047,7 @@ class TestTestCommand:
         output_path = tmp_path / "nested" / "results.xml"
 
         def fake_main(args: list[str]) -> int:
-            del args
-            report_path = Path(os.environ["PKCS11_CHECK_REPORT_LOG"])
+            report_path = Path(args[args.index("--report-log") + 1])
             observed["path"] = report_path
             report_path.write_text(
                 "\n".join(
@@ -2052,11 +2169,10 @@ class TestTestCommand:
         restored: dict[str, str | None] = {}
 
         def fake_main(args: list[str]) -> int:
-            del args
             deselect_path = Path(os.environ["PKCS11_CHECK_DESELECT_FILE"])
             called["path"] = deselect_path
             called["text"] = deselect_path.read_text(encoding="utf-8")
-            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+            Path(args[args.index("--report-log") + 1]).write_text(
                 "\n".join(
                     [
                         json.dumps({"$report_type": "SessionStart"}),
@@ -2135,9 +2251,8 @@ class TestTestCommand:
         module.write_text("", encoding="utf-8")
 
         def fake_main(args: list[str]) -> int:
-            del args
             assert "PKCS11_CHECK_DESELECT_FILE" not in os.environ
-            Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+            Path(args[args.index("--report-log") + 1]).write_text(
                 "\n".join(
                     [
                         json.dumps({"$report_type": "SessionStart"}),
@@ -2800,8 +2915,7 @@ class TestTestCommand:
         observed: dict[str, Path] = {}
 
         def fake_main(args: list[str]) -> int:
-            del args
-            path = Path(os.environ["PKCS11_CHECK_REPORT_LOG"])
+            path = Path(args[args.index("--report-log") + 1])
             observed["report"] = path
             path.write_text(
                 '{"$report_type":"SessionStart"}\n'

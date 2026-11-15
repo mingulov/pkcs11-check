@@ -820,8 +820,6 @@ def test_command(
 
     original_no_collection_cache = os.environ.get("PKCS11_CHECK_NO_COLLECTION_CACHE")
     had_no_collection_cache = "PKCS11_CHECK_NO_COLLECTION_CACHE" in os.environ
-    original_report_log = os.environ.get("PKCS11_CHECK_REPORT_LOG")
-    had_report_log = "PKCS11_CHECK_REPORT_LOG" in os.environ
     original_deselect_file = os.environ.get("PKCS11_CHECK_DESELECT_FILE")
     had_deselect_file = "PKCS11_CHECK_DESELECT_FILE" in os.environ
     original_selection_manifest = os.environ.get("PKCS11_CHECK_SELECTION_MANIFEST")
@@ -856,10 +854,6 @@ def test_command(
             os.environ["PKCS11_CHECK_NO_COLLECTION_CACHE"] = original_no_collection_cache or ""
         else:
             os.environ.pop("PKCS11_CHECK_NO_COLLECTION_CACHE", None)
-        if had_report_log:
-            os.environ["PKCS11_CHECK_REPORT_LOG"] = original_report_log or ""
-        else:
-            os.environ.pop("PKCS11_CHECK_REPORT_LOG", None)
         if had_deselect_file:
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = original_deselect_file or ""
         else:
@@ -1322,7 +1316,11 @@ def test_command(
         jsonl_path = Path(jsonl_raw)
         os.close(jsonl_fd)
         jsonl_fd = None
-        os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
+        # Explicit --report-log CLI arg (same two-arg spelling as the isolated
+        # path): pytest-reportlog reads config.option.report_log eagerly in its
+        # own pytest_configure, which runs before ours, so a late injection
+        # would never activate the writer. Orthogonal to junit/rich modes.
+        args.extend(["--report-log", str(jsonl_path)])
         # In-process none path (fw#73): the session record reads this directly.
         # Restored with the other run-scoped keys in restore_caller_environment.
         os.environ[ISOLATION_ENV] = "none"

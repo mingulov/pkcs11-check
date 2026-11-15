@@ -1295,9 +1295,8 @@ def test_none_path_seeds_run_id_and_restores(
         )
 
     def fake_main(args: list[str]) -> int:
-        del args
         seen["run"] = os.environ.get(RUN_ID_ENV)
-        Path(os.environ["PKCS11_CHECK_REPORT_LOG"]).write_text(
+        Path(args[args.index("--report-log") + 1]).write_text(
             '{"$report_type":"SessionStart"}\n{"$report_type":"SessionFinish","exitstatus":0}\n',
             encoding="utf-8",
         )
