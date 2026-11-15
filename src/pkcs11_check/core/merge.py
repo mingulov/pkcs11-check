@@ -9,7 +9,9 @@ single full run would have produced:
   disjoint by unit, so the union is the full record set), with a compatibility
   enrichment that copies teardown-only RV traces onto failed/xfail reports from
   older shard artifacts.
-- ``results.json``  : summary counters summed, ``units`` lists concatenated.
+- ``results.json``  : summary counters summed, ``units`` lists concatenated,
+  ``call_counters`` recomputed from the concatenated JSONL (same source as
+  ``coverage.json``), so the merge is exact for counters too.
 - ``coverage.json`` : recomputed from the concatenated JSONL via the existing
   :func:`extract_coverage_from_jsonl`, which unions names and sums counts and
   is order-independent — so the merge is exact (a split→merge round-trip
@@ -35,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core.file_runner import (
+    extract_call_counters_from_jsonl,
     extract_coverage_from_jsonl,
     extract_quality_report_evidence_from_jsonl,
     extract_quality_report_records_from_jsonl,
@@ -515,6 +518,7 @@ def merge_results_payloads(
     payloads: list[dict[str, Any]],
     *,
     coverage: dict[str, Any] | None,
+    call_counters: dict[str, Any] | None = None,
     shard_meta: dict[str, Any] | None = None,
     incomplete_evidence: bool = False,
     testcases_root: Path | None = None,
@@ -552,6 +556,8 @@ def merge_results_payloads(
         merged["provenance"] = merged_provenance
     if coverage:
         merged["coverage"] = coverage
+    if call_counters:
+        merged["call_counters"] = call_counters
     if shard_meta is not None:
         merged["shards"] = shard_meta
     return merged
@@ -848,6 +854,9 @@ def merge_shard_dirs(
     _promote_rv_traces_to_outcome_reports(merged_report)
 
     coverage = extract_coverage_from_jsonl(merged_report) if merged_report.exists() else None
+    call_counters = (
+        extract_call_counters_from_jsonl(merged_report) if merged_report.exists() else None
+    )
     if coverage:
         (output_dir / "coverage.json").write_text(
             json.dumps(coverage, indent=2) + "\n", encoding="utf-8"
@@ -866,6 +875,7 @@ def merge_shard_dirs(
     merged = merge_results_payloads(
         payloads,
         coverage=coverage,
+        call_counters=call_counters,
         shard_meta=shard_meta,
         incomplete_evidence=bool(warnings),
         testcases_root=testcases_root,

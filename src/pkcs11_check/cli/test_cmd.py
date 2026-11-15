@@ -34,6 +34,7 @@ from pkcs11_check.core._report_records import (
     _write_report_jsonl_from_record_sources,
 )
 from pkcs11_check.core._run_guard import RunArtifactsLockedError, run_artifact_guard
+from pkcs11_check.core.call_counters import ISOLATION_ENV
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
@@ -809,6 +810,8 @@ def test_command(
     had_deselect_file = "PKCS11_CHECK_DESELECT_FILE" in os.environ
     original_selection_manifest = os.environ.get("PKCS11_CHECK_SELECTION_MANIFEST")
     had_selection_manifest = "PKCS11_CHECK_SELECTION_MANIFEST" in os.environ
+    original_isolation = os.environ.get(ISOLATION_ENV)
+    had_original_isolation = ISOLATION_ENV in os.environ
     manifest_path: Path | None = None
     manifest_fd: int | None = None
     jsonl_path: Path | None = None
@@ -847,6 +850,10 @@ def test_command(
             os.environ["PKCS11_CHECK_SELECTION_MANIFEST"] = original_selection_manifest or ""
         else:
             os.environ.pop("PKCS11_CHECK_SELECTION_MANIFEST", None)
+        if had_original_isolation:
+            os.environ[ISOLATION_ENV] = original_isolation or ""
+        else:
+            os.environ.pop(ISOLATION_ENV, None)
 
     def close_manifest_fd() -> None:
         nonlocal manifest_fd
@@ -1211,6 +1218,11 @@ def test_command(
                     }
                     runner_kwargs["selection_batch_id"] = case_selection.batch_id
                     runner_kwargs["selection_digest"] = case_selection.source_collection_sha256
+                # Isolated path (fw#73): unit children read the flag value from
+                # here (run_isolated_pytest_units copies os.environ); seeded late
+                # so preflight/collection subprocesses do not inherit it. Restored
+                # with the other run-scoped keys in restore_caller_environment.
+                os.environ[ISOLATION_ENV] = isolation
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
@@ -1281,6 +1293,9 @@ def test_command(
         os.close(jsonl_fd)
         jsonl_fd = None
         os.environ["PKCS11_CHECK_REPORT_LOG"] = jsonl_raw
+        # In-process none path (fw#73): the session record reads this directly.
+        # Restored with the other run-scoped keys in restore_caller_environment.
+        os.environ[ISOLATION_ENV] = "none"
         if disabled_nodeids:
             deselect_path = write_deselect_file(disabled_nodeids)
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)

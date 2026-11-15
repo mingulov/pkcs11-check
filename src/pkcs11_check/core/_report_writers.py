@@ -317,6 +317,7 @@ def write_isolated_json_report(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    call_counters: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
     owner_aliases: _ReportOwnerAliases | None = None,
     selection: CaseSelection | None = None,
@@ -327,6 +328,7 @@ def write_isolated_json_report(
         state,
         per_unit_details=per_unit_details,
         coverage=coverage,
+        call_counters=call_counters,
         provenance=provenance,
         owner_aliases=owner_aliases,
         selection=selection,
@@ -342,6 +344,7 @@ def _build_isolated_json_payload(
     *,
     per_unit_details: dict[str, dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    call_counters: dict[str, Any] | None = None,
     provenance: dict[str, Any] | None = None,
     owner_aliases: _ReportOwnerAliases | None = None,
     selection: CaseSelection | None = None,
@@ -561,6 +564,8 @@ def _build_isolated_json_payload(
         payload["disabled_baseline"] = dict(disabled_baseline)
     if coverage:
         payload["coverage"] = coverage
+    if call_counters:
+        payload["call_counters"] = call_counters
     if provenance:
         payload["provenance"] = provenance
     if state.attempt_history:
