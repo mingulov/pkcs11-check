@@ -23,7 +23,8 @@ import pytest
 
 from pkcs11_check.core import call_counters
 from pkcs11_check.core.process_observation import drain_process_observations
-from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.raw.api import RawPKCS11
+from pkcs11_check.raw.types_std import CK_SESSION_HANDLE, CK_ULONG, CKR_CANT_LOCK, CKR_OK
 from pkcs11_check.testcases import _raw_subprocess, _subprocess_preamble, test_threading
 from pkcs11_check.testcases._probes import (
     _ckr_ctypes,
@@ -673,13 +674,94 @@ def test_workload_counters_garbage_rows_ignored_channel_ok() -> None:
     assert call_counters.serialize_current()["total_calls"] == 1
 
 
-def test_workload_script_emits_counters_marker() -> None:
-    # The python -c child cannot import the parent module, so the marker
-    # literal is duplicated in the script source; pin the coupling both ways.
-    assert test_threading._CALL_COUNTERS_MARKER in test_threading._WORKLOAD_SCRIPT
-    assert "flatten_current" in test_threading._WORKLOAD_SCRIPT
-    # Both exit paths emit: the CKR_CANT_LOCK early exit and the clean tail.
-    assert test_threading._WORKLOAD_SCRIPT.count("P11_CALL_COUNTERS_JSON:") == 2
+class _FakeWorkloadRaw:
+    """Stub RawPKCS11 behind ``from_lib`` so the workload script runs with no provider."""
+
+    def __init__(self, init_rv: int) -> None:
+        self._init_rv = init_rv
+
+    def C_Initialize(  # noqa: N802 - mirrors the C_* API name
+        self, _args: Any
+    ) -> int:
+        return self._init_rv
+
+    def C_Finalize(  # noqa: N802 - mirrors the C_* API name
+        self, _arg: Any
+    ) -> int:
+        return int(CKR_OK)
+
+    def C_GetSlotList(  # noqa: N802 - mirrors the C_* API name
+        self, _present: int, buf: Any, count_ref: Any
+    ) -> int:
+        count = ctypes.cast(count_ref, ctypes.POINTER(CK_ULONG))
+        if buf is None:
+            count.contents.value = 1
+        else:
+            buf[0] = 7
+            count.contents.value = 1
+        return int(CKR_OK)
+
+    def C_OpenSession(  # noqa: N802 - mirrors the C_* API name
+        self, _slot: int, _flags: int, _cb: Any, _notify: Any, session_ref: Any
+    ) -> int:
+        ctypes.cast(session_ref, ctypes.POINTER(CK_SESSION_HANDLE)).contents.value = 11
+        return int(CKR_OK)
+
+    def C_CloseSession(  # noqa: N802 - mirrors the C_* API name
+        self, _session: int
+    ) -> int:
+        return int(CKR_OK)
+
+
+def _exec_workload_script(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], init_rv: int
+) -> list[str]:
+    """Execute the real ``_WORKLOAD_SCRIPT`` source with stub env + stub module.
+
+    No provider: ``RawPKCS11.from_lib`` is monkeypatched to return the fake.
+    Returns the child stdout lines (SystemExit from the early-exit path is
+    consumed here after asserting its code).
+    """
+    monkeypatch.setenv("P11_THREAD_MODULE", "fake-module.so")
+    monkeypatch.setenv("P11_THREAD_THREADS", "1")
+    monkeypatch.setenv("P11_THREAD_ITERS", "0")
+    monkeypatch.setenv("P11_THREAD_WORKLOAD", "random")
+    monkeypatch.delenv("P11_THREAD_PIN", raising=False)
+    fake = _FakeWorkloadRaw(init_rv)
+    monkeypatch.setattr(
+        RawPKCS11, "from_lib", classmethod(lambda cls, lib_path, interface="auto": fake)
+    )
+    namespace: dict[str, Any] = {"__name__": "p11_workload_stub"}
+    try:
+        exec(test_threading._WORKLOAD_SCRIPT, namespace)
+    except SystemExit as exc:
+        assert exc.code == 0
+    return capsys.readouterr().out.splitlines()
+
+
+def _workload_marker_payload(lines: list[str]) -> Any:
+    marker_lines = [line for line in lines if line.startswith(test_threading._CALL_COUNTERS_MARKER)]
+    assert len(marker_lines) == 1
+    return json.loads(marker_lines[0].removeprefix(test_threading._CALL_COUNTERS_MARKER))
+
+
+def test_workload_script_cant_lock_exit_emits_counters_marker(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The CKR_CANT_LOCK early exit prints the marker (executed, not grepped).
+    lines = _exec_workload_script(monkeypatch, capsys, int(CKR_CANT_LOCK))
+    assert "SKIP_CANT_LOCK" in lines
+    assert _workload_marker_payload(lines) == []
+
+
+def test_workload_script_clean_tail_emits_counters_marker(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The clean tail prints the marker after C_Finalize (executed, not
+    # grepped); ITERS=0 runs the session open/close with no workload ops.
+    lines = _exec_workload_script(monkeypatch, capsys, int(CKR_OK))
+    assert "OK" in lines
+    assert _workload_marker_payload(lines) == []
 
 
 # --- Final fix wave: isolation grandchild channel (I1.4) ---
@@ -1256,3 +1338,36 @@ def test_ingest_skips_garbage_legacy_values_but_folds_valid(
     assert func_ok == {"C_Login": 1}
     assert mech == {7: 3}
     assert mech_rv == {7: {0: 2}}
+
+
+def _nested_poison_json(depth: int = 100_000) -> str:
+    return '{"call_counters": ' + "[" * depth + "]" * depth + "}"
+
+
+def _bigint_poison_json(digits: int = 6000) -> str:
+    return '{"call_counters": [], "probe": ' + "9" * digits + "}"
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        _subprocess_preamble.ingest_subprocess_coverage,
+        _raw_subprocess.ingest_raw_subprocess_coverage,
+    ],
+    ids=["preamble", "raw"],
+)
+@pytest.mark.parametrize(
+    "poison",
+    [_nested_poison_json(), _bigint_poison_json()],
+    ids=["recursion", "bigint"],
+)
+def test_child_coverage_decoder_poison_is_unusable(
+    tmp_path: Path, reader: Callable[[str], bool], poison: str
+) -> None:
+    # Decoder failures (RecursionError, huge-int ValueError) read as an
+    # unusable channel (False -> launcher lost+1), never raise.
+    cov = tmp_path / "cov.json"
+    cov.write_text(poison, encoding="utf-8")
+    assert reader(str(cov)) is False
+    assert call_counters.probes_lost() == 0
+    assert call_counters.serialize_current()["total_calls"] == 0

@@ -485,6 +485,22 @@ def _parse_session_counters(
     return (pid, total, buckets, probes_lost, isolation, run)
 
 
+def _marker_is_static_skip(rec: dict[str, Any]) -> bool:
+    """Whether a marker carries explicit static-skip provenance.
+
+    The writer (``_report_records._isolated_unit_report``) emits ``reason`` +
+    ``skipped`` together for a unit skipped before pytest execution, and
+    neither for plain attempt markers (stream framing). Only the full
+    writer shape reads as "never executed"; a partial shape fails visible
+    (startup loss), never silent.
+    """
+    return (
+        isinstance(rec.get("reason"), str)
+        and isinstance(rec.get("skipped"), int)
+        and not isinstance(rec.get("skipped"), bool)
+    )
+
+
 def _parse_test_counters(entry: Any) -> tuple[int, int, dict[str, Any], str] | None:
     """Validate a per-test counter entry into (pid, total, buckets, run) or None.
 
@@ -553,6 +569,27 @@ def _counters_process_row(pid: int, state: _CountersPid) -> dict[str, Any]:
     }
 
 
+def _canonicalize_counter_block(block: dict[str, Any]) -> dict[str, Any]:
+    """Recursively key-sort a serialized counter block's maps, in place.
+
+    ``merge_serialized`` preserves first-insertion order, so without this the
+    bucket/function/RV map order in a returned block depends on record (or
+    shard) order and ``json.dumps`` output is not byte-identical across
+    orders. Only the three map levels are reordered; every other key keeps
+    its value and position. Imported by ``core.merge`` for the same
+    canonicalization at the merge return.
+    """
+    buckets: dict[str, Any] = block.get("buckets", {})
+    block["buckets"] = {bucket: buckets[bucket] for bucket in sorted(buckets)}
+    for bucket_block in block["buckets"].values():
+        by_fn: dict[str, Any] = bucket_block.get("by_fn", {})
+        bucket_block["by_fn"] = {fn: by_fn[fn] for fn in sorted(by_fn)}
+        for fn_block in bucket_block["by_fn"].values():
+            by_rv: dict[str, Any] = fn_block.get("by_rv", {})
+            fn_block["by_rv"] = {rv: by_rv[rv] for rv in sorted(by_rv)}
+    return block
+
+
 def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     """Aggregate call-counter records from a JSONL artifact into one payload.
 
@@ -575,10 +612,14 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     group is. A segment with at least one TestReport but zero counters data in
     an opened, unfinished session scope is an executed-but-counterless unit
     (typically a first-test crash): it emits an EMPTY group, which flips the
-    run to ``complete: false`` instead of vanishing (C2). A finished scope
-    with zero counters predates the feature (old artifact): no group, and
-    None is returned when no group exists anywhere. Malformed records are
-    ignored, never raised.
+    run to ``complete: false`` instead of vanishing (C2). A crash in
+    load_module/C_Initialize during FIRST fixture setup leaves no TestReport
+    at all, so a segment with only a plain marker (no ``reason``/``skipped``
+    static-skip provenance) and zero reports/counters in an opened,
+    unfinished scope emits the same EMPTY group (C2b). A finished scope with
+    zero counters predates the feature (old artifact): no group, as with a
+    static-skip marker with zero reports; None is returned when no group
+    exists anywhere. Malformed records are ignored, never raised.
 
     Rounds: records without ``run_id`` (pre-round artifacts, direct-pytest
     runs) fold into the implicit ``""`` round, as do C2 empty groups (a
@@ -599,6 +640,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     opened: set[int] = set()
     finished: set[int] = set()
     reported: set[tuple[int, str | None, int | None]] = set()
+    marked: set[tuple[int, str | None, int | None]] = set()
+    static_skipped: set[tuple[int, str | None, int | None]] = set()
 
     def _group(key: tuple[str, int, str | None, int | None]) -> _CountersGroup:
         return groups.setdefault(key, _CountersGroup())
@@ -631,6 +674,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 and not isinstance(attempt, bool)
             ):
                 current = (scope, target, attempt)
+                marked.add(current)
+                if _marker_is_static_skip(rec):
+                    static_skipped.add(current)
             else:
                 current = (scope, None, None)
             continue
@@ -684,12 +730,23 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     # C2: executed-but-counterless segments (reports, zero counters, opened
     # scope, no finish) emit an empty group so the run reads incomplete. A
     # finished scope with zero counters is an old artifact (no group); a
-    # marker with zero reports is a static skip (no group). The empty group
-    # lands in "" — a counterless report names no round, so "" doubles as
-    # "round unknown" next to its old-artifact meaning.
+    # static-skip marker (explicit reason/skipped provenance) with zero
+    # reports never executed (no group). The empty group lands in "" — a
+    # counterless report names no round, so "" doubles as "round unknown"
+    # next to its old-artifact meaning.
     grouped_segments = {key[1:] for key in groups}
     for key in reported:
         if key not in grouped_segments and key[0] in opened and key[0] not in finished:
+            groups[("", *key)] = _CountersGroup()
+    # C2b: a first-setup crash (Start + plain marker + truncation, zero
+    # reports) is a started-but-unfinished execution independent of any
+    # TestReport; TestReports elsewhere already won above, so only
+    # marked-but-unreported, non-static segments in an opened, unfinished
+    # scope emit here.
+    for key in marked:
+        if key in reported or key in grouped_segments or key in static_skipped:
+            continue
+        if key[0] in opened and key[0] not in finished:
             groups[("", *key)] = _CountersGroup()
 
     if not groups:
@@ -718,6 +775,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             if show_round:
                 tagged["round"] = run
             by_process.append(tagged)
+    _canonicalize_counter_block(merged)
+    for round_block in by_round.values():
+        _canonicalize_counter_block(round_block["by_bucket"])
     return {
         "complete": complete,
         "total_calls": merged["total_calls"],
