@@ -580,7 +580,7 @@ def register_cli_vendor_mechanisms(specs: list[str] | None) -> dict[int, str]:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Register pkcs11-check custom markers and inject --report-log for non-isolated runs."""
+    """Register pkcs11-check custom markers and per-session stash state."""
     for marker in MARKER_DEFINITIONS:
         config.addinivalue_line("markers", f"{marker.name}: {marker.description}")
     # Phase-attribution wrappers live in their own pluggy plugin, registered
@@ -616,17 +616,6 @@ def pytest_configure(config: pytest.Config) -> None:
     config.stash[_SELECTION_TELEMETRY_KEY] = {}
     config.stash[_SELECTION_PARAM_CACHE_KEY] = {}
     config.stash[_PROVISIONING_COUNTS] = Counter()
-
-    # Inject --report-log when PKCS11_CHECK_REPORT_LOG is set (by test_cmd.py for
-    # --isolation none JSON runs).  Guard against meta-tests (no --p11-module) and
-    # cases where the user already supplied --report-log on the command line.
-    if config.getoption("p11_module", default=None) is None:
-        return  # Not a pkcs11-check run (e.g. meta-tests)
-    if config.getoption("report_log", default=None) is not None:
-        return  # User already passed --report-log
-    report_log_path = os.environ.get("PKCS11_CHECK_REPORT_LOG")
-    if report_log_path:
-        config.option.report_log = report_log_path
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:

@@ -190,7 +190,7 @@ Exit 1 means a disagreement; exit 2 means invalid evidence.
 
 Roll at-source classifications (and runner-side crash findings) up into per-provider
 conformance reports. Run after a test run that produced a `report.jsonl` (the `test_cmd`
-JSON path sets `PKCS11_CHECK_REPORT_LOG` so the plugin writes one).
+JSON path passes `--report-log` so the report plugin writes one).
 
 ```bash
 # Single provider (bare paths; --provider names it; --results-json adds crash findings):
