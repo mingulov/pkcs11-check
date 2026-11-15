@@ -193,6 +193,7 @@ from pkcs11_check._plugin_state import (
 from pkcs11_check._plugin_state import (
     _is_testcase_item as _is_testcase_item,
 )
+from pkcs11_check.core.call_counters import counted_bucket
 from pkcs11_check.core.crash_codes import crash_detail_name, ctypes_access_violation_code
 
 # Re-export fixtures so pytest discovers them
@@ -276,7 +277,8 @@ def _finalize_on_teardown(config: pytest.Config, raw: Any) -> str | None:
             previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
             # setitimer returns (old_value, old_interval); capture to restore.
             old_timer = signal.setitimer(signal.ITIMER_REAL, float(_TEARDOWN_FINALIZE_TIMEOUT_S))
-        rv_int = int(raw.C_Finalize(None))
+        with counted_bucket("module_init"):
+            rv_int = int(raw.C_Finalize(None))
         rv = rv_int
         rv_name = ckr_name(rv_int)
         if rv_int != int(CKR_OK):
