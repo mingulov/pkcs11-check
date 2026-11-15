@@ -19,7 +19,7 @@ import json
 import os
 from collections import Counter, defaultdict
 
-from pkcs11_check.core.call_counters import ingest_child_counts
+from pkcs11_check.core.call_counters import add_lost_probes, ingest_child_counts
 from pkcs11_check.testcases._subprocess_coverage import (
     normalize_mechanism_counts,
     normalize_mechanism_rv_counts,
@@ -38,9 +38,11 @@ def ingest_raw_subprocess_coverage(path: str) -> bool:
     crashed before writing it).  All I/O and parse errors are silently swallowed
     so a missing or corrupt coverage file never aborts the parent.
 
-    Returns True when usable ``call_counters`` were merged into the process-global
-    fw#73 counters (under the active bucket), False otherwise.  A present but
-    empty list reports True: the child reported zero calls, so nothing was lost.
+    Returns True when usable ``call_counters`` were folded into the process-global
+    fw#73 counters (under the active bucket), False otherwise.  True means the
+    channel worked (counters present and well-shaped), not that any particular
+    call was recovered.  A present but empty list reports True: the child
+    reported zero calls, so nothing was lost.
     """
     if not path or not os.path.exists(path):
         return False
@@ -60,8 +62,12 @@ def ingest_raw_subprocess_coverage(path: str) -> bool:
         _subprocess_mechanism_rv_counts[mechanism].update(counts)
     counters = data.get("call_counters")
     if not isinstance(counters, (list, tuple)):
+        # Unusable channel: the launcher owns this child as one loss, so the
+        # payload's inner loss claims (if any) are dropped, never accumulated.
         return False
     ingest_child_counts(list(counters))
+    # .get default: payloads written before the wire extension carry no key.
+    add_lost_probes(data.get("probes_lost", 0))
     return True
 
 

@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pkcs11_check.core.call_counters import flatten_current
+from pkcs11_check.core.call_counters import flatten_current, probes_lost
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
@@ -107,6 +107,7 @@ def _write_coverage(raw: RawPKCS11) -> None:
             for mechanism, counts in raw.mechanism_rv_counts.items()
         },
         call_counters=flatten_current(),
+        probes_lost=probes_lost(),
     )
 
 

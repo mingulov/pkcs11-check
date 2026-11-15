@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
+import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,8 +22,17 @@ import pytest
 
 from pkcs11_check.core import call_counters
 from pkcs11_check.core.process_observation import drain_process_observations
-from pkcs11_check.testcases import _raw_subprocess, _subprocess_preamble
-from pkcs11_check.testcases._probes import _ckr_ctypes, _emit, raw_session, session
+from pkcs11_check.raw.types_std import CKR_OK
+from pkcs11_check.testcases import _raw_subprocess, _subprocess_preamble, test_threading
+from pkcs11_check.testcases._probes import (
+    _ckr_ctypes,
+    _emit,
+    ckr_null_params_login,
+    ckr_null_params_session,
+    raw_session,
+    session,
+)
+from pkcs11_check.testcases._probes import subprocess_safety as subprocess_safety_probe
 from pkcs11_check.testcases._probes.runner import run_probe
 
 
@@ -454,3 +465,643 @@ def test_call_func_counts_stubbed_address_call() -> None:
     ]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"]["count"] == 1
+
+
+# --- Final fix wave (fw#73 review): loss propagation wire extension ---
+
+
+def test_add_lost_probes_accumulates() -> None:
+    call_counters.note_lost_probe()
+    call_counters.add_lost_probes(2)
+    call_counters.add_lost_probes(3)
+    assert call_counters.probes_lost() == 6
+
+
+@pytest.mark.parametrize("garbage", [0, -1, True, False, "2", 2.0, None, [1]])
+def test_add_lost_probes_ignores_garbage(garbage: Any) -> None:
+    # The ingest path must never raise on a hostile payload value.
+    call_counters.add_lost_probes(garbage)
+    assert call_counters.probes_lost() == 0
+
+
+def test_write_coverage_embeds_probes_lost(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    _emit.write_coverage({"C_Login": 1}, {}, call_counters=[["C_Login", 0, 1]], probes_lost=2)
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["probes_lost"] == 2
+
+
+def test_write_coverage_defaults_probes_lost_to_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pre-existing callers (e.g. the _echo stub) are unchanged: the key is
+    # always present so readers never have to distinguish "zero" from "absent".
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    _emit.write_coverage({"C_Echo": 1}, {})
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["probes_lost"] == 0
+    assert "call_counters" not in data
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_accumulates_child_probes_lost(ingest: _IngestFn, tmp_path: Path) -> None:
+    payload = _child_payload()
+    payload["probes_lost"] = 2
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is True
+    assert call_counters.probes_lost() == 2
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_old_payload_without_lost_key(ingest: _IngestFn, tmp_path: Path) -> None:
+    # Backward compat: payloads written before the wire extension carry no
+    # key and read as zero losses.
+    cov = _write_coverage_file(tmp_path / "cov.json", _child_payload())
+    assert ingest(cov) is True
+    assert call_counters.probes_lost() == 0
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+@pytest.mark.parametrize("garbage", ["x", -1, True, 1.5, None, [2]])
+def test_ingest_ignores_garbage_probes_lost(
+    ingest: _IngestFn, garbage: Any, tmp_path: Path
+) -> None:
+    payload = _child_payload()
+    payload["probes_lost"] = garbage
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is True
+    assert call_counters.probes_lost() == 0
+
+
+@pytest.mark.parametrize("ingest", _INGEST_FNS, ids=["session", "raw"])
+def test_ingest_drops_inner_loss_when_counters_unusable(ingest: _IngestFn, tmp_path: Path) -> None:
+    # A payload the channel cannot use is one lost child, owned by the
+    # launcher; inner loss claims are untrusted and dropped (no double count).
+    payload = _child_payload()
+    payload["call_counters"] = "garbage"
+    payload["probes_lost"] = 3
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is False
+    assert call_counters.probes_lost() == 0
+
+
+def test_session_write_coverage_embeds_child_side_lost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call_counters.note_lost_probe()
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    session._write_coverage(_fake_raw())
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["probes_lost"] == 1
+
+
+def test_raw_write_coverage_embeds_child_side_lost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call_counters.note_lost_probe()
+    call_counters.note_lost_probe()
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    raw_session._write_raw_coverage()
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["probes_lost"] == 2
+
+
+# --- Final fix wave: bare-CDLL direct-symbol probes (I1.1, I1.2) ---
+
+
+def test_counting_cdll_wraps_direct_symbol_handle() -> None:
+    stub = SimpleNamespace(C_GenerateRandom=_StubCFunc(7))
+    wrapped = raw_session.counting_cdll(cast("ctypes.CDLL", stub))
+    wrapped.C_GenerateRandom.restype = ctypes.c_ulong
+    assert wrapped.C_GenerateRandom(11, None, 32) == 7
+    assert stub.C_GenerateRandom.calls == [(11, None, 32)]
+    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+        "C_GenerateRandom"
+    ]
+    assert entry["calls"] == 1
+    assert entry["by_rv"]["7"]["count"] == 1
+
+
+def test_ckr_null_login_direct_call_lands_in_child_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub = SimpleNamespace(C_GenerateRandom=_StubCFunc(0))
+    monkeypatch.setattr(ctypes, "CDLL", lambda _path: stub)
+    ckr_null_params_login._run(SimpleNamespace(sh=11), {"module_path": "fake-module.so"})
+    assert stub.C_GenerateRandom.calls == [(11, None, 32)]
+    # The child payload written at teardown carries the direct call.
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    session._write_coverage(_fake_raw())
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert ["C_GenerateRandom", 0, 1] in data["call_counters"]
+
+
+def test_ckr_null_session_direct_call_lands_in_child_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub = SimpleNamespace(C_OpenSession=_StubCFunc(0))
+    monkeypatch.setattr(ctypes, "CDLL", lambda _path: stub)
+    ckr_null_params_session._run(SimpleNamespace(slot_id=3), {"module_path": "fake-module.so"})
+    assert stub.C_OpenSession.calls == [(3, 0x06, None, None, None)]
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    session._write_coverage(_fake_raw())
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert ["C_OpenSession", 0, 1] in data["call_counters"]
+
+
+def test_ckr_null_login_not_exported_still_reports_cleanly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A module without the direct symbol keeps its output protocol and counts
+    # nothing (the module was never invoked).
+    monkeypatch.setattr(ctypes, "CDLL", lambda _path: SimpleNamespace())
+    ckr_null_params_login._run(SimpleNamespace(sh=11), {"module_path": "fake-module.so"})
+    assert capsys.readouterr().out == "CKR:0x00000000:not_exported\n"
+    assert call_counters.serialize_current()["total_calls"] == 0
+
+
+# --- Final fix wave: threading workload child channel (I1.3) ---
+# The workload tests are skip-disabled, so these pin the MECHANISM with stubs:
+# marker present -> folded in, absent/unusable -> one lost probe.
+
+
+def _workload_stdout(payload: str) -> str:
+    return f"{test_threading._CALL_COUNTERS_MARKER}{payload}\nOK\n"
+
+
+def test_workload_counters_marker_merged_into_parent() -> None:
+    flat = [["C_Login", 0, 2], ["C_Login", 49, 1]]
+    with call_counters.counted_bucket("test"):
+        test_threading._ingest_workload_counters(_workload_stdout(json.dumps(flat)))
+    entry = call_counters.serialize_current()["buckets"]["test"]["by_fn"]["C_Login"]
+    assert entry["calls"] == 3
+    assert entry["by_rv"]["0"]["count"] == 2
+    assert entry["by_rv"]["49"]["count"] == 1
+    assert call_counters.probes_lost() == 0
+
+
+def test_workload_counters_absent_marker_means_lost() -> None:
+    test_threading._ingest_workload_counters("OK\n")
+    assert call_counters.probes_lost() == 1
+    assert call_counters.serialize_current()["total_calls"] == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["not-json{{{", '{"C_Login": 1}', "42", "null"],
+    ids=["bad-json", "dict", "int", "null"],
+)
+def test_workload_counters_unusable_marker_means_lost(payload: str) -> None:
+    test_threading._ingest_workload_counters(_workload_stdout(payload))
+    assert call_counters.probes_lost() == 1
+    assert call_counters.serialize_current()["total_calls"] == 0
+
+
+def test_workload_counters_garbage_rows_ignored_channel_ok() -> None:
+    # Parity with the coverage channel: a well-shaped marker means the channel
+    # worked, even when individual rows are garbage (dropped by ingest).
+    payload = json.dumps([["C_Login", 0, 1], "garbage", ["C_Login", "x", 1]])
+    test_threading._ingest_workload_counters(_workload_stdout(payload))
+    assert call_counters.probes_lost() == 0
+    assert call_counters.serialize_current()["total_calls"] == 1
+
+
+def test_workload_script_emits_counters_marker() -> None:
+    # The python -c child cannot import the parent module, so the marker
+    # literal is duplicated in the script source; pin the coupling both ways.
+    assert test_threading._CALL_COUNTERS_MARKER in test_threading._WORKLOAD_SCRIPT
+    assert "flatten_current" in test_threading._WORKLOAD_SCRIPT
+    # Both exit paths emit: the CKR_CANT_LOCK early exit and the clean tail.
+    assert test_threading._WORKLOAD_SCRIPT.count("P11_CALL_COUNTERS_JSON:") == 2
+
+
+# --- Final fix wave: isolation grandchild channel (I1.4) ---
+
+
+def test_write_coverage_honors_grandchild_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cov = tmp_path / "gcov.json"
+    monkeypatch.delenv("_P11CHECK_SUBPROCESS_COVERAGE", raising=False)
+    monkeypatch.setenv(_emit.GRANDCHILD_COVERAGE_ENV, str(cov))
+    _emit.write_coverage({"C_Initialize": 1}, {}, call_counters=[["C_Initialize", 0, 1]])
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["call_log"] == {"C_Initialize": 1}
+    assert data["call_counters"] == [["C_Initialize", 0, 1]]
+
+
+def test_write_coverage_prefers_standard_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    std = tmp_path / "std.json"
+    gc = tmp_path / "gc.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(std))
+    monkeypatch.setenv(_emit.GRANDCHILD_COVERAGE_ENV, str(gc))
+    _emit.write_coverage({"C_Initialize": 1}, {})
+    assert json.loads(std.read_text(encoding="utf-8"))["call_log"] == {"C_Initialize": 1}
+    assert not gc.exists()
+
+
+def test_mark_python_finalized_honors_grandchild_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cov = tmp_path / "gcov.json"
+    monkeypatch.delenv("_P11CHECK_SUBPROCESS_COVERAGE", raising=False)
+    monkeypatch.setenv(_emit.GRANDCHILD_COVERAGE_ENV, str(cov))
+    _emit.mark_python_finalized()
+    assert json.loads(cov.read_text(encoding="utf-8")) == {"python_finalized": True}
+
+
+class _IsolationRaw:
+    """RawPKCS11 double answering CKR_OK to the parent-side isolation calls."""
+
+    def C_Initialize(self, _args: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+        return int(CKR_OK)
+
+    def C_CreateObject(self, *args: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+        return int(CKR_OK)
+
+    def C_DestroyObject(self, *args: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+        return int(CKR_OK)
+
+    def C_Finalize(self, _args: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+        return int(CKR_OK)
+
+
+def _isolation_ctx() -> SimpleNamespace:
+    return SimpleNamespace(
+        raw=_IsolationRaw(), slot_id=0, module_path="fake-module.so", interface="auto"
+    )
+
+
+def _stub_isolation_deps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("_P11CHECK_PIN", raising=False)
+    monkeypatch.setattr(subprocess_safety_probe, "get_slot_ids", lambda _raw: [7])
+    monkeypatch.setattr(subprocess_safety_probe, "open_session", lambda _r, _s, _f: 11)
+    monkeypatch.setattr(subprocess_safety_probe, "close_session_quietly", lambda _r, _s: None)
+
+
+def _fake_grandchild_popen(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, Any] | None,
+    *,
+    timeout_first: bool = False,
+) -> dict[str, Any]:
+    """Stub Popen: capture env, optionally write a grandchild coverage file."""
+    seen: dict[str, Any] = {}
+
+    class _Proc:
+        returncode = 0
+
+        def __init__(self, argv: object, **kwargs: Any) -> None:
+            seen["argv"] = argv
+            seen["env"] = kwargs["env"]
+            self._calls = 0
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            self._calls += 1
+            if timeout_first and self._calls == 1:
+                raise subprocess.TimeoutExpired(cmd="fake-grandchild", timeout=timeout)
+            if payload is not None:
+                gcov = seen["env"][_emit.GRANDCHILD_COVERAGE_ENV]
+                Path(gcov).write_text(json.dumps(payload), encoding="utf-8")
+            return ("", "")
+
+        def kill(self) -> None:
+            seen["killed"] = True
+
+    monkeypatch.setattr(subprocess, "Popen", _Proc)
+    return seen
+
+
+def _grandchild_payload() -> dict[str, Any]:
+    return {
+        "call_log": {"C_Initialize": 1},
+        "mechanism_counts": {},
+        "call_log_ok": {},
+        "mechanism_rv_counts": {},
+        "call_counters": [["C_Initialize", 0, 1], ["C_FindObjectsInit", 0, 1]],
+        "probes_lost": 1,
+    }
+
+
+def test_isolation_grandchild_counts_folded_into_probe_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_isolation_deps(monkeypatch)
+    seen = _fake_grandchild_popen(monkeypatch, _grandchild_payload())
+    try:
+        subprocess_safety_probe._session_object_isolation(_isolation_ctx(), {})
+    finally:
+        _drain_probe_side_effects()
+    env = seen["env"]
+    assert "_P11CHECK_SUBPROCESS_COVERAGE" not in env  # parent's file still protected
+    assert _emit.GRANDCHILD_COVERAGE_ENV in env
+    by_fn = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"]
+    assert by_fn["C_Initialize"]["calls"] == 1
+    assert by_fn["C_FindObjectsInit"]["calls"] == 1
+    assert call_counters.probes_lost() == 1  # grandchild loss propagated
+
+
+def test_isolation_grandchild_missing_counts_as_lost(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_isolation_deps(monkeypatch)
+    _fake_grandchild_popen(monkeypatch, None)  # grandchild wrote nothing (crash)
+    try:
+        subprocess_safety_probe._session_object_isolation(_isolation_ctx(), {})
+    finally:
+        _drain_probe_side_effects()
+    assert call_counters.probes_lost() == 1
+    assert call_counters.serialize_current()["total_calls"] == 0
+
+
+def test_isolation_grandchild_timeout_counts_as_lost(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_isolation_deps(monkeypatch)
+    seen = _fake_grandchild_popen(monkeypatch, None, timeout_first=True)
+    try:
+        subprocess_safety_probe._session_object_isolation(_isolation_ctx(), {})
+    finally:
+        _drain_probe_side_effects()
+    assert seen["killed"] is True
+    assert call_counters.probes_lost() == 1
+
+
+# --- Final fix wave: fork-child loss accounting (I1.5) ---
+
+
+def test_fork_parent_accounts_untransmitted_child_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The fork child dies via os._exit with its calls untransmitted by design;
+    # the reaping probe-child parent accounts one lost probe, which rides this
+    # child's own coverage write via the wire extension.
+    class _Raw:
+        def C_Initialize(self, _args: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+            return int(CKR_OK)
+
+        def C_Finalize(self, _args: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+            return int(CKR_OK)
+
+    monkeypatch.setattr(os, "fork", lambda: 4242)
+    monkeypatch.setattr(
+        subprocess_safety_probe, "_wait_child_bounded", lambda _pid, _t: ("exit", 0)
+    )
+    subprocess_safety_probe._fork_after_initialize(SimpleNamespace(raw=_Raw()), {})
+    assert call_counters.probes_lost() == 1
+
+
+# --- Final fix wave: entry/exit pairing corrections (M1, M2) ---
+
+
+def _make_call_double(stub_map: dict[str, Any]) -> Any:
+    """Minimal RawPKCS11 double driving ``_call`` without a provider."""
+    from collections import Counter, defaultdict
+
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = dict(stub_map)
+    raw._call_log = defaultdict(int)
+    raw._call_log_ok = defaultdict(int)
+    raw._used_mechanisms = set()
+    raw._mechanism_counts = Counter()
+    raw._mechanism_rv_counts = defaultdict(Counter)
+    raw._journal = None
+    raw._rv_trace = None
+    raw._rv_trace_total = 0
+    return raw
+
+
+def test_call_missing_function_counts_nothing() -> None:
+    # The module was never invoked (no funclist entry), so no counter entry.
+    # The legacy call log still records the attempt (its semantics unchanged).
+    raw = _make_call_double({})
+    with pytest.raises(AttributeError, match="not available"):
+        raw._call("C_GetInfo")
+    assert call_counters.serialize_current()["total_calls"] == 0
+    assert raw.call_log == {"C_GetInfo": 1}
+
+
+def test_call_crash_counts_entry_without_exit() -> None:
+    # Crash-entry semantics are unchanged by the M1 move: a raise inside the
+    # module invocation still counts the entry with no RV row.
+    def _boom(*args: Any) -> int:
+        raise OSError("SEH")
+
+    raw = _make_call_double({"C_GetInfo": _boom})
+    with pytest.raises(OSError, match="SEH"):
+        raw._call("C_GetInfo")
+    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+        "C_GetInfo"
+    ]
+    assert entry["calls"] == 1
+    assert entry["by_rv"] == {}
+
+
+def _make_load_double() -> Any:
+    """RawPKCS11 double with just enough state for ``_load_from_lib``."""
+    from pkcs11_check.raw.api import RawPKCS11
+
+    raw = object.__new__(RawPKCS11)
+    raw._funcs = {}
+    return raw
+
+
+def test_get_interface_raise_counts_entry_only() -> None:
+    # A raising C_GetInterface attempt entered the module: entry-only
+    # (crash parity), not silence.
+    from unittest.mock import patch
+
+    from pkcs11_check.raw.api import RawPKCS11
+
+    def _raising(_name: Any, _version: Any, _iface_pp: Any, _flags: Any) -> int:
+        raise OSError("module blew up")
+
+    fake_lib = SimpleNamespace(C_GetInterface=_raising)
+    raw = _make_load_double()
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(OSError, match="module blew up"),
+    ):
+        RawPKCS11._load_from_lib(raw, "fake-module.so", interface="3.2")
+    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+        "C_GetInterface"
+    ]
+    assert entry["calls"] == 1
+    assert entry["by_rv"] == {}
+
+
+def test_get_function_list_raise_counts_entry_only() -> None:
+    from unittest.mock import patch
+
+    from pkcs11_check.raw.api import RawPKCS11
+
+    def _raising(_fn_list_pp: Any) -> int:
+        raise OSError("module blew up")
+
+    # No C_GetInterface attribute: the legacy route is selected, then raises.
+    fake_lib = SimpleNamespace(C_GetFunctionList=_raising)
+    raw = _make_load_double()
+    with (
+        patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
+        pytest.raises(OSError, match="module blew up"),
+    ):
+        RawPKCS11._load_from_lib(raw, "fake-module.so", interface="2.40")
+    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+        "C_GetFunctionList"
+    ]
+    assert entry["calls"] == 1
+    assert entry["by_rv"] == {}
+
+
+def test_raw_get_function_list_raise_counts_entry_only() -> None:
+    class _Raising:
+        def __call__(self, *args: Any) -> int:
+            raise RuntimeError("boom")
+
+    lib = SimpleNamespace(C_GetFunctionList=_Raising())
+    with pytest.raises(RuntimeError, match="boom"):
+        raw_session._get_function_list(cast("ctypes.CDLL", lib))
+    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+        "C_GetFunctionList"
+    ]
+    assert entry["calls"] == 1
+    assert entry["by_rv"] == {}
+
+
+# --- Final fix wave: C-call-site guard (R4) ---
+#
+# Every ctypes library load under src/ is a potential uncounted C-call path
+# (I1.1/I1.2 escaped exactly this way). This AST guard fails on any load site
+# that is not allowlisted with a counting justification, so future paths
+# cannot silently escape counting. Keyed on (file, enclosing scope) plus the
+# exact call count per scope, so neither a new site nor a second load in a
+# listed scope passes silently; stale entries fail too, keeping the list
+# honest. Pure source analysis (no imports of the scanned modules), so it is
+# portable across platforms.
+#
+# Deliberately scoped to library LOADS under src/: scripts/ holds
+# operator-run tooling (token-init, vector generation) that is out-of-harness
+# by nature (M3 class) and cannot be counted; child spawns (python -c/-m)
+# cannot be classified statically, so they stay pinned by mechanism tests
+# (workload marker, grandchild fold-in) instead of this guard.
+
+
+_COUNTED_LOAD_SITES: dict[tuple[str, str], tuple[int, str]] = {
+    # (relpath, enclosing scope) -> (expected CDLL-call count, justification)
+    ("raw/api.py", "RawPKCS11._load_from_lib"): (
+        1,
+        "loader: C_GetInterface/C_GetFunctionList recorded as pairs at the call site",
+    ),
+    ("testcases/_probes/raw_session.py", "_load_cdll"): (
+        1,
+        "callers wrap: probe_main_raw and counting_cdll apply _CountingCDLL",
+    ),
+    ("testcases/_probes/ckr_null_params_login.py", "_run"): (1, "counting_cdll wrap (I1.1)"),
+    ("testcases/_probes/ckr_null_params_session.py", "_run"): (
+        1,
+        "counting_cdll wrap (I1.2)",
+    ),
+}
+
+
+def _cdll_loads_in_source(source: str) -> list[tuple[str, int]]:
+    """Return (enclosing scope, lineno) for every ``ctypes.CDLL(...)`` call."""
+    import ast
+
+    tree = ast.parse(source)
+    found: list[tuple[str, int]] = []
+    stack: list[str] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815 - stdlib visitor protocol name
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            stack.append("<lambda>")
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_Call(self, node: ast.Call) -> None:
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "CDLL"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "ctypes"
+            ):
+                scope = ".".join(stack) if stack else "<module>"
+                found.append((scope, node.lineno))
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+    return found
+
+
+def _iter_src_cdll_loads() -> Iterator[tuple[str, str, int]]:
+    """Yield (relpath, scope, lineno) for every ``ctypes.CDLL`` call under src/."""
+    root = Path(__file__).resolve().parent.parent / "src" / "pkcs11_check"
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        for scope, lineno in _cdll_loads_in_source(path.read_text(encoding="utf-8")):
+            yield rel, scope, lineno
+
+
+def test_cdll_load_scanner_finds_only_real_calls() -> None:
+    # Negative control for the matcher: comments, string literals, and
+    # lookalike names (doubles) must not trip the guard.
+    source = (
+        "# so = ctypes.CDLL(module)\n"
+        'doc = "ctypes.CDLL(not-a-call)"\n'
+        "proxy = _StubCDLL()\n"
+        "other.CDLL(x)\n"
+        "import ctypes\n"
+        "def f():\n"
+        "    return ctypes.CDLL(p)\n"
+    )
+    assert _cdll_loads_in_source(source) == [("f", 7)]
+
+
+def test_all_cdll_load_sites_allowlisted() -> None:
+    from collections import Counter
+
+    found: Counter[tuple[str, str]] = Counter()
+    locations: dict[tuple[str, str], list[int]] = {}
+    for rel, scope, lineno in _iter_src_cdll_loads():
+        found[(rel, scope)] += 1
+        locations.setdefault((rel, scope), []).append(lineno)
+    problems: list[str] = []
+    for key in sorted(found):
+        lines = ",".join(str(n) for n in locations[key])
+        if key not in _COUNTED_LOAD_SITES:
+            problems.append(
+                f"unlisted C-call load site {key[0]}:{key[1]} (line {lines}): "
+                "justify its counting or wrap it, then allowlist it"
+            )
+        elif found[key] != _COUNTED_LOAD_SITES[key][0]:
+            problems.append(
+                f"load-count drift at {key[0]}:{key[1]} (lines {lines}): "
+                f"found {found[key]}, allowlisted {_COUNTED_LOAD_SITES[key][0]}"
+            )
+    for key in sorted(_COUNTED_LOAD_SITES):
+        if key not in found:
+            problems.append(f"stale allowlist entry {key[0]}:{key[1]} (remove it)")
+    assert not problems, (
+        "uncounted C-call paths may be escaping:\n"
+        + "\n".join(f"- {p}" for p in problems)
+        + "\nSee docs/call-counters-design.md (Capture section)."
+    )

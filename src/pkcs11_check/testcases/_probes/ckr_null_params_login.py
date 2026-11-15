@@ -27,12 +27,14 @@ from __future__ import annotations
 import ctypes
 from typing import Any
 
+from pkcs11_check.testcases._probes.raw_session import counting_cdll
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
 
 
 def _run(ctx: ProbeContext, extra: dict[str, Any]) -> None:
-    # Direct-symbol handle onto the same module (mirrors legacy `so = ctypes.CDLL(module)`).
-    so = ctypes.CDLL(extra["module_path"])
+    # Direct-symbol handle onto the same module (mirrors legacy `so = ctypes.CDLL(module)`),
+    # wrapped so the call below is counted in the child payload (fw#73).
+    so = counting_cdll(ctypes.CDLL(extra["module_path"]))
     try:
         c_generate_random = so.C_GenerateRandom
     except AttributeError:

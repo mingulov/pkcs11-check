@@ -54,6 +54,7 @@ import uuid
 from ctypes import byref
 from typing import Any
 
+from pkcs11_check.core.call_counters import note_lost_probe
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -79,9 +80,10 @@ from pkcs11_check.raw.types_std import (
     CKR_USER_ALREADY_LOGGED_IN,
     CKR_USER_TYPE_INVALID,
 )
-from pkcs11_check.testcases._probes._emit import HARNESS_ERROR_MARKER
+from pkcs11_check.testcases._probes._emit import GRANDCHILD_COVERAGE_ENV, HARNESS_ERROR_MARKER
 from pkcs11_check.testcases._probes.params import ProbeParams
 from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_main
+from pkcs11_check.testcases._subprocess_preamble import ingest_subprocess_coverage
 
 #: Bound on the inherited fork child's lifetime; the outer probe timeout is 15 s.
 _FORK_CHILD_TIMEOUT_S = 10.0
@@ -203,6 +205,10 @@ def _fork_after_initialize(ctx: ProbeContext, _extra: dict[str, Any]) -> None:
             os._exit(1)
     else:
         disposition, value = _wait_child_bounded(pid, _FORK_CHILD_TIMEOUT_S)
+        # The fork child dies via os._exit with its C_* traffic untransmitted
+        # by design; this reaping probe child accounts one lost probe (fw#73),
+        # which rides this child's own coverage write via the wire extension.
+        note_lost_probe()
         if disposition == "timeout":
             print("CHILD_TIMEOUT", flush=True)
         elif value is None:
@@ -268,8 +274,9 @@ def _isolation_child_env() -> dict[str, str]:
 
     The child must not write the parent's ``_P11CHECK_SUBPROCESS_COVERAGE`` file: a stale
     child write would make a later parent C-``exit()`` look like a clean Python death to
-    the abrupt-exit detector. Coverage writers no-op when the variable is absent, and the
-    fork-era child contributed no coverage either (``os._exit``), so nothing is lost.
+    the abrupt-exit detector. The caller hands the grandchild a private path under
+    ``GRANDCHILD_COVERAGE_ENV`` and ingests it afterwards, so its C_* traffic still
+    folds into this probe child's globals (fw#73).
     """
     env = dict(os.environ)
     env.pop("_P11CHECK_SUBPROCESS_COVERAGE", None)
@@ -338,6 +345,13 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
     # --- Spawn a fresh-interpreter child (a different application) ---
     child_params = _isolation_child_params(ctx.module_path, ctx.interface, slot, label.decode())
     params_fd, params_path = tempfile.mkstemp(suffix=".json", prefix="p11-isolation-child-")
+    gcov_fd, gcov_path = tempfile.mkstemp(suffix=".json", prefix="p11-grandchild-cov-")
+    os.close(gcov_fd)
+    child_env = _isolation_child_env()
+    # The grandchild's own coverage path: it must not share this probe child's
+    # file (see _isolation_child_env), but its C_* traffic still folds into
+    # this child's globals below so it rides this child's own coverage write.
+    child_env[GRANDCHILD_COVERAGE_ENV] = gcov_path
     try:
         with os.fdopen(params_fd, "w", encoding="utf-8") as fh:
             json.dump(child_params, fh)
@@ -348,7 +362,7 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_isolation_child_env(),
+            env=child_env,
         )
         try:
             out, err = proc.communicate(timeout=_ISOLATION_CHILD_TIMEOUT_S)
@@ -359,11 +373,19 @@ def _session_object_isolation(ctx: ProbeContext, _extra: dict[str, Any]) -> None
             out = _stream_text(exc.stdout) + (rest_out or "")
             err = _stream_text(exc.stderr) + (rest_err or "")
             timed_out = True
+        # Fold the grandchild's C_* traffic into this probe child's globals; a
+        # grandchild whose counters never arrived (crash/timeout/corrupt) counts
+        # one lost probe (fw#73). The legacy accumulators this also updates are
+        # never read in a probe child (its own coverage write uses raw.*
+        # directly), so they die here; only the counters propagate.
+        if not ingest_subprocess_coverage(gcov_path):
+            note_lost_probe()
     finally:
-        try:
-            os.unlink(params_path)
-        except OSError:
-            pass
+        for _path in (params_path, gcov_path):
+            try:
+                os.unlink(_path)
+            except OSError:
+                pass
     for line in out.splitlines():
         if line.startswith(_CHILD_RELAY_PREFIXES):
             print(line, flush=True)

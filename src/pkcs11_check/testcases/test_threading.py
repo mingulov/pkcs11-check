@@ -26,6 +26,7 @@ concurrent ``C_GenerateKey`` mutates/contends token state) and ``@stress``.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -35,6 +36,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.classification import classify, fail_as
+from pkcs11_check.core.call_counters import ingest_child_counts, note_lost_probe
 from pkcs11_check.core.crash_codes import crash_detail_name, is_crash_returncode
 from pkcs11_check.testcases._shellcmd import shell_invocation
 
@@ -77,6 +79,35 @@ def _mint_throwaway_token(tmp_path: Path) -> str | None:
     return str(conf) if proc.returncode == 0 else None
 
 
+# Child -> parent call-counters channel (fw#73): the workload child prints one
+# `<marker><flattened-counters-JSON>` line on each exit path; the parent folds
+# it into its own globals. The child is a `python -c` string that cannot import
+# this module, so the marker literal is duplicated below (pinned by test).
+_CALL_COUNTERS_MARKER = "P11_CALL_COUNTERS_JSON:"
+
+
+def _ingest_workload_counters(stdout: str) -> None:
+    """Fold a workload child's flattened counters into the process globals (fw#73).
+
+    A missing or unusable marker (crash, hang, or a child that never reached
+    its emit) accounts one lost probe, mirroring the coverage-channel rule in
+    ``runner.py``. A well-shaped marker means the channel worked, even when
+    individual rows are garbage (dropped by the ingest, as on that path).
+    """
+    for line in stdout.splitlines():
+        if not line.startswith(_CALL_COUNTERS_MARKER):
+            continue
+        try:
+            flat = json.loads(line.removeprefix(_CALL_COUNTERS_MARKER))
+        except ValueError:
+            break
+        if not isinstance(flat, (list, tuple)):
+            break
+        ingest_child_counts(list(flat))
+        return
+    note_lost_probe()
+
+
 # Fixed child script: ALL parameters arrive via environment variables (no code
 # interpolation, and the PIN is never embedded in source or printed). It runs
 # its own C_Initialize(CKF_OS_LOCKING_OK) so concurrent access is spec-valid and
@@ -84,9 +115,11 @@ def _mint_throwaway_token(tmp_path: Path) -> str | None:
 _WORKLOAD_SCRIPT = r"""
 import concurrent.futures
 import ctypes
+import json
 import os
 import sys
 
+from pkcs11_check.core.call_counters import flatten_current
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
     close_session_quietly,
@@ -122,6 +155,7 @@ args.flags = int(CKF_OS_LOCKING_OK)
 rv = int(raw.C_Initialize(ctypes.byref(args)))
 if rv == int(CKR_CANT_LOCK):
     print("SKIP_CANT_LOCK")
+    print("P11_CALL_COUNTERS_JSON:" + json.dumps(flatten_current()))
     sys.exit(0)
 assert rv == int(CKR_OK), hex(rv)
 
@@ -157,6 +191,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=THREADS) as pool:
     list(pool.map(worker, range(THREADS)))
 
 raw.C_Finalize(None)
+print("P11_CALL_COUNTERS_JSON:" + json.dumps(flatten_current()))
 print("OK")
 """
 
@@ -201,7 +236,11 @@ def _run_threaded_workload(
             env=env,
         )
     except subprocess.TimeoutExpired:
+        # A hung child never emitted counters (partial output is discarded by
+        # contract, as before); account it lost (fw#73).
+        note_lost_probe()
         return None, "", "TIMEOUT"
+    _ingest_workload_counters(result.stdout)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 

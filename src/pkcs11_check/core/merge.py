@@ -524,7 +524,11 @@ def merge_results_payloads(
     testcases_root: Path | None = None,
     shard_dirs: list[Path] | None = None,
 ) -> dict[str, Any]:
-    """Combine N ``results.json`` payloads (summary summed, units concatenated)."""
+    """Combine N ``results.json`` payloads (summary summed, units concatenated).
+
+    ``call_counters`` (recomputed from the concatenated JSONL by the caller)
+    is attached when provided.
+    """
     _validate_selection_payloads(payloads, testcases_root=testcases_root, shard_dirs=shard_dirs)
     merged_provenance, provenance_mixed = _merged_shard_provenance(payloads)
 
