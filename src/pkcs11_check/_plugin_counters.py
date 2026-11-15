@@ -6,13 +6,13 @@ phase attribution stays out of the main plugin module. Every hook starts with th
 (no ``--p11-module``) pass every hook through untouched and their report streams
 stay byte-identical to before this feature.
 
-Phase attribution: the setup wrapper snapshots a baseline and pushes the
-``setup_teardown`` bucket; the call wrapper pushes ``test``; the teardown wrapper
-pushes ``setup_teardown`` again and, once the phase is over, diffs baseline to
+Phase attribution: the setup wrapper snapshots a baseline and sets the
+``setup_teardown`` phase; the call wrapper sets ``test``; the teardown wrapper
+sets ``setup_teardown`` again and, once the phase is over, diffs baseline to
 now and stashes the per-test entry. The makereport wrapper attaches the stashed
 entry to the teardown report (setup/call reports are emitted before the entry
-exists, so they always no-op). Buckets always balance: every push is a
-``counted_bucket`` context manager (try/finally), and the teardown diff lives in
+exists, so they always no-op). Phases always restore: every set is a
+``_phase`` context manager (try/finally), and the teardown diff lives in
 an outer finally so a failing teardown still yields an entry.
 
 The item-stash keys below are private to this module (no other module reads or
@@ -32,7 +32,7 @@ from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_REPORT_TYPE,
     ISOLATION_ENV,
     Snapshot,
-    counted_bucket,
+    _phase,
     diff_snapshots,
     probes_lost,
     serialize_current,
@@ -59,7 +59,7 @@ def pytest_runtest_setup(item: pytest.Item) -> Any:
         result = yield
         return result
     item.stash[_BASELINE_KEY] = take_snapshot()
-    with counted_bucket("setup_teardown"):
+    with _phase("setup_teardown"):
         result = yield
         return result
 
@@ -73,7 +73,7 @@ def pytest_runtest_call(item: pytest.Item) -> Any:
     if not _is_testcase_item(item):
         result = yield
         return result
-    with counted_bucket("test"):
+    with _phase("test"):
         result = yield
         return result
 
@@ -92,7 +92,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
         result = yield
         return result
     try:
-        with counted_bucket("setup_teardown"):
+        with _phase("setup_teardown"):
             result = yield
             return result
     finally:

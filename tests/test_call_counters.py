@@ -470,3 +470,156 @@ def test_teardown_finalize_attributes_call_to_module_init() -> None:
     assert snap["total_calls"] == 1
     assert set(snap["buckets"]) == {"module_init"}
     assert snap["buckets"]["module_init"]["by_fn"]["C_Finalize"]["calls"] == 1
+
+
+# --- Codex R1 fix round (I3): thread attribution ---
+
+
+def test_overlapping_thread_regions_stay_isolated() -> None:
+    # I3: regions are thread-local: two threads recording while BOTH regions
+    # are active must each land in their own bucket. The barrier makes the
+    # overlap deterministic (both pushes precede both records).
+    import threading
+
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def _worker(bucket: str, fn: str) -> None:
+        try:
+            with call_counters.counted_bucket(bucket):
+                barrier.wait(timeout=30)
+                call_counters.record_call(fn)
+                call_counters.record_return(fn, 0)
+                barrier.wait(timeout=30)
+        except BaseException as exc:  # propagate to the main thread
+            errors.append(exc)
+
+    first = threading.Thread(target=_worker, args=("test", "C_ThreadA"))
+    second = threading.Thread(target=_worker, args=("module_init", "C_ThreadB"))
+    first.start()
+    second.start()
+    first.join(timeout=60)
+    second.join(timeout=60)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    snap = call_counters.serialize_current()
+    assert set(snap["buckets"]) == {"test", "module_init"}
+    entry_a = snap["buckets"]["test"]["by_fn"]["C_ThreadA"]
+    assert entry_a["calls"] == 1
+    assert entry_a["by_rv"]["0"]["count"] == 1
+    entry_b = snap["buckets"]["module_init"]["by_fn"]["C_ThreadB"]
+    assert entry_b["calls"] == 1
+    assert entry_b["by_rv"]["0"]["count"] == 1
+
+
+def test_cross_thread_return_does_not_follow_foreign_region() -> None:
+    # I3 (codex scenario): thread A enters under "test" and returns while
+    # thread B holds "module_init" -- the exit must not follow B's bucket.
+    # Events pin the interleaving: B's region is active during A's return.
+    import threading
+
+    hold = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def _holder() -> None:
+        try:
+            with call_counters.counted_bucket("module_init"):
+                hold.set()
+                assert release.wait(timeout=30)
+        except BaseException as exc:  # propagate to the main thread
+            errors.append(exc)
+
+    holder = threading.Thread(target=_holder)
+    with call_counters.counted_bucket("test"):
+        call_counters.record_call("C_Foreign")
+        holder.start()
+        assert hold.wait(timeout=30)
+        call_counters.record_return("C_Foreign", 0)
+        release.set()
+    holder.join(timeout=60)
+    assert not holder.is_alive()
+    assert errors == []
+    snap = call_counters.serialize_current()
+    entry = snap["buckets"]["test"]["by_fn"]["C_Foreign"]
+    assert entry["calls"] == 1
+    assert entry["by_rv"]["0"]["count"] == 1
+    assert "module_init" not in snap["buckets"]
+
+
+def test_call_binds_return_to_entry_bucket_across_mid_call_switch() -> None:
+    # I3: the exit half of a _call lands in the ENTRY-captured bucket even
+    # when the bucket switches mid-call (e.g. a module callback re-entering
+    # counted scopes between entry and return). Regions alone cannot fix the
+    # same-thread case: only binding the return to the captured entry bucket
+    # keeps the pair together.
+    from contextlib import AbstractContextManager
+
+    switched: list[AbstractContextManager[None, None, None]] = []
+
+    def _switcher(*args: Any) -> int:
+        del args
+        scope = call_counters.counted_bucket("module_init")
+        scope.__enter__()  # left entered: the switch is active at return time
+        switched.append(scope)
+        return 0
+
+    raw = _make_raw_double({"C_Switch": _switcher})
+    try:
+        with call_counters.counted_bucket("test"):
+            raw._call("C_Switch")
+    finally:
+        for scope in switched:
+            scope.__exit__(None, None, None)
+    snap = call_counters.serialize_current()
+    entry = snap["buckets"]["test"]["by_fn"]["C_Switch"]
+    assert entry["calls"] == 1
+    assert entry["by_rv"]["0"]["count"] == 1
+    assert "module_init" not in snap["buckets"]
+
+
+def test_phase_scopes_worker_threads_and_yields_to_regions() -> None:
+    # I3: the process-global phase (set by the pytest hooks) is visible to
+    # worker threads, while a thread-local region still wins in its own
+    # thread; the phase restores on exit, even on exception.
+    import threading
+
+    assert call_counters.current_bucket() == "session_provisioning"
+    with call_counters._phase("test"):
+        assert call_counters.current_bucket() == "test"
+        call_counters.record_call("C_Phase")
+        call_counters.record_return("C_Phase", 0)
+        with call_counters.counted_bucket("module_init"):
+            assert call_counters.current_bucket() == "module_init"
+            call_counters.record_call("C_Region")
+            call_counters.record_return("C_Region", 0)
+        assert call_counters.current_bucket() == "test"
+
+        errors: list[BaseException] = []
+
+        def _worker() -> None:
+            try:
+                assert call_counters.current_bucket() == "test"
+                call_counters.record_call("C_Worker")
+                call_counters.record_return("C_Worker", 0)
+            except BaseException as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=_worker)
+        worker.start()
+        worker.join(timeout=60)
+        assert not worker.is_alive()
+        assert errors == []
+    assert call_counters.current_bucket() == "session_provisioning"
+    snap = call_counters.serialize_current()
+    assert snap["buckets"]["test"]["by_fn"]["C_Phase"]["calls"] == 1
+    assert snap["buckets"]["test"]["by_fn"]["C_Worker"]["calls"] == 1
+    assert snap["buckets"]["module_init"]["by_fn"]["C_Region"]["calls"] == 1
+    with pytest.raises(ValueError, match="nope"):
+        with call_counters._phase("nope"):
+            pass
+    with pytest.raises(RuntimeError, match="boom"):
+        with call_counters._phase("test"):
+            raise RuntimeError("boom")
+    assert call_counters.current_bucket() == "session_provisioning"

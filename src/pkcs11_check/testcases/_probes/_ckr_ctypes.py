@@ -20,7 +20,7 @@ import ctypes
 from collections.abc import Callable
 from typing import Any, cast
 
-from pkcs11_check.core.call_counters import record_call, record_return
+from pkcs11_check.core.call_counters import current_bucket, record_call, record_return
 from pkcs11_check.raw.api import function_list_header_size
 from pkcs11_check.raw.metadata_std import FUNCTION_INDICES
 
@@ -61,9 +61,11 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
         * ``get_func(index)`` -> the raw function address (an ``int``) stored at
           ``index`` in the table (index counted *after* the CK_VERSION field), via
           pointer arithmetic.
-        * ``call_func(name, *args)`` -> resolve ``FUNC_INDICES[name]``, build a
-          ``CK_RV (*)(...)`` CFUNCTYPE from the runtime types of ``*args``, invoke it,
-          and return the CK_RV as an ``int``.
+        * ``call_func(name, *args, bucket=None)`` -> resolve ``FUNC_INDICES[name]``,
+          build a ``CK_RV (*)(...)`` CFUNCTYPE from the runtime types of ``*args``,
+          invoke it, and return the CK_RV as an ``int``. The keyword-only
+          ``bucket`` overrides attribution; by default the entry-captured
+          bucket binds both halves of the pair.
 
     The returned callables perform no safety validation: they exist precisely so a
     probe can hand the module a NULL / malformed argument the RawPKCS11 wrapper would
@@ -81,7 +83,7 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
         # from the legacy get_func, which returned the address unchanged).
         return cast(int, addr)
 
-    def call_func(name: str, *args: Any) -> int:
+    def call_func(name: str, *args: Any, bucket: str | None = None) -> int:
         idx = FUNC_INDICES[name]
         addr = get_func(idx)
         # Build the CK_RV (*)(arg_types...) signature from the caller's OWN ctypes objects.
@@ -89,14 +91,17 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
         # exact (possibly NULL / malformed) arguments a probe constructs, which the RawPKCS11
         # wrapper would reject.  Do NOT switch to static argtypes -- that would coerce/reject
         # the fault arguments and defeat the probe.  A non-ctypes arg fails loud here.
+        # (The keyword-only bucket is consumed here, never forwarded to the module.)
         arg_types = [type(a) for a in args]
         func_type = ctypes.CFUNCTYPE(_CK_RV, *arg_types)
         func = func_type(addr)
         # Entry is recorded immediately before the invocation (mirroring
         # RawPKCS11._call): a crash inside the module still counts the call.
-        record_call(name)
+        # The bucket is captured once so a mid-call switch cannot split the pair.
+        target = bucket if bucket is not None else current_bucket()
+        record_call(name, bucket=target)
         rv = int(func(*args))
-        record_return(name, rv)
+        record_return(name, rv, bucket=target)
         return rv
 
     return call_func, get_func

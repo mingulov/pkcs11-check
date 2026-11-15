@@ -10,7 +10,7 @@ from collections import Counter, defaultdict, deque
 from ctypes import byref, c_void_p, cast
 from typing import Any
 
-from pkcs11_check.core.call_counters import record_call, record_return
+from pkcs11_check.core.call_counters import current_bucket, record_call, record_return
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 
 from . import metadata_std
@@ -523,9 +523,10 @@ class RawPKCS11:
             requested_version.minor = version[1]
             version_ptr = byref(requested_version)
 
-        record_call("C_GetInterface")
+        bucket = current_bucket()
+        record_call("C_GetInterface", bucket=bucket)
         rv = int(get_interface(None, version_ptr, byref(interface_ptr), 0))
-        record_return("C_GetInterface", rv)
+        record_return("C_GetInterface", rv, bucket=bucket)
         requested_interface = self._version_string(version) if version is not None else "auto"
         if rv != int(CKR_OK):
             if strict:
@@ -619,9 +620,10 @@ class RawPKCS11:
         # rebound here to a CK_FUNCTION_LIST_PTR ctypes object — different type
         # but same logical role. Use a fresh local to keep mypy happy.
         fn_list_ptr = CK_FUNCTION_LIST_PTR()
-        record_call("C_GetFunctionList")
+        bucket = current_bucket()
+        record_call("C_GetFunctionList", bucket=bucket)
         rv = get_function_list(byref(fn_list_ptr))
-        record_return("C_GetFunctionList", int(rv))
+        record_return("C_GetFunctionList", int(rv), bucket=bucket)
         if rv != CKR_OK:
             raise RuntimeError(f"C_GetFunctionList failed: 0x{rv:08x}")
         if not bool(fn_list_ptr):
@@ -753,10 +755,12 @@ class RawPKCS11:
         )
         # Entry is recorded only once the module is actually invoked: an
         # unavailable function (AttributeError above) counts nothing, while a
-        # crash inside func(*args) still counts the entry with no RV.
-        record_call(name)
+        # crash inside func(*args) still counts the entry with no RV. The
+        # bucket is captured once so a mid-call switch cannot split the pair.
+        bucket = current_bucket()
+        record_call(name, bucket=bucket)
         result = int(func(*args))
-        record_return(name, result)
+        record_return(name, result, bucket=bucket)
         if result == int(CKR_OK):
             self._call_log_ok[name] += 1
         if mech_id is not None:

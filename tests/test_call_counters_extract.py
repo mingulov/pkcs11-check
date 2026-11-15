@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
 
 
@@ -372,18 +374,11 @@ def test_extract_session_without_probes_lost_ignored_isolation_defaults(tmp_path
     )
     # probes_lost is load-bearing for `complete`: without it the record is garbage.
     assert extract_call_counters_from_jsonl(missing_lost) is None
-    missing_isolation = _write_jsonl(
-        tmp_path / "noiso.jsonl",
-        [
-            {
-                "$report_type": "CallCountersReport",
-                "pid": 100,
-                "probes_lost": 0,
-                "total_calls": 10,
-                "buckets": {},
-            },
-        ],
-    )
+    # I2 fail-closed totals: the record must be internally consistent
+    # (total == sum of buckets); only the isolation key is under test here.
+    no_isolation_record = _session_record(100, 10)
+    del no_isolation_record["isolation"]
+    missing_isolation = _write_jsonl(tmp_path / "noiso.jsonl", [no_isolation_record])
     payload = extract_call_counters_from_jsonl(missing_isolation)
     assert payload is not None
     assert payload["total_calls"] == 10
@@ -435,3 +430,214 @@ def test_extract_buckets_merged_across_records(tmp_path: Path) -> None:
     assert by_bucket["buckets"]["test"]["calls"] == 10
     assert by_bucket["buckets"]["setup_teardown"]["by_fn"]["C_Login"]["calls"] == 5
     assert by_bucket["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["0"]["count"] == 10
+
+
+# --- Codex R1 fix round (C2): executed-but-counterless segments ---
+
+
+def test_extract_missing_group_crashed_first_test_marks_incomplete(tmp_path: Path) -> None:
+    # C2: a unit that crashed during its first test (marker + setup report,
+    # then truncated: no counters, no SessionFinish) must still appear as an
+    # empty complete:false group -- never silently vanish.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _test_report("a.py::t1", "setup", None),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
+    assert payload["by_bucket"] == {"total_calls": 0, "buckets": {}}
+    assert payload["probes_lost"] == 0
+    assert payload["by_process"] == []
+
+
+def test_extract_finished_without_counters_is_old_artifact(tmp_path: Path) -> None:
+    # C2: the same shape WITH a SessionFinish predates the feature (old
+    # artifact): no group, None preserved.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _test_report("a.py::t1", "setup", None),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    assert extract_call_counters_from_jsonl(jsonl) is None
+
+
+def test_extract_marker_without_reports_is_static_skip(tmp_path: Path) -> None:
+    # C2: a marker with zero TestReports is a static skip, not an execution:
+    # no group with or without a finish.
+    assert (
+        extract_call_counters_from_jsonl(
+            _write_jsonl(
+                tmp_path / "skip.jsonl",
+                [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+            )
+        )
+        is None
+    )
+    assert (
+        extract_call_counters_from_jsonl(
+            _write_jsonl(
+                tmp_path / "skip2.jsonl",
+                [
+                    {"$report_type": "SessionStart"},
+                    _marker("a.py", 0),
+                    {"$report_type": "SessionFinish", "exitstatus": 0},
+                ],
+            )
+        )
+        is None
+    )
+
+
+def test_extract_crashed_unit_alongside_healthy_marks_incomplete(tmp_path: Path) -> None:
+    # C2 (codex scenario): a crashed unit next to a healthy one must flip the
+    # run to complete:false; the healthy unit's totals still fold exactly.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _test_report("a.py::t1", "teardown", _test_entry(100, 4)),
+            _session_record(100, 10),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _test_report("b.py::t1", "setup", None),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 10
+    assert payload["complete"] is False
+    assert [entry["pid"] for entry in payload["by_process"]] == [100]
+
+
+# --- Codex R1 fix round (I1): malformed user_properties container ---
+
+
+@pytest.mark.parametrize("props", [1, 2.5, True], ids=["int", "float", "bool"])
+def test_extract_malformed_properties_container_ignored(tmp_path: Path, props: Any) -> None:
+    # I1: a non-list user_properties container must not raise (the old code
+    # raised TypeError inside _user_property, aborting the whole extraction);
+    # valid counters elsewhere still fold.
+    report = _test_report("a.py::t1", "teardown", None)
+    report["user_properties"] = props
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            report,
+            _session_record(100, 10),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 10
+    assert payload["complete"] is True
+
+
+def test_extract_malformed_properties_counts_as_executed_when_unfinished(
+    tmp_path: Path,
+) -> None:
+    # I1+C2: malformed counters on an unfinished stream are still evidence of
+    # execution: an empty complete:false group, never a raise and never None.
+    report = _test_report("a.py::t1", "teardown", None)
+    report["user_properties"] = 1
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            report,
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
+
+
+# --- Codex R1 fix round (I2): fail-closed validation ---
+
+
+def _violation_records() -> dict[str, dict[str, Any]]:
+    """One whole-record violation per I2 class (each must be skipped)."""
+    good_leaf = {"calls": 10, "by_rv": {"0": {"name": "CKR_OK", "count": 10}}}
+    hex_buckets = _buckets(10)
+    hex_buckets["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"] = {
+        "0x0": {"name": "CKR_OK", "count": 10}
+    }
+    negative_buckets = _buckets(10)
+    negative_buckets["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"] = {
+        "-1": {"name": "WEIRD", "count": 10}
+    }
+    bucket_mismatch = _buckets(10)
+    bucket_mismatch["buckets"]["test"]["calls"] = 99
+    rv_exceeds = _buckets(10)
+    rv_exceeds["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["0"]["count"] = 12
+    # NOTE: _session_record takes its total from the passed buckets dict, so a
+    # total/buckets mismatch needs post-build surgery.
+    total_mismatch = _session_record(100, 5, _buckets(5))
+    total_mismatch["total_calls"] = 10
+    return {
+        "unknown-bucket": _session_record(
+            100, 10, {"total_calls": 10, "buckets": {"nope": {"calls": 10, "by_fn": {}}}}
+        ),
+        "unknown-bucket-with-fns": _session_record(
+            100,
+            10,
+            {
+                "total_calls": 10,
+                "buckets": {"nope": {"calls": 10, "by_fn": {"C_Sign": dict(good_leaf)}}},
+            },
+        ),
+        "hex-rv-key": _session_record(100, 10, hex_buckets),
+        "negative-rv-key": _session_record(100, 10, negative_buckets),
+        "bucket-calls-mismatch": _session_record(100, 10, bucket_mismatch),
+        "entry-total-mismatch": total_mismatch,
+        "rv-exceeds-calls": _session_record(100, 10, rv_exceeds),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_violation_records()))
+def test_extract_skips_violating_session_record(tmp_path: Path, name: str) -> None:
+    # I2: a record violating the serialized contract is skipped whole; the
+    # valid record in the same group still folds and the run stays complete.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [_violation_records()[name], _session_record(200, 7)],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 7
+    assert payload["complete"] is True
+    assert [entry["pid"] for entry in payload["by_process"]] == [200]
+
+
+def test_extract_skips_violating_test_entry(tmp_path: Path) -> None:
+    # I2: per-test entries face the same fail-closed validation as session
+    # records (here: an unknown bucket on a fallback-eligible pid).
+    entry = _test_entry(300, 5)
+    entry["buckets"] = {"nope": {"calls": 5, "by_fn": {}}}
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            _test_report("a.py::t1", "teardown", entry),
+            _session_record(200, 7),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 7
+    assert payload["complete"] is True
+    assert [entry_row["pid"] for entry_row in payload["by_process"]] == [200]

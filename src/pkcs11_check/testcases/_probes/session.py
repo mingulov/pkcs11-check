@@ -91,7 +91,24 @@ def _emit_rv_trace(raw: RawPKCS11) -> None:
     emit_rv_trace(raw.rv_trace)
 
 
-def _write_coverage(raw: RawPKCS11) -> None:
+@dataclass(frozen=True)
+class _LegacyCoverageSnapshot:
+    """Frozen legacy coverage fields, snapshotted before cleanup (C1).
+
+    ``_ProbeTeardown`` freezes these BEFORE ``C_CloseSession``/``C_Finalize``
+    (which advance the live ``RawPKCS11`` logs) and writes them AFTER, so the
+    legacy payload bytes are identical to the old write-first order while the
+    flattened counters include cleanup traffic. Shapes match the ``RawPKCS11``
+    accessors exactly (integer mechanism/RV keys; ``_write_coverage`` converts).
+    """
+
+    call_log: dict[str, int]
+    mechanism_counts: dict[int, int]
+    call_log_ok: dict[str, int]
+    mechanism_rv_counts: dict[int, dict[int, int]]
+
+
+def _write_coverage(raw: RawPKCS11 | _LegacyCoverageSnapshot) -> None:
     """Write function/mechanism counts and RV state to subprocess coverage (I6).
 
     Integer mechanism and return-value keys are converted to strings for JSON compatibility.
@@ -116,14 +133,43 @@ def _write_coverage(raw: RawPKCS11) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _snapshot_legacy_coverage(raw: RawPKCS11) -> _LegacyCoverageSnapshot:
+    """Freeze the legacy coverage fields before cleanup mutates them (C1).
+
+    The defensive ``getattr`` defaults keep partial test doubles (which stub
+    only the ``C_*`` surface) working; the real ``RawPKCS11`` always provides
+    all four accessors. Copies are detached, so later cleanup traffic cannot
+    leak into the frozen payload.
+    """
+    call_log = getattr(raw, "call_log", None)
+    mechanism_counts = getattr(raw, "mechanism_counts", None)
+    call_log_ok = getattr(raw, "call_log_ok", None)
+    mechanism_rv_counts = getattr(raw, "mechanism_rv_counts", None)
+    return _LegacyCoverageSnapshot(
+        call_log=dict(call_log) if isinstance(call_log, dict) else {},
+        mechanism_counts=dict(mechanism_counts) if isinstance(mechanism_counts, dict) else {},
+        call_log_ok=dict(call_log_ok) if isinstance(call_log_ok, dict) else {},
+        mechanism_rv_counts=(
+            {m: dict(c) for m, c in mechanism_rv_counts.items() if isinstance(c, dict)}
+            if isinstance(mechanism_rv_counts, dict)
+            else {}
+        ),
+    )
+
+
 class _ProbeTeardown:
-    """Idempotent child teardown: write coverage, close the session, C_Finalize -- at most once.
+    """Idempotent child teardown: snapshot legacy, close/finalize, write once -- at most once.
 
     Extracted from ``probe_main`` so the run-at-most-once contract is directly testable. It is
     both registered via ``atexit`` and exposed as ``ctx.cleanup`` (a probe may trigger it
     explicitly). ``probe_main`` also invokes it from normal control flow so an access violation
     cannot be hidden by Python's atexit exception handling. Double invocation is a no-op after
     the first run.
+
+    The single coverage write happens AFTER cleanup with the legacy snapshot
+    plus a fresh ``flatten_current()`` (C1): cleanup traffic is counted, the
+    legacy bytes are unchanged, and a cleanup crash writes nothing, so the
+    launcher honestly accounts the child as lost.
     """
 
     def __init__(self, raw: RawPKCS11) -> None:
@@ -136,7 +182,7 @@ class _ProbeTeardown:
         if self._done:
             return
         self._done = True
-        _write_coverage(self.raw)
+        legacy = _snapshot_legacy_coverage(self.raw)
         if self.sh is not None:
             close_session_quietly(self.raw, self.sh)
         if self.initialized:
@@ -147,6 +193,7 @@ class _ProbeTeardown:
                     raise
             except (AttributeError, ctypes.ArgumentError):
                 pass
+        _write_coverage(legacy)
 
 
 def probe_main(

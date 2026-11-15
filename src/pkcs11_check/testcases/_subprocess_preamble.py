@@ -57,12 +57,30 @@ def pin_from_config(p11_config: Any) -> str | None:
     return value
 
 
+def _normalize_call_log(value: Any) -> Counter[str]:
+    """Return positive per-function counts from a legacy call-log section.
+
+    Garbage-tolerant like the mechanism normalizers: a non-dict section, a
+    non-string function name, or a non-positive-int count is ignored without
+    raising, so a hostile payload value can never break the ingest path (I1).
+    """
+    normalized: Counter[str] = Counter()
+    if not isinstance(value, dict):
+        return normalized
+    for fn, count in value.items():
+        if isinstance(fn, str) and fn and type(count) is int and count > 0:
+            normalized[fn] += count
+    return normalized
+
+
 def ingest_subprocess_coverage(path: str) -> bool:
     """Read a child coverage JSON file into the preamble-path accumulators (I6).
 
     No-op when ``path`` is empty or the file does not exist (e.g. the child
     crashed before writing it).  All I/O and parse errors are silently swallowed
-    so a missing or corrupt coverage file never aborts the parent.
+    so a missing or corrupt coverage file never aborts the parent.  Malformed
+    legacy sections are likewise ignored (never raised), so valid counters in
+    the same payload still fold.
 
     Returns True when usable ``call_counters`` were folded into the process-global
     fw#73 counters (under the active bucket), False otherwise.  True means the
@@ -81,9 +99,9 @@ def ingest_subprocess_coverage(path: str) -> bool:
         return False
     if not isinstance(data, dict):
         return False
-    _subprocess_call_counts.update(data.get("call_log", {}))
+    _subprocess_call_counts.update(_normalize_call_log(data.get("call_log", {})))
     _subprocess_mechanism_counts.update(normalize_mechanism_counts(data.get("mechanism_counts")))
-    _subprocess_call_ok_counts.update(data.get("call_log_ok", {}))
+    _subprocess_call_ok_counts.update(_normalize_call_log(data.get("call_log_ok", {})))
     for mechanism, counts in normalize_mechanism_rv_counts(data.get("mechanism_rv_counts")).items():
         _subprocess_mechanism_rv_counts[mechanism].update(counts)
     counters = data.get("call_counters")

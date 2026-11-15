@@ -158,6 +158,7 @@ from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
 from pkcs11_check.core.call_counters import (
+    BUCKETS,
     CALL_COUNTERS_PROPERTY,
     CALL_COUNTERS_REPORT_TYPE,
     merge_serialized,
@@ -356,41 +357,86 @@ def _as_nonneg_int(value: Any) -> int | None:
     return value
 
 
-def _counters_buckets_valid(buckets: Any) -> bool:
-    """Whether ``buckets`` has the serialized-schema buckets shape (T1).
+def _is_decimal_rv_key(rv_key: str) -> bool:
+    """Whether ``rv_key`` is the canonical decimal rendering of a CK_RV.
 
-    Every ``calls``/``count`` scalar must be a non-negative int (bools
-    rejected), every function/RV key a string, every RV leaf a
-    ``{"name": str, "count": int}`` dict. Cross-total consistency is NOT
-    enforced: crash windows make ``sum(by_rv) <= calls`` by design, so only
-    the shape and scalar types are validated.
+    The serializer emits ``str(rv)`` for an unsigned CK_RV, so anything else
+    (hex, signs, whitespace, leading zeros, non-digits) is not our shape and
+    the record is rejected. Never raises.
+    """
+    try:
+        rv = int(rv_key)
+    except ValueError:
+        return False
+    return rv >= 0 and str(rv) == rv_key
+
+
+def _counters_buckets_valid(buckets: Any) -> bool:
+    """Whether ``buckets`` satisfies the serialized-schema contract (T1, I2).
+
+    Fail-closed: besides the shape rules (non-negative int ``calls``/``count``
+    scalars with bools rejected, non-empty string function names, decimal RV
+    keys, ``{"name": str, "count": int}`` RV leaves), bucket membership, the
+    per-bucket total, and the per-function RV upper bound are enforced:
+
+    - every bucket name is a known ``BUCKETS`` member;
+    - ``bucket.calls`` equals the sum of its functions' ``calls`` exactly;
+    - ``sum(by_rv counts)`` never exceeds the function's ``calls`` (crash
+      windows make it SMALLER by design, so only the upper bound is checked).
+
+    The entry-level ``total_calls == sum(bucket.calls)`` check lives in the
+    ``_parse_*`` callers, which own the total.
     """
     if not isinstance(buckets, dict):
         return False
     for bucket_name, block in buckets.items():
-        if not isinstance(bucket_name, str) or not isinstance(block, dict):
+        if (
+            not isinstance(bucket_name, str)
+            or bucket_name not in BUCKETS
+            or not isinstance(block, dict)
+        ):
             return False
-        if _as_nonneg_int(block.get("calls")) is None:
+        bucket_calls = _as_nonneg_int(block.get("calls"))
+        if bucket_calls is None:
             return False
         by_fn = block.get("by_fn")
         if not isinstance(by_fn, dict):
             return False
+        fn_total = 0
         for fn, fn_block in by_fn.items():
             if not isinstance(fn, str) or not fn or not isinstance(fn_block, dict):
                 return False
-            if _as_nonneg_int(fn_block.get("calls")) is None:
+            fn_calls = _as_nonneg_int(fn_block.get("calls"))
+            if fn_calls is None:
                 return False
             by_rv = fn_block.get("by_rv")
             if not isinstance(by_rv, dict):
                 return False
+            rv_total = 0
             for rv_key, rv_block in by_rv.items():
-                if not isinstance(rv_key, str) or not isinstance(rv_block, dict):
+                if (
+                    not isinstance(rv_key, str)
+                    or not _is_decimal_rv_key(rv_key)
+                    or not isinstance(rv_block, dict)
+                ):
                     return False
                 if not isinstance(rv_block.get("name"), str):
                     return False
-                if _as_nonneg_int(rv_block.get("count")) is None:
+                count = _as_nonneg_int(rv_block.get("count"))
+                if count is None:
                     return False
+                rv_total += count
+            if rv_total > fn_calls:
+                return False
+            fn_total += fn_calls
+        if fn_total != bucket_calls:
+            return False
     return True
+
+
+def _buckets_calls_total(buckets: dict[str, Any]) -> int:
+    """Sum ``calls`` over validated buckets (shape proven by the caller)."""
+    return sum(block["calls"] for block in buckets.values())
 
 
 def _parse_session_counters(
@@ -401,7 +447,9 @@ def _parse_session_counters(
     Returns None for any malformed shape. ``probes_lost`` is load-bearing for
     the ``complete`` flag, so a record without a usable value is garbage;
     ``isolation`` is informational and defaults to ``"unknown"`` (the T3
-    read-default) when absent or mistyped.
+    read-default) when absent or mistyped. ``total_calls`` must equal the sum
+    of the buckets exactly (I2); a mismatch means a corrupt or hand-edited
+    record and the whole record is skipped.
     """
     pid = _as_nonneg_int(record.get("pid"))
     total = _as_nonneg_int(record.get("total_calls"))
@@ -411,6 +459,8 @@ def _parse_session_counters(
         return None
     if not _counters_buckets_valid(buckets):
         return None
+    if total != _buckets_calls_total(buckets):
+        return None
     isolation = record.get("isolation")
     if not isinstance(isolation, str):
         isolation = "unknown"
@@ -418,13 +468,19 @@ def _parse_session_counters(
 
 
 def _parse_test_counters(entry: Any) -> tuple[int, int, dict[str, Any]] | None:
-    """Validate a per-test counter entry into (pid, total, buckets) or None."""
+    """Validate a per-test counter entry into (pid, total, buckets) or None.
+
+    Same fail-closed contract as session records (I2): shape, bucket
+    membership, exact totals, and the RV upper bound, or the entry is skipped.
+    """
     if not isinstance(entry, dict):
         return None
     pid = _as_nonneg_int(entry.get("pid"))
     total = _as_nonneg_int(entry.get("total_calls"))
     buckets: Any = entry.get("buckets")
     if pid is None or total is None or not _counters_buckets_valid(buckets):
+        return None
+    if total != _buckets_calls_total(buckets):
         return None
     return (pid, total, buckets)
 
@@ -465,23 +521,33 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     teardown reports, but no phase is assumed), segmented by
     ``IsolatedUnitReport`` (target, attempt) marker provenance exactly like
     :func:`report_log.iter_classification_occurrences` (reset at SessionStart;
-    a malformed marker resets to unattributed; never raises).
+    a malformed marker resets to unattributed; never raises). Groups are
+    additionally namespaced by SessionStart scope (C3a), so a repeated marker
+    or pid in a later session never reconciles against an earlier one.
 
     Reconciliation per group: every session record is summed (retries count
     twice — both runs made real calls); a buffered per-test entry folds only
     when its pid has NO session record in that group (the crashed/timed-out
     fallback). A group is complete iff a session record exists, no fallback
     was used, and session ``probes_lost`` is 0; the run is complete iff every
-    group is. Returns None when the JSONL carries no counters data, so old
-    artifacts stay clean. Malformed records are ignored, never raised.
+    group is. A segment with at least one TestReport but zero counters data in
+    an opened, unfinished session scope is an executed-but-counterless unit
+    (typically a first-test crash): it emits an EMPTY group, which flips the
+    run to ``complete: false`` instead of vanishing (C2). A finished scope
+    with zero counters predates the feature (old artifact): no group, and
+    None is returned when no group exists anywhere. Malformed records are
+    ignored, never raised.
     """
-    groups: dict[tuple[str | None, int | None], _CountersGroup] = {}
+    groups: dict[tuple[int, str | None, int | None], _CountersGroup] = {}
     pids: dict[int, _CountersPid] = {}
     merged: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    current: tuple[str | None, int | None] = (None, None)
-    found = False
+    scope = 0
+    current: tuple[int, str | None, int | None] = (0, None, None)
+    opened: set[int] = set()
+    finished: set[int] = set()
+    reported: set[tuple[int, str | None, int | None]] = set()
 
-    def _group(key: tuple[str | None, int | None]) -> _CountersGroup:
+    def _group(key: tuple[int, str | None, int | None]) -> _CountersGroup:
         return groups.setdefault(key, _CountersGroup())
 
     def _pid_state(pid: int) -> _CountersPid:
@@ -492,7 +558,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     for rec in _iter_report_log_records(jsonl_path):
         report_type = rec.get("$report_type", "TestReport")
         if report_type == "SessionStart":
-            current = (None, None)
+            scope += 1
+            opened.add(scope)
+            current = (scope, None, None)
             continue
         if report_type == _ISOLATED_UNIT_REPORT_TYPE:
             target = rec.get("target")
@@ -503,9 +571,12 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 and isinstance(attempt, int)
                 and not isinstance(attempt, bool)
             ):
-                current = (target, attempt)
+                current = (scope, target, attempt)
             else:
-                current = (None, None)
+                current = (scope, None, None)
+            continue
+        if report_type == "SessionFinish":
+            finished.add(scope)
             continue
         if report_type == CALL_COUNTERS_REPORT_TYPE:
             parsed = _parse_session_counters(rec)
@@ -523,9 +594,15 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             pid_state.has_session = True
             pid_state.sessions_total += total
             pid_state.sessions_probes_lost += probes_lost
-            found = True
             continue
         if report_type != "TestReport":
+            continue
+        reported.add(current)
+        # I1: the shared _user_property iterates the container blindly, so a
+        # non-list container (e.g. user_properties: 1) would raise TypeError
+        # and abort the whole extraction; validate locally and skip instead
+        # (the report still counts as execution evidence above).
+        if not isinstance(rec.get("user_properties"), (list, tuple)):
             continue
         entry = _parse_test_counters(_user_property(rec, CALL_COUNTERS_PROPERTY))
         if entry is None:
@@ -543,9 +620,16 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             pid_state = _pid_state(pid)
             pid_state.fallback_total += total
             pid_state.fallback_used = True
-            found = True
 
-    if not found:
+    # C2: executed-but-counterless segments (reports, zero counters, opened
+    # scope, no finish) emit an empty group so the run reads incomplete. A
+    # finished scope with zero counters is an old artifact (no group); a
+    # marker with zero reports is a static skip (no group).
+    for key in reported:
+        if key not in groups and key[0] in opened and key[0] not in finished:
+            groups[key] = _CountersGroup()
+
+    if not groups:
         return None
     complete = all(
         group.has_session and not group.fallback_used and group.session_probes_lost == 0

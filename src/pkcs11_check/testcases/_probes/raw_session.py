@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from pkcs11_check.core.call_counters import (
+    current_bucket,
     flatten_current,
     probes_lost,
     record_call,
@@ -124,10 +125,12 @@ def _get_function_list(lib: ctypes.CDLL) -> tuple[ctypes.c_void_p | None, int]:
     funclist_ptr = ctypes.c_void_p()
     # This runs on the raw CDLL before ctx.lib is wrapped, so the call is recorded
     # explicitly (mirrors the C_GetFunctionList site in raw/api.py). A raising
-    # attempt counts entry-only (crash parity), not silence.
-    record_call("C_GetFunctionList")
+    # attempt counts entry-only (crash parity), not silence. The bucket is
+    # captured once so a mid-call switch cannot split the pair.
+    bucket = current_bucket()
+    record_call("C_GetFunctionList", bucket=bucket)
     rv = get_fn_list(ctypes.byref(funclist_ptr))
-    record_return("C_GetFunctionList", int(rv))
+    record_return("C_GetFunctionList", int(rv), bucket=bucket)
     if rv != 0:  # CKR_OK = 0
         return None, int(rv)
     return funclist_ptr, int(rv)
@@ -161,8 +164,12 @@ class _CountingFuncPtr:
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_func", func)
 
-    def __call__(self, *args: Any) -> Any:
-        record_call(self._name)
+    def __call__(self, *args: Any, bucket: str | None = None) -> Any:
+        # Keyword-only: C arguments always arrive positionally through ctypes,
+        # so this can never collide with a call argument. The bucket is
+        # captured once so a mid-call switch cannot split the pair.
+        target = bucket if bucket is not None else current_bucket()
+        record_call(self._name, bucket=target)
         result = self._func(*args)
         try:
             rv = int(result)
@@ -171,7 +178,7 @@ class _CountingFuncPtr:
             # RV: the value still passes through and only the entry is counted,
             # exactly as if the call had not returned.
             return result
-        record_return(self._name, rv)
+        record_return(self._name, rv, bucket=target)
         return result
 
     def __getattr__(self, name: str) -> Any:

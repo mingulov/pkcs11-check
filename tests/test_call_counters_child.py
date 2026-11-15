@@ -13,6 +13,7 @@ import ctypes
 import json
 import os
 import subprocess
+from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -1105,3 +1106,153 @@ def test_all_cdll_load_sites_allowlisted() -> None:
         + "\n".join(f"- {p}" for p in problems)
         + "\nSee docs/call-counters-design.md (Capture section)."
     )
+
+
+# --- Codex R1 fix round (C1): probe-teardown lifecycle ---
+
+
+class _LifecycleRaw:
+    """RawPKCS11 double whose cleanup advances live state like ``_call`` does.
+
+    The legacy accessors read the LIVE dicts (cleanup traffic lands in them,
+    exactly as ``RawPKCS11._call`` mutates ``_call_log``); the counter
+    recordings mirror the ``_call`` choke-point wiring.
+    """
+
+    def __init__(self) -> None:
+        self.live_log: dict[str, int] = {"C_Login": 1}
+        self.live_log_ok: dict[str, int] = {"C_Login": 1}
+
+    @property
+    def call_log(self) -> dict[str, int]:
+        return dict(self.live_log)
+
+    @property
+    def mechanism_counts(self) -> dict[int, int]:
+        return {}
+
+    @property
+    def call_log_ok(self) -> dict[str, int]:
+        return dict(self.live_log_ok)
+
+    @property
+    def mechanism_rv_counts(self) -> dict[int, dict[int, int]]:
+        return {}
+
+    def C_CloseSession(self, session: int) -> int:  # noqa: N802 - mirrors the C_* API name
+        del session
+        self.live_log["C_CloseSession"] = self.live_log.get("C_CloseSession", 0) + 1
+        self.live_log_ok["C_CloseSession"] = self.live_log_ok.get("C_CloseSession", 0) + 1
+        call_counters.record_call("C_CloseSession")
+        call_counters.record_return("C_CloseSession", 0)
+        return 0
+
+    def C_Finalize(self, reserved: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+        del reserved
+        self.live_log["C_Finalize"] = self.live_log.get("C_Finalize", 0) + 1
+        self.live_log_ok["C_Finalize"] = self.live_log_ok.get("C_Finalize", 0) + 1
+        call_counters.record_call("C_Finalize")
+        call_counters.record_return("C_Finalize", 0)
+        return 0
+
+
+def test_probe_teardown_counters_include_cleanup_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # C1: the coverage write happens AFTER close/finalize, so the flattened
+    # counters include cleanup traffic; the legacy fields are snapshotted
+    # BEFORE cleanup, so their bytes are unchanged (no C_CloseSession there).
+    call_counters.record_direct_call("C_Login", 0)
+    raw = _LifecycleRaw()
+    teardown = session._ProbeTeardown(raw)  # type: ignore[arg-type]
+    teardown.sh = 11
+    teardown.initialized = True
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    teardown()
+    data = json.loads(cov.read_text(encoding="utf-8"))
+    assert data["call_log"] == {"C_Login": 1}
+    assert data["call_log_ok"] == {"C_Login": 1}
+    assert raw.live_log == {"C_Login": 1, "C_CloseSession": 1, "C_Finalize": 1}
+    rows = data["call_counters"]
+    assert ["C_Login", 0, 1] in rows
+    assert ["C_CloseSession", 0, 1] in rows
+    assert ["C_Finalize", 0, 1] in rows
+
+
+def test_probe_teardown_cleanup_crash_writes_no_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # C1: a cleanup crash (access violation inside C_Finalize) must not leave
+    # a stale payload behind: no write means the launcher accounts one loss.
+    class _CrashingRaw(_LifecycleRaw):
+        def C_Finalize(self, reserved: Any) -> int:  # noqa: N802 - mirrors the C_* API name
+            del reserved
+            call_counters.record_call("C_Finalize")
+            raise OSError("exception: access violation reading 0x00000000")
+
+    call_counters.record_direct_call("C_Login", 0)
+    teardown = session._ProbeTeardown(_CrashingRaw())  # type: ignore[arg-type]
+    teardown.sh = 11
+    teardown.initialized = True
+    cov = tmp_path / "cov.json"
+    monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
+    with pytest.raises(OSError, match="access violation"):
+        teardown()
+    assert not cov.exists()
+    assert _subprocess_preamble.ingest_subprocess_coverage(str(cov)) is False
+
+
+# --- Codex R1 fix round (I1): malformed legacy sections ---
+
+
+_DrainFn = Callable[[], tuple[Counter[str], Counter[int], Counter[str], dict[int, Counter[int]]]]
+
+_INGEST_DRAIN_FNS: tuple[tuple[_IngestFn, _DrainFn], ...] = (
+    (
+        _subprocess_preamble.ingest_subprocess_coverage,
+        _subprocess_preamble.get_preamble_subprocess_coverage,
+    ),
+    (_raw_subprocess.ingest_raw_subprocess_coverage, _raw_subprocess.get_raw_subprocess_coverage),
+)
+
+
+@pytest.mark.parametrize(("ingest", "drain"), _INGEST_DRAIN_FNS, ids=["session", "raw"])
+def test_ingest_ignores_garbage_legacy_sections(
+    ingest: _IngestFn, drain: _DrainFn, tmp_path: Path
+) -> None:
+    # I1: non-dict legacy sections must not raise (the old code raised
+    # TypeError inside Counter.update, aborting before the counters folded);
+    # valid counters still fold and the channel reports usable.
+    payload = _child_payload()
+    payload["call_log"] = 1
+    payload["call_log_ok"] = "garbage"
+    payload["mechanism_counts"] = 1
+    payload["mechanism_rv_counts"] = [2]
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is True
+    assert call_counters.serialize_current()["total_calls"] == 3
+    assert call_counters.probes_lost() == 0
+    func, mech, func_ok, mech_rv = drain()
+    assert func == {} and mech == {} and func_ok == {} and mech_rv == {}
+
+
+@pytest.mark.parametrize(("ingest", "drain"), _INGEST_DRAIN_FNS, ids=["session", "raw"])
+def test_ingest_skips_garbage_legacy_values_but_folds_valid(
+    ingest: _IngestFn, drain: _DrainFn, tmp_path: Path
+) -> None:
+    # I1: garbage scalar values inside legacy sections are skipped entry by
+    # entry; valid entries in the same section still fold.
+    payload = _child_payload()
+    payload["call_log"] = {"C_Login": "bogus", "C_Sign": 2, "": 5}
+    payload["call_log_ok"] = {"C_Login": 1, "C_Sign": None}
+    payload["mechanism_counts"] = {"7": 3, "bogus": 1}
+    payload["mechanism_rv_counts"] = {"7": {"0": 2, "x": 1}}
+    cov = _write_coverage_file(tmp_path / "cov.json", payload)
+    assert ingest(cov) is True
+    assert call_counters.serialize_current()["total_calls"] == 3
+    func, mech, func_ok, mech_rv = drain()
+    assert func == {"C_Sign": 2}
+    assert func_ok == {"C_Login": 1}
+    assert mech == {7: 3}
+    assert mech_rv == {7: {0: 2}}
