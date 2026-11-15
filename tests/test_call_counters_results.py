@@ -1389,3 +1389,94 @@ def test_merge_heterogeneous_counters_is_byte_identical(tmp_path: Path) -> None:
     assert list(buckets["test"]["by_fn"]) == ["C_Sign"]
     round_buckets = merged_ab["call_counters"]["by_round"][f"shardA/{_MR1}"]["by_bucket"]
     assert list(round_buckets["buckets"]) == ["test"]
+
+
+def test_merge_generated_label_collision_with_literal_gets_counter_suffix(
+    tmp_path: Path,
+) -> None:
+    # Important R3: a generated `shard@h` must not collide with a literal
+    # `shard@h` basename; final-label collisions resolve deterministically
+    # with @2/@3, independent of CLI order.
+    host_a = tmp_path / "hostA" / "shard"
+    host_b = tmp_path / "hostB" / "shard"
+    digest_a = hashlib.sha256(str(host_a.resolve()).encode("utf-8")).hexdigest()[:8]
+    digest_b = hashlib.sha256(str(host_b.resolve()).encode("utf-8")).hexdigest()[:8]
+    assert digest_a != digest_b
+    host_c = tmp_path / "hostC" / f"shard@{digest_a}"
+    _round_shard(
+        host_a,
+        "a.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _round_session_record(100, 10, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _round_shard(
+        host_b,
+        "b.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "b.py", "attempt": 0},
+            _round_session_record(100, 5, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _round_shard(
+        host_c,
+        "c.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "c.py", "attempt": 0},
+            _round_session_record(100, 7, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    merged_abc = merge_shard_dirs([host_a, host_b, host_c], tmp_path / "merged_abc")
+    merged_cba = merge_shard_dirs([host_c, host_b, host_a], tmp_path / "merged_cba")
+    assert merged_abc["call_counters"] == merged_cba["call_counters"]
+    assert json.dumps(merged_abc["call_counters"]) == json.dumps(merged_cba["call_counters"])
+    block = merged_abc["call_counters"]
+    assert block["total_calls"] == 22
+    assert block["complete"] is True
+    assert len(block["by_round"]) == 3
+    assert sorted(b["total_calls"] for b in block["by_round"].values()) == [5, 7, 10]
+    assert len(set(block["by_round"])) == 3
+    assert any("@2" in key or "@3" in key for key in block["by_round"])
+
+
+def test_merge_conflicting_rv_names_is_byte_identical(tmp_path: Path) -> None:
+    # Important R3: hex vs symbolic names for the same vendor RV merge
+    # deterministically (symbolic wins) in both shard orders.
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    vendor_rv = str(0x80000001)
+    _round_shard(
+        shard_a,
+        "a.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _het_session_record(100, "test", "C_Sign", vendor_rv, "0x80000001", 10, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _round_shard(
+        shard_b,
+        "b.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "b.py", "attempt": 0},
+            _het_session_record(200, "test", "C_Sign", vendor_rv, "CKR_VENDOR_FOO", 5, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    merged_ab = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged_ab")
+    merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
+    assert merged_ab["call_counters"] == merged_ba["call_counters"]
+    assert json.dumps(merged_ab["call_counters"]) == json.dumps(merged_ba["call_counters"])
+    leaf = merged_ab["call_counters"]["by_bucket"]["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"][
+        vendor_rv
+    ]
+    assert leaf == {"name": "CKR_VENDOR_FOO", "count": 15}

@@ -257,12 +257,33 @@ def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
                 _exit_counts[(target, fn, rv)] += count
 
 
+def _is_hex_rv_name(name: str) -> bool:
+    """Whether ``name`` is a hex fallback (``0x...``) rather than symbolic."""
+    return name.startswith("0x") or name.startswith("0X")
+
+
+def _resolve_rv_name(first: str, second: str) -> str:
+    """Deterministically resolve conflicting observed RV leaf names.
+
+    Prefers the non-hex (symbolic) name; ties resolve to the
+    lexicographically smallest. Keeps observed names (no rewriting), so both
+    merge orders yield the identical leaf.
+    """
+    first_hex = _is_hex_rv_name(first)
+    second_hex = _is_hex_rv_name(second)
+    if first_hex != second_hex:
+        return second if first_hex else first
+    return min(first, second)
+
+
 def merge_serialized(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     """Add ``incoming`` counts into ``target`` in place and return ``target``.
 
     Both dicts must have the serialized schema shape; buckets, functions, or
     RVs missing from ``target`` are created (leaf dicts are copied, never
-    aliased). Touches no global counter state.
+    aliased). On leaf-name conflict the deterministic rule wins: prefer the
+    non-``0x`` (symbolic) name, ties to the lexicographically smallest.
+    Touches no global counter state.
     """
     target["total_calls"] = target.get("total_calls", 0) + incoming.get("total_calls", 0)
     target_buckets: dict[str, Any] = target.setdefault("buckets", {})
@@ -284,6 +305,10 @@ def merge_serialized(target: dict[str, Any], incoming: dict[str, Any]) -> dict[s
                     }
                 else:
                     existing["count"] += rv_block["count"]
+                    existing_name = existing.get("name")
+                    incoming_name = rv_block.get("name")
+                    if isinstance(existing_name, str) and isinstance(incoming_name, str):
+                        existing["name"] = _resolve_rv_name(existing_name, incoming_name)
     return target
 
 

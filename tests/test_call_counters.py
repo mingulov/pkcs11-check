@@ -623,3 +623,64 @@ def test_phase_scopes_worker_threads_and_yields_to_regions() -> None:
         with call_counters._phase("test"):
             raise RuntimeError("boom")
     assert call_counters.current_bucket() == "session_provisioning"
+
+
+def _rv_block(name: str, count: int, total: int) -> dict[str, Any]:
+    return {
+        "total_calls": total,
+        "buckets": {
+            "test": {
+                "calls": total,
+                "by_fn": {
+                    "C_Sign": {
+                        "calls": total,
+                        "by_rv": {"2147483649": {"name": name, "count": count}},
+                    }
+                },
+            }
+        },
+    }
+
+
+def test_merge_serialized_prefers_symbolic_rv_name() -> None:
+    # Important R3: on leaf-name conflict prefer the non-0x (symbolic) name;
+    # both merge orders yield the identical block including the name.
+    import json as _json
+
+    hex_block = _rv_block("0x80000001", 2, 2)
+    sym_block = _rv_block("CKR_VENDOR_FOO", 3, 3)
+    forward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    call_counters.merge_serialized(forward, hex_block)
+    call_counters.merge_serialized(forward, sym_block)
+    leaf = forward["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
+    assert leaf == {"name": "CKR_VENDOR_FOO", "count": 5}
+    backward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    call_counters.merge_serialized(backward, sym_block)
+    call_counters.merge_serialized(backward, hex_block)
+    assert backward == forward
+    assert _json.dumps(backward) == _json.dumps(forward)
+
+
+def test_merge_serialized_rv_name_tie_breaks_lexicographically() -> None:
+    # Ties (both symbolic or both hex) resolve to the smallest name, both orders.
+    import json as _json
+
+    first = _rv_block("CKR_B_VENDOR", 1, 1)
+    second = _rv_block("CKR_A_VENDOR", 1, 1)
+    forward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    call_counters.merge_serialized(forward, first)
+    call_counters.merge_serialized(forward, second)
+    leaf = forward["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
+    assert leaf == {"name": "CKR_A_VENDOR", "count": 2}
+    backward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    call_counters.merge_serialized(backward, second)
+    call_counters.merge_serialized(backward, first)
+    assert backward == forward
+    assert _json.dumps(backward) == _json.dumps(forward)
+    upper = _rv_block("0x80000002", 1, 1)
+    lower = _rv_block("0x80000001", 1, 1)
+    both_hex: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    call_counters.merge_serialized(both_hex, upper)
+    call_counters.merge_serialized(both_hex, lower)
+    hex_leaf = both_hex["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
+    assert hex_leaf == {"name": "0x80000001", "count": 2}
