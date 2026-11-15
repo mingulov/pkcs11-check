@@ -501,6 +501,43 @@ def _marker_is_static_skip(rec: dict[str, Any]) -> bool:
     )
 
 
+def _is_framing_marker(rec: dict[str, Any], following: dict[str, Any] | None) -> bool:
+    """Whether ``rec`` is merged-writer framing re-stated after the bookend.
+
+    The merged writer (``_report_records._write_report_jsonl_from_record_sources``)
+    emits ``_isolated_unit_report(unit, 0)`` BEFORE a unit's records when they do
+    not start with a marker; every production cache starting with SessionStart
+    continues with that unit's OWN ``(unit, 0)`` marker (the cache writer's
+    ``next_attempt`` is still 0 before its first emission), so a framing marker
+    is always immediately re-stated after the bookend with the identical
+    (target, attempt). A genuine attempt marker that merely precedes the next
+    scope's SessionStart (a truncated attempt 0 before attempt 1's bookend)
+    names a DIFFERENT (target, attempt) than the following scope's marker.
+
+    Only an exact well-formed (target, attempt) re-statement positively
+    establishes framing; anything else (different/absent/malformed following
+    marker, EOF) keeps current-scope attribution, so an unfinished marked
+    scope degrades to a visible C2b empty group instead of vanishing.
+    Static-skip markers carry explicit never-executed provenance and never
+    move: moving one would mark the new scope's segment static-skipped and
+    suppress its own unfinished-segment accounting.
+    """
+    if following is None or following.get("$report_type") != _ISOLATED_UNIT_REPORT_TYPE:
+        return False
+    if _marker_is_static_skip(rec):
+        return False
+    target = rec.get("target")
+    attempt = rec.get("attempt")
+    return (
+        isinstance(target, str)
+        and bool(target)
+        and isinstance(attempt, int)
+        and not isinstance(attempt, bool)
+        and target == following.get("target")
+        and attempt == following.get("attempt")
+    )
+
+
 def _parse_test_counters(entry: Any) -> tuple[int, int, dict[str, Any], str] | None:
     """Validate a per-test counter entry into (pid, total, buckets, run) or None.
 
@@ -599,9 +636,9 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     ``IsolatedUnitReport`` (target, attempt) marker provenance exactly like
     :func:`report_log.iter_classification_occurrences` (reset at SessionStart;
     a malformed marker resets to unattributed; never raises), plus a
-    one-record marker lookahead: a marker immediately followed by SessionStart
-    (merged-writer framing) belongs to the NEW scope, otherwise to the
-    current scope. Groups are
+    two-record marker lookahead: a marker immediately followed by SessionStart
+    AND re-stated identically after the bookend (merged-writer framing)
+    belongs to the NEW scope, otherwise to the current scope. Groups are
     additionally namespaced by SessionStart scope (C3a), so a repeated marker
     or pid in a later session never reconciles against an earlier one, and by
     round (the record's ``run_id``) ABOVE the session scope, so each CLI
@@ -660,11 +697,13 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
 
     # Streamed via the shared binary-decode iterator (report_log.iter_report_log_records)
     # like the coverage/provisioning extractors above: one bad byte drops one line.
-    # One-record marker lookahead: the merged writer emits a unit's framing
+    # Two-record marker lookahead: the merged writer emits a unit's framing
     # marker BEFORE that unit's SessionStart, so a marker immediately followed
-    # by SessionStart belongs to the NEW scope (applied after the bookend);
-    # otherwise it belongs to the current scope (marker+EOF and
-    # marker+TestReport keep current-scope behavior).
+    # by SessionStart AND re-stated identically after the bookend belongs to
+    # the NEW scope (applied after the bookend); a marker naming a different
+    # (target, attempt) than the following scope's marker is a genuine attempt
+    # marker (a truncated attempt before the next attempt's bookend) and stays
+    # in the current scope, as do marker+EOF and marker+TestReport.
     def _apply_marker(rec: dict[str, Any], scope_id: int) -> None:
         nonlocal current
         target = rec.get("target")
@@ -684,39 +723,41 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
 
     records = _iter_report_log_records(jsonl_path)
     pending: dict[str, Any] | None = next(records, None)
+    nxt: dict[str, Any] | None = next(records, None)
     while pending is not None:
         rec = pending
+        pending = nxt
         nxt = next(records, None)
         report_type = rec.get("$report_type", "TestReport")
         if (
             report_type == _ISOLATED_UNIT_REPORT_TYPE
-            and nxt is not None
-            and nxt.get("$report_type") == "SessionStart"
+            and pending is not None
+            and pending.get("$report_type") == "SessionStart"
         ):
-            scope += 1
-            opened.add(scope)
-            current = (scope, None, None)
+            if _is_framing_marker(rec, nxt):
+                scope += 1
+                opened.add(scope)
+                current = (scope, None, None)
+                _apply_marker(rec, scope)
+                pending = nxt
+                nxt = next(records, None)
+                continue
             _apply_marker(rec, scope)
-            pending = next(records, None)
             continue
         if report_type == "SessionStart":
             scope += 1
             opened.add(scope)
             current = (scope, None, None)
-            pending = nxt
             continue
         if report_type == _ISOLATED_UNIT_REPORT_TYPE:
             _apply_marker(rec, scope)
-            pending = nxt
             continue
         if report_type == "SessionFinish":
             finished.add(scope)
-            pending = nxt
             continue
         if report_type == CALL_COUNTERS_REPORT_TYPE:
             parsed = _parse_session_counters(rec)
             if parsed is None:
-                pending = nxt
                 continue
             pid, total, buckets, probes_lost, isolation, run = parsed
             _fold(run, total, buckets)
@@ -730,10 +771,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             pid_state.has_session = True
             pid_state.sessions_total += total
             pid_state.sessions_probes_lost += probes_lost
-            pending = nxt
             continue
         if report_type != "TestReport":
-            pending = nxt
             continue
         reported.add(current)
         # I1: the shared _user_property iterates the container blindly, so a
@@ -741,15 +780,12 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         # and abort the whole extraction; validate locally and skip instead
         # (the report still counts as execution evidence above).
         if not isinstance(rec.get("user_properties"), (list, tuple)):
-            pending = nxt
             continue
         parsed_entry = _parse_test_counters(_user_property(rec, CALL_COUNTERS_PROPERTY))
         if parsed_entry is None:
-            pending = nxt
             continue
         entry_pid, entry_total, entry_buckets, entry_run = parsed_entry
         _group((entry_run, *current)).pending.append((entry_pid, entry_total, entry_buckets))
-        pending = nxt
 
     # Session records sort after the test reports they supersede, so fallback
     # folds only now that every group's session-pid set is final.

@@ -341,7 +341,11 @@ Small seams, each following an existing pattern.
   counters were recovered (new return; existing callers may ignore it).
 - `runner.py` calls `note_lost_probe()` exactly when ingest reports no
   usable counters (missing/corrupt coverage file included - ingest never
-  raises).
+  raises). Ordering guarantee: coverage ingest plus loss accounting run
+  BEFORE the optional diagnostic rv-trace recording, so a poisoned trace
+  marker can never bypass counter ingestion; the shared trace parser
+  additionally skips undecodable markers per marker (`JSONDecodeError`,
+  `RecursionError`, `ValueError`) without changing valid-trace behavior.
 - Below the probe child: the isolation grandchild writes a private coverage
   path the probe child ingests; the fork child (untransmittable via
   `os._exit` by design) is accounted lost by its reaping parent; the
@@ -361,12 +365,18 @@ Small seams, each following an existing pattern.
   totals, `sum(by_rv) <= calls`; a violating record is skipped whole, and a
   malformed `user_properties` container is ignored without raising.
 
-A one-record marker lookahead keeps merged-writer framing from creating a
+A two-record marker lookahead keeps merged-writer framing from creating a
 fictitious startup-loss group: a marker immediately followed by
-`SessionStart` belongs to the NEW scope (applied after the bookend),
-otherwise to the current scope. Marker+EOF and marker+`TestReport` keep
-current-scope behavior, so `C2`/`C2b` still fire for genuinely counterless
-segments.
+`SessionStart` AND re-stated identically after the bookend (same target and
+attempt - the merged writer always duplicates the new scope's own `(unit, 0)`
+marker) belongs to the NEW scope (applied after the bookend). A marker
+naming a different `(target, attempt)` than the following scope's marker is
+a genuine attempt marker - a truncated attempt before the next attempt's
+bookend - and stays in the current scope, as do marker+EOF,
+marker+`TestReport`, and static-skip markers (explicit never-executed
+provenance never moves), so `C2`/`C2b` still fire for genuinely counterless
+segments. Any residual ambiguity defaults to visible incompleteness (an
+empty group), never silent loss.
 - `write_isolated_json_report(..., call_counters=None)` sets
   `payload["call_counters"]` when truthy; the isolated path extracts per
   unit JSONL and passes it in.

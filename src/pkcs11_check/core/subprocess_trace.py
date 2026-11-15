@@ -18,12 +18,22 @@ _subprocess_rv_traces: list[list[dict[str, Any]]] = []
 
 
 def extract_subprocess_rv_trace(text: str) -> list[dict[str, Any]]:
-    """Return the last valid RV trace marker from ``text``."""
+    """Return the last valid RV trace marker from ``text``.
+
+    Per-marker fail-soft: a marker whose JSON cannot be decoded -- malformed
+    (``JSONDecodeError``), hostile nesting (``RecursionError``), or an
+    out-of-range literal such as a huge int (``ValueError``) -- is skipped, so
+    one poisoned marker can neither raise nor hide an adjacent valid trace.
+    Decodable markers take the exact same path as before.
+    """
     trace: list[dict[str, Any]] = []
     for match in RV_TRACE_STDOUT_RE.finditer(text):
         try:
             value = json.loads(match.group(1))
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
+            # JSONDecodeError subclasses ValueError; RecursionError escapes the
+            # decoder on hostile nesting. Skipping keeps this diagnostic parse
+            # from ever blocking the caller's counter/loss accounting.
             continue
         if isinstance(value, list):
             trace = [entry for entry in value if isinstance(entry, dict)]

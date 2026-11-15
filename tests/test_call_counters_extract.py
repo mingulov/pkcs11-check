@@ -1189,3 +1189,76 @@ def test_merged_writer_framing_marker_creates_no_fictitious_group(
     assert payload["total_calls"] == 15
     assert sorted(payload["by_round"]) == [run_id]
     assert payload["by_round"][run_id]["complete"] is True
+
+
+def test_truncated_attempt_marker_before_next_session_start_stays_incomplete(
+    tmp_path: Path,
+) -> None:
+    # Critical R4 through the actual cache writer + extractor: attempt 0's
+    # log truncates right after SessionStart (startup crash before any
+    # record) while the attempt-1 retry completes. The cache writer emits
+    # Start,mark(a,0),Start,mark(a,1),counters,Finish; attempt 0's real
+    # marker must stay in its own scope (C2b empty group -> complete:false),
+    # not ride the framing lookahead into attempt 1's finished scope.
+    from pkcs11_check.core._report_records import (
+        _report_record_cache_path,
+        _write_unit_report_record_cache_from_jsonl_paths,
+    )
+
+    state_file = tmp_path / "state.json"
+    attempt0 = _write_jsonl(
+        tmp_path / "attempt0.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+        ],
+    )
+    attempt1 = _write_jsonl(
+        tmp_path / "attempt1.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _round_session(100, 5, _R1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _write_unit_report_record_cache_from_jsonl_paths(state_file, "a.py", [attempt0, attempt1])
+    cache_path = _report_record_cache_path(state_file, "a.py")
+    shapes = [
+        json.loads(line).get("$report_type")
+        for line in cache_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert shapes == [
+        "SessionStart",
+        "IsolatedUnitReport",
+        "SessionStart",
+        "IsolatedUnitReport",
+        "CallCountersReport",
+        "SessionFinish",
+    ]
+    payload = extract_call_counters_from_jsonl(cache_path)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 5
+    assert payload["by_round"][_R1]["complete"] is True
+    assert payload["by_round"][""]["complete"] is False
+
+
+def test_static_skip_marker_before_session_start_never_moves(tmp_path: Path) -> None:
+    # R4 pin: a static-skip marker carries explicit never-executed
+    # provenance, so even when immediately followed by SessionStart and an
+    # identical plain marker it stays in its own (unopened) scope instead of
+    # riding the framing lookahead. Moving it would mark the new scope's
+    # segment static-skipped and suppress its C2b empty group (silently
+    # complete/None); staying keeps the truncated scope visibly incomplete.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            _static_skip_marker("a.py", 0),
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
