@@ -1423,3 +1423,62 @@ def test_workload_counters_deep_marker_json_is_lost() -> None:
     test_threading._ingest_workload_counters(_workload_stdout(deep))
     assert call_counters.probes_lost() == 1
     assert call_counters.serialize_current()["total_calls"] == 0
+
+
+def _trace_poison_payloads() -> list[str]:
+    # Decoder-hostile trace payloads: nesting past the ~1000-frame parse
+    # depth (RecursionError) and an int past the 4300-digit limit (ValueError).
+    return ["[" * 100_000 + "]" * 100_000, '[{"i": ' + "9" * 6000 + "}]"]
+
+
+@pytest.mark.parametrize("poison", _trace_poison_payloads(), ids=["recursion", "bigint"])
+def test_run_probe_poisoned_trace_keeps_valid_counters(
+    monkeypatch: pytest.MonkeyPatch, poison: str
+) -> None:
+    # Important R4: valid coverage counters must be ingested (and loss
+    # accounted) independently of the optional diagnostic rv-trace parse. A
+    # poisoned P11_RV_TRACE_JSON marker must neither raise out of run_probe
+    # nor cost the child's calls.
+    from pkcs11_check.core.subprocess_trace import (
+        RV_TRACE_MARKER,
+        drain_subprocess_rv_trace,
+    )
+
+    drain_subprocess_rv_trace()
+    drain_process_observations()
+
+    def _fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        cov_path = str(kwargs["env"]["_P11CHECK_SUBPROCESS_COVERAGE"])
+        Path(cov_path).write_text(json.dumps(_child_payload()), encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, f"{RV_TRACE_MARKER}{poison}\n", "")
+
+    monkeypatch.setattr("pkcs11_check.testcases._probes.runner.subprocess.run", _fake_run)
+    try:
+        result = run_probe("_echo", {"module_path": "/x.so"})
+    finally:
+        _drain_probe_side_effects()
+    assert result.returncode == 0
+    assert call_counters.probes_lost() == 0
+    assert call_counters.serialize_current()["total_calls"] == 3
+    assert result.observation is not None
+    assert result.observation["termination"]["kind"] == "exit"
+    assert drain_subprocess_rv_trace() == []
+
+
+@pytest.mark.parametrize("poison", _trace_poison_payloads(), ids=["recursion", "bigint"])
+def test_extract_subprocess_rv_trace_skips_poisoned_marker(poison: str) -> None:
+    # Important R4: one undecodable marker is skipped per-marker, so a valid
+    # adjacent trace still parses instead of the whole extraction raising.
+    from pkcs11_check.core.subprocess_trace import RV_TRACE_MARKER, extract_subprocess_rv_trace
+
+    valid = '[{"i": 0, "fn": "C_GetInfo", "rv": 7}]'
+    text = f"{RV_TRACE_MARKER}{poison}\n{RV_TRACE_MARKER}{valid}\n"
+    assert extract_subprocess_rv_trace(text) == [{"i": 0, "fn": "C_GetInfo", "rv": 7}]
+
+
+@pytest.mark.parametrize("poison", _trace_poison_payloads(), ids=["recursion", "bigint"])
+def test_extract_subprocess_rv_trace_poison_only_is_empty(poison: str) -> None:
+    # Important R4: poison with no valid marker yields no trace, never raises.
+    from pkcs11_check.core.subprocess_trace import RV_TRACE_MARKER, extract_subprocess_rv_trace
+
+    assert extract_subprocess_rv_trace(f"{RV_TRACE_MARKER}{poison}\n") == []

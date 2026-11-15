@@ -237,8 +237,6 @@ def run_probe(
         if rc is not None and not timed_out and _module_terminated_process(rc, err, cov_path):
             err += f"\n{SUBPROCESS_ABRUPT_EXIT_MARKER}:{rc}\n"
 
-        record_subprocess_rv_trace(out, err)  # I7
-
         counters_ok: bool
         if coverage == "raw":
             counters_ok = ingest_raw_subprocess_coverage(cov_path)  # I6
@@ -249,6 +247,12 @@ def run_probe(
             # payload without counters): account it as lost (fw#73). This is the
             # only lost-probe accounting site; ingests never account loss.
             note_lost_probe()
+
+        # I7 AFTER ingest + loss accounting: the rv-trace is an optional
+        # diagnostic parse, so it must never run before (or block) counter
+        # ingestion -- a poisoned trace marker would otherwise bypass both
+        # ingestion and loss accounting (fw#73).
+        record_subprocess_rv_trace(out, err)  # I7
 
         observation = build_process_observation(
             probe, "probe", 0, rc, timed_out=timed_out, stderr=err
