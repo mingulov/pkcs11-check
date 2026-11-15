@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -350,10 +351,16 @@ def _make_load_double() -> Any:
 
     raw = object.__new__(RawPKCS11)
     raw._funcs = {}
+    raw._lib = None
+    raw._interface_version = None
+    raw._missing_function_list_names = set()
+    # The win32 prologue of _load_from_lib appends to this (__init__ line); the
+    # guard is sys.platform-based so Linux doubles never noticed its absence.
+    raw._dll_dir_handles = []
     return raw
 
 
-def test_load_from_lib_records_c_get_interface() -> None:
+def test_load_from_lib_records_c_get_interface(tmp_path: Path) -> None:
     import ctypes
     from types import SimpleNamespace
     from unittest.mock import patch
@@ -371,8 +378,11 @@ def test_load_from_lib_records_c_get_interface() -> None:
 
     fake_lib = SimpleNamespace(C_GetInterface=_fake_get_interface)
     raw = _make_load_double()
+    # tmp_path-backed: on win32 _windows_dll_directory resolves the lib's
+    # directory and os.add_dll_directory requires it to exist.
+    lib_path = str(tmp_path / "fake-module.so")
     with patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib):
-        RawPKCS11._load_from_lib(raw, "fake-module.so", interface="3.2")
+        RawPKCS11._load_from_lib(raw, lib_path, interface="3.2")
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
     entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_GetInterface"]
@@ -380,7 +390,7 @@ def test_load_from_lib_records_c_get_interface() -> None:
     assert entry["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
 
 
-def test_load_from_lib_records_c_get_function_list() -> None:
+def test_load_from_lib_records_c_get_function_list(tmp_path: Path) -> None:
     import ctypes
     from types import SimpleNamespace
     from unittest.mock import patch
@@ -397,8 +407,11 @@ def test_load_from_lib_records_c_get_function_list() -> None:
     # No C_GetInterface attribute: AttributeError path selects the legacy route.
     fake_lib = SimpleNamespace(C_GetFunctionList=_fake_get_function_list)
     raw = _make_load_double()
+    # tmp_path-backed: on win32 _windows_dll_directory resolves the lib's
+    # directory and os.add_dll_directory requires it to exist.
+    lib_path = str(tmp_path / "fake-module.so")
     with patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib):
-        RawPKCS11._load_from_lib(raw, "fake-module.so", interface="2.40")
+        RawPKCS11._load_from_lib(raw, lib_path, interface="2.40")
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
     entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_GetFunctionList"]
@@ -435,8 +448,6 @@ def test_call_log_content_unchanged_by_counters() -> None:
 
 
 def test_reinitialize_attributes_calls_to_module_init() -> None:
-    from pathlib import Path
-
     from pkcs11_check.core.loader import P11Module
 
     def _finalize(*args: Any) -> int:

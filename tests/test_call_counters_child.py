@@ -916,7 +916,16 @@ def test_isolation_grandchild_timeout_counts_as_lost(monkeypatch: pytest.MonkeyP
 
 # --- Final fix wave: fork-child loss accounting (I1.5) ---
 
+# os.fork() is POSIX-only: on Windows the attribute does not exist, so even
+# stubbing it raises AttributeError. Mirrors production's requires_fork gate
+# (testcases/test_subprocess_safety.py); fork-safety is inapplicable there.
+requires_fork = pytest.mark.skipif(
+    not hasattr(os, "fork"),
+    reason="os.fork() is POSIX-only; fork-safety is inapplicable on this platform",
+)
 
+
+@requires_fork
 def test_fork_parent_accounts_untransmitted_child_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -992,10 +1001,16 @@ def _make_load_double() -> Any:
 
     raw = object.__new__(RawPKCS11)
     raw._funcs = {}
+    raw._lib = None
+    raw._interface_version = None
+    raw._missing_function_list_names = set()
+    # The win32 prologue of _load_from_lib appends to this (__init__ line); the
+    # guard is sys.platform-based so Linux doubles never noticed its absence.
+    raw._dll_dir_handles = []
     return raw
 
 
-def test_get_interface_raise_counts_entry_only() -> None:
+def test_get_interface_raise_counts_entry_only(tmp_path: Path) -> None:
     # A raising C_GetInterface attempt entered the module: entry-only
     # (crash parity), not silence.
     from unittest.mock import patch
@@ -1007,11 +1022,14 @@ def test_get_interface_raise_counts_entry_only() -> None:
 
     fake_lib = SimpleNamespace(C_GetInterface=_raising)
     raw = _make_load_double()
+    # tmp_path-backed: on win32 _windows_dll_directory resolves the lib's
+    # directory and os.add_dll_directory requires it to exist.
+    lib_path = str(tmp_path / "fake-module.so")
     with (
         patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
         pytest.raises(OSError, match="module blew up"),
     ):
-        RawPKCS11._load_from_lib(raw, "fake-module.so", interface="3.2")
+        RawPKCS11._load_from_lib(raw, lib_path, interface="3.2")
     entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
         "C_GetInterface"
     ]
@@ -1019,7 +1037,7 @@ def test_get_interface_raise_counts_entry_only() -> None:
     assert entry["by_rv"] == {}
 
 
-def test_get_function_list_raise_counts_entry_only() -> None:
+def test_get_function_list_raise_counts_entry_only(tmp_path: Path) -> None:
     from unittest.mock import patch
 
     from pkcs11_check.raw.api import RawPKCS11
@@ -1030,11 +1048,14 @@ def test_get_function_list_raise_counts_entry_only() -> None:
     # No C_GetInterface attribute: the legacy route is selected, then raises.
     fake_lib = SimpleNamespace(C_GetFunctionList=_raising)
     raw = _make_load_double()
+    # tmp_path-backed: on win32 _windows_dll_directory resolves the lib's
+    # directory and os.add_dll_directory requires it to exist.
+    lib_path = str(tmp_path / "fake-module.so")
     with (
         patch("pkcs11_check.raw.api.ctypes.CDLL", return_value=fake_lib),
         pytest.raises(OSError, match="module blew up"),
     ):
-        RawPKCS11._load_from_lib(raw, "fake-module.so", interface="2.40")
+        RawPKCS11._load_from_lib(raw, lib_path, interface="2.40")
     entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
         "C_GetFunctionList"
     ]
