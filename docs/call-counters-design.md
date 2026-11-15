@@ -92,8 +92,11 @@ per-shard JSONL extracts (fresh provenance per shard).
 - A segment with test reports but zero counters data in an opened,
   unfinished session scope (typically a first-test crash) emits an EMPTY
   group, which flips the run to `complete: false` instead of vanishing. A
-  finished scope with zero counters predates the feature and contributes
-  nothing, as does a marker with zero reports (static skip).
+  crash during FIRST fixture setup leaves no reports at all, so a segment
+  with only a plain marker (no `reason`/`skipped` static-skip provenance)
+  and zero reports/counters in an opened, unfinished scope emits the same
+  EMPTY group. A finished scope with zero counters predates the feature
+  and contributes nothing, as does a static-skip marker with zero reports.
 - `by_process` carries one row per (round, pid) that contributed a session
   record or fallback deltas; `isolation` is the `PKCS11_CHECK_ISOLATION`
   value that process saw. Rows carry `round` (the raw run id) iff more than
@@ -103,7 +106,8 @@ per-shard JSONL extracts (fresh provenance per shard).
 - `by_round` maps each round's run id to its own block with the exact
   top-level shape (`complete`, `total_calls`, `by_bucket`, `probes_lost`,
   `by_process`); the top level stays the GLOBAL roll-up across rounds.
-  Merged `by_round` keys are shard-namespaced (`"<shard>/<run id>"`).
+  Merged `by_round` keys are shard-namespaced (`"<label>/<run id>"`, with
+  a conditional `@sha8` suffix on colliding basenames - see Rounds).
 - The block is absent (not empty) when the JSONL carries no counters data
   and no executed-but-counterless segment, so old artifacts stay clean.
 
@@ -140,13 +144,16 @@ to the same `report.jsonl` while overwriting `results.json`, so without
 round attribution the merged totals could not be split back per invocation.
 
 - Generation: `test_cmd` mints exactly one run id per invocation -
-  `<UTC-timestamp-microseconds>Z-p<pid>` (e.g.
-  `20261115T120345123456Z-p12345`), sortable and unique, timestamp+pid only
-  (no secrets, no machine identity) - and seeds `PKCS11_CHECK_RUN_ID` late,
-  immediately before `run_isolated_pytest_units` (isolated path) or the
-  in-process `pytest.main` (none path), with the same save/restore
-  bookkeeping as the isolation key. A stale caller-provided value is dropped
-  before preflight/collection run, so those subprocesses never inherit it.
+  `<UTC-timestamp-microseconds>Z-p<pid>-<uuid4hex8>` (e.g.
+  `20261115T120345123456Z-p12345-a1b2c3d4`). The timestamp+pid prefix stays
+  readable and sortable; the random nonce carries uniqueness, so a frozen
+  clock or wall-clock rollback can never fuse two invocations.
+  Timestamp+pid+random only (no secrets, no machine identity) - and
+  `test_cmd` seeds `PKCS11_CHECK_RUN_ID` late, immediately before
+  `run_isolated_pytest_units` (isolated path) or the in-process
+  `pytest.main` (none path), with the same save/restore bookkeeping as the
+  isolation key. A stale caller-provided value is dropped before
+  preflight/collection run, so those subprocesses never inherit it.
 - Forwarding: the runner threads the seed into each unit child's plugin env
   under the same guarded rule as the isolation key (explicit value wins, a
   preset is preserved, absent stays absent); confirmation and escalation
@@ -162,10 +169,16 @@ round attribution the merged totals could not be split back per invocation.
   unknown"). Old artifacts therefore yield exactly one `""` round with
   byte-compatible totals. A record whose `run_id` is present but not a
   non-empty string is malformed and skipped whole (fail-closed, like I2).
-- Merge namespacing: `by_round` maps merge under `"<shard>/<run id>"` flat
-  keys, so identical run ids on two shards (a CI-matrix same-second
-  same-pid collision) never fuse; the merged top level stays the GLOBAL
-  roll-up with rows sorted by (shard, round, pid).
+- Merge namespacing: `by_round` maps merge under `"<label>/<run id>"`
+  flat keys, so identical run ids on two shards (a CI-matrix same-second
+  same-pid collision) never fuse. The label is the shard dir basename, or
+  `"<basename>@<sha8(resolved-absolute-path)>"` when basenames collide
+  (legit layouts like `hostA/shard` + `hostB/shard` are disambiguated,
+  never rejected or fused); the suffix derives from the path alone, so it
+  is deterministic and merge-order independent. The merged top level stays
+  the GLOBAL roll-up with rows sorted by (shard, round, pid), and bucket,
+  function, and RV maps are recursively canonicalized so `json.dumps`
+  output is byte-identical across merge orders.
 - Fingerprint ignoring: the run id matches the `PKCS11_` fingerprint prefix
   but is plumbing, not configuration, so it joins the isolation key in both
   ignored sets - resume across run ids (the normal case: every invocation

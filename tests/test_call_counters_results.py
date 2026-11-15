@@ -8,9 +8,11 @@ environment plumbing for unit children.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -837,10 +839,19 @@ def test_merge_attributes_untagged_rows_to_round_with_rows(tmp_path: Path) -> No
     ]
 
 
-def test_merge_duplicate_shard_basenames_is_byte_identical(tmp_path: Path) -> None:
-    # M2: same shard dir basename + same round + same pid on two shards fuses
-    # losslessly; pid ties break on the full row bytes so both merge orders
-    # are byte-identical (not just dict-equal).
+def _shard_label(shard_dir: Path) -> str:
+    # Merge-side disambiguation contract: a colliding basename gains a
+    # conditional @sha8(resolved-absolute-path) suffix (order-independent:
+    # the suffix derives from the path, never from merge position).
+    digest = hashlib.sha256(str(shard_dir.resolve()).encode("utf-8")).hexdigest()[:8]
+    return f"{shard_dir.name}@{digest}"
+
+
+def test_merge_duplicate_shard_basenames_disambiguate(tmp_path: Path) -> None:
+    # M2 (codex R2): same shard dir basename + same round + same pid on two
+    # shards must NOT fuse (one invocation's loss would contaminate the
+    # other's round): colliding basenames gain a conditional @sha8 suffix,
+    # rows stay attributable, and both merge orders are byte-identical.
     shard_a = tmp_path / "p1" / "shard"
     shard_b = tmp_path / "p2" / "shard"
     _round_shard(
@@ -863,6 +874,9 @@ def test_merge_duplicate_shard_basenames_is_byte_identical(tmp_path: Path) -> No
             {"$report_type": "SessionFinish", "exitstatus": 0},
         ],
     )
+    label_a = _shard_label(shard_a)
+    label_b = _shard_label(shard_b)
+    assert label_a != label_b
     merged_ab = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged_ab")
     merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
     assert merged_ab["call_counters"] == merged_ba["call_counters"]
@@ -870,18 +884,106 @@ def test_merge_duplicate_shard_basenames_is_byte_identical(tmp_path: Path) -> No
     block = merged_ab["call_counters"]
     assert block["total_calls"] == 15
     assert block["complete"] is True
-    assert list(block["by_round"]) == [f"shard/{_MR1}"]
-    expected_rows = [
-        {"pid": 100, "isolation": "none", "total_calls": 10, "complete": True},
-        {"pid": 100, "isolation": "none", "total_calls": 5, "complete": True},
-    ]
+    assert list(block["by_round"]) == sorted([f"{label_a}/{_MR1}", f"{label_b}/{_MR1}"])
+    assert block["by_round"][f"{label_a}/{_MR1}"]["total_calls"] == 10
+    assert block["by_round"][f"{label_b}/{_MR1}"]["total_calls"] == 5
+    # Per-round completeness stays independent: each round keeps its own
+    # verdict instead of inheriting the other's.
+    assert block["by_round"][f"{label_a}/{_MR1}"]["complete"] is True
+    assert block["by_round"][f"{label_b}/{_MR1}"]["complete"] is True
+    expected_rows = sorted(
+        [
+            {
+                "pid": 100,
+                "isolation": "none",
+                "total_calls": 10,
+                "complete": True,
+                "shard": label_a,
+            },
+            {
+                "pid": 100,
+                "isolation": "none",
+                "total_calls": 5,
+                "complete": True,
+                "shard": label_b,
+            },
+        ],
+        key=lambda row: str(row["shard"]),
+    )
     assert block["by_process"] == expected_rows
-    assert block["by_round"][f"shard/{_MR1}"]["by_process"] == expected_rows
+
+
+def test_merge_duplicate_basenames_distinct_rounds_stay_attributed(tmp_path: Path) -> None:
+    # Duplicate basenames + distinct run_ids: distinct suffixed keys with
+    # correct per-round attribution, both orders byte-identical.
+    shard_a = tmp_path / "p1" / "shard"
+    shard_b = tmp_path / "p2" / "shard"
+    _round_shard(
+        shard_a,
+        "a.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _round_session_record(100, 10, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _round_shard(
+        shard_b,
+        "b.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "b.py", "attempt": 0},
+            _round_session_record(200, 5, _MR2),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    label_a = _shard_label(shard_a)
+    label_b = _shard_label(shard_b)
+    merged_ab = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged_ab")
+    merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
+    assert json.dumps(merged_ab["call_counters"]) == json.dumps(merged_ba["call_counters"])
+    block = merged_ab["call_counters"]
+    assert list(block["by_round"]) == sorted([f"{label_a}/{_MR1}", f"{label_b}/{_MR2}"])
+    assert block["by_round"][f"{label_a}/{_MR1}"]["total_calls"] == 10
+    assert block["by_round"][f"{label_b}/{_MR2}"]["total_calls"] == 5
+    rows = {(row["shard"], row["round"]): row["total_calls"] for row in block["by_process"]}
+    assert rows == {(label_a, _MR1): 10, (label_b, _MR2): 5}
+
+
+def test_merge_unique_basenames_keep_plain_keys(tmp_path: Path) -> None:
+    # The @sha8 suffix is conditional: unique basenames keep "{basename}/..."
+    # keys (and untagged rows when nothing else forces tags).
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    _round_shard(
+        shard_a,
+        "a.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _round_session_record(100, 10, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _round_shard(
+        shard_b,
+        "b.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "b.py", "attempt": 0},
+            _round_session_record(200, 5, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    block = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged")["call_counters"]
+    assert list(block["by_round"]) == [f"shardA/{_MR1}", f"shardB/{_MR1}"]
+    assert "@" not in json.dumps(block["by_round"])
 
 
 # --- Per-round (run_id) dimension: generation, forwarding, fingerprints ---
 
-_RUN_ID_RE = r"\d{8}T\d{12}Z-p\d+"
+_RUN_ID_RE = r"\d{8}T\d{12}Z-p\d+-[0-9a-f]{8}"
 
 
 def test_new_run_id_format_and_pid_suffix() -> None:
@@ -891,10 +993,56 @@ def test_new_run_id_format_and_pid_suffix() -> None:
     second = _new_run_id()
     for value in (first, second):
         assert re.fullmatch(_RUN_ID_RE, value), value
-        assert value.endswith(f"-p{os.getpid()}")
-    # Sortable: lexicographic order matches creation order (equal when the
-    # clock granularity covers both calls, e.g. Windows).
-    assert first <= second
+        assert f"-p{os.getpid()}-" in value
+    # Consecutive ids are strictly distinct: the uuid4hex8 nonce survives
+    # coarse clock granularity (e.g. Windows) that used to fuse them.
+    assert first != second
+    # The readable prefix (UTC microseconds + pid) is preserved and still
+    # sortable: lexicographic order matches creation order.
+    assert first[:-9] <= second[:-9]
+
+
+def test_new_run_id_frozen_clock_still_distinct(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A frozen wall clock (same timestamp twice) must still mint distinct
+    # ids: the nonce, not the clock, carries uniqueness.
+    from pkcs11_check.cli import test_cmd
+
+    frozen = datetime(2026, 11, 15, 12, 0, 0, tzinfo=UTC)
+
+    class _FrozenDateTime:
+        @staticmethod
+        def now(tz: Any = None) -> datetime:
+            assert tz is UTC
+            return frozen
+
+    monkeypatch.setattr(test_cmd, "datetime", _FrozenDateTime)
+    assert test_cmd._new_run_id() != test_cmd._new_run_id()
+
+
+def test_new_run_id_rollback_clock_still_distinct(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Wall-clock rollback (NTP step, DST, manual set) must not fuse ids
+    # either: backward-moving timestamps still mint distinct ids.
+    from pkcs11_check.cli import test_cmd
+
+    stamps = iter(
+        [
+            datetime(2026, 11, 15, 12, 0, 1, tzinfo=UTC),
+            datetime(2026, 11, 15, 12, 0, 0, tzinfo=UTC),
+        ]
+    )
+
+    class _RollbackDateTime:
+        @staticmethod
+        def now(tz: Any = None) -> datetime:
+            assert tz is UTC
+            return next(stamps)
+
+    monkeypatch.setattr(test_cmd, "datetime", _RollbackDateTime)
+    first = test_cmd._new_run_id()
+    second = test_cmd._new_run_id()
+    assert first != second
+    for value in (first, second):
+        assert re.fullmatch(_RUN_ID_RE, value), value
 
 
 def test_subprocess_plugin_env_sets_run_id_value() -> None:
@@ -1179,3 +1327,65 @@ def test_none_path_seeds_run_id_and_restores(
     assert isinstance(seen["run"], str) and re.fullmatch(_RUN_ID_RE, seen["run"])
     assert seen["run"] != "STALE-RUN-ID"
     assert seen["restored"] == "STALE-RUN-ID"
+
+
+def _het_session_record(
+    pid: int, bucket: str, fn: str, rv: str, rv_name: str, total: int, run_id: str
+) -> dict[str, Any]:
+    return {
+        "$report_type": "CallCountersReport",
+        "pid": pid,
+        "isolation": "none",
+        "probes_lost": 0,
+        "total_calls": total,
+        "run_id": run_id,
+        "buckets": {
+            bucket: {
+                "calls": total,
+                "by_fn": {
+                    fn: {
+                        "calls": total,
+                        "by_rv": {rv: {"name": rv_name, "count": total}},
+                    }
+                },
+            }
+        },
+    }
+
+
+def test_merge_heterogeneous_counters_is_byte_identical(tmp_path: Path) -> None:
+    # Byte-identity (codex R2): shards contributing DISTINCT buckets,
+    # functions, and RVs merge to byte-identical output in both orders
+    # (plain json.dumps, no sort_keys) -- homogeneous shapes cannot expose
+    # first-insertion-order leaks through merge_serialized.
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    _round_shard(
+        shard_a,
+        "a.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _het_session_record(100, "test", "C_Sign", "0", "CKR_OK", 10, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    _round_shard(
+        shard_b,
+        "b.py",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "b.py", "attempt": 0},
+            _het_session_record(200, "module_init", "C_Initialize", "1", "CKR_CANCEL", 5, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    merged_ab = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged_ab")
+    merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
+    assert json.dumps(merged_ab["call_counters"]) == json.dumps(merged_ba["call_counters"])
+    buckets = merged_ab["call_counters"]["by_bucket"]["buckets"]
+    assert list(buckets) == ["module_init", "test"]
+    assert list(buckets["module_init"]["by_fn"]) == ["C_Initialize"]
+    assert list(buckets["test"]["by_fn"]) == ["C_Sign"]
+    round_buckets = merged_ab["call_counters"]["by_round"][f"shardA/{_MR1}"]["by_bucket"]
+    assert list(round_buckets["buckets"]) == ["test"]

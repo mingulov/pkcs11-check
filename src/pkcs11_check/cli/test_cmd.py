@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 import tomllib
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, suppress
 from dataclasses import replace as _dataclass_replace
@@ -156,13 +157,17 @@ def _build_run_provenance(manifest: Any, data_dir: Path) -> dict[str, Any]:
 
 
 def _new_run_id() -> str:
-    """Return a fresh per-invocation run id (UTC microsecond timestamp + pid).
+    """Return a fresh per-invocation run id (timestamp + pid + nonce).
 
-    Sortable (zero-padded fixed width, so lexicographic order matches
-    creation order) and unique per CLI invocation; timestamp+pid only, so no
-    secret or machine-identifying material ever lands in the id.
+    Format ``{UTC-microseconds}Z-p{pid}-{uuid4hex8}``. The timestamp+pid
+    prefix stays readable and sortable (zero-padded fixed width, so
+    lexicographic order matches creation order); the random nonce carries
+    uniqueness, so a frozen clock or wall-clock rollback can never fuse two
+    invocations. Timestamp+pid+random only, so no secret or
+    machine-identifying material ever lands in the id.
     """
-    return f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-p{os.getpid()}"
+    nonce = uuid.uuid4().hex[:8]
+    return f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-p{os.getpid()}-{nonce}"
 
 
 def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:

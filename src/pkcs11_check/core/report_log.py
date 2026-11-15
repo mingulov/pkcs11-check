@@ -126,7 +126,7 @@ def iter_report_log_records(
                 continue
             try:
                 obj = json.loads(line)
-            except json.JSONDecodeError:
+            except (RecursionError, ValueError):
                 if on_invalid is not None:
                     on_invalid()
                 continue

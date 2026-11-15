@@ -31,14 +31,19 @@ carried their own trace.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
 import tempfile
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from pkcs11_check.core._jsonl_extract import (
+    _canonicalize_counter_block as _canonicalize_counter_block,
+)
 from pkcs11_check.core.call_counters import merge_serialized
 from pkcs11_check.core.file_runner import (
     extract_call_counters_from_jsonl,
@@ -547,21 +552,45 @@ def _collected_row_sort_key(item: tuple[str, str, dict[str, Any]]) -> tuple[str,
     return (shard or "", run or "", int(base["pid"]), json.dumps(base, sort_keys=True))
 
 
+def _call_counter_shard_labels(shard_dirs: list[Path]) -> list[str]:
+    """Return one merge label per shard dir (conditional @sha8 disambiguation).
+
+    Unique basenames keep the plain ``"{basename}"`` label; colliding
+    basenames (legit layouts such as ``hostA/shard`` + ``hostB/shard`` are
+    never rejected) gain ``"@{sha8(resolved-absolute-path)}"`` so distinct
+    shards never share a namespace. The suffix derives from the path alone,
+    so labels are deterministic and merge-order independent.
+    """
+    counts = Counter(d.name for d in shard_dirs)
+    labels: list[str] = []
+    for shard_dir in shard_dirs:
+        if counts[shard_dir.name] == 1:
+            labels.append(shard_dir.name)
+            continue
+        digest = hashlib.sha256(str(shard_dir.resolve()).encode("utf-8")).hexdigest()[:8]
+        labels.append(f"{shard_dir.name}@{digest}")
+    return labels
+
+
 def _merge_call_counter_blocks(
-    blocks: list[tuple[str, dict[str, Any]]],
+    blocks: list[tuple[Path, dict[str, Any]]],
 ) -> dict[str, Any] | None:
     """Merge per-shard call-counter extracts into one block (C3b).
 
-    Each ``(shard_name, block)`` pair was extracted from its own shard JSONL
+    Each ``(shard_dir, block)`` pair was extracted from its own shard JSONL
     in fresh state (own marker/pid provenance, so a numeric pid can never
     collide across shards and a truncated shard cannot inherit a marker).
     Totals, buckets, and probes_lost are summed, ``complete`` is ANDed,
     ``by_round`` maps merge under shard-namespaced flat keys
-    (``"{shard_dir_name}/{run_id}"``, so a CI-matrix same-second same-pid
-    run_id collision across machines never fuses), and ``by_process`` rows
-    are concatenated with no fusion of distinct processes, sorted by
+    (``"{label}/{run_id}"`` where ``label`` is the basename, or
+    ``"{basename}@{sha8}"`` when basenames collide, so a CI-matrix
+    same-second same-pid run_id collision across machines never fuses and
+    duplicate basenames never fuse either), and ``by_process`` rows are
+    concatenated with no fusion of distinct processes, sorted by
     (shard, round, pid) with pid ties broken on the full row bytes, so both
-    merge orders yield the identical block.
+    merge orders yield the identical block. Bucket, function, and RV maps
+    are recursively canonicalized at the return, so ``json.dumps`` output
+    is byte-identical across merge orders even for heterogeneous shapes.
     ``"round"``/``"shard"`` keys are present on a block's rows iff more than
     one distinct value appears among them (single-round single-shard output
     reads exactly like a single extract); the row ``"round"`` is the raw
@@ -571,12 +600,14 @@ def _merge_call_counter_blocks(
     """
     if not blocks:
         return None
+    labels = _call_counter_shard_labels([shard_dir for shard_dir, _ in blocks])
     by_bucket: dict[str, Any] = {"total_calls": 0, "buckets": {}}
     probes_lost = 0
     complete = True
     collected: list[tuple[str, str, dict[str, Any]]] = []
     by_round: dict[str, dict[str, Any]] = {}
-    for shard_name, block in blocks:
+    for index, (_, block) in enumerate(blocks):
+        shard_label = labels[index]
         merge_serialized(by_bucket, block["by_bucket"])
         probes_lost += int(block["probes_lost"])
         if not block["complete"]:
@@ -584,13 +615,14 @@ def _merge_call_counter_blocks(
         shard_rounds: dict[str, Any] = block["by_round"]
         shard_round_keys = sorted(shard_rounds)
         for run in shard_round_keys:
-            namespaced = f"{shard_name}/{run}"
+            namespaced = f"{shard_label}/{run}"
             incoming = shard_rounds[run]
             existing = by_round.get(namespaced)
             if existing is None:
                 by_round[namespaced] = _copy_round_block(incoming)
             else:
-                # Duplicate shard dir names: fuse losslessly, never overwrite.
+                # Same resolved shard dir passed twice: fuse losslessly, never
+                # overwrite. Distinct dirs always carry distinct labels now.
                 merge_serialized(existing["by_bucket"], incoming["by_bucket"])
                 existing["total_calls"] = existing["by_bucket"]["total_calls"]
                 existing["probes_lost"] += int(incoming["probes_lost"])
@@ -606,18 +638,21 @@ def _merge_call_counter_blocks(
                 # to the unique round with rows; a pid-less C2-only "" round
                 # beside one attributed round must not steal them.
                 run = rounds_with_rows[0] if len(rounds_with_rows) == 1 else ""
-            collected.append((shard_name, str(run), base))
+            collected.append((shard_label, str(run), base))
     show_shard = len({shard for shard, _, _ in collected}) > 1
     show_round = len({run for _, run, _ in collected}) > 1
     collected.sort(key=_collected_row_sort_key)
     by_process: list[dict[str, Any]] = []
-    for shard_name, run, base in collected:
+    for shard_label, run, base in collected:
         tagged = dict(base)
         if show_round:
             tagged["round"] = run
         if show_shard:
-            tagged["shard"] = shard_name
+            tagged["shard"] = shard_label
         by_process.append(tagged)
+    _canonicalize_counter_block(by_bucket)
+    for round_block in by_round.values():
+        _canonicalize_counter_block(round_block["by_bucket"])
     return {
         "complete": complete,
         "total_calls": by_bucket["total_calls"],
@@ -977,11 +1012,11 @@ def merge_shard_dirs(
     # truncated shard must not inherit its neighbour's marker, and a numeric
     # pid must not collide across shards (C3). Shards without counters data
     # (old artifacts) contribute nothing.
-    shard_blocks: list[tuple[str, dict[str, Any]]] = []
+    shard_blocks: list[tuple[Path, dict[str, Any]]] = []
     for shard_dir in shard_dirs:
         block = extract_call_counters_from_jsonl(shard_dir / "report.jsonl")
         if block is not None:
-            shard_blocks.append((shard_dir.name, block))
+            shard_blocks.append((shard_dir, block))
     call_counters = _merge_call_counter_blocks(shard_blocks)
     if coverage:
         (output_dir / "coverage.json").write_text(

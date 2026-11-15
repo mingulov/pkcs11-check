@@ -70,7 +70,10 @@ def ingest_raw_subprocess_coverage(path: str) -> bool:
         # unpinned read would decode as the platform codepage (cp1252 on Windows).
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
+        # ValueError covers JSONDecodeError and huge-int literals;
+        # RecursionError covers hostile nesting depth. Either way the
+        # channel is unusable (False -> the launcher owns one loss).
         return False
     if not isinstance(data, dict):
         return False

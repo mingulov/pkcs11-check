@@ -471,14 +471,49 @@ def test_extract_finished_without_counters_is_old_artifact(tmp_path: Path) -> No
     assert extract_call_counters_from_jsonl(jsonl) is None
 
 
-def test_extract_marker_without_reports_is_static_skip(tmp_path: Path) -> None:
-    # C2: a marker with zero TestReports is a static skip, not an execution:
-    # no group with or without a finish.
+def _static_skip_marker(target: str, attempt: int) -> dict[str, Any]:
+    # The writer shape (_report_records._isolated_unit_report with provenance):
+    # a static skip carries explicit reason/skipped fields; plain attempt
+    # markers (stream framing) carry neither.
+    marker = _marker(target, attempt)
+    marker["reason"] = "missing-provider-capability"
+    marker["skipped"] = 3
+    return marker
+
+
+def test_extract_first_setup_crash_marker_without_reports_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    # C2b (codex R2 critical): a native crash in load_module/C_Initialize
+    # during FIRST fixture setup leaves Start + plain marker + truncation
+    # (zero TestReports, zero counters). That started-but-unfinished
+    # execution must surface as an EMPTY complete:false group in the
+    # implicit "" round -- never vanish into a complete global report.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
+    assert payload["by_bucket"] == {"total_calls": 0, "buckets": {}}
+    assert payload["probes_lost"] == 0
+    assert payload["by_process"] == []
+    assert sorted(payload["by_round"]) == [""]
+    assert payload["by_round"][""]["complete"] is False
+
+
+def test_extract_static_skip_marker_without_reports_is_none(tmp_path: Path) -> None:
+    # C2b: only a marker with explicit static-skip provenance (reason +
+    # skipped, per the writer) reads as "never executed": no group whether
+    # the scope is unfinished, finished, or never opened (the real cache
+    # shape is a bare marker with no SessionStart at all).
     assert (
         extract_call_counters_from_jsonl(
             _write_jsonl(
                 tmp_path / "skip.jsonl",
-                [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+                [{"$report_type": "SessionStart"}, _static_skip_marker("a.py", 0)],
             )
         )
         is None
@@ -489,13 +524,51 @@ def test_extract_marker_without_reports_is_static_skip(tmp_path: Path) -> None:
                 tmp_path / "skip2.jsonl",
                 [
                     {"$report_type": "SessionStart"},
-                    _marker("a.py", 0),
+                    _static_skip_marker("a.py", 0),
                     {"$report_type": "SessionFinish", "exitstatus": 0},
                 ],
             )
         )
         is None
     )
+    assert (
+        extract_call_counters_from_jsonl(
+            _write_jsonl(tmp_path / "skip3.jsonl", [_static_skip_marker("a.py", 0)])
+        )
+        is None
+    )
+
+
+def test_extract_partial_skip_provenance_is_not_a_static_skip(tmp_path: Path) -> None:
+    # C2b: the writer emits reason+skipped together or neither; a marker
+    # with only one of the two is not writer-shaped, so an unfinished
+    # scope still reads as a startup loss (fail visible, never silent).
+    marker = _marker("a.py", 0)
+    marker["reason"] = "missing-provider-capability"
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [{"$report_type": "SessionStart"}, marker],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 0
+
+
+def test_extract_plain_marker_finished_without_reports_is_old_artifact(
+    tmp_path: Path,
+) -> None:
+    # C2b: a plain marker with zero reports in a FINISHED scope predates
+    # the feature (old artifact): no group, None preserved.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    assert extract_call_counters_from_jsonl(jsonl) is None
 
 
 def test_extract_crashed_unit_alongside_healthy_marks_incomplete(tmp_path: Path) -> None:
@@ -884,3 +957,122 @@ def test_extract_malformed_run_id_skips_test_entry(tmp_path: Path, bad_run_id: A
     assert payload is not None
     assert payload["total_calls"] == 7
     assert [row["pid"] for row in payload["by_process"]] == [200]
+
+
+def _shuffled_buckets() -> dict[str, Any]:
+    # Buckets, functions, and RVs all in reverse-sorted insertion order, so
+    # a non-canonicalizing extractor leaks record order into its output maps.
+    return {
+        "total_calls": 6,
+        "buckets": {
+            "test": {
+                "calls": 3,
+                "by_fn": {
+                    "C_Verify": {
+                        "calls": 2,
+                        "by_rv": {
+                            "5": {"name": "CKR_GENERAL_ERROR", "count": 1},
+                            "0": {"name": "CKR_OK", "count": 1},
+                        },
+                    },
+                    "C_Sign": {
+                        "calls": 1,
+                        "by_rv": {"0": {"name": "CKR_OK", "count": 1}},
+                    },
+                },
+            },
+            "module_init": {
+                "calls": 3,
+                "by_fn": {
+                    "C_Initialize": {
+                        "calls": 3,
+                        "by_rv": {"0": {"name": "CKR_OK", "count": 3}},
+                    },
+                },
+            },
+        },
+    }
+
+
+def test_extract_canonicalizes_counter_maps(tmp_path: Path) -> None:
+    # Byte-identity (codex R2): bucket, function, and RV maps in returned
+    # blocks are recursively key-sorted, independent of record order.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _session_record(100, 6, _shuffled_buckets()),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    buckets = payload["by_bucket"]["buckets"]
+    assert list(buckets) == ["module_init", "test"]
+    assert list(buckets["test"]["by_fn"]) == ["C_Sign", "C_Verify"]
+    assert list(buckets["test"]["by_fn"]["C_Verify"]["by_rv"]) == ["0", "5"]
+    round_block = payload["by_round"][""]["by_bucket"]["buckets"]
+    assert list(round_block) == ["module_init", "test"]
+    assert list(round_block["test"]["by_fn"]["C_Verify"]["by_rv"]) == ["0", "5"]
+
+
+def _nested_poison_line(depth: int = 100_000) -> str:
+    # json.loads raises RecursionError past the ~1000-frame parse depth.
+    return "[" * depth + "]" * depth
+
+
+def _bigint_poison_line(digits: int = 6000) -> str:
+    # json.loads raises ValueError past the 4300-digit int-string limit.
+    return '{"probe": ' + "9" * digits + "}"
+
+
+def test_extract_decoder_poison_lines_drop_neighbors_fold(tmp_path: Path) -> None:
+    # Never-raise boundary (codex R2): a RecursionError line and a ValueError
+    # line each cost exactly one line; the neighboring session records fold.
+    lines = [
+        json.dumps({"$report_type": "SessionStart"}),
+        json.dumps(_marker("a.py", 0)),
+        json.dumps(_session_record(100, 10)),
+        _nested_poison_line(),
+        json.dumps(_marker("b.py", 0)),
+        json.dumps(_session_record(200, 5)),
+        _bigint_poison_line(),
+        json.dumps({"$report_type": "SessionFinish", "exitstatus": 0}),
+    ]
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 15
+    assert payload["complete"] is True
+    assert [row["pid"] for row in payload["by_process"]] == [100, 200]
+
+
+def test_report_log_iterator_counts_decoder_poison_as_invalid(tmp_path: Path) -> None:
+    # The shared iterator honors its one-line-loss contract for decoder
+    # failures too: poison lines are skipped with on_invalid fired.
+    from pkcs11_check.core.report_log import iter_report_log_records
+
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text(
+        "\n".join(
+            [
+                '{"$report_type": "SessionStart"}',
+                _nested_poison_line(),
+                '{"$report_type": "SessionFinish", "exitstatus": 0}',
+                _bigint_poison_line(),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    invalid = 0
+
+    def _count() -> None:
+        nonlocal invalid
+        invalid += 1
+
+    records = list(iter_report_log_records(jsonl, on_invalid=_count))
+    assert [r["$report_type"] for r in records] == ["SessionStart", "SessionFinish"]
+    assert invalid == 2
