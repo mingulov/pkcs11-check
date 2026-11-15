@@ -77,6 +77,9 @@ from pkcs11_check.core._jsonl_extract import (
     _emit_external_provision_banner as _emit_external_provision_banner,
 )
 from pkcs11_check.core._jsonl_extract import (
+    extract_call_counters_from_jsonl as extract_call_counters_from_jsonl,
+)
+from pkcs11_check.core._jsonl_extract import (
     extract_coverage_from_jsonl as extract_coverage_from_jsonl,
 )
 from pkcs11_check.core._jsonl_extract import (
@@ -388,6 +391,7 @@ from pkcs11_check.core._unit_discovery import (
 from pkcs11_check.core._unit_discovery import (
     validate_subprocess_per_test_expansion as validate_subprocess_per_test_expansion,
 )
+from pkcs11_check.core.call_counters import ISOLATION_ENV
 from pkcs11_check.core.collection import CollectedPytestItem
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
@@ -755,7 +759,9 @@ def _parent_provenance_record() -> dict[str, Any]:
     }
 
 
-def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, str]:
+def _subprocess_plugin_env(
+    base_env: Mapping[str, str], unit: str, *, isolation: str | None = None
+) -> dict[str, str]:
     """Per-unit env that disables pytest plugin autoload and enables only the
     plugins the unit needs. Behavior-preserving; only trims startup cost."""
     env = dict(base_env)
@@ -765,6 +771,12 @@ def _subprocess_plugin_env(base_env: Mapping[str, str], unit: str) -> dict[str, 
     # in-process (`--isolation none`), where it would kill the CLI before results.json is
     # written. Set BEFORE the early return below so units without plugin addopts get it.
     env[_UNIT_CHILD_ENV] = "1"
+    # The --isolation flag value, read by the CallCountersReport session record
+    # (fw#73). Guarded: callers that do not pass it leave the key untouched, so
+    # a preset value is preserved (like the framework-version pin) and an
+    # absent one stays absent (the plugin defaults to "unknown").
+    if isolation is not None:
+        env[ISOLATION_ENV] = isolation
     # UTF-8 so a unit's pytest subprocess output (rich marks etc.) does not crash on a
     # Windows cp1252 console; no-op off Windows. setdefault respects an explicit value.
     if sys.platform == "win32":
@@ -1510,6 +1522,7 @@ def _exit_code_for_no_pending_units(
     )
     if report_config is not None:
         coverage_data: dict[str, Any] | None = None
+        call_counters_data: dict[str, Any] | None = None
         quality_records: list[dict[str, Any]] = []
         quality_report_evidence: QualityReportEvidence | None = None
         inline_report_records_by_unit: dict[str, Sequence[Mapping[str, Any]]] = {}
@@ -1570,6 +1583,7 @@ def _exit_code_for_no_pending_units(
             )
             if wrote_report_jsonl or report_config.jsonl_path.exists():
                 coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                call_counters_data = extract_call_counters_from_jsonl(report_config.jsonl_path)
                 quality_records = extract_quality_report_records_from_jsonl(
                     report_config.jsonl_path
                 )
@@ -1606,6 +1620,7 @@ def _exit_code_for_no_pending_units(
                 output_state,
                 per_unit_details=merged_details,
                 coverage=coverage_data,
+                call_counters=call_counters_data,
                 provenance=provenance,
                 owner_aliases=owner_aliases,
                 selection=report_config.selection if report_config else None,
@@ -1676,6 +1691,7 @@ def _write_final_reports(
     oracle changes.
     """
     coverage_data = None
+    call_counters_data: dict[str, Any] | None = None
     quality_records = []
     quality_report_evidence = None
     merged_details = dict(per_unit_details)
@@ -1736,6 +1752,7 @@ def _write_final_reports(
                     per_unit_details,
                 )
                 coverage_data = extract_coverage_from_jsonl(report_config.jsonl_path)
+                call_counters_data = extract_call_counters_from_jsonl(report_config.jsonl_path)
                 quality_records = extract_quality_report_records_from_jsonl(
                     report_config.jsonl_path
                 )
@@ -1780,6 +1797,7 @@ def _write_final_reports(
                 output_state,
                 per_unit_details=merged_details,
                 coverage=coverage_data,
+                call_counters=call_counters_data,
                 provenance=provenance,
                 owner_aliases=owner_aliases,
                 selection=report_config.selection if report_config else None,
@@ -1838,6 +1856,12 @@ def run_isolated_pytest_units(
     # merges exactly one into report.jsonl at the writer calls below.
     parent_provenance_record = _parent_provenance_record()
     env["PKCS11_CHECK_FRAMEWORK_VERSION"] = parent_provenance_record["framework"]["version"]
+    # The --isolation flag value (seeded by test_cmd) rides the base env so every
+    # child -- unit, confirmation, escalation -- reports the same mode. Read, not
+    # popped: _STATE_IGNORED_ENV_KEYS excludes it, so the fingerprinted snapshot
+    # is identical with the key present (no pop/restore needed), while the value
+    # below still threads explicitly into each unit's plugin env.
+    isolation_value = env.get(ISOLATION_ENV)
     deselect_by_file = {unit: set(nodeids) for unit, nodeids in (deselect_by_file or {}).items()}
     file_test_counts: dict[str, int] = {}
     for item in collected_items or ():
@@ -2085,7 +2109,7 @@ def run_isolated_pytest_units(
             # and incomplete sessions retain direct evidence at any granularity.
             unit_jsonl_path: Path | None = None
             initial_deselect_path: Path | None = None
-            run_env = _subprocess_plugin_env(env, unit)
+            run_env = _subprocess_plugin_env(env, unit, isolation=isolation_value)
             _maybe_set_crash_journal(run_env, unit)
             collect_report_log = True
             if unit_disabled_nodeids:

@@ -164,6 +164,7 @@ from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
 from pkcs11_check.core._secrets import SECRET_ARGV_FLAGS, redact_secret_args
+from pkcs11_check.core.call_counters import ISOLATION_ENV
 from pkcs11_check.core.preflight import load_manifest
 
 # The fingerprint detects when the run's effective configuration changed, so
@@ -183,6 +184,11 @@ _DEFAULT_FINGERPRINT_ENV_PREFIXES = ("P11TEST_", "PKCS11_")
 
 _REDACTED_ENV_KEYS = {"P11TEST_PIN", "P11TEST_SO_PIN", "P11TEST_WRAP_KEY_VALUE"}
 
+# The --isolation flag value rides os.environ from test_cmd to the runner (fw#73):
+# it matches the PKCS11_ fingerprint prefix but is a plumbing detail, not run
+# configuration. Ignored on both fingerprints so start/mid-run/pre-fw#73
+# fingerprints are identical and policy write (seeded) matches policy read
+# (pre-seed at discovery time).
 _POLICY_IGNORED_ENV_KEYS = {
     "P11TEST_ISOLATION",
     "P11TEST_POLICY_FILE",
@@ -192,12 +198,13 @@ _POLICY_IGNORED_ENV_KEYS = {
     # Derived from the checkout, not operator-selected: committing between a run
     # and its resume must not invalidate the state file.
     "PKCS11_CHECK_FRAMEWORK_VERSION",
+    ISOLATION_ENV,
 }
 
 # Same exclusion for the resume-validation fingerprint: resuming across
 # framework versions was always allowed, and the version pin must not newly
 # forbid it (the merged report still stamps the current version honestly).
-_STATE_IGNORED_ENV_KEYS = frozenset({"PKCS11_CHECK_FRAMEWORK_VERSION"})
+_STATE_IGNORED_ENV_KEYS = frozenset({"PKCS11_CHECK_FRAMEWORK_VERSION", ISOLATION_ENV})
 
 
 def _recovery_attempts_path(path: Path) -> Path:
