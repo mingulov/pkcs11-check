@@ -20,6 +20,7 @@ import ctypes
 from collections.abc import Callable
 from typing import Any, cast
 
+from pkcs11_check.core.call_counters import record_call, record_return
 from pkcs11_check.raw.api import function_list_header_size
 from pkcs11_check.raw.metadata_std import FUNCTION_INDICES
 
@@ -91,6 +92,11 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
         arg_types = [type(a) for a in args]
         func_type = ctypes.CFUNCTYPE(_CK_RV, *arg_types)
         func = func_type(addr)
-        return int(func(*args))
+        # Entry is recorded immediately before the invocation (mirroring
+        # RawPKCS11._call): a crash inside the module still counts the call.
+        record_call(name)
+        rv = int(func(*args))
+        record_return(name, rv)
+        return rv
 
     return call_func, get_func

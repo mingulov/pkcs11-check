@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pkcs11_check.core.call_counters import note_lost_probe
 from pkcs11_check.core.loader import SUPPORTED_INTERFACES
 from pkcs11_check.core.process_observation import (
     SUBPROCESS_ABRUPT_EXIT_MARKER,
@@ -232,10 +233,16 @@ def run_probe(
 
         record_subprocess_rv_trace(out, err)  # I7
 
+        counters_ok: bool
         if coverage == "raw":
-            ingest_raw_subprocess_coverage(cov_path)  # I6
+            counters_ok = ingest_raw_subprocess_coverage(cov_path)  # I6
         else:
-            ingest_subprocess_coverage(cov_path)  # I6
+            counters_ok = ingest_subprocess_coverage(cov_path)  # I6
+        if not counters_ok:
+            # The child's C_* traffic never arrived (crash, corrupt file, or a
+            # payload without counters): account it as lost (fw#73). This is the
+            # only lost-probe accounting site; ingests never account loss.
+            note_lost_probe()
 
         observation = build_process_observation(
             probe, "probe", 0, rc, timed_out=timed_out, stderr=err
