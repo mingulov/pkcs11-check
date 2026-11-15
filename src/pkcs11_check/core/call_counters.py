@@ -227,6 +227,20 @@ def note_lost_probe() -> None:
         _probes_lost += 1
 
 
+def add_lost_probes(n: Any) -> None:
+    """Add ``n`` child-side losses propagated through a coverage payload.
+
+    Garbage-tolerant like :func:`ingest_child_counts`: anything that is not a
+    positive ``int`` (bools included) is ignored without raising, so a hostile
+    payload value can never break the ingest path.
+    """
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        return
+    global _probes_lost
+    with _lock:
+        _probes_lost += n
+
+
 def probes_lost() -> int:
     """Return the number of probe children with unrecoverable counters."""
     with _lock:
@@ -250,6 +264,7 @@ __all__ = [
     "DEFAULT_BUCKET",
     "ISOLATION_ENV",
     "Snapshot",
+    "add_lost_probes",
     "counted_bucket",
     "current_bucket",
     "diff_snapshots",

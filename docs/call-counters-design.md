@@ -132,12 +132,18 @@ The four bucket strings, exactly: `test`, `setup_teardown`,
   pushed bucket.
 - `module_init` - module lifecycle: the `load_module` body, the
   `P11Module.reinitialize` body, and the session-teardown `C_Finalize`.
-  Load traffic (`C_Initialize`, `C_GetSlotList`, `C_GetFunctionList`,
-  `C_GetInterface`, and the rest of open/load probing) lands here.
+  That is `C_GetInterface` and/or `C_GetFunctionList` from `from_lib`, one
+  `C_Initialize` from `load_module` (plus `reinitialize`'s
+  `C_Finalize`/`C_Initialize` and the teardown `C_Finalize`).
 
 The stack nests: the innermost pushed bucket wins and the previous bucket is
 restored on exit (every push is a try/finally context manager, so a raising
 phase cannot unbalance it). Pushing an unknown name raises `ValueError`.
+
+Attribution is window-truthful, not origin-truthful: session-fixture or
+provisioning work that executes inside a test window lands in `test` or
+`setup_teardown`, so `session_provisioning` typically holds only
+out-of-window traffic and is often sparse.
 
 ## Exclusions
 
@@ -146,6 +152,8 @@ Counted nowhere, by design:
 - Preflight/doctor/recovery helper subprocesses (own processes,
   harness-internal).
 - The openssl-interop grandchild binary (third-party, uninstrumentable).
+- Operator-supplied external provision commands and token-mint tools
+  (third-party, uninstrumentable - same class as openssl-interop).
 
 Everything else the harness spawns is either folded in (probe children via
 the coverage channel) or accounted as lost: a probe child whose counters
@@ -177,6 +185,14 @@ To compare the counters of two runs (no tool is shipped; the consumer diffs):
    - Merged counters are recomputed from the concatenated JSONL, so a merged
      block equals its shards modulo retries - it is never a sum of shard
      `results.json` blocks.
+   - The crashed/timed-out fallback (per-test deltas folded without a
+     session record) is a lower bound: calls outside any test window are
+     missing.
+   - Per-test entries never include the post-window teardown `C_Finalize`
+     (the session record does), so entry sums reconcile with session totals
+     modulo that call plus any out-of-window traffic.
+   - `by_process[].isolation` records the raw `--isolation` flag value
+     (e.g. `"auto"`), not the effective per-unit mode.
 
 ## Design
 
@@ -184,17 +200,20 @@ Small seams, each following an existing pattern.
 
 ### 1. Capture - `raw/api.py`, `_ckr_ctypes.py`, `raw_session.py`
 
-- `_call`: `record_call(name)` immediately after the `_call_log` increment,
+- `_call`: `record_call(name)` immediately before the module invocation
+  (after funclist resolution, so an unavailable function counts nothing),
   `record_return(name, result)` after `result = int(func(*args))`. No
   signature or return-value changes.
-- `_load_from_lib`: `record_direct_call("C_GetInterface", rv)` and
-  `record_direct_call("C_GetFunctionList", rv)` at the two direct sites.
+- `_load_from_lib`: `record_call`/`record_return` pairs around the
+  `C_GetInterface` and `C_GetFunctionList` direct sites (a raising attempt
+  counts entry-only).
 - `_ckr_ctypes.call_func`: entry/exit recording around the raw ctypes call,
   so the CKR probes count without a `RawPKCS11` instance.
 - `raw_session.py`: a counting `CDLL` proxy for `ctx.lib` (wraps `C_*`
   attributes, forwards `restype`/`argtypes`/`errcheck` sets, ignores
-  non-`C_*` attributes) plus an explicit record for its own
-  `C_GetFunctionList`.
+  non-`C_*` attributes) plus an explicit entry/exit pair for its own
+  `C_GetFunctionList`; `counting_cdll()` wraps direct-symbol handles in
+  probes that bypass `ctx.lib`.
 
 ### 2. Buckets - `core/loader.py`, `_plugin_finalize.py`, `_plugin_counters.py`
 
@@ -214,15 +233,22 @@ Small seams, each following an existing pattern.
 
 ### 3. Child channel - `_probes/`, `_subprocess_preamble.py`, `_raw_subprocess.py`
 
-- `write_coverage(..., call_counters=None)` gains the optional flattened
-  payload key; `session.py` and `raw_session.py` probes pass
-  `flatten_current()`.
-- Both ingest functions extract the key, merge it via `ingest_child_counts`
-  under the parent's active bucket, and return whether usable counters were
-  recovered (new return; existing callers may ignore it).
+- `write_coverage(..., call_counters=None, probes_lost=0)` gains the
+  optional flattened payload key plus the child's own lost count;
+  `session.py` and `raw_session.py` probes pass `flatten_current()` and
+  their `probes_lost()`.
+- Both ingest functions fold the key in via `ingest_child_counts` under the
+  parent's active bucket, accumulate the payload's `probes_lost`, and return
+  whether usable counters were recovered (new return; existing callers may
+  ignore it).
 - `runner.py` calls `note_lost_probe()` exactly when ingest reports no
   usable counters (missing/corrupt coverage file included - ingest never
   raises).
+- Below the probe child: the isolation grandchild writes a private coverage
+  path the probe child ingests; the fork child (untransmittable via
+  `os._exit` by design) is accounted lost by its reaping parent; the
+  threading workload child prints a `P11_CALL_COUNTERS_JSON:` stdout marker
+  the parent folds in, accounting lost when it is absent or unusable.
 
 ### 4. Extraction - `_jsonl_extract.py`, `_report_writers.py`, `file_runner.py`, `test_cmd.py`, `merge.py`
 

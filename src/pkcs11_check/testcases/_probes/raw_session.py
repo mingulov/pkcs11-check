@@ -50,8 +50,8 @@ from typing import Any, cast
 
 from pkcs11_check.core.call_counters import (
     flatten_current,
+    probes_lost,
     record_call,
-    record_direct_call,
     record_return,
 )
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
@@ -122,10 +122,12 @@ def _get_function_list(lib: ctypes.CDLL) -> tuple[ctypes.c_void_p | None, int]:
     get_fn_list.restype = ctypes.c_ulong  # CK_RV
     get_fn_list.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
     funclist_ptr = ctypes.c_void_p()
-    rv = get_fn_list(ctypes.byref(funclist_ptr))
     # This runs on the raw CDLL before ctx.lib is wrapped, so the call is recorded
-    # explicitly (mirrors the C_GetFunctionList site in raw/api.py).
-    record_direct_call("C_GetFunctionList", int(rv))
+    # explicitly (mirrors the C_GetFunctionList site in raw/api.py). A raising
+    # attempt counts entry-only (crash parity), not silence.
+    record_call("C_GetFunctionList")
+    rv = get_fn_list(ctypes.byref(funclist_ptr))
+    record_return("C_GetFunctionList", int(rv))
     if rv != 0:  # CKR_OK = 0
         return None, int(rv)
     return funclist_ptr, int(rv)
@@ -138,7 +140,7 @@ def _write_raw_coverage() -> None:
     the fw#73 counters (fed by the counting CDLL proxy, ``call_func``, and the
     explicit ``C_GetFunctionList`` record above) ride along under ``call_counters``.
     """
-    write_coverage({}, {}, call_counters=flatten_current())
+    write_coverage({}, {}, call_counters=flatten_current(), probes_lost=probes_lost())
 
 
 class _CountingFuncPtr:
@@ -186,6 +188,8 @@ class _CountingCDLL:
     mirroring CDLL's own caching); anything else passes through to the real
     library untouched. A missing symbol raises the real library's AttributeError
     unchanged, so probes keep their absent-export handling (e.g. CKR:NO_METHOD).
+    Note: the proxy is not a ``ctypes.CDLL`` instance (``isinstance`` checks
+    against CDLL fail); it is duck-type compatible only.
     """
 
     def __init__(self, lib: ctypes.CDLL) -> None:
@@ -203,6 +207,18 @@ class _CountingCDLL:
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
+
+def counting_cdll(lib: ctypes.CDLL) -> ctypes.CDLL:
+    """Wrap a raw ``ctypes.CDLL`` so every ``C_*`` call through it is counted (fw#73).
+
+    For probes that drive the module through a direct-symbol handle instead of
+    ``ctx.lib`` (e.g. the CKR NULL-params probes): the proxy is duck-type
+    compatible with the raw library (attribute access, ``restype``/``argtypes``
+    configuration, calls, and AttributeError for missing symbols all behave the
+    same), so call sites only change the construction line.
+    """
+    return cast(ctypes.CDLL, _CountingCDLL(lib))
 
 
 def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -> None:

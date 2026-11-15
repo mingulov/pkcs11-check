@@ -7,11 +7,14 @@ ONE implementation of each protocol.
 Coverage shape (I6):
     {"call_log": dict[str, int], "mechanism_counts": dict[str, int],
      "call_log_ok": dict[str, int], "mechanism_rv_counts": dict[str, dict[str, int]],
-     "call_counters": list[[fn, rv_or_None, count]]}  # fw#73; only when provided
+     "call_counters": list[[fn, rv_or_None, count]],  # fw#73; only when provided
+     "probes_lost": int}  # fw#73; child-side losses, always present
 
 The ``call_counters`` key is present only when the child passed flattened
 counters: its absence means "no counters reported" (pre-channel payload), which
-the parent's ingest readers report as a lost child.
+the parent's ingest readers report as a lost child. ``probes_lost`` carries the
+child's own lost-probe count (losses below it); readers use ``.get`` with a
+zero default so payloads written before the key existed still read as zero.
 
 RV-trace shape (I7):
     "P11_RV_TRACE_JSON:" + json.dumps(list[dict])
@@ -27,6 +30,24 @@ from re import fullmatch
 from typing import Any
 
 _RV_TRACE_MARKER = "P11_RV_TRACE_JSON:"
+
+# Private coverage path for the isolation grandchild (subprocess_safety): the
+# grandchild must not share its probe-child parent's _P11CHECK_SUBPROCESS_COVERAGE
+# file (a stale grandchild write would blind the abrupt-exit detector), so the
+# probe child hands it a private path under this key and ingests it afterwards.
+GRANDCHILD_COVERAGE_ENV = "_P11CHECK_GRANDCHILD_COVERAGE"
+
+
+def _coverage_path() -> str | None:
+    """Resolve the coverage file this process should write (I6).
+
+    The standard key wins; the grandchild key is the fallback for the
+    isolation grandchild, which never has the standard key set.
+    """
+    return os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE") or os.environ.get(
+        GRANDCHILD_COVERAGE_ENV
+    )
+
 
 # Child -> parent sentinel for a failure in the HARNESS, not in the module (GH #9/#11).
 # Only harness-side cleanup emits it. Everything else keeps its previous attribution, so
@@ -194,7 +215,7 @@ def mark_python_finalized() -> None:
     teardown would leave the same empty file as a module-terminated process, and would be
     reported as a provider crash. Registering first closes that window.
     """
-    path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
+    path = _coverage_path()
     if not path:
         return
     try:
@@ -216,6 +237,7 @@ def write_coverage(
     call_log_ok: dict[str, int] | None = None,
     mechanism_rv_counts: dict[str, dict[str, int]] | None = None,
     call_counters: list[list[str | int | None]] | None = None,
+    probes_lost: int = 0,
 ) -> None:
     """Write function/mechanism counts and their successful/return-value subsets (I6).
 
@@ -223,10 +245,12 @@ def write_coverage(
     the hollow-pass oracle; ``mechanism_rv_counts`` feeds accepted/rejected mechanism state.
     ``call_counters`` carries the child's flattened fw#73 counters (fn names + RV ints +
     counts only -- never PINs or key material); the key is omitted when None so the
-    parent can tell "no counters reported" apart from "zero calls".
+    parent can tell "no counters reported" apart from "zero calls". ``probes_lost``
+    carries the child's own lost-probe count so losses below it propagate to the
+    parent (which accumulates them only when the counters channel is usable).
     No-op when the environment variable is absent.
     """
-    path = os.environ.get("_P11CHECK_SUBPROCESS_COVERAGE")
+    path = _coverage_path()
     if not path:
         return
     try:
@@ -235,6 +259,7 @@ def write_coverage(
             "mechanism_counts": mechanism_counts,
             "call_log_ok": call_log_ok or {},
             "mechanism_rv_counts": mechanism_rv_counts or {},
+            "probes_lost": probes_lost,
         }
         if call_counters is not None:
             payload["call_counters"] = call_counters
