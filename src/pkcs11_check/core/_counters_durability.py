@@ -96,9 +96,10 @@ ProducerVerdict = Literal["alive", "dead", "unknown"]
 FenceOutcome = Literal["fenced", "unresolved"]
 
 #: Signals that mean "killed from outside" rather than "crashed itself".
-_KILL_SIGNALS = frozenset(
-    sig for name in ("SIGKILL", "SIGTERM") if (sig := getattr(signal, name, None)) is not None
-)
+#: Literal POSIX numbers (SIGKILL=9, SIGTERM=15): negative return codes are
+#: POSIX signal-death encoding (Windows never yields them), and a pure
+#: mapping must not vary by platform.
+_KILL_SIGNALS = frozenset({9, 15})
 
 #: Win32 process rights + wait/error codes shared by the kernel32 call sites.
 _PROCESS_TERMINATE = 0x0001
@@ -274,13 +275,8 @@ def _kernel32() -> Any:
     handle = ctypes.c_void_p
     kernel32.OpenProcess.argtypes = [ctypes.c_uint, ctypes.c_bool, ctypes.c_uint]
     kernel32.OpenProcess.restype = handle
-    kernel32.GetProcessTimes.argtypes = [
-        handle,
-        ctypes.POINTER(ctypes.c_ulonglong),
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-    ]
+    filetime = ctypes.POINTER(ctypes.c_ulonglong)
+    kernel32.GetProcessTimes.argtypes = [handle, filetime, filetime, filetime, filetime]
     kernel32.GetProcessTimes.restype = ctypes.c_bool
     kernel32.TerminateProcess.argtypes = [handle, ctypes.c_uint]
     kernel32.TerminateProcess.restype = ctypes.c_bool
@@ -293,19 +289,38 @@ def _kernel32() -> Any:
     return kernel32
 
 
-def _windows_creation_time(pid: int) -> int | None:
-    """Return a process's creation FILETIME as an int, or None."""
+def _process_creation_time(kernel32: Any, handle: Any) -> int | None:
+    """Read one open handle's creation FILETIME as an int, or None.
+
+    All four out-params get real buffers: GetProcessTimes writes each
+    unconditionally, so a NULL out-pointer access-violates instead of
+    being skipped.
+    """
     import ctypes
 
+    creation = ctypes.c_ulonglong(0)
+    exit_time = ctypes.c_ulonglong(0)
+    kernel_time = ctypes.c_ulonglong(0)
+    user_time = ctypes.c_ulonglong(0)
+    if not kernel32.GetProcessTimes(
+        handle,
+        ctypes.byref(creation),
+        ctypes.byref(exit_time),
+        ctypes.byref(kernel_time),
+        ctypes.byref(user_time),
+    ):
+        return None
+    return int(creation.value)
+
+
+def _windows_creation_time(pid: int) -> int | None:
+    """Return a process's creation FILETIME as an int, or None."""
     kernel32 = _kernel32()
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         return None
     try:
-        creation = ctypes.c_ulonglong(0)
-        if not kernel32.GetProcessTimes(handle, ctypes.byref(creation), None, None, None):
-            return None
-        return int(creation.value)
+        return _process_creation_time(kernel32, handle)
     finally:
         kernel32.CloseHandle(handle)
 
@@ -684,8 +699,6 @@ def _terminate_handle(pid: int, birth: int, timeout_s: float) -> bool:
     every other failure (access-denied open, unreadable times, refused
     terminate, unmet wait) is unresolved, never assumed quiescent.
     """
-    import ctypes
-
     kernel32 = _kernel32()
     handle = kernel32.OpenProcess(
         _PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE, False, pid
@@ -693,10 +706,10 @@ def _terminate_handle(pid: int, birth: int, timeout_s: float) -> bool:
     if not handle:
         return bool(kernel32.GetLastError() == _ERROR_INVALID_PARAMETER)
     try:
-        creation = ctypes.c_ulonglong(0)
-        if not kernel32.GetProcessTimes(handle, ctypes.byref(creation), None, None, None):
+        creation = _process_creation_time(kernel32, handle)
+        if creation is None:
             return False
-        if int(creation.value) != birth:
+        if creation != birth:
             return True
         if not kernel32.TerminateProcess(handle, 1):
             return False
