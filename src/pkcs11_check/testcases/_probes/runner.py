@@ -27,9 +27,28 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
-from pkcs11_check.core.call_counters import note_lost_probe
+from pkcs11_check.core._counters_durability import (
+    COUNTERS_ATTEMPT_ENV,
+    COUNTERS_DIR_ENV,
+    COUNTERS_ROLE_ENV,
+    COUNTERS_UNIT_ENV,
+    PROBE_SEQ_ENV,
+    PROBE_SIDECAR_ENV,
+    durability_dir,
+    mark_probe_consumed,
+    validate_probe_receipt,
+)
+from pkcs11_check.core.call_counters import (
+    assign_probe_seq,
+    flush_counters,
+    get_worker_uuid,
+    ingest_child_evidence,
+    note_lost_probe,
+)
+from pkcs11_check.core.counters_schema import mint_filename_nonce
 from pkcs11_check.core.loader import SUPPORTED_INTERFACES
 from pkcs11_check.core.process_observation import (
     SUBPROCESS_ABRUPT_EXIT_MARKER,
@@ -134,6 +153,128 @@ def _module_terminated_process(rc: int, stderr: str, cov_path: str) -> bool:
     return rc >= 0 and not _finalizer_ran(cov_path) and _PYTHON_TRACEBACK not in stderr
 
 
+def _read_probe_json(path: str | None) -> dict[str, Any] | None:
+    """Read one probe evidence file; missing/torn reads as absent (never raises)."""
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _delete_probe_sidecar(path: str | None) -> bool:
+    """Remove a probe sidecar (never raises). True when gone or absent.
+
+    A missing file counts as deleted: the sidecar writer suppresses I/O
+    failures, so valid coverage may arrive with no sidecar at all, and
+    that must not escalate into a consumed-marker rename of nothing.
+    """
+    if not path:
+        return True
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _commit_probe_sidecar(path: str | None) -> None:
+    """Flush-then-delete: persist the parent checkpoint, then drop the sidecar.
+
+    The parent checkpoint must be durable before the probe's own evidence
+    goes: an ingest below K otherwise lives only in memory, and a worker
+    death after the delete would lose the recoverable probe evidence. The
+    sidecar is deleted only on flush success and retained on failure (the
+    orphan collector then suppresses-or-folds it from disk). When the
+    delete itself fails after a good flush, the sidecar renames to a
+    consumed marker instead: the parent checkpoint already holds the
+    counts, and the marker tells orphan adoption to suppress rather than
+    fold them a second time.
+
+    Raises:
+        CounterPersistenceError: When the parent checkpoint cannot be
+            flushed (the sidecar is retained and the error propagates loud;
+            the in-memory ingest is kept), or when neither delete nor the
+            consumed-marker rename succeeds (proceeding would risk a
+            silent double-fold).
+    """
+    flush_counters()
+    if path is None:
+        return
+    if _delete_probe_sidecar(path):
+        return
+    mark_probe_consumed(path)
+
+
+def ingest_probe_payload(
+    cov_path: str | Path,
+    *,
+    seq: int,
+    sidecar_path: str | Path | None,
+) -> Literal["folded", "partial", "lost"]:
+    """Fold one probe child's counter evidence (receipt-aware, never raises loss).
+
+    Returns ``"folded"`` when the coverage channel carried usable counters
+    (a present receipt must exactly match the assigned ``seq``; absent
+    receipt folds legacy-style with no receipt recorded; propagated
+    grandchild receipts union in), ``"partial"`` when only the probe
+    sidecar carried usable counters for this seq (counts fold, the receipt
+    is suppressed — partial evidence never earns a folded receipt), and
+    ``"lost"`` otherwise. After a commit the sidecar goes only once the
+    parent checkpoint flushed (flush-then-delete); on flush failure the
+    sidecar is retained and the persistence error propagates loud. A
+    definitive miss still deletes the sidecar (validated-unusable, torn, or
+    missing: nothing recoverable remains). This function never accounts
+    loss itself: the caller owns ``note_lost_probe`` for ``"partial"`` and
+    ``"lost"`` alike (the single accounting site).
+
+    Raises:
+        CounterPersistenceError: When the parent checkpoint cannot be
+            flushed after a commit (the sidecar is retained).
+    """
+    sidecar = str(sidecar_path) if sidecar_path is not None else None
+    data = _read_probe_json(str(cov_path))
+    if data is not None:
+        counters = data.get("call_counters")
+        receipt = data.get("receipt")
+        if isinstance(counters, (list, tuple)) and receipt is None:
+            ingest_child_evidence(
+                list(counters), data.get("probes_lost", 0), data.get("receipts", ())
+            )
+            _commit_probe_sidecar(sidecar)
+            return "folded"
+        if isinstance(counters, (list, tuple)) and receipt is not None:
+            validated = validate_probe_receipt(receipt, seq)
+            if validated is not None:
+                propagated: list[Any] = (
+                    list(data["receipts"]) if isinstance(data.get("receipts"), list) else []
+                )
+                propagated.append({"worker_uuid": validated[0], "probe_seq": validated[1]})
+                ingest_child_evidence(list(counters), data.get("probes_lost", 0), propagated)
+                _commit_probe_sidecar(sidecar)
+                return "folded"
+    fallback = _read_probe_json(sidecar)
+    if fallback is not None:
+        fallback_receipt = {
+            "worker_uuid": fallback.get("worker_uuid"),
+            "probe_seq": fallback.get("probe_seq"),
+        }
+        fallback_counters = fallback.get("counters")
+        if validate_probe_receipt(fallback_receipt, seq) is not None and isinstance(
+            fallback_counters, (list, tuple)
+        ):
+            ingest_child_evidence(list(fallback_counters))
+            _commit_probe_sidecar(sidecar)
+            return "partial"
+    _delete_probe_sidecar(sidecar)
+    return "lost"
+
+
 def run_probe(
     probe: str,
     params: Mapping[str, Any],
@@ -190,6 +331,30 @@ def run_probe(
     else:
         env.pop("_P11CHECK_PIN", None)
 
+    # Probe children ride the receipt channel (coverage + probe sidecar),
+    # never the registry: strip the counters identity so a grandchild can
+    # neither register under its parent's (unit, attempt) nor flush into
+    # the parent's evidence files (that would double-count on collection).
+    for counters_key in (
+        COUNTERS_DIR_ENV,
+        COUNTERS_UNIT_ENV,
+        COUNTERS_ATTEMPT_ENV,
+        COUNTERS_ROLE_ENV,
+    ):
+        env.pop(counters_key, None)
+    probe_seq = assign_probe_seq()
+    env[PROBE_SEQ_ENV] = str(probe_seq)
+    probe_sidecar: str | None = None
+    counters_root = durability_dir()
+    if counters_root is not None:
+        probe_sidecar = str(
+            counters_root
+            / f"probe-{get_worker_uuid()[:8]}-{probe_seq}-{mint_filename_nonce()}.json"
+        )
+        env[PROBE_SIDECAR_ENV] = probe_sidecar
+    else:
+        env.pop(PROBE_SIDECAR_ENV, None)
+
     params_fd, params_path = tempfile.mkstemp(suffix=".json", prefix="p11probe-")
     cov_fd, cov_path = tempfile.mkstemp(suffix=".json", prefix="p11cov-")
     os.close(cov_fd)
@@ -237,15 +402,16 @@ def run_probe(
         if rc is not None and not timed_out and _module_terminated_process(rc, err, cov_path):
             err += f"\n{SUBPROCESS_ABRUPT_EXIT_MARKER}:{rc}\n"
 
-        counters_ok: bool
         if coverage == "raw":
-            counters_ok = ingest_raw_subprocess_coverage(cov_path)  # I6
+            ingest_raw_subprocess_coverage(cov_path, ingest_counters=False)  # I6
         else:
-            counters_ok = ingest_subprocess_coverage(cov_path)  # I6
-        if not counters_ok:
-            # The child's C_* traffic never arrived (crash, corrupt file, or a
-            # payload without counters): account it as lost (fw#73). This is the
-            # only lost-probe accounting site; ingests never account loss.
+            ingest_subprocess_coverage(cov_path, ingest_counters=False)  # I6
+        counters_status = ingest_probe_payload(cov_path, seq=probe_seq, sidecar_path=probe_sidecar)
+        if counters_status != "folded":
+            # The child's C_* traffic never fully arrived (crash, corrupt
+            # file, unattributable receipt, or sidecar-only partial
+            # evidence): account it as lost (fw#73). This is the only
+            # lost-probe accounting site; ingests never account loss.
             note_lost_probe()
 
         # I7 AFTER ingest + loss accounting: the rv-trace is an optional

@@ -82,6 +82,10 @@ class FileRunState:
     # forward-compatible additions to the recovery evidence contract.
     attempt_history: list[dict[str, Any]] = field(default_factory=list)
     recovery_events: list[dict[str, Any]] = field(default_factory=list)
+    # Durable counter-evidence home (rc2 Task 3): the counters dir this run
+    # engaged, so resume finds it even when the environment differs. None
+    # when durability was never engaged (old states read as None).
+    counters_dir: str | None = None
 
 
 @dataclass

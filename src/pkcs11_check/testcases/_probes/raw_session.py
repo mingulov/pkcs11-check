@@ -50,6 +50,7 @@ from typing import Any, cast
 
 from pkcs11_check.core.call_counters import (
     current_bucket,
+    current_receipts,
     flatten_current,
     probes_lost,
     record_call,
@@ -61,7 +62,9 @@ from pkcs11_check.raw.rv import ckr_name
 from pkcs11_check.testcases._probes._emit import (
     emit_harness_error,
     emit_rv_trace,
+    flush_probe_sidecar,
     mark_python_finalized,
+    probe_coverage_receipt,
     rv_trace_enabled,
     write_coverage,
 )
@@ -91,6 +94,7 @@ class RawCtypesContext:
     func_list: Any  # ctypes.c_void_p (opaque; Any avoids ctypes generic-type noise)
     cleanup: Callable[[], None]
     interface: str = "auto"
+    module_path: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +115,7 @@ def _load_cdll(lib_path: str) -> ctypes.CDLL:
     return ctypes.CDLL(lib_path)
 
 
-def _get_function_list(lib: ctypes.CDLL) -> tuple[ctypes.c_void_p | None, int]:
+def _get_function_list(lib: ctypes.CDLL, module: str = "") -> tuple[ctypes.c_void_p | None, int]:
     """Return the opaque function-list pointer and exact provider CKR.
 
     Mirrors the ctypes boilerplate in ckr/_ctypes_raw.py and test_operation_state.py:
@@ -128,9 +132,9 @@ def _get_function_list(lib: ctypes.CDLL) -> tuple[ctypes.c_void_p | None, int]:
     # attempt counts entry-only (crash parity), not silence. The bucket is
     # captured once so a mid-call switch cannot split the pair.
     bucket = current_bucket()
-    record_call("C_GetFunctionList", bucket=bucket)
+    record_call("C_GetFunctionList", bucket=bucket, module=module)
     rv = get_fn_list(ctypes.byref(funclist_ptr))
-    record_return("C_GetFunctionList", int(rv), bucket=bucket)
+    record_return("C_GetFunctionList", int(rv), bucket=bucket, module=module)
     if rv != 0:  # CKR_OK = 0
         return None, int(rv)
     return funclist_ptr, int(rv)
@@ -141,9 +145,20 @@ def _write_raw_coverage() -> None:
 
     The raw CDLL path has no RawPKCS11 wrapper, so ``call_log`` is always empty;
     the fw#73 counters (fed by the counting CDLL proxy, ``call_func``, and the
-    explicit ``C_GetFunctionList`` record above) ride along under ``call_counters``.
+    explicit ``C_GetFunctionList`` record above) ride along under ``call_counters``,
+    with the echoed probe receipt plus propagated grandchild receipts; the same
+    counters flush to the probe sidecar for the parent's torn-coverage fallback.
     """
-    write_coverage({}, {}, call_counters=flatten_current(), probes_lost=probes_lost())
+    flattened = flatten_current()
+    flush_probe_sidecar(flattened)
+    write_coverage(
+        {},
+        {},
+        call_counters=flattened,
+        probes_lost=probes_lost(),
+        receipt=probe_coverage_receipt(),
+        receipts=current_receipts() or None,
+    )
 
 
 class _CountingFuncPtr:
@@ -157,19 +172,21 @@ class _CountingFuncPtr:
 
     _name: str
     _func: Any
+    _module: str
 
-    def __init__(self, name: str, func: Any) -> None:
+    def __init__(self, name: str, func: Any, module: str = "") -> None:
         # object.__setattr__: __setattr__ below forwards EVERYTHING to the real
         # func, so the wrapper's own state must bypass it.
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_func", func)
+        object.__setattr__(self, "_module", module)
 
     def __call__(self, *args: Any, bucket: str | None = None) -> Any:
         # Keyword-only: C arguments always arrive positionally through ctypes,
         # so this can never collide with a call argument. The bucket is
         # captured once so a mid-call switch cannot split the pair.
         target = bucket if bucket is not None else current_bucket()
-        record_call(self._name, bucket=target)
+        record_call(self._name, bucket=target, module=self._module)
         result = self._func(*args)
         try:
             rv = int(result)
@@ -178,7 +195,7 @@ class _CountingFuncPtr:
             # RV: the value still passes through and only the entry is counted,
             # exactly as if the call had not returned.
             return result
-        record_return(self._name, rv, bucket=target)
+        record_return(self._name, rv, bucket=target, module=self._module)
         return result
 
     def __getattr__(self, name: str) -> Any:
@@ -199,14 +216,15 @@ class _CountingCDLL:
     against CDLL fail); it is duck-type compatible only.
     """
 
-    def __init__(self, lib: ctypes.CDLL) -> None:
+    def __init__(self, lib: ctypes.CDLL, module: str = "") -> None:
         self._lib = lib
+        self._module = module
 
     def __getattr__(self, name: str) -> Any:
         func = getattr(self._lib, name)
         if not name.startswith("C_"):
             return func
-        wrapper = _CountingFuncPtr(name, func)
+        wrapper = _CountingFuncPtr(name, func, self._module)
         setattr(self, name, wrapper)
         return wrapper
 
@@ -216,16 +234,17 @@ class _CountingCDLL:
 # ---------------------------------------------------------------------------
 
 
-def counting_cdll(lib: ctypes.CDLL) -> ctypes.CDLL:
+def counting_cdll(lib: ctypes.CDLL, module: str = "") -> ctypes.CDLL:
     """Wrap a raw ``ctypes.CDLL`` so every ``C_*`` call through it is counted (fw#73).
 
     For probes that drive the module through a direct-symbol handle instead of
     ``ctx.lib`` (e.g. the CKR NULL-params probes): the proxy is duck-type
     compatible with the raw library (attribute access, ``restype``/``argtypes``
     configuration, calls, and AttributeError for missing symbols all behave the
-    same), so call sites only change the construction line.
+    same), so call sites only change the construction line. ``module`` is the
+    id every call through the proxy attributes to (the child's module path).
     """
-    return cast(ctypes.CDLL, _CountingCDLL(lib))
+    return cast(ctypes.CDLL, _CountingCDLL(lib, module))
 
 
 def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -> None:
@@ -267,7 +286,7 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
         emit_harness_error(exc, phase=f"CDLL load {params.module_path!r}")
         return
 
-    func_list, get_function_list_rv = _get_function_list(lib)
+    func_list, get_function_list_rv = _get_function_list(lib, module=params.module_path)
     if func_list is None:
         print(f"SETUP_XFAIL:C_GetFunctionList rejected with {ckr_name(get_function_list_rv)}")
         return
@@ -292,9 +311,10 @@ def probe_main_raw(run_fn: Callable[[RawCtypesContext, dict[str, Any]], None]) -
     # keeps the declared type (and all downstream probe signatures) as CDLL; the
     # proxy is duck-type compatible.
     ctx = RawCtypesContext(
-        lib=cast(ctypes.CDLL, _CountingCDLL(lib)),
+        lib=cast(ctypes.CDLL, _CountingCDLL(lib, module=params.module_path)),
         func_list=func_list,
         cleanup=_cleanup,
         interface=params.interface or "auto",
+        module_path=params.module_path,
     )
     run_fn(ctx, params.extra)

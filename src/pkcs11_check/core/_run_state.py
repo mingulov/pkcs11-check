@@ -165,7 +165,7 @@ from pkcs11_check.core._run_units import (
 )
 from pkcs11_check.core._secrets import SECRET_ARGV_FLAGS, redact_secret_args
 from pkcs11_check.core.call_counters import ISOLATION_ENV, RUN_ID_ENV
-from pkcs11_check.core.preflight import load_manifest
+from pkcs11_check.core.preflight import PREFLIGHT_EVIDENCE_ENV, load_manifest
 
 # The fingerprint detects when the run's effective configuration changed, so
 # stale resume/policy state is not reused. By default it covers the framework's
@@ -191,6 +191,22 @@ _REDACTED_ENV_KEYS = {"P11TEST_PIN", "P11TEST_SO_PIN", "P11TEST_WRAP_KEY_VALUE"}
 # (pre-seed at discovery time). The per-invocation run id rides the same
 # bridge and is ignored for the same reason: a fresh id per invocation MUST
 # NOT invalidate resume (every resume round seeds a new one).
+# Counter-durability plumbing (rc2 Task 3): the evidence home and the
+# per-launch identity ride os.environ like the run id above. Ignored on both
+# fingerprints: engaging durability (or resuming with a different launch
+# identity) must not invalidate resume or policy state. The retained
+# preflight evidence path (rc2 Task 4) joins them: it names a run artifact,
+# not run configuration.
+_COUNTERS_IGNORED_ENV_KEYS = frozenset(
+    {
+        "PKCS11_CHECK_COUNTERS_DIR",
+        "PKCS11_CHECK_COUNTERS_UNIT",
+        "PKCS11_CHECK_COUNTERS_ATTEMPT",
+        "PKCS11_CHECK_COUNTERS_ROLE",
+        PREFLIGHT_EVIDENCE_ENV,
+    }
+)
+
 _POLICY_IGNORED_ENV_KEYS = {
     "P11TEST_ISOLATION",
     "P11TEST_POLICY_FILE",
@@ -202,6 +218,7 @@ _POLICY_IGNORED_ENV_KEYS = {
     "PKCS11_CHECK_FRAMEWORK_VERSION",
     ISOLATION_ENV,
     RUN_ID_ENV,
+    *_COUNTERS_IGNORED_ENV_KEYS,
 }
 
 # Same exclusion for the resume-validation fingerprint: resuming across
@@ -209,7 +226,9 @@ _POLICY_IGNORED_ENV_KEYS = {
 # forbid it (the merged report still stamps the current version honestly).
 # The run id joins it for the same reason as above: resume across run ids is
 # the normal case (each CLI invocation seeds a fresh one), not a config change.
-_STATE_IGNORED_ENV_KEYS = frozenset({"PKCS11_CHECK_FRAMEWORK_VERSION", ISOLATION_ENV, RUN_ID_ENV})
+_STATE_IGNORED_ENV_KEYS = frozenset(
+    {"PKCS11_CHECK_FRAMEWORK_VERSION", ISOLATION_ENV, RUN_ID_ENV, *_COUNTERS_IGNORED_ENV_KEYS}
+)
 
 
 def _recovery_attempts_path(path: Path) -> Path:
@@ -367,6 +386,7 @@ def load_run_state(path: Path) -> FileRunState | None:
         if isinstance(raw_recovery_events, list)
         else []
     )
+    raw_counters_dir = raw.get("counters_dir")
     state = FileRunState(
         units=list(raw.get("units", [])),
         fingerprint=str(raw.get("fingerprint", "")),
@@ -380,6 +400,7 @@ def load_run_state(path: Path) -> FileRunState | None:
         ),
         attempt_history=attempt_history,
         recovery_events=recovery_events,
+        counters_dir=raw_counters_dir if isinstance(raw_counters_dir, str) else None,
     )
     _reconcile_recovery_attempts(path, state, _load_recovery_attempt_sidecar(path))
     return state
@@ -411,6 +432,8 @@ def save_run_state(path: Path, state: FileRunState) -> None:
         "attempt_history": state.attempt_history,
         "recovery_events": state.recovery_events,
     }
+    if state.counters_dir is not None:
+        payload["counters_dir"] = state.counters_dir
     if os.environ.get("PKCS11_CHECK_STATE_INLINE_RECORDS") == "1":
         # Opt-in legacy/debug behavior: embed the per-unit report records inline.
         # This is the O(n^2) re-serialization the default path deliberately

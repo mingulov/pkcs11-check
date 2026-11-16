@@ -22,6 +22,7 @@ writes them); shared keys keep their single home in ``_plugin_state``.
 from __future__ import annotations
 
 import os
+import warnings
 from typing import Any
 
 import pytest
@@ -32,16 +33,22 @@ from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_REPORT_TYPE,
     ISOLATION_ENV,
     RUN_ID_ENV,
+    CounterPersistenceError,
     Snapshot,
     _phase,
+    current_receipts,
     diff_snapshots,
+    flush_counters,
+    get_worker_uuid,
     probes_lost,
+    publish_test_window,
     serialize_current,
     take_snapshot,
 )
 
 _BASELINE_KEY: pytest.StashKey[Snapshot] = pytest.StashKey()
 _ENTRY_KEY: pytest.StashKey[dict[str, Any]] = pytest.StashKey()
+_RECEIPTS_MARK_KEY: pytest.StashKey[frozenset[tuple[str, int]]] = pytest.StashKey()
 
 
 # Note on the wrapper protocol: pluggy replaces the hook outcome with a
@@ -60,6 +67,9 @@ def pytest_runtest_setup(item: pytest.Item) -> Any:
         result = yield
         return result
     item.stash[_BASELINE_KEY] = take_snapshot()
+    item.stash[_RECEIPTS_MARK_KEY] = frozenset(
+        (receipt["worker_uuid"], receipt["probe_seq"]) for receipt in current_receipts()
+    )
     with _phase("setup_teardown"):
         result = yield
         return result
@@ -99,12 +109,25 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     finally:
         baseline = item.stash.get(_BASELINE_KEY, None)
         if baseline is not None:
-            entry: dict[str, Any] = {"pid": os.getpid()}
+            entry: dict[str, Any] = {"pid": os.getpid(), "worker_uuid": get_worker_uuid()}
+            # Isolation stamp (rc2 Task 5): crash-fallback rows inherit
+            # this; entries without it (bare pytest) read as "unknown".
+            entry["isolation"] = os.environ.get(ISOLATION_ENV, "unknown")
             run_id = os.environ.get(RUN_ID_ENV)
             if run_id is not None:
                 entry["run_id"] = run_id
+            mark = item.stash.get(_RECEIPTS_MARK_KEY, frozenset())
+            window_receipts = sorted(
+                {(receipt["worker_uuid"], receipt["probe_seq"]) for receipt in current_receipts()}
+                - set(mark)
+            )
+            if window_receipts:
+                entry["receipts"] = [
+                    {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in window_receipts
+                ]
             entry.update(diff_snapshots(baseline, take_snapshot()))
             item.stash[_ENTRY_KEY] = entry
+            _publish_window_best_effort(item.nodeid, entry)
 
 
 @pytest.hookimpl(wrapper=True)
@@ -139,14 +162,31 @@ def attach_call_counters(item: pytest.Item, report: Any) -> None:
         user_properties.append((CALL_COUNTERS_PROPERTY, entry))
 
 
+def _publish_window_best_effort(nodeid: str, entry: dict[str, Any]) -> None:
+    """Publish one test window to the durability journal (loud, never fatal).
+
+    A persistence failure warns (it cannot fail the test: verdicts stay
+    untouched by counter plumbing); the unrecovered tail is named by the
+    collector's lost record instead. No-op when disengaged.
+    """
+    block = {"total_calls": entry["total_calls"], "by_module": entry["by_module"]}
+    try:
+        publish_test_window(nodeid, block)
+    except CounterPersistenceError as exc:
+        warnings.warn(f"call-counter publish failed for {nodeid}: {exc}", UserWarning, stacklevel=3)
+
+
 def build_session_record() -> dict[str, Any]:
     """Build the session CallCountersReport record from the global counters.
 
-    Carries ``probes_lost`` only (there is no ``probes_completed`` field).
+    Carries ``probes_lost`` only (there is no ``probes_completed`` field)
+    plus the process ``worker_uuid`` and the folded-probe ``receipts``
+    (omitted when empty); counters serialize module-first.
     """
     record: dict[str, Any] = {
         "$report_type": CALL_COUNTERS_REPORT_TYPE,
         "pid": os.getpid(),
+        "worker_uuid": get_worker_uuid(),
         "isolation": os.environ.get(ISOLATION_ENV, "unknown"),
         "probes_lost": probes_lost(),
     }
@@ -156,12 +196,24 @@ def build_session_record() -> dict[str, Any]:
     run_id = os.environ.get(RUN_ID_ENV)
     if run_id is not None:
         record["run_id"] = run_id
+    receipts = current_receipts()
+    if receipts:
+        record["receipts"] = receipts
     record.update(serialize_current())
     return record
 
 
 def emit_session_record(config: pytest.Config) -> None:
-    """Write one CallCountersReport record via the report-log plugin when present."""
+    """Write one CallCountersReport record via the report-log plugin when present.
+
+    Boundary-flushes first (best effort, warns on persistence failure), so
+    the sidecar carries the final in-progress snapshot even when the
+    report-log write itself is lost.
+    """
+    try:
+        flush_counters()
+    except CounterPersistenceError as exc:
+        warnings.warn(f"call-counter session flush failed: {exc}", UserWarning, stacklevel=2)
     report_log_plugin = getattr(config, "_report_log_plugin", None)
     if report_log_plugin is not None and hasattr(report_log_plugin, "_write_json_data"):
         report_log_plugin._write_json_data(build_session_record())

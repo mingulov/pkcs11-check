@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.core import call_counters
+from pkcs11_check.core import counters_schema as schema
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +17,17 @@ def _clean_counters() -> Iterator[None]:
     call_counters.reset_for_tests()
     yield
     call_counters.reset_for_tests()
+
+
+def _unknown_buckets(snap: dict[str, Any]) -> dict[str, Any]:
+    """Inner buckets of the single unknown-module block.
+
+    These tests record without a handle, so every call lands under the ``""``
+    module; the helper pins that explicitly instead of hiding it in the
+    index chain.
+    """
+    assert set(snap["by_module"]) == {""}
+    return snap["by_module"][""]["buckets"]
 
 
 def test_entry_exit_counts_and_rv_breakdown() -> None:
@@ -26,15 +38,16 @@ def test_entry_exit_counts_and_rv_breakdown() -> None:
     call_counters.record_return("C_Login", 0x31)
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 2
-    assert snap["buckets"]["session_provisioning"]["by_fn"]["C_Login"]["calls"] == 2
-    assert snap["buckets"]["session_provisioning"]["by_fn"]["C_Login"]["by_rv"]["0"]["count"] == 1
+    login = _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_Login"]
+    assert login["calls"] == 2
+    assert login["by_rv"]["0"]["count"] == 1
 
 
 def test_record_direct_call_counts_entry_and_exit() -> None:
     call_counters.record_direct_call("C_GetFunctionList", 0)
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_GetFunctionList"]
+    entry = _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_GetFunctionList"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
 
@@ -60,9 +73,10 @@ def test_counted_bucket_pushes_and_pops_with_nesting() -> None:
         assert call_counters.current_bucket() == "test"
     assert call_counters.current_bucket() == "session_provisioning"
     snap = call_counters.serialize_current()
-    assert snap["buckets"]["test"]["by_fn"]["C_Login"]["calls"] == 1
-    assert snap["buckets"]["module_init"]["by_fn"]["C_Initialize"]["calls"] == 1
-    assert "session_provisioning" not in snap["buckets"]
+    assert _unknown_buckets(snap)["test"]["by_fn"]["C_Login"]["calls"] == 1
+    assert _unknown_buckets(snap)["module_init"]["by_fn"]["C_Initialize"]["calls"] == 1
+    assert _unknown_buckets(snap)["session_provisioning"] == {"calls": 0, "by_fn": {}}
+    assert _unknown_buckets(snap)["preflight"] == {"calls": 0, "by_fn": {}}
 
 
 def test_counted_bucket_pops_on_exception() -> None:
@@ -83,7 +97,7 @@ def test_crash_entry_without_exit_counts_with_empty_rv_breakdown() -> None:
     call_counters.record_call("C_Sign")
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_Sign"]
+    entry = _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_Sign"]
     assert entry["calls"] == 1
     assert entry["by_rv"] == {}
 
@@ -96,8 +110,8 @@ def test_snapshot_diff_isolates_a_window() -> None:
         call_counters.record_direct_call("C_Login", 0xB3)
     delta = call_counters.diff_snapshots(before, call_counters.take_snapshot())
     assert delta["total_calls"] == 2
-    assert set(delta["buckets"]) == {"test"}
-    entry = delta["buckets"]["test"]["by_fn"]["C_Login"]
+    assert set(_unknown_buckets(delta)) == set(schema.BUCKETS_5)
+    entry = _unknown_buckets(delta)["test"]["by_fn"]["C_Login"]
     assert entry["calls"] == 2
     assert entry["by_rv"]["0"]["count"] == 1
     assert entry["by_rv"][str(0xB3)]["count"] == 1
@@ -115,7 +129,7 @@ def test_snapshot_is_detached_from_later_mutation() -> None:
 def test_diff_of_empty_window_is_empty() -> None:
     snap = call_counters.take_snapshot()
     delta = call_counters.diff_snapshots(snap, snap)
-    assert delta == {"total_calls": 0, "buckets": {}}
+    assert delta == {"total_calls": 0, "by_module": {}}
 
 
 def test_flatten_current_sorted_wire_format() -> None:
@@ -126,10 +140,10 @@ def test_flatten_current_sorted_wire_format() -> None:
     call_counters.record_call("C_Sign")
     call_counters.record_direct_call("C_GetInfo", 0)
     assert call_counters.flatten_current() == [
-        ["C_GetInfo", 0, 1],
-        ["C_Login", 0, 1],
-        ["C_Login", 0x31, 1],
-        ["C_Sign", None, 1],
+        ["", "C_GetInfo", 0, 1],
+        ["", "C_Login", 0, 1],
+        ["", "C_Login", 0x31, 1],
+        ["", "C_Sign", None, 1],
     ]
 
 
@@ -139,7 +153,7 @@ def test_flatten_empty_is_empty() -> None:
 
 def test_flatten_orphan_return_never_goes_negative() -> None:
     call_counters.record_return("C_Login", 0)
-    assert call_counters.flatten_current() == [["C_Login", 0, 1]]
+    assert call_counters.flatten_current() == [["", "C_Login", 0, 1]]
 
 
 def test_flatten_ingest_round_trip() -> None:
@@ -163,11 +177,11 @@ def test_ingest_merges_child_counts_under_active_bucket() -> None:
         call_counters.ingest_child_counts(flat)
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 6
-    login = snap["buckets"]["test"]["by_fn"]["C_Login"]
+    login = _unknown_buckets(snap)["test"]["by_fn"]["C_Login"]
     assert login["calls"] == 3
     assert login["by_rv"]["0"] == {"name": "CKR_OK", "count": 2}
     assert login["by_rv"]["49"] == {"name": ckr_name(49), "count": 1}
-    sign = snap["buckets"]["test"]["by_fn"]["C_Sign"]
+    sign = _unknown_buckets(snap)["test"]["by_fn"]["C_Sign"]
     assert sign["calls"] == 3
     assert sign["by_rv"] == {}
 
@@ -176,8 +190,8 @@ def test_ingest_explicit_bucket_overrides_active_bucket() -> None:
     with call_counters.counted_bucket("test"):
         call_counters.ingest_child_counts([["C_Login", 0, 1]], bucket="module_init")
     snap = call_counters.serialize_current()
-    assert snap["buckets"]["module_init"]["by_fn"]["C_Login"]["calls"] == 1
-    assert "test" not in snap["buckets"]
+    assert _unknown_buckets(snap)["module_init"]["by_fn"]["C_Login"]["calls"] == 1
+    assert _unknown_buckets(snap)["test"] == {"calls": 0, "by_fn": {}}
 
 
 def test_ingest_rejects_unknown_bucket() -> None:
@@ -205,17 +219,21 @@ def test_ingest_ignores_garbage_without_raising() -> None:
         ["C_Login", -1, 1],
         ("C_Login", -1, 1),
         ("C_Login", 0, 1),
+        ["", "C_Login", 0, 1, "extra"],
+        [None, "C_Login", 0, 1],
+        [42, "C_Login", 0, 1],
+        [["C_Login"], 0, 1],
     ]
     call_counters.ingest_child_counts(garbage)
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    assert snap["buckets"]["session_provisioning"]["by_fn"]["C_Login"]["calls"] == 1
+    assert _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_Login"]["calls"] == 1
 
 
 def test_ingest_non_list_payload_ignored() -> None:
     call_counters.ingest_child_counts(None)  # type: ignore[arg-type]
     call_counters.ingest_child_counts({"C_Login": 1})  # type: ignore[arg-type]
-    assert call_counters.serialize_current() == {"total_calls": 0, "buckets": {}}
+    assert call_counters.serialize_current() == {"total_calls": 0, "by_module": {}}
 
 
 def test_ingest_accepts_tuple_payload() -> None:
@@ -224,7 +242,9 @@ def test_ingest_accepts_tuple_payload() -> None:
     assert snap["total_calls"] == 2
 
 
-def test_merge_serialized_sums_and_returns_target() -> None:
+def test_merge_module_first_sums_and_returns_target() -> None:
+    from pkcs11_check.core.counters_schema import merge_module_first
+
     call_counters.record_direct_call("C_Login", 0)
     with call_counters.counted_bucket("test"):
         call_counters.record_direct_call("C_Login", 0)
@@ -232,35 +252,43 @@ def test_merge_serialized_sums_and_returns_target() -> None:
     call_counters.reset_for_tests()
     call_counters.record_direct_call("C_Login", 0x31)
     second = call_counters.serialize_current()
-    merged = call_counters.merge_serialized(first, second)
+    merged = merge_module_first(first, second)
     assert merged is first
     assert merged["total_calls"] == 3
-    assert merged["buckets"]["session_provisioning"]["calls"] == 2
-    assert merged["buckets"]["test"]["calls"] == 1
-    login = merged["buckets"]["session_provisioning"]["by_fn"]["C_Login"]
+    buckets = _unknown_buckets(merged)
+    assert buckets["session_provisioning"]["calls"] == 2
+    assert buckets["test"]["calls"] == 1
+    login = buckets["session_provisioning"]["by_fn"]["C_Login"]
     assert login["calls"] == 2
     assert login["by_rv"]["0"]["count"] == 1
     assert login["by_rv"][str(0x31)]["count"] == 1
 
 
-def test_merge_serialized_creates_missing_keys_without_aliasing() -> None:
+def test_merge_module_first_creates_missing_keys_without_aliasing() -> None:
+    from pkcs11_check.core.counters_schema import merge_module_first
+
     call_counters.record_direct_call("C_Login", 0)
     incoming = call_counters.serialize_current()
-    target: dict[str, object] = {"total_calls": 0, "buckets": {}}
-    merged = call_counters.merge_serialized(target, incoming)
+    target: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merged = merge_module_first(target, incoming)
     assert merged == incoming
-    leaf = merged["buckets"]["session_provisioning"]["by_fn"]["C_Login"]["by_rv"]["0"]
+    leaf = _unknown_buckets(merged)["session_provisioning"]["by_fn"]["C_Login"]["by_rv"]["0"]
     assert leaf == {"name": "CKR_OK", "count": 1}
     leaf["count"] += 10
     assert (
-        incoming["buckets"]["session_provisioning"]["by_fn"]["C_Login"]["by_rv"]["0"]["count"] == 1
+        _unknown_buckets(incoming)["session_provisioning"]["by_fn"]["C_Login"]["by_rv"]["0"][
+            "count"
+        ]
+        == 1
     )
 
 
-def test_merge_serialized_does_not_touch_globals() -> None:
+def test_merge_module_first_does_not_touch_globals() -> None:
+    from pkcs11_check.core.counters_schema import merge_module_first
+
     call_counters.record_direct_call("C_Login", 0)
     before = call_counters.serialize_current()
-    call_counters.merge_serialized({"total_calls": 0, "buckets": {}}, before)
+    merge_module_first({"total_calls": 0, "by_module": {}}, before)
     assert call_counters.serialize_current() == before
 
 
@@ -276,7 +304,7 @@ def test_reset_for_tests_clears_everything() -> None:
         call_counters.record_direct_call("C_Login", 0)
     call_counters.note_lost_probe()
     call_counters.reset_for_tests()
-    assert call_counters.serialize_current() == {"total_calls": 0, "buckets": {}}
+    assert call_counters.serialize_current() == {"total_calls": 0, "by_module": {}}
     assert call_counters.flatten_current() == []
     assert call_counters.probes_lost() == 0
     assert call_counters.current_bucket() == "session_provisioning"
@@ -321,7 +349,7 @@ def test_call_counts_call_and_return_value() -> None:
     raw._call("C_GetInfo")
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_GetInfo"]
+    entry = _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_GetInfo"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
 
@@ -385,7 +413,7 @@ def test_load_from_lib_records_c_get_interface(tmp_path: Path) -> None:
         RawPKCS11._load_from_lib(raw, lib_path, interface="3.2")
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_GetInterface"]
+    entry = _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_GetInterface"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
 
@@ -414,7 +442,7 @@ def test_load_from_lib_records_c_get_function_list(tmp_path: Path) -> None:
         RawPKCS11._load_from_lib(raw, lib_path, interface="2.40")
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    entry = snap["buckets"]["session_provisioning"]["by_fn"]["C_GetFunctionList"]
+    entry = _unknown_buckets(snap)["session_provisioning"]["by_fn"]["C_GetFunctionList"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"] == {"name": "CKR_OK", "count": 1}
 
@@ -432,7 +460,7 @@ def test_reset_call_log_does_not_clear_global_counters() -> None:
     assert raw.call_count == 0
     after = call_counters.serialize_current()
     assert after["total_calls"] == 2
-    assert after["buckets"]["session_provisioning"]["by_fn"]["C_GetInfo"]["calls"] == 2
+    assert _unknown_buckets(after)["session_provisioning"]["by_fn"]["C_GetInfo"]["calls"] == 2
 
 
 def test_call_log_content_unchanged_by_counters() -> None:
@@ -462,9 +490,9 @@ def test_reinitialize_attributes_calls_to_module_init() -> None:
     assert module.reinit_count == 1
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 2
-    assert set(snap["buckets"]) == {"module_init"}
-    assert snap["buckets"]["module_init"]["by_fn"]["C_Finalize"]["calls"] == 1
-    assert snap["buckets"]["module_init"]["by_fn"]["C_Initialize"]["calls"] == 1
+    assert set(_unknown_buckets(snap)) == set(schema.BUCKETS_5)
+    assert _unknown_buckets(snap)["module_init"]["by_fn"]["C_Finalize"]["calls"] == 1
+    assert _unknown_buckets(snap)["module_init"]["by_fn"]["C_Initialize"]["calls"] == 1
 
 
 def test_teardown_finalize_attributes_call_to_module_init() -> None:
@@ -481,8 +509,8 @@ def test_teardown_finalize_attributes_call_to_module_init() -> None:
     assert outcome == "ok"
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 1
-    assert set(snap["buckets"]) == {"module_init"}
-    assert snap["buckets"]["module_init"]["by_fn"]["C_Finalize"]["calls"] == 1
+    assert set(_unknown_buckets(snap)) == set(schema.BUCKETS_5)
+    assert _unknown_buckets(snap)["module_init"]["by_fn"]["C_Finalize"]["calls"] == 1
 
 
 # --- Codex R1 fix round (I3): thread attribution ---
@@ -517,11 +545,11 @@ def test_overlapping_thread_regions_stay_isolated() -> None:
     assert not second.is_alive()
     assert errors == []
     snap = call_counters.serialize_current()
-    assert set(snap["buckets"]) == {"test", "module_init"}
-    entry_a = snap["buckets"]["test"]["by_fn"]["C_ThreadA"]
+    assert set(_unknown_buckets(snap)) == set(schema.BUCKETS_5)
+    entry_a = _unknown_buckets(snap)["test"]["by_fn"]["C_ThreadA"]
     assert entry_a["calls"] == 1
     assert entry_a["by_rv"]["0"]["count"] == 1
-    entry_b = snap["buckets"]["module_init"]["by_fn"]["C_ThreadB"]
+    entry_b = _unknown_buckets(snap)["module_init"]["by_fn"]["C_ThreadB"]
     assert entry_b["calls"] == 1
     assert entry_b["by_rv"]["0"]["count"] == 1
 
@@ -555,10 +583,10 @@ def test_cross_thread_return_does_not_follow_foreign_region() -> None:
     assert not holder.is_alive()
     assert errors == []
     snap = call_counters.serialize_current()
-    entry = snap["buckets"]["test"]["by_fn"]["C_Foreign"]
+    entry = _unknown_buckets(snap)["test"]["by_fn"]["C_Foreign"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"]["count"] == 1
-    assert "module_init" not in snap["buckets"]
+    assert _unknown_buckets(snap)["module_init"] == {"calls": 0, "by_fn": {}}
 
 
 def test_call_binds_return_to_entry_bucket_across_mid_call_switch() -> None:
@@ -586,10 +614,10 @@ def test_call_binds_return_to_entry_bucket_across_mid_call_switch() -> None:
         for scope in switched:
             scope.__exit__(None, None, None)
     snap = call_counters.serialize_current()
-    entry = snap["buckets"]["test"]["by_fn"]["C_Switch"]
+    entry = _unknown_buckets(snap)["test"]["by_fn"]["C_Switch"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"]["count"] == 1
-    assert "module_init" not in snap["buckets"]
+    assert _unknown_buckets(snap)["module_init"] == {"calls": 0, "by_fn": {}}
 
 
 def test_phase_scopes_worker_threads_and_yields_to_regions() -> None:
@@ -626,9 +654,9 @@ def test_phase_scopes_worker_threads_and_yields_to_regions() -> None:
         assert errors == []
     assert call_counters.current_bucket() == "session_provisioning"
     snap = call_counters.serialize_current()
-    assert snap["buckets"]["test"]["by_fn"]["C_Phase"]["calls"] == 1
-    assert snap["buckets"]["test"]["by_fn"]["C_Worker"]["calls"] == 1
-    assert snap["buckets"]["module_init"]["by_fn"]["C_Region"]["calls"] == 1
+    assert _unknown_buckets(snap)["test"]["by_fn"]["C_Phase"]["calls"] == 1
+    assert _unknown_buckets(snap)["test"]["by_fn"]["C_Worker"]["calls"] == 1
+    assert _unknown_buckets(snap)["module_init"]["by_fn"]["C_Region"]["calls"] == 1
     with pytest.raises(ValueError, match="nope"):
         with call_counters._phase("nope"):
             pass
@@ -641,13 +669,18 @@ def test_phase_scopes_worker_threads_and_yields_to_regions() -> None:
 def _rv_block(name: str, count: int, total: int) -> dict[str, Any]:
     return {
         "total_calls": total,
-        "buckets": {
-            "test": {
+        "by_module": {
+            "mod": {
                 "calls": total,
-                "by_fn": {
-                    "C_Sign": {
+                "buckets": {
+                    "test": {
                         "calls": total,
-                        "by_rv": {"2147483649": {"name": name, "count": count}},
+                        "by_fn": {
+                            "C_Sign": {
+                                "calls": total,
+                                "by_rv": {"2147483649": {"name": name, "count": count}},
+                            }
+                        },
                     }
                 },
             }
@@ -655,45 +688,50 @@ def _rv_block(name: str, count: int, total: int) -> dict[str, Any]:
     }
 
 
-def test_merge_serialized_prefers_symbolic_rv_name() -> None:
+def _mod_leaf(block: dict[str, Any]) -> dict[str, Any]:
+    return block["by_module"]["mod"]["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
+
+
+def test_merge_module_first_prefers_symbolic_rv_name() -> None:
     # Important R3: on leaf-name conflict prefer the non-0x (symbolic) name;
     # both merge orders yield the identical block including the name.
     import json as _json
 
+    from pkcs11_check.core.counters_schema import merge_module_first
+
     hex_block = _rv_block("0x80000001", 2, 2)
     sym_block = _rv_block("CKR_VENDOR_FOO", 3, 3)
-    forward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    call_counters.merge_serialized(forward, hex_block)
-    call_counters.merge_serialized(forward, sym_block)
-    leaf = forward["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
-    assert leaf == {"name": "CKR_VENDOR_FOO", "count": 5}
-    backward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    call_counters.merge_serialized(backward, sym_block)
-    call_counters.merge_serialized(backward, hex_block)
+    forward: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merge_module_first(forward, hex_block)
+    merge_module_first(forward, sym_block)
+    assert _mod_leaf(forward) == {"name": "CKR_VENDOR_FOO", "count": 5}
+    backward: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merge_module_first(backward, sym_block)
+    merge_module_first(backward, hex_block)
     assert backward == forward
     assert _json.dumps(backward) == _json.dumps(forward)
 
 
-def test_merge_serialized_rv_name_tie_breaks_lexicographically() -> None:
+def test_merge_module_first_rv_name_tie_breaks_lexicographically() -> None:
     # Ties (both symbolic or both hex) resolve to the smallest name, both orders.
     import json as _json
 
+    from pkcs11_check.core.counters_schema import merge_module_first
+
     first = _rv_block("CKR_B_VENDOR", 1, 1)
     second = _rv_block("CKR_A_VENDOR", 1, 1)
-    forward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    call_counters.merge_serialized(forward, first)
-    call_counters.merge_serialized(forward, second)
-    leaf = forward["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
-    assert leaf == {"name": "CKR_A_VENDOR", "count": 2}
-    backward: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    call_counters.merge_serialized(backward, second)
-    call_counters.merge_serialized(backward, first)
+    forward: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merge_module_first(forward, first)
+    merge_module_first(forward, second)
+    assert _mod_leaf(forward) == {"name": "CKR_A_VENDOR", "count": 2}
+    backward: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merge_module_first(backward, second)
+    merge_module_first(backward, first)
     assert backward == forward
     assert _json.dumps(backward) == _json.dumps(forward)
     upper = _rv_block("0x80000002", 1, 1)
     lower = _rv_block("0x80000001", 1, 1)
-    both_hex: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    call_counters.merge_serialized(both_hex, upper)
-    call_counters.merge_serialized(both_hex, lower)
-    hex_leaf = both_hex["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["2147483649"]
-    assert hex_leaf == {"name": "0x80000001", "count": 2}
+    both_hex: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merge_module_first(both_hex, upper)
+    merge_module_first(both_hex, lower)
+    assert _mod_leaf(both_hex) == {"name": "0x80000001", "count": 2}

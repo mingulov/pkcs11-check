@@ -117,7 +117,7 @@ def _get_interface_list(ctx: RawCtypesContext, call_func: Callable[..., int]) ->
 
 
 def _run(ctx: RawCtypesContext, extra: dict[str, Any]) -> None:
-    call_func, _get_func = make_caller(ctx.func_list)
+    call_func, _get_func = make_caller(ctx.func_list, ctx.module_path)
 
     probe = extra["probe"]
     if probe == "double_initialize":

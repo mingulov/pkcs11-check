@@ -35,7 +35,13 @@ runner = PlainCliRunner()
 
 
 def _ok_preflight(
-    module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+    module: Path,
+    *,
+    interface: str,
+    slot: int,
+    timeout: int,
+    output_path: Path,
+    counters: object = None,
 ) -> CapabilityManifest:
     del timeout
     output_path.write_text("{}", encoding="utf-8")
@@ -381,6 +387,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del console
             called["units"] = units
@@ -466,6 +473,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del (
                 units,
@@ -536,6 +544,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del (
                 units,
@@ -566,7 +575,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -622,6 +631,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del (
                 units,
@@ -690,6 +700,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del (
                 pytest_args,
@@ -719,7 +730,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -773,6 +784,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
             collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
@@ -808,7 +820,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -1230,6 +1242,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del (
                 units,
@@ -1259,7 +1272,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -1306,6 +1319,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
             collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
@@ -1347,7 +1361,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -1410,7 +1424,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -1484,6 +1498,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
             collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
@@ -1529,7 +1544,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -1577,7 +1592,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -1681,7 +1696,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2126,7 +2141,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2201,7 +2216,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2277,7 +2292,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2315,7 +2330,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2360,6 +2375,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
             collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
@@ -2413,7 +2429,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2464,6 +2480,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
             collected_items: list[CollectedPytestItem] | None = None,
         ) -> int:
             del (
@@ -2533,7 +2550,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2582,6 +2599,7 @@ class TestTestCommand:
             baseline_fingerprint: str | None = None,
             provenance: object = None,
             recovery_config: object = None,
+            counters_barrier_plan: object = None,
         ) -> int:
             del (
                 units,
@@ -2611,7 +2629,7 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: (
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
                 output_path.write_text("{}", encoding="utf-8"),
                 CapabilityManifest(
                     status="ok",
@@ -2646,15 +2664,17 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status="error",
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                error="RuntimeError: boom",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="error",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    error="RuntimeError: boom",
+                )
             ),
         )
 
@@ -2680,16 +2700,18 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status="error",
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                reason=reason,
-                error="preflight error",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="error",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    reason=reason,
+                    error="preflight error",
+                )
             ),
         )
 
@@ -2707,7 +2729,13 @@ class TestTestCommand:
         monkeypatch.setenv("P11TEST_SO_PIN", "caller-so-pin")
 
         def fail_preflight(
-            module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+            module: Path,
+            *,
+            interface: str,
+            slot: int,
+            timeout: int,
+            output_path: Path,
+            counters: object = None,
         ) -> CapabilityManifest:
             del module, interface, slot, timeout
             observed["manifest"] = output_path
@@ -2744,7 +2772,13 @@ class TestTestCommand:
         monkeypatch.setenv("P11TEST_SO_PIN", "caller-so-pin")
 
         def ok_preflight(
-            module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+            module: Path,
+            *,
+            interface: str,
+            slot: int,
+            timeout: int,
+            output_path: Path,
+            counters: object = None,
         ) -> CapabilityManifest:
             manifest = _ok_preflight(
                 module,
@@ -2867,7 +2901,13 @@ class TestTestCommand:
         real_unlink = Path.unlink
 
         def ok_preflight(
-            module: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+            module: Path,
+            *,
+            interface: str,
+            slot: int,
+            timeout: int,
+            output_path: Path,
+            counters: object = None,
         ) -> CapabilityManifest:
             manifest = _ok_preflight(
                 module,
@@ -2960,15 +3000,17 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status="error",
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                error="collection/configuration failure",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="error",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    error="collection/configuration failure",
+                )
             ),
         )
 
@@ -3049,16 +3091,18 @@ class TestTestCommand:
             monkeypatch.setattr(
                 test_cmd,
                 "run_preflight_subprocess",
-                lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                    status="error",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version=None,
-                    slot_index=slot,
-                    slot_count=None,
-                    mechanisms=[],
-                    reason=preflight_reason,
-                    error="module is unloadable",
+                lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                    CapabilityManifest(
+                        status="error",
+                        module_path=str(module),
+                        requested_interface=interface,
+                        interface_version=None,
+                        slot_index=slot,
+                        slot_count=None,
+                        mechanisms=[],
+                        reason=preflight_reason,
+                        error="module is unloadable",
+                    )
                 ),
             )
 
@@ -3310,16 +3354,18 @@ class TestTestCommand:
             monkeypatch.setattr(
                 test_cmd,
                 "run_preflight_subprocess",
-                lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                    status="error",
-                    module_path=str(module),
-                    requested_interface=interface,
-                    interface_version=None,
-                    slot_index=slot,
-                    slot_count=None,
-                    mechanisms=[],
-                    reason="module_unloadable",
-                    error="module is unloadable",
+                lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                    CapabilityManifest(
+                        status="error",
+                        module_path=str(module),
+                        requested_interface=interface,
+                        interface_version=None,
+                        slot_index=slot,
+                        slot_count=None,
+                        mechanisms=[],
+                        reason="module_unloadable",
+                        error="module is unloadable",
+                    )
                 ),
             )
             expected_exit = 3
@@ -3399,16 +3445,18 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status=status,
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                process_observation=observation,
-                error=f"preflight {status}",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status=status,
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    process_observation=observation,
+                    error=f"preflight {status}",
+                )
             ),
         )
 
@@ -3444,15 +3492,17 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status="error",
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                error="preflight error",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="error",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    error="preflight error",
+                )
             ),
         )
 
@@ -3481,16 +3531,18 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status="crashed",
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                process_observation=build_process_observation(str(module), "preflight", 0, -11),
-                error="preflight crashed",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="crashed",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    process_observation=build_process_observation(str(module), "preflight", 0, -11),
+                    error="preflight crashed",
+                )
             ),
         )
 
@@ -3520,16 +3572,18 @@ class TestTestCommand:
         monkeypatch.setattr(
             test_cmd,
             "run_preflight_subprocess",
-            lambda module, *, interface, slot, timeout, output_path: CapabilityManifest(
-                status="timeout",
-                module_path=str(module),
-                requested_interface=interface,
-                interface_version=None,
-                slot_index=slot,
-                slot_count=None,
-                mechanisms=[],
-                process_observation=observation,
-                error="preflight timed out",
+            lambda module, *, interface, slot, timeout, output_path, counters=None: (
+                CapabilityManifest(
+                    status="timeout",
+                    module_path=str(module),
+                    requested_interface=interface,
+                    interface_version=None,
+                    slot_index=slot,
+                    slot_count=None,
+                    mechanisms=[],
+                    process_observation=observation,
+                    error="preflight timed out",
+                )
             ),
         )
 

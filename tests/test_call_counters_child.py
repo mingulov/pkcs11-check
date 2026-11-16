@@ -45,6 +45,12 @@ def _clean_counters() -> Iterator[None]:
     call_counters.reset_for_tests()
 
 
+def _unknown_buckets(snap: dict[str, Any]) -> dict[str, Any]:
+    """Inner buckets of the single unknown-module block (no handle involved)."""
+    assert set(snap["by_module"]) == {""}
+    return snap["by_module"][""]["buckets"]
+
+
 _IngestFn = Callable[[str], bool]
 
 _INGEST_FNS: tuple[_IngestFn, ...] = (
@@ -72,7 +78,7 @@ def test_ingest_merges_child_counts_under_active_bucket(tmp_path: Path) -> None:
     cov = _write_coverage_file(tmp_path / "cov.json", _child_payload())
     with call_counters.counted_bucket("test"):
         assert _subprocess_preamble.ingest_subprocess_coverage(cov) is True
-    entry = call_counters.serialize_current()["buckets"]["test"]["by_fn"]["C_Login"]
+    entry = _unknown_buckets(call_counters.serialize_current())["test"]["by_fn"]["C_Login"]
     assert entry["calls"] == 3
     assert entry["by_rv"]["0"]["count"] == 2
     assert entry["by_rv"]["49"]["count"] == 1
@@ -83,7 +89,7 @@ def test_ingest_merges_child_counts_both_paths(ingest: _IngestFn, tmp_path: Path
     cov = _write_coverage_file(tmp_path / "cov.json", _child_payload())
     with call_counters.counted_bucket("test"):
         assert ingest(cov) is True
-    entry = call_counters.serialize_current()["buckets"]["test"]["by_fn"]["C_Login"]
+    entry = _unknown_buckets(call_counters.serialize_current())["test"]["by_fn"]["C_Login"]
     assert entry["calls"] == 3
     assert entry["by_rv"]["0"]["count"] == 2
     assert entry["by_rv"]["49"]["count"] == 1
@@ -202,7 +208,7 @@ def test_session_write_coverage_embeds_flattened_counters(
     monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
     session._write_coverage(_fake_raw())
     data = json.loads(cov.read_text(encoding="utf-8"))
-    assert data["call_counters"] == [["C_Initialize", 0, 1], ["C_Login", None, 1]]
+    assert data["call_counters"] == [["", "C_Initialize", 0, 1], ["", "C_Login", None, 1]]
     assert data["call_log"] == {"C_Initialize": 1}
 
 
@@ -216,7 +222,7 @@ def test_session_write_coverage_round_trip_merges_into_parent(
     call_counters.reset_for_tests()  # parent starts clean, as a fresh process would
     with call_counters.counted_bucket("test"):
         assert _subprocess_preamble.ingest_subprocess_coverage(str(cov)) is True
-    entry = call_counters.serialize_current()["buckets"]["test"]["by_fn"]["C_Initialize"]
+    entry = _unknown_buckets(call_counters.serialize_current())["test"]["by_fn"]["C_Initialize"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["0"]["count"] == 1
 
@@ -229,7 +235,7 @@ def test_raw_write_coverage_embeds_flattened_counters(
     monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
     raw_session._write_raw_coverage()
     data = json.loads(cov.read_text(encoding="utf-8"))
-    assert data["call_counters"] == [["C_GetFunctionList", 0, 1]]
+    assert data["call_counters"] == [["", "C_GetFunctionList", 0, 1]]
     assert data["call_log"] == {}
 
 
@@ -258,7 +264,7 @@ def test_get_function_list_records_direct_call() -> None:
     assert rv == 0
     assert funclist_ptr is not None
     assert lib.calls == 1
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GetFunctionList"
     ]
     assert entry["calls"] == 1
@@ -270,7 +276,7 @@ def test_get_function_list_records_rejection() -> None:
     funclist_ptr, rv = raw_session._get_function_list(cast("ctypes.CDLL", lib))
     assert rv == 7
     assert funclist_ptr is None
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GetFunctionList"
     ]
     assert entry["calls"] == 1
@@ -354,7 +360,8 @@ def test_proxy_counts_one_entry_and_exit_per_call() -> None:
     stub.C_Login._result = 49
     assert proxy.C_Login("b") == 49
     assert stub.C_Login.calls == [("a",), ("b",)]
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"]["C_Login"]
+    by_fn = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"]
+    entry = by_fn["C_Login"]
     assert entry["calls"] == 2
     assert entry["by_rv"]["0"]["count"] == 1
     assert entry["by_rv"]["49"]["count"] == 1
@@ -390,7 +397,8 @@ def test_proxy_forwards_to_real_funcptr() -> None:
     assert real.restype is ctypes.c_ulong
     assert real.argtypes == [ctypes.c_void_p]
     assert wrapped(ctypes.c_void_p(None)) == 7
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"]["C_Seven"]
+    by_fn = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"]
+    entry = by_fn["C_Seven"]
     assert entry["calls"] == 1
     assert entry["by_rv"]["7"]["count"] == 1
 
@@ -424,7 +432,8 @@ def test_proxy_call_exception_counts_entry_only() -> None:
     with pytest.raises(RuntimeError, match="boom"):
         proxy.C_Login()
     assert stub.C_Login.calls == [()]
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"]["C_Login"]
+    by_fn = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"]
+    entry = by_fn["C_Login"]
     assert entry["calls"] == 1
     assert entry["by_rv"] == {}
 
@@ -435,7 +444,8 @@ def test_proxy_non_integer_result_passes_through_without_exit() -> None:
     stub = _StubCDLL(None)
     proxy = _proxy_for(stub)
     assert proxy.C_Login() is None
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"]["C_Login"]
+    by_fn = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"]
+    entry = by_fn["C_Login"]
     assert entry["calls"] == 1
     assert entry["by_rv"] == {}
 
@@ -462,7 +472,7 @@ def test_call_func_counts_stubbed_address_call() -> None:
     assert get_func(idx) == addr
     assert call_func("C_Initialize", ctypes.c_void_p(None)) == 0
     assert len(seen) == 1
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_Initialize"
     ]
     assert entry["calls"] == 1
@@ -581,7 +591,7 @@ def test_counting_cdll_wraps_direct_symbol_handle() -> None:
     wrapped.C_GenerateRandom.restype = ctypes.c_ulong
     assert wrapped.C_GenerateRandom(11, None, 32) == 7
     assert stub.C_GenerateRandom.calls == [(11, None, 32)]
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GenerateRandom"
     ]
     assert entry["calls"] == 1
@@ -600,7 +610,7 @@ def test_ckr_null_login_direct_call_lands_in_child_payload(
     monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
     session._write_coverage(_fake_raw())
     data = json.loads(cov.read_text(encoding="utf-8"))
-    assert ["C_GenerateRandom", 0, 1] in data["call_counters"]
+    assert ["fake-module.so", "C_GenerateRandom", 0, 1] in data["call_counters"]
 
 
 def test_ckr_null_session_direct_call_lands_in_child_payload(
@@ -614,7 +624,7 @@ def test_ckr_null_session_direct_call_lands_in_child_payload(
     monkeypatch.setenv("_P11CHECK_SUBPROCESS_COVERAGE", str(cov))
     session._write_coverage(_fake_raw())
     data = json.loads(cov.read_text(encoding="utf-8"))
-    assert ["C_OpenSession", 0, 1] in data["call_counters"]
+    assert ["fake-module.so", "C_OpenSession", 0, 1] in data["call_counters"]
 
 
 def test_ckr_null_login_not_exported_still_reports_cleanly(
@@ -641,7 +651,7 @@ def test_workload_counters_marker_merged_into_parent() -> None:
     flat = [["C_Login", 0, 2], ["C_Login", 49, 1]]
     with call_counters.counted_bucket("test"):
         test_threading._ingest_workload_counters(_workload_stdout(json.dumps(flat)))
-    entry = call_counters.serialize_current()["buckets"]["test"]["by_fn"]["C_Login"]
+    entry = _unknown_buckets(call_counters.serialize_current())["test"]["by_fn"]["C_Login"]
     assert entry["calls"] == 3
     assert entry["by_rv"]["0"]["count"] == 2
     assert entry["by_rv"]["49"]["count"] == 1
@@ -886,7 +896,7 @@ def test_isolation_grandchild_counts_folded_into_probe_child(
     env = seen["env"]
     assert "_P11CHECK_SUBPROCESS_COVERAGE" not in env  # parent's file still protected
     assert _emit.GRANDCHILD_COVERAGE_ENV in env
-    by_fn = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"]
+    by_fn = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"]
     assert by_fn["C_Initialize"]["calls"] == 1
     assert by_fn["C_FindObjectsInit"]["calls"] == 1
     assert call_counters.probes_lost() == 1  # grandchild loss propagated
@@ -988,7 +998,7 @@ def test_call_crash_counts_entry_without_exit() -> None:
     raw = _make_call_double({"C_GetInfo": _boom})
     with pytest.raises(OSError, match="SEH"):
         raw._call("C_GetInfo")
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GetInfo"
     ]
     assert entry["calls"] == 1
@@ -1030,7 +1040,7 @@ def test_get_interface_raise_counts_entry_only(tmp_path: Path) -> None:
         pytest.raises(OSError, match="module blew up"),
     ):
         RawPKCS11._load_from_lib(raw, lib_path, interface="3.2")
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GetInterface"
     ]
     assert entry["calls"] == 1
@@ -1056,7 +1066,7 @@ def test_get_function_list_raise_counts_entry_only(tmp_path: Path) -> None:
         pytest.raises(OSError, match="module blew up"),
     ):
         RawPKCS11._load_from_lib(raw, lib_path, interface="2.40")
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GetFunctionList"
     ]
     assert entry["calls"] == 1
@@ -1071,7 +1081,7 @@ def test_raw_get_function_list_raise_counts_entry_only() -> None:
     lib = SimpleNamespace(C_GetFunctionList=_Raising())
     with pytest.raises(RuntimeError, match="boom"):
         raw_session._get_function_list(cast("ctypes.CDLL", lib))
-    entry = call_counters.serialize_current()["buckets"]["session_provisioning"]["by_fn"][
+    entry = _unknown_buckets(call_counters.serialize_current())["session_provisioning"]["by_fn"][
         "C_GetFunctionList"
     ]
     assert entry["calls"] == 1
@@ -1278,9 +1288,9 @@ def test_probe_teardown_counters_include_cleanup_calls(
     assert data["call_log_ok"] == {"C_Login": 1}
     assert raw.live_log == {"C_Login": 1, "C_CloseSession": 1, "C_Finalize": 1}
     rows = data["call_counters"]
-    assert ["C_Login", 0, 1] in rows
-    assert ["C_CloseSession", 0, 1] in rows
-    assert ["C_Finalize", 0, 1] in rows
+    assert ["", "C_Login", 0, 1] in rows
+    assert ["", "C_CloseSession", 0, 1] in rows
+    assert ["", "C_Finalize", 0, 1] in rows
 
 
 def test_probe_teardown_cleanup_crash_writes_no_coverage(
@@ -1518,7 +1528,7 @@ def test_ingest_drops_negative_rv_rows_but_keeps_channel(ingest: _IngestFn, tmp_
         assert ingest(cov) is True
     snap = call_counters.serialize_current()
     assert snap["total_calls"] == 3
-    assert set(snap["buckets"]["test"]["by_fn"]) == {"C_Sign"}
-    sign = snap["buckets"]["test"]["by_fn"]["C_Sign"]
+    assert set(_unknown_buckets(snap)["test"]["by_fn"]) == {"C_Sign"}
+    sign = _unknown_buckets(snap)["test"]["by_fn"]["C_Sign"]
     assert sign["calls"] == 3
     assert sign["by_rv"]["0"]["count"] == 3

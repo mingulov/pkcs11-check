@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import tempfile
 import tomllib
 import uuid
@@ -29,6 +30,14 @@ from pkcs11_check.config_layers import (
     read_toml_settings,
     resolve_config_rows,
 )
+from pkcs11_check.core._counters_durability import (
+    COUNTERS_DIR_ENV,
+    counters_run_dir_for_state,
+    ensure_layout,
+    prepare_resume,
+    sweep_orphans,
+    unseal,
+)
 from pkcs11_check.core._report_records import (
     _build_detail_from_report_records,
     _build_per_unit_details_from_record_sources,
@@ -36,12 +45,17 @@ from pkcs11_check.core._report_records import (
     _write_report_jsonl_from_record_sources,
 )
 from pkcs11_check.core._run_guard import RunArtifactsLockedError, run_artifact_guard
-from pkcs11_check.core.call_counters import ISOLATION_ENV, RUN_ID_ENV
+from pkcs11_check.core.call_counters import (
+    ISOLATION_ENV,
+    RUN_ID_ENV,
+    CounterPersistenceError,
+)
 from pkcs11_check.core.collection import CollectedPytestItem, collect_pytest_item_metadata
 from pkcs11_check.core.collection_errors import (
     collection_failure_sidecar_path,
     ensure_failed_collection_report,
 )
+from pkcs11_check.core.counters_schema import mint_filename_nonce
 from pkcs11_check.core.disabled_baseline import (
     build_disabled_baseline_block,
     format_disabled_baseline_banner,
@@ -58,6 +72,7 @@ from pkcs11_check.core.file_runner import (
     _run_artifact_guard_paths,
     discover_auto_isolation_units,
     discover_pytest_units,
+    extract_call_counters_from_jsonl,
     extract_coverage_from_jsonl,
     extract_provisioning_from_jsonl,
     extract_quality_report_evidence_from_jsonl,
@@ -72,7 +87,13 @@ from pkcs11_check.core.file_runner import (
     write_quality_json_report,
 )
 from pkcs11_check.core.nodeids import normalize_nodeid
-from pkcs11_check.core.preflight import run_preflight_subprocess
+from pkcs11_check.core.preflight import (
+    PREFLIGHT_EVIDENCE_ENV,
+    PREFLIGHT_UNIT,
+    PreflightCounters,
+    preflight_evidence_path_for_state,
+    run_preflight_subprocess,
+)
 from pkcs11_check.core.recovery import build_recovery_config
 from pkcs11_check.core.report_log import SessionCompletionTracker, iter_report_log_records
 from pkcs11_check.core.test_selection import (
@@ -168,6 +189,95 @@ def _new_run_id() -> str:
     """
     nonce = uuid.uuid4().hex[:8]
     return f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-p{os.getpid()}-{nonce}"
+
+
+def splice_preflight_evidence(jsonl_path: Path, evidence_path: Path) -> int:
+    """Append retained preflight scopes to a run JSONL; return scopes appended.
+
+    A no-op returning 0 when either file is missing or the evidence is
+    blank (no report was written, or the census never engaged). Raises
+    ``OSError`` on I/O failure -- the caller warns, never fails the run.
+    """
+    if not jsonl_path.exists():
+        return 0
+    try:
+        blob = evidence_path.read_bytes()
+    except OSError:
+        return 0
+    if not blob.strip():
+        return 0
+    if not blob.endswith(b"\n"):
+        blob += b"\n"
+    with jsonl_path.open("rb+") as handle:
+        handle.seek(0, 2)
+        if handle.tell() > 0:
+            handle.seek(-1, 2)
+            if handle.read(1) != b"\n":
+                handle.seek(0, 2)
+                handle.write(b"\n")
+        handle.seek(0, 2)
+        handle.write(blob)
+    return blob.count(b"SessionStart")
+
+
+def refresh_results_call_counters(results_path: Path, jsonl_path: Path) -> bool:
+    """Re-extract counters from a JSONL and patch ``results.json``; True when patched.
+
+    Returns False when the JSONL holds no counter evidence (nothing to
+    patch). Raises ``OSError``/``ValueError`` on unreadable/corrupt inputs --
+    the caller warns, never fails the run.
+    """
+    payload = extract_call_counters_from_jsonl(jsonl_path)
+    if payload is None:
+        return False
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    if not isinstance(results, dict):
+        raise ValueError(f"results file {results_path} is not a JSON object")
+    results["call_counters"] = payload
+    results_path.write_text(
+        json.dumps(results, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return True
+
+
+def _evidence_counters(evidence_path: Path | None) -> dict[str, Any] | None:
+    """Extract counters from a retained evidence file, else None (never raises)."""
+    if evidence_path is None:
+        return None
+    try:
+        if not evidence_path.exists() or not evidence_path.read_bytes().strip():
+            return None
+    except OSError:
+        return None
+    return extract_call_counters_from_jsonl(evidence_path)
+
+
+def _fold_preflight_evidence(
+    report_config: IsolatedReportConfig | None,
+    evidence_path: Path | None,
+    output: str,
+    console: Console,
+) -> None:
+    """Splice retained preflight scopes into the merged report (isolated path).
+
+    Appends every accumulated round's evidence to the merged ``report.jsonl``
+    and, for JSON output, refreshes the ``call_counters`` block the runner
+    extracted before the splice. Warns and continues on any failure: counter
+    plumbing never fails a run.
+    """
+    if report_config is None or report_config.jsonl_path is None or evidence_path is None:
+        return
+    try:
+        spliced = splice_preflight_evidence(report_config.jsonl_path, evidence_path)
+    except OSError as exc:
+        console.print(f"[yellow]Warning:[/yellow] preflight counter evidence not folded: {exc}")
+        return
+    if spliced == 0 or output != "json":
+        return
+    try:
+        refresh_results_call_counters(report_config.output_path, report_config.jsonl_path)
+    except (OSError, ValueError) as exc:
+        console.print(f"[yellow]Warning:[/yellow] preflight counters not refreshed: {exc}")
 
 
 def _combine_marker(marker: str | None, *, skip_slow: bool, only_slow: bool) -> str | None:
@@ -828,13 +938,25 @@ def test_command(
     had_original_isolation = ISOLATION_ENV in os.environ
     original_run_id = os.environ.get(RUN_ID_ENV)
     had_original_run_id = RUN_ID_ENV in os.environ
+    original_preflight_evidence = os.environ.get(PREFLIGHT_EVIDENCE_ENV)
+    had_preflight_evidence = PREFLIGHT_EVIDENCE_ENV in os.environ
+    original_counters_dir = os.environ.get(COUNTERS_DIR_ENV)
+    had_counters_dir = COUNTERS_DIR_ENV in os.environ
     manifest_path: Path | None = None
     manifest_fd: int | None = None
     jsonl_path: Path | None = None
     jsonl_fd: int | None = None
     deselect_path: Path | None = None
-    # F-038: holds the run-artifact guards from the first reset to run end;
-    # entered once the outputs are known, released in cleanup_owned_resources.
+    preflight_evidence_path: Path | None = None
+    # C1: the --isolation none counters tempdir, owned by this run and
+    # removed in cleanup_owned_resources. Isolated runs use a retained
+    # state sibling instead (resume continuity), never a temp.
+    owned_counters_dir: Path | None = None
+    # C2: the resume-barrier plan, computed before preflight and threaded
+    # to the runner (None on fresh runs and --isolation none).
+    counters_barrier_plan: dict[str, Any] | None = None
+    # F-038: holds the run-artifact guards from before the first reset to
+    # run end; entered once at startup, released in cleanup_owned_resources.
     artifact_guard_stack = ExitStack()
 
     def restore_caller_environment() -> None:
@@ -870,6 +992,14 @@ def test_command(
             os.environ[RUN_ID_ENV] = original_run_id or ""
         else:
             os.environ.pop(RUN_ID_ENV, None)
+        if had_preflight_evidence:
+            os.environ[PREFLIGHT_EVIDENCE_ENV] = original_preflight_evidence or ""
+        else:
+            os.environ.pop(PREFLIGHT_EVIDENCE_ENV, None)
+        if had_counters_dir:
+            os.environ[COUNTERS_DIR_ENV] = original_counters_dir or ""
+        else:
+            os.environ.pop(COUNTERS_DIR_ENV, None)
 
     def close_manifest_fd() -> None:
         nonlocal manifest_fd
@@ -910,15 +1040,28 @@ def test_command(
             if path is not None:
                 with suppress(Exception):
                     path.unlink(missing_ok=True)
+        # The none-path evidence temp is owned here; the isolated evidence
+        # file is a retained state sibling and is never cleaned up.
+        if isolation == "none" and preflight_evidence_path is not None:
+            with suppress(Exception):
+                preflight_evidence_path.unlink(missing_ok=True)
+        # The none-path counters tempdir is likewise owned here (removed
+        # whole); the isolated state sibling is retained for resume.
+        if owned_counters_dir is not None:
+            with suppress(Exception):
+                shutil.rmtree(owned_counters_dir, ignore_errors=True)
         with suppress(Exception):
             artifact_guard_stack.close()
 
     try:
-        # A stale caller-provided run id must not leak into preflight or
-        # collection subprocesses (or, worse, be mistaken for this run's):
-        # drop it now (saved above for restore) and seed one fresh id late,
-        # next to the isolation seed on each path.
+        # One run id per CLI invocation, seeded before preflight so the
+        # census, recovery probes, and unit rounds all attribute to it. A
+        # stale caller value is dropped first (saved above for restore), so
+        # it can never be mistaken for this run's. Collection children
+        # inherit the fresh id harmlessly: they have no report-log channel
+        # and make no provider calls, so they emit nothing.
         os.environ.pop(RUN_ID_ENV, None)
+        os.environ[RUN_ID_ENV] = _new_run_id()
         manifest_fd, manifest_raw_path = tempfile.mkstemp(
             prefix="pkcs11-check-manifest-",
             suffix=".json",
@@ -948,13 +1091,148 @@ def test_command(
         if wrap_key_value:
             os.environ["P11TEST_WRAP_KEY_VALUE"] = wrap_key_value
 
+        # C2: the report layout is known before any provider work, so the
+        # full guard set is computable here (the disabled-baseline block is
+        # attached to a replaced copy later; the guarded paths never change).
+        report_config = (
+            _isolated_report_config(output, output_file, selection=case_selection)
+            if isolation != "none"
+            else None
+        )
+
+        # C2: hold every artifact guard from before the first reset to run
+        # end (released in cleanup_owned_resources via the outer finally). A
+        # run sharing any artifact with a live run refuses here, before it
+        # can reset, allocate, fence, or write anything. Acquired once for
+        # both modes; never nested.
+        if isolation in {"auto", "file", "test"}:
+            guard_paths = _run_artifact_guard_paths(state_file, report_config)
+        elif output == "json":
+            # Same guard discipline as the isolated path: the json layout
+            # matches it exactly, so enumerate via a synthetic config.
+            _none_results_path = Path(output_file or "pkcs11-check-results.json")
+            guard_paths = _run_artifact_guard_paths(
+                None,
+                IsolatedReportConfig(
+                    "json",
+                    _none_results_path,
+                    jsonl_path=_none_results_path.parent / "report.jsonl",
+                ),
+            )
+        elif output == "junit":
+            guard_paths = [Path(output_file or "pkcs11-check-results.xml")]
+        else:
+            guard_paths = []
+        if guard_paths:
+            try:
+                artifact_guard_stack.enter_context(run_artifact_guard(*guard_paths))
+            except RunArtifactsLockedError as exc:
+                console.print(f"[red]Error:[/red] {exc}")
+                raise typer.Exit(code=2) from exc
+
+        # C1: the CLI allocates a run-owned counters dir on every
+        # invocation, before preflight. Isolated runs use a state sibling
+        # with a per-series nonce (covered by the state guard above);
+        # --isolation none uses a fresh tempdir (owned, removed in
+        # cleanup). Resume reuses the state's recorded dir for evidence
+        # continuity (same precedence as the runner's: the recorded dir
+        # wins). A stale caller export is dropped (saved above for
+        # restore): the variable is child plumbing, not an opt-in, and
+        # the census is always counted.
+        if isolation == "none":
+            counters_root = Path(tempfile.mkdtemp(prefix="pkcs11-check-counters-"))
+            owned_counters_dir = counters_root
+        else:
+            recorded_counters_dir: str | None = None
+            if resume:
+                prior_counters_state = load_run_state(state_file)
+                if prior_counters_state is not None:
+                    stored = getattr(prior_counters_state, "counters_dir", None)
+                    recorded_counters_dir = stored if isinstance(stored, str) else None
+            if recorded_counters_dir:
+                counters_root = Path(recorded_counters_dir)
+            else:
+                # Fresh series (including resume-without-state): a new
+                # run-specific dir, never a reused one (N-C3).
+                counters_root = counters_run_dir_for_state(state_file, mint_filename_nonce())
+        try:
+            ensure_layout(counters_root)
+        except CounterPersistenceError as exc:
+            console.print(f"[red]Error:[/red] cannot create counters dir {counters_root}: {exc}")
+            setup_exit_code = _resume_exit_code(state_file, 2) if resume else 2
+            raise typer.Exit(code=setup_exit_code) from exc
+        os.environ[COUNTERS_DIR_ENV] = str(counters_root)
+
+        # C2: the durability barrier runs NOW, before any provider traffic.
+        # Resume seals, collects, and fences old producers (the plan threads
+        # to the runner, which applies it instead of re-running the barrier);
+        # fresh runs lift a stale seal and sweep debris (the reset below then
+        # clears the dir, so no dead series' evidence can fold into this one).
+        # --isolation none skips it: its tempdir is born empty.
+        if isolation != "none":
+            if resume:
+                prior_merged = report_config.jsonl_path if report_config is not None else None
+                counters_barrier_plan = prepare_resume(
+                    counters_root, prior_merged_jsonl=prior_merged
+                )
+                if not counters_barrier_plan.get("barrier_ok", False):
+                    console.print(
+                        "[red]Error:[/red] counter resume barrier failed; "
+                        "refusing to run without proven quiescence"
+                    )
+                    setup_exit_code = _resume_exit_code(state_file, 2)
+                    raise typer.Exit(code=setup_exit_code)
+            else:
+                try:
+                    unseal(counters_root)
+                except CounterPersistenceError:
+                    pass
+                swept = sweep_orphans(counters_root, current_run=os.environ[RUN_ID_ENV])
+                if swept["retained"]:
+                    console.print(
+                        f"[dim]Counters dir holds {swept['retained']} unclaimed evidence "
+                        f"file(s) from other runs (retained, not collected)[/dim]"
+                    )
+
+        if isolation in {"auto", "file", "test"}:
+            preflight_evidence_path = preflight_evidence_path_for_state(state_file)
+            if not resume or not state_file.exists():
+                # Fresh start (including resume-without-state): stale rounds
+                # from an unrelated run must not fold into this one.
+                preflight_evidence_path.unlink(missing_ok=True)
+        else:
+            evidence_fd, evidence_raw_path = tempfile.mkstemp(
+                prefix="pkcs11-check-preflight-",
+                suffix=".jsonl",
+            )
+            os.close(evidence_fd)
+            preflight_evidence_path = Path(evidence_raw_path)
+        if isolation in {"auto", "file", "test"} and not resume:
+            # Remove stale output/state before any metadata collection can
+            # fail (now also the counters dir + supplements, so a fresh
+            # series cannot absorb a dead one's evidence). The isolated
+            # runner repeats this reset when execution starts; keeping it
+            # here closes the pre-run collection gap.
+            _reset_fresh_run_artifacts(state_file, report_config)
+
         assert manifest_path is not None
+        assert preflight_evidence_path is not None
+        census_counters = PreflightCounters(
+            counters_dir=counters_root,
+            run_id=os.environ[RUN_ID_ENV],
+            unit=PREFLIGHT_UNIT,
+            attempt=0,
+            evidence_path=preflight_evidence_path,
+        )
+        # Recovery probes resolve the same file from the environment.
+        os.environ[PREFLIGHT_EVIDENCE_ENV] = str(preflight_evidence_path)
         manifest = run_preflight_subprocess(
             module,
             interface=interface,
             slot=slot,
             timeout=_preflight_timeout_seconds(timeout),
             output_path=manifest_path,
+            counters=census_counters,
         )
         if manifest.status != "ok":
             console.print(
@@ -990,11 +1268,31 @@ def test_command(
                     results_path,
                     state,
                     selection=case_selection,
+                    call_counters=_evidence_counters(preflight_evidence_path),
                 )
                 payload["summary"]["incomplete"] = True
                 results_path.write_text(
                     json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
                 )
+            if output == "json" and preflight_evidence_path is not None:
+                # Failed preflights still retain their counter-only JSONL
+                # evidence (counts or identity-bearing loss) next to the
+                # results; plain error manifests write no results file (as
+                # before), only this evidence.
+                try:
+                    blob = preflight_evidence_path.read_bytes()
+                except OSError:
+                    blob = b""
+                if blob.strip():
+                    report_path = Path(output_file or "pkcs11-check-results.json").parent
+                    report_path.mkdir(parents=True, exist_ok=True)
+                    try:
+                        (report_path / "report.jsonl").write_bytes(blob)
+                    except OSError as exc:
+                        console.print(
+                            "[yellow]Warning:[/yellow] "
+                            f"preflight counter evidence not retained: {exc}"
+                        )
             if manifest.status in {"crashed", "timeout"}:
                 preflight_exit_code = 1
             elif manifest.reason == "module_unloadable":
@@ -1051,30 +1349,12 @@ def test_command(
             vendor_mechanism=vendor_mechanism,
         )
         pytest_args.extend(["--p11-manifest", str(manifest_path)])
-        report_config = (
-            _isolated_report_config(output, output_file, selection=case_selection)
-            if isolation != "none"
-            else None
-        )
 
+        # C2: report_config, the artifact guard, the counters dir, the
+        # barrier, and the fresh reset all ran before preflight above; the
+        # runner repeats the reset when execution starts (and applies the
+        # threaded barrier plan instead of re-running the barrier).
         target_args = targets or [_TESTCASES_DIR]
-        if isolation in {"auto", "file", "test"}:
-            # F-038: hold every artifact guard from the first reset to run end
-            # (released in cleanup_owned_resources via the outer finally). A run
-            # sharing any artifact with a live run refuses here, before it can
-            # reset or write anything.
-            try:
-                artifact_guard_stack.enter_context(
-                    run_artifact_guard(*_run_artifact_guard_paths(state_file, report_config))
-                )
-            except RunArtifactsLockedError as exc:
-                console.print(f"[red]Error:[/red] {exc}")
-                raise typer.Exit(code=2) from exc
-        if isolation in {"auto", "file", "test"} and not resume:
-            # Remove stale output/state before any metadata collection can fail. The
-            # isolated runner repeats this reset when execution starts; keeping it
-            # here closes the pre-run collection gap.
-            _reset_fresh_run_artifacts(state_file, report_config)
         try:
             runtime_config = P11TestConfig(
                 module=module,
@@ -1243,10 +1523,9 @@ def test_command(
                 # here (run_isolated_pytest_units copies os.environ); seeded late
                 # so preflight/collection subprocesses do not inherit it. Restored
                 # with the other run-scoped keys in restore_caller_environment.
-                # The run id rides the same bridge: one fresh id per CLI
-                # invocation, so resume rounds stay attributable.
+                # The run id was seeded once before preflight and rides the same
+                # bridge, so resume rounds stay attributable.
                 os.environ[ISOLATION_ENV] = isolation
-                os.environ[RUN_ID_ENV] = _new_run_id()
                 exit_code = run_isolated_pytest_units(
                     selection_plan.units,
                     pytest_args,
@@ -1263,9 +1542,11 @@ def test_command(
                     max_crashes_per_file=max_crashes_per_file,
                     provenance=run_provenance,
                     recovery_config=recovery_config,
+                    counters_barrier_plan=counters_barrier_plan,
                     **runner_kwargs,
                 )
-            except (FileNotFoundError, ValueError) as exc:
+                _fold_preflight_evidence(report_config, preflight_evidence_path, output, console)
+            except (FileNotFoundError, ValueError, CounterPersistenceError) as exc:
                 if collection_phase:
                     _persist_collection_failure(
                         diagnostic=str(exc) or type(exc).__name__,
@@ -1287,27 +1568,9 @@ def test_command(
         results_path = Path(output_file or "pkcs11-check-results.json")
         if output == "json":
             results_path.parent.mkdir(parents=True, exist_ok=True)
-        # F-038: same guard discipline as the isolated path. The json layout
-        # matches the isolated one exactly, so enumerate via a synthetic
-        # config; junit writes only its xml; rich writes no shared artifact.
-        none_guard_paths: list[Path] = []
-        if output == "json":
-            none_guard_paths = _run_artifact_guard_paths(
-                None,
-                IsolatedReportConfig(
-                    "json",
-                    results_path,
-                    jsonl_path=results_path.parent / "report.jsonl",
-                ),
-            )
-        elif output == "junit":
-            none_guard_paths = [Path(output_file or "pkcs11-check-results.xml")]
-        if none_guard_paths:
-            try:
-                artifact_guard_stack.enter_context(run_artifact_guard(*none_guard_paths))
-            except RunArtifactsLockedError as exc:
-                console.print(f"[red]Error:[/red] {exc}")
-                raise typer.Exit(code=2) from exc
+        # C2: the guard was acquired once at startup (same paths as the
+        # isolated layout for json, the xml for junit, none for rich);
+        # nothing to acquire here.
         jsonl_fd, jsonl_raw = tempfile.mkstemp(
             prefix="pkcs11-check-jsonl-",
             suffix=".jsonl",
@@ -1325,8 +1588,15 @@ def test_command(
         args.extend(["--report-log", str(jsonl_path)])
         # In-process none path (fw#73): the session record reads this directly.
         # Restored with the other run-scoped keys in restore_caller_environment.
+        # The run id was seeded once before preflight (shared with the census).
         os.environ[ISOLATION_ENV] = "none"
-        os.environ[RUN_ID_ENV] = _new_run_id()
+        # C1: the in-process session runs disengaged (rc1 shape). Durability
+        # sidecars would have no collecting parent -- a segfault kills the
+        # CLI itself -- so the engagement keys go before pytest.main. The
+        # census already ran engaged above; its evidence splices in below.
+        # RUN_ID/ISOLATION stay for session attribution.
+        os.environ.pop(COUNTERS_DIR_ENV, None)
+        os.environ.pop(PREFLIGHT_EVIDENCE_ENV, None)
         if disabled_nodeids:
             deselect_path = write_deselect_file(disabled_nodeids)
             os.environ["PKCS11_CHECK_DESELECT_FILE"] = str(deselect_path)
@@ -1348,6 +1618,13 @@ def test_command(
             with suppress(Exception):
                 deselect_path.unlink(missing_ok=True)
         assert jsonl_path is not None
+        if preflight_evidence_path is not None:
+            try:
+                splice_preflight_evidence(jsonl_path, preflight_evidence_path)
+            except OSError as exc:
+                console.print(
+                    f"[yellow]Warning:[/yellow] preflight counter evidence not folded: {exc}"
+                )
         completion_verified = _ensure_nonisolated_completion_record(
             jsonl_path,
             returncode=int(exit_code),

@@ -7,14 +7,18 @@ ONE implementation of each protocol.
 Coverage shape (I6):
     {"call_log": dict[str, int], "mechanism_counts": dict[str, int],
      "call_log_ok": dict[str, int], "mechanism_rv_counts": dict[str, dict[str, int]],
-     "call_counters": list[[fn, rv_or_None, count]],  # fw#73; only when provided
-     "probes_lost": int}  # fw#73; child-side losses, always present
+     "call_counters": list[[module, fn, rv_or_None, count]],  # fw#73; only when provided
+     "probes_lost": int,  # fw#73; child-side losses, always present
+     "receipt": {"worker_uuid": str, "probe_seq": int},  # rc2; only when assigned
+     "receipts": list[{"worker_uuid": str, "probe_seq": int}]}  # rc2; only when non-empty
 
 The ``call_counters`` key is present only when the child passed flattened
 counters: its absence means "no counters reported" (pre-channel payload), which
 the parent's ingest readers report as a lost child. ``probes_lost`` carries the
 child's own lost-probe count (losses below it); readers use ``.get`` with a
 zero default so payloads written before the key existed still read as zero.
+``receipt`` echoes the parent-assigned probe seqno (the parent accepts it only
+on an exact match); ``receipts`` propagates grandchild receipts upward.
 
 RV-trace shape (I7):
     "P11_RV_TRACE_JSON:" + json.dumps(list[dict])
@@ -238,17 +242,22 @@ def write_coverage(
     mechanism_rv_counts: dict[str, dict[str, int]] | None = None,
     call_counters: list[list[str | int | None]] | None = None,
     probes_lost: int = 0,
+    receipt: dict[str, Any] | None = None,
+    receipts: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write function/mechanism counts and their successful/return-value subsets (I6).
 
     The parent's subprocess coverage readers consume exactly this shape. ``call_log_ok`` feeds
     the hollow-pass oracle; ``mechanism_rv_counts`` feeds accepted/rejected mechanism state.
-    ``call_counters`` carries the child's flattened fw#73 counters (fn names + RV ints +
-    counts only -- never PINs or key material); the key is omitted when None so the
-    parent can tell "no counters reported" apart from "zero calls". ``probes_lost``
+    ``call_counters`` carries the child's flattened fw#73 counters (module ids +
+    fn names + RV ints + counts only -- never PINs or key material); the key
+    is omitted when None so the parent can tell "no counters reported" apart
+    from "zero calls". ``probes_lost``
     carries the child's own lost-probe count so losses below it propagate to the
     parent (which accumulates them only when the counters channel is usable).
-    No-op when the environment variable is absent.
+    ``receipt``/``receipts`` carry the echoed seqno receipt and propagated
+    grandchild receipts (omitted when None/empty, so legacy payloads are
+    byte-identical). No-op when the environment variable is absent.
     """
     path = _coverage_path()
     if not path:
@@ -263,10 +272,67 @@ def write_coverage(
         }
         if call_counters is not None:
             payload["call_counters"] = call_counters
+        if receipt is not None:
+            payload["receipt"] = receipt
+        if receipts:
+            payload["receipts"] = receipts
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
     except (OSError, TypeError, ValueError):
         pass
+
+
+def probe_coverage_receipt() -> dict[str, Any] | None:
+    """Build this probe child's echoed receipt, or None when unassigned.
+
+    Reads the parent-assigned seqno from the environment (garbage reads as
+    unassigned: the child reports legacy-style and the parent folds the
+    counters without a receipt). Never raises.
+    """
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV
+    from pkcs11_check.core.call_counters import get_worker_uuid
+
+    try:
+        seq = int(os.environ.get(PROBE_SEQ_ENV, ""))
+    except (TypeError, ValueError):
+        return None
+    if seq < 0:
+        return None
+    return {"worker_uuid": get_worker_uuid(), "probe_seq": seq}
+
+
+def flush_probe_sidecar(counters: list[list[str | int | None]] | None) -> None:
+    """Write this probe child's counters sidecar for the parent's fallback.
+
+    The parent deletes the sidecar after a coverage commit
+    (flush-then-delete) and folds it as partial evidence (receipt
+    suppressed) when the coverage file is torn. No-op when the parent did
+    not assign a sidecar path. Never raises.
+    """
+    from pkcs11_check.core._counters_durability import PROBE_SIDECAR_ENV
+
+    path = os.environ.get(PROBE_SIDECAR_ENV)
+    if not path or counters is None:
+        return
+    receipt = probe_coverage_receipt()
+    if receipt is None:
+        return
+    try:
+        payload = {
+            "worker_uuid": receipt["worker_uuid"],
+            "probe_seq": receipt["probe_seq"],
+            "counters": counters,
+        }
+        tmp = f"{path}.tmp-{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+            fh.flush()
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError):
+        try:
+            os.unlink(f"{path}.tmp-{os.getpid()}")
+        except OSError:
+            pass
 
 
 def emit_harness_error(exc: BaseException, *, phase: str) -> None:

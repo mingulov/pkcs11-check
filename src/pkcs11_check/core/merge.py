@@ -36,15 +36,17 @@ import json
 import shutil
 import sys
 import tempfile
-from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from pkcs11_check.core._jsonl_extract import (
-    _canonicalize_counter_block as _canonicalize_counter_block,
+    _strip_single_module_tag as _strip_single_module_tag,
 )
-from pkcs11_check.core.call_counters import merge_serialized
+from pkcs11_check.core.counters_schema import (
+    canonicalize_module_first,
+    merge_module_first,
+)
 from pkcs11_check.core.file_runner import (
     extract_call_counters_from_jsonl,
     extract_coverage_from_jsonl,
@@ -524,32 +526,41 @@ def _merged_shard_provenance(
 
 
 def _copy_round_block(block: dict[str, Any]) -> dict[str, Any]:
-    """Detach a per-round block (fresh buckets + rows; never aliases the shard block)."""
-    by_bucket: dict[str, Any] = {"total_calls": 0, "buckets": {}}
-    merge_serialized(by_bucket, block["by_bucket"])
-    return {
+    """Detach a per-round block (fresh modules + rows; never aliases the shard block)."""
+    by_module: dict[str, Any] = {"total_calls": 0, "by_module": {}}
+    merge_module_first(by_module, block["by_module"])
+    copied: dict[str, Any] = {
         "complete": block["complete"],
-        "total_calls": by_bucket["total_calls"],
-        "by_bucket": by_bucket,
+        "total_calls": by_module["total_calls"],
+        "by_module": by_module,
         "probes_lost": int(block["probes_lost"]),
         "by_process": [dict(row) for row in block["by_process"]],
     }
+    if block.get("lost_processes"):
+        copied["lost_processes"] = [dict(row) for row in block["lost_processes"]]
+    if block.get("probes_detail"):
+        copied["probes_detail"] = [dict(row) for row in block["probes_detail"]]
+    return copied
 
 
-def _process_row_sort_key(row: dict[str, Any]) -> tuple[str, str, int, str]:
-    """Deterministic order for process rows: pid ties break on the full row bytes."""
-    return (
-        row.get("shard") or "",
-        row.get("round") or "",
-        int(row["pid"]),
-        json.dumps(row, sort_keys=True),
-    )
+def _lost_row_sort_key(row: dict[str, Any]) -> str:
+    """Deterministic lost-row order (full row bytes; merge-order independent)."""
+    return json.dumps(row, sort_keys=True)
 
 
-def _collected_row_sort_key(item: tuple[str, str, dict[str, Any]]) -> tuple[str, str, int, str]:
-    """Deterministic order for merged rows: (shard, round, pid) ties break on bytes."""
+def _collected_row_sort_key(
+    item: tuple[str, str, dict[str, Any]],
+) -> tuple[str, str, str, int, str, str]:
+    """Deterministic order for merged rows: (shard, round, uuid, pid, module, bytes)."""
     shard, run, base = item
-    return (shard or "", run or "", int(base["pid"]), json.dumps(base, sort_keys=True))
+    return (
+        shard or "",
+        run or "",
+        base.get("worker_uuid") or "",
+        int(base["pid"]),
+        base.get("module") or "",
+        json.dumps(base, sort_keys=True),
+    )
 
 
 def _call_counter_shard_labels(shard_dirs: list[Path]) -> list[str]:
@@ -562,9 +573,14 @@ def _call_counter_shard_labels(shard_dirs: list[Path]) -> list[str]:
     generated ``shard@h`` vs a literal ``shard@h`` dir) resolve with a
     ``@2``/``@3``/... counter suffix, assigned in sorted-by-resolved-path
     order so numbering never depends on CLI arg order. Identical resolved
-    dirs share one label (same dir passed twice still fuses).
+    dirs share one label (same dir passed twice still fuses); the
+    collision count runs over distinct resolved paths, so a repeated dir
+    keeps the plain basename instead of gaining a digest.
     """
-    counts = Counter(d.name for d in shard_dirs)
+    distinct: dict[str, set[str]] = {}
+    for shard_dir in shard_dirs:
+        distinct.setdefault(shard_dir.name, set()).add(str(shard_dir.resolve()))
+    counts = {name: len(paths) for name, paths in distinct.items()}
     base: list[str] = []
     for shard_dir in shard_dirs:
         if counts[shard_dir.name] == 1:
@@ -600,65 +616,102 @@ def _merge_call_counter_blocks(
     Each ``(shard_dir, block)`` pair was extracted from its own shard JSONL
     in fresh state (own marker/pid provenance, so a numeric pid can never
     collide across shards and a truncated shard cannot inherit a marker).
-    Totals, buckets, and probes_lost are summed, ``complete`` is ANDed,
+    Totals, modules, and probes_lost are summed, ``complete`` is ANDed,
     ``by_round`` maps merge under shard-namespaced flat keys
     (``"{label}/{run_id}"`` where ``label`` is the basename, or
     ``"{basename}@{sha8}"`` when basenames collide, so a CI-matrix
     same-second same-pid run_id collision across machines never fuses and
-    duplicate basenames never fuse either), and ``by_process`` rows are
-    concatenated with no fusion of distinct processes, sorted by
-    (shard, round, pid) with pid ties broken on the full row bytes, so both
-    merge orders yield the identical block. Bucket, function, and RV maps
-    are recursively canonicalized at the return, so ``json.dumps`` output
-    is byte-identical across merge orders even for heterogeneous shapes.
-    ``"round"``/``"shard"`` keys are present on a block's rows iff more than
-    one distinct value appears among them (single-round single-shard output
-    reads exactly like a single extract); the row ``"round"`` is the raw
-    run_id (the ``"shard"`` tag beside it keeps it attributable). Untagged
-    rows are attributed to the unique round WITH rows (a pid-less C2-only
-    ``""`` round beside one attributed round must not steal them).
+    duplicate basenames never fuse either). Labels are unique per resolved
+    shard dir, so a repeated label is the same shard extracted twice: an
+    identical snapshot fuses to the first copy with only ``complete``
+    still ANDed, while any difference refuses loud with ``ValueError``
+    (the shard mutated between extractions -- concurrent-mutation
+    evidence, never silently fused and never merged whole, either of
+    which would double-count the repeated contributions). Distinct
+    shards always fuse, even on uuid collision. ``by_process`` rows otherwise concatenate
+    with no fusion of distinct processes, sorted by (shard, round, uuid,
+    pid, module) with ties broken on the full row bytes, so both merge
+    orders yield the identical block. Module, bucket,
+    function, and RV maps are recursively canonicalized at the return, so
+    ``json.dumps`` output is byte-identical across merge orders even for
+    heterogeneous shapes. ``"round"``/``"shard"``/``"module"`` keys are
+    present on a block's rows iff more than one distinct value appears
+    among them (single-round single-shard single-module output reads
+    exactly like a single extract); the row ``"round"`` is the raw run_id
+    (the ``"shard"`` tag beside it keeps it attributable). Untagged rows
+    are attributed to the unique round WITH rows (a pid-less C2-only
+    ``""`` round beside one attributed round must not steal them), and
+    untagged rows from a single-module shard gain that shard's module when
+    the merge holds more than one (exact, not inferred: the shard block
+    proves every row's module).
     """
     if not blocks:
         return None
     labels = _call_counter_shard_labels([shard_dir for shard_dir, _ in blocks])
-    by_bucket: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    by_module: dict[str, Any] = {"total_calls": 0, "by_module": {}}
     probes_lost = 0
     complete = True
     collected: list[tuple[str, str, dict[str, Any]]] = []
+    collected_lost: list[tuple[str, dict[str, Any]]] = []
+    detail_keys: set[tuple[str, int]] = set()
     by_round: dict[str, dict[str, Any]] = {}
+    seen: dict[str, dict[str, Any]] = {}
     for index, (_, block) in enumerate(blocks):
         shard_label = labels[index]
-        merge_serialized(by_bucket, block["by_bucket"])
-        probes_lost += int(block["probes_lost"])
-        if not block["complete"]:
-            complete = False
         shard_rounds: dict[str, Any] = block["by_round"]
         shard_round_keys = sorted(shard_rounds)
-        for run in shard_round_keys:
-            namespaced = f"{shard_label}/{run}"
-            incoming = shard_rounds[run]
-            existing = by_round.get(namespaced)
-            if existing is None:
-                by_round[namespaced] = _copy_round_block(incoming)
-            else:
-                # Same resolved shard dir passed twice: fuse losslessly, never
-                # overwrite. Distinct dirs always carry distinct labels now.
-                merge_serialized(existing["by_bucket"], incoming["by_bucket"])
-                existing["total_calls"] = existing["by_bucket"]["total_calls"]
-                existing["probes_lost"] += int(incoming["probes_lost"])
-                existing["complete"] = existing["complete"] and incoming["complete"]
-                existing["by_process"].extend(dict(row) for row in incoming["by_process"])
-                existing["by_process"].sort(key=_process_row_sort_key)
         rounds_with_rows = [r for r in shard_round_keys if shard_rounds[r].get("by_process")]
+        shard_modules = set(block["by_module"]["by_module"])
+        shard_module = next(iter(shard_modules)) if len(shard_modules) == 1 else None
+        attributed: list[tuple[str, dict[str, Any]]] = []
         for row in block["by_process"]:
             base = {key: value for key, value in row.items() if key != "round"}
+            if "module" not in base and shard_module is not None:
+                base["module"] = shard_module
             run = row.get("round")
             if run is None:
                 # Untagged rows (extract tags iff >1 round WITH rows) belong
                 # to the unique round with rows; a pid-less C2-only "" round
                 # beside one attributed round must not steal them.
                 run = rounds_with_rows[0] if len(rounds_with_rows) == 1 else ""
-            collected.append((shard_label, str(run), base))
+            attributed.append((str(run), base))
+        # Same-label gate (I5): labels are unique per resolved shard dir,
+        # so a repeated label is the same shard extracted twice. An
+        # identical snapshot fuses (only completeness still ANDs -- the
+        # safe direction); any difference means the shard mutated between
+        # extractions and refuses loud like the N-001/overlap refusals.
+        # Never a silent subset fuse and never a whole-block merge of a
+        # partially overlapping aggregate (both double-count repeats).
+        first = seen.get(shard_label)
+        if first is not None:
+            if block != first:
+                raise ValueError(
+                    f"inconsistent call-counter snapshots for shard {shard_label!r}: "
+                    "refusing to merge (same shard extracted twice with different results)"
+                )
+            if not block["complete"]:
+                complete = False
+            continue
+        seen[shard_label] = block
+        merge_module_first(by_module, block["by_module"])
+        probes_lost += int(block["probes_lost"])
+        if not block["complete"]:
+            complete = False
+        for row in block.get("lost_processes", []):
+            collected_lost.append((shard_label, dict(row)))
+        for detail in block.get("probes_detail", []):
+            uuid = detail.get("worker_uuid")
+            seq = detail.get("probe_seq")
+            if isinstance(uuid, str) and isinstance(seq, int):
+                detail_keys.add((uuid, seq))
+        for run in shard_round_keys:
+            # Namespaced keys embed the shard label, so a repeat would need
+            # the same label twice -- decided at the same-label gate above
+            # (identical fuses, different refuses), never merged here.
+            namespaced = f"{shard_label}/{run}"
+            by_round[namespaced] = _copy_round_block(shard_rounds[run])
+        for run, base in attributed:
+            collected.append((shard_label, run, base))
     show_shard = len({shard for shard, _, _ in collected}) > 1
     show_round = len({run for _, run, _ in collected}) > 1
     collected.sort(key=_collected_row_sort_key)
@@ -670,17 +723,37 @@ def _merge_call_counter_blocks(
         if show_shard:
             tagged["shard"] = shard_label
         by_process.append(tagged)
-    _canonicalize_counter_block(by_bucket)
+    _strip_single_module_tag(by_process)
+    # Lost rows tag their shard whenever the merge holds more than one: a
+    # scope_index without its shard is unattributable (unlike by_process
+    # rows, whose round tag beside them keeps them attributable).
+    show_lost_shard = len(set(labels)) > 1
+    collected_lost.sort(key=lambda item: (item[0], _lost_row_sort_key(item[1])))
+    lost_processes: list[dict[str, Any]] = []
+    for shard_label, row in collected_lost:
+        tagged = dict(row)
+        if show_lost_shard:
+            tagged["shard"] = shard_label
+        lost_processes.append(tagged)
+    by_module = canonicalize_module_first(by_module)
     for round_block in by_round.values():
-        _canonicalize_counter_block(round_block["by_bucket"])
-    return {
+        round_block["by_module"] = canonicalize_module_first(round_block["by_module"])
+    merged_block: dict[str, Any] = {
         "complete": complete,
-        "total_calls": by_bucket["total_calls"],
-        "by_bucket": by_bucket,
+        "total_calls": by_module["total_calls"],
+        "by_module": by_module,
         "probes_lost": probes_lost,
         "by_process": by_process,
         "by_round": {key: by_round[key] for key in sorted(by_round)},
     }
+    if lost_processes:
+        merged_block["lost_processes"] = lost_processes
+    if detail_keys:
+        merged_block["probes_detail"] = [
+            {"worker_uuid": uuid, "probe_seq": seq, "status": "folded"}
+            for uuid, seq in sorted(detail_keys)
+        ]
+    return merged_block
 
 
 def merge_results_payloads(

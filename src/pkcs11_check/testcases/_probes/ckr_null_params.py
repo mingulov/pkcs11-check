@@ -32,7 +32,7 @@ from pkcs11_check.testcases._probes.raw_session import RawCtypesContext, probe_m
 
 
 def _run(ctx: RawCtypesContext, extra: dict[str, Any]) -> None:
-    call_func, _get_func = make_caller(ctx.func_list)
+    call_func, _get_func = make_caller(ctx.func_list, ctx.module_path)
 
     # Initialize the module first (mirror the legacy CKR_OK / ALREADY_INITIALIZED
     # acceptance and the :Initialize_failed sentinel + exit(1) path).

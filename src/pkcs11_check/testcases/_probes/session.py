@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pkcs11_check.core.call_counters import flatten_current, probes_lost
+from pkcs11_check.core.call_counters import current_receipts, flatten_current, probes_lost
 from pkcs11_check.core.crash_codes import ctypes_access_violation_code
 from pkcs11_check.raw.api import RawPKCS11
 from pkcs11_check.raw.bootstrap import (
@@ -56,7 +56,9 @@ from pkcs11_check.raw.types_std import (
 )
 from pkcs11_check.testcases._probes._emit import (
     emit_rv_trace,
+    flush_probe_sidecar,
     mark_python_finalized,
+    probe_coverage_receipt,
     rv_trace_enabled,
     rv_trace_maxlen,
     write_coverage,
@@ -113,8 +115,12 @@ def _write_coverage(raw: RawPKCS11 | _LegacyCoverageSnapshot) -> None:
 
     Integer mechanism and return-value keys are converted to strings for JSON compatibility.
     The flattened fw#73 counters ride along under ``call_counters`` so the parent can
-    fold this child's C_* traffic into its own globals.
+    fold this child's C_* traffic into its own globals, with the echoed probe
+    receipt plus propagated grandchild receipts; the same counters flush to
+    the probe sidecar for the parent's torn-coverage fallback.
     """
+    flattened = flatten_current()
+    flush_probe_sidecar(flattened)
     write_coverage(
         raw.call_log,
         {str(k): v for k, v in raw.mechanism_counts.items()},
@@ -123,8 +129,10 @@ def _write_coverage(raw: RawPKCS11 | _LegacyCoverageSnapshot) -> None:
             str(mechanism): {str(rv): count for rv, count in counts.items()}
             for mechanism, counts in raw.mechanism_rv_counts.items()
         },
-        call_counters=flatten_current(),
+        call_counters=flattened,
         probes_lost=probes_lost(),
+        receipt=probe_coverage_receipt(),
+        receipts=current_receipts() or None,
     )
 
 

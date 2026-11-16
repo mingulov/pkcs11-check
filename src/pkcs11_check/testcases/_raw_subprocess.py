@@ -48,7 +48,7 @@ def _normalize_call_log(value: Any) -> Counter[str]:
     return normalized
 
 
-def ingest_raw_subprocess_coverage(path: str) -> bool:
+def ingest_raw_subprocess_coverage(path: str, *, ingest_counters: bool = True) -> bool:
     """Read a child coverage JSON file into the raw-path accumulators (I6).
 
     No-op when ``path`` is empty or the file does not exist (e.g. the child
@@ -62,6 +62,10 @@ def ingest_raw_subprocess_coverage(path: str) -> bool:
     channel worked (counters present and well-shaped), not that any particular
     call was recovered.  A present but empty list reports True: the child
     reported zero calls, so nothing was lost.
+
+    ``ingest_counters=False`` ingests only the mechanism/call-log sections
+    (the receipt-aware ``_probes.runner.ingest_probe_payload`` drives the
+    counters channel instead) and reports whether the payload parsed.
     """
     if not path or not os.path.exists(path):
         return False
@@ -82,6 +86,8 @@ def ingest_raw_subprocess_coverage(path: str) -> bool:
     _subprocess_call_ok_counts.update(_normalize_call_log(data.get("call_log_ok", {})))
     for mechanism, counts in normalize_mechanism_rv_counts(data.get("mechanism_rv_counts")).items():
         _subprocess_mechanism_rv_counts[mechanism].update(counts)
+    if not ingest_counters:
+        return True
     counters = data.get("call_counters")
     if not isinstance(counters, (list, tuple)):
         # Unusable channel: the launcher owns this child as one loss, so the

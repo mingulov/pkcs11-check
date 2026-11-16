@@ -23,16 +23,49 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
-from pkcs11_check.core.preflight import run_preflight_subprocess
+from pkcs11_check.core.preflight import (
+    PreflightCounters,
+    run_preflight_subprocess,
+)
 
 RecoveryMode = Literal["off", "wait", "cmd"]
+
+#: Registry/sidecar unit key for recovery liveness probes (distinct from the
+#: CLI census ``preflight`` unit so the two never share an identity).
+RECOVERY_UNIT = "recovery"
+
+#: Attempt sequence for env-resolved recovery probes (attempt 0 is reserved
+#: for the CLI census). Probes run sequentially from the controller, so a
+#: process-global counter suffices; tests reset it explicitly.
+_recovery_probe_attempt = 0
+
+
+def reset_probe_attempts_for_tests() -> None:
+    """Reset the recovery-probe attempt sequence (tests only)."""
+    global _recovery_probe_attempt
+    _recovery_probe_attempt = 0
+
 
 # Unit outcomes that count as a failure for streak/suspicion purposes. A "passed" unit proves
 # the provider is live and breaks the streak; anything else neutral (skips) is left untouched.
 _FAILURE_STATUSES = frozenset({"failed", "crashed", "error", "timeout"})
 
 
-def probe_provider_liveness(module: Path, *, interface: str, slot: int, timeout: int) -> bool:
+def _next_recovery_attempt() -> int:
+    """Return the next recovery-probe attempt number (1-based; 0 is the census)."""
+    global _recovery_probe_attempt
+    _recovery_probe_attempt += 1
+    return _recovery_probe_attempt
+
+
+def probe_provider_liveness(
+    module: Path,
+    *,
+    interface: str,
+    slot: int,
+    timeout: int,
+    counters: PreflightCounters | None = None,
+) -> bool:
     """Return True iff the provider is reachable, via a fresh-subprocess liveness probe.
 
     Wraps ``run_preflight_subprocess`` (C_Initialize + C_GetSlotList/mechanism enumeration in an
@@ -40,12 +73,23 @@ def probe_provider_liveness(module: Path, *, interface: str, slot: int, timeout:
     module that cannot even be loaded) is treated as dead. Running in a subprocess is deliberate:
     a probe against a crashing provider must not take the runner down with it.
 
+    Counter engagement: an explicit ``counters`` wins; otherwise the probe
+    resolves from the environment (counters dir + run id + evidence path,
+    unit ``recovery``, next attempt) and stays uncounted when any key is
+    absent. The file runner passes nothing, so in-run probes engage
+    automatically under the CLI-seeded environment.
+
     NOTE: this is reachability-only. The spec's optional crypto-liveness step (a capability-gated
     ``C_GenerateRandom`` to catch a "reachable but crypto-dead" daemon) is deferred: doing it
     in-process would add a crypto crash surface to the recovery probe itself, and doing it in the
     subprocess is a separate preflight change. The residual (a daemon whose RPC front-end answers
     but whose crypto backend died) records real per-op results verbatim -- recorded, never hidden.
     """
+    engaged = counters
+    if engaged is None:
+        engaged = PreflightCounters.resolve_from_env(
+            unit=RECOVERY_UNIT, attempt=_next_recovery_attempt()
+        )
     try:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as fh:
             output_path = Path(fh.name)
@@ -55,6 +99,7 @@ def probe_provider_liveness(module: Path, *, interface: str, slot: int, timeout:
             slot=slot,
             timeout=timeout,
             output_path=output_path,
+            counters=engaged,
         )
     except (OSError, ValueError):
         return False

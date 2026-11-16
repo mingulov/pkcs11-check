@@ -34,7 +34,7 @@ from pkcs11_check.testcases._probes.session import Level, ProbeContext, probe_ma
 def _run(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     # Direct-symbol handle onto the same module (mirrors legacy `so = ctypes.CDLL(module)`),
     # wrapped so the call below is counted in the child payload (fw#73).
-    so = counting_cdll(ctypes.CDLL(extra["module_path"]))
+    so = counting_cdll(ctypes.CDLL(extra["module_path"]), module=extra["module_path"])
     try:
         c_generate_random = so.C_GenerateRandom
     except AttributeError:

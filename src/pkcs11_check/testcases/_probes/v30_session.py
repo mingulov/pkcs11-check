@@ -96,7 +96,7 @@ def _negotiate_v30(ctx: RawCtypesContext) -> RawPKCS11:
             raise RuntimeError(
                 f"requested PKCS#11 interface {requested!r} requires C_GetInterface"
             ) from None
-        return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+        return RawPKCS11(ctx.func_list.value, funclist3_ptr=0, module_id=ctx.module_path)
 
     requested_version_obj: CK_VERSION | None = None
     if requested_version is not None:
@@ -111,21 +111,21 @@ def _negotiate_v30(ctx: RawCtypesContext) -> RawPKCS11:
     )
     if rv != CKR_OK:
         if requested_version is None:
-            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0, module_id=ctx.module_path)
         raise RuntimeError(
             f"C_GetInterface for requested PKCS#11 interface {requested!r} "
             f"returned CK_RV 0x{int(rv):08x}"
         )
     if not bool(iface_ptr):
         if requested_version is None:
-            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0, module_id=ctx.module_path)
         raise RuntimeError(
             f"C_GetInterface for requested PKCS#11 interface {requested!r} returned NULL"
         )
     fl3_val = int(iface_ptr.contents.pFunctionList or 0)
     if not fl3_val:
         if requested_version is None:
-            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0)
+            return RawPKCS11(ctx.func_list.value, funclist3_ptr=0, module_id=ctx.module_path)
         raise RuntimeError(
             f"C_GetInterface for requested PKCS#11 interface {requested!r} returned "
             "NULL pFunctionList"
@@ -139,7 +139,7 @@ def _negotiate_v30(ctx: RawCtypesContext) -> RawPKCS11:
                 f"requested PKCS#11 interface {requested!r}, got "
                 f"{actual_version[0]}.{actual_version[1]}"
             )
-    return RawPKCS11(ctx.func_list.value, funclist3_ptr=fl3_val)
+    return RawPKCS11(ctx.func_list.value, funclist3_ptr=fl3_val, module_id=ctx.module_path)
 
 
 def _teardown(raw: RawPKCS11, session_handle: int) -> None:

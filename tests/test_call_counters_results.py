@@ -35,15 +35,20 @@ def _counters_block(total: int = 10) -> dict[str, Any]:
     return {
         "complete": True,
         "total_calls": total,
-        "by_bucket": {
+        "by_module": {
             "total_calls": total,
-            "buckets": {
-                "test": {
+            "by_module": {
+                "": {
                     "calls": total,
-                    "by_fn": {
-                        "C_Sign": {
+                    "buckets": {
+                        "test": {
                             "calls": total,
-                            "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                            "by_fn": {
+                                "C_Sign": {
+                                    "calls": total,
+                                    "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                                }
+                            },
                         }
                     },
                 }
@@ -226,8 +231,8 @@ def test_merge_shard_dirs_recomputes_call_counters_exactly(tmp_path: Path) -> No
             "shard": "shard1",
         },
     ]
-    assert block["by_bucket"]["total_calls"] == 15
-    assert block["by_bucket"]["buckets"]["test"]["calls"] == 15
+    assert block["by_module"]["total_calls"] == 15
+    assert block["by_module"]["by_module"][""]["buckets"]["test"]["calls"] == 15
 
 
 def test_merge_shard_dirs_omits_key_without_counters_data(tmp_path: Path) -> None:
@@ -337,6 +342,7 @@ def test_isolated_path_seeds_isolation_env_for_unit_children(
         baseline_fingerprint: str | None = None,
         provenance: object = None,
         recovery_config: object = None,
+        counters_barrier_plan: object = None,
     ) -> int:
         del (
             units,
@@ -369,7 +375,7 @@ def test_isolated_path_seeds_isolation_env_for_unit_children(
     monkeypatch.setattr(
         test_cmd,
         "run_preflight_subprocess",
-        lambda module, *, interface, slot, timeout, output_path: (
+        lambda module, *, interface, slot, timeout, output_path, counters=None: (
             output_path.write_text("{}", encoding="utf-8"),
             CapabilityManifest(
                 status="ok",
@@ -1138,10 +1144,17 @@ def _invoke_isolated_with_env_probes(
     from tests._plain_cli_runner import PlainCliRunner
 
     def fake_preflight(
-        module_arg: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+        module_arg: Path,
+        *,
+        interface: str,
+        slot: int,
+        timeout: int,
+        output_path: Path,
+        counters: object = None,
     ) -> CapabilityManifest:
         del module_arg, interface, slot, timeout
         seen["preflight"] = os.environ.get(RUN_ID_ENV)
+        seen["preflight_counters"] = counters
         output_path.write_text("{}", encoding="utf-8")
         return CapabilityManifest(
             status="ok",
@@ -1177,6 +1190,7 @@ def _invoke_isolated_with_env_probes(
         baseline_fingerprint: str | None = None,
         provenance: object = None,
         recovery_config: object = None,
+        counters_barrier_plan: object = None,
     ) -> int:
         del (
             units,
@@ -1246,6 +1260,8 @@ def test_isolated_path_seeds_one_run_id_without_leak(
 def test_isolated_path_stale_run_id_not_inherited_but_restored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from pkcs11_check.core.preflight import PreflightCounters
+
     module = tmp_path / "dummy.so"
     module.write_text("", encoding="utf-8")
     seen: dict[str, object] = {}
@@ -1257,12 +1273,15 @@ def test_isolated_path_stale_run_id_not_inherited_but_restored(
     finally:
         os.environ.pop(RUN_ID_ENV, None)
     assert result.exit_code == 0
-    # Preflight/collection run before the seed: no stale value visible.
-    assert seen["preflight"] is None
-    assert seen["discovery"] is None
-    # Unit children see one fresh id, not the stale caller value.
+    # One id seeded before preflight: census, collection, and unit children
+    # all see the same fresh value, never the stale caller one.
+    assert isinstance(seen["preflight"], str) and re.fullmatch(_RUN_ID_RE, seen["preflight"])
+    assert seen["preflight"] != "STALE-RUN-ID"
+    assert seen["discovery"] == seen["preflight"]
     assert isinstance(seen["run"], str) and re.fullmatch(_RUN_ID_RE, seen["run"])
-    assert seen["run"] != "STALE-RUN-ID"
+    assert seen["run"] == seen["preflight"]
+    # C1: the census is always counted (run-owned dir, no opt-in).
+    assert isinstance(seen["preflight_counters"], PreflightCounters)
     assert seen["restored"] == "STALE-RUN-ID"
 
 
@@ -1271,7 +1290,7 @@ def test_none_path_seeds_run_id_and_restores(
 ) -> None:
     from pkcs11_check.cli import test_cmd
     from pkcs11_check.cli.app import app
-    from pkcs11_check.core.preflight import CapabilityManifest
+    from pkcs11_check.core.preflight import CapabilityManifest, PreflightCounters
     from tests._plain_cli_runner import PlainCliRunner
 
     module = tmp_path / "dummy.so"
@@ -1279,10 +1298,17 @@ def test_none_path_seeds_run_id_and_restores(
     seen: dict[str, object] = {}
 
     def fake_preflight(
-        module_arg: Path, *, interface: str, slot: int, timeout: int, output_path: Path
+        module_arg: Path,
+        *,
+        interface: str,
+        slot: int,
+        timeout: int,
+        output_path: Path,
+        counters: object = None,
     ) -> CapabilityManifest:
         del module_arg, interface, slot, timeout
         seen["preflight"] = os.environ.get(RUN_ID_ENV)
+        seen["preflight_counters"] = counters
         output_path.write_text("{}", encoding="utf-8")
         return CapabilityManifest(
             status="ok",
@@ -1322,9 +1348,13 @@ def test_none_path_seeds_run_id_and_restores(
     finally:
         os.environ.pop(RUN_ID_ENV, None)
     assert result.exit_code == 0
-    assert seen["preflight"] is None
+    # One id seeded before preflight: census and the in-process run share it.
+    assert isinstance(seen["preflight"], str) and re.fullmatch(_RUN_ID_RE, seen["preflight"])
+    assert seen["preflight"] != "STALE-RUN-ID"
     assert isinstance(seen["run"], str) and re.fullmatch(_RUN_ID_RE, seen["run"])
-    assert seen["run"] != "STALE-RUN-ID"
+    assert seen["run"] == seen["preflight"]
+    # C1: the census is always counted (run-owned dir, no opt-in).
+    assert isinstance(seen["preflight_counters"], PreflightCounters)
     assert seen["restored"] == "STALE-RUN-ID"
 
 
@@ -1382,12 +1412,14 @@ def test_merge_heterogeneous_counters_is_byte_identical(tmp_path: Path) -> None:
     merged_ab = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged_ab")
     merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
     assert json.dumps(merged_ab["call_counters"]) == json.dumps(merged_ba["call_counters"])
-    buckets = merged_ab["call_counters"]["by_bucket"]["buckets"]
+    by_module = merged_ab["call_counters"]["by_module"]
+    assert list(by_module["by_module"]) == [""]
+    buckets = by_module["by_module"][""]["buckets"]
     assert list(buckets) == ["module_init", "test"]
     assert list(buckets["module_init"]["by_fn"]) == ["C_Initialize"]
     assert list(buckets["test"]["by_fn"]) == ["C_Sign"]
-    round_buckets = merged_ab["call_counters"]["by_round"][f"shardA/{_MR1}"]["by_bucket"]
-    assert list(round_buckets["buckets"]) == ["test"]
+    round_buckets = merged_ab["call_counters"]["by_round"][f"shardA/{_MR1}"]["by_module"]
+    assert list(round_buckets["by_module"][""]["buckets"]) == ["test"]
 
 
 def test_merge_generated_label_collision_with_literal_gets_counter_suffix(
@@ -1475,7 +1507,91 @@ def test_merge_conflicting_rv_names_is_byte_identical(tmp_path: Path) -> None:
     merged_ba = merge_shard_dirs([shard_b, shard_a], tmp_path / "merged_ba")
     assert merged_ab["call_counters"] == merged_ba["call_counters"]
     assert json.dumps(merged_ab["call_counters"]) == json.dumps(merged_ba["call_counters"])
-    leaf = merged_ab["call_counters"]["by_bucket"]["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"][
-        vendor_rv
-    ]
+    leaf = merged_ab["call_counters"]["by_module"]["by_module"][""]["buckets"]["test"]["by_fn"][
+        "C_Sign"
+    ]["by_rv"][vendor_rv]
     assert leaf == {"name": "CKR_VENDOR_FOO", "count": 15}
+
+
+# --- I5: same-shard snapshots must agree or refuse ---
+
+_I5_X = "1" * 32
+_I5_Y = "2" * 32
+_I5_RUN = "20261116T120000000000Z-p100-i5"
+
+
+def _i5_session(pid: int, total: int, uuid: str) -> dict[str, Any]:
+    return {
+        "$report_type": "CallCountersReport",
+        "pid": pid,
+        "isolation": "file",
+        "probes_lost": 0,
+        "run_id": _I5_RUN,
+        "worker_uuid": uuid,
+        "total_calls": total,
+        "by_module": {
+            "m": {
+                "calls": total,
+                "buckets": {
+                    "test": {
+                        "calls": total,
+                        "by_fn": {
+                            "C_Sign": {
+                                "calls": total,
+                                "by_rv": {"0": {"name": "CKR_OK", "count": total}},
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+
+
+def _i5_block(tmp_path: Path, name: str, *sessions: dict[str, Any]) -> dict[str, Any]:
+    from pkcs11_check.core._jsonl_extract import extract_call_counters_from_jsonl
+
+    jsonl = _write_jsonl(
+        tmp_path / name,
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            *sessions,
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    block = extract_call_counters_from_jsonl(jsonl)
+    assert block is not None
+    return block
+
+
+def test_merge_same_shard_inconsistent_snapshots_rejected_both_orders(
+    tmp_path: Path,
+) -> None:
+    from pkcs11_check.core.merge import _merge_call_counter_blocks
+
+    one = _i5_block(tmp_path, "one.jsonl", _i5_session(100, 10, _I5_X))
+    two = _i5_block(tmp_path, "two.jsonl", _i5_session(100, 10, _I5_X), _i5_session(200, 5, _I5_Y))
+    shard = tmp_path / "shard"
+    # One repeated identity plus one new one: a partially overlapping
+    # aggregate must refuse loud, never silently fuse or double-count.
+    with pytest.raises(ValueError, match="inconsistent"):
+        _merge_call_counter_blocks([(shard, one), (shard, two)])
+    with pytest.raises(ValueError, match="inconsistent"):
+        _merge_call_counter_blocks([(shard, two), (shard, one)])
+
+
+def test_merge_same_shard_identical_snapshot_still_fuses(tmp_path: Path) -> None:
+    import copy
+
+    from pkcs11_check.core.merge import _merge_call_counter_blocks
+
+    one = _i5_block(tmp_path, "one.jsonl", _i5_session(100, 10, _I5_X))
+    twin = copy.deepcopy(one)
+    assert twin == one and twin is not one
+    merged = _merge_call_counter_blocks([(tmp_path / "shard", one), (tmp_path / "shard", twin)])
+    assert merged is not None
+    assert merged["total_calls"] == 10
+    assert merged["complete"] is True
+    assert len(merged["by_process"]) == 1
+    assert "lost_processes" not in merged

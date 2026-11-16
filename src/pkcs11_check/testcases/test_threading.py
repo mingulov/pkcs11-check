@@ -214,6 +214,16 @@ def _run_threaded_workload(
     against that disposable token (so a crash cannot corrupt the shared one).
     """
     env = dict(os.environ)
+    # The workload child rides the stdout-marker channel (never the
+    # registry): strip the counters identity so it cannot register under
+    # its parent's (unit, attempt) and double-count on collection.
+    for counters_key in (
+        "PKCS11_CHECK_COUNTERS_DIR",
+        "PKCS11_CHECK_COUNTERS_UNIT",
+        "PKCS11_CHECK_COUNTERS_ATTEMPT",
+        "PKCS11_CHECK_COUNTERS_ROLE",
+    ):
+        env.pop(counters_key, None)
     conf_env_var = os.environ.get("PKCS11_CHECK_TOKEN_CONF_ENV")
     if throwaway_conf is not None and conf_env_var:
         env[conf_env_var] = throwaway_conf
