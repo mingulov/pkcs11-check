@@ -538,9 +538,12 @@ def test_cache_markers_carry_per_source_attempt_counts(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     resumed = tmp_path / "resumed.jsonl"
+    # json.dumps, never an f-string: a raw OS path breaks JSON escaping on
+    # Windows (backslashes), silently dropping this marker line.
     resumed.write_text(
-        f'{{"$report_type": "IsolatedUnitReport", "target": "{unit}", "attempt": 5}}\n'
-        '{"nodeid": "x::t", "when": "call", "outcome": "passed"}\n',
+        json.dumps({"$report_type": "IsolatedUnitReport", "target": unit, "attempt": 5})
+        + "\n"
+        + '{"nodeid": "x::t", "when": "call", "outcome": "passed"}\n',
         encoding="utf-8",
     )
     _write_unit_report_record_cache_from_jsonl_paths(state_file, unit, [first, second, resumed])

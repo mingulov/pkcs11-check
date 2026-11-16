@@ -2724,6 +2724,7 @@ class TestPidfdTerminate:
         monkeypatch.setattr(os, "pidfd_open", _no_syscall, raising=False)
         assert durability._terminate_pidfd(424242, 776, 5.0) is False
 
+    @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="pidfd fencing is Linux-only")
     def test_pidfd_signal_eperm_is_unresolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(os, "pidfd_open", lambda pid, flags: 999, raising=False)
         monkeypatch.setattr(durability, "_linux_starttime", lambda pid: 776)
@@ -2737,6 +2738,7 @@ class TestPidfdTerminate:
         assert durability._terminate_pidfd(424242, 776, 5.0) is False
         assert closes == [999]
 
+    @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="pidfd fencing is Linux-only")
     def test_pidfd_signal_lookup_error_is_fenced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(os, "pidfd_open", lambda pid, flags: 999, raising=False)
         monkeypatch.setattr(durability, "_linux_starttime", lambda pid: 776)
@@ -2947,6 +2949,41 @@ class TestWindowsKernel32:
         assert durability._terminate_handle(424242, 222, 5.0) is True
         assert fake.terminated() is True
         assert ("CloseHandle", 0xABCD) in fake.calls
+
+    def test_get_process_times_receives_no_null_out_pointers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GetProcessTimes writes all four out-params: NULL would AV (CI windows)."""
+
+        class _StrictKernel32(_FakeKernel32):
+            def GetProcessTimes(  # noqa: N802 - mirrors the Win32 API name
+                self, handle: int, creation_ptr: Any, *rest: Any
+            ) -> bool:
+                if any(ptr is None for ptr in rest):
+                    raise OSError("exception: access violation writing 0x0000000000000000")
+                return super().GetProcessTimes(handle, creation_ptr, *rest)
+
+        fake = _StrictKernel32()
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._windows_creation_time(424242) == 9876543210
+
+    def test_terminate_reverify_receives_no_null_out_pointers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fence re-verify honors the same no-NULL rule (CI windows)."""
+
+        class _StrictKernel32(_FakeKernel32):
+            def GetProcessTimes(  # noqa: N802 - mirrors the Win32 API name
+                self, handle: int, creation_ptr: Any, *rest: Any
+            ) -> bool:
+                if any(ptr is None for ptr in rest):
+                    raise OSError("exception: access violation writing 0x0000000000000000")
+                return super().GetProcessTimes(handle, creation_ptr, *rest)
+
+        fake = _StrictKernel32(creation=222)
+        monkeypatch.setattr(durability, "_kernel32", lambda: fake)
+        assert durability._terminate_handle(424242, 222, 5.0) is True
+        assert fake.terminated() is True
 
 
 def _broken_writer(path: Any, payload: Any) -> None:
