@@ -425,11 +425,13 @@ def test_extract_buckets_merged_across_records(tmp_path: Path) -> None:
     payload = extract_call_counters_from_jsonl(jsonl)
     assert payload is not None
     assert payload["total_calls"] == 15
-    by_bucket = payload["by_bucket"]
-    assert by_bucket["total_calls"] == 15
-    assert by_bucket["buckets"]["test"]["calls"] == 10
-    assert by_bucket["buckets"]["setup_teardown"]["by_fn"]["C_Login"]["calls"] == 5
-    assert by_bucket["buckets"]["test"]["by_fn"]["C_Sign"]["by_rv"]["0"]["count"] == 10
+    by_module = payload["by_module"]
+    assert by_module["total_calls"] == 15
+    assert set(by_module["by_module"]) == {""}
+    buckets = by_module["by_module"][""]["buckets"]
+    assert buckets["test"]["calls"] == 10
+    assert buckets["setup_teardown"]["by_fn"]["C_Login"]["calls"] == 5
+    assert buckets["test"]["by_fn"]["C_Sign"]["by_rv"]["0"]["count"] == 10
 
 
 # --- Codex R1 fix round (C2): executed-but-counterless segments ---
@@ -451,7 +453,7 @@ def test_extract_missing_group_crashed_first_test_marks_incomplete(tmp_path: Pat
     assert payload is not None
     assert payload["complete"] is False
     assert payload["total_calls"] == 0
-    assert payload["by_bucket"] == {"total_calls": 0, "buckets": {}}
+    assert payload["by_module"] == {"total_calls": 0, "by_module": {}}
     assert payload["probes_lost"] == 0
     assert payload["by_process"] == []
 
@@ -497,7 +499,7 @@ def test_extract_first_setup_crash_marker_without_reports_is_incomplete(
     assert payload is not None
     assert payload["complete"] is False
     assert payload["total_calls"] == 0
-    assert payload["by_bucket"] == {"total_calls": 0, "buckets": {}}
+    assert payload["by_module"] == {"total_calls": 0, "by_module": {}}
     assert payload["probes_lost"] == 0
     assert payload["by_process"] == []
     assert sorted(payload["by_round"]) == [""]
@@ -764,7 +766,7 @@ def test_extract_splits_rounds_and_keeps_global_rollup(tmp_path: Path) -> None:
     assert round_1["total_calls"] == 10
     assert round_1["complete"] is True
     assert round_1["probes_lost"] == 0
-    assert round_1["by_bucket"]["total_calls"] == 10
+    assert round_1["by_module"]["total_calls"] == 10
     assert round_1["by_process"] == [
         {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True}
     ]
@@ -819,7 +821,7 @@ def test_extract_old_records_fold_into_implicit_round(tmp_path: Path) -> None:
     assert implicit["total_calls"] == payload["total_calls"]
     assert implicit["complete"] == payload["complete"]
     assert implicit["probes_lost"] == payload["probes_lost"]
-    assert implicit["by_bucket"] == payload["by_bucket"]
+    assert implicit["by_module"] == payload["by_module"]
     assert implicit["by_process"] == payload["by_process"]
 
 
@@ -1008,11 +1010,13 @@ def test_extract_canonicalizes_counter_maps(tmp_path: Path) -> None:
     )
     payload = extract_call_counters_from_jsonl(jsonl)
     assert payload is not None
-    buckets = payload["by_bucket"]["buckets"]
+    by_module = payload["by_module"]
+    assert list(by_module["by_module"]) == [""]
+    buckets = by_module["by_module"][""]["buckets"]
     assert list(buckets) == ["module_init", "test"]
     assert list(buckets["test"]["by_fn"]) == ["C_Sign", "C_Verify"]
     assert list(buckets["test"]["by_fn"]["C_Verify"]["by_rv"]) == ["0", "5"]
-    round_block = payload["by_round"][""]["by_bucket"]["buckets"]
+    round_block = payload["by_round"][""]["by_module"]["by_module"][""]["buckets"]
     assert list(round_block) == ["module_init", "test"]
     assert list(round_block["test"]["by_fn"]["C_Verify"]["by_rv"]) == ["0", "5"]
 

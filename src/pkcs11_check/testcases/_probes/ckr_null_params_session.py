@@ -36,7 +36,7 @@ _CKF_SERIAL_SESSION_RW = 0x06  # CKF_SERIAL_SESSION (0x04) | CKF_RW_SESSION (0x0
 def _run(ctx: ProbeContext, extra: dict[str, Any]) -> None:
     # Direct-symbol handle onto the same module (mirrors legacy `so = ctypes.CDLL(module)`),
     # wrapped so the call below is counted in the child payload (fw#73).
-    so = counting_cdll(ctypes.CDLL(extra["module_path"]))
+    so = counting_cdll(ctypes.CDLL(extra["module_path"]), module=extra["module_path"])
     try:
         c_open_session = so.C_OpenSession
     except AttributeError:

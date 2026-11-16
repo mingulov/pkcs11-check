@@ -159,14 +159,17 @@ def test_raw_session_clean_function_list_reject_preserves_exact_ckr(
     """A clean bootstrap CKR is terminal provider evidence, not a child error."""
     monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
     monkeypatch.setattr(raw_session, "_load_cdll", lambda _path: object())
-    monkeypatch.setattr(
-        raw_session,
-        "_get_function_list",
-        lambda _lib: (None, int(CKR_GENERAL_ERROR)),
-    )
+    seen: dict[str, object] = {}
+
+    def _reject(_lib: object, module: str = "") -> tuple[None, int]:
+        seen["module"] = module
+        return (None, int(CKR_GENERAL_ERROR))
+
+    monkeypatch.setattr(raw_session, "_get_function_list", _reject)
 
     raw_session.probe_main_raw(lambda _ctx, _extra: pytest.fail("probe must not run"))
 
+    assert seen == {"module": "provider.so"}
     assert (
         "SETUP_XFAIL:C_GetFunctionList rejected with CKR_GENERAL_ERROR" in capsys.readouterr().out
     )
@@ -179,7 +182,7 @@ def test_raw_session_python_bootstrap_error_propagates(
     monkeypatch.setattr(raw_session.ProbeParams, "load", lambda _path: _raw_params())
     monkeypatch.setattr(raw_session, "_load_cdll", lambda _path: object())
 
-    def broken_get_function_list(_lib: object) -> tuple[None, int]:
+    def broken_get_function_list(_lib: object, module: str = "") -> tuple[None, int]:
         raise RuntimeError("bootstrap bug")
 
     monkeypatch.setattr(raw_session, "_get_function_list", broken_get_function_list)

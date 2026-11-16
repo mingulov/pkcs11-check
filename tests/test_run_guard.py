@@ -138,6 +138,14 @@ def test_cli_second_run_refused_before_reset(
     results_file = tmp_path / "results.json"
     state_file.write_text('{"sentinel": "state"}', encoding="utf-8")
     results_file.write_text('{"sentinel": "results"}', encoding="utf-8")
+    # C2: the guard precedes ALL evidence mutation, so a refused run must
+    # leave the preflight evidence sibling and the run-owned counters dir
+    # (both pure state siblings, covered by the state guard) untouched.
+    evidence_file = tmp_path / "state.json.preflight-counters.jsonl"
+    evidence_file.write_text('{"sentinel": "evidence"}\n', encoding="utf-8")
+    counters_sentinel = tmp_path / "state.json.counters" / "sentinel.txt"
+    counters_sentinel.parent.mkdir()
+    counters_sentinel.write_text("sentinel", encoding="utf-8")
 
     def _ok_preflight(
         module: Path,
@@ -146,6 +154,7 @@ def test_cli_second_run_refused_before_reset(
         slot: int,
         timeout: int,
         output_path: Path,
+        counters: object = None,
     ) -> object:
         from pkcs11_check.core.preflight import CapabilityManifest
 
@@ -187,6 +196,8 @@ def test_cli_second_run_refused_before_reset(
     assert "another run" in result.output
     assert state_file.read_text(encoding="utf-8") == '{"sentinel": "state"}'
     assert results_file.read_text(encoding="utf-8") == '{"sentinel": "results"}'
+    assert evidence_file.read_text(encoding="utf-8") == '{"sentinel": "evidence"}\n'
+    assert counters_sentinel.read_text(encoding="utf-8") == "sentinel"
 
 
 def test_resume_rejects_foreign_fingerprint(tmp_path: Path) -> None:

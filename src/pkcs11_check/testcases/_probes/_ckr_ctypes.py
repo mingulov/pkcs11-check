@@ -10,7 +10,7 @@ NULL / oversized arguments a wrapper would reject).
 The whole raw-ctypes ckr family reuses ``FUNC_INDICES`` + ``make_caller``:
 
     from pkcs11_check.testcases._probes._ckr_ctypes import make_caller
-    call_func, get_func = make_caller(ctx.func_list)   # ctx: RawCtypesContext
+    call_func, get_func = make_caller(ctx.func_list, ctx.module_path)  # ctx: RawCtypesContext
     rv = call_func("C_GetInfo", ctypes.c_void_p(None))
 """
 
@@ -45,7 +45,9 @@ def _slot_offset(index: int, *, header_size: int, ptr_size: int) -> int:
     return header_size + index * ptr_size
 
 
-def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int]]:
+def make_caller(
+    func_list: Any, module: str = ""
+) -> tuple[Callable[..., int], Callable[[int], int]]:
     """Build ``(call_func, get_func)`` bound to a CK_FUNCTION_LIST pointer.
 
     Args:
@@ -54,6 +56,8 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
             whose first field is a CK_VERSION (2 bytes, padded to pointer alignment),
             followed by ``C_*`` function pointers one pointer-width apart in
             pkcs11f.h order.
+        module: The module id every ``call_func`` call attributes to
+            (``RawCtypesContext.module_path`` at probe call sites).
 
     Returns:
         A ``(call_func, get_func)`` pair:
@@ -99,9 +103,9 @@ def make_caller(func_list: Any) -> tuple[Callable[..., int], Callable[[int], int
         # RawPKCS11._call): a crash inside the module still counts the call.
         # The bucket is captured once so a mid-call switch cannot split the pair.
         target = bucket if bucket is not None else current_bucket()
-        record_call(name, bucket=target)
+        record_call(name, bucket=target, module=module)
         rv = int(func(*args))
-        record_return(name, rv, bucket=target)
+        record_return(name, rv, bucket=target, module=module)
         return rv
 
     return call_func, get_func

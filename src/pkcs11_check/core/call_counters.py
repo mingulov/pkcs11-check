@@ -13,18 +13,62 @@ still inherit the phase. Entry/exit pairs additionally bind the exit to the
 bucket captured at entry, so a mid-call bucket switch cannot split one call
 across two buckets.
 
+Identity is two more axes: every call carries the MODULE id bound to the
+handle it passed through (``RawPKCS11`` binds its lib path before the first
+loader C call; direct ``record_*`` calls without a handle count under the
+``""`` unknown module, never inferred), and every record carries the process
+``worker_uuid`` minted here (allocation only; durable registration is Task 3).
+Core keys are ``(module, bucket, fn)`` / ``(module, bucket, fn, rv)`` and the
+serialized shape is module-first.
+
 This module is the ONLY owner of counter state. It must import nothing from
 ``pkcs11_check.raw.api`` (that module imports this one at the ``_call`` choke
 point); ``ckr_name`` is imported lazily inside the serializer.
+``counters_schema`` and ``_counters_durability`` are safe to import (stdlib
+plus schema only, no cycles).
+
+Durability (rc2 Task 3): when ``PKCS11_CHECK_COUNTERS_DIR`` is set, the
+first provider call self-registers this process (registry file + birth
+token), and evidence flushes to a sidecar/journal pair every K calls, at
+test-window boundaries, and at exit — all under this module's lock with a
+dirty flag covering every evidence mutation. Without the env var every
+durability entry point is inert. A sealed dir or an I/O failure raises
+``CounterPersistenceError`` out of the recording call, blocking provider
+entry rather than silently undercounting; a failed K flush rolls back
+the just-admitted call, so a provider call that never ran leaves no
+trace in the session either.
 """
 
 from __future__ import annotations
 
+import atexit
+import os
+import warnings
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from threading import RLock, local
 from typing import Any
+
+from pkcs11_check.core._counters_durability import (
+    COUNTERS_ATTEMPT_ENV,
+    COUNTERS_ROLE_ENV,
+    COUNTERS_UNIT_ENV,
+    FLUSH_WINDOW_K,
+    CounterPersistenceError,
+    Registration,
+    append_journal,
+    durability_dir,
+    register_worker,
+    write_sidecar_atomic,
+)
+from pkcs11_check.core.counters_schema import (
+    UNKNOWN_MODULE,
+    ensure_five_buckets,
+    is_module_first_block,
+    is_receipt,
+    mint_worker_uuid,
+)
 
 BUCKETS: tuple[str, ...] = ("test", "setup_teardown", "session_provisioning", "module_init")
 DEFAULT_BUCKET = "session_provisioning"
@@ -44,10 +88,51 @@ class _ThreadState(local):
 
 _lock = RLock()
 _state = _ThreadState()
-_entry_counts: Counter[tuple[str, str]] = Counter()
-_exit_counts: Counter[tuple[str, str, int]] = Counter()
+_entry_counts: Counter[tuple[str, str, str]] = Counter()
+_exit_counts: Counter[tuple[str, str, str, int]] = Counter()
 _phase_name: str = DEFAULT_BUCKET
 _probes_lost = 0
+_worker_uuid: str | None = None
+_worker_uuid_pid: int | None = None
+_registration: Registration | None = None
+_registration_pid: int | None = None
+_dirty = False
+_pending_calls = 0
+_receipts: set[tuple[str, int]] = set()
+_probe_seq = 0
+_inprog_entry: Counter[tuple[str, str, str]] = Counter()
+_inprog_exit: Counter[tuple[str, str, str, int]] = Counter()
+_journal_len = 0
+_atexit_installed = False
+
+
+def _get_worker_uuid_locked() -> str:
+    """Mint-or-return the producer identity; caller must hold ``_lock``."""
+    global _worker_uuid, _worker_uuid_pid
+    pid = os.getpid()
+    if _worker_uuid is None or _worker_uuid_pid != pid:
+        _worker_uuid = mint_worker_uuid()
+        _worker_uuid_pid = pid
+    return _worker_uuid
+
+
+def get_worker_uuid() -> str:
+    """Return the process-scoped producer identity, minting it once (Task 1 helper).
+
+    Allocation only: no filesystem or registry I/O happens here (durable
+    registration is Task 3). Fork-safe via a pid guard -- a forked child that
+    never minted mints its own, and a child inheriting a minted value remints
+    on first use, so two processes never share an identity.
+    """
+    with _lock:
+        return _get_worker_uuid_locked()
+
+
+def _current_bucket_locked() -> str:
+    """Return the active bucket; caller must hold ``_lock`` for the phase read."""
+    if _state.regions:
+        return _state.regions[-1]
+    return _phase_name
 
 
 def current_bucket() -> str:
@@ -56,6 +141,189 @@ def current_bucket() -> str:
         return _state.regions[-1]
     with _lock:
         return _phase_name
+
+
+def _ensure_registered_locked() -> Registration | None:
+    """Register this process when durability is engaged; caller holds ``_lock``.
+
+    Returns the registration, or None when disengaged. A forked child
+    (pid mismatch) re-registers with a fresh identity and fresh evidence
+    files, never touching the parent's. Raises ``CounterPersistenceError``
+    when sealed or on invalid identity inputs / I/O failure.
+    """
+    global _registration, _registration_pid, _atexit_installed
+    root = durability_dir()
+    if root is None:
+        return None
+    pid = os.getpid()
+    if _registration is not None and _registration_pid == pid:
+        return _registration
+    attempt_raw = os.environ.get(COUNTERS_ATTEMPT_ENV, "0")
+    try:
+        attempt = int(attempt_raw)
+    except ValueError:
+        raise CounterPersistenceError(f"invalid {COUNTERS_ATTEMPT_ENV}: {attempt_raw!r}") from None
+    registration = register_worker(
+        root,
+        run_id=os.environ.get(RUN_ID_ENV, ""),
+        unit=os.environ.get(COUNTERS_UNIT_ENV, "") or "<in-process>",
+        attempt=attempt,
+        role=os.environ.get(COUNTERS_ROLE_ENV, "") or "unit",
+        worker_uuid=_get_worker_uuid_locked(),
+        pid=pid,
+    )
+    _registration = registration
+    _registration_pid = pid
+    if not _atexit_installed:
+        _atexit_installed = True
+        atexit.register(_exit_flush)
+    return registration
+
+
+def ensure_registered() -> dict[str, Any] | None:
+    """Register this process when durability is engaged; return its identity.
+
+    Returns None when disengaged. Raises ``CounterPersistenceError`` when
+    sealed or on I/O failure (provider entry stays blocked).
+    """
+    with _lock:
+        registration = _ensure_registered_locked()
+        return _registration_info_locked() if registration is not None else None
+
+
+def _registration_info_locked() -> dict[str, Any] | None:
+    """Return the current registration identity; caller must hold ``_lock``."""
+    if _registration is None or _registration_pid != os.getpid():
+        return None
+    return {
+        "worker_uuid": _registration.worker_uuid,
+        "pid": _registration.pid,
+        "run_id": _registration.run_id,
+        "unit": _registration.unit,
+        "attempt": _registration.attempt,
+        "role": _registration.role,
+        "registry_path": str(_registration.registry_path),
+        "sidecar_path": str(_registration.sidecar_path),
+        "journal_path": str(_registration.journal_path),
+    }
+
+
+def registration_info() -> dict[str, Any] | None:
+    """Return the current registration identity, or None (no side effects)."""
+    with _lock:
+        return _registration_info_locked()
+
+
+def _flush_locked() -> None:
+    """Write the in-progress snapshot; caller holds ``_lock`` (whole-transaction).
+
+    No-op unless registered in this pid. Raises ``CounterPersistenceError``
+    on I/O failure (the old sidecar stays intact; dirty stays set so the
+    evidence is retried by the next flush).
+    """
+    global _dirty, _pending_calls
+    if _registration is None or _registration_pid != os.getpid():
+        return
+    if durability_dir() is None:
+        return
+    payload = {
+        "worker_uuid": _registration.worker_uuid,
+        "run_id": _registration.run_id,
+        "unit": _registration.unit,
+        "attempt": _registration.attempt,
+        "pid": _registration.pid,
+        "journal_seq": _journal_len,
+        "in_progress": _serialize(Counter(_inprog_entry), Counter(_inprog_exit)),
+        "receipts": [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)],
+    }
+    write_sidecar_atomic(_registration.sidecar_path, payload)
+    _dirty = False
+    _pending_calls = 0
+
+
+def flush_counters() -> bool:
+    """Flush the in-progress snapshot when dirty; return whether it wrote.
+
+    Never registers (best-effort persistence, no side effects beyond the
+    sidecar): False when disengaged, unregistered, fork-guarded, or clean.
+    Raises ``CounterPersistenceError`` on I/O failure.
+    """
+    with _lock:
+        if durability_dir() is None:
+            return False
+        if _registration is None or _registration_pid != os.getpid():
+            return False
+        if not _dirty:
+            return False
+        _flush_locked()
+        return True
+
+
+def _exit_flush() -> None:
+    """Best-effort exit flush for the atexit backstop (loud, never raises)."""
+    try:
+        with _lock:
+            if durability_dir() is None:
+                return
+            if _registration is None or _registration_pid != os.getpid():
+                return
+            if not _dirty:
+                return
+            _flush_locked()
+    except CounterPersistenceError as exc:
+        warnings.warn(f"call-counter exit flush failed: {exc}", UserWarning, stacklevel=2)
+
+
+def _mark_dirty_locked(calls: int = 0) -> None:
+    """Mark evidence mutated; flush when the K window fills. Holds ``_lock``."""
+    global _dirty, _pending_calls
+    _dirty = True
+    if _registration is not None and _registration_pid == os.getpid():
+        _pending_calls += calls
+        if _pending_calls >= FLUSH_WINDOW_K:
+            _flush_locked()
+
+
+def _unadmit(counter: Counter[Any], key: Any) -> None:
+    """Remove one just-admitted count, dropping keys that were absent (holds ``_lock``)."""
+    counter[key] -= 1
+    if counter[key] <= 0:
+        counter.pop(key, None)
+
+
+@contextmanager
+def _rollback_admission(
+    entry_key: tuple[str, str, str] | None,
+    exit_key: tuple[str, str, str, int] | None,
+) -> Iterator[None]:
+    """Roll back just-admitted counts if the dirty-mark flush fails (holds ``_lock``).
+
+    The caller admits the counts first, then marks dirty inside this guard: a
+    ``CounterPersistenceError`` from the K-boundary flush decrements exactly
+    the just-admitted counts (global and in-progress alike) and restores the
+    pending window, while ``_dirty`` stays set so the earlier evidence is
+    retried by the next flush. The error re-raises: the provider call never
+    ran (the record precedes it), so the session must not show it either.
+    Anything other than the persistence error propagates with the admission
+    kept. Read under the same lock hold as the admission, so no other thread
+    can interleave a counter mutation between the two.
+    """
+    global _pending_calls
+    pending_before = _pending_calls
+    admitted_inprog = _registration is not None
+    try:
+        yield
+    except CounterPersistenceError:
+        _pending_calls = pending_before
+        if entry_key is not None:
+            _unadmit(_entry_counts, entry_key)
+            if admitted_inprog:
+                _unadmit(_inprog_entry, entry_key)
+        if exit_key is not None:
+            _unadmit(_exit_counts, exit_key)
+            if admitted_inprog:
+                _unadmit(_inprog_exit, exit_key)
+        raise
 
 
 @contextmanager
@@ -97,72 +365,142 @@ def counted_bucket(name: str) -> Iterator[None]:
         _state.regions.pop()
 
 
-def _resolve_bucket(bucket: str | None) -> str:
-    """Return the explicit bucket (validated) or the currently active one."""
+def _resolve_bucket_locked(bucket: str | None) -> str:
+    """Return the explicit bucket (validated) or the active one (holds ``_lock``)."""
     if bucket is not None:
         if bucket not in BUCKETS:
             raise ValueError(f"unknown call-counter bucket: {bucket!r}")
         return bucket
-    return current_bucket()
+    return _current_bucket_locked()
 
 
-def record_call(fn: str, *, bucket: str | None = None) -> None:
+def _resolve_module(module: str) -> str:
+    """Return the module id, failing loud on a non-string (a caller bug, not wire data)."""
+    if not isinstance(module, str):
+        raise ValueError(f"invalid call-counter module: {module!r}")
+    return module
+
+
+def record_call(fn: str, *, bucket: str | None = None, module: str = UNKNOWN_MODULE) -> None:
     """Count one entry into the PKCS#11 function ``fn``.
 
     Attributed to ``bucket`` when given (validated like ``counted_bucket``),
-    else to the calling thread's active bucket.
+    else to the calling thread's active bucket. ``module`` is the id bound to
+    the handle the call passed through; the default ``""`` marks calls with
+    no handle (never inferred to a real module). When durability is engaged
+    the call self-registers first (raising ``CounterPersistenceError`` when
+    sealed or on I/O failure, blocking provider entry) and K-flushes under
+    the same lock acquisition. A failed K flush rolls back the just-admitted
+    entry (strong exception guarantee): the provider never ran, so the
+    session must not show the call either.
     """
-    target = _resolve_bucket(bucket)
+    module_id = _resolve_module(module)
+    if bucket is not None and bucket not in BUCKETS:
+        raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     with _lock:
-        _entry_counts[(target, fn)] += 1
+        target = _resolve_bucket_locked(bucket)
+        _ensure_registered_locked()
+        key = (module_id, target, fn)
+        _entry_counts[key] += 1
+        if _registration is not None:
+            _inprog_entry[key] += 1
+        with _rollback_admission(entry_key=key, exit_key=None):
+            _mark_dirty_locked(calls=1)
 
 
-def record_return(fn: str, rv: int, *, bucket: str | None = None) -> None:
+def record_return(
+    fn: str, rv: int, *, bucket: str | None = None, module: str = UNKNOWN_MODULE
+) -> None:
     """Count one return from ``fn`` with ``rv`` (same bucket rule as entry).
 
     Call sites that pair with :func:`record_call` must capture the bucket
     once at entry and pass it to both halves, so a mid-call bucket switch
-    cannot land the entry and the RV in different buckets.
+    cannot land the entry and the RV in different buckets. The module halves
+    must likewise match: entry and exit of one call always share a handle.
+    Durability registration/flush behaves like :func:`record_call` (a
+    return marks dirty but never fills the K window: only new calls do).
+    A failed retry flush rolls back the just-admitted exit the same way.
     """
-    target = _resolve_bucket(bucket)
+    module_id = _resolve_module(module)
+    if bucket is not None and bucket not in BUCKETS:
+        raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     with _lock:
-        _exit_counts[(target, fn, rv)] += 1
+        target = _resolve_bucket_locked(bucket)
+        _ensure_registered_locked()
+        key = (module_id, target, fn, rv)
+        _exit_counts[key] += 1
+        if _registration is not None:
+            _inprog_exit[key] += 1
+        with _rollback_admission(entry_key=None, exit_key=key):
+            _mark_dirty_locked()
 
 
-def record_direct_call(fn: str, rv: int, *, bucket: str | None = None) -> None:
-    """Count a call made outside the ``_call`` choke point (entry + exit together)."""
-    target = _resolve_bucket(bucket)
+def record_direct_call(
+    fn: str, rv: int, *, bucket: str | None = None, module: str = UNKNOWN_MODULE
+) -> None:
+    """Count a call made outside the ``_call`` choke point (entry + exit together).
+
+    Same K-flush rollback as :func:`record_call`: a failed flush unadmits
+    both halves, so a call the provider never ran leaves no trace.
+    """
+    module_id = _resolve_module(module)
+    if bucket is not None and bucket not in BUCKETS:
+        raise ValueError(f"unknown call-counter bucket: {bucket!r}")
     with _lock:
-        _entry_counts[(target, fn)] += 1
-        _exit_counts[(target, fn, rv)] += 1
+        target = _resolve_bucket_locked(bucket)
+        _ensure_registered_locked()
+        entry_key = (module_id, target, fn)
+        exit_key = (module_id, target, fn, rv)
+        _entry_counts[entry_key] += 1
+        _exit_counts[exit_key] += 1
+        if _registration is not None:
+            _inprog_entry[entry_key] += 1
+            _inprog_exit[exit_key] += 1
+        with _rollback_admission(entry_key=entry_key, exit_key=exit_key):
+            _mark_dirty_locked(calls=1)
 
 
 def _serialize(
-    entry: Counter[tuple[str, str]] | dict[tuple[str, str], int],
-    exits: Counter[tuple[str, str, int]] | dict[tuple[str, str, int], int],
+    entry: Counter[tuple[str, str, str]] | dict[tuple[str, str, str], int],
+    exits: Counter[tuple[str, str, str, int]] | dict[tuple[str, str, str, int], int],
 ) -> dict[str, Any]:
-    """Render counters in the serialized schema shape (sparse: nonzero only)."""
+    """Render counters in the module-first shape (uniform-5 per module block).
+
+    ``{total_calls, by_module{module: {calls, buckets}}}`` with exact totals
+    at both levels; inner buckets keep the rc1 serialized contract, and
+    every module block present carries all five bucket keys (zero buckets
+    explicit as ``{"calls": 0, "by_fn": {}}``) while functions/RVs stay
+    sparse. An exit without an entry (a lone return) still opens its
+    module map entry with zero calls, so the block validates and the
+    global ``total == sum(modules)`` invariant holds. Empty counters emit
+    no module blocks at all (``{"total_calls": 0, "by_module": {}}``).
+    """
     from pkcs11_check.raw.rv import ckr_name
 
-    buckets: dict[str, dict[str, Any]] = {}
+    by_module: dict[str, dict[str, Any]] = {}
     total = 0
-    for (bucket, fn), calls in entry.items():
+    for (module, bucket, fn), calls in entry.items():
         if calls <= 0:
             continue
         total += calls
-        bucket_block = buckets.setdefault(bucket, {"calls": 0, "by_fn": {}})
+        module_block = by_module.setdefault(module, {"calls": 0, "buckets": {}})
+        module_block["calls"] += calls
+        bucket_block = module_block["buckets"].setdefault(bucket, {"calls": 0, "by_fn": {}})
         bucket_block["calls"] += calls
         bucket_block["by_fn"][fn] = {"calls": calls, "by_rv": {}}
-    for (bucket, fn, rv), count in exits.items():
+    for (module, bucket, fn, rv), count in exits.items():
         if count <= 0:
             continue
-        by_fn = buckets.setdefault(bucket, {"calls": 0, "by_fn": {}})["by_fn"]
+        module_block = by_module.setdefault(module, {"calls": 0, "buckets": {}})
+        by_fn = module_block["buckets"].setdefault(bucket, {"calls": 0, "by_fn": {}})["by_fn"]
         target = by_fn.setdefault(fn, {"calls": 0, "by_rv": {}})
         target["by_rv"][str(rv)] = {"name": ckr_name(rv), "count": count}
-    return {"total_calls": total, "buckets": buckets}
+    for module_block in by_module.values():
+        module_block["buckets"] = ensure_five_buckets(module_block["buckets"])
+    return {"total_calls": total, "by_module": by_module}
 
 
-Snapshot = tuple[Counter[tuple[str, str]], Counter[tuple[str, str, int]]]
+Snapshot = tuple[Counter[tuple[str, str, str]], Counter[tuple[str, str, str, int]]]
 
 
 def take_snapshot() -> Snapshot:
@@ -172,10 +510,11 @@ def take_snapshot() -> Snapshot:
 
 
 def diff_snapshots(before: Snapshot, after: Snapshot) -> dict[str, Any]:
-    """Serialize the ``after - before`` delta in the serialized schema shape.
+    """Serialize the ``after - before`` delta in the module-first shape.
 
-    Only positive deltas are reported; buckets, functions, and RVs with no
-    new calls in the window are omitted (sparse).
+    Only positive deltas are reported; modules, functions, and RVs with no
+    new calls in the window are omitted (sparse), while every module block
+    present carries all five bucket keys (uniform-5, zero buckets explicit).
     """
     before_entry, before_exit = before
     after_entry, after_exit = after
@@ -193,126 +532,144 @@ def diff_snapshots(before: Snapshot, after: Snapshot) -> dict[str, Any]:
 
 
 def serialize_current() -> dict[str, Any]:
-    """Serialize all counters recorded so far in the serialized schema shape."""
+    """Serialize all counters recorded so far in the module-first shape."""
     with _lock:
         return _serialize(Counter(_entry_counts), Counter(_exit_counts))
 
 
 def flatten_current() -> list[list[str | int | None]]:
-    """Flatten all counters to the child wire format ``[[fn, rv_or_None, count]]``.
+    """Flatten all counters to the child wire format ``[[module, fn, rv_or_None, count]]``.
 
     Bucket attribution is dropped (the ingesting parent applies its own
-    bucket); ``rv None`` marks entries that never returned. Sorted by fn,
+    bucket); the module id is kept so absorbed traffic stays attributable and
+    ``rv None`` marks entries that never returned. Sorted by module, then fn,
     then RV ascending with the unreturned row last per fn.
     """
     with _lock:
-        entries: Counter[str] = Counter()
-        for (_bucket, fn), calls in _entry_counts.items():
-            entries[fn] += calls
-        exits: Counter[tuple[str, int]] = Counter()
-        for (_bucket, fn, rv), count in _exit_counts.items():
-            exits[(fn, rv)] += count
-    typed: list[tuple[str, int | None, int]] = []
-    for (fn, rv), count in exits.items():
-        typed.append((fn, rv, count))
-        entries[fn] -= count
-    for fn, unreturned in entries.items():
+        entries: Counter[tuple[str, str]] = Counter()
+        for (module, _bucket, fn), calls in _entry_counts.items():
+            entries[(module, fn)] += calls
+        exits: Counter[tuple[str, str, int]] = Counter()
+        for (module, _bucket, fn, rv), count in _exit_counts.items():
+            exits[(module, fn, rv)] += count
+    typed: list[tuple[str, str, int | None, int]] = []
+    for (module, fn, rv), count in exits.items():
+        typed.append((module, fn, rv, count))
+        entries[(module, fn)] -= count
+    for (module, fn), unreturned in entries.items():
         if unreturned > 0:
-            typed.append((fn, None, unreturned))
-    typed.sort(key=lambda item: (item[0], item[1] is None, item[1] or 0))
-    return [[fn, rv, count] for fn, rv, count in typed]
+            typed.append((module, fn, None, unreturned))
+    typed.sort(key=lambda item: (item[0], item[1], item[2] is None, item[2] or 0))
+    return [[module, fn, rv, count] for module, fn, rv, count in typed]
 
 
-def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
-    """Merge child wire-format rows into the globals under ``bucket`` (or active).
-
-    Only ``[fn, rv_or_None, count]`` rows with a non-empty str fn, a
-    None-or-non-negative-int rv (bools rejected), and a positive int count
-    are applied; every other shape (including a non-list/tuple payload) is
-    ignored without raising. A negative rv is garbage per-row, never
-    folded: serializing one would emit a ``"-1"`` RV key the extractor
-    rejects whole-record, discarding valid traffic. An explicitly unknown
-    ``bucket`` raises ValueError like ``counted_bucket``.
-    """
-    target = bucket if bucket is not None else current_bucket()
-    if target not in BUCKETS:
-        raise ValueError(f"unknown call-counter bucket: {target!r}")
+def _parse_flat_rows(flat: Any) -> list[tuple[str, str, int | None, int]]:
+    """Parse child wire-format rows (pure; garbage rows skipped, never raised)."""
     if not isinstance(flat, (list, tuple)):
-        return
-    parsed: list[tuple[str, int | None, int]] = []
+        return []
+    parsed: list[tuple[str, str, int | None, int]] = []
     for row in flat:
-        if not isinstance(row, (list, tuple)) or len(row) != 3:
+        if not isinstance(row, (list, tuple)):
             continue
-        fn: Any = row[0]
-        rv: Any = row[1]
-        count: Any = row[2]
+        module: Any
+        fn: Any
+        rv: Any
+        count: Any
+        if len(row) == 3:
+            module = UNKNOWN_MODULE
+            fn, rv, count = row[0], row[1], row[2]
+        elif len(row) == 4:
+            module, fn, rv, count = row[0], row[1], row[2], row[3]
+        else:
+            continue
+        if not isinstance(module, str):
+            continue
         if not isinstance(fn, str) or not fn:
             continue
         if rv is not None and (not isinstance(rv, int) or isinstance(rv, bool) or rv < 0):
             continue
         if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
             continue
-        parsed.append((fn, rv, count))
+        parsed.append((module, fn, rv, count))
+    return parsed
+
+
+def _parse_lost_count(value: Any) -> int:
+    """Return a propagated loss count, or 0 for garbage (never raises)."""
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return 0
+    return value
+
+
+def _parse_receipts(value: Any) -> set[tuple[str, int]]:
+    """Return the well-formed receipt keys from a payload value (never raises)."""
+    if not isinstance(value, (list, tuple)):
+        return set()
+    keys: set[tuple[str, int]] = set()
+    for entry in value:
+        if is_receipt(entry):
+            keys.add((entry["worker_uuid"], entry["probe_seq"]))
+    return keys
+
+
+def ingest_child_evidence(
+    flat: Any,
+    lost: Any = 0,
+    receipts: Any = (),
+    *,
+    bucket: str | None = None,
+) -> None:
+    """Merge one child's evidence atomically: counts + losses + receipts.
+
+    ONE atomic transaction under the counters lock (validate counts,
+    propagated losses, and receipt inserts, apply, mark dirty): checkpoints
+    and flushes observe all-or-none. Garbage-tolerant per item (a hostile
+    row, loss value, or receipt never breaks the ingest); an explicitly
+    unknown ``bucket`` raises ValueError like ``counted_bucket``. When
+    durability is engaged the ingest self-registers first (raising
+    ``CounterPersistenceError`` when sealed) and K-flushes under the same
+    acquisition. Unlike the ``record_*`` entry points, a failed K flush here
+    does NOT roll back: child evidence is post-hoc real provider data, so it
+    stays admitted (dirty, retried by the next flush) rather than
+    undercounting calls that provably ran.
+    """
+    global _probes_lost, _receipts
+    if bucket is not None and bucket not in BUCKETS:
+        raise ValueError(f"unknown call-counter bucket: {bucket!r}")
+    parsed = _parse_flat_rows(flat)
+    lost_count = _parse_lost_count(lost)
+    receipt_keys = _parse_receipts(receipts)
     with _lock:
-        for fn, rv, count in parsed:
-            _entry_counts[(target, fn)] += count
+        target = _resolve_bucket_locked(bucket)
+        _ensure_registered_locked()
+        for module, fn, rv, count in parsed:
+            _entry_counts[(module, target, fn)] += count
+            if _registration is not None:
+                _inprog_entry[(module, target, fn)] += count
             if rv is not None:
-                _exit_counts[(target, fn, rv)] += count
+                _exit_counts[(module, target, fn, rv)] += count
+                if _registration is not None:
+                    _inprog_exit[(module, target, fn, rv)] += count
+        _probes_lost += lost_count
+        _receipts |= receipt_keys
+        if parsed or lost_count or receipt_keys:
+            _mark_dirty_locked(calls=sum(count for _, _, _, count in parsed))
 
 
-def _is_hex_rv_name(name: str) -> bool:
-    """Whether ``name`` is a hex fallback (``0x...``) rather than symbolic."""
-    return name.startswith("0x") or name.startswith("0X")
+def ingest_child_counts(flat: list[Any], *, bucket: str | None = None) -> None:
+    """Merge child wire-format rows into the globals under ``bucket`` (or active).
 
-
-def _resolve_rv_name(first: str, second: str) -> str:
-    """Deterministically resolve conflicting observed RV leaf names.
-
-    Prefers the non-hex (symbolic) name; ties resolve to the
-    lexicographically smallest. Keeps observed names (no rewriting), so both
-    merge orders yield the identical leaf.
+    Only ``[module, fn, rv_or_None, count]`` rows with a str module, a
+    non-empty str fn, a None-or-non-negative-int rv (bools rejected), and a
+    positive int count are applied; legacy 3-column ``[fn, rv, count]`` rows
+    fold under the ``""`` unknown module, and every other shape (including a
+    non-list/tuple payload) is ignored without raising. A negative rv is
+    garbage per-row, never folded: serializing one would emit a ``"-1"`` RV
+    key the extractor rejects whole-record, discarding valid traffic. An
+    explicitly unknown ``bucket`` raises ValueError like ``counted_bucket``.
+    Applies through :func:`ingest_child_evidence` (one lock acquisition).
     """
-    first_hex = _is_hex_rv_name(first)
-    second_hex = _is_hex_rv_name(second)
-    if first_hex != second_hex:
-        return second if first_hex else first
-    return min(first, second)
-
-
-def merge_serialized(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    """Add ``incoming`` counts into ``target`` in place and return ``target``.
-
-    Both dicts must have the serialized schema shape; buckets, functions, or
-    RVs missing from ``target`` are created (leaf dicts are copied, never
-    aliased). On leaf-name conflict the deterministic rule wins: prefer the
-    non-``0x`` (symbolic) name, ties to the lexicographically smallest.
-    Touches no global counter state.
-    """
-    target["total_calls"] = target.get("total_calls", 0) + incoming.get("total_calls", 0)
-    target_buckets: dict[str, Any] = target.setdefault("buckets", {})
-    incoming_buckets: dict[str, Any] = incoming.get("buckets", {})
-    for bucket, block in incoming_buckets.items():
-        target_block = target_buckets.setdefault(bucket, {"calls": 0, "by_fn": {}})
-        target_block["calls"] = target_block.get("calls", 0) + block.get("calls", 0)
-        target_by_fn = target_block.setdefault("by_fn", {})
-        for fn, fn_block in block.get("by_fn", {}).items():
-            target_fn = target_by_fn.setdefault(fn, {"calls": 0, "by_rv": {}})
-            target_fn["calls"] = target_fn.get("calls", 0) + fn_block.get("calls", 0)
-            target_by_rv = target_fn.setdefault("by_rv", {})
-            for rv_key, rv_block in fn_block.get("by_rv", {}).items():
-                existing = target_by_rv.get(rv_key)
-                if existing is None:
-                    target_by_rv[rv_key] = {
-                        "name": rv_block["name"],
-                        "count": rv_block["count"],
-                    }
-                else:
-                    existing["count"] += rv_block["count"]
-                    existing_name = existing.get("name")
-                    incoming_name = rv_block.get("name")
-                    if isinstance(existing_name, str) and isinstance(incoming_name, str):
-                        existing["name"] = _resolve_rv_name(existing_name, incoming_name)
-    return target
+    ingest_child_evidence(flat, 0, (), bucket=bucket)
 
 
 def note_lost_probe() -> None:
@@ -320,6 +677,7 @@ def note_lost_probe() -> None:
     global _probes_lost
     with _lock:
         _probes_lost += 1
+        _mark_dirty_locked()
 
 
 def add_lost_probes(n: Any) -> None:
@@ -327,13 +685,16 @@ def add_lost_probes(n: Any) -> None:
 
     Garbage-tolerant like :func:`ingest_child_counts`: anything that is not a
     positive ``int`` (bools included) is ignored without raising, so a hostile
-    payload value can never break the ingest path.
+    payload value can never break the ingest path. Pure loss accounting:
+    never registers (never blocks on the admission barrier), one lock
+    acquisition.
     """
-    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
-        return
     global _probes_lost
     with _lock:
-        _probes_lost += n
+        lost_count = _parse_lost_count(n)
+        if lost_count:
+            _probes_lost += lost_count
+            _mark_dirty_locked()
 
 
 def probes_lost() -> int:
@@ -342,14 +703,92 @@ def probes_lost() -> int:
         return _probes_lost
 
 
+def assign_probe_seq() -> int:
+    """Assign the next folded-probe sequence number for this process (0-based).
+
+    The parent assigns one seqno per probe launch and the child echoes it in
+    its coverage receipt; the parent accepts the receipt only on an exact
+    match. Pure in-memory counter (no registration, never raises).
+    """
+    global _probe_seq
+    with _lock:
+        seq = _probe_seq
+        _probe_seq += 1
+        return seq
+
+
+def current_receipts() -> list[dict[str, Any]]:
+    """Return the folded-probe receipts accumulated so far (sorted, detached)."""
+    with _lock:
+        return [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)]
+
+
+def publish_test_window(nodeid: str, block: Mapping[str, Any] | None = None) -> None:
+    """Publish one test window to the journal and reset the in-progress tail.
+
+    No-op when disengaged. Otherwise appends ``(nodeid, block, receipts)``
+    to the journal FIRST, then resets the in-progress accumulator and
+    boundary-flushes (carrying the new journal length), so any crash
+    interleaving stays sound: journaled-but-unflushed windows are excluded
+    from the collected gap because their calls are still in the flushed
+    snapshot. A failed append leaves the baseline unadvanced (nothing is
+    eagerly cleared). Raises ``CounterPersistenceError`` when sealed or on
+    I/O failure, ValueError on a caller-bug block/nodeid.
+    """
+    global _journal_len, _dirty
+    if durability_dir() is None:
+        return
+    if not isinstance(nodeid, str) or not nodeid:
+        raise ValueError(f"invalid test window nodeid: {nodeid!r}")
+    with _lock:
+        registration = _ensure_registered_locked()
+        assert registration is not None
+        if block is None:
+            window = _serialize(Counter(_inprog_entry), Counter(_inprog_exit))
+        else:
+            if not is_module_first_block(block):
+                raise ValueError(f"invalid test window block for {nodeid!r}")
+            window = {"total_calls": block["total_calls"], "by_module": block["by_module"]}
+        try:
+            append_journal(
+                registration.journal_path,
+                {
+                    "nodeid": nodeid,
+                    "block": window,
+                    "receipts": [
+                        {"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)
+                    ],
+                },
+            )
+        except OSError as exc:
+            raise CounterPersistenceError(f"cannot publish test window {nodeid}: {exc}") from exc
+        _journal_len += 1
+        _inprog_entry.clear()
+        _inprog_exit.clear()
+        _dirty = True
+        _flush_locked()
+
+
 def reset_for_tests() -> None:
-    """Clear counters, the phase, the calling thread's regions, and lost probes."""
-    global _probes_lost, _phase_name
+    """Clear counters, phase, regions, losses, identity, receipts, and durability."""
+    global _probes_lost, _phase_name, _worker_uuid, _worker_uuid_pid
+    global _registration, _registration_pid, _dirty, _pending_calls, _probe_seq, _journal_len
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
         _phase_name = DEFAULT_BUCKET
         _probes_lost = 0
+        _worker_uuid = None
+        _worker_uuid_pid = None
+        _registration = None
+        _registration_pid = None
+        _dirty = False
+        _pending_calls = 0
+        _receipts.clear()
+        _probe_seq = 0
+        _inprog_entry.clear()
+        _inprog_exit.clear()
+        _journal_len = 0
     _state.regions.clear()
 
 
@@ -361,18 +800,26 @@ __all__ = [
     "ISOLATION_ENV",
     "RUN_ID_ENV",
     "Snapshot",
+    "CounterPersistenceError",
     "add_lost_probes",
+    "assign_probe_seq",
     "counted_bucket",
     "current_bucket",
+    "current_receipts",
     "diff_snapshots",
+    "ensure_registered",
     "flatten_current",
+    "flush_counters",
+    "get_worker_uuid",
     "ingest_child_counts",
-    "merge_serialized",
+    "ingest_child_evidence",
     "note_lost_probe",
     "probes_lost",
+    "publish_test_window",
     "record_call",
     "record_direct_call",
     "record_return",
+    "registration_info",
     "reset_for_tests",
     "serialize_current",
     "take_snapshot",

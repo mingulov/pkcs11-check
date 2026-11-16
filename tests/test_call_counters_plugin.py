@@ -21,6 +21,7 @@ import pkcs11_check._plugin_counters as plugin_counters
 import pkcs11_check.plugin as plugin_mod
 from pkcs11_check._plugin_state import _is_testcase_item
 from pkcs11_check.core import call_counters
+from pkcs11_check.core import counters_schema as schema
 from pkcs11_check.core.call_counters import (
     CALL_COUNTERS_PROPERTY,
     ISOLATION_ENV,
@@ -103,6 +104,12 @@ def _record(fn: str, rv: int = 0) -> None:
     call_counters.record_return(fn, rv)
 
 
+def _unknown_buckets(snap: dict[str, Any]) -> dict[str, Any]:
+    """Inner buckets of the single unknown-module block (no handle involved)."""
+    assert set(snap["by_module"]) == {""}
+    return snap["by_module"][""]["buckets"]
+
+
 def _prop(report: Any) -> dict[str, Any] | None:
     for name, value in report.user_properties:
         if name == CALL_COUNTERS_PROPERTY:
@@ -127,10 +134,9 @@ def test_session_record_carries_pid_and_buckets() -> None:
     _record("C_OpenSession")
     rec = plugin_counters.build_session_record()
     assert rec["pid"] == os.getpid()
-    assert rec["buckets"]["session_provisioning"]["by_fn"]["C_OpenSession"]["calls"] == 1
-    assert (
-        rec["buckets"]["session_provisioning"]["by_fn"]["C_OpenSession"]["by_rv"]["0"]["count"] == 1
-    )
+    entry = _unknown_buckets(rec)["session_provisioning"]["by_fn"]["C_OpenSession"]
+    assert entry["calls"] == 1
+    assert entry["by_rv"]["0"]["count"] == 1
 
 
 def test_session_record_isolation_defaults_to_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,7 +235,7 @@ def test_setup_wrapper_attributes_to_setup_teardown() -> None:
     _resume(gen)
     assert call_counters.current_bucket() == "session_provisioning"
     snap = call_counters.serialize_current()
-    assert snap["buckets"]["setup_teardown"]["by_fn"]["C_SetupCall"]["calls"] == 1
+    assert _unknown_buckets(snap)["setup_teardown"]["by_fn"]["C_SetupCall"]["calls"] == 1
 
 
 def test_setup_wrapper_skipped_without_module() -> None:
@@ -268,7 +274,7 @@ def test_call_wrapper_attributes_to_test() -> None:
     _resume(gen)
     assert call_counters.current_bucket() == "session_provisioning"
     snap = call_counters.serialize_current()
-    assert snap["buckets"]["test"]["by_fn"]["C_BodyCall"]["calls"] == 1
+    assert _unknown_buckets(snap)["test"]["by_fn"]["C_BodyCall"]["calls"] == 1
 
 
 def test_call_wrapper_balances_bucket_on_inner_raise() -> None:
@@ -310,10 +316,11 @@ def test_teardown_wrapper_computes_windowed_entry() -> None:
     entry = item.stash[plugin_counters._ENTRY_KEY]
     assert entry["pid"] == os.getpid()
     assert entry["total_calls"] == 3
-    assert set(entry["buckets"]) == {"setup_teardown", "test"}
-    assert entry["buckets"]["setup_teardown"]["calls"] == 2
-    assert entry["buckets"]["test"]["calls"] == 1
-    assert "C_Before" not in entry["buckets"].get("session_provisioning", {}).get("by_fn", {})
+    assert set(_unknown_buckets(entry)) == set(schema.BUCKETS_5)
+    assert _unknown_buckets(entry)["setup_teardown"]["calls"] == 2
+    assert _unknown_buckets(entry)["test"]["calls"] == 1
+    provisioning = _unknown_buckets(entry).get("session_provisioning", {}).get("by_fn", {})
+    assert "C_Before" not in provisioning
 
 
 def test_teardown_wrapper_skip_in_setup_yields_setup_only_entry() -> None:
@@ -323,7 +330,7 @@ def test_teardown_wrapper_skip_in_setup_yields_setup_only_entry() -> None:
     _drive_phase(plugin_counters.pytest_runtest_teardown, item, None)
     entry = item.stash[plugin_counters._ENTRY_KEY]
     assert entry["total_calls"] == 1
-    assert set(entry["buckets"]) == {"setup_teardown"}
+    assert set(_unknown_buckets(entry)) == set(schema.BUCKETS_5)
 
 
 def test_teardown_wrapper_computes_entry_despite_inner_raise() -> None:
@@ -454,7 +461,7 @@ def test_sessionfinish_emits_after_finalize_includes_finalize(
     _run_sessionfinish(_session_config(report_log, _CountingRaw()))
     records = _counters_records(report_log)
     assert len(records) == 1
-    by_fn = records[0]["buckets"]["module_init"]["by_fn"]
+    by_fn = _unknown_buckets(records[0])["module_init"]["by_fn"]
     assert by_fn["C_Finalize"]["calls"] == 1
     kinds = [r.get("$report_type") for r in report_log.records]
     assert kinds.index("TeardownFinalize") < kinds.index("CallCountersReport")
@@ -517,8 +524,8 @@ def test_phase_buckets_end_to_end(
         if ln["when"] == "teardown":
             entry = props[CALL_COUNTERS_PROPERTY]
             assert entry["total_calls"] == 3
-            assert entry["buckets"]["setup_teardown"]["calls"] == 2
-            assert entry["buckets"]["test"]["calls"] == 1
+            assert _unknown_buckets(entry)["setup_teardown"]["calls"] == 2
+            assert _unknown_buckets(entry)["test"]["calls"] == 1
             assert isinstance(entry["pid"], int)
         else:
             assert CALL_COUNTERS_PROPERTY not in props

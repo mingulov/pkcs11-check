@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import time
+import warnings
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -22,6 +23,23 @@ from typing import IO, Any
 from rich.console import Console
 
 from pkcs11_check.classification import Classification, serialize
+from pkcs11_check.core._counters_durability import (
+    COUNTERS_ATTEMPT_ENV,
+    COUNTERS_DIR_ENV,
+    COUNTERS_ROLE_ENV,
+    COUNTERS_UNIT_ENV,
+    RECOVERY_SUPPLEMENTS_SUFFIX,
+    CounterPersistenceError,
+    append_supplement_records,
+    collect_unit,
+    discard_barrier_staging,
+    durability_dir,
+    prepare_resume,
+    supplements_path,
+    sweep_orphans,
+    unseal,
+    write_recovery_supplements,
+)
 from pkcs11_check.core._crash_classify import (
     _analyze_report_jsonl as _analyze_report_jsonl,
 )
@@ -567,6 +585,272 @@ def _completion_verified_for_attempt(
     )
 
 
+# Active counters dir for this process's run (rc2 Task 3). Set by
+# run_isolated_pytest_units at run start (env-or-stored resolution); _cache
+# and the timeout path read it so per-attempt collection needs no signature
+# change. Direct _cache callers (tests) fall back to the environment.
+_ACTIVE_COUNTERS_DIR: Path | None = None
+
+
+def _counters_dir_active() -> Path | None:
+    """Return the run's counters dir (run-resolved, else the environment)."""
+    if _ACTIVE_COUNTERS_DIR is not None:
+        return _ACTIVE_COUNTERS_DIR
+    return durability_dir()
+
+
+def _counters_child_env(
+    state: Any, base_env: Mapping[str, str], target: str, role: str
+) -> dict[str, str]:
+    """Build the counters identity overlay for one child launch.
+
+    Returns {} when durability is disengaged (the base env carries no
+    counters dir). Otherwise returns the dir + (unit, attempt, role), with
+    the attempt numbered exactly like the process observation this launch
+    will append (count of existing observations for (target, role)), so
+    the child's self-registration matches the parent's collection key.
+    """
+    raw_dir = base_env.get(COUNTERS_DIR_ENV, "").strip()
+    if not raw_dir:
+        return {}
+    attempt = sum(
+        1
+        for previous in getattr(state, "process_observations", [])
+        if isinstance(previous, Mapping)
+        and previous.get("target") == target
+        and previous.get("parent_nodeid") is None
+        and previous.get("role") == role
+    )
+    return {
+        COUNTERS_DIR_ENV: raw_dir,
+        COUNTERS_UNIT_ENV: target,
+        COUNTERS_ATTEMPT_ENV: str(attempt),
+        COUNTERS_ROLE_ENV: role if role in ("unit", "retry", "confirmation") else "unit",
+    }
+
+
+def _supplemented_cache_paths(
+    state_file: Path, unit: str, jsonl_paths: Sequence[Path]
+) -> list[Path]:
+    """Prepend a unit's recovery supplements (archived sessions) when present.
+
+    Supplements carry bare archived session records; the cache writer frames
+    them as their own scope, so a requeued attempt's counters fold as
+    themselves instead of staying dropped. Inert when no supplements exist.
+    """
+    supplements = supplements_path(state_file, unit)
+    if supplements.exists():
+        return [supplements, *jsonl_paths]
+    return list(jsonl_paths)
+
+
+def _collect_counters_for_attempt(
+    unit: str,
+    jsonl_path: Path,
+    status: str,
+    returncode: int,
+    *,
+    timed_out: bool = False,
+) -> None:
+    """Collect one attempt's counter evidence into its child JSONL (best effort).
+
+    No-op when durability is disengaged. Collection appends gap-only
+    partials + identity-bearing losses BEFORE the cache write, so the unit
+    cache carries them; it never touches verdicts, detail, or retention.
+    Never raises (collection warns and retains files for a later pass).
+    """
+    counters_dir = _counters_dir_active()
+    if counters_dir is None:
+        return
+    collect_unit(
+        counters_dir,
+        unit=unit,
+        child_jsonl=jsonl_path,
+        status=status,
+        returncode=returncode,
+        timed_out=timed_out,
+        current_run=os.environ.get(RUN_ID_ENV, "").strip() or None,
+    )
+
+
+def _apply_counters_barrier_plan(
+    state_file: Path,
+    plan: dict[str, Any],
+    pending_units: list[str],
+    console: Any,
+) -> list[str]:
+    """Land one resume-barrier plan in supplements/caches; filter skipped units.
+
+    Records for pending units append to per-unit supplements (their rerun's
+    cache prepends them); records for other units write through to their
+    cache directly. Units with unresolved live writers drop from the pending
+    set with a loud warning. Shared by the in-runner application and the
+    fingerprint-mismatch refusal path (a refused resume must not drop an
+    already-consumed CLI plan).
+
+    Raises:
+        CounterPersistenceError: When any destination fails. The barrier
+            staging is retained for the next resume (which re-applies
+            idempotently); the resume must not proceed without its
+            recovered evidence.
+    """
+    pending_set = set(pending_units)
+    failed: list[str] = []
+    for unit, records in plan["cache_records"].items():
+        if unit in pending_set:
+            landed = append_supplement_records(state_file, unit, records)
+        else:
+            landed = _write_counters_recovery_cache(state_file, unit, records)
+        if not landed:
+            failed.append(unit)
+    for unit in plan["skipped_units"]:
+        console.print(
+            f"[red]Skipping conflicting rerun[/red] {unit}: an unverified live "
+            f"counter producer is still running there (never assumed quiescent; "
+            f"resolve it and resume again)"
+        )
+    if plan["consumed"]:
+        console.print(
+            f"[dim]Counter resume barrier: collected {plan['consumed']} orphaned producer(s)[/dim]"
+        )
+    if failed:
+        raise CounterPersistenceError(
+            f"counter barrier plan failed to land for {sorted(failed)}; "
+            "staging retained for the next resume"
+        )
+    staged_root = plan.get("counters_dir")
+    if staged_root is None:
+        warnings.warn(
+            "counter barrier plan names no counters dir; "
+            "staging (if any) left for the next barrier",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif not discard_barrier_staging(staged_root):
+        warnings.warn(
+            f"counter barrier staging in {staged_root} could not be removed; "
+            "the next barrier re-applies it idempotently",
+            UserWarning,
+            stacklevel=2,
+        )
+    skipped = set(plan["skipped_units"])
+    return [unit for unit in pending_units if unit not in skipped]
+
+
+def _setup_counters_durability(
+    state_file: Path,
+    state: Any,
+    pending_units: list[str],
+    resume: bool,
+    previous_state: Any | None,
+    run_id_value: str | None,
+    env: dict[str, str],
+    report_config: Any | None,
+    console: Any,
+    *,
+    barrier_plan: dict[str, Any] | None = None,
+) -> list[str]:
+    """Resolve the counters dir and run the start-of-run barrier (rc2 Task 3).
+
+    Fresh runs engage the environment's dir (unsealing a stale seal and
+    sweeping torn files; other-run evidence is retained, never destroyed).
+    Resumes reuse the state's recorded dir (evidence continuity wins over a
+    differing environment, loudly), then run seal-collect-fence: recovered
+    evidence routes into supplements (pending units) or cache write-through
+    (skipped units), and units with unresolved live writers are dropped
+    from the pending set with a loud warning. Returns the filtered pending
+    units. Inert when neither the environment nor the state names a dir.
+
+    ``barrier_plan`` is a CLI-provided resume plan (rc2 C2): the CLI runs
+    the barrier before preflight and threads the plan down, so the in-runner
+    barrier is skipped (guard flag) -- ``prepare_resume`` consumes producer
+    files and must never run twice. None runs the barrier here (the fallback
+    for programmatic callers).
+    """
+    global _ACTIVE_COUNTERS_DIR
+    env_dir = env.get(COUNTERS_DIR_ENV, "").strip()
+    stored_dir = (
+        getattr(previous_state, "counters_dir", None) if previous_state is not None else None
+    )
+    if resume and stored_dir:
+        if env_dir and env_dir != stored_dir:
+            console.print(
+                f"[yellow]Counters dir differs from the recorded run dir; "
+                f"using the recorded one for evidence continuity:[/yellow] {stored_dir}"
+            )
+        resolved: str | None = stored_dir
+    else:
+        resolved = env_dir or None
+    _ACTIVE_COUNTERS_DIR = Path(resolved) if resolved else None
+    if resolved is None:
+        return pending_units
+    env[COUNTERS_DIR_ENV] = resolved
+    counters_root = Path(resolved)
+    if getattr(state, "counters_dir", None) != resolved:
+        state.counters_dir = resolved
+        save_run_state(state_file, state)
+    if not resume:
+        try:
+            unseal(counters_root)
+        except CounterPersistenceError:
+            pass
+        if not discard_barrier_staging(counters_root):
+            warnings.warn(
+                f"stale barrier staging in {counters_root} could not be removed; "
+                "a later resume may re-apply it",
+                UserWarning,
+                stacklevel=2,
+            )
+        swept = sweep_orphans(counters_root, current_run=run_id_value)
+        if swept["retained"]:
+            console.print(
+                f"[dim]Counters dir holds {swept['retained']} unclaimed evidence "
+                f"file(s) from other runs (retained, not collected)[/dim]"
+            )
+        return pending_units
+    if barrier_plan is None:
+        prior_merged = report_config.jsonl_path if report_config is not None else None
+        plan = prepare_resume(counters_root, prior_merged_jsonl=prior_merged)
+    else:
+        plan = barrier_plan
+    if not plan.get("barrier_ok", False):
+        raise CounterPersistenceError(
+            f"counter resume barrier failed for {counters_root}; "
+            "refusing to run without proven quiescence"
+        )
+    pending_units = _apply_counters_barrier_plan(state_file, plan, pending_units, console)
+    sweep_orphans(
+        counters_root, current_run=run_id_value, collected_runs=frozenset(plan["collected_runs"])
+    )
+    return pending_units
+
+
+def _write_counters_recovery_cache(
+    state_file: Path, unit: str, records: list[dict[str, Any]]
+) -> bool:
+    """Write recovery records through to one unit's cache (skipped units only).
+
+    Pending units receive recovery evidence via supplements (their rerun
+    overwrites the cache); skipped units never rerun, so the cache itself
+    carries the records into the merged stream. Returns False (with a
+    warning) on I/O failure. Never raises.
+    """
+    if not records:
+        return True
+    try:
+        cache_path = _report_record_cache_path(state_file, unit)
+        existing = _load_report_log_records(cache_path) if cache_path.exists() else []
+        _write_unit_report_record_cache(state_file, unit, [*existing, *records])
+    except (OSError, ValueError) as exc:
+        warnings.warn(
+            f"counter recovery cache for {unit} failed ({exc}); recovery evidence dropped",
+            UserWarning,
+            stacklevel=2,
+        )
+        return False
+    return True
+
+
 def _cache_attempt_report(
     *,
     state_file: Path,
@@ -582,6 +866,14 @@ def _cache_attempt_report(
     evidence_nodeid: str | None = None,
 ) -> tuple[dict[str, Any] | None, bool]:
     """Persist one attempt's report evidence, including unverified completion."""
+    # Counter durability (rc2 Task 3): collect this attempt's sidecar
+    # evidence into the child JSONL first (counters-only: verdicts, detail,
+    # and retention untouched), and cache archived recovery sessions
+    # alongside. Both are inert when disengaged / absent.
+    _collect_counters_for_attempt(
+        unit, jsonl_path, status, returncode, timed_out=(status == "timeout")
+    )
+    jsonl_paths = _supplemented_cache_paths(state_file, unit, jsonl_paths or [jsonl_path])
     completion_verified = _completion_verified_for_attempt(
         jsonl_path, status, returncode, session_exitstatus
     )
@@ -1063,7 +1355,13 @@ def _run_outer_tee(
     watchdog's TimeoutExpired record. A self-exit 124 becomes a timeout only
     then (F-012); without evidence it stays an abrupt exit. Consulted lazily,
     only for children that exited 124 without a timeout verdict already.
+
+    Counter durability (rc2 Task 3) rides here: every unit/confirmation/
+    retry launch carries its counters identity (the single spawn choke
+    point), so children self-register under the attempt this launch will
+    observe. Inert when disengaged.
     """
+    env.update(_counters_child_env(state, env, target, role))
     try:
         tee_result = _run_subprocess_tee(cmd, env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -1184,11 +1482,12 @@ def _run_artifact_guard_paths(
     """Every independently-named durable path a run may reset or write (F-038).
 
     Two runs sharing ANY of these paths must not overlap. State-derived
-    siblings (collection sidecar, recovery journal, report cache) need no
-    separate entry: they are pure functions of the state path, so the state
-    guard already covers them. Report outputs and their sidecars are named
-    independently of the state, hence listed explicitly. Either root may be
-    None when the mode does not touch it (non-isolated runs use no state).
+    siblings (collection sidecar, recovery journal, report cache, recovery
+    supplements, preflight evidence, counters dir) need no separate entry:
+    they are pure functions of the state path, so the state guard already
+    covers them. Report outputs and their sidecars are named independently
+    of the state, hence listed explicitly. Either root may be None when the
+    mode does not touch it (non-isolated runs use no state).
     """
     paths = [state_file] if state_file is not None else []
     if report_config is not None:
@@ -1200,6 +1499,45 @@ def _run_artifact_guard_paths(
     return paths
 
 
+def _is_owned_counters_dir(state_name: str, candidate_name: str) -> bool:
+    """Whether a sibling matches our allocated counters-dir forms.
+
+    Legacy canonical (``{state}.counters``) or run-specific
+    (``{state}.counters.{8 hex}``). Anything else -- including hostile
+    lookalikes -- is never removed.
+    """
+    canonical = f"{state_name}.counters"
+    if candidate_name == canonical:
+        return True
+    prefix = f"{canonical}."
+    if not candidate_name.startswith(prefix):
+        return False
+    nonce = candidate_name[len(prefix) :]
+    return len(nonce) == 8 and all(char in "0123456789abcdef" for char in nonce)
+
+
+def _remove_retired_counters_dir(path: Path) -> None:
+    """Remove one retired counters dir (symlink-safe; warns on leftovers)."""
+    try:
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            # A relocated link (drop the link only, never delete through
+            # it) or a junk file (remove it so layout creation cannot fail
+            # on it).
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            return
+    except OSError:
+        pass
+    if path.exists() or path.is_symlink():
+        warnings.warn(
+            f"retired counters dir {path} could not be fully removed; left in place",
+            UserWarning,
+            stacklevel=2,
+        )
+
+
 def _reset_fresh_run_artifacts(
     state_file: Path,
     report_config: IsolatedReportConfig | None,
@@ -1208,6 +1546,35 @@ def _reset_fresh_run_artifacts(
     state_file.unlink(missing_ok=True)
     collection_failure_sidecar_path(state_file).unlink(missing_ok=True)
     _recovery_attempts_path(state_file).unlink(missing_ok=True)
+    # Counter evidence siblings (rc2 C2): stale recovery supplements would
+    # prepend into the new run's caches -- they must go, or a fresh series
+    # silently absorbs a dead one's evidence.
+    for stale_supplements in state_file.parent.glob(
+        f"{state_file.name}.*{RECOVERY_SUPPLEMENTS_SUFFIX}"
+    ):
+        stale_supplements.unlink(missing_ok=True)
+    # Counter dirs (rc2 N-C3): each fresh series allocates its own dir, so
+    # every retired sibling goes with the abandoned state instead of being
+    # emptied in place (emptying a reused dir deletes live producers'
+    # registries and lets their re-created sidecars fold into the new run).
+    # Found by glob, never by reading the dead state (which may itself be
+    # corrupt -- reset must not crash on garbage). The live dir (this run's
+    # env export) is never touched, and only exact allocated forms are
+    # removed: hostile lookalikes are retained with a loud warning.
+    current = os.environ.get(COUNTERS_DIR_ENV, "").strip() or None
+    prefix = f"{state_file.name}.counters"
+    for candidate in sorted(state_file.parent.glob(f"{prefix}*")):
+        if current is not None and candidate == Path(current):
+            continue
+        if not _is_owned_counters_dir(state_file.name, candidate.name):
+            warnings.warn(
+                f"sibling {candidate} looks like a counters dir but matches "
+                "no allocated form; left in place",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        _remove_retired_counters_dir(candidate)
     report_cache_dir = _report_record_cache_dir(state_file)
     if report_cache_dir.is_symlink():
         # A relocated cache dir: drop the link only. rmtree would raise on a
@@ -1484,6 +1851,17 @@ def _requeue_units_after_recovery(
         }
         history.append(attempt)
         attempts.append(attempt)
+        # Counter durability (rc2 Task 3): archive this attempt's session
+        # records for its rerun's cache, so the requeued attempt's counters
+        # fold as themselves instead of staying dropped. Inert unless
+        # engaged (run-resolved); never raises.
+        if state_file is not None:
+            write_recovery_supplements(
+                state_file,
+                result.target,
+                attempt["records"],
+                engaged=_counters_dir_active() is not None,
+            )
     _append_recovery_attempt_wrappers(state_file, attempts)
     observations = getattr(state, "process_observations", [])
     if isinstance(observations, list) and hasattr(state, "process_observations"):
@@ -1852,6 +2230,7 @@ def run_isolated_pytest_units(
     unit_test_counts: Mapping[str, int] | None = None,
     selection_batch_id: str | None = None,
     selection_digest: str | None = None,
+    counters_barrier_plan: dict[str, Any] | None = None,
 ) -> int:
     """Run pytest units in fresh subprocesses and persist progress.
 
@@ -1859,6 +2238,11 @@ def run_isolated_pytest_units(
     detects a dead daemon between units, pauses for it to return, supersedes the false-failure
     cascade, and resumes or aborts honestly. The wiring is inert unless mode != "off", so a
     default run is byte-identical. See core/recovery.py.
+
+    ``counters_barrier_plan`` (default None) is a CLI-provided resume-barrier
+    plan (rc2 C2): the CLI runs the barrier before preflight and threads the
+    plan down, so the in-runner barrier is skipped and the plan is only
+    applied. None runs the barrier in-runner (the programmatic fallback).
     """
     env = os.environ.copy()
     # Framework version, computed once per run: children inherit the pin (no
@@ -1927,6 +2311,13 @@ def run_isolated_pytest_units(
                 save_run_state(state_file, state)
         pending_units: list[str] = []
     elif previous_state is not None and previous_state.fingerprint != fingerprint:
+        if counters_barrier_plan is not None:
+            # The CLI already ran the barrier and consumed the producer
+            # files; land the plan in supplements before refusing, so a
+            # later correct resume folds it instead of silently dropping it.
+            # Every unit counts as pending here (no run proceeds), so all
+            # records supplement.
+            _apply_counters_barrier_plan(state_file, counters_barrier_plan, units, console)
         msg = (
             f"state file {state_file} belongs to a different isolated run; "
             "use a different --state-file or remove the old one"
@@ -1969,6 +2360,19 @@ def run_isolated_pytest_units(
             f"with {granularity} isolation "
             f"(state: [bold]{state_file}[/bold])"
         )
+
+    pending_units = _setup_counters_durability(
+        state_file,
+        state,
+        pending_units,
+        resume,
+        previous_state,
+        run_id_value,
+        env,
+        report_config,
+        console,
+        barrier_plan=counters_barrier_plan,
+    )
 
     per_unit_details: dict[str, dict[str, Any]] = {}
     executed_units: set[str] = set()
@@ -2179,10 +2583,13 @@ def run_isolated_pytest_units(
                     status = "timeout"
                     returncode = _TIMEOUT_RETURN_CODE
                     if unit_jsonl_path is not None:
+                        _collect_counters_for_attempt(
+                            unit, unit_jsonl_path, status, returncode, timed_out=True
+                        )
                         _write_unit_report_record_cache_from_jsonl_paths(
                             state_file,
                             unit,
-                            [unit_jsonl_path],
+                            _supplemented_cache_paths(state_file, unit, [unit_jsonl_path]),
                         )
                     result = FileRunResult(
                         target=unit,
@@ -2606,7 +3013,7 @@ def run_isolated_pytest_units(
                             _write_unit_report_record_cache_from_jsonl_paths(
                                 state_file,
                                 unit,
-                                all_iter_jsonls,
+                                _supplemented_cache_paths(state_file, unit, all_iter_jsonls),
                             )
                             save_run_state(state_file, state)
                             for tmp in dict.fromkeys(to_retry_temps + all_iter_jsonls):
@@ -3264,7 +3671,7 @@ def run_isolated_pytest_units(
                             _write_unit_report_record_cache_from_jsonl_paths(
                                 state_file,
                                 unit,
-                                all_iter_jsonls,
+                                _supplemented_cache_paths(state_file, unit, all_iter_jsonls),
                             )
                             save_run_state(state_file, state)
                             for tmp in dict.fromkeys(retry_temp_files + all_iter_jsonls):

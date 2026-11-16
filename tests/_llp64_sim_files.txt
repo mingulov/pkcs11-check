@@ -1,5 +1,6 @@
 tests/test_attribute_encoding_contract.py
 tests/test_byte_kdf_protection_contract.py
+tests/test_call_counters_contracts.py
 tests/test_ccm_ecma_b0_contract.py
 tests/test_context_auth_transition_contract.py
 tests/test_copy_attribute_contract.py

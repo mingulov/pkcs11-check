@@ -148,6 +148,7 @@ def _v30_context(
         func_list=ctypes.c_void_p(0x1234),
         cleanup=lambda: None,
         interface=requested,
+        module_path="fake-module.so",
     )
     return context, requested_calls, table_version_obj, interface
 
@@ -165,8 +166,10 @@ def test_v30_child_requests_exact_interface_and_uses_returned_function_list(
     captured: dict[str, object] = {}
 
     class _Raw:
-        def __init__(self, funclist_ptr: int, *, funclist3_ptr: int) -> None:
-            captured.update(funclist_ptr=funclist_ptr, funclist3_ptr=funclist3_ptr)
+        def __init__(self, funclist_ptr: int, *, funclist3_ptr: int, module_id: str) -> None:
+            captured.update(
+                funclist_ptr=funclist_ptr, funclist3_ptr=funclist3_ptr, module_id=module_id
+            )
 
     monkeypatch.setattr(v30_session, "RawPKCS11", _Raw)
     result = v30_session._negotiate_v30(context)
@@ -179,6 +182,7 @@ def test_v30_child_requests_exact_interface_and_uses_returned_function_list(
     assert captured == {
         "funclist_ptr": 0x1234,
         "funclist3_ptr": ctypes.cast(ctypes.pointer(table_version), ctypes.c_void_p).value,
+        "module_id": "fake-module.so",
     }
 
 

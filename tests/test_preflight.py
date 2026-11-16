@@ -307,7 +307,9 @@ def test_preflight_timeout_returns_structured_observation(
 
     process = FakeProcess()
 
-    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+    monkeypatch.setattr(
+        "pkcs11_check.core.preflight.subprocess.Popen", lambda command, **kwargs: process
+    )
     monkeypatch.setattr(
         "pkcs11_check.core.preflight.subprocess.run",
         lambda *args, **kwargs: pytest.fail("subprocess.run should not handle preflight timeouts"),
@@ -360,7 +362,9 @@ def test_preflight_keyboard_interrupt_kills_and_reaps_child(
             self.killed = True
 
     process = FakeProcess()
-    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+    monkeypatch.setattr(
+        "pkcs11_check.core.preflight.subprocess.Popen", lambda command, **kwargs: process
+    )
 
     with pytest.raises(KeyboardInterrupt) as exc_info:
         run_preflight_subprocess(
@@ -399,7 +403,9 @@ def test_preflight_interrupt_preserved_when_cleanup_kill_fails(
             raise RuntimeError("cleanup failed")
 
     process = FakeProcess()
-    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+    monkeypatch.setattr(
+        "pkcs11_check.core.preflight.subprocess.Popen", lambda command, **kwargs: process
+    )
 
     with pytest.raises(KeyboardInterrupt) as exc_info:
         run_preflight_subprocess(
@@ -437,7 +443,9 @@ def test_preflight_interrupt_during_timeout_reap_is_preserved(
             kill_calls += 1
 
     process = FakeProcess()
-    monkeypatch.setattr("pkcs11_check.core.preflight.subprocess.Popen", lambda command: process)
+    monkeypatch.setattr(
+        "pkcs11_check.core.preflight.subprocess.Popen", lambda command, **kwargs: process
+    )
 
     with pytest.raises(KeyboardInterrupt) as exc_info:
         run_preflight_subprocess(
@@ -463,7 +471,7 @@ def test_preflight_crash_returns_exact_structured_observation(
             return -11
 
     monkeypatch.setattr(
-        "pkcs11_check.core.preflight.subprocess.Popen", lambda command: FakeProcess()
+        "pkcs11_check.core.preflight.subprocess.Popen", lambda command, **kwargs: FakeProcess()
     )
 
     manifest = run_preflight_subprocess(

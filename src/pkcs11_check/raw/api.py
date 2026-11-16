@@ -382,6 +382,9 @@ class RawPKCS11:
     # having to set it; real instances may override in __init__ when the journal
     # env var is set.
     _journal: _RvTraceJournal | None = None
+    # Class-default module id for the same partial doubles: calls through a
+    # handle that never bound an id count under the "" unknown module.
+    _module_id: str = ""
 
     def __init__(
         self,
@@ -390,10 +393,18 @@ class RawPKCS11:
         funclist3_ptr: int = 0,
         funclist32_ptr: int = 0,
         interface: str = "auto",
+        module_id: str | None = None,
     ) -> None:
         if interface not in _SUPPORTED_INTERFACES:
             msg = f"Unknown interface {interface!r}; must be one of {_SUPPORTED_INTERFACES}"
             raise ValueError(msg)
+        if module_id is not None and not isinstance(module_id, str):
+            raise ValueError(f"invalid module_id: {module_id!r}")
+        # The per-handle immutable module id, bound BEFORE any loader C call
+        # below runs, so C_GetInterface/C_GetFunctionList already attribute to
+        # it. Defaults to the lib path (funclist-built handles without an
+        # explicit id count under "" -- never inferred).
+        self._module_id = module_id if module_id is not None else (lib_path or "")
         self._funcs: dict[str, Any] = {}
         self._interface_version: str | None = None
         self._missing_function_list_names: set[str] = set()
@@ -524,9 +535,9 @@ class RawPKCS11:
             version_ptr = byref(requested_version)
 
         bucket = current_bucket()
-        record_call("C_GetInterface", bucket=bucket)
+        record_call("C_GetInterface", bucket=bucket, module=self._module_id)
         rv = int(get_interface(None, version_ptr, byref(interface_ptr), 0))
-        record_return("C_GetInterface", rv, bucket=bucket)
+        record_return("C_GetInterface", rv, bucket=bucket, module=self._module_id)
         requested_interface = self._version_string(version) if version is not None else "auto"
         if rv != int(CKR_OK):
             if strict:
@@ -621,9 +632,9 @@ class RawPKCS11:
         # but same logical role. Use a fresh local to keep mypy happy.
         fn_list_ptr = CK_FUNCTION_LIST_PTR()
         bucket = current_bucket()
-        record_call("C_GetFunctionList", bucket=bucket)
+        record_call("C_GetFunctionList", bucket=bucket, module=self._module_id)
         rv = get_function_list(byref(fn_list_ptr))
-        record_return("C_GetFunctionList", int(rv), bucket=bucket)
+        record_return("C_GetFunctionList", int(rv), bucket=bucket, module=self._module_id)
         if rv != CKR_OK:
             raise RuntimeError(f"C_GetFunctionList failed: 0x{rv:08x}")
         if not bool(fn_list_ptr):
@@ -758,9 +769,9 @@ class RawPKCS11:
         # crash inside func(*args) still counts the entry with no RV. The
         # bucket is captured once so a mid-call switch cannot split the pair.
         bucket = current_bucket()
-        record_call(name, bucket=bucket)
+        record_call(name, bucket=bucket, module=self._module_id)
         result = int(func(*args))
-        record_return(name, result, bucket=bucket)
+        record_return(name, result, bucket=bucket, module=self._module_id)
         if result == int(CKR_OK):
             self._call_log_ok[name] += 1
         if mech_id is not None:

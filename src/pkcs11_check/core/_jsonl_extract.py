@@ -158,10 +158,21 @@ from pkcs11_check.core._run_units import (
     normalize_policy_file_key as normalize_policy_file_key,
 )
 from pkcs11_check.core.call_counters import (
-    BUCKETS,
     CALL_COUNTERS_PROPERTY,
     CALL_COUNTERS_REPORT_TYPE,
-    merge_serialized,
+)
+from pkcs11_check.core.counters_schema import (
+    LOST_REPORT_TYPE,
+    PARTIAL_REPORT_TYPE,
+    canonicalize_module_first,
+    is_end_state,
+    is_legacy_buckets_block,
+    is_module_first_block,
+    is_receipt,
+    is_role,
+    is_worker_uuid,
+    merge_module_first,
+    normalize_legacy_to_module_first,
 )
 from pkcs11_check.core.report_log import (
     _ISOLATED_UNIT_REPORT_TYPE as _ISOLATED_UNIT_REPORT_TYPE,
@@ -357,86 +368,30 @@ def _as_nonneg_int(value: Any) -> int | None:
     return value
 
 
-def _is_decimal_rv_key(rv_key: str) -> bool:
-    """Whether ``rv_key`` is the canonical decimal rendering of a CK_RV.
+def _parse_counters_block(record: dict[str, Any], total: int) -> dict[str, Any] | None:
+    """Validate a record's counters into a module-first block, else None (fail-closed).
 
-    The serializer emits ``str(rv)`` for an unsigned CK_RV, so anything else
-    (hex, signs, whitespace, leading zeros, non-digits) is not our shape and
-    the record is rejected. Never raises.
+    Exactly one of ``buckets`` (rc1 legacy) or ``by_module`` (module-first)
+    must be present; both or neither is malformed. Shapes validate through
+    the frozen Task-1 predicates (known buckets only, decimal RV keys, exact
+    totals at every level, ``sum(by_rv) <= calls``); legacy blocks normalize
+    to the ``""`` unknown module, never inferred to a real module id.
     """
-    try:
-        rv = int(rv_key)
-    except ValueError:
-        return False
-    return rv >= 0 and str(rv) == rv_key
-
-
-def _counters_buckets_valid(buckets: Any) -> bool:
-    """Whether ``buckets`` satisfies the serialized-schema contract (T1, I2).
-
-    Fail-closed: besides the shape rules (non-negative int ``calls``/``count``
-    scalars with bools rejected, non-empty string function names, decimal RV
-    keys, ``{"name": str, "count": int}`` RV leaves), bucket membership, the
-    per-bucket total, and the per-function RV upper bound are enforced:
-
-    - every bucket name is a known ``BUCKETS`` member;
-    - ``bucket.calls`` equals the sum of its functions' ``calls`` exactly;
-    - ``sum(by_rv counts)`` never exceeds the function's ``calls`` (crash
-      windows make it SMALLER by design, so only the upper bound is checked).
-
-    The entry-level ``total_calls == sum(bucket.calls)`` check lives in the
-    ``_parse_*`` callers, which own the total.
-    """
-    if not isinstance(buckets, dict):
-        return False
-    for bucket_name, block in buckets.items():
-        if (
-            not isinstance(bucket_name, str)
-            or bucket_name not in BUCKETS
-            or not isinstance(block, dict)
-        ):
-            return False
-        bucket_calls = _as_nonneg_int(block.get("calls"))
-        if bucket_calls is None:
-            return False
-        by_fn = block.get("by_fn")
-        if not isinstance(by_fn, dict):
-            return False
-        fn_total = 0
-        for fn, fn_block in by_fn.items():
-            if not isinstance(fn, str) or not fn or not isinstance(fn_block, dict):
-                return False
-            fn_calls = _as_nonneg_int(fn_block.get("calls"))
-            if fn_calls is None:
-                return False
-            by_rv = fn_block.get("by_rv")
-            if not isinstance(by_rv, dict):
-                return False
-            rv_total = 0
-            for rv_key, rv_block in by_rv.items():
-                if (
-                    not isinstance(rv_key, str)
-                    or not _is_decimal_rv_key(rv_key)
-                    or not isinstance(rv_block, dict)
-                ):
-                    return False
-                if not isinstance(rv_block.get("name"), str):
-                    return False
-                count = _as_nonneg_int(rv_block.get("count"))
-                if count is None:
-                    return False
-                rv_total += count
-            if rv_total > fn_calls:
-                return False
-            fn_total += fn_calls
-        if fn_total != bucket_calls:
-            return False
-    return True
-
-
-def _buckets_calls_total(buckets: dict[str, Any]) -> int:
-    """Sum ``calls`` over validated buckets (shape proven by the caller)."""
-    return sum(block["calls"] for block in buckets.values())
+    has_buckets = "buckets" in record
+    has_modules = "by_module" in record
+    if has_buckets == has_modules:
+        return None
+    if has_buckets:
+        legacy = {"total_calls": total, "buckets": record["buckets"]}
+        if not is_legacy_buckets_block(legacy):
+            return None
+        normalized = normalize_legacy_to_module_first(legacy)
+        assert normalized is not None  # validated above; never None here
+        return normalized
+    module_first = {"total_calls": total, "by_module": record["by_module"]}
+    if not is_module_first_block(module_first):
+        return None
+    return module_first
 
 
 def _parse_round(record: dict[str, Any]) -> str | None:
@@ -455,34 +410,167 @@ def _parse_round(record: dict[str, Any]) -> str | None:
     return run_id
 
 
+def _parse_receipts_list(value: Any) -> frozenset[tuple[str, int]]:
+    """Return the well-formed receipt keys from a record's receipts list.
+
+    Item-tolerant like the live ingest path: a non-list container yields
+    nothing and malformed items are skipped, so one hostile receipt never
+    discards the record's counts.
+    """
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(
+        (entry["worker_uuid"], entry["probe_seq"]) for entry in value if is_receipt(entry)
+    )
+
+
 def _parse_session_counters(
     record: dict[str, Any],
-) -> tuple[int, int, dict[str, Any], int, str, str] | None:
-    """Validate a CallCountersReport record into (pid, total, buckets, lost, isolation, run).
+) -> (
+    tuple[
+        int, int, dict[str, Any], int, str, str, str | None, frozenset[tuple[str, int]], str | None
+    ]
+    | None
+):
+    """Validate a CallCountersReport into its folded tuple (now with role).
 
     Returns None for any malformed shape. ``probes_lost`` is load-bearing for
     the ``complete`` flag, so a record without a usable value is garbage;
     ``isolation`` is informational and defaults to ``"unknown"`` (the T3
-    read-default) when absent or mistyped. ``total_calls`` must equal the sum
-    of the buckets exactly (I2); a mismatch means a corrupt or hand-edited
-    record and the whole record is skipped. ``run`` is the round key from
-    :func:`_parse_round` (implicit ``""`` when the key is absent).
+    read-default) when absent or mistyped. ``block`` is the module-first
+    counters block (legacy buckets-first normalized to ``""``); a present but
+    malformed ``worker_uuid`` or ``role`` fails the whole record closed (a
+    forged attribution tag must not fold). ``run`` is the round key from
+    :func:`_parse_round` (implicit ``""`` when the key is absent). Receipts
+    fold item-tolerantly (see :func:`_parse_receipts_list`).
     """
     pid = _as_nonneg_int(record.get("pid"))
     total = _as_nonneg_int(record.get("total_calls"))
     probes_lost = _as_nonneg_int(record.get("probes_lost"))
-    buckets: Any = record.get("buckets")
     run = _parse_round(record)
     if pid is None or total is None or probes_lost is None or run is None:
         return None
-    if not _counters_buckets_valid(buckets):
+    block = _parse_counters_block(record, total)
+    if block is None:
         return None
-    if total != _buckets_calls_total(buckets):
+    uuid = record.get("worker_uuid")
+    if uuid is not None and not is_worker_uuid(uuid):
+        return None
+    role = record.get("role")
+    if role is not None and not is_role(role):
         return None
     isolation = record.get("isolation")
     if not isinstance(isolation, str):
         isolation = "unknown"
-    return (pid, total, buckets, probes_lost, isolation, run)
+    receipts = _parse_receipts_list(record.get("receipts"))
+    assert role is None or isinstance(role, str)
+    return (pid, total, block, probes_lost, isolation, run, uuid, receipts, role)
+
+
+def _parse_partial_counters(
+    record: dict[str, Any],
+) -> (
+    tuple[int | None, int, dict[str, Any], str, str, frozenset[tuple[str, int]], str | None, str]
+    | None
+):
+    """Validate a CallCountersPartial into its staged tuple (now with role + isolation).
+
+    The producer uuid is required (a partial without one is unattributable
+    garbage); the pid is optional (counts fold globally, but no by_process
+    row can name a pid-less producer). ``truncated`` must be exactly True
+    and the counters shape follows the same fail-closed contract as
+    sessions; anything malformed skips the whole record. A present role
+    fails closed like sessions (a forged tag must not fold); isolation is
+    informational like sessions (``"unknown"`` when absent or mistyped).
+    """
+    if record.get("truncated") is not True:
+        return None
+    uuid = record.get("worker_uuid")
+    if not is_worker_uuid(uuid):
+        return None
+    total = _as_nonneg_int(record.get("total_calls"))
+    run = _parse_round(record)
+    if total is None or run is None:
+        return None
+    block = _parse_counters_block(record, total)
+    if block is None:
+        return None
+    pid: int | None
+    if "pid" not in record:
+        pid = None
+    else:
+        pid = _as_nonneg_int(record.get("pid"))
+        if pid is None:
+            return None
+    role = record.get("role")
+    if role is not None and not is_role(role):
+        return None
+    isolation = record.get("isolation")
+    if not isinstance(isolation, str):
+        isolation = "unknown"
+    assert isinstance(uuid, str)
+    assert role is None or isinstance(role, str)
+    return (
+        pid,
+        total,
+        block,
+        uuid,
+        run,
+        _parse_receipts_list(record.get("receipts")),
+        role,
+        isolation,
+    )
+
+
+def _parse_lost_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a CallCountersLost record into a normalized entry, else None.
+
+    Requires a known end state, a valid (but assembly-rebased) scope index,
+    a well-formed round key, and at least one of a valid worker uuid / pid;
+    unit/attempt/origin_shard are carried when well-formed. Anything
+    malformed fails the whole record closed (a hostile loss claim never
+    flips completeness by itself).
+    """
+    if not is_end_state(record.get("end_state")):
+        return None
+    if _as_nonneg_int(record.get("scope_index")) is None:
+        return None
+    run = _parse_round(record)
+    if run is None:
+        return None
+    uuid = record.get("worker_uuid")
+    if uuid is not None and not is_worker_uuid(uuid):
+        return None
+    pid: int | None
+    if "pid" not in record:
+        pid = None
+    else:
+        pid = _as_nonneg_int(record.get("pid"))
+        if pid is None:
+            return None
+    if uuid is None and pid is None:
+        return None
+    unit = record.get("unit")
+    if unit is not None and (not isinstance(unit, str) or not unit):
+        return None
+    attempt = record.get("attempt")
+    if attempt is not None and _as_nonneg_int(attempt) is None:
+        return None
+    origin = record.get("origin_shard")
+    if origin is not None and not isinstance(origin, str):
+        return None
+    entry: dict[str, Any] = {"end_state": record["end_state"], "run": run}
+    if uuid is not None:
+        entry["worker_uuid"] = uuid
+    if pid is not None:
+        entry["pid"] = pid
+    if unit is not None:
+        entry["unit"] = unit
+    if attempt is not None:
+        entry["attempt"] = attempt
+    if origin:
+        entry["origin_shard"] = origin
+    return entry
 
 
 def _marker_is_static_skip(rec: dict[str, Any]) -> bool:
@@ -548,24 +636,45 @@ def _is_framing_marker(rec: dict[str, Any], following: dict[str, Any] | None) ->
     )
 
 
-def _parse_test_counters(entry: Any) -> tuple[int, int, dict[str, Any], str] | None:
-    """Validate a per-test counter entry into (pid, total, buckets, run) or None.
+def _parse_test_counters(
+    entry: Any,
+) -> tuple[int, int, dict[str, Any], str, str | None, frozenset[tuple[str, int]], str] | None:
+    """Validate a per-test counter entry into (pid, total, block, run, uuid, receipts, isolation).
 
     Same fail-closed contract as session records (I2): shape, bucket
-    membership, exact totals, the RV upper bound, and a well-formed round
-    key, or the entry is skipped.
+    membership, exact totals, the RV upper bound, a well-formed
+    ``worker_uuid`` when present, and a well-formed round key, or the entry
+    is skipped. Counters normalize to a module-first block like sessions.
+    Receipts fold item-tolerantly (a superseded entry still unions its
+    receipts into the group). ``isolation`` is informational like on
+    sessions: the stamped value when it is a string, else ``"unknown"``
+    (bare-pytest entries carry no stamp).
     """
     if not isinstance(entry, dict):
         return None
     pid = _as_nonneg_int(entry.get("pid"))
     total = _as_nonneg_int(entry.get("total_calls"))
-    buckets: Any = entry.get("buckets")
     run = _parse_round(entry)
-    if pid is None or total is None or run is None or not _counters_buckets_valid(buckets):
+    if pid is None or total is None or run is None:
         return None
-    if total != _buckets_calls_total(buckets):
+    block = _parse_counters_block(entry, total)
+    if block is None:
         return None
-    return (pid, total, buckets, run)
+    uuid = entry.get("worker_uuid")
+    if uuid is not None and not is_worker_uuid(uuid):
+        return None
+    isolation = entry.get("isolation")
+    if not isinstance(isolation, str):
+        isolation = "unknown"
+    return (
+        pid,
+        total,
+        block,
+        run,
+        uuid,
+        _parse_receipts_list(entry.get("receipts")),
+        isolation,
+    )
 
 
 @dataclass
@@ -575,18 +684,24 @@ class _CountersGroup:
     Per-test entries are buffered during the stream pass because a session
     record (emitted at sessionfinish) sorts AFTER the test reports it
     supersedes; the fallback fold runs once the stream is fully read.
+    (Partials stage globally, not per group: a superseded partial must
+    leave no vacuous group behind to poison completeness.)
     """
 
     session_pids: set[int] = field(default_factory=set)
     session_probes_lost: int = 0
     has_session: bool = False
     fallback_used: bool = False
-    pending: list[tuple[int, int, dict[str, Any]]] = field(default_factory=list)
+    has_partial: bool = False
+    has_lost: bool = False
+    pending: list[tuple[int, int, dict[str, Any], str | None, frozenset[tuple[str, int]], str]] = (
+        field(default_factory=list)
+    )
 
 
 @dataclass
 class _CountersPid:
-    """One pid's folded contribution across all groups."""
+    """One pid's folded contribution across all groups (split per module at render)."""
 
     sessions_total: int = 0
     sessions_probes_lost: int = 0
@@ -594,47 +709,137 @@ class _CountersPid:
     fallback_total: int = 0
     fallback_used: bool = False
     isolation: str = "unknown"
+    worker_uuid: str | None = None
+    role: str | None = None
+    session_modules: dict[str, int] = field(default_factory=dict)
+    fallback_modules: dict[str, int] = field(default_factory=dict)
+    partial_modules: dict[str, int] = field(default_factory=dict)
+    end_states: set[str] = field(default_factory=set)
 
 
 def _counters_group_complete(group: _CountersGroup) -> bool:
-    """Whether a group is complete: session present, no fallback, no lost probes."""
-    return group.has_session and not group.fallback_used and group.session_probes_lost == 0
+    """Whether a group reconciles clean: session, no fallback/partial/loss, no lost probes."""
+    return (
+        group.has_session
+        and not group.fallback_used
+        and not group.has_partial
+        and not group.has_lost
+        and group.session_probes_lost == 0
+    )
 
 
-def _counters_pid_complete(state: _CountersPid) -> bool:
-    """Whether a pid's contribution is complete (same rule as a group)."""
-    return state.has_session and not state.fallback_used and state.sessions_probes_lost == 0
+def _fold_module_calls(state: dict[str, int], block: dict[str, Any]) -> None:
+    """Add one module-first block's per-module calls into a pid split map (in place)."""
+    for module, module_block in block["by_module"].items():
+        state[module] = state.get(module, 0) + module_block["calls"]
 
 
-def _counters_process_row(pid: int, state: _CountersPid) -> dict[str, Any]:
-    """Render one by_process row (no round/shard keys; the caller tags those)."""
-    return {
-        "pid": pid,
-        "isolation": state.isolation,
-        "total_calls": state.sessions_total + state.fallback_total,
-        "complete": _counters_pid_complete(state),
-    }
+def _counters_process_rows(pid: int, state: _CountersPid) -> list[dict[str, Any]]:
+    """Render one by_process row per (pid, module), each carrying its ``module`` key.
 
-
-def _canonicalize_counter_block(block: dict[str, Any]) -> dict[str, Any]:
-    """Recursively key-sort a serialized counter block's maps, in place.
-
-    ``merge_serialized`` preserves first-insertion order, so without this the
-    bucket/function/RV map order in a returned block depends on record (or
-    shard) order and ``json.dumps`` output is not byte-identical across
-    orders. Only the three map levels are reordered; every other key keeps
-    its value and position. Imported by ``core.merge`` for the same
-    canonicalization at the merge return.
+    A row is complete iff its module reconciles clean for this pid (session
+    evidence, no fallback or partial evidence, no lost probes, no loss
+    disposition); lost probes and loss dispositions are process-level, so
+    they flip every row of the pid. Partial modules render ``truncated``
+    rows; a reconciled loss disposition renders ``end_state``; a non-unit
+    role (session or partial evidence; retry, confirmation, preflight)
+    renders ``role``. No round/shard keys; the caller tags those, and
+    strips ``module`` when the block holds a single distinct module
+    (see :func:`_strip_single_module_tag`).
     """
-    buckets: dict[str, Any] = block.get("buckets", {})
-    block["buckets"] = {bucket: buckets[bucket] for bucket in sorted(buckets)}
-    for bucket_block in block["buckets"].values():
-        by_fn: dict[str, Any] = bucket_block.get("by_fn", {})
-        bucket_block["by_fn"] = {fn: by_fn[fn] for fn in sorted(by_fn)}
-        for fn_block in bucket_block["by_fn"].values():
-            by_rv: dict[str, Any] = fn_block.get("by_rv", {})
-            fn_block["by_rv"] = {rv: by_rv[rv] for rv in sorted(by_rv)}
-    return block
+    rows: list[dict[str, Any]] = []
+    modules = sorted(
+        set(state.session_modules) | set(state.fallback_modules) | set(state.partial_modules)
+    )
+    for module in modules:
+        row: dict[str, Any] = {
+            "pid": pid,
+            "isolation": state.isolation,
+            "total_calls": state.session_modules.get(module, 0)
+            + state.fallback_modules.get(module, 0)
+            + state.partial_modules.get(module, 0),
+            "complete": (
+                module in state.session_modules
+                and module not in state.fallback_modules
+                and module not in state.partial_modules
+                and state.sessions_probes_lost == 0
+                and not state.end_states
+            ),
+        }
+        if state.worker_uuid is not None:
+            row["worker_uuid"] = state.worker_uuid
+        if state.role is not None and state.role != "unit":
+            row["role"] = state.role
+        if module in state.partial_modules:
+            row["truncated"] = True
+        if state.end_states:
+            row["end_state"] = (
+                next(iter(state.end_states)) if len(state.end_states) == 1 else "conflict"
+            )
+        row["module"] = module
+        rows.append(row)
+    return rows
+
+
+def _strip_single_module_tag(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop ``module`` from every row unless >1 distinct module occurs (in place).
+
+    The same conditional rule as ``round``/``shard``: single-module output
+    reads exactly like rc1 on every row key. Imported by ``core.merge`` for
+    the same decision over the merged row set.
+    """
+    if len({row["module"] for row in rows}) > 1:
+        return rows
+    for row in rows:
+        del row["module"]
+    return rows
+
+
+def _anchor_lost_record(
+    normalized: dict[str, Any],
+    staged: tuple[int, str | None, int | None],
+    marked: set[tuple[int, str | None, int | None]],
+) -> tuple[int, str | None, int | None] | None:
+    """Return the assembly anchor segment for one staged lost record.
+
+    A lost record covers a marked segment ONLY on a source-association
+    match ``(origin_shard, unit, attempt)``: the origin must be local
+    (absent or empty) and the unit/attempt must name a marked segment.
+    The staged stream position wins among matches (the collector appends
+    into its own segment, so agreement means zero behavior change);
+    otherwise the earliest matching marked scope anchors, so prepended
+    and reordered records still dispose their execution. Static-skipped
+    segments match too: an explicit loss claim against a never-executed
+    unit is contradictory evidence and stays fail-visible incomplete.
+    The worker identity rides along as the disposition identity (dedup
+    and row end states) but never gates the match -- a C2b segment has
+    no counter evidence to compare it against.
+
+    A foreign ``origin_shard`` anchors to nothing (None): no producer
+    writes it, so the claim names no local execution; the caller keeps
+    the loss groupless (its run rides the lost entry, visibly
+    incomplete) rather than covering a local segment by positional
+    coincidence. Records without an association (no unit/attempt:
+    legacy sources) keep their staged position (existing C2b behavior,
+    retained never guessed); decoys whose association matches no marked
+    segment key their own group from the staged scope plus their own
+    ``(unit, attempt)``. The caller assigns the entry ``scope_index``
+    from the anchor scope (the staged scope for groupless records):
+    assembly-assigned, rebased together with the group key.
+    """
+    if normalized.get("origin_shard"):
+        return None
+    unit = normalized.get("unit")
+    attempt = normalized.get("attempt")
+    if unit is None or attempt is None:
+        return staged
+    staged_scope, staged_target, staged_attempt = staged
+    if staged_target == unit and staged_attempt == attempt:
+        return staged
+    for scope_id in sorted({scope for scope, _, _ in marked}):
+        if (scope_id, unit, attempt) in marked:
+            return (scope_id, unit, attempt)
+    return (staged_scope, unit, attempt)
 
 
 def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
@@ -655,21 +860,51 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     invocation's calls stay attributable after resume appends new rounds.
 
     Reconciliation per group: every session record is summed (retries count
-    twice — both runs made real calls); a buffered per-test entry folds only
-    when its pid has NO session record in that group (the crashed/timed-out
-    fallback). A group is complete iff a session record exists, no fallback
-    was used, and session ``probes_lost`` is 0; the run is complete iff every
-    group is. A segment with at least one TestReport but zero counters data in
-    an opened, unfinished session scope is an executed-but-counterless unit
+    twice — both runs made real calls — except a uuid-bearing repeat of an
+    already-folded ``(run, worker_uuid)``, which is a torn-append retry and
+    folds first-wins; uuid-less legacy repeats keep summing); a buffered
+    per-test entry folds only when its pid has NO session record in that
+    group (the crashed/timed-out fallback). A staged sidecar partial folds
+    only when its producer has NO
+    authoritative session in the same run (authoritative supersedes partial,
+    both input orders); a partial without a pid folds its counts globally
+    but names no by_process row. A group is complete iff a session record
+    exists, no fallback or partial was used, no loss disposition names it,
+    and session ``probes_lost`` is 0; the run is complete iff every group
+    is. Folded-probe receipts union across sessions, entries, and partials
+    (superseded sources still contribute their receipts) into
+    ``probes_detail``; lost records reconcile globally by producer identity
+    (repeats dedup, conflicting end states surface ``conflict``) into
+    ``lost_processes``, with the scope index assembly-assigned from the
+    anchor segment (the record's provisional value is ignored, never
+    fatal). Both keys render only when non-empty, top-level and per-round.
+    A segment with at least one TestReport but zero counters data in an
+    opened, unfinished session scope is an executed-but-counterless unit
     (typically a first-test crash): it emits an EMPTY group, which flips the
     run to ``complete: false`` instead of vanishing (C2). A crash in
     load_module/C_Initialize during FIRST fixture setup leaves no TestReport
     at all, so a segment with only a plain marker (no ``reason``/``skipped``
     static-skip provenance) and zero reports/counters in an opened,
-    unfinished scope emits the same EMPTY group (C2b). A finished scope with
+    unfinished scope emits the same EMPTY group (C2b) -- unless a lost
+    record covers the segment on a source-association match (local origin
+    plus the segment's own unit/attempt; the staged position wins among
+    matches, otherwise the earliest marked scope anchors, so prepended and
+    reordered records still dispose their execution). Cross-source decoys
+    never cover a segment: the backstop is retained and the loss keys
+    its own group from its staged scope plus its own unit/attempt.
+    Foreign-origin records anchor to nothing (no producer writes that
+    field): they stay groupless, their run rides the lost entry, and
+    they never disposition local rows. Legacy records without an
+    association keep positional grouping (their staged position still
+    covers the segment they were collected into). A finished scope with
     zero counters predates the feature (old artifact): no group, as with a
     static-skip marker with zero reports; None is returned when no group
-    exists anywhere. Malformed records are ignored, never raised.
+    exists anywhere. Malformed records are
+    ignored, never raised. A surviving lost record is a terminal
+    disposition: it keeps its group incomplete (fail-visible). A loss
+    naming a producer with validated authoritative evidence in the same
+    run is stale (healed by a rerun or a re-collected sidecar) and
+    reconciles away before anchoring; pid-only losses never reconcile.
 
     Rounds: records without ``run_id`` (pre-round artifacts, direct-pytest
     runs) fold into the implicit ``""`` round, as do C2 empty groups (a
@@ -678,13 +913,23 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     top-level shape; the top level stays the GLOBAL roll-up. Top-level
     ``by_process`` rows carry ``"round"`` iff more than one distinct round
     appears among them (single-round output is identical to before on every
-    existing key); per-round rows never carry it. Keys and rows are sorted
-    for determinism.
+    existing key); per-round rows never carry it. One row renders per
+    (round, pid, module) that contributed, and rows carry ``"module"`` iff
+    more than one distinct module appears among the block's rows, with the
+    same per-block conditional rule top-level and per-round. Keys and rows
+    are sorted for determinism.
     """
     groups: dict[tuple[str, int, str | None, int | None], _CountersGroup] = {}
     pids: dict[tuple[str, int], _CountersPid] = {}
-    merged: dict[str, Any] = {"total_calls": 0, "buckets": {}}
+    merged: dict[str, Any] = {"total_calls": 0, "by_module": {}}
     merged_by_round: dict[str, dict[str, Any]] = {}
+    authoritative: set[tuple[str, str]] = set()
+    receipts_all: set[tuple[str, int]] = set()
+    receipts_by_round: dict[str, set[tuple[str, int]]] = {}
+    staged_lost: list[tuple[str, int, str | None, int | None, int, dict[str, Any]]] = []
+    staged_partials: list[
+        tuple[str, int, str | None, int | None, str, int | None, dict[str, Any], str | None, str]
+    ] = []
     scope = 0
     current: tuple[int, str | None, int | None] = (0, None, None)
     opened: set[int] = set()
@@ -699,11 +944,14 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     def _pid_state(key: tuple[str, int]) -> _CountersPid:
         return pids.setdefault(key, _CountersPid())
 
-    def _fold(run: str, total: int, buckets: dict[str, Any]) -> None:
-        block = {"total_calls": total, "buckets": buckets}
-        merge_serialized(merged, block)
-        round_merged = merged_by_round.setdefault(run, {"total_calls": 0, "buckets": {}})
-        merge_serialized(round_merged, block)
+    def _fold(run: str, block: dict[str, Any]) -> None:
+        merge_module_first(merged, block)
+        round_merged = merged_by_round.setdefault(run, {"total_calls": 0, "by_module": {}})
+        merge_module_first(round_merged, block)
+
+    def _union_receipts(run: str, keys: frozenset[tuple[str, int]]) -> None:
+        receipts_all.update(keys)
+        receipts_by_round.setdefault(run, set()).update(keys)
 
     # Streamed via the shared binary-decode iterator (report_log.iter_report_log_records)
     # like the coverage/provisioning extractors above: one bad byte drops one line.
@@ -769,8 +1017,17 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             parsed = _parse_session_counters(rec)
             if parsed is None:
                 continue
-            pid, total, buckets, probes_lost, isolation, run = parsed
-            _fold(run, total, buckets)
+            pid, total, block, probes_lost, isolation, run, uuid, receipts, role = parsed
+            if uuid is not None and (run, uuid) in authoritative:
+                # Torn-append retry: one producer emits one session per
+                # run, so a repeat is the same scope appended twice and
+                # folds first-wins (uuid-less legacy keeps fold-every:
+                # no attribution is possible without an identity).
+                continue
+            _fold(run, block)
+            _union_receipts(run, receipts)
+            if uuid is not None:
+                authoritative.add((run, uuid))
             group = _group((run, *current))
             group.has_session = True
             group.session_pids.add(pid)
@@ -778,9 +1035,42 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             pid_state = _pid_state((run, pid))
             if not pid_state.has_session:
                 pid_state.isolation = isolation
+            if uuid is not None and pid_state.worker_uuid is None:
+                pid_state.worker_uuid = uuid
+            if role is not None and pid_state.role is None:
+                pid_state.role = role
             pid_state.has_session = True
             pid_state.sessions_total += total
             pid_state.sessions_probes_lost += probes_lost
+            _fold_module_calls(pid_state.session_modules, block)
+            continue
+        if report_type == PARTIAL_REPORT_TYPE:
+            parsed_partial = _parse_partial_counters(rec)
+            if parsed_partial is None:
+                continue
+            (
+                part_pid,
+                _part_total,
+                part_block,
+                part_uuid,
+                part_run,
+                part_receipts,
+                part_role,
+                part_isolation,
+            ) = parsed_partial
+            _union_receipts(part_run, part_receipts)
+            staged_partials.append(
+                (part_run, *current, part_uuid, part_pid, part_block, part_role, part_isolation)
+            )
+            continue
+        if report_type == LOST_REPORT_TYPE:
+            parsed_lost = _parse_lost_record(rec)
+            if parsed_lost is None:
+                continue
+            lost_run = parsed_lost["run"]
+            # Buffered only: the anchor resolves post-pass (association
+            # match, never stream position), once every marker is known.
+            staged_lost.append((lost_run, *current, scope, parsed_lost))
             continue
         if report_type != "TestReport":
             continue
@@ -794,20 +1084,181 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         parsed_entry = _parse_test_counters(_user_property(rec, CALL_COUNTERS_PROPERTY))
         if parsed_entry is None:
             continue
-        entry_pid, entry_total, entry_buckets, entry_run = parsed_entry
-        _group((entry_run, *current)).pending.append((entry_pid, entry_total, entry_buckets))
+        (
+            entry_pid,
+            entry_total,
+            entry_block,
+            entry_run,
+            entry_uuid,
+            entry_receipts,
+            entry_isolation,
+        ) = parsed_entry
+        _union_receipts(entry_run, entry_receipts)
+        _group((entry_run, *current)).pending.append(
+            (entry_pid, entry_total, entry_block, entry_uuid, entry_receipts, entry_isolation)
+        )
 
     # Session records sort after the test reports they supersede, so fallback
-    # folds only now that every group's session-pid set is final.
+    # folds only now that every group's session-pid set is final. Receipts
+    # union regardless (a superseded entry still contributes its receipts).
+    # Fallback rows inherit the entry's stamped isolation (first source
+    # wins, like sessions); pids with session evidence keep the session
+    # stamp, and unstamped bare-pytest entries leave "unknown".
     for group_key, group in groups.items():
-        for pid, total, buckets in group.pending:
+        for pid, total, block, uuid, _entry_receipts, isolation in group.pending:
             if pid in group.session_pids:
                 continue
-            _fold(group_key[0], total, buckets)
+            _fold(group_key[0], block)
             group.fallback_used = True
             pid_state = _pid_state((group_key[0], pid))
+            if not pid_state.has_session and not pid_state.fallback_used:
+                pid_state.isolation = isolation
             pid_state.fallback_total += total
             pid_state.fallback_used = True
+            if uuid is not None and pid_state.worker_uuid is None:
+                pid_state.worker_uuid = uuid
+            _fold_module_calls(pid_state.fallback_modules, block)
+
+    # Keyed staging: an authoritative session anywhere in the run supersedes
+    # same-producer partials (both input orders); repeats of one partial
+    # fold first-wins (re-collection after a crash between append and
+    # consume still counts exactly once). Groups are created only for
+    # folded partials, so a superseded partial leaves no vacuous group.
+    folded_partials: set[tuple[str, str]] = set()
+    for staged in staged_partials:
+        (
+            part_run,
+            part_scope,
+            part_target,
+            part_attempt,
+            uuid,
+            part_pid,
+            block,
+            part_role,
+            part_isolation,
+        ) = staged
+        if (part_run, uuid) in authoritative:
+            continue
+        if (part_run, uuid) in folded_partials:
+            continue
+        folded_partials.add((part_run, uuid))
+        _fold(part_run, block)
+        _group((part_run, part_scope, part_target, part_attempt)).has_partial = True
+        if part_pid is None:
+            continue
+        pid_state = _pid_state((part_run, part_pid))
+        if pid_state.worker_uuid is None:
+            pid_state.worker_uuid = uuid
+        if part_role is not None and pid_state.role is None:
+            pid_state.role = part_role
+        if (
+            not pid_state.has_session
+            and not pid_state.fallback_used
+            and not pid_state.partial_modules
+        ):
+            pid_state.isolation = part_isolation
+        _fold_module_calls(pid_state.partial_modules, block)
+
+    # Healed producers: a staged loss carrying a worker uuid whose
+    # (run, uuid) has validated authoritative evidence is stale (a resumed
+    # rerun, or a crash between collection append and consume, healed it)
+    # and drops before anchoring, so it neither dispositions rows nor
+    # poisons completeness. Receipts need no union here: lost records carry
+    # none, and the authoritative evidence already unioned its own. Pid-only
+    # losses never drop (pids are shard-local: no authority key matches
+    # them), and losses in other runs never heal this producer's claim.
+    staged_lost = [
+        staged
+        for staged in staged_lost
+        if staged[5].get("worker_uuid") is None
+        or (staged[0], staged[5]["worker_uuid"]) not in authoritative
+    ]
+    # Association-anchored lost disposition: every staged lost record
+    # resolves to its anchor segment (source-association match, staged
+    # position preferred, decoys own-grouped, legacy positional, foreign
+    # groupless) and the staged tuple is rewritten with the anchor
+    # coordinates, so the entry merge below reuses the anchor scope as the
+    # assembly-assigned scope_index (the staged scope for groupless
+    # records). Groups form here, before the C2/C2b backstop consults
+    # them: only a matched loss covers its segment.
+    anchored_lost: list[tuple[str, int, str | None, int | None, int, dict[str, Any]]] = []
+    for lost_staged in staged_lost:
+        lost_run, staged_scope, staged_target, staged_attempt, _provisional, normalized = (
+            lost_staged
+        )
+        anchor = _anchor_lost_record(
+            normalized, (staged_scope, staged_target, staged_attempt), marked
+        )
+        if anchor is None:
+            anchor_scope, anchor_target, anchor_attempt = (
+                staged_scope,
+                staged_target,
+                staged_attempt,
+            )
+        else:
+            anchor_scope, anchor_target, anchor_attempt = anchor
+            _group((lost_run, anchor_scope, anchor_target, anchor_attempt)).has_lost = True
+        anchored_lost.append(
+            (lost_run, anchor_scope, anchor_target, anchor_attempt, anchor_scope, normalized)
+        )
+    staged_lost = anchored_lost
+
+    # Lost records reconcile globally by producer identity: repeats dedup,
+    # conflicting end states surface an explicit conflict (never a silent
+    # pick), and the scope index rebases to the assembly scope.
+    lost_by_identity: dict[tuple[str, str, Any], dict[str, Any]] = {}
+    lost_end_states: dict[tuple[str, str, Any], set[str]] = {}
+    for lost_run, _scope_id, _target, _attempt, rebased, normalized in staged_lost:
+        if normalized.get("worker_uuid") is not None:
+            identity = (lost_run, "uuid", normalized["worker_uuid"])
+        else:
+            identity = (lost_run, "pid", normalized["pid"])
+        known = lost_by_identity.get(identity)
+        if known is None:
+            merged_entry = dict(normalized)
+            merged_entry["scope_index"] = rebased
+            lost_by_identity[identity] = merged_entry
+            lost_end_states[identity] = {normalized["end_state"]}
+            continue
+        for name in ("worker_uuid", "pid", "unit", "attempt", "origin_shard"):
+            if name not in known and normalized.get(name) is not None:
+                known[name] = normalized[name]
+        lost_end_states[identity].add(normalized["end_state"])
+    lost_processes: list[dict[str, Any]] = []
+    for identity in sorted(lost_by_identity):
+        merged_entry = lost_by_identity[identity]
+        states = lost_end_states[identity]
+        entry: dict[str, Any] = {}
+        if merged_entry.get("worker_uuid") is not None:
+            entry["worker_uuid"] = merged_entry["worker_uuid"]
+        if merged_entry.get("pid") is not None:
+            entry["pid"] = merged_entry["pid"]
+        entry["end_state"] = next(iter(states)) if len(states) == 1 else "conflict"
+        entry["scope_index"] = merged_entry["scope_index"]
+        if merged_entry["run"]:
+            entry["run_id"] = merged_entry["run"]
+        if merged_entry.get("unit") is not None:
+            entry["unit"] = merged_entry["unit"]
+        if merged_entry.get("attempt") is not None:
+            entry["attempt"] = merged_entry["attempt"]
+        if merged_entry.get("origin_shard"):
+            entry["origin_shard"] = merged_entry["origin_shard"]
+        lost_processes.append(entry)
+    lost_processes.sort(key=lambda item: json.dumps(item, sort_keys=True))
+    for entry in lost_processes:
+        if entry.get("origin_shard"):
+            # Foreign loss claims stay visible but never disposition local
+            # rows: pids are shard-local namespaces, and an unverifiable
+            # cross-shard claim must not rewrite local attribution.
+            continue
+        run = entry.get("run_id", "")
+        if entry.get("pid") is not None:
+            pid_state = _pid_state((run, entry["pid"]))
+            pid_state.end_states.add(entry["end_state"])
+        if entry.get("worker_uuid") is not None:
+            for (state_run, _state_pid), pid_state in pids.items():
+                if state_run == run and pid_state.worker_uuid == entry["worker_uuid"]:
+                    pid_state.end_states.add(entry["end_state"])
 
     # C2: executed-but-counterless segments (reports, zero counters, opened
     # scope, no finish) emit an empty group so the run reads incomplete. A
@@ -831,43 +1282,75 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         if key[0] in opened and key[0] not in finished:
             groups[("", *key)] = _CountersGroup()
 
-    if not groups:
+    if not groups and not lost_processes:
         return None
+    # A surviving lost record is a terminal disposition: any named loss
+    # keeps its level incomplete, including groupless foreign losses
+    # (whose runs ride the lost entries, never segment groups). Losses
+    # reconciled against same-run authority dropped before anchoring, so
+    # they reach neither this conjunct nor the rows below. For grouped
+    # losses these conjuncts are redundant -- their has_lost group already
+    # reads incomplete -- and change nothing.
     complete = all(_counters_group_complete(group) for group in groups.values())
-    rounds = sorted({key[0] for key in groups})
+    complete = complete and not lost_processes
+    rounds = sorted(
+        {key[0] for key in groups} | {entry.get("run_id", "") for entry in lost_processes}
+    )
     round_rows: dict[str, list[dict[str, Any]]] = {run: [] for run in rounds}
     for (run, pid), state in sorted(pids.items()):
-        if state.has_session or state.fallback_used:
-            round_rows[run].append(_counters_process_row(pid, state))
+        if state.has_session or state.fallback_used or state.partial_modules:
+            round_rows[run].extend(_counters_process_rows(pid, state))
     show_round = len({run for run, rows in round_rows.items() if rows}) > 1
     by_process: list[dict[str, Any]] = []
     by_round: dict[str, Any] = {}
+    lost_by_round: dict[str, list[dict[str, Any]]] = {run: [] for run in rounds}
+    for entry in lost_processes:
+        lost_by_round.setdefault(entry.get("run_id", ""), []).append(entry)
     for run in rounds:
-        round_merged = merged_by_round.get(run, {"total_calls": 0, "buckets": {}})
+        round_merged = merged_by_round.get(run, {"total_calls": 0, "by_module": {}})
         round_groups = [group for key, group in groups.items() if key[0] == run]
-        by_round[run] = {
-            "complete": all(_counters_group_complete(group) for group in round_groups),
+        round_complete = all(_counters_group_complete(group) for group in round_groups)
+        round_complete = round_complete and not lost_by_round.get(run, [])
+        round_block: dict[str, Any] = {
+            "complete": round_complete,
             "total_calls": round_merged["total_calls"],
-            "by_bucket": round_merged,
+            "by_module": canonicalize_module_first(round_merged),
             "probes_lost": sum(group.session_probes_lost for group in round_groups),
-            "by_process": round_rows[run],
+            "by_process": _strip_single_module_tag([dict(row) for row in round_rows[run]]),
         }
+        if lost_by_round.get(run):
+            round_block["lost_processes"] = lost_by_round[run]
+        round_receipts = sorted(receipts_by_round.get(run, set()))
+        if round_receipts:
+            round_block["probes_detail"] = [
+                {"worker_uuid": uuid, "probe_seq": seq, "status": "folded"}
+                for uuid, seq in round_receipts
+            ]
+        by_round[run] = round_block
         for row in round_rows[run]:
             tagged = dict(row)
             if show_round:
                 tagged["round"] = run
             by_process.append(tagged)
-    _canonicalize_counter_block(merged)
-    for round_block in by_round.values():
-        _canonicalize_counter_block(round_block["by_bucket"])
-    return {
+    _strip_single_module_tag(by_process)
+    merged = canonicalize_module_first(merged)
+    payload: dict[str, Any] = {
         "complete": complete,
         "total_calls": merged["total_calls"],
-        "by_bucket": merged,
+        "by_module": merged,
         "probes_lost": sum(group.session_probes_lost for group in groups.values()),
         "by_process": by_process,
         "by_round": by_round,
     }
+    if lost_processes:
+        payload["lost_processes"] = lost_processes
+    ordered_receipts = sorted(receipts_all)
+    if ordered_receipts:
+        payload["probes_detail"] = [
+            {"worker_uuid": uuid, "probe_seq": seq, "status": "folded"}
+            for uuid, seq in ordered_receipts
+        ]
+    return payload
 
 
 def _emit_external_provision_banner(n: int) -> None:
