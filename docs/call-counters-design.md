@@ -851,11 +851,10 @@ the completeness formula under Normative contracts).
 - `probes_detail[]` rows carry `status: folded` (a folded probe's
   child identity) or `status: lost` (the accounting parent of a
   surviving keyed loss); folded rows render first, then net lost rows.
-- Session and partial records may carry `lost_keys` /
-  `orphan_keys` / `recovered_keys` (keyed-loss identity lists) and
-  sessions a `persistence_pending` marker (counter-specific
-  incomplete); partials may be zero-call claim-only carriers for
-  recovery evidence.
+- Session records may carry `lost_keys` and a `persistence_pending`
+  marker (counter-specific incomplete); partials may additionally
+  carry `orphan_keys` / `recovered_keys` (keyed-loss identity lists)
+  and may be zero-call claim-only carriers for recovery evidence.
 - Results blocks may carry `unattributed_segments`
   (`{scope_index, unit, attempt}`); no degenerate `""` round renders.
 - Producer sidecars carry the `role` / `isolation` attribution stamp;
