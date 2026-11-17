@@ -52,6 +52,7 @@ from typing import Any
 
 from pkcs11_check.core._counters_durability import (
     COUNTERS_ATTEMPT_ENV,
+    COUNTERS_FLUSH_K_ENV,
     COUNTERS_ROLE_ENV,
     COUNTERS_UNIT_ENV,
     FLUSH_WINDOW_K,
@@ -120,6 +121,9 @@ _registration: Registration | None = None
 _registration_pid: int | None = None
 _dirty = False
 _pending_calls = 0
+#: Effective sidecar flush cadence (None until first read, then cached for
+#: the process; children inherit via env, so a normal run is consistent).
+_flush_k_cache: int | None = None
 _receipts: set[tuple[str, int]] = set()
 _probe_seq = 0
 _inprog_entry: Counter[tuple[str, str, str]] = Counter()
@@ -308,13 +312,61 @@ def _exit_flush() -> None:
         warnings.warn(f"call-counter exit flush failed: {exc}", UserWarning, stacklevel=2)
 
 
+def _effective_flush_k_locked() -> int:
+    """Return the cached sidecar flush cadence; caller holds ``_lock``.
+
+    Split out so the hot path adds no lock acquisition (ingest holds
+    the counters lock exactly once per transaction); external callers
+    use :func:`effective_flush_k`, which takes it. Same global lock
+    either way, so the garbage warning fires exactly once per process
+    even under threads.
+    """
+    global _flush_k_cache
+    if _flush_k_cache is not None:
+        return _flush_k_cache
+    raw = os.environ.get(COUNTERS_FLUSH_K_ENV, "").strip()
+    if not raw:
+        _flush_k_cache = FLUSH_WINDOW_K
+        return _flush_k_cache
+    try:
+        parsed = int(raw)
+    except ValueError:
+        parsed = 0
+    if parsed < 1:
+        warnings.warn(
+            f"invalid {COUNTERS_FLUSH_K_ENV}={raw!r}: expected a positive int; "
+            "falling back to 1 (exact)",
+            UserWarning,
+            stacklevel=2,
+        )
+        _flush_k_cache = FLUSH_WINDOW_K
+        return _flush_k_cache
+    _flush_k_cache = parsed
+    return _flush_k_cache
+
+
+def effective_flush_k() -> int:
+    """Return the sidecar flush cadence for this process (cached).
+
+    ``PKCS11_CHECK_COUNTERS_FLUSH_K`` sets how many evidence units
+    accumulate before the sidecar snapshot persists; unset means
+    ``FLUSH_WINDOW_K`` (1, exact). Garbage (non-int, < 1) warns loudly
+    once per process and falls back to 1 -- the safe direction is
+    exactness, and a perf-knob typo must not brick runs the way an
+    identity typo must. Read once per process (children inherit via
+    env); ``reset_for_tests`` clears the cache.
+    """
+    with _lock:
+        return _effective_flush_k_locked()
+
+
 def _mark_dirty_locked(calls: int = 0) -> None:
     """Mark evidence mutated; flush when the K window fills. Holds ``_lock``."""
     global _dirty, _pending_calls
     _dirty = True
     if _registration is not None and _registration_pid == os.getpid():
         _pending_calls += calls
-        if _pending_calls >= FLUSH_WINDOW_K:
+        if _pending_calls >= _effective_flush_k_locked():
             _flush_locked()
 
 
@@ -983,7 +1035,7 @@ def reset_for_tests() -> None:
     """Clear counters, phase, regions, losses, identity, receipts, and durability."""
     global _unkeyed_lost, _phase_name, _worker_uuid, _worker_uuid_pid
     global _registration, _registration_pid, _dirty, _pending_calls, _probe_seq, _journal_len
-    global _persistence_pending
+    global _persistence_pending, _flush_k_cache
     with _lock:
         _entry_counts.clear()
         _exit_counts.clear()
@@ -998,6 +1050,7 @@ def reset_for_tests() -> None:
         _registration_pid = None
         _dirty = False
         _pending_calls = 0
+        _flush_k_cache = None
         _receipts.clear()
         _probe_seq = 0
         _inprog_entry.clear()
