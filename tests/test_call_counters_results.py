@@ -367,6 +367,54 @@ def test_merge_keeps_folded_and_lost_statuses_distinct(tmp_path: Path) -> None:
     ]
 
 
+def test_merge_never_stamps_module_onto_zero_rows(tmp_path: Path) -> None:
+    from pkcs11_check.core.merge import _merge_call_counter_blocks
+
+    # Contract review F1: a module-less zero-call row (loss-attributed,
+    # no module traffic) must not gain its shard's module in a
+    # multi-module merge -- that tag would be fabricated attribution.
+    left = _counters_block(5)
+    left["by_module"]["by_module"] = {"mA": left["by_module"]["by_module"].pop("")}
+    zero_row: dict[str, Any] = {
+        "pid": 101,
+        "isolation": "file",
+        "total_calls": 0,
+        "complete": False,
+    }
+    left["by_process"].append(zero_row)
+    left["by_round"] = {
+        _MR1: {
+            "complete": False,
+            "total_calls": 5,
+            "by_module": left["by_module"],
+            "probes_lost": 1,
+            "by_process": left["by_process"],
+        }
+    }
+    right = _counters_block(5)
+    right["by_process"][0]["pid"] = 200
+    right["by_module"]["by_module"] = {"mB": right["by_module"]["by_module"].pop("")}
+    right["by_round"] = {
+        _MR2: {
+            "complete": True,
+            "total_calls": 5,
+            "by_module": right["by_module"],
+            "probes_lost": 0,
+            "by_process": right["by_process"],
+        }
+    }
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    shard_a.mkdir()
+    shard_b.mkdir()
+    merged = _merge_call_counter_blocks([(shard_a, left), (shard_b, right)])
+    assert merged is not None
+    by_pid = {row["pid"]: row for row in merged["by_process"]}
+    assert by_pid[100]["module"] == "mA"
+    assert by_pid[200]["module"] == "mB"
+    assert "module" not in by_pid[101]
+
+
 def test_merge_skips_malformed_segment_entries(tmp_path: Path) -> None:
     from pkcs11_check.core.merge import _merge_call_counter_blocks
 

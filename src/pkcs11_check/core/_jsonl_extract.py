@@ -520,7 +520,9 @@ def _parse_partial_counters(
     ]
     | None
 ):
-    """Validate a CallCountersPartial into its staged tuple (now with role + isolation).
+    """Validate a CallCountersPartial into its staged tuple.
+
+    Carries role + isolation + probes_lost + the three key lists.
 
     The producer uuid is required (a partial without one is unattributable
     garbage); the pid is optional (counts fold globally, but no by_process
@@ -1271,8 +1273,11 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             _union_receipts(part_run, part_receipts)
             # Recoveries harvest at stage time (like receipts): exact healing
             # must pierce session-supersede, which would otherwise skip this
-            # partial's whole contribution at fold time.
-            recovered_by_run.setdefault(part_run, set()).update(part_recovered)
+            # partial's whole contribution at fold time. Keys naming another
+            # producer are forged (adoption only ever heals its own uuid),
+            # so they drop here instead of erasing a real loss (robustness M2).
+            own_recovered = {key for key in part_recovered if key[0] == part_uuid}
+            recovered_by_run.setdefault(part_run, set()).update(own_recovered)
             staged_partials.append(
                 (
                     part_run,
@@ -1608,7 +1613,13 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     )
     round_rows: dict[str, list[dict[str, Any]]] = {run: [] for run in rounds}
     for (run, pid), state in sorted(pids.items()):
-        if state.has_session or state.fallback_used or state.partial_modules or state.end_states:
+        if (
+            state.has_session
+            or state.fallback_used
+            or state.partial_modules
+            or state.end_states
+            or state.loss.total() > 0
+        ):
             round_rows[run].extend(_counters_process_rows(pid, state))
     show_round = len({run for run, rows in round_rows.items() if rows}) > 1
     by_process: list[dict[str, Any]] = []

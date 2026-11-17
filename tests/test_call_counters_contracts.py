@@ -433,6 +433,10 @@ class TestShapePredicates:
         assert schema.is_lost_record(self._lost(buckets={})) is False
         assert schema.is_lost_record(self._lost(by_module={})) is False
         assert schema.is_lost_record(self._lost(probes_lost=0)) is False
+        assert schema.is_lost_record(self._lost(role="preflight")) is True
+        assert schema.is_lost_record(self._lost(role="bogus")) is False
+        assert schema.is_lost_record(self._lost(isolation="file")) is True
+        assert schema.is_lost_record(self._lost(isolation=7)) is False
 
     def _registry(self, **overrides: Any) -> dict[str, Any]:
         content: dict[str, Any] = {

@@ -109,7 +109,10 @@ _ingested_sources: set[tuple[str, int]] = set()
 #: never set it (they roll back instead); it clears only when a sidecar flush
 #: or journal append durably covers the retained evidence. A marker surviving
 #: to session emission forces counter-specific incomplete. Fork children
-#: inherit it like ``_dirty`` (their first covering flush clears it).
+#: inherit it like ``_dirty`` (their first covering flush clears it). No
+#: sidecar leg exists by construction: a failed flush cannot persist a
+#: marker to the file it failed to write, and a dead producer is already
+#: structurally incomplete via its partial+lost records.
 _persistence_pending: dict[str, Any] | None = None
 _worker_uuid: str | None = None
 _worker_uuid_pid: int | None = None
@@ -253,6 +256,10 @@ def _flush_locked() -> None:
         "unit": _registration.unit,
         "attempt": _registration.attempt,
         "pid": _registration.pid,
+        # Attribution stamp for registryless adoption (robustness N1):
+        # a torn registry with a surviving sidecar recovers these.
+        "role": _registration.role,
+        "isolation": _registration.isolation,
         "journal_seq": _journal_len,
         "in_progress": _serialize(Counter(_inprog_entry), Counter(_inprog_exit)),
         "receipts": [{"worker_uuid": uuid, "probe_seq": seq} for uuid, seq in sorted(_receipts)],

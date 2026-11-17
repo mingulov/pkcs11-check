@@ -3246,6 +3246,37 @@ class TestProbeFlushCommit:
 
 
 class TestProbeOrphanAdoption:
+    def test_empty_orphan_still_heals_and_unions_keys(self, engaged: Path) -> None:
+        # Robustness M1: a zero-counters orphan carries no counts but its
+        # identity still heals the parent's live claim and its nested keys
+        # still union -- healing must not gate on having counts to fold.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
+        )
+        _plant_probe_orphan(
+            engaged,
+            parent_uuid=_UUID_A,
+            seq=0,
+            counters=[],
+            lost_keys=[{"parent_uuid": _UUID_B, "probe_seq": 1}],
+        )
+        sidecar = durability.read_json_file(planted["sidecar"])
+        merged, claimed, consumed, recovered, orphan_keys = durability._adopt_probe_orphans(
+            engaged,
+            worker_uuid=_UUID_A,
+            sidecar=sidecar,
+            journal_lines=[],
+            claims={},
+            known_uuids={_UUID_A},
+            producer_run=_RUN,
+            producer_unit="a.py",
+        )
+        assert merged is None
+        assert claimed == []
+        assert recovered == [(_UUID_A, 0)]
+        assert orphan_keys == {(_UUID_B, 1)}
+
     def test_dead_worker_orphan_folds_exactly_once(self, engaged: Path, tmp_path: Path) -> None:
         pid, birth = _dead_pid_with_birth()
         _plant_producer(
@@ -5668,3 +5699,40 @@ class TestBarrierAdoptionE2E:
         assert len(partials) == 1
         assert partials[0]["total_calls"] == 9, "gap plus adopted orphan"
         assert not orphan.exists()
+
+
+class TestTornSidecarRoleRecovery:
+    def test_flush_payload_carries_role_and_isolation(self, engaged: Path) -> None:
+        # Robustness N1: the sidecar carries the registration's
+        # attribution stamp so registryless adoption recovers it.
+        call_counters.record_call("C_Login", module="m")
+        sidecar = _read_sidecar()
+        assert sidecar["role"] == "unit"
+        assert sidecar["isolation"] == "unknown"
+
+    def test_torn_sidecar_recovers_role_and_isolation(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged, uuid=_UUID_A, pid=pid, birth=birth, in_progress=_counts_block(5)
+        )
+        Path(planted["registry"]).unlink()
+        sidecar_path = Path(planted["sidecar"])
+        content = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        content["role"] = "preflight"
+        content["isolation"] = "file"
+        sidecar_path.write_text(json.dumps(content), encoding="utf-8")
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-9
+        )
+        partials = [rec for rec in records if rec["$report_type"] == "CallCountersPartial"]
+        assert len(partials) == 1
+        assert partials[0]["role"] == "preflight"
+        assert partials[0]["isolation"] == "file"
+        lost = [rec for rec in records if rec["$report_type"] == "CallCountersLost"]
+        assert len(lost) == 1
+        assert lost[0]["role"] == "preflight"
+        assert lost[0]["isolation"] == "file"

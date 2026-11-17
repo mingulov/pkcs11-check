@@ -975,6 +975,81 @@ def test_extract_unmarked_segment_yields_null_unit_attempt(tmp_path: Path) -> No
     assert payload["unattributed_segments"] == [{"scope_index": 1, "unit": None, "attempt": None}]
 
 
+def test_extract_forged_recovery_never_heals_another_producer(tmp_path: Path) -> None:
+    # Robustness M2: a partial's recovered_keys heal only its own
+    # producer's claims -- a forged key naming another producer is
+    # dropped at harvest (fail-closed), never erasing a real loss.
+    session = _session_record(100, 10)
+    session.update(
+        {
+            "worker_uuid": "a" * 32,
+            "run_id": _R1,
+            "probes_lost": 1,
+            "lost_keys": [{"parent_uuid": "a" * 32, "probe_seq": 0}],
+        }
+    )
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            session,
+            {
+                "$report_type": "CallCountersPartial",
+                "worker_uuid": "b" * 32,
+                "truncated": True,
+                "total_calls": 0,
+                "by_module": {},
+                "run_id": _R1,
+                "recovered_keys": [{"parent_uuid": "a" * 32, "probe_seq": 0}],
+            },
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["probes_lost"] == 1
+    assert {"worker_uuid": "a" * 32, "probe_seq": 0, "status": "lost"} in payload["probes_detail"]
+
+
+def test_extract_loss_only_partial_pid_gets_zero_row(tmp_path: Path) -> None:
+    # Contract review F5: a pid-bearing loss-only partial (zero counts,
+    # real ledger loss, no session/fallback/lost) must render its pid's
+    # zero row -- the gate matches the renderer's own loss trigger, so a
+    # counted loss never lacks its explaining row.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {
+                "$report_type": "CallCountersPartial",
+                "worker_uuid": "c" * 32,
+                "truncated": True,
+                "total_calls": 0,
+                "by_module": {},
+                "probes_lost": 1,
+                "pid": 300,
+                "run_id": _R1,
+            },
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["total_calls"] == 0
+    assert payload["complete"] is False
+    assert payload["probes_lost"] == 1
+    assert payload["by_process"] == [
+        {
+            "pid": 300,
+            "isolation": "unknown",
+            "total_calls": 0,
+            "complete": False,
+            "worker_uuid": "c" * 32,
+        }
+    ]
+
+
 def test_extract_segments_sorted_by_scope(tmp_path: Path) -> None:
     # Two C2b segments stage through set iteration (nondeterministic
     # order): the wire shape is canonically sorted by scope.

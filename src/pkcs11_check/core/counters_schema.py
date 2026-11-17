@@ -534,6 +534,11 @@ def is_lost_record(value: object) -> TypeGuard[dict[str, Any]]:
         return False
     if "attempt" in value and not _is_nonneg_int(value["attempt"]):
         return False
+    if "role" in value and not is_role(value["role"]):
+        return False
+    isolation = value.get("isolation")
+    if isolation is not None and not isinstance(isolation, str):
+        return False
     return "origin_shard" not in value or isinstance(value["origin_shard"], str)
 
 

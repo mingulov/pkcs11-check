@@ -419,7 +419,10 @@ def register_worker(
     Registration causally precedes the producer's first provider call, so a
     torn or missing registry proves zero-loss: nothing was ever admitted.
     Filenames carry identity + nonce (uuid4, randomness only), so two
-    producers never share evidence files.
+    producers never share evidence files. Registry invariant: isolation
+    is required and non-empty here, so every registry-backed producer
+    carries its attribution stamp from birth (records read it back,
+    defaulting to ``unknown`` only for legacy registry-less evidence).
 
     Raises:
         CounterPersistenceError: When sealed (pre-check, or a barrier seal
@@ -1082,6 +1085,9 @@ def _read_probe_orphan(
             identity[field] = value
     attempt = data.get("attempt")
     if _is_nonneg_int(attempt):
+        # Parsed for evidence completeness; the reunion matches run/unit
+        # only (an exact parent_uuid implies the registration and hence
+        # the attempt, so matching it would be vacuous).
         identity["attempt"] = attempt
     return (uuid, seq, list(counters), frozenset(keys), identity)
 
@@ -1228,6 +1234,9 @@ def _adopt_probe_orphans(
     receipt is suppressed by design), followed by a failed parent flush
     and a pre-flush death, folds once via its committed entry and once
     here. That triple fault stays fail-visible through the lost record.
+    Adopted orphans' nested receipts are dropped, never propagated:
+    probe sidecars carry counters, keyed losses, and F2 identity only,
+    and only the orphan's own receipt is claimed here.
     """
     prefix = worker_uuid[:8]
     colliders = sorted(uuid for uuid in known_uuids if uuid.startswith(prefix))
@@ -1250,15 +1259,19 @@ def _adopt_probe_orphans(
         if (child_uuid, seq) in coverage:
             consumed.append(path)
             return
+        # Healing and key-union never gate on counts: a zero-counters
+        # orphan still names its (parent, seq) identity (the child
+        # accounted for zero calls) and may carry nested grandchild
+        # keys (robustness M1). Only the count merge and the receipt
+        # claim need a block. (.update, not |=: rebinding the closure
+        # name would raise UnboundLocalError.)
+        orphan_keys.update(keys)
+        if seq == filename_seq:
+            recovered.append((worker_uuid, seq))
         block = _probe_rows_to_block(counters)
         if block is not None:
             merge_module_first(merged, block)
             claimed.append({"worker_uuid": child_uuid, "probe_seq": seq})
-            # .update, not |=: augmented assignment would rebind the
-            # closure name (UnboundLocalError); mutation shares the set.
-            orphan_keys.update(keys)
-            if seq == filename_seq:
-                recovered.append((worker_uuid, seq))
         consumed.append(path)
 
     # Markers (order-free, conservative): consumed markers suppress before
@@ -1343,7 +1356,13 @@ def _adopt_probe_orphans(
 
 
 def _sidecar_loss_keys(sidecar: Any | None) -> set[tuple[str, int]]:
-    """Return the sidecar's keyed-loss set (tolerantly parsed, never raises)."""
+    """Return the sidecar's keyed-loss set (tolerantly parsed, never raises).
+
+    Keys are read from the sidecar only, never the journal: with K=1
+    every loss mutation flushes the sidecar immediately, so its key set
+    is always at least as current as any journal window (a union there
+    would be set-idempotent but pointless).
+    """
     if not isinstance(sidecar, dict):
         return set()
     raw = sidecar.get("lost_keys", ())
@@ -1490,7 +1509,12 @@ def _partial_record(
     orphan_keys: list[dict[str, Any]] | None = None,
     recovered_keys: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build a gap-only ``CallCountersPartial`` record (schema-valid)."""
+    """Build a ``CallCountersPartial`` record (schema-valid).
+
+    Gap-only for dead producers, zero-call loss-only when only a loss
+    scalar/keys survive, claim-only when only adopted-orphan evidence
+    rides along.
+    """
     record: dict[str, Any] = {
         "$report_type": "CallCountersPartial",
         "worker_uuid": worker_uuid,
@@ -1728,6 +1752,7 @@ def collect_unit(
         records = []
         if block is None and (scalar_count or gap_keys or orphan_keys):
             block = {"total_calls": 0, "by_module": {}}
+        stamp_role, stamp_isolation = _sidecar_stamp(sidecar)
         if block is not None:
             records.append(
                 _partial_record(
@@ -1741,6 +1766,8 @@ def collect_unit(
                     block=block,
                     receipts=receipts,
                     probes_lost=scalar_count,
+                    role=stamp_role,
+                    isolation=stamp_isolation,
                     lost_keys=_keys_to_wire(gap_keys),
                     orphan_keys=_keys_to_wire(orphan_keys),
                     recovered_keys=_keys_to_wire(set(recovered)),
@@ -1753,6 +1780,8 @@ def collect_unit(
             run_id=str(sidecar.get("run_id", "")),
             unit=str(sidecar.get("unit", "")),
             attempt=sidecar.get("attempt") if _is_nonneg_int(sidecar.get("attempt")) else None,
+            role=stamp_role,
+            isolation=stamp_isolation,
         )
         if lost is not None:
             records.append(lost)
@@ -1775,6 +1804,20 @@ def _reap_torn_registry(root: Path, registry_path: Path) -> None:
         registry_path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def _sidecar_stamp(sidecar: dict[str, Any]) -> tuple[str, str]:
+    """Return the (role, isolation) stamp from sidecar content (tolerant).
+
+    Sidecars are unvalidated evidence (unlike registries), so a mistyped
+    stamp falls back to the defaults instead of failing the adoption.
+    """
+    role = sidecar.get("role")
+    isolation = sidecar.get("isolation")
+    # isinstance narrows for mypy (is_role returns plain bool).
+    stamped_role = role if isinstance(role, str) and is_role(role) else "unit"
+    stamped_isolation = isolation if isinstance(isolation, str) else "unknown"
+    return (stamped_role, stamped_isolation)
 
 
 def _adopt_orphan_sidecar(sidecar_path: Path, seen: set[str]) -> tuple[str, dict[str, Any]] | None:
@@ -2268,6 +2311,8 @@ def prepare_resume(
             run_id=content["run_id"],
             unit=content["unit"],
             attempt=content["attempt"],
+            role=content["role"],
+            isolation=content.get("isolation", "unknown"),
         )
         if lost is not None:
             _emit(content["unit"], [lost])
@@ -2298,6 +2343,7 @@ def prepare_resume(
         if uuid in sessions:
             claim_records = []
             if orphan_block is not None:
+                barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
                 claim_records.append(
                     _partial_record(
                         worker_uuid=uuid,
@@ -2309,6 +2355,8 @@ def prepare_resume(
                         pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
                         block=orphan_block,
                         receipts=orphan_receipts,
+                        role=barrier_stamp_role,
+                        isolation=barrier_stamp_isolation,
                     )
                 )
             _emit(str(sidecar.get("unit", "")), claim_records)
@@ -2321,6 +2369,7 @@ def prepare_resume(
             block = orphan_block if block is None else merge_module_first(block, orphan_block)
             receipts = [*receipts, *orphan_receipts]
         records = []
+        barrier_stamp_role, barrier_stamp_isolation = _sidecar_stamp(sidecar)
         if block is not None:
             records.append(
                 _partial_record(
@@ -2333,6 +2382,8 @@ def prepare_resume(
                     pid=sidecar.get("pid") if _is_nonneg_int(sidecar.get("pid")) else None,
                     block=block,
                     receipts=receipts,
+                    role=barrier_stamp_role,
+                    isolation=barrier_stamp_isolation,
                 )
             )
         lost = _lost_record(
@@ -2342,6 +2393,8 @@ def prepare_resume(
             run_id=str(sidecar.get("run_id", "")),
             unit=str(sidecar.get("unit", "")),
             attempt=sidecar.get("attempt") if _is_nonneg_int(sidecar.get("attempt")) else None,
+            role=barrier_stamp_role,
+            isolation=barrier_stamp_isolation,
         )
         if lost is not None:
             records.append(lost)
