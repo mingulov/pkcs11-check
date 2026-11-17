@@ -5426,6 +5426,35 @@ class TestEagerProbeRegistration:
             run_probe("_echo", {"module_path": "/x.so"})
         assert calls == [], "sealed probes never spawn (fail fast, no phantom traffic)"
 
+    def test_run_probe_strips_ambient_probe_context_when_disengaged(
+        self, disengaged: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from pkcs11_check.testcases._probes.runner import run_probe
+
+        f2_keys = (
+            durability.PROBE_PARENT_ENV,
+            durability.PROBE_RUN_ENV,
+            durability.PROBE_UNIT_ENV,
+            durability.PROBE_ATTEMPT_ENV,
+            durability.PROBE_ROLE_ENV,
+            durability.PROBE_ISOLATION_ENV,
+        )
+        for key in f2_keys:
+            monkeypatch.setenv(key, "ambient-leak")
+        seen: dict[str, str] = {}
+
+        def _capture(*args: Any, **kwargs: Any) -> Any:
+            seen.update(kwargs.get("env", {}))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        result = run_probe("_echo", {"module_path": "/x.so"})
+        assert result.returncode == 0
+        for key in f2_keys:
+            assert key not in seen, "ambient probe context never leaks (H gap pin)"
+
     def test_run_probe_exports_parent_context(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

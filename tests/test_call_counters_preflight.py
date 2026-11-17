@@ -383,6 +383,12 @@ class TestDoctorExcluded:
         monkeypatch.setenv(PREFLIGHT_EVIDENCE_ENV, "/tmp/evidence.jsonl")
         monkeypatch.setenv("_P11CHECK_PROBE_SEQ", "7")
         monkeypatch.setenv("_P11CHECK_PROBE_SIDECAR", "/tmp/probe.json")
+        monkeypatch.setenv("_P11CHECK_PROBE_PARENT", "p" * 32)
+        monkeypatch.setenv("_P11CHECK_PROBE_RUN", "R1")
+        monkeypatch.setenv("_P11CHECK_PROBE_UNIT", "a.py")
+        monkeypatch.setenv("_P11CHECK_PROBE_ATTEMPT", "0")
+        monkeypatch.setenv("_P11CHECK_PROBE_ROLE", "unit")
+        monkeypatch.setenv("_P11CHECK_PROBE_ISOLATION", "file")
         env = preflight_child_env(None)
         for key in (
             "PKCS11_CHECK_COUNTERS_DIR",
@@ -393,6 +399,12 @@ class TestDoctorExcluded:
             PREFLIGHT_EVIDENCE_ENV,
             "_P11CHECK_PROBE_SEQ",
             "_P11CHECK_PROBE_SIDECAR",
+            "_P11CHECK_PROBE_PARENT",
+            "_P11CHECK_PROBE_RUN",
+            "_P11CHECK_PROBE_UNIT",
+            "_P11CHECK_PROBE_ATTEMPT",
+            "_P11CHECK_PROBE_ROLE",
+            "_P11CHECK_PROBE_ISOLATION",
         ):
             assert key not in env
 
