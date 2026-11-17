@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from pkcs11_check.config import P11TestConfig
+from pkcs11_check.core.call_counters import counted_bucket
 from pkcs11_check.core.loader import P11Module, load_module
 from pkcs11_check.raw.api import RawPKCS11
 
@@ -233,6 +234,7 @@ def _restart_signature_rvs(
     return frozenset(int(rv) for rv in values)
 
 
+@counted_bucket("session_provisioning")
 def _open_or_reinit(
     p11_module: P11Module,
     p11_config: P11TestConfig,

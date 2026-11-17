@@ -22,6 +22,7 @@ from cryptography.x509 import ObjectIdentifier as _CryptoObjectIdentifier
 from pydantic import SecretStr
 
 from pkcs11_check.classification import classify, raise_for_record, record_as
+from pkcs11_check.core.call_counters import counted_bucket
 from pkcs11_check.raw import sw_wrap
 from pkcs11_check.raw.api import ckm_name
 from pkcs11_check.raw.der import decode_ec_point
@@ -1447,6 +1448,7 @@ def _build_bootstrap_wrap_context(rs: Any, cfg: Any, owned: list[int]) -> WrapCo
 _VALUE_BEARING: frozenset[int] = frozenset({CKA_VALUE, CKA_VALUE_LEN})
 
 
+@counted_bucket("session_provisioning")
 def provision_secret_key(
     rs: Any,
     cfg: Any,
@@ -1624,6 +1626,7 @@ def provision_secret_key(
 # ---------------------------------------------------------------------------
 
 
+@counted_bucket("session_provisioning")
 def provision_rsa_private_key(
     rs: Any,
     cfg: Any,
@@ -1829,6 +1832,7 @@ def provision_rsa_private_key(
 _EC_UNWRAP_STRIP: frozenset[int] = frozenset({CKA_EC_PARAMS, CKA_VALUE})
 
 
+@counted_bucket("session_provisioning")
 def provision_ec_private_key(
     rs: Any,
     cfg: Any,
@@ -2220,6 +2224,7 @@ def _ec_public_spki_or_none(ec_params: bytes, ec_point: bytes) -> bytes | None:
         return None
 
 
+@counted_bucket("session_provisioning")
 def provision_public_key(
     rs: Any,
     cfg: Any,
@@ -2322,6 +2327,7 @@ def provision_public_key(
 # ---------------------------------------------------------------------------
 
 
+@counted_bucket("session_provisioning")
 def provision_certificate(
     rs: Any,
     cfg: Any,
@@ -2398,6 +2404,7 @@ def provision_certificate(
 # ---------------------------------------------------------------------------
 
 
+@counted_bucket("session_provisioning")
 def provision_data(
     rs: Any,
     cfg: Any,
