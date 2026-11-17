@@ -258,7 +258,11 @@ def _assert_exact_or_named_or_partial(
     partially recovered ones carry counts plus an identity-bearing
     loss/truncated disposition; zero recoverable evidence carries an
     identity-bearing loss; recovered counts appear exactly once; and an
-    unrecovered tail forces the process/round incomplete.
+    unrecovered tail forces the process/round incomplete. Under K=1 a dead
+    producer routinely recovers numerically exact counts through its
+    truncated partial while staying honestly incomplete (the in-flight
+    checkpoint at kill time is unobservable, so completeness is unprovable):
+    exact counts plus a named loss plus incomplete is the fourth accepted arm.
     """
     recovered = extracted["total_calls"] if extracted is not None else 0
     assert recovered <= oracle_total, "counter evidence counted twice"
@@ -267,7 +271,8 @@ def _assert_exact_or_named_or_partial(
     fully_recovered = recovered == oracle_total and not losses and complete
     named_partial = 0 < recovered < oracle_total and bool(losses) and not complete
     named_zero = recovered == 0 and bool(losses) and not complete
-    assert fully_recovered or named_partial or named_zero, (
+    exact_but_truncated = recovered == oracle_total and bool(losses) and not complete
+    assert fully_recovered or named_partial or named_zero or exact_but_truncated, (
         f"recovered {recovered}/{oracle_total} with {len(losses)} loss records "
         f"(complete={complete}): no exact-or-named-or-partial accounting"
     )

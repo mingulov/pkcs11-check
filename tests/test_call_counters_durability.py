@@ -222,7 +222,8 @@ class TestRegistration:
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _record_calls(3)
-        assert call_counters.flush_counters() is True
+        # K=1: already flushed; the explicit flush is a clean no-op.
+        assert call_counters.flush_counters() is False
         info = call_counters.registration_info()
         assert info is not None
         parent_sidecar = Path(info["sidecar_path"])
@@ -247,23 +248,28 @@ class TestRegistration:
 
 
 class TestFlusher:
-    def test_k_flush_cadence_every_ten_calls(self, engaged: Path) -> None:
-        _record_calls(9)
+    def test_k1_flush_cadence_every_record(self, engaged: Path) -> None:
+        # K=1 (rc3 Area A): every entry AND every return persists; there is
+        # no below-K window anymore. Each step reads the disk, not globals.
+        call_counters.record_call("C_Login", module="m")
         info = call_counters.registration_info()
         assert info is not None
         sidecar = Path(info["sidecar_path"])
-        assert not sidecar.exists()
-        _record_calls(1)
         assert sidecar.exists()
         first = json.loads(sidecar.read_text(encoding="utf-8"))
-        assert first["in_progress"]["total_calls"] == 10
-        _record_calls(9)
-        assert json.loads(sidecar.read_text(encoding="utf-8")) == first
-        _record_calls(1)
+        assert first["in_progress"]["total_calls"] == 1
+        call_counters.record_return("C_Login", 0, module="m")
         second = json.loads(sidecar.read_text(encoding="utf-8"))
-        assert second["in_progress"]["total_calls"] == 20
+        assert second["in_progress"]["total_calls"] == 1
+        assert _sidecar_by_fn(second, "m", "C_Login")["by_rv"]["0"]["count"] == 1
+        _record_calls(2)
+        third = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert third["in_progress"]["total_calls"] == 3
 
     def test_dirty_flag_skips_clean_flush(self, engaged: Path) -> None:
+        # K=1: records auto-flush, so the tree is clean after every record
+        # and an explicit flush is a no-op. Dirt only survives a failed
+        # flush (see the retain/repair tests); the True arm lives there.
         for _ in range(10):
             call_counters.record_call("C_Login")
         info = call_counters.registration_info()
@@ -273,7 +279,7 @@ class TestFlusher:
         assert call_counters.flush_counters() is False
         assert sidecar.read_bytes() == before
         call_counters.record_call("C_OneMore")
-        assert call_counters.flush_counters() is True
+        assert call_counters.flush_counters() is False
         assert sidecar.read_bytes() != before
 
     def test_boundary_publish_moves_window_to_journal(self, engaged: Path) -> None:
@@ -299,14 +305,29 @@ class TestFlusher:
         sidecar = json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
         assert sidecar["in_progress"]["total_calls"] == 2
 
-    def test_exit_flush_writes_pending_tail(self, engaged: Path) -> None:
+    def test_exit_flush_writes_pending_tail(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # K=1: the tail is already current, so the exit flush is a clean
+        # no-op — but it still recovers dirt retained by a failed flush.
         _record_calls(3)
         info = call_counters.registration_info()
         assert info is not None
         sidecar = Path(info["sidecar_path"])
-        assert not sidecar.exists()
+        assert json.loads(sidecar.read_text(encoding="utf-8"))["in_progress"]["total_calls"] == 3
         call_counters._exit_flush()
         assert json.loads(sidecar.read_text(encoding="utf-8"))["in_progress"]["total_calls"] == 3
+        call_counters.record_call("C_Tail", module="m")
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Tail", 0, module="m")
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+        call_counters._exit_flush()
+        on_disk = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert on_disk["in_progress"]["total_calls"] == 4
+        assert _sidecar_by_fn(on_disk, "m", "C_Tail")["by_rv"]["0"]["count"] == 1
+        assert call_counters.persistence_pending() is False
 
     def test_atomic_replace_keeps_old_sidecar_on_failure(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
@@ -321,9 +342,11 @@ class TestFlusher:
             raise OSError("disk on fire")
 
         monkeypatch.setattr(os, "replace", _boom)
-        call_counters.record_call("C_OneMore")
+        # K=1: the record itself attempts the flush, so it raises (rolling
+        # the entry back); the old sidecar stays intact, no tmp litter.
         with pytest.raises(call_counters.CounterPersistenceError):
-            call_counters.flush_counters()
+            call_counters.record_call("C_OneMore")
+        assert call_counters.serialize_current()["total_calls"] == 10
         assert sidecar.read_bytes() == before
         assert list(engaged.glob("*.tmp-*")) == []
 
@@ -826,14 +849,17 @@ def _plant_producer(
     journal: list[dict[str, Any]] | None = None,
     journal_seq: int | None = -1,
     receipts: list[dict[str, Any]] | None = None,
+    probes_lost: Any = None,
 ) -> dict[str, Path]:
     """Plant registry + sidecar + journal files for a (possibly dead) producer.
 
     ``journal_seq`` defaults to ``len(journal)`` (a cleanly flushed producer);
     pass ``None`` to omit it from the sidecar (an ambiguity the collector
-    must read as conflict when the journal is non-empty). ``receipts`` seeds
-    the sidecar's folded-probe receipt list (a parent that flushed after
-    ingesting probes).
+    reads as conflict when the journal is non-empty, folding the snapshot
+    only). ``receipts`` seeds the sidecar's folded-probe receipt list (a
+    parent that flushed after ingesting probes). ``probes_lost`` seeds the
+    sidecar's loss scalar (omitted when None; pass garbage to plant a
+    mistyped scalar).
     """
     reg_dir = root / "registrations"
     reg_dir.mkdir(parents=True, exist_ok=True)
@@ -866,6 +892,8 @@ def _plant_producer(
         seq = len(journal or []) if journal_seq == -1 else journal_seq
         if seq is not None:
             sidecar_content["journal_seq"] = seq
+        if probes_lost is not None:
+            sidecar_content["probes_lost"] = probes_lost
         sidecar.write_text(json.dumps(sidecar_content), encoding="utf-8")
     if journal:
         journal_path.write_text(
@@ -1147,12 +1175,14 @@ class TestCollection:
         for kwargs, expected in cases:
             assert durability.end_state_for_attempt(**kwargs) == expected
 
-    def test_journal_sidecar_ambiguity_yields_conflict_not_counts(
+    def test_missing_seq_folds_snapshot_only_plus_conflict(
         self, engaged: Path, tmp_path: Path
     ) -> None:
         pid, birth = _dead_pid_with_birth()
         # A non-empty journal with no journal_seq cannot disambiguate
-        # journaled-vs-in-progress overlap: conflict, never invented counts.
+        # journaled-vs-in-progress overlap: fold the snapshot only (the one
+        # exact piece), skip every uncommitted journal window, and mark the
+        # producer conflict — recovered, never double-counted, never silent.
         _plant_producer(
             engaged,
             uuid=_UUID_A,
@@ -1169,8 +1199,12 @@ class TestCollection:
         records = durability.collect_unit(
             engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
         )
-        assert [rec["$report_type"] for rec in records] == ["CallCountersLost"]
-        assert records[0]["end_state"] == "conflict"
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 2
+        assert records[1]["end_state"] == "conflict"
 
     def test_torn_journal_tail_is_benign(self, engaged: Path, tmp_path: Path) -> None:
         # A torn TAIL is the crash-mid-append shape: the unpublished window's
@@ -1230,9 +1264,10 @@ class TestCollection:
             "CallCountersPartial",
             "CallCountersLost",
         ]
-        # t1 (3) + tail (2); post-seq t2 stays excluded (fail toward loud
-        # incomplete, never toward double count).
-        assert records[0]["total_calls"] == 5
+        # t1 (3) + t2 (4); the stale tail is subsumed by the valid
+        # window beyond the mark (single-writer append order), so it folds
+        # out while every valid window folds in. The tear still conflicts.
+        assert records[0]["total_calls"] == 7
         assert records[1]["end_state"] == "conflict"
 
 
@@ -3002,11 +3037,14 @@ def _rv_total(flat: list[list[Any]], rv: int | None) -> int:
 
 
 class TestKBoundaryRollback:
-    @pytest.mark.parametrize("direct", [False, True])
     def test_k_boundary_write_failure_leaves_provider_and_counters_unchanged(
-        self, engaged: Path, monkeypatch: pytest.MonkeyPatch, direct: bool
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        window = durability.FLUSH_WINDOW_K
+        # K=1: every admission is a K boundary. Break the writer before the
+        # first call: the entry raises before the provider runs and rolls
+        # back the just-admitted counts (strong exception guarantee). The
+        # direct-call arm moved to TestRetainNotRollback: post-hoc counts
+        # retain, they never roll back.
         provider_calls = 0
 
         def provider() -> int:
@@ -3014,77 +3052,62 @@ class TestKBoundaryRollback:
             provider_calls += 1
             return 0
 
-        def full_call() -> None:
-            if direct:
-                provider()
-                call_counters.record_direct_call("C_Login", 0)
-            else:
-                call_counters.record_call("C_Login")
-                provider()
-                call_counters.record_return("C_Login", 0)
-
-        for _ in range(window - 1):
-            full_call()
-        assert provider_calls == window - 1
-        assert call_counters.serialize_current()["total_calls"] == window - 1
-        # Pre-K state: the window is full but nothing has flushed yet (no
-        # explicit flush here: any flush would restart the K window).
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_call("C_Login")
+            provider()  # Unreachable: the record raises first.
+        assert provider_calls == 0, "the call never reached the provider"
+        current = call_counters.serialize_current()
+        assert current["total_calls"] == 0, "entry rolled back"
+        flat = call_counters.flatten_current()
+        assert _rv_total(flat, 0) == 0, "no exits admitted"
+        assert _rv_total(flat, None) == 0
         info = call_counters.registration_info()
         assert info is not None
         sidecar = Path(info["sidecar_path"])
-        assert not sidecar.exists()
-        # Break the writer: the Kth admission raises before the provider runs
-        # and rolls back the just-admitted counts (strong exception guarantee).
-        original = call_counters.write_sidecar_atomic
-        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
-        with pytest.raises(durability.CounterPersistenceError):
-            if direct:
-                call_counters.record_direct_call("C_Login", 0)
-                provider()  # Unreachable: the record raises first.
-            else:
-                call_counters.record_call("C_Login")
-                provider()  # Unreachable: the record raises first.
-        assert provider_calls == window - 1, "the Kth call never reached the provider"
-        current = call_counters.serialize_current()
-        assert current["total_calls"] == window - 1, "entry rolled back"
-        flat = call_counters.flatten_current()
-        assert _rv_total(flat, 0) == window - 1, "exits rolled back"
-        assert _rv_total(flat, None) == 0
         assert not sidecar.exists(), "the failed K flush leaves no durable trace"
+        assert call_counters.persistence_pending() is False, "nothing retained, nothing pending"
         with pytest.raises(durability.CounterPersistenceError):
             call_counters.flush_counters()
-        # Dirty evidence is retained for retry: repairing the writer lets the
-        # Kth call land, flushing exactly at the K boundary again.
+        # Repairing the writer lets the call land, flushed immediately.
         monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
-        full_call()
-        assert provider_calls == window
-        assert call_counters.serialize_current()["total_calls"] == window
-        assert (
-            json.loads(sidecar.read_text(encoding="utf-8"))["in_progress"]["total_calls"] == window
-        ), "retry flushes at K (pending restored, dirty kept)"
+        call_counters.record_call("C_Login")
+        provider()
+        call_counters.record_return("C_Login", 0)
+        assert provider_calls == 1
+        assert call_counters.serialize_current()["total_calls"] == 1
+        assert json.loads(sidecar.read_text(encoding="utf-8"))["in_progress"]["total_calls"] == 1, (
+            "retry flushes immediately under K=1"
+        )
 
-    def test_record_return_retry_failure_rolls_back_exit(
+    def test_record_return_retry_failure_retains_exit_and_marks_pending(
         self, engaged: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        window = durability.FLUSH_WINDOW_K
+        # rc3 Area A flips this contract: a return whose flush fails KEEPS
+        # its exit (the provider already returned — rolling back would hide
+        # real traffic) and marks the undurable evidence pending. There is
+        # no re-record: the exit was never unadmitted.
         original = call_counters.write_sidecar_atomic
         monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
-        # Fill the K window through post-hoc child evidence (real provider
-        # data: the ingest path admits without rollback by design).
+        # Post-hoc child evidence still admits without rollback by design.
         with pytest.raises(durability.CounterPersistenceError):
-            call_counters.ingest_child_evidence([["m", "C_Login", 0, window]])
-        assert call_counters.serialize_current()["total_calls"] == window
-        # A return now retries the failed flush; its own exit rolls back.
+            call_counters.ingest_child_evidence([["m", "C_Login", 0, 10]])
+        assert call_counters.serialize_current()["total_calls"] == 10
+        assert call_counters.persistence_pending() is True
+        # A return now retries the failed flush; its own exit is retained.
         with pytest.raises(durability.CounterPersistenceError):
             call_counters.record_return("C_Done", 0)
         flat = call_counters.flatten_current()
-        assert _rv_total(flat, 0) == window, "the retried exit was not admitted"
-        assert all(row[1] != "C_Done" for row in flat)
-        # Repair: the retry succeeds and the exit lands exactly once.
+        assert _rv_total(flat, 0) == 11, "the retried exit stays admitted"
+        assert sum(int(row[3]) for row in flat if row[1] == "C_Done") == 1
+        # Repair: the next entry covers everything (marker clears) and the
+        # retained exit lands exactly once — never re-recorded.
         monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
-        call_counters.record_return("C_Done", 0)
+        call_counters.record_call("C_Next")
+        assert call_counters.persistence_pending() is False
         flat = call_counters.flatten_current()
-        assert _rv_total(flat, 0) == window + 1
+        assert _rv_total(flat, 0) == 11
         assert sum(int(row[3]) for row in flat if row[1] == "C_Done") == 1
 
 
@@ -3094,9 +3117,7 @@ class TestKBoundaryRollback:
 
 
 class TestProbeFlushCommit:
-    def test_below_k_fold_lands_in_parent_sidecar_on_disk(
-        self, engaged: Path, tmp_path: Path
-    ) -> None:
+    def test_probe_fold_commits_parent_checkpoint(self, engaged: Path, tmp_path: Path) -> None:
         from pkcs11_check.testcases._probes.runner import ingest_probe_payload
 
         seq = call_counters.assign_probe_seq()
@@ -3105,7 +3126,9 @@ class TestProbeFlushCommit:
         info = call_counters.registration_info()
         assert info is not None
         sidecar = Path(info["sidecar_path"])
-        assert not sidecar.exists(), "below K nothing has flushed yet"
+        # K=1: the parent call already flushed; the probe fold still commits
+        # (flush-then-delete) with the folded counts.
+        assert json.loads(sidecar.read_text(encoding="utf-8"))["in_progress"]["total_calls"] == 1
         probe_sidecar = _plant_probe_orphan(engaged, parent_uuid=parent_uuid, seq=seq)
         cov = tmp_path / "cov.json"
         cov.write_text(
@@ -3603,3 +3626,684 @@ class TestLostReconciliation:
         assert payload["by_round"][_RUN]["complete"] is True
         assert payload["by_round"]["R2"]["complete"] is False
         assert [entry["worker_uuid"] for entry in payload["lost_processes"]] == [_UUID_A]
+
+
+# --------------------------------------------------------------------------
+# Area A (rc3): K=1 cadence — every record persists immediately
+# --------------------------------------------------------------------------
+
+
+def _sidecar_by_fn(on_disk: dict[str, Any], module: str, fn: str) -> dict[str, Any]:
+    """Find one function's block in an on-disk sidecar payload (any bucket)."""
+    modules = on_disk["in_progress"]["by_module"]
+    assert module in modules
+    for bucket_block in modules[module]["buckets"].values():
+        by_fn = bucket_block.get("by_fn", {})
+        if fn in by_fn:
+            return by_fn[fn]
+    raise AssertionError(f"{fn} missing from on-disk module {module!r}")
+
+
+def _read_sidecar() -> dict[str, Any]:
+    info = call_counters.registration_info()
+    assert info is not None
+    return json.loads(Path(info["sidecar_path"]).read_text(encoding="utf-8"))
+
+
+class TestK1Cadence:
+    def test_flush_window_is_one(self) -> None:
+        assert durability.FLUSH_WINDOW_K == 1
+
+    def test_every_entry_flushes_immediately(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        on_disk = _read_sidecar()
+        assert on_disk["in_progress"]["total_calls"] == 1
+        assert call_counters.flush_counters() is False
+
+    def test_every_return_flushes_immediately(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        call_counters.record_return("C_Login", 0, module="m")
+        # The RV is durable before any next call runs: a kill here keeps
+        # the return. Read the sidecar, never the globals.
+        on_disk = _read_sidecar()
+        assert on_disk["in_progress"]["total_calls"] == 1
+        assert _sidecar_by_fn(on_disk, "m", "C_Login")["by_rv"]["0"]["count"] == 1
+        assert call_counters.flush_counters() is False
+
+    def test_direct_call_flushes_immediately(self, engaged: Path) -> None:
+        call_counters.record_direct_call("C_Login", 0, module="m")
+        on_disk = _read_sidecar()
+        assert on_disk["in_progress"]["total_calls"] == 1
+        assert _sidecar_by_fn(on_disk, "m", "C_Login")["by_rv"]["0"]["count"] == 1
+
+    def test_note_lost_probe_flushes_scalar_immediately(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        call_counters.note_lost_probe()
+        assert _read_sidecar().get("probes_lost") == 1
+        assert call_counters.flush_counters() is False
+
+    def test_add_lost_probes_flushes_scalar_immediately(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        call_counters.add_lost_probes(3)
+        assert _read_sidecar().get("probes_lost") == 3
+        assert call_counters.flush_counters() is False
+
+    def test_receipt_only_ingest_persists_receipts_immediately(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        receipt = {"worker_uuid": _UUID_B, "probe_seq": 0}
+        call_counters.ingest_child_evidence([], 0, [receipt])
+        assert receipt in _read_sidecar()["receipts"]
+        assert call_counters.flush_counters() is False
+
+    def test_loss_only_ingest_flushes_immediately(self, engaged: Path) -> None:
+        call_counters.record_call("C_Login", module="m")
+        call_counters.ingest_child_evidence([], 2, [])
+        assert _read_sidecar().get("probes_lost") == 2
+        assert call_counters.flush_counters() is False
+
+    def test_zero_call_mutation_flush_failure_is_loud(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_counters.record_call("C_Login", module="m")
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.note_lost_probe()
+        # Retained, marked, and loud: the loss is not silently dropped.
+        assert call_counters.probes_lost() == 1
+        assert call_counters.persistence_pending() is True
+
+    def test_repeated_publish_flush_failure_then_success_converges(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The journal leg covers retained evidence even when the sidecar
+        # leg fails: a failed publish-flush raises (fail-visible) but sets
+        # no pending marker, and a later success converges the mark.
+        original = call_counters.write_sidecar_atomic
+        for nodeid in ("a.py::t1", "a.py::t2"):
+            before = call_counters.take_snapshot()
+            _record_calls(1)
+            window = call_counters.diff_snapshots(before, call_counters.take_snapshot())
+            monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+            with pytest.raises(durability.CounterPersistenceError):
+                call_counters.publish_test_window(nodeid, window)
+            monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+            assert call_counters.persistence_pending() is False
+        before = call_counters.take_snapshot()
+        _record_calls(1)
+        window = call_counters.diff_snapshots(before, call_counters.take_snapshot())
+        call_counters.publish_test_window("a.py::t3", window)
+        info = call_counters.registration_info()
+        assert info is not None
+        journal_lines = Path(info["journal_path"]).read_text(encoding="utf-8").splitlines()
+        assert len(journal_lines) == 3
+        assert _read_sidecar()["journal_seq"] == 3
+        assert call_counters.persistence_pending() is False
+
+
+# --------------------------------------------------------------------------
+# Area A (rc3): retain-not-rollback + pending-failure protocol
+# --------------------------------------------------------------------------
+
+
+class TestRetainNotRollback:
+    def test_failed_return_flush_retains_exit_and_sets_pending(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_counters.record_call("C_Login", module="m")
+        call_counters.record_return("C_Login", 0, module="m")
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Done", 0, module="m")
+        # The provider already returned: the exit stays admitted (never
+        # rolled back), and the undurable evidence is marked pending.
+        flat = call_counters.flatten_current()
+        assert _rv_total(flat, 0) == 2
+        assert sum(int(row[3]) for row in flat if row[1] == "C_Done") == 1
+        assert call_counters.persistence_pending() is True
+
+    def test_pending_marker_blocks_next_entry_until_recovered(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_counters.record_call("C_Login", module="m")
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Login", 0, module="m")
+        assert call_counters.persistence_pending() is True
+        # The next entry retries persistence first and blocks while the
+        # writer is still broken: the provider never runs, nothing admits.
+        provider_calls = 0
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_call("C_Blocked", module="m")
+            provider_calls += 1  # Unreachable: the record raises first.
+        assert provider_calls == 0
+        assert call_counters.serialize_current()["total_calls"] == 1
+        assert call_counters.persistence_pending() is True
+        # Repair: the next entry recovers (retry covers, marker clears)
+        # and the blocked call lands exactly once.
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+        call_counters.record_call("C_Blocked", module="m")
+        assert call_counters.persistence_pending() is False
+        assert call_counters.serialize_current()["total_calls"] == 2
+        assert _read_sidecar()["in_progress"]["total_calls"] == 2
+
+    def test_failed_direct_flush_retains_both_halves(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Direct calls count post-hoc: the provider RAN before the record,
+        # so a failed flush retains (never rolls back) and marks pending.
+        provider_calls = 0
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            provider_calls += 1
+            call_counters.record_direct_call("C_Login", 0, module="m")
+        assert provider_calls == 1
+        current = call_counters.serialize_current()
+        assert current["total_calls"] == 1
+        flat = call_counters.flatten_current()
+        assert _rv_total(flat, 0) == 1
+        assert call_counters.persistence_pending() is True
+
+    def test_entry_failure_still_rolls_back_and_blocks(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # K=1: every admission is a K boundary. A failed entry flush rolls
+        # back (the provider never ran) and sets no marker: nothing is
+        # retained, so nothing is pending.
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        provider_calls = 0
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_call("C_Login", module="m")
+            provider_calls += 1  # Unreachable: the record raises first.
+        assert provider_calls == 0
+        assert call_counters.serialize_current()["total_calls"] == 0
+        assert call_counters.persistence_pending() is False
+
+    def test_publish_clears_preexisting_marker_via_journal_leg(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_counters.record_call("C_Login", module="m")
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Login", 0, module="m")
+        assert call_counters.persistence_pending() is True
+        # A publish whose append lands covers the retained evidence: the
+        # marker clears even though this publish's own sidecar leg fails.
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+        before = call_counters.take_snapshot()
+        window = call_counters.diff_snapshots(before, call_counters.take_snapshot())
+        call_counters.publish_test_window("a.py::t1", window)
+        assert call_counters.persistence_pending() is False
+
+    def test_repaired_evidence_recovers_exactly(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_counters.record_call("C_Login", module="m")
+        original = call_counters.write_sidecar_atomic
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Login", 0, module="m")
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", original)
+        call_counters.record_call("C_Next", module="m")
+        call_counters.record_return("C_Next", 0, module="m")
+        # No re-record, no double count, no loss: on-disk equals memory.
+        on_disk = _read_sidecar()
+        assert on_disk["in_progress"]["total_calls"] == 2
+        assert _sidecar_by_fn(on_disk, "m", "C_Login")["by_rv"]["0"]["count"] == 1
+        assert _sidecar_by_fn(on_disk, "m", "C_Next")["by_rv"]["0"]["count"] == 1
+        assert call_counters.serialize_current()["total_calls"] == 2
+
+
+# --------------------------------------------------------------------------
+# Area A (rc3): surviving marker forces counter-specific incomplete
+# --------------------------------------------------------------------------
+
+
+class TestPendingMarkerEmission:
+    def test_surviving_marker_forces_session_incomplete(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={
+                "worker_uuid": _UUID_A,
+                "run_id": _RUN,
+                "persistence_pending": {"checkpoint": "return", "unit": "a.py", "attempt": 0},
+            },
+        )
+        assert schema.is_session_record(session) is True
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        # The counts are present and exact — but durability degraded, so
+        # the counters read incomplete with the persistence reason shown.
+        assert payload["total_calls"] == 10
+        assert payload["complete"] is False
+        assert payload["by_round"][_RUN]["complete"] is False
+        rows = payload["by_process"]
+        assert rows and all(row["complete"] is False for row in rows)
+        assert all(row.get("persistence_pending") is True for row in rows)
+
+    def test_failed_unit_without_marker_keeps_complete_counters(self, tmp_path: Path) -> None:
+        # R3-2 regression pin: counter completeness derives from the
+        # persistence marker, never from generic unit status. An ordinary
+        # provider failure with clean persistence keeps complete counters.
+        session = _session_record(
+            100, _counts_block(10), extra={"worker_uuid": _UUID_A, "run_id": _RUN}
+        )
+        assert schema.is_session_record(session) is True
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 1},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        assert payload["total_calls"] == 10
+        assert payload["complete"] is True
+
+    def test_malformed_marker_reads_as_pending_not_clean(self, tmp_path: Path) -> None:
+        session = _session_record(
+            100,
+            _counts_block(10),
+            extra={"worker_uuid": _UUID_A, "run_id": _RUN, "persistence_pending": "bogus"},
+        )
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        # Fail closed: an unreadable marker cannot prove clean persistence.
+        assert payload["total_calls"] == 10
+        assert payload["complete"] is False
+
+    def test_live_marker_reaches_session_record(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # End to end through the real emission path: a failed return at
+        # the tail (no next entry to block) rides to the session record.
+        from pkcs11_check._plugin_counters import build_session_record
+
+        call_counters.record_call("C_Login", module="m")
+        monkeypatch.setattr(call_counters, "write_sidecar_atomic", _broken_writer)
+        with pytest.raises(durability.CounterPersistenceError):
+            call_counters.record_return("C_Login", 0, module="m")
+        assert call_counters.persistence_pending() is True
+        session = build_session_record()
+        assert session["persistence_pending"]["checkpoint"] == "return"
+        assert session["total_calls"] == 1
+
+
+# --------------------------------------------------------------------------
+# Area A (rc3): validated-count mark rule
+# --------------------------------------------------------------------------
+
+
+def _block_fn_count(block: dict[str, Any], module: str, fn: str) -> int:
+    """Sum one function's calls across all buckets of a module-first block."""
+    total = 0
+    for bucket_block in block["by_module"][module]["buckets"].values():
+        entry = bucket_block.get("by_fn", {}).get(fn)
+        if entry is not None:
+            total += entry["calls"]
+    return total
+
+
+def _collect_dead(engaged: Path, tmp_path: Path, name: str = "child.jsonl") -> list[dict[str, Any]]:
+    child = _write_jsonl(
+        tmp_path / name,
+        [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
+    )
+    return durability.collect_unit(
+        engaged, unit="a.py", child_jsonl=child, status="crashed", returncode=-11
+    )
+
+
+class TestMarkRule:
+    def test_older_mark_folds_all_valid_and_excludes_stale(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Multi-publish crash: two publishes' sidecar flushes failed, so the
+        # journal ran ahead (3 valid windows, mark still 1). The stale
+        # snapshot is subsumed by journal[1] (failed appends never reset),
+        # so the gap folds every valid window and excludes the snapshot:
+        # 3+4+5, with fn_A exactly once (no double count, no under-count).
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(3, fn="C_A"),
+            journal=[
+                {"nodeid": "a.py::t1", "block": _counts_block(3, fn="C_A"), "receipts": []},
+                {"nodeid": "a.py::t2", "block": _counts_block(4, fn="C_B"), "receipts": []},
+                {"nodeid": "a.py::t3", "block": _counts_block(5, fn="C_C"), "receipts": []},
+            ],
+            journal_seq=1,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 12
+        assert _block_fn_count(records[0], "m", "C_A") == 3
+        assert _block_fn_count(records[0], "m", "C_B") == 4
+        assert _block_fn_count(records[0], "m", "C_C") == 5
+        assert records[1]["end_state"] == "crashed"
+
+    def test_newer_mark_is_conflict_without_partial(self, engaged: Path, tmp_path: Path) -> None:
+        # Pin-as-is: a vanished append (mark ahead of the journal) stays a
+        # corruption conflict with a lost record only.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2),
+            journal=[{"nodeid": "a.py::t1", "block": _counts_block(3), "receipts": []}],
+            journal_seq=5,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == ["CallCountersLost"]
+        assert records[0]["end_state"] == "conflict"
+
+    def test_mark_without_journal_is_conflict_without_partial(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # A nonzero mark with no journal file means every append vanished
+        # (deleted/truncated journal): corruption, lost record only.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2),
+            journal_seq=3,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == ["CallCountersLost"]
+        assert records[0]["end_state"] == "conflict"
+
+    def test_self_heal_failed_append_recovers_all_plus_conflict(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Pin-as-is: [A, torn-failed-B, C] with seq=2. B's append raised
+        # loudly at runtime (no reset), C's superset window recovered B's
+        # calls, and the tear still flags conflict. Everything folds.
+        pid, birth = _dead_pid_with_birth()
+        planted = _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(2, fn="C_Tail"),
+            journal=[
+                {"nodeid": "a.py::t1", "block": _counts_block(3), "receipts": []},
+                {"nodeid": "a.py::t3", "block": _counts_block(4), "receipts": []},
+            ],
+        )
+        lines = planted["journal"].read_text(encoding="utf-8").splitlines()
+        planted["journal"].write_text(
+            lines[0] + "\n{" + '"nodeid": "a.py::t2", "block": ' + "\n" + lines[1] + "\n",
+            encoding="utf-8",
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 9
+        assert records[1]["end_state"] == "conflict"
+
+
+# --------------------------------------------------------------------------
+# Area A (rc3): loss-scalar pipeline (sidecar → partial → extract)
+# --------------------------------------------------------------------------
+
+
+class TestLossScalarPipeline:
+    def test_dead_producer_scalar_folds_into_partial(self, engaged: Path, tmp_path: Path) -> None:
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            probes_lost=3,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 5
+        assert records[0]["probes_lost"] == 3
+
+    def test_partial_scalar_folds_into_extract_totals(self, tmp_path: Path) -> None:
+        partial = _partial_record(worker_uuid=_UUID_A, run_id=_RUN, attempt=0, probes_lost=3)
+        partial.update(_counts_block(5))
+        jsonl = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                partial,
+                _lost_record(),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(jsonl)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 3
+        assert payload["complete"] is False
+
+    def test_committed_producer_scalar_not_double_folded(
+        self, engaged: Path, tmp_path: Path
+    ) -> None:
+        # Pin-as-is guard: when the session is authoritative, a stale
+        # sidecar scalar must never inflate the loss total.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            probes_lost=7,
+        )
+        session = _session_record(
+            pid,
+            _counts_block(5),
+            extra={"worker_uuid": _UUID_A, "run_id": _RUN, "probes_lost": 1},
+        )
+        child = _write_jsonl(
+            tmp_path / "child.jsonl",
+            [{"$report_type": "SessionStart"}, _marker("a.py", 0), session],
+        )
+        records = durability.collect_unit(
+            engaged, unit="a.py", child_jsonl=child, status="passed", returncode=0
+        )
+        report = _write_jsonl(
+            tmp_path / "report.jsonl",
+            [
+                {"$report_type": "SessionStart"},
+                _marker("a.py", 0),
+                session,
+                *records,
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+            ],
+        )
+        payload = extract_call_counters_from_jsonl(report)
+        assert payload is not None
+        assert payload["total_calls"] == 5
+        assert payload["probes_lost"] == 1
+
+    def test_mistyped_scalar_is_conflict_not_counts(self, engaged: Path, tmp_path: Path) -> None:
+        # Fail closed: an unreadable loss scalar conflicts loudly instead
+        # of inventing (or silently dropping) a loss count.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(5),
+            probes_lost="bogus",
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 5
+        assert records[0].get("probes_lost", 0) == 0
+        assert records[1]["end_state"] == "conflict"
+
+    def test_zero_call_scalar_still_emits_loss_partial(self, engaged: Path, tmp_path: Path) -> None:
+        # A producer with no calls but real losses still emits its scalar:
+        # dropping it would silently under-count losses.
+        pid, birth = _dead_pid_with_birth()
+        _plant_producer(
+            engaged,
+            uuid=_UUID_A,
+            pid=pid,
+            birth=birth,
+            in_progress=_counts_block(0),
+            probes_lost=2,
+        )
+        records = _collect_dead(engaged, tmp_path)
+        assert [rec["$report_type"] for rec in records] == [
+            "CallCountersPartial",
+            "CallCountersLost",
+        ]
+        assert records[0]["total_calls"] == 0
+        assert records[0]["probes_lost"] == 2
+
+
+# --------------------------------------------------------------------------
+# Area A (rc3): bounded transient retry inside persistence writes
+# --------------------------------------------------------------------------
+
+
+class TestTransientWriteRetry:
+    def test_sidecar_transient_failure_absorbed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = 0
+        real_replace = os.replace
+
+        def _flaky(src: Any, dst: Any) -> None:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise OSError(errno.EAGAIN, "try again")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _flaky)
+        durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
+        assert json.loads((tmp_path / "s.json").read_text(encoding="utf-8")) == {"a": 1}
+        assert calls == 3
+
+    def test_sidecar_permanent_failure_raises_fast(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = 0
+
+        def _denied(src: Any, dst: Any) -> None:
+            nonlocal calls
+            calls += 1
+            raise OSError(errno.ENOSPC, "no space left")
+
+        monkeypatch.setattr(os, "replace", _denied)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
+        assert calls == 1, "permanent errors never retry"
+
+    def test_sidecar_persistent_transient_raises_bounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = 0
+
+        def _always_busy(src: Any, dst: Any) -> None:
+            nonlocal calls
+            calls += 1
+            raise OSError(errno.EAGAIN, "busy")
+
+        monkeypatch.setattr(os, "replace", _always_busy)
+        with pytest.raises(durability.CounterPersistenceError):
+            durability.write_sidecar_atomic(tmp_path / "s.json", {"a": 1})
+        assert calls == 3, "transient errors retry boundedly, then raise"
+
+    def test_journal_transient_failure_absorbed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import builtins
+
+        real_open = open
+        calls = 0
+
+        def _flaky_open(path: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            if "a" in mode and str(path).endswith(".windows.jsonl"):
+                calls += 1
+                if calls == 1:
+                    raise OSError(errno.EAGAIN, "try again")
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", _flaky_open)
+        journal = tmp_path / "w.windows.jsonl"
+        durability.append_journal(journal, {"nodeid": "a.py::t1", "block": _counts_block(2)})
+        assert journal.read_text(encoding="utf-8").count("a.py::t1") == 1
+
+    def test_record_absorbs_transient_os_replace_failure(
+        self, engaged: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = 0
+        real_replace = os.replace
+
+        def _flaky(src: Any, dst: Any) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError(errno.EAGAIN, "try again")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _flaky)
+        call_counters.record_call("C_Login")
+        assert call_counters.persistence_pending() is False
+        assert _read_sidecar()["in_progress"]["total_calls"] == 1
+
+    def test_transient_predicate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        is_transient = durability._is_transient_write_error
+        assert is_transient(OSError(errno.EAGAIN, "try again")) is True
+        assert is_transient(OSError(errno.EWOULDBLOCK, "would block")) is True
+        assert is_transient(OSError(errno.ENOSPC, "no space")) is False
+        assert is_transient(OSError(errno.EACCES, "denied")) is False
+        monkeypatch.setattr(sys, "platform", "win32")
+        assert is_transient(OSError(errno.EACCES, "denied")) is True
+        assert is_transient(OSError(errno.EPERM, "denied")) is True
+        assert is_transient(OSError(errno.ENOSPC, "no space")) is False

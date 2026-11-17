@@ -51,7 +51,16 @@ CONTRIBUTION_PRECEDENCE: dict[str, int] = {"authoritative": 2, "partial": 1, "ab
 
 SESSION_REQUIRED_KEYS = frozenset({"$report_type", "pid", "probes_lost", "total_calls"})
 SESSION_OPTIONAL_KEYS = frozenset(
-    {"buckets", "by_module", "isolation", "run_id", "worker_uuid", "role", "receipts"}
+    {
+        "buckets",
+        "by_module",
+        "isolation",
+        "run_id",
+        "worker_uuid",
+        "role",
+        "receipts",
+        "persistence_pending",
+    }
 )
 SESSION_ALLOWED_KEYS = SESSION_REQUIRED_KEYS | SESSION_OPTIONAL_KEYS
 ENTRY_REQUIRED_KEYS = frozenset({"pid", "total_calls"})
@@ -61,7 +70,18 @@ ENTRY_OPTIONAL_KEYS = frozenset(
 ENTRY_ALLOWED_KEYS = ENTRY_REQUIRED_KEYS | ENTRY_OPTIONAL_KEYS
 PARTIAL_REQUIRED_KEYS = frozenset({"$report_type", "worker_uuid", "truncated", "total_calls"})
 PARTIAL_OPTIONAL_KEYS = frozenset(
-    {"buckets", "by_module", "run_id", "unit", "attempt", "pid", "receipts", "role", "isolation"}
+    {
+        "buckets",
+        "by_module",
+        "run_id",
+        "unit",
+        "attempt",
+        "pid",
+        "receipts",
+        "role",
+        "isolation",
+        "probes_lost",
+    }
 )
 PARTIAL_ALLOWED_KEYS = PARTIAL_REQUIRED_KEYS | PARTIAL_OPTIONAL_KEYS
 LOST_REQUIRED_KEYS = frozenset({"$report_type", "end_state", "scope_index"})
@@ -86,7 +106,16 @@ REGISTRY_REQUIRED_KEYS = frozenset(
 REGISTRY_ALLOWED_KEYS = frozenset(REGISTRY_REQUIRED_KEYS)
 ROW_REQUIRED_KEYS = frozenset({"pid", "total_calls", "isolation", "complete"})
 ROW_OPTIONAL_KEYS = frozenset(
-    {"worker_uuid", "module", "role", "truncated", "end_state", "round", "shard"}
+    {
+        "worker_uuid",
+        "module",
+        "role",
+        "truncated",
+        "end_state",
+        "round",
+        "shard",
+        "persistence_pending",
+    }
 )
 ROW_ALLOWED_KEYS = ROW_REQUIRED_KEYS | ROW_OPTIONAL_KEYS
 RECEIPT_KEYS = frozenset({"worker_uuid", "probe_seq"})
