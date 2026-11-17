@@ -85,6 +85,25 @@ def test_blank_k_is_silent_default(
         assert call_counters.effective_flush_k() == 1
 
 
+def test_garbage_k_under_warnings_error_never_phantoms(
+    engaged: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex R1: under -W error the garbage diagnostic raises. It must
+    # raise BEFORE admission (cadence resolves in _ensure), so repeated
+    # calls keep failing loudly with zero admitted counts, zero
+    # registration, and no provider execution -- never phantoms.
+    monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "bogus")
+    call_counters.reset_for_tests()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for _ in range(3):
+            with pytest.raises(UserWarning, match="FLUSH_K"):
+                call_counters.record_call("C_Login", module="m")
+    assert call_counters.serialize_current()["total_calls"] == 0
+    assert call_counters.registration_info() is None
+    assert list(engaged.glob("registrations/*.json")) == []
+
+
 def test_k3_flushes_every_third_unit(engaged: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(durability.COUNTERS_FLUSH_K_ENV, "3")
     call_counters.reset_for_tests()
