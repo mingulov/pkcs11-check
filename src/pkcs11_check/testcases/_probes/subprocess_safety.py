@@ -282,9 +282,9 @@ def _isolation_child_env() -> dict[str, str]:
     same reason: the grandchild runs ``probe_main``, so an inherited slot
     would let it overwrite the outer probe's sidecar -- and an orphaned
     late write would then heal the outer probe's loss claim with
-    grandchild-only evidence (codex CX1). ``PROBE_SEQ_ENV`` stays: the
-    grandchild's receipt chains upward through the coverage channel by
-    design (the unit parent propagates grandchild receipts).
+    grandchild-only evidence (codex CX1). ``PROBE_SEQ_ENV`` stays: a bare
+    sequence aliases no file (this leg currently drops receipts rather
+    than propagating them), so keeping it is safe.
     """
     from pkcs11_check.core._counters_durability import (
         PROBE_ATTEMPT_ENV,
