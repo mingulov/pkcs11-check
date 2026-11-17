@@ -322,10 +322,20 @@ def flush_probe_sidecar(
     (flush-then-delete) and folds it as partial evidence (receipt
     suppressed) when the coverage file is torn. ``lost_keys`` carries the
     child's keyed-loss set (omitted when None/empty, so legacy sidecars
-    are byte-identical). No-op when the parent did not assign a sidecar
-    path. Never raises.
+    are byte-identical). The F2 parent-identity block rides along when the
+    runner exported it (each field omitted when unset or malformed, so a
+    partial export still yields a parseable sidecar). No-op when the
+    parent did not assign a sidecar path. Never raises.
     """
-    from pkcs11_check.core._counters_durability import PROBE_SIDECAR_ENV
+    from pkcs11_check.core._counters_durability import (
+        PROBE_ATTEMPT_ENV,
+        PROBE_ISOLATION_ENV,
+        PROBE_PARENT_ENV,
+        PROBE_ROLE_ENV,
+        PROBE_RUN_ENV,
+        PROBE_SIDECAR_ENV,
+        PROBE_UNIT_ENV,
+    )
 
     path = os.environ.get(PROBE_SIDECAR_ENV)
     if not path or counters is None:
@@ -341,6 +351,22 @@ def flush_probe_sidecar(
         }
         if lost_keys:
             payload["lost_keys"] = lost_keys
+        for env_key, field in (
+            (PROBE_PARENT_ENV, "parent_uuid"),
+            (PROBE_RUN_ENV, "run_id"),
+            (PROBE_UNIT_ENV, "unit"),
+            (PROBE_ROLE_ENV, "role"),
+            (PROBE_ISOLATION_ENV, "isolation"),
+        ):
+            value = os.environ.get(env_key)
+            if value:
+                payload[field] = value
+        attempt_raw = os.environ.get(PROBE_ATTEMPT_ENV)
+        if attempt_raw:
+            try:
+                payload["attempt"] = int(attempt_raw)
+            except ValueError:
+                pass
         tmp = f"{path}.tmp-{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)

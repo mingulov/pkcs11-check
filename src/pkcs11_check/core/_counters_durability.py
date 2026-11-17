@@ -81,6 +81,16 @@ COUNTERS_ATTEMPT_ENV = "PKCS11_CHECK_COUNTERS_ATTEMPT"
 COUNTERS_ROLE_ENV = "PKCS11_CHECK_COUNTERS_ROLE"
 PROBE_SEQ_ENV = "_P11CHECK_PROBE_SEQ"
 PROBE_SIDECAR_ENV = "_P11CHECK_PROBE_SIDECAR"
+#: Parent-identity context for one probe child (rc3 Area B, F2): the runner
+#: exports all six so the child's sidecar is self-describing even when the
+#: parent's registry is gone. The child embeds the set ones; unset or
+#: malformed values omit that field (legacy shape stays byte-identical).
+PROBE_PARENT_ENV = "_P11CHECK_PROBE_PARENT"
+PROBE_RUN_ENV = "_P11CHECK_PROBE_RUN"
+PROBE_UNIT_ENV = "_P11CHECK_PROBE_UNIT"
+PROBE_ATTEMPT_ENV = "_P11CHECK_PROBE_ATTEMPT"
+PROBE_ROLE_ENV = "_P11CHECK_PROBE_ROLE"
+PROBE_ISOLATION_ENV = "_P11CHECK_PROBE_ISOLATION"
 
 #: Evidence units between automatic sidecar flushes (K bound, per producer).
 #: K=1 (rc3 Area A): every entry, every return, and every zero-call
@@ -1036,8 +1046,13 @@ def mark_probe_consumed(sidecar: Path | str) -> Path:
 
 def _read_probe_orphan(
     path: Path,
-) -> tuple[str, int, list[Any], frozenset[tuple[str, int]]] | None:
-    """Return ``(child_uuid, seq, counters, lost_keys)`` from a probe sidecar, else None."""
+) -> tuple[str, int, list[Any], frozenset[tuple[str, int]], dict[str, Any]] | None:
+    """Return ``(child_uuid, seq, counters, lost_keys, identity)`` from a probe sidecar.
+
+    ``identity`` is the F2 self-describing block (parent_uuid/run_id/unit/
+    attempt/role/isolation, each present only when well-typed); legacy
+    sidecars yield ``{}``. Returns None unless the core shape parses.
+    """
     data = read_json_file(path)
     if not isinstance(data, dict):
         return None
@@ -1057,7 +1072,18 @@ def _read_probe_orphan(
         for entry in raw_keys:
             if is_lost_key(entry):
                 keys.add((entry["parent_uuid"], entry["probe_seq"]))
-    return (uuid, seq, list(counters), frozenset(keys))
+    identity: dict[str, Any] = {}
+    parent = data.get("parent_uuid")
+    if is_worker_uuid(parent):
+        identity["parent_uuid"] = parent
+    for field in ("run_id", "unit", "role", "isolation"):
+        value = data.get(field)
+        if isinstance(value, str) and value:
+            identity[field] = value
+    attempt = data.get("attempt")
+    if _is_nonneg_int(attempt):
+        identity["attempt"] = attempt
+    return (uuid, seq, list(counters), frozenset(keys), identity)
 
 
 def _parse_probe_flat_row(row: Any) -> tuple[str, str, int | None, int] | None:
@@ -1151,6 +1177,8 @@ def _adopt_probe_orphans(
     journal_lines: list[str],
     claims: dict[str, set[tuple[str, int]]],
     known_uuids: set[str],
+    producer_run: str | None = None,
+    producer_unit: str | None = None,
 ) -> tuple[
     dict[str, Any] | None,
     list[dict[str, Any]],
@@ -1174,11 +1202,25 @@ def _adopt_probe_orphans(
     only when the filename and content seq agree; a mismatch still folds
     counts best-effort but heals nothing (fail closed toward incomplete).
     Consumed files go only after the caller durably records the fold
-    (append-then-delete, like parent files). Retained, never destroyed:
-    ambiguous prefixes (more than one known producer shares the 8-char
-    hint), parentless orphans, and dict-shaped but schema-invalid files
-    (mirroring invalid sidecars). Torn (unparseable or non-dict) files are
-    provably unrecoverable debris and consume with the fold.
+    (append-then-delete, like parent files). Both directory listings
+    snapshot up front (``sorted`` over a full glob), so a sidecar landing
+    mid-pass waits for the next pass instead of half-folding (TOCTOU-safe).
+
+    Reunion is two passes (rc3 Area B, F3). Pass 1 reunites by the F2
+    content identity (``parent_uuid``): the filename hint only pre-filters,
+    so a shared 8-char prefix never misattributes. Pass 2 keeps the legacy
+    filename fallback, but only when the prefix names exactly this
+    producer; under a collision the legacy orphan retains with one
+    ``ambiguous`` warning (reported by the lowest colliding uuid, so every
+    colliding pass does not warn). A content identity whose run or unit
+    contradicts the producer's (``producer_run``/``producer_unit``, each
+    compared only when both sides state it) is stale evidence from another
+    run or unit: retained with a ``cross-run``/``cross-unit`` warning,
+    never folded. Retained, never destroyed: ambiguous legacy orphans,
+    cross-run/cross-unit orphans, parentless orphans, and dict-shaped but
+    schema-invalid files (mirroring invalid sidecars). Torn (unparseable
+    or non-dict) files are provably unrecoverable debris and consume with
+    the fold.
 
     Residual: a probe ingested via the live sidecar-fallback path (whose
     receipt is suppressed by design), followed by a failed parent flush
@@ -1186,31 +1228,57 @@ def _adopt_probe_orphans(
     here. That triple fault stays fail-visible through the lost record.
     """
     prefix = worker_uuid[:8]
-    if sum(1 for uuid in known_uuids if uuid.startswith(prefix)) != 1:
-        return None, [], [], [], set()
+    colliders = sorted(uuid for uuid in known_uuids if uuid.startswith(prefix))
+    unambiguous = colliders == [worker_uuid]
     coverage = _durable_receipts(sidecar, journal_lines) | claims.get(worker_uuid, set())
     merged: dict[str, Any] = {"total_calls": 0, "by_module": {}}
     claimed: list[dict[str, Any]] = []
     consumed: list[Path] = []
     recovered: list[tuple[str, int]] = []
     orphan_keys: set[tuple[str, int]] = set()
-    # Pass 1 (order-free): consumed markers suppress before any orphan
-    # folds. A marker's counts already sit in the parent checkpoint, so
-    # its identity joins coverage and the marker itself consumes. Torn
-    # markers are debris: unparseable content folds nothing. Valid markers
-    # still heal (their evidence is checkpoint-durable) and union their
-    # nested keys.
-    for path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
-        parsed_name = _parse_consumed_probe_filename(path.name)
-        if parsed_name is None or parsed_name[0] != prefix:
-            continue
-        orphan = _read_probe_orphan(path)
-        if orphan is not None:
-            coverage.add((orphan[0], orphan[1]))
-            orphan_keys |= orphan[3]
-            if orphan[1] == parsed_name[1]:
-                recovered.append((worker_uuid, orphan[1]))
+
+    def _fold(
+        path: Path,
+        child_uuid: str,
+        seq: int,
+        counters: list[Any],
+        keys: frozenset[tuple[str, int]],
+        filename_seq: int,
+    ) -> None:
+        if (child_uuid, seq) in coverage:
+            consumed.append(path)
+            return
+        block = _probe_rows_to_block(counters)
+        if block is not None:
+            merge_module_first(merged, block)
+            claimed.append({"worker_uuid": child_uuid, "probe_seq": seq})
+            # .update, not |=: augmented assignment would rebind the
+            # closure name (UnboundLocalError); mutation shares the set.
+            orphan_keys.update(keys)
+            if seq == filename_seq:
+                recovered.append((worker_uuid, seq))
         consumed.append(path)
+
+    # Markers (order-free, conservative): consumed markers suppress before
+    # any orphan folds. A marker's counts already sit in the parent
+    # checkpoint, so its identity joins coverage and the marker itself
+    # consumes. Torn markers are debris: unparseable content folds nothing.
+    # Valid markers still heal (their evidence is checkpoint-durable) and
+    # union their nested keys. Filename-prefix match only, and only when
+    # the prefix is unambiguous, exactly as before the reunion passes.
+    if unambiguous:
+        for path in sorted(root.glob(f"{PROBE_CONSUMED_PREFIX}*{PROBE_FILE_SUFFIX}")):
+            parsed_name = _parse_consumed_probe_filename(path.name)
+            if parsed_name is None or parsed_name[0] != prefix:
+                continue
+            orphan = _read_probe_orphan(path)
+            if orphan is not None:
+                coverage.add((orphan[0], orphan[1]))
+                orphan_keys |= orphan[3]
+                if orphan[1] == parsed_name[1]:
+                    recovered.append((worker_uuid, orphan[1]))
+            consumed.append(path)
+    ambiguous_reporter = colliders[:1] == [worker_uuid]
     for path in sorted(root.glob(f"{PROBE_FILE_PREFIX}*{PROBE_FILE_SUFFIX}")):
         parsed_name = _parse_probe_filename(path.name)
         if parsed_name is None or parsed_name[0] != prefix:
@@ -1221,18 +1289,51 @@ def _adopt_probe_orphans(
             if raw is None or not isinstance(raw, dict):
                 consumed.append(path)
             continue
-        child_uuid, seq, counters, keys = orphan
-        if (child_uuid, seq) in coverage:
-            consumed.append(path)
+        child_uuid, seq, counters, keys, identity = orphan
+        parent_claim = identity.get("parent_uuid")
+        if parent_claim is not None and parent_claim != worker_uuid:
+            continue  # Another producer's pass owns it (content-exact).
+        if parent_claim == worker_uuid:
+            # Pass 1: content-exact reunion. Run/unit must agree with the
+            # producer when both sides state them; a contradiction retains
+            # the orphan loudly instead of misfolding another run's calls.
+            orphan_run = identity.get("run_id")
+            if orphan_run is not None and producer_run is not None and orphan_run != producer_run:
+                warnings.warn(
+                    f"cross-run probe orphan {path.name} retained "
+                    f"(orphan run {orphan_run!r} != producer run {producer_run!r})",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            orphan_unit = identity.get("unit")
+            if (
+                orphan_unit is not None
+                and producer_unit is not None
+                and orphan_unit != producer_unit
+            ):
+                warnings.warn(
+                    f"cross-unit probe orphan {path.name} retained "
+                    f"(orphan unit {orphan_unit!r} != producer unit {producer_unit!r})",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            _fold(path, child_uuid, seq, counters, keys, parsed_name[1])
             continue
-        block = _probe_rows_to_block(counters)
-        if block is not None:
-            merge_module_first(merged, block)
-            claimed.append({"worker_uuid": child_uuid, "probe_seq": seq})
-            orphan_keys |= keys
-            if seq == parsed_name[1]:
-                recovered.append((worker_uuid, seq))
-        consumed.append(path)
+        # Pass 2: legacy filename fallback (no content identity). Under a
+        # prefix collision the orphan could belong to any collider, so it
+        # retains with one warning instead of attributing by a hint.
+        if not unambiguous:
+            if ambiguous_reporter:
+                warnings.warn(
+                    f"ambiguous probe orphan {path.name} retained "
+                    f"({len(colliders)} producers share prefix {prefix})",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            continue
+        _fold(path, child_uuid, seq, counters, keys, parsed_name[1])
     if merged["total_calls"] == 0:
         return None, [], consumed, sorted(set(recovered)), orphan_keys
     claimed.sort(key=lambda item: (item["worker_uuid"], item["probe_seq"]))
@@ -1511,12 +1612,15 @@ def collect_unit(
         if content is None:
             _reap_torn_registry(root, registry_path)
             continue
+        uuid = content["worker_uuid"]
+        # Every registry-backed uuid suppresses the torn-sidecar path,
+        # foreign runs/units included: a live registry proves the uuid is
+        # no orphan, whatever this collection filters out.
+        seen_sidecar_uuids.add(uuid)
         if content["unit"] != unit:
             continue
         if current_run is not None and content["run_id"] != current_run:
             continue
-        uuid = content["worker_uuid"]
-        seen_sidecar_uuids.add(uuid)
         if uuid in sessions:
             claim_records, consumed = _collect_committed_producer(
                 content, uuid, root=root, known_uuids=known_uuids, claims=claims
@@ -1546,12 +1650,32 @@ def collect_unit(
         if adopted is None:
             continue
         uuid, sidecar = adopted
+        # A registryless sidecar from another unit or run is stale evidence
+        # (its barrier owns prior runs): skip it loudly, never misfold it.
+        # Live-registry uuids never reach here (``seen_sidecar_uuids`` holds
+        # every registry-backed uuid, foreign runs/units included), so these
+        # warns fire only for genuinely suspicious torn evidence, not for
+        # healthy foreign producers sharing the dir.
         if sidecar.get("unit") != unit:
+            warnings.warn(
+                f"cross-unit producer sidecar {sidecar_path.name} retained "
+                f"(sidecar unit {sidecar.get('unit')!r} != collecting unit {unit!r})",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         if current_run is not None and sidecar.get("run_id") != current_run:
+            warnings.warn(
+                f"cross-run producer sidecar {sidecar_path.name} retained "
+                f"(sidecar run {sidecar.get('run_id')!r} != collecting run {current_run!r})",
+                UserWarning,
+                stacklevel=2,
+            )
             continue
         journal_path = _journal_for_sidecar(sidecar_path)
         journal_lines = _read_journal_lines(journal_path)
+        sidecar_run = sidecar.get("run_id")
+        sidecar_unit = sidecar.get("unit")
         orphan_block, orphan_receipts, consumed, recovered, orphan_keys = _adopt_probe_orphans(
             root,
             worker_uuid=uuid,
@@ -1559,6 +1683,8 @@ def collect_unit(
             journal_lines=journal_lines,
             claims=claims,
             known_uuids=known_uuids,
+            producer_run=sidecar_run if isinstance(sidecar_run, str) else None,
+            producer_unit=sidecar_unit if isinstance(sidecar_unit, str) else None,
         )
         if uuid in sessions:
             records = []
@@ -1711,6 +1837,8 @@ def _collect_dead_producer(
         journal_lines=journal_lines,
         claims=claims,
         known_uuids=known_uuids,
+        producer_run=content["run_id"],
+        producer_unit=content["unit"],
     )
     if orphan_block is not None:
         block = orphan_block if block is None else merge_module_first(block, orphan_block)
@@ -1782,6 +1910,8 @@ def _collect_committed_producer(
         journal_lines=journal_lines,
         claims=claims,
         known_uuids=known_uuids,
+        producer_run=content["run_id"],
+        producer_unit=content["unit"],
     )
     if orphan_block is None:
         return [], consumed
@@ -2151,6 +2281,8 @@ def prepare_resume(
         journal_lines = _read_journal_lines(journal_path)
         # Resume track (postponed past 0.3.0): recovered/orphan-keys are
         # unpacked but deliberately not wired yet; behavior preserved exactly.
+        barrier_run = sidecar.get("run_id")
+        barrier_unit = sidecar.get("unit")
         orphan_block, orphan_receipts, consumed, _recovered, _orphan_keys = _adopt_probe_orphans(
             root,
             worker_uuid=uuid,
@@ -2158,6 +2290,8 @@ def prepare_resume(
             journal_lines=journal_lines,
             claims=claims,
             known_uuids=known_uuids,
+            producer_run=barrier_run if isinstance(barrier_run, str) else None,
+            producer_unit=barrier_unit if isinstance(barrier_unit, str) else None,
         )
         if uuid in sessions:
             claim_records = []
@@ -2333,6 +2467,12 @@ __all__ = [
     "PROBE_FILE_SUFFIX",
     "PROBE_SEQ_ENV",
     "PROBE_SIDECAR_ENV",
+    "PROBE_PARENT_ENV",
+    "PROBE_RUN_ENV",
+    "PROBE_UNIT_ENV",
+    "PROBE_ATTEMPT_ENV",
+    "PROBE_ROLE_ENV",
+    "PROBE_ISOLATION_ENV",
     "ProducerVerdict",
     "RECOVERY_SUPPLEMENTS_SUFFIX",
     "SEAL_FILENAME",

@@ -1593,3 +1593,77 @@ def test_ingest_drops_keys_when_counters_unusable(ingest: _IngestFn, tmp_path: P
     assert ingest(cov) is False
     assert call_counters.lost_probe_keys() == []
     assert call_counters.probes_lost() == 0
+
+
+def _set_f2_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+
+    values = {
+        durability.PROBE_PARENT_ENV: "p" * 32,
+        durability.PROBE_RUN_ENV: "R1",
+        durability.PROBE_UNIT_ENV: "a.py",
+        durability.PROBE_ATTEMPT_ENV: "2",
+        durability.PROBE_ROLE_ENV: "unit",
+        durability.PROBE_ISOLATION_ENV: "file",
+    }
+    values.update(overrides)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_probe_sidecar_embeds_parent_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV, PROBE_SIDECAR_ENV
+    from pkcs11_check.testcases._probes._emit import flush_probe_sidecar
+
+    sidecar = tmp_path / "probe-sidecar.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "7")
+    _set_f2_env(monkeypatch)
+    flush_probe_sidecar([["m", "C_Login", 0, 4]])
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert payload["probe_seq"] == 7
+    assert payload["parent_uuid"] == "p" * 32
+    assert payload["run_id"] == "R1"
+    assert payload["unit"] == "a.py"
+    assert payload["attempt"] == 2
+    assert payload["role"] == "unit"
+    assert payload["isolation"] == "file"
+
+
+def test_probe_sidecar_omits_identity_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV, PROBE_SIDECAR_ENV
+    from pkcs11_check.testcases._probes._emit import flush_probe_sidecar
+
+    sidecar = tmp_path / "probe-sidecar.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "7")
+    flush_probe_sidecar([["m", "C_Login", 0, 4]])
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert "parent_uuid" not in payload
+    assert "run_id" not in payload
+    assert "unit" not in payload
+    assert "attempt" not in payload
+    assert "role" not in payload
+    assert "isolation" not in payload
+
+
+def test_probe_sidecar_malformed_attempt_omits_attempt_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkcs11_check.core import _counters_durability as durability
+    from pkcs11_check.core._counters_durability import PROBE_SEQ_ENV, PROBE_SIDECAR_ENV
+    from pkcs11_check.testcases._probes._emit import flush_probe_sidecar
+
+    sidecar = tmp_path / "probe-sidecar.json"
+    monkeypatch.setenv(PROBE_SIDECAR_ENV, str(sidecar))
+    monkeypatch.setenv(PROBE_SEQ_ENV, "7")
+    _set_f2_env(monkeypatch, **{durability.PROBE_ATTEMPT_ENV: "bogus"})
+    flush_probe_sidecar([["m", "C_Login", 0, 4]])
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert "attempt" not in payload
+    assert payload["parent_uuid"] == "p" * 32
+    assert payload["unit"] == "a.py"
