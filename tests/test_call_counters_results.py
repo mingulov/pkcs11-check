@@ -257,6 +257,100 @@ def test_merge_shard_dirs_omits_key_without_counters_data(tmp_path: Path) -> Non
     assert "call_counters" not in merged
 
 
+def test_postprocess_embeds_unattributed_segments(tmp_path: Path) -> None:
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            _round_session_record(100, 10, _MR1),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "b.py", "attempt": 0},
+            {
+                "$report_type": "TestReport",
+                "nodeid": "b.py::t1",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+            },
+        ],
+    )
+    payload = postprocess_jsonl_to_unified(jsonl, tmp_path / "results.json")
+    assert payload["call_counters"]["complete"] is False
+    assert payload["call_counters"]["unattributed_segments"] == [
+        {"scope_index": 2, "unit": "b.py", "attempt": 0}
+    ]
+    assert "" not in payload["call_counters"]["by_round"]
+    on_disk = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    assert on_disk["call_counters"]["unattributed_segments"] == [
+        {"scope_index": 2, "unit": "b.py", "attempt": 0}
+    ]
+
+
+def test_merge_shard_dirs_concatenates_segments_with_shard_tags(tmp_path: Path) -> None:
+    s0 = tmp_path / "shard0"
+    s1 = tmp_path / "shard1"
+    for shard, unit in ((s0, "a.py"), (s1, "b.py")):
+        _write_shard(
+            shard,
+            units=[{"target": unit, "status": "passed"}],
+            summary={"passed": 1, "failed": 0},
+            records=[
+                {"$report_type": "SessionStart"},
+                {"$report_type": "IsolatedUnitReport", "target": unit, "attempt": 0},
+                _session_record(100, 10),
+                {"$report_type": "SessionFinish", "exitstatus": 0},
+                {"$report_type": "SessionStart"},
+                {"$report_type": "IsolatedUnitReport", "target": "zzz.py", "attempt": 0},
+                {
+                    "$report_type": "TestReport",
+                    "nodeid": "zzz.py::t1",
+                    "when": "call",
+                    "outcome": "passed",
+                    "duration": 0.1,
+                },
+            ],
+        )
+    merged = merge_shard_dirs([s0, s1], tmp_path / "merged")
+    block = merged["call_counters"]
+    # Totals conserved; segments (shard-local scopes) concatenate tagged.
+    assert block["total_calls"] == 20
+    assert block["complete"] is False
+    assert block["unattributed_segments"] == [
+        {"scope_index": 2, "unit": "zzz.py", "attempt": 0, "shard": "shard0"},
+        {"scope_index": 2, "unit": "zzz.py", "attempt": 0, "shard": "shard1"},
+    ]
+    # Merge-order independence: reversed input yields identical segments.
+    flipped = merge_shard_dirs([s1, s0], tmp_path / "merged-rev")
+    assert flipped["call_counters"]["unattributed_segments"] == block["unattributed_segments"]
+
+
+def test_merge_single_shard_segments_carry_no_shard_tag(tmp_path: Path) -> None:
+    s0 = tmp_path / "shard0"
+    _write_shard(
+        s0,
+        units=[{"target": "a.py", "status": "passed"}],
+        summary={"passed": 1, "failed": 0},
+        records=[
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": 0},
+            {
+                "$report_type": "TestReport",
+                "nodeid": "a.py::t1",
+                "when": "call",
+                "outcome": "passed",
+                "duration": 0.1,
+            },
+        ],
+    )
+    merged = merge_shard_dirs([s0], tmp_path / "merged")
+    block = merged["call_counters"]
+    assert block["total_calls"] == 0
+    assert block["complete"] is False
+    assert block["unattributed_segments"] == [{"scope_index": 1, "unit": "a.py", "attempt": 0}]
+
+
 def test_subprocess_plugin_env_sets_isolation_value() -> None:
     env = _subprocess_plugin_env({}, "test_anything.py", isolation="file")
     assert env["PKCS11_CHECK_UNIT_CHILD"] == "1"
@@ -779,8 +873,9 @@ def test_merge_multi_round_shard_keeps_rounds_split(tmp_path: Path) -> None:
 
 
 def test_merge_attributes_untagged_rows_to_round_with_rows(tmp_path: Path) -> None:
-    # I1: a degenerate shard (attributed round R1 with rows + a C2-only ""
-    # round with none) emits untagged rows; on merge they belong to R1, not "".
+    # I1: a shard with an attributed round R1 (rows) plus a C2 segment (no
+    # round) emits untagged rows; on merge they belong to R1, and the
+    # segment concatenates with its shard tag.
     shard_a = tmp_path / "shardA"
     shard_b = tmp_path / "shardB"
     _round_shard(
@@ -813,18 +908,22 @@ def test_merge_attributes_untagged_rows_to_round_with_rows(tmp_path: Path) -> No
             {"$report_type": "SessionFinish", "exitstatus": 0},
         ],
     )
-    # Premise: the degenerate shard really is degenerate (2 round keys, yet
-    # untagged rows).
+    # Premise: the C2 shard emits one round plus one segment, yet untagged
+    # rows (the conditional tag counts distinct rounds among ROWS).
     degenerate = extract_call_counters_from_jsonl(shard_a / "report.jsonl")
     assert degenerate is not None
-    assert sorted(degenerate["by_round"]) == ["", _MR1]
+    assert sorted(degenerate["by_round"]) == [_MR1]
+    assert degenerate["unattributed_segments"] == [{"scope_index": 2, "unit": "c.py", "attempt": 0}]
     assert degenerate["by_process"] == [
         {"pid": 100, "isolation": "none", "total_calls": 10, "complete": True}
     ]
     block = merge_shard_dirs([shard_a, shard_b], tmp_path / "merged")["call_counters"]
     assert block["total_calls"] == 15
-    assert block["complete"] is False  # the C2-only "" round is incomplete
-    assert sorted(block["by_round"]) == ["shardA/", f"shardA/{_MR1}", f"shardB/{_MR2}"]
+    assert block["complete"] is False  # the C2 segment is incomplete
+    assert sorted(block["by_round"]) == [f"shardA/{_MR1}", f"shardB/{_MR2}"]
+    assert block["unattributed_segments"] == [
+        {"scope_index": 2, "unit": "c.py", "attempt": 0, "shard": "shardA"}
+    ]
     assert block["by_process"] == [
         {
             "pid": 100,
@@ -837,6 +936,70 @@ def test_merge_attributes_untagged_rows_to_round_with_rows(tmp_path: Path) -> No
         {
             "pid": 200,
             "isolation": "none",
+            "total_calls": 5,
+            "complete": True,
+            "round": _MR2,
+            "shard": "shardB",
+        },
+    ]
+
+
+def test_merge_legacy_degenerate_round_still_attributes_to_rows(tmp_path: Path) -> None:
+    from pkcs11_check.core.merge import _merge_call_counter_blocks
+
+    # I1 legacy: a pre-C shard block (pid-less C2-only "" round beside an
+    # attributed round, untagged rows) still merges with its rows under
+    # the round with rows -- old artifacts never misattribute to "".
+    legacy = _counters_block(10)
+    legacy["complete"] = False
+    legacy["by_round"] = {
+        "": {
+            "complete": False,
+            "total_calls": 0,
+            "by_module": {"total_calls": 0, "by_module": {}},
+            "probes_lost": 0,
+            "by_process": [],
+        },
+        _MR1: {
+            "complete": True,
+            "total_calls": 10,
+            "by_module": legacy["by_module"],
+            "probes_lost": 0,
+            "by_process": legacy["by_process"],
+        },
+    }
+    other = _counters_block(5)
+    other["by_process"][0]["pid"] = 200
+    other["by_round"] = {
+        _MR2: {
+            "complete": True,
+            "total_calls": 5,
+            "by_module": other["by_module"],
+            "probes_lost": 0,
+            "by_process": other["by_process"],
+        }
+    }
+    shard_a = tmp_path / "shardA"
+    shard_b = tmp_path / "shardB"
+    shard_a.mkdir()
+    shard_b.mkdir()
+    block = _merge_call_counter_blocks([(shard_a, legacy), (shard_b, other)])
+    assert block is not None
+    assert block["total_calls"] == 15
+    assert block["complete"] is False
+    assert sorted(block["by_round"]) == ["shardA/", f"shardA/{_MR1}", f"shardB/{_MR2}"]
+    assert block["by_process"] == [
+        {
+            "pid": 100,
+            "isolation": "file",
+            "total_calls": 10,
+            "complete": True,
+            "round": _MR1,
+            "shard": "shardA",
+        },
+        {
+            "pid": 200,
+            "isolation": "file",
             "total_calls": 5,
             "complete": True,
             "round": _MR2,

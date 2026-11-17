@@ -860,7 +860,7 @@ class TestCharacterizationRc1:
         assert payload["total_calls"] == 17
         assert payload["complete"] is True
 
-    def test_c2_and_c2b_emit_empty_incomplete_groups(self, tmp_path: Path) -> None:
+    def test_c2_and_c2b_emit_unattributed_segments(self, tmp_path: Path) -> None:
         first_test = _write_jsonl(
             tmp_path / "c2.jsonl",
             [
@@ -874,7 +874,10 @@ class TestCharacterizationRc1:
         assert payload["total_calls"] == 0
         assert payload["complete"] is False
         assert payload["by_process"] == []
-        assert list(payload["by_round"]) == [""]
+        assert payload["by_round"] == {}
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 1, "unit": "a.py", "attempt": 0}
+        ]
         first_setup = _write_jsonl(
             tmp_path / "c2b.jsonl", [{"$report_type": "SessionStart"}, _marker("a.py", 0)]
         )
@@ -1546,7 +1549,10 @@ class TestForwardTask4Preflight:
         assert payload is not None
         assert payload["total_calls"] == 0
         assert payload["complete"] is False
-        assert list(payload["by_round"]) == [""]
+        assert payload["by_round"] == {}
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 1, "unit": "a.py", "attempt": 0}
+        ]
         retained = _write_jsonl(
             tmp_path / "retained.jsonl",
             [
@@ -1595,7 +1601,6 @@ def _drive_hook(hook: Any, item: Any, *args: Any, calls: tuple[str, ...] = ()) -
         return
 
 
-@pytest.mark.xfail(reason="rc2-Task-5: isolation stamp / uniform-5 / C2b interplay", strict=False)
 class TestForwardTask5Structure:
     @pytest.fixture(autouse=True)
     def _clean_counters(self) -> Any:
@@ -1673,8 +1678,10 @@ class TestForwardTask5Structure:
         )
         payload = extract_call_counters_from_jsonl(decoy)
         assert payload is not None
-        assert list(payload["by_round"]) == ["", _R1]
-        assert payload["by_round"][""]["complete"] is False
+        assert list(payload["by_round"]) == [_R1]
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 1, "unit": "a.py", "attempt": 0}
+        ]
         prepended = _write_jsonl(
             tmp_path / "prepended.jsonl",
             [_lost_record(), {"$report_type": "SessionStart"}, _marker("a.py", 0)],

@@ -1076,17 +1076,23 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     reconciles away before anchoring; pid-only losses never reconcile.
 
     Rounds: records without ``run_id`` (pre-round artifacts, direct-pytest
-    runs) fold into the implicit ``""`` round, as do C2 empty groups (a
-    counterless TestReport names no round, so ``""`` also means "round
-    unknown"). Each round gets its own block under ``by_round`` with the exact
-    top-level shape; the top level stays the GLOBAL roll-up. Top-level
-    ``by_process`` rows carry ``"round"`` iff more than one distinct round
-    appears among them (single-round output is identical to before on every
-    existing key); per-round rows never carry it. One row renders per
-    (round, pid, module) that contributed, and rows carry ``"module"`` iff
-    more than one distinct module appears among the block's rows, with the
-    same per-block conditional rule top-level and per-round. Keys and rows
-    are sorted for determinism.
+    runs) fold into the implicit ``""`` round, which keeps its block whenever
+    it holds data. C2/C2b empty groups (executed-but-counterless segments)
+    name no round, so they leave the round assembly for the top-level
+    ``unattributed_segments`` list (``{scope_index, unit, attempt}``,
+    canonically sorted) instead of a degenerate ``""`` block; no ``""``
+    block renders for them at all. Segments keep only the GLOBAL
+    ``complete`` false (ANDed); per-round flags never see them. A
+    segments-only input yields a zero-call payload with ``complete:
+    false``, never None. Each round gets its own block under ``by_round``
+    with the exact top-level shape; the top level stays the GLOBAL roll-up.
+    Top-level ``by_process`` rows carry ``"round"`` iff more than one
+    distinct round appears among them (single-round output is identical to
+    before on every existing key); per-round rows never carry it. One row
+    renders per (round, pid, module) that contributed, and rows carry
+    ``"module"`` iff more than one distinct module appears among the
+    block's rows, with the same per-block conditional rule top-level and
+    per-round. Keys and rows are sorted for determinism.
     """
     groups: dict[tuple[str, int, str | None, int | None], _CountersGroup] = {}
     pids: dict[tuple[str, int], _CountersPid] = {}
@@ -1554,7 +1560,37 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
                 for healed in recovered:
                     state.loss.discard(healed)
 
-    if not groups and not lost_processes:
+    # C2/C2b backstop, rc3 Area C: empty "" groups (executed-but-
+    # counterless segments: no session, fallback, partial, or loss) are
+    # unattributed by definition -- they name no round -- so they leave
+    # the round assembly for the top-level segment list instead of a
+    # degenerate "" round block. Non-empty "" groups (legacy run-less
+    # sessions, loss-anchored decoys) keep their block exactly as before.
+    # Group keys are unique, so the segment list is inherently deduped;
+    # the canonical sort keeps the wire shape deterministic (C2b stages
+    # through set iteration).
+    unattributed_segments: list[dict[str, Any]] = []
+    for group_key in [group_key for group_key in groups if group_key[0] == ""]:
+        group = groups[group_key]
+        if (
+            group.has_session
+            or group.fallback_used
+            or group.has_partial
+            or group.has_lost
+            or group.loss.total() != 0
+        ):
+            continue
+        del groups[group_key]
+        _run, scope_index, unit, attempt = group_key
+        unattributed_segments.append({"scope_index": scope_index, "unit": unit, "attempt": attempt})
+    unattributed_segments.sort(
+        key=lambda entry: (
+            entry["scope_index"],
+            entry["unit"] or "",
+            entry["attempt"] if entry["attempt"] is not None else -1,
+        )
+    )
+    if not groups and not lost_processes and not unattributed_segments:
         return None
     # A surviving lost record is a terminal disposition: any named loss
     # keeps its level incomplete, including groupless foreign losses
@@ -1562,9 +1598,11 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
     # reconciled against same-run authority dropped before anchoring, so
     # they reach neither this conjunct nor the rows below. For grouped
     # losses these conjuncts are redundant -- their has_lost group already
-    # reads incomplete -- and change nothing.
+    # reads incomplete -- and change nothing. Unattributed segments keep
+    # the GLOBAL flag incomplete; per-round flags never see them (they
+    # belong to no round, not even "").
     complete = all(_counters_group_complete(group) for group in groups.values())
-    complete = complete and not lost_processes
+    complete = complete and not lost_processes and not unattributed_segments
     rounds = sorted(
         {key[0] for key in groups} | {entry.get("run_id", "") for entry in lost_processes}
     )
@@ -1624,6 +1662,8 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         "by_process": by_process,
         "by_round": by_round,
     }
+    if unattributed_segments:
+        payload["unattributed_segments"] = unattributed_segments
     if lost_processes:
         payload["lost_processes"] = lost_processes
     ordered_receipts = sorted(receipts_all)

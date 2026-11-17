@@ -339,13 +339,17 @@ def test_sigkill_mid_first_test_leaves_zero_counter_shape(tmp_path: Path) -> Non
     assert extracted["complete"] is False
     assert extracted["total_calls"] == 0
     assert extracted["by_process"] == []
-    assert list(extracted["by_round"]) == [""]
+    assert extracted["by_round"] == {}
+    assert extracted["unattributed_segments"] == [{"scope_index": 1, "unit": unit, "attempt": 0}]
 
     oracle_total, dead_pid = _oracle_total(bundle["oracle"])
     assert oracle_total == len(_KILL_PLAN)
     assert all(row["pid"] != dead_pid for row in extracted["by_process"])
     payload = json.loads(bundle["results_path"].read_text(encoding="utf-8"))
     assert payload["call_counters"]["complete"] is False
+    assert payload["call_counters"]["unattributed_segments"] == [
+        {"scope_index": 1, "unit": unit, "attempt": 0}
+    ]
 
     observations = [obs for obs in state.process_observations if obs.get("target") == unit]
     assert len(observations) == 1

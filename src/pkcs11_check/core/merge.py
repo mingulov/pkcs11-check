@@ -643,7 +643,10 @@ def _merge_call_counter_blocks(
     ``""`` round beside one attributed round must not steal them), and
     untagged rows from a single-module shard gain that shard's module when
     the merge holds more than one (exact, not inferred: the shard block
-    proves every row's module).
+    proves every row's module). ``unattributed_segments`` concatenate
+    across shards with ``"shard"`` tags (scopes are shard-local, so
+    segments never dedup across shards), tagged iff more than one shard
+    merges, mirroring lost rows.
     """
     if not blocks:
         return None
@@ -653,6 +656,7 @@ def _merge_call_counter_blocks(
     complete = True
     collected: list[tuple[str, str, dict[str, Any]]] = []
     collected_lost: list[tuple[str, dict[str, Any]]] = []
+    collected_segments: list[tuple[str, dict[str, Any]]] = []
     detail_keys: set[tuple[str, int, str]] = set()
     by_round: dict[str, dict[str, Any]] = {}
     seen: dict[str, dict[str, Any]] = {}
@@ -702,6 +706,13 @@ def _merge_call_counter_blocks(
             complete = False
         for row in block.get("lost_processes", []):
             collected_lost.append((shard_label, dict(row)))
+        # Unattributed segments (rc3 Area C): shard-local scopes, so shards
+        # concatenate (never dedup across shards) with shard tags, exactly
+        # like lost rows. Non-dict entries are malformed input and skip
+        # (the extractor never emits them; the merge must not crash).
+        for segment in block.get("unattributed_segments", []):
+            if isinstance(segment, dict):
+                collected_segments.append((shard_label, dict(segment)))
         for detail in block.get("probes_detail", []):
             uuid = detail.get("worker_uuid")
             seq = detail.get("probe_seq")
@@ -742,6 +753,13 @@ def _merge_call_counter_blocks(
         if show_lost_shard:
             tagged["shard"] = shard_label
         lost_processes.append(tagged)
+    collected_segments.sort(key=lambda item: (item[0], _lost_row_sort_key(item[1])))
+    segments: list[dict[str, Any]] = []
+    for shard_label, segment in collected_segments:
+        tagged_segment = dict(segment)
+        if show_lost_shard:
+            tagged_segment["shard"] = shard_label
+        segments.append(tagged_segment)
     by_module = canonicalize_module_first(by_module)
     for round_block in by_round.values():
         round_block["by_module"] = canonicalize_module_first(round_block["by_module"])
@@ -755,6 +773,8 @@ def _merge_call_counter_blocks(
     }
     if lost_processes:
         merged_block["lost_processes"] = lost_processes
+    if segments:
+        merged_block["unattributed_segments"] = segments
     if detail_keys:
         merged_block["probes_detail"] = [
             {"worker_uuid": uuid, "probe_seq": seq, "status": status}

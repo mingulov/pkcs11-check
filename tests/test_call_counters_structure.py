@@ -409,8 +409,10 @@ class TestC2bAssociationInterplay:
         )
         payload = extract_call_counters_from_jsonl(jsonl)
         assert payload is not None
-        assert list(payload["by_round"]) == ["", _R1]
-        assert payload["by_round"][""]["complete"] is False
+        assert list(payload["by_round"]) == [_R1]
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 1, "unit": "a.py", "attempt": 0}
+        ]
         assert [entry["worker_uuid"] for entry in payload["lost_processes"]] == [_UUID_B]
 
     def test_cross_attempt_decoy_retains_c2b(self, tmp_path: Path) -> None:
@@ -424,8 +426,10 @@ class TestC2bAssociationInterplay:
         )
         payload = extract_call_counters_from_jsonl(jsonl)
         assert payload is not None
-        assert list(payload["by_round"]) == ["", _R1]
-        assert payload["by_round"][""]["complete"] is False
+        assert list(payload["by_round"]) == [_R1]
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 1, "unit": "a.py", "attempt": 0}
+        ]
 
     def test_foreign_origin_never_anchors(self, tmp_path: Path) -> None:
         jsonl = _write_jsonl(
@@ -438,8 +442,10 @@ class TestC2bAssociationInterplay:
         )
         payload = extract_call_counters_from_jsonl(jsonl)
         assert payload is not None
-        assert list(payload["by_round"]) == ["", _R1]
-        assert payload["by_round"][""]["complete"] is False
+        assert list(payload["by_round"]) == [_R1]
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 1, "unit": "a.py", "attempt": 0}
+        ]
         assert payload["lost_processes"][0]["origin_shard"] == "shardX"
 
     def test_reordered_lost_anchors_by_association(self, tmp_path: Path) -> None:
@@ -455,11 +461,13 @@ class TestC2bAssociationInterplay:
         )
         payload = extract_call_counters_from_jsonl(jsonl)
         assert payload is not None
-        assert list(payload["by_round"]) == ["", _R1]
+        assert list(payload["by_round"]) == [_R1]
         # The (a.py, 0) loss anchors scope 1 (not its staged scope 2);
-        # the genuinely counterless (b.py, 0) segment keeps its C2b group.
+        # the genuinely counterless (b.py, 0) segment keeps its C2b segment.
         assert payload["lost_processes"][0]["scope_index"] == 1
-        assert payload["by_round"][""]["complete"] is False
+        assert payload["unattributed_segments"] == [
+            {"scope_index": 2, "unit": "b.py", "attempt": 0}
+        ]
         assert payload["by_round"][_R1]["complete"] is False
 
     def test_prepended_lost_anchors_by_association(self, tmp_path: Path) -> None:

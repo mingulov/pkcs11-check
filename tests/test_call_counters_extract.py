@@ -489,8 +489,9 @@ def test_extract_first_setup_crash_marker_without_reports_is_incomplete(
     # C2b (codex R2 critical): a native crash in load_module/C_Initialize
     # during FIRST fixture setup leaves Start + plain marker + truncation
     # (zero TestReports, zero counters). That started-but-unfinished
-    # execution must surface as an EMPTY complete:false group in the
-    # implicit "" round -- never vanish into a complete global report.
+    # execution must surface as an unattributed segment -- never vanish
+    # into a complete global report, and never a degenerate "" round block.
+    # Segments-only input returns a zero-call payload (never None).
     jsonl = _write_jsonl(
         tmp_path / "report.jsonl",
         [{"$report_type": "SessionStart"}, _marker("a.py", 0)],
@@ -502,8 +503,8 @@ def test_extract_first_setup_crash_marker_without_reports_is_incomplete(
     assert payload["by_module"] == {"total_calls": 0, "by_module": {}}
     assert payload["probes_lost"] == 0
     assert payload["by_process"] == []
-    assert sorted(payload["by_round"]) == [""]
-    assert payload["by_round"][""]["complete"] is False
+    assert payload["by_round"] == {}
+    assert payload["unattributed_segments"] == [{"scope_index": 1, "unit": "a.py", "attempt": 0}]
 
 
 def test_extract_static_skip_marker_without_reports_is_none(tmp_path: Path) -> None:
@@ -899,8 +900,9 @@ def test_extract_pid_reconciliation_is_run_scoped(tmp_path: Path) -> None:
 
 def test_extract_counterless_segment_is_unattributable_round(tmp_path: Path) -> None:
     # C2 with rounds: a counterless TestReport in an unfinished scope names no
-    # round, so the empty group lands in "" (round unknown) and flips global
-    # complete while leaving the attributed round complete.
+    # round, so the segment lands in unattributed_segments (round unknown)
+    # and flips global complete while leaving the attributed round complete.
+    # No degenerate "" round block is emitted.
     jsonl = _write_jsonl(
         tmp_path / "report.jsonl",
         [
@@ -917,16 +919,81 @@ def test_extract_counterless_segment_is_unattributable_round(tmp_path: Path) -> 
     assert payload is not None
     assert payload["complete"] is False
     assert payload["total_calls"] == 10
-    assert sorted(payload["by_round"]) == ["", _R1]
+    assert sorted(payload["by_round"]) == [_R1]
     assert payload["by_round"][_R1]["complete"] is True
-    assert payload["by_round"][""]["complete"] is False
-    assert payload["by_round"][""]["total_calls"] == 0
-    assert payload["by_round"][""]["by_process"] == []
+    assert payload["unattributed_segments"] == [{"scope_index": 2, "unit": "b.py", "attempt": 0}]
     # Untagged-rows contract: the conditional tag counts distinct rounds among
-    # ROWS, so the pid-less C2-only "" round leaves R1's rows untagged (the
-    # merge must attribute them to R1, not to "").
+    # ROWS, so R1's rows stay untagged (the merge must attribute them to R1).
     assert payload["by_process"] == [
         {"pid": 100, "isolation": "file", "total_calls": 10, "complete": True}
+    ]
+
+
+def test_extract_implicit_round_with_data_keeps_block_beside_segments(
+    tmp_path: Path,
+) -> None:
+    # "" with data (legacy, run-less) keeps its block; the counterless
+    # segment moves out. Per-round completeness is segment-blind: the ""
+    # round reads complete from its session, the GLOBAL flag from segments.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            _session_record(100, 10),
+            {"$report_type": "SessionFinish", "exitstatus": 0},
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 0),
+            _test_report("b.py::t1", "call", None),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["total_calls"] == 10
+    assert sorted(payload["by_round"]) == [""]
+    assert payload["by_round"][""]["complete"] is True
+    assert payload["by_round"][""]["total_calls"] == 10
+    assert payload["unattributed_segments"] == [{"scope_index": 2, "unit": "b.py", "attempt": 0}]
+
+
+def test_extract_unmarked_segment_yields_null_unit_attempt(tmp_path: Path) -> None:
+    # No marker (or a malformed one) leaves (scope, None, None): the
+    # segment still surfaces, with explicit nulls, never guessed identity.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            {"$report_type": "IsolatedUnitReport", "target": "a.py", "attempt": "bogus"},
+            _test_report("a.py::t1", "call", None),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["by_round"] == {}
+    assert payload["unattributed_segments"] == [{"scope_index": 1, "unit": None, "attempt": None}]
+
+
+def test_extract_segments_sorted_by_scope(tmp_path: Path) -> None:
+    # Two C2b segments stage through set iteration (nondeterministic
+    # order): the wire shape is canonically sorted by scope.
+    jsonl = _write_jsonl(
+        tmp_path / "report.jsonl",
+        [
+            {"$report_type": "SessionStart"},
+            _marker("a.py", 0),
+            {"$report_type": "SessionStart"},
+            _marker("b.py", 1),
+        ],
+    )
+    payload = extract_call_counters_from_jsonl(jsonl)
+    assert payload is not None
+    assert payload["complete"] is False
+    assert payload["by_round"] == {}
+    assert payload["unattributed_segments"] == [
+        {"scope_index": 1, "unit": "a.py", "attempt": 0},
+        {"scope_index": 2, "unit": "b.py", "attempt": 1},
     ]
 
 
@@ -1244,7 +1311,8 @@ def test_truncated_attempt_marker_before_next_session_start_stays_incomplete(
     assert payload["complete"] is False
     assert payload["total_calls"] == 5
     assert payload["by_round"][_R1]["complete"] is True
-    assert payload["by_round"][""]["complete"] is False
+    assert "" not in payload["by_round"]
+    assert payload["unattributed_segments"] == [{"scope_index": 1, "unit": "a.py", "attempt": 0}]
 
 
 def test_static_skip_marker_before_session_start_never_moves(tmp_path: Path) -> None:
