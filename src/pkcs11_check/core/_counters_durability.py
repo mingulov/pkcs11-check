@@ -1113,8 +1113,10 @@ def _probe_rows_to_block(rows: list[Any]) -> dict[str, Any] | None:
 
     Recovery attribution: the parent's active bucket at ingest time is
     unknowable post-hoc, and probes launch from test bodies, so orphan
-    traffic folds under ``test``. Row validation mirrors the live ingest
-    parser (garbage rows skipped, never fatal); None when no row parses.
+    traffic folds under ``test`` (provisioning-spawned orphans recover
+    here too: the live bucket is unknowable post-hoc). Row validation
+    mirrors the live ingest parser (garbage rows skipped, never fatal);
+    None when no row parses.
     """
     from pkcs11_check.raw.rv import ckr_name
 
