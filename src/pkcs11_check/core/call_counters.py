@@ -176,6 +176,7 @@ def _ensure_registered_locked() -> Registration | None:
         unit=os.environ.get(COUNTERS_UNIT_ENV, "") or "<in-process>",
         attempt=attempt,
         role=os.environ.get(COUNTERS_ROLE_ENV, "") or "unit",
+        isolation=os.environ.get(ISOLATION_ENV, "") or "unknown",
         worker_uuid=_get_worker_uuid_locked(),
         pid=pid,
     )

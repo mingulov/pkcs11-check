@@ -548,9 +548,11 @@ def _parse_lost_record(record: dict[str, Any]) -> dict[str, Any] | None:
 
     Requires a known end state, a valid (but assembly-rebased) scope index,
     a well-formed round key, and at least one of a valid worker uuid / pid;
-    unit/attempt/origin_shard are carried when well-formed. Anything
-    malformed fails the whole record closed (a hostile loss claim never
-    flips completeness by itself).
+    unit/attempt/origin_shard are carried when well-formed. A present role
+    fails closed like sessions (a forged tag must not fold); isolation is
+    informational like sessions (carried when a string, dropped otherwise).
+    Anything else malformed fails the whole record closed (a hostile loss
+    claim never flips completeness by itself).
     """
     if not is_end_state(record.get("end_state")):
         return None
@@ -580,6 +582,12 @@ def _parse_lost_record(record: dict[str, Any]) -> dict[str, Any] | None:
     origin = record.get("origin_shard")
     if origin is not None and not isinstance(origin, str):
         return None
+    role = record.get("role")
+    if role is not None and not is_role(role):
+        return None
+    isolation = record.get("isolation")
+    if isolation is not None and not isinstance(isolation, str):
+        isolation = None
     entry: dict[str, Any] = {"end_state": record["end_state"], "run": run}
     if uuid is not None:
         entry["worker_uuid"] = uuid
@@ -591,6 +599,10 @@ def _parse_lost_record(record: dict[str, Any]) -> dict[str, Any] | None:
         entry["attempt"] = attempt
     if origin:
         entry["origin_shard"] = origin
+    if role is not None:
+        entry["role"] = role
+    if isolation is not None:
+        entry["isolation"] = isolation
     return entry
 
 
@@ -1209,6 +1221,10 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
         pid_state = _pid_state((part_run, part_pid))
         if pid_state.worker_uuid is None:
             pid_state.worker_uuid = uuid
+        # Deliberate asymmetry (rc3-D residual): session values win over
+        # partial values — sessions fold during the stream pass while
+        # partials stage globally and fill only unset fields afterwards.
+        # Same-producer pairs agree (one producer, one identity anyway).
         if part_role is not None and pid_state.role is None:
             pid_state.role = part_role
         if (
@@ -1280,7 +1296,7 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             lost_by_identity[identity] = merged_entry
             lost_end_states[identity] = {normalized["end_state"]}
             continue
-        for name in ("worker_uuid", "pid", "unit", "attempt", "origin_shard"):
+        for name in ("worker_uuid", "pid", "unit", "attempt", "origin_shard", "role", "isolation"):
             if name not in known and normalized.get(name) is not None:
                 known[name] = normalized[name]
         lost_end_states[identity].add(normalized["end_state"])
@@ -1303,6 +1319,10 @@ def extract_call_counters_from_jsonl(jsonl_path: Path) -> dict[str, Any] | None:
             entry["attempt"] = merged_entry["attempt"]
         if merged_entry.get("origin_shard"):
             entry["origin_shard"] = merged_entry["origin_shard"]
+        if merged_entry.get("role") is not None:
+            entry["role"] = merged_entry["role"]
+        if merged_entry.get("isolation") is not None:
+            entry["isolation"] = merged_entry["isolation"]
         lost_processes.append(entry)
     lost_processes.sort(key=lambda item: json.dumps(item, sort_keys=True))
     for entry in lost_processes:
