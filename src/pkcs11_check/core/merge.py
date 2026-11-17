@@ -670,7 +670,11 @@ def _merge_call_counter_blocks(
         attributed: list[tuple[str, dict[str, Any]]] = []
         for row in block["by_process"]:
             base = {key: value for key, value in row.items() if key != "round"}
-            if "module" not in base and shard_module is not None:
+            # Rows with calls always need the stamp for the merged strip
+            # decision; module-less zero-call rows (loss-attributed, no
+            # module traffic) must never gain it -- that tag would be
+            # fabricated attribution (contract review F1).
+            if "module" not in base and shard_module is not None and base.get("total_calls", 0) > 0:
                 base["module"] = shard_module
             run = row.get("round")
             if run is None:
