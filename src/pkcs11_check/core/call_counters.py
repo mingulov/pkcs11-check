@@ -181,6 +181,12 @@ def _ensure_registered_locked() -> Registration | None:
     root = durability_dir()
     if root is None:
         return None
+    # Resolve the flush cadence on every engaged call, before any evidence
+    # is admitted: a garbage setting must warn (or raise, under -W error)
+    # before admission, never after, or a warnings-as-errors run would keep
+    # phantom counts for a provider call that never ran (codex R1). Cached,
+    # so the steady state costs one global read.
+    _effective_flush_k_locked()
     pid = os.getpid()
     if _registration is not None and _registration_pid == pid:
         return _registration
